@@ -1,0 +1,31 @@
+import os
+import sys
+import subprocess
+
+# -------------------------------------------------------
+# 1. FORCE WORKING DIRECTORY
+# -------------------------------------------------------
+PROJECT_DIR = "/Users/ericballhaus/Desktop/ai_trading_dashboard"
+os.chdir(PROJECT_DIR)
+
+# -------------------------------------------------------
+# 2. FORCE PYTHONPATH
+# -------------------------------------------------------
+sys.path.insert(0, PROJECT_DIR)
+
+print("PYTHONPATH:", sys.path)
+print("Working Directory:", os.getcwd())
+
+# -------------------------------------------------------
+# 3. LAUNCH STREAMLIT WITH CORRECT ENV
+# -------------------------------------------------------
+cmd = [
+    f"{PROJECT_DIR}/venv/bin/python",
+    "-m",
+    "streamlit",
+    "run",
+    "app.py",
+]
+
+print("Launching Streamlit...")
+subprocess.run(cmd)
