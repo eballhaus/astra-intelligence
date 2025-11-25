@@ -1,60 +1,78 @@
-"""
-app.py — Phase-60 Astra Intelligence Main Entry
------------------------------------------------
-Handles safe loading of all tabs with automatic session management.
-"""
+# app.py
+# Astra Intelligence Phase-90 Main Application
 
+import os
 import streamlit as st
-from astra_modules.guardian.environment_guardian import safe_import
+from astra_modules.guardian.guardian_v6 import GuardianV6
 
-# -------------------------------------------------------------------
-# Page Configuration
-# -------------------------------------------------------------------
-st.set_page_config(
-    page_title="Astra Intelligence — Trading Dashboard",
-    layout="wide",
-)
+# UI tab imports
+from astra_modules.ui.tab_dashboard import render_dashboard
+from astra_modules.ui.tab_predictions import render_predictions
+from astra_modules.ui.tab_learning import render_learning
 
-# -------------------------------------------------------------------
-# Clear session to prevent stale data issues (safe, version-independent)
-# -------------------------------------------------------------------
-if 'initialized_app' not in st.session_state:
-    st.session_state.clear()
-    st.session_state.initialized_app = True
+# Optional: from astra_modules.ui.tab_monitoring import render_monitoring
 
-# -------------------------------------------------------------------
-# Lazy Import Wrapper (prevents startup crashes if a tab fails)
-# -------------------------------------------------------------------
-def load_tab(name, attr):
-    module = safe_import(f"astra_modules.ui.{name}")
-    if module is None:
-        st.error(f"❌ Failed to load tab module: {name}")
-        return None
-    return getattr(module, attr, None)
 
-# -------------------------------------------------------------------
-# Sidebar Navigation
-# -------------------------------------------------------------------
-st.sidebar.title("📊 Astra Intelligence")
-page = st.sidebar.radio(
-    "Navigation",
-    ["Dashboard", "Predictions", "Learning Center"],
-    index=0
-)
+def main():
+    """Launch Astra Intelligence Phase-90 Streamlit application."""
 
-# -------------------------------------------------------------------
-# ROUTING
-# -------------------------------------------------------------------
-tab_mapping = {
-    "Dashboard": ("tab_dashboard", "render_tab"),
-    "Predictions": ("tab_predictions", "render_predictions"),
-    "Learning Center": ("tab_learning", "render_learning_center")
-}
+    # ---------- GLOBAL PAGE CONFIG ----------
+    st.set_page_config(
+        page_title="Astra Intelligence – Phase-90",
+        page_icon="🚀",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
 
-tab_name, fn_name = tab_mapping[page]
-fn = load_tab(tab_name, fn_name)
-if fn:
-    try:
-        fn()
-    except Exception as e:
-        st.error(f"{page} failed to render: {e}")
+    # ---------- GUARDIAN INITIALIZATION ----------
+    base_path = os.path.dirname(os.path.abspath(__file__))
+    guardian = GuardianV6(base_path)
+    guardian.safe_run(lambda: print(f">>> GuardianV6 initialized at {base_path}"))
+
+    # ---------- SIDEBAR NAVIGATION ----------
+    st.sidebar.markdown(
+        """
+        <h2 style='color:#6FA3EF;'>🧭 Navigation</h2>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    selected_tab = st.sidebar.radio(
+        "Select a tab:",
+        ["Dashboard", "Predictions", "Learning", "Monitoring"],
+        index=0,
+    )
+
+    st.sidebar.markdown(
+        "<p style='color:#6FA3EF;font-weight:600;'>🛡️ Guardian V6 verified system integrity.</p>",
+        unsafe_allow_html=True,
+    )
+
+    # ---------- MAIN ROUTING ----------
+    if selected_tab == "Dashboard":
+        render_dashboard()
+    elif selected_tab == "Predictions":
+        render_predictions()
+    elif selected_tab == "Learning":
+        render_learning()
+    elif selected_tab == "Monitoring":
+        st.info("Monitoring module under development for Phase-100.")
+    else:
+        st.error("Invalid tab selection.")
+
+    # ---------- FOOTER ----------
+    st.markdown(
+        """
+        <hr>
+        <div style='text-align:center;color:#6FA3EF;'>
+            © 2025 Astra Intelligence • Phase-90 Framework
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ---------- ENTRY POINT ----------
+if __name__ == "__main__":
+    main()
+
