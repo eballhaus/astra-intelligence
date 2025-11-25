@@ -14,8 +14,7 @@ import pandas as pd
 
 from astra_modules.guardian.guardian_v6 import GuardianV6 as GuardianV3
 from astra_modules.scanners.smart_scan import smart_scan
-from astra_modules.chart_core.chart_engine import ChartEngine
-from astra_modules.ui.components.ticker_card import render_ticker_card
+from astra_modules.chart_core.chart_engine import render_chart_html
 from astra_modules.engine.ranking_engine import RankingEngine
 from astra_modules.universe.universe_builder import UniverseBuilder
 
@@ -44,7 +43,6 @@ def render_predictions():
         return
 
     with st.spinner("Running smart scan across universe…"):
-        # Call smart_scan() for each symbol; collect results
         predictions = []
         for symbol in universe_list:
             result = guardian.safe_run(smart_scan, symbol)
@@ -56,24 +54,71 @@ def render_predictions():
         return
 
     # Split Stocks / Crypto
-    stocks = [x for x in predictions if not x["ticker"].endswith("-USD")]
-    crypto = [x for x in predictions if x["ticker"].endswith("-USD")]
+    stocks = [x for x in predictions if not x.get("ticker", "").endswith("-USD")]
+    crypto = [x for x in predictions if x.get("ticker", "").endswith("-USD")]
 
     selected = st.session_state.get("selected_prediction")
-
     left, right = st.columns([1.2, 2])
 
     # LEFT — Stock Table
     with left:
         st.markdown("## 📈 Stocks")
-        stock_rows = [
-            [
+        stock_rows = []
+        for x in stocks[:20]:
+            stock_rows.append([
                 x.get("ticker"),
                 round(x.get("rank_score", 0), 3),
                 round(x.get("astra_score", 0), 3),
                 round(x.get("agent_scores", {}).get("neural", 0), 3),
                 round(x.get("agent_scores", {}).get("momentum", 0), 3),
                 round(x.get("agent_scores", {}).get("technical", 0), 3),
-                round(x.get("fetch_meta", {}).get("last_price", 0), 3),
+                round(x.get("fetch_meta", {}).get("last_price", 0), 3)
+            ])
+
+        df_stocks = pd.DataFrame(
+            stock_rows,
+            columns=[
+                "Ticker", "Rank Score", "Astra Score",
+                "Neural", "Momentum", "Technical", "Price"
             ]
+        )
+        st.dataframe(df_stocks, use_container_width=True, hide_index=True)
+
+        st.markdown("## 🪙 Crypto")
+        crypto_rows = []
+        for x in crypto[:20]:
+            crypto_rows.append([
+                x.get("ticker"),
+                round(x.get("rank_score", 0), 3),
+                round(x.get("astra_score", 0), 3),
+                round(x.get("agent_scores", {}).get("neural", 0), 3),
+                round(x.get("agent_scores", {}).get("momentum", 0), 3),
+                round(x.get("agent_scores", {}).get("technical", 0), 3),
+                round(x.get("fetch_meta", {}).get("last_price", 0), 3)
+            ])
+
+        df_crypto = pd.DataFrame(
+            crypto_rows,
+            columns=[
+                "Ticker", "Rank Score", "Astra Score",
+                "Neural", "Momentum", "Technical", "Price"
+            ]
+        )
+        st.dataframe(df_crypto, use_container_width=True, hide_index=True)
+
+    # RIGHT — Chart
+    with right:
+        st.markdown("## 📊 Prediction Chart")
+        if not selected:
+            st.info("Select a ticker from the table to display chart.")
+            return
+
+        df = guardian.safe_run(universe.fetch_and_clean, selected)
+        if df is None:
+            st.error("Chart data fetch failed")
+            return
+
+       chart_html = guardian.safe_run(render_chart_html, selected, df)
+	 if chart_html:
+            st.components.v1.html(chart_html, height=500, scrolling=False)
 
