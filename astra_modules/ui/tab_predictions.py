@@ -12,7 +12,7 @@ Predictions Tab:
 import streamlit as st
 import pandas as pd
 
-from astra_modules.guardian.guardian_v3 import GuardianV3
+from astra_modules.guardian.guardian_v6 import GuardianV6 as GuardianV3
 from astra_modules.scanners.scan_manager import ScanManager
 from astra_modules.chart_core.chart_engine import ChartEngine
 from astra_modules.ui.components.ticker_card import render_ticker_card
