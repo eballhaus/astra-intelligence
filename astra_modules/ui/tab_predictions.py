@@ -118,7 +118,7 @@ def render_predictions():
             st.error("Chart data fetch failed")
             return
 
-       chart_html = guardian.safe_run(render_chart_html, selected, df)
-	 if chart_html:
-            st.components.v1.html(chart_html, height=500, scrolling=False)
+    chart_html = guardian.safe_run(render_chart_html, selected, df)
+    if chart_html:
+        st.components.v1.html(chart_html, height=500, scrolling=False)
 
