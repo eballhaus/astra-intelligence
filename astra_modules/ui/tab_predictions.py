@@ -17,11 +17,10 @@ from astra_modules.scanners.scan_manager import ScanManager
 from astra_modules.chart_core.chart_engine import ChartEngine
 from astra_modules.ui.components.ticker_card import render_ticker_card
 from astra_modules.engine.ranking_engine import RankingEngine
-from astra_modules/universe/universe_builder import UniverseBuilder
+from astra_modules.universe.universe_builder import UniverseBuilder
 
 
 def render_predictions():
-
     st.markdown(
         "<h1 style='color:#F5F7FA;font-weight:700;'>Astra Intelligence — Predictions</h1>",
         unsafe_allow_html=True
@@ -37,11 +36,11 @@ def render_predictions():
     ranker = RankingEngine()
     universe = UniverseBuilder()
 
-    # =================================================================
+    # ================================
     # RUN SCAN
-    # =================================================================
-    ulist = guardian.safe_run(universe.build_universe)
-    if not ulist:
+    # ================================
+    universe_list = guardian.safe_run(universe.build_universe)
+    if not universe_list:
         st.error("Universe load failed")
         return
 
@@ -71,14 +70,14 @@ def render_predictions():
                 round(x["packet"]["agent_scores"]["momentum"], 3),
                 round(x["packet"]["agent_scores"]["technical"], 3),
                 round(x["packet"]["fetch_meta"].get("last_price", 0), 3),
-            ] for x in stocks[:20]
+            ]
+            for x in stocks[:20]
         ]
         df_stocks = pd.DataFrame(
             stock_rows,
             columns=[
                 "Ticker", "Rank Score", "Astra Score",
-                "Neural", "Momentum", "Technical",
-                "Price"
+                "Neural", "Momentum", "Technical", "Price"
             ]
         )
         st.dataframe(df_stocks, use_container_width=True, hide_index=True)
@@ -93,14 +92,14 @@ def render_predictions():
                 round(x["packet"]["agent_scores"]["momentum"], 3),
                 round(x["packet"]["agent_scores"]["technical"], 3),
                 round(x["packet"]["fetch_meta"].get("last_price", 0), 3),
-            ] for x in crypto[:20]
+            ]
+            for x in crypto[:20]
         ]
         df_crypto = pd.DataFrame(
             crypto_rows,
             columns=[
                 "Ticker", "Rank Score", "Astra Score",
-                "Neural", "Momentum", "Technical",
-                "Price"
+                "Neural", "Momentum", "Technical", "Price"
             ]
         )
         st.dataframe(df_crypto, use_container_width=True, hide_index=True)
@@ -120,3 +119,4 @@ def render_predictions():
         chart_html = guardian.safe_run(chart_engine.render_chart, selected, df)
         if chart_html:
             st.components.v1.html(chart_html, height=500, scrolling=False)
+
