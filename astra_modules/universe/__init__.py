@@ -1,4 +1,4 @@
 # Universe module init
-from .universe_builder import build_universe
+from .universe_builder import UniverseBuilder
 
 __all__ = ["build_universe"]
