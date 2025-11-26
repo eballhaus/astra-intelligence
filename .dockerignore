@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.db
+astra_cache/
+astra_logs/
+.venv/
+Dockerfile
+.git/
+.gitignore
+

@@ -1,0 +1,140 @@
+{
+  "errors": [
+    {
+      "timestamp": 1763698424.9491,
+      "function": "render_ticker_card",
+      "args": [],
+      "kwargs": {
+        "symbol": "A",
+        "price": "0.0",
+        "buy_score": "50.0",
+        "confidence": "50.0",
+        "summary": "Unknown",
+        "sparkline": "[]",
+        "final_score": "50.0"
+      },
+      "error_type": "StreamlitDuplicateElementKey",
+      "error_msg": "There are multiple elements with the same `key='card_A_4309815600'`. To fix this, please make sure that the `key` argument is unique for each element you create.",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/astra_modules/guardian/guardian_defender.py\", line 53, in run_safe\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/astra_modules/ui/components/ticker_card.py\", line 63, in render_ticker_card\n    clicked = st.button(\"\", key=unique_key)  # empty label, click area via HTML\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/runtime/metrics_util.py\", line 447, in wrapped_func\n    result = non_optional_func(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/widgets/button.py\", line 266, in button\n    return self.dg._button(\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/widgets/button.py\", line 1120, in _button\n    element_id = compute_and_register_element_id(\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/lib/utils.py\", line 265, in compute_and_register_element_id\n    _register_element_id(ctx, element_type, element_id)\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/lib/utils.py\", line 145, in _register_element_id\n    raise StreamlitDuplicateElementKey(user_key)\nstreamlit.errors.StreamlitDuplicateElementKey: There are multiple elements with the same `key='card_A_4309815600'`. To fix this, please make sure that the `key` argument is unique for each element you create.\n"
+    },
+    {
+      "timestamp": 1763698424.9494898,
+      "function": "render_ticker_card",
+      "args": [],
+      "kwargs": {
+        "symbol": "A",
+        "price": "0.0",
+        "buy_score": "50.0",
+        "confidence": "50.0",
+        "summary": "Unknown",
+        "sparkline": "[]",
+        "final_score": "50.0"
+      },
+      "error_type": "StreamlitDuplicateElementKey",
+      "error_msg": "There are multiple elements with the same `key='card_A_4309815600'`. To fix this, please make sure that the `key` argument is unique for each element you create.",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/astra_modules/guardian/guardian_defender.py\", line 53, in run_safe\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/astra_modules/ui/components/ticker_card.py\", line 63, in render_ticker_card\n    clicked = st.button(\"\", key=unique_key)  # empty label, click area via HTML\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/runtime/metrics_util.py\", line 447, in wrapped_func\n    result = non_optional_func(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/widgets/button.py\", line 266, in button\n    return self.dg._button(\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/widgets/button.py\", line 1120, in _button\n    element_id = compute_and_register_element_id(\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/lib/utils.py\", line 265, in compute_and_register_element_id\n    _register_element_id(ctx, element_type, element_id)\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/lib/utils.py\", line 145, in _register_element_id\n    raise StreamlitDuplicateElementKey(user_key)\nstreamlit.errors.StreamlitDuplicateElementKey: There are multiple elements with the same `key='card_A_4309815600'`. To fix this, please make sure that the `key` argument is unique for each element you create.\n"
+    },
+    {
+      "timestamp": 1763698424.949813,
+      "function": "render_ticker_card",
+      "args": [],
+      "kwargs": {
+        "symbol": "A",
+        "price": "0.0",
+        "buy_score": "50.0",
+        "confidence": "50.0",
+        "summary": "Unknown",
+        "sparkline": "[]",
+        "final_score": "50.0"
+      },
+      "error_type": "StreamlitDuplicateElementKey",
+      "error_msg": "There are multiple elements with the same `key='card_A_4309815600'`. To fix this, please make sure that the `key` argument is unique for each element you create.",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/astra_modules/guardian/guardian_defender.py\", line 53, in run_safe\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/astra_modules/ui/components/ticker_card.py\", line 63, in render_ticker_card\n    clicked = st.button(\"\", key=unique_key)  # empty label, click area via HTML\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/runtime/metrics_util.py\", line 447, in wrapped_func\n    result = non_optional_func(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/widgets/button.py\", line 266, in button\n    return self.dg._button(\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/widgets/button.py\", line 1120, in _button\n    element_id = compute_and_register_element_id(\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/lib/utils.py\", line 265, in compute_and_register_element_id\n    _register_element_id(ctx, element_type, element_id)\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/lib/utils.py\", line 145, in _register_element_id\n    raise StreamlitDuplicateElementKey(user_key)\nstreamlit.errors.StreamlitDuplicateElementKey: There are multiple elements with the same `key='card_A_4309815600'`. To fix this, please make sure that the `key` argument is unique for each element you create.\n"
+    },
+    {
+      "timestamp": 1763698424.950117,
+      "function": "render_ticker_card",
+      "args": [],
+      "kwargs": {
+        "symbol": "A",
+        "price": "0.0",
+        "buy_score": "50.0",
+        "confidence": "50.0",
+        "summary": "Unknown",
+        "sparkline": "[]",
+        "final_score": "50.0"
+      },
+      "error_type": "StreamlitDuplicateElementKey",
+      "error_msg": "There are multiple elements with the same `key='card_A_4309815600'`. To fix this, please make sure that the `key` argument is unique for each element you create.",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/astra_modules/guardian/guardian_defender.py\", line 53, in run_safe\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/astra_modules/ui/components/ticker_card.py\", line 63, in render_ticker_card\n    clicked = st.button(\"\", key=unique_key)  # empty label, click area via HTML\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/runtime/metrics_util.py\", line 447, in wrapped_func\n    result = non_optional_func(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/widgets/button.py\", line 266, in button\n    return self.dg._button(\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/widgets/button.py\", line 1120, in _button\n    element_id = compute_and_register_element_id(\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/lib/utils.py\", line 265, in compute_and_register_element_id\n    _register_element_id(ctx, element_type, element_id)\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/lib/utils.py\", line 145, in _register_element_id\n    raise StreamlitDuplicateElementKey(user_key)\nstreamlit.errors.StreamlitDuplicateElementKey: There are multiple elements with the same `key='card_A_4309815600'`. To fix this, please make sure that the `key` argument is unique for each element you create.\n"
+    },
+    {
+      "timestamp": 1763698436.114296,
+      "function": "render_ticker_card",
+      "args": [],
+      "kwargs": {
+        "symbol": "A",
+        "price": "0.0",
+        "buy_score": "50.0",
+        "confidence": "50.0",
+        "summary": "Unknown",
+        "sparkline": "[]",
+        "final_score": "50.0"
+      },
+      "error_type": "StreamlitDuplicateElementKey",
+      "error_msg": "There are multiple elements with the same `key='card_A_4309815600'`. To fix this, please make sure that the `key` argument is unique for each element you create.",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/astra_modules/guardian/guardian_defender.py\", line 53, in run_safe\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/astra_modules/ui/components/ticker_card.py\", line 63, in render_ticker_card\n    clicked = st.button(\"\", key=unique_key)  # empty label, click area via HTML\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/runtime/metrics_util.py\", line 447, in wrapped_func\n    result = non_optional_func(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/widgets/button.py\", line 266, in button\n    return self.dg._button(\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/widgets/button.py\", line 1120, in _button\n    element_id = compute_and_register_element_id(\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/lib/utils.py\", line 265, in compute_and_register_element_id\n    _register_element_id(ctx, element_type, element_id)\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/lib/utils.py\", line 145, in _register_element_id\n    raise StreamlitDuplicateElementKey(user_key)\nstreamlit.errors.StreamlitDuplicateElementKey: There are multiple elements with the same `key='card_A_4309815600'`. To fix this, please make sure that the `key` argument is unique for each element you create.\n"
+    },
+    {
+      "timestamp": 1763698436.114941,
+      "function": "render_ticker_card",
+      "args": [],
+      "kwargs": {
+        "symbol": "A",
+        "price": "0.0",
+        "buy_score": "50.0",
+        "confidence": "50.0",
+        "summary": "Unknown",
+        "sparkline": "[]",
+        "final_score": "50.0"
+      },
+      "error_type": "StreamlitDuplicateElementKey",
+      "error_msg": "There are multiple elements with the same `key='card_A_4309815600'`. To fix this, please make sure that the `key` argument is unique for each element you create.",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/astra_modules/guardian/guardian_defender.py\", line 53, in run_safe\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/astra_modules/ui/components/ticker_card.py\", line 63, in render_ticker_card\n    clicked = st.button(\"\", key=unique_key)  # empty label, click area via HTML\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/runtime/metrics_util.py\", line 447, in wrapped_func\n    result = non_optional_func(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/widgets/button.py\", line 266, in button\n    return self.dg._button(\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/widgets/button.py\", line 1120, in _button\n    element_id = compute_and_register_element_id(\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/lib/utils.py\", line 265, in compute_and_register_element_id\n    _register_element_id(ctx, element_type, element_id)\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/lib/utils.py\", line 145, in _register_element_id\n    raise StreamlitDuplicateElementKey(user_key)\nstreamlit.errors.StreamlitDuplicateElementKey: There are multiple elements with the same `key='card_A_4309815600'`. To fix this, please make sure that the `key` argument is unique for each element you create.\n"
+    },
+    {
+      "timestamp": 1763698436.115509,
+      "function": "render_ticker_card",
+      "args": [],
+      "kwargs": {
+        "symbol": "A",
+        "price": "0.0",
+        "buy_score": "50.0",
+        "confidence": "50.0",
+        "summary": "Unknown",
+        "sparkline": "[]",
+        "final_score": "50.0"
+      },
+      "error_type": "StreamlitDuplicateElementKey",
+      "error_msg": "There are multiple elements with the same `key='card_A_4309815600'`. To fix this, please make sure that the `key` argument is unique for each element you create.",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/astra_modules/guardian/guardian_defender.py\", line 53, in run_safe\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/astra_modules/ui/components/ticker_card.py\", line 63, in render_ticker_card\n    clicked = st.button(\"\", key=unique_key)  # empty label, click area via HTML\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/runtime/metrics_util.py\", line 447, in wrapped_func\n    result = non_optional_func(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/widgets/button.py\", line 266, in button\n    return self.dg._button(\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/widgets/button.py\", line 1120, in _button\n    element_id = compute_and_register_element_id(\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/lib/utils.py\", line 265, in compute_and_register_element_id\n    _register_element_id(ctx, element_type, element_id)\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/lib/utils.py\", line 145, in _register_element_id\n    raise StreamlitDuplicateElementKey(user_key)\nstreamlit.errors.StreamlitDuplicateElementKey: There are multiple elements with the same `key='card_A_4309815600'`. To fix this, please make sure that the `key` argument is unique for each element you create.\n"
+    },
+    {
+      "timestamp": 1763698436.1159198,
+      "function": "render_ticker_card",
+      "args": [],
+      "kwargs": {
+        "symbol": "A",
+        "price": "0.0",
+        "buy_score": "50.0",
+        "confidence": "50.0",
+        "summary": "Unknown",
+        "sparkline": "[]",
+        "final_score": "50.0"
+      },
+      "error_type": "StreamlitDuplicateElementKey",
+      "error_msg": "There are multiple elements with the same `key='card_A_4309815600'`. To fix this, please make sure that the `key` argument is unique for each element you create.",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/astra_modules/guardian/guardian_defender.py\", line 53, in run_safe\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/astra_modules/ui/components/ticker_card.py\", line 63, in render_ticker_card\n    clicked = st.button(\"\", key=unique_key)  # empty label, click area via HTML\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/runtime/metrics_util.py\", line 447, in wrapped_func\n    result = non_optional_func(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/widgets/button.py\", line 266, in button\n    return self.dg._button(\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/widgets/button.py\", line 1120, in _button\n    element_id = compute_and_register_element_id(\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/lib/utils.py\", line 265, in compute_and_register_element_id\n    _register_element_id(ctx, element_type, element_id)\n  File \"/Users/ericballhaus/Desktop/ai_trading_dashboard/venv/lib/python3.12/site-packages/streamlit/elements/lib/utils.py\", line 145, in _register_element_id\n    raise StreamlitDuplicateElementKey(user_key)\nstreamlit.errors.StreamlitDuplicateElementKey: There are multiple elements with the same `key='card_A_4309815600'`. To fix this, please make sure that the `key` argument is unique for each element you create.\n"
+    }
+  ]
+}

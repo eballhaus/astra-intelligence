@@ -1,0 +1,123 @@
+/* ASTRA INTELLIGENCE — GLOBAL THEME */
+/* ---------------------------------- */
+/* Dark-mode financial terminal look */
+/* Matches TradingView / Bloomberg aesthetics */
+
+:root {
+    --bg-primary: #0E1117;
+    --bg-secondary: #161B22;
+    --accent-blue: #3A8DFF;
+    --accent-green: #2ECC71;
+    --accent-red: #E74C3C;
+    --text-primary: #F5F7FA;
+    --text-secondary: #9DA5B4;
+    --text-muted: #6C7480;
+    --card-radius: 12px;
+    --card-padding: 16px;
+    --shadow-light: rgba(255, 255, 255, 0.05);
+    --shadow-strong: rgba(0, 0, 0, 0.35);
+}
+
+/* GENERAL STYLING */
+body, .stApp {
+    background-color: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
+    font-family: "Inter", sans-serif !important;
+}
+
+/* HEADERS */
+h1, h2, h3 {
+    color: var(--text-primary) !important;
+    margin-bottom: 6px !important;
+    font-weight: 700 !important;
+}
+
+p, span, label {
+    color: var(--text-secondary) !important;
+}
+
+/* CARDS */
+.ast-card {
+    background-color: var(--bg-secondary) !important;
+    padding: var(--card-padding) !important;
+    border-radius: var(--card-radius) !important;
+    box-shadow: 0px 4px 10px var(--shadow-strong) !important;
+    transition: all 0.15s ease-in-out !important;
+    border: 1px solid rgba(255, 255, 255, 0.05) !important;
+}
+
+/* CARD HOVER EFFECT */
+.ast-card:hover {
+    transform: translateY(-3px) !important;
+    box-shadow: 0px 6px 16px var(--shadow-strong) !important;
+}
+
+/* CARD ACCENT BORDER (dynamic via class) */
+.ast-accent-green {
+    border-left: 4px solid var(--accent-green) !important;
+}
+.ast-accent-blue {
+    border-left: 4px solid var(--accent-blue) !important;
+}
+.ast-accent-red {
+    border-left: 4px solid var(--accent-red) !important;
+}
+
+/* TICKER SYMBOL TEXT */
+.ast-symbol {
+    font-size: 22px !important;
+    font-weight: 700 !important;
+    color: var(--text-primary) !important;
+}
+
+/* PRICE TEXT */
+.ast-price {
+    font-size: 18px !important;
+    font-weight: 600 !important;
+}
+
+/* METRIC LABELS */
+.ast-label {
+    font-size: 14px !important;
+    color: var(--text-muted) !important;
+}
+
+/* METRIC VALUE */
+.ast-value {
+    font-size: 16px !important;
+    font-weight: 600 !important;
+}
+
+/* GRID LAYOUT HELPERS */
+.ast-grid {
+    display: grid;
+    gap: 16px;
+}
+
+.ast-grid-2 {
+    grid-template-columns: repeat(2, 1fr);
+}
+
+.ast-grid-3 {
+    grid-template-columns: repeat(3, 1fr);
+}
+
+.ast-grid-1 {
+    grid-template-columns: repeat(1, 1fr);
+}
+
+/* SPARKLINE CANVAS FIX */
+canvas {
+    background-color: transparent !important;
+}
+
+/* TOOLTIP-STYLE HOVER INFO (pop-ups) */
+.ast-hover-info {
+    background-color: rgba(22, 27, 34, 0.95) !important;
+    padding: 12px !important;
+    border-radius: 8px !important;
+    color: var(--text-primary) !important;
+    font-size: 14px !important;
+    border: 1px solid rgba(255,255,255,0.10) !important;
+    box-shadow: 0px 4px 12px var(--shadow-strong) !important;
+}

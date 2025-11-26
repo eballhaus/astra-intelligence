@@ -1,0 +1,1260 @@
+{
+  "root": "359be17b25059fa9a1a9bb02b40c8f6a261ec3eee4b45f80bca8313681411366",
+  "events": [
+    {
+      "timestamp": "2025-11-23T20:16:26.750450",
+      "type": "analysis",
+      "payload": {
+        "risk": 0.4892935518858624,
+        "action": "MONITOR"
+      },
+      "hash": "2edf8d9eb521a84d67fe63a737faeacfc8dc640bbae83c267c745b98f49afa18"
+    },
+    {
+      "timestamp": "2025-11-23T20:16:27.255845",
+      "type": "analysis",
+      "payload": {
+        "risk": 0.16990659409924586,
+        "action": "ALLOW"
+      },
+      "hash": "328c2aaf3efd5c4f1b3fbba13173baea3485536533f542fb4fc06ea03621f29c"
+    },
+    {
+      "timestamp": "2025-11-23T20:16:27.759743",
+      "type": "analysis",
+      "payload": {
+        "risk": 0.10829631212410223,
+        "action": "ALLOW"
+      },
+      "hash": "7d7ddfaffb405d7b06444ca4c2c9fa81dcd1784520bd8b34e9c9101f21abe7d9"
+    },
+    {
+      "timestamp": "2025-11-23T20:16:28.264975",
+      "type": "analysis",
+      "payload": {
+        "risk": 0.4428976519000376,
+        "action": "MONITOR"
+      },
+      "hash": "c3ad2493d29074781f5708559cf040afe8e152f6729f9700d6ea6a574277d58f"
+    },
+    {
+      "timestamp": "2025-11-23T20:16:28.771782",
+      "type": "analysis",
+      "payload": {
+        "risk": 0.46335631553323936,
+        "action": "MONITOR"
+      },
+      "hash": "8dca8fc02d67253d5904c4c7b5497dcaeb0be9c6756956829325ca14cd0a01c7"
+    },
+    {
+      "timestamp": "2025-11-23T20:16:29.278276",
+      "type": "analysis",
+      "payload": {
+        "risk": 0.24405805586572882,
+        "action": "ALLOW"
+      },
+      "hash": "a9679effd7ff4822edd0c9afa3d87e99b58b263163f777a61f5ce5a0753471de"
+    },
+    {
+      "timestamp": "2025-11-23T20:16:29.784791",
+      "type": "analysis",
+      "payload": {
+        "risk": 0.006503470989565605,
+        "action": "ALLOW"
+      },
+      "hash": "fbc917c3951fc36ddcd2c58775e99b65094cb9fcfe4839f3142b3098b995bff4"
+    },
+    {
+      "timestamp": "2025-11-23T20:16:30.289275",
+      "type": "analysis",
+      "payload": {
+        "risk": 0.3139082530565691,
+        "action": "MONITOR"
+      },
+      "hash": "23da97cd41f60698f0355dfab8d32e64b92e7dab177173a3b9af2988505b3be4"
+    },
+    {
+      "timestamp": "2025-11-23T20:16:30.802968",
+      "type": "analysis",
+      "payload": {
+        "risk": 0.30356055725477354,
+        "action": "MONITOR"
+      },
+      "hash": "5f73cdf58365f249fa16a5f51f22f6de12bba98110562e96a2624ec81e554378"
+    },
+    {
+      "timestamp": "2025-11-23T20:16:31.305231",
+      "type": "analysis",
+      "payload": {
+        "risk": 0.4769168782066509,
+        "action": "MONITOR"
+      },
+      "hash": "9143c93d444c9d5d1091c16498a741a9b271bbbe0be2c2647b36fab7d1d040ea"
+    },
+    {
+      "timestamp": "2025-11-23T20:46:19.483984+00:00",
+      "type": "sentinel_report",
+      "payload": {
+        "checked": 5,
+        "failed": 0,
+        "timestamp": "2025-11-23T20:46:19.483641"
+      },
+      "hash": "ef9673c75eabd5436bb129a95457e3d47562ab1af06cf754cbecfdbe5e73c52c"
+    },
+    {
+      "timestamp": "2025-11-23T20:46:19.484386+00:00",
+      "type": "startup_check",
+      "payload": {
+        "timestamp": "2025-11-23T20:46:19.484383",
+        "modules_checked": 5,
+        "modules_failed": 0,
+        "status": "ok"
+      },
+      "hash": "d5baaa7210777fb9e792c7a2e5d6117d2d06437f31e499a842e6ad5414df1338"
+    },
+    {
+      "timestamp": "2025-11-23T20:48:29.711533+00:00",
+      "type": "auto_repair",
+      "payload": {
+        "timestamp": "2025-11-23T20:48:29.711522+00:00",
+        "checked": 3,
+        "repaired": 0,
+        "duration": 0.002,
+        "log": []
+      },
+      "hash": "9f308dd5e1696c8adcdb4a9e3ffb0acc7bcfa3ac50e369d61053100e0b2f0652"
+    },
+    {
+      "timestamp": "2025-11-23T20:56:24.058109+00:00",
+      "type": "auto_repair",
+      "payload": {
+        "timestamp": "2025-11-23T20:56:24.058097+00:00",
+        "checked": 3,
+        "repaired": 0,
+        "duration": 0.003,
+        "log": []
+      },
+      "hash": "48f98df33706becfe0e4ddf8e93077299669c5ff6f8286e4844ed0252b91cb37"
+    },
+    {
+      "timestamp": "2025-11-23T20:56:24.059231+00:00",
+      "type": "sentinel_report",
+      "payload": {
+        "checked": 5,
+        "failed": 0,
+        "timestamp": "2025-11-23T20:56:24.058852"
+      },
+      "hash": "25e1e2b8504bd8d24f5db786fc503c48397564974a5c96042ee33d91221e3298"
+    },
+    {
+      "timestamp": "2025-11-23T20:56:24.059491+00:00",
+      "type": "startup_check",
+      "payload": {
+        "timestamp": "2025-11-23T20:56:24.059489",
+        "modules_checked": 5,
+        "modules_failed": 0,
+        "status": "ok"
+      },
+      "hash": "0a755e96a8fbea63a2ca139553d50dd1be11f4db6317ebd898d9a254a16ad8e8"
+    },
+    {
+      "timestamp": "2025-11-23T21:01:39.161042+00:00",
+      "type": "guardian_sync",
+      "payload": {
+        "timestamp": "2025-11-23T21:01:39.161006+00:00",
+        "verified": 4,
+        "mismatched": 4,
+        "duration": 0.658,
+        "results": [
+          {
+            "file": "astra_modules/guardian/guardian_v4.py",
+            "local_hash": "2d92850ff66763e58ecd9de54f555c247e4492a2adaeb34d2dfe6ad801737373",
+            "github_hash": "4ebb1536f2fa9c36f4df5ccd8194008a99d74980",
+            "match": false
+          },
+          {
+            "file": "astra_modules/guardian/guardian_sentinel.py",
+            "local_hash": "4e9fb62c29a196cfaabc3aa1e94f05417f8cb34d6b7f76aa0fd149d682120a8b",
+            "github_hash": "HTTP_404",
+            "match": false
+          },
+          {
+            "file": "astra_modules/guardian/startup_hook.py",
+            "local_hash": "813e48568cbd58766591d1d40b74ef7107227d41640a339d063d08f87e30f2f0",
+            "github_hash": "HTTP_404",
+            "match": false
+          },
+          {
+            "file": "astra_modules/guardian/auto_repair.py",
+            "local_hash": "0d78a8f57ebb602db098e9a67c86c34811e7be00461eeed71ec49ddc70ef7421",
+            "github_hash": "10555efcb5ee74747f2a8f5490059212ce38ff6b",
+            "match": false
+          }
+        ]
+      },
+      "hash": "94cb728516b83b8711a0f8692e0801ebd4e1a9643d35a49379767485bf7b5adb"
+    },
+    {
+      "timestamp": "2025-11-23T21:03:34.517253+00:00",
+      "type": "guardian_sync",
+      "payload": {
+        "timestamp": "2025-11-23T21:03:34.517213+00:00",
+        "verified": 4,
+        "mismatched": 4,
+        "duration": 0.706,
+        "results": [
+          {
+            "file": "astra_modules/guardian/guardian_v4.py",
+            "local_hash": "2d92850ff66763e58ecd9de54f555c247e4492a2adaeb34d2dfe6ad801737373",
+            "github_hash": "903f2fa88ce21621acfd76be710f17ba12cce644",
+            "match": false
+          },
+          {
+            "file": "astra_modules/guardian/guardian_sentinel.py",
+            "local_hash": "4e9fb62c29a196cfaabc3aa1e94f05417f8cb34d6b7f76aa0fd149d682120a8b",
+            "github_hash": "b96c9eb8b286ab5521a6803e46132bb636be8cff",
+            "match": false
+          },
+          {
+            "file": "astra_modules/guardian/startup_hook.py",
+            "local_hash": "813e48568cbd58766591d1d40b74ef7107227d41640a339d063d08f87e30f2f0",
+            "github_hash": "b85d18f5338674606c4f4289789c8b47ddd097b7",
+            "match": false
+          },
+          {
+            "file": "astra_modules/guardian/auto_repair.py",
+            "local_hash": "0d78a8f57ebb602db098e9a67c86c34811e7be00461eeed71ec49ddc70ef7421",
+            "github_hash": "f048ee2a52084b74eea7ab93b1d815bc7f01c7c5",
+            "match": false
+          }
+        ]
+      },
+      "hash": "b9a440a3a08f5bcb16f206dd5201831415fa249d6be6c93d7224920377c532dc"
+    },
+    {
+      "timestamp": "2025-11-23T21:39:02.150327+00:00",
+      "type": "auto_repair",
+      "payload": {
+        "timestamp": "2025-11-23T21:39:02.150319+00:00",
+        "checked": 3,
+        "repaired": 0,
+        "duration": 0.003,
+        "log": []
+      },
+      "hash": "1e369c2bdd516b70980e26a66ce7ae8fc23442b7bd8883bb13b8d0d7d77b7d91"
+    },
+    {
+      "timestamp": "2025-11-23T21:39:02.151697+00:00",
+      "type": "sentinel_report",
+      "payload": {
+        "checked": 5,
+        "failed": 0,
+        "timestamp": "2025-11-23T21:39:02.151348"
+      },
+      "hash": "8a6560f614a370487ea9ffc99ead7d6149d202687351c22e5c2e0ecf98f04207"
+    },
+    {
+      "timestamp": "2025-11-23T21:39:02.152074+00:00",
+      "type": "startup_check",
+      "payload": {
+        "timestamp": "2025-11-23T21:39:02.152072",
+        "modules_checked": 5,
+        "modules_failed": 0,
+        "status": "ok"
+      },
+      "hash": "55bc9d2122dc8c301149a09aac230a6015d2f48cffbb5832f50462f55275c87b"
+    },
+    {
+      "timestamp": "2025-11-24T04:49:01.307959+00:00",
+      "type": "auto_repair",
+      "payload": {
+        "timestamp": "2025-11-24T04:49:01.307659+00:00",
+        "checked": 3,
+        "repaired": 0,
+        "duration": 0.004,
+        "log": []
+      },
+      "hash": "c4473c39966bb7558235784cc485f149d6fe995b78a4816e1bec6a1b79fa5100"
+    },
+    {
+      "timestamp": "2025-11-24T04:49:01.309560+00:00",
+      "type": "sentinel_report",
+      "payload": {
+        "checked": 5,
+        "failed": 0,
+        "timestamp": "2025-11-24T04:49:01.308928"
+      },
+      "hash": "91903668dd248e7b4ec61f05ea308fef4dd261a499091262844aa2ab876e951e"
+    },
+    {
+      "timestamp": "2025-11-24T04:49:01.309975+00:00",
+      "type": "startup_check",
+      "payload": {
+        "timestamp": "2025-11-24T04:49:01.309973",
+        "modules_checked": 5,
+        "modules_failed": 0,
+        "status": "ok"
+      },
+      "hash": "170471cee87545d3a1e2a76cd5e8b7368584807469d629f89c2d3ff764680108"
+    },
+    {
+      "timestamp": "2025-11-24T04:51:46.072609+00:00",
+      "type": "auto_repair",
+      "payload": {
+        "timestamp": "2025-11-24T04:51:46.060384+00:00",
+        "checked": 3,
+        "repaired": 0,
+        "duration": 0.022,
+        "log": []
+      },
+      "hash": "84d3c9d91c9a62558eace2d1740755696a90af2dc5d76cd41028bd96ba2c744e"
+    },
+    {
+      "timestamp": "2025-11-24T04:51:46.095691+00:00",
+      "type": "sentinel_report",
+      "payload": {
+        "checked": 5,
+        "failed": 0,
+        "timestamp": "2025-11-24T04:51:46.090157"
+      },
+      "hash": "b12542754dbad1aba434d666eccecd9103c43421032c7b1f4cffb550d1d6ad74"
+    },
+    {
+      "timestamp": "2025-11-24T04:51:46.105797+00:00",
+      "type": "startup_check",
+      "payload": {
+        "timestamp": "2025-11-24T04:51:46.105782",
+        "modules_checked": 5,
+        "modules_failed": 0,
+        "status": "ok"
+      },
+      "hash": "dc0ab74b3f34adaed5fd1e083edd24f0c9b6ab0535325a091e6e60ea6ed80f48"
+    },
+    {
+      "timestamp": "2025-11-24T04:52:57.778963+00:00",
+      "type": "sentinel_report",
+      "payload": {
+        "checked": 5,
+        "failed": 0,
+        "timestamp": "2025-11-24T04:52:57.778669"
+      },
+      "hash": "b10240edb3c531cb9effbed5ec3edc8e21c69be7ca85177cc746e76e5de08f69"
+    },
+    {
+      "timestamp": "2025-11-24T05:05:36.245377+00:00",
+      "type": "fetch_live_data",
+      "payload": {
+        "symbol": "AAPL"
+      },
+      "hash": "81f2f55d6b43e79fafab6b67ab2212fd60cb428180f320e87a1c9f885c628cdd"
+    }
+  ],
+  "2025-11-25T15:43:19.301225": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:43:19.336680": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:43:19.345973": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:43:19.369171": {
+    "event": "VERIFY_FAIL",
+    "detail": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 140, in <module>\n    main()\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 136, in main\n    guardian.log_event(\"preflight_complete\", \"Incremental verification finished successfully.\")\n    ^^^^^^^^^^^^^^^^^^\nAttributeError: 'GuardianV6' object has no attribute 'log_event'"
+  },
+  "2025-11-25T15:47:45.573451": {
+    "event": "SHUTDOWN",
+    "detail": "Guardian terminated cleanly."
+  },
+  "2025-11-25T15:48:12.289494": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:48:12.298769": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:48:12.328694": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:48:12.336798": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:51:32.756551": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:51:32.795812": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:51:32.805232": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:51:32.826168": {
+    "event": "VERIFY_FAIL",
+    "detail": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 140, in <module>\n    main()\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 136, in main\n    guardian.log_event(\"preflight_complete\", \"Incremental verification finished successfully.\")\n    ^^^^^^^^^^^^^^^^^^\nAttributeError: 'GuardianV6' object has no attribute 'log_event'"
+  },
+  "2025-11-25T15:51:34.777837": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:51:34.788325": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:51:34.822002": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:51:34.830185": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:51:35.383757": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:51:35.387427": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:51:35.388732": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:51:35.450652": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:52:34.870512": {
+    "event": "SHUTDOWN",
+    "detail": "Guardian terminated cleanly."
+  },
+  "2025-11-25T15:53:07.812806": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:07.856212": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:07.866178": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:07.890947": {
+    "event": "VERIFY_FAIL",
+    "detail": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 140, in <module>\n    main()\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 136, in main\n    guardian.log_event(\"preflight_complete\", \"Incremental verification finished successfully.\")\n    ^^^^^^^^^^^^^^^^^^\nAttributeError: 'GuardianV6' object has no attribute 'log_event'"
+  },
+  "2025-11-25T15:53:09.836892": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:09.847883": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:09.882177": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:09.890743": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:10.261400": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:10.263974": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:10.264677": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:10.325905": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:30.133989": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:30.167736": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:30.176632": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:30.187151": {
+    "event": "VERIFY_FAIL",
+    "detail": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 140, in <module>\n    main()\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 136, in main\n    guardian.log_event(\"preflight_complete\", \"Incremental verification finished successfully.\")\n    ^^^^^^^^^^^^^^^^^^\nAttributeError: 'GuardianV6' object has no attribute 'log_event'"
+  },
+  "2025-11-25T15:53:32.166059": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:32.180896": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:32.223650": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:32.232963": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:54.618832": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:54.660835": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:54.669575": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:54.679062": {
+    "event": "VERIFY_FAIL",
+    "detail": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 140, in <module>\n    main()\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 136, in main\n    guardian.log_event(\"preflight_complete\", \"Incremental verification finished successfully.\")\n    ^^^^^^^^^^^^^^^^^^\nAttributeError: 'GuardianV6' object has no attribute 'log_event'"
+  },
+  "2025-11-25T15:53:56.649738": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:56.664226": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:56.704157": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:53:56.712689": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:54:01.403735": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:54:01.445196": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:54:01.453915": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:54:01.463390": {
+    "event": "VERIFY_FAIL",
+    "detail": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 140, in <module>\n    main()\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 136, in main\n    guardian.log_event(\"preflight_complete\", \"Incremental verification finished successfully.\")\n    ^^^^^^^^^^^^^^^^^^\nAttributeError: 'GuardianV6' object has no attribute 'log_event'"
+  },
+  "2025-11-25T15:54:03.404608": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:54:03.418389": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:54:03.456997": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:54:03.465533": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:55:03.415934": {
+    "event": "AUTO_HEAL",
+    "detail": "Missing ['app.py', 'verify_astra.py']"
+  },
+  "2025-11-25T15:58:09.079934": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:58:09.119553": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:58:09.133362": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:58:09.155346": {
+    "event": "VERIFY_FAIL",
+    "detail": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 140, in <module>\n    main()\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 136, in main\n    guardian.log_event(\"preflight_complete\", \"Incremental verification finished successfully.\")\n    ^^^^^^^^^^^^^^^^^^\nAttributeError: 'GuardianV6' object has no attribute 'log_event'"
+  },
+  "2025-11-25T15:58:11.023192": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:58:11.031945": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:58:11.075924": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:58:11.087329": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:58:11.122686": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:58:11.135411": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:58:20.581165": {
+    "event": "SHUTDOWN",
+    "detail": "Guardian terminated cleanly."
+  },
+  "2025-11-25T15:58:20.585680": {
+    "event": "SHUTDOWN",
+    "detail": "Guardian terminated cleanly."
+  },
+  "2025-11-25T15:58:29.040808": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:58:29.081452": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:58:29.091479": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:58:29.101196": {
+    "event": "VERIFY_FAIL",
+    "detail": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 140, in <module>\n    main()\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 136, in main\n    guardian.log_event(\"preflight_complete\", \"Incremental verification finished successfully.\")\n    ^^^^^^^^^^^^^^^^^^\nAttributeError: 'GuardianV6' object has no attribute 'log_event'"
+  },
+  "2025-11-25T15:58:31.009010": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:58:31.064226": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:58:31.075912": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:58:31.110382": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:58:31.120108": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T15:58:31.481098": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:34.507979": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:34.544606": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:34.557458": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:34.580472": {
+    "event": "VERIFY_FAIL",
+    "detail": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 140, in <module>\n    main()\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 136, in main\n    guardian.log_event(\"preflight_complete\", \"Incremental verification finished successfully.\")\n    ^^^^^^^^^^^^^^^^^^\nAttributeError: 'GuardianV6' object has no attribute 'log_event'"
+  },
+  "2025-11-25T16:00:36.464429": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:36.470615": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:36.502991": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:36.514196": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:36.552146": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:36.561890": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:46.864958": {
+    "event": "SHUTDOWN",
+    "detail": "Guardian terminated cleanly."
+  },
+  "2025-11-25T16:00:54.580708": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:54.619424": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:54.628410": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:54.637475": {
+    "event": "VERIFY_FAIL",
+    "detail": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 140, in <module>\n    main()\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 136, in main\n    guardian.log_event(\"preflight_complete\", \"Incremental verification finished successfully.\")\n    ^^^^^^^^^^^^^^^^^^\nAttributeError: 'GuardianV6' object has no attribute 'log_event'"
+  },
+  "2025-11-25T16:00:56.563633": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:56.618795": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:56.630382": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:56.663451": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:56.672392": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T16:00:56.922884": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T17:20:03.357209": {
+    "event": "AUTO_HEAL",
+    "detail": "Missing ['app.py', 'verify_astra.py']"
+  },
+  "2025-11-25T18:10:37.051029": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:10:37.088978": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:10:37.101487": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:10:37.122306": {
+    "event": "VERIFY_FAIL",
+    "detail": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 140, in <module>\n    main()\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 136, in main\n    guardian.log_event(\"preflight_complete\", \"Incremental verification finished successfully.\")\n    ^^^^^^^^^^^^^^^^^^\nAttributeError: 'GuardianV6' object has no attribute 'log_event'"
+  },
+  "2025-11-25T18:10:39.032310": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:10:39.045902": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:10:39.080854": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:10:39.089253": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:10:54.004906": {
+    "event": "SHUTDOWN",
+    "detail": "Guardian terminated cleanly."
+  },
+  "2025-11-25T18:11:03.055118": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:11:03.092990": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:11:03.102510": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:11:03.112142": {
+    "event": "VERIFY_FAIL",
+    "detail": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 140, in <module>\n    main()\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 136, in main\n    guardian.log_event(\"preflight_complete\", \"Incremental verification finished successfully.\")\n    ^^^^^^^^^^^^^^^^^^\nAttributeError: 'GuardianV6' object has no attribute 'log_event'"
+  },
+  "2025-11-25T18:11:05.083267": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:11:05.094366": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:11:05.127393": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:11:05.136381": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:11:57.550264": {
+    "event": "SHUTDOWN",
+    "detail": "Guardian terminated cleanly."
+  },
+  "2025-11-25T18:12:45.704229": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:12:45.744234": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:12:45.754469": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:12:45.775724": {
+    "event": "VERIFY_FAIL",
+    "detail": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 140, in <module>\n    main()\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 136, in main\n    guardian.log_event(\"preflight_complete\", \"Incremental verification finished successfully.\")\n    ^^^^^^^^^^^^^^^^^^\nAttributeError: 'GuardianV6' object has no attribute 'log_event'"
+  },
+  "2025-11-25T18:12:47.732121": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:12:47.743481": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:12:47.776214": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:12:47.784762": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:12:48.145833": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:12:48.148009": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:13:43.778845": {
+    "event": "SHUTDOWN",
+    "detail": "Guardian terminated cleanly."
+  },
+  "2025-11-25T18:16:16.598370": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:16:16.640523": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:16:16.650336": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:16:16.671767": {
+    "event": "VERIFY_FAIL",
+    "detail": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 140, in <module>\n    main()\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 136, in main\n    guardian.log_event(\"preflight_complete\", \"Incremental verification finished successfully.\")\n    ^^^^^^^^^^^^^^^^^^\nAttributeError: 'GuardianV6' object has no attribute 'log_event'"
+  },
+  "2025-11-25T18:16:18.640245": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:16:18.651170": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:16:18.683390": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:16:18.691742": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:16:19.082574": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:16:19.085144": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:16:19.086603": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:16:19.087870": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:03.694558": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:03.733044": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:03.734421": {
+    "event": "AUTO_HEAL",
+    "detail": "Missing ['app.py', 'verify_astra.py']"
+  },
+  "2025-11-25T18:20:03.746907": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:03.774865": {
+    "event": "VERIFY_FAIL",
+    "detail": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 140, in <module>\n    main()\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 136, in main\n    guardian.log_event(\"preflight_complete\", \"Incremental verification finished successfully.\")\n    ^^^^^^^^^^^^^^^^^^\nAttributeError: 'GuardianV6' object has no attribute 'log_event'"
+  },
+  "2025-11-25T18:20:05.651698": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:05.659043": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:05.660375": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:05.661813": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:05.685020": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:05.695867": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:05.730415": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:05.739604": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:15.338938": {
+    "event": "SHUTDOWN",
+    "detail": "Guardian terminated cleanly."
+  },
+  "2025-11-25T18:20:31.237793": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:31.275480": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:31.287278": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:31.297707": {
+    "event": "VERIFY_FAIL",
+    "detail": "Traceback (most recent call last):\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 140, in <module>\n    main()\n  File \"/Users/ericballhaus/Desktop/astra-intelligence/verify_astra.py\", line 136, in main\n    guardian.log_event(\"preflight_complete\", \"Incremental verification finished successfully.\")\n    ^^^^^^^^^^^^^^^^^^\nAttributeError: 'GuardianV6' object has no attribute 'log_event'"
+  },
+  "2025-11-25T18:20:33.252660": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:33.264374": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:33.296805": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:33.305497": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:33.678323": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:33.680560": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:33.681774": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:20:33.683046": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:10.406101": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:10.449365": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:10.463742": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:10.479674": {
+    "event": "preflight_complete",
+    "detail": "Incremental verification finished successfully."
+  },
+  "2025-11-25T18:25:10.485431": {
+    "event": "VERIFY",
+    "detail": "Integrity check passed"
+  },
+  "2025-11-25T18:25:12.366540": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:12.375011": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:12.379803": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:12.383301": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:12.390928": {
+    "event": "universe_error",
+    "detail": "Universe build failed: 'GuardianV6' object has no attribute 'self_heal'"
+  },
+  "2025-11-25T18:25:12.419213": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:12.431137": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:12.465649": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:12.476029": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:12.480697": {
+    "event": "preflight_complete",
+    "detail": "Incremental verification finished successfully."
+  },
+  "2025-11-25T18:25:21.988640": {
+    "event": "SHUTDOWN",
+    "detail": "Guardian terminated cleanly."
+  },
+  "2025-11-25T18:25:32.229918": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:32.271862": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:32.282986": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:32.288345": {
+    "event": "preflight_complete",
+    "detail": "Incremental verification finished successfully."
+  },
+  "2025-11-25T18:25:32.294008": {
+    "event": "VERIFY",
+    "detail": "Integrity check passed"
+  },
+  "2025-11-25T18:25:34.255556": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:34.267315": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:34.301182": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:34.310224": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:34.314939": {
+    "event": "preflight_complete",
+    "detail": "Incremental verification finished successfully."
+  },
+  "2025-11-25T18:25:34.713216": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:34.715621": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:34.716819": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:34.718161": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:25:34.808274": {
+    "event": "universe_error",
+    "detail": "Universe build failed: 'GuardianV6' object has no attribute 'self_heal'"
+  },
+  "2025-11-25T18:36:56.042110": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:36:56.082272": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:36:56.095873": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:36:56.113555": {
+    "event": "preflight_complete",
+    "detail": "Incremental verification finished successfully."
+  },
+  "2025-11-25T18:36:56.120693": {
+    "event": "VERIFY",
+    "detail": "Integrity check passed"
+  },
+  "2025-11-25T18:36:58.053255": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:36:58.063767": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:36:58.096042": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:36:58.104588": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:36:58.109344": {
+    "event": "preflight_complete",
+    "detail": "Incremental verification finished successfully."
+  },
+  "2025-11-25T18:37:06.227940": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:37:06.267829": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:37:06.276475": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:37:06.281188": {
+    "event": "preflight_complete",
+    "detail": "Incremental verification finished successfully."
+  },
+  "2025-11-25T18:37:06.286451": {
+    "event": "VERIFY",
+    "detail": "Integrity check passed"
+  },
+  "2025-11-25T18:37:08.194100": {
+    "event": "universe_error",
+    "detail": "Universe build failed: 'GuardianV6' object has no attribute 'self_heal'"
+  },
+  "2025-11-25T18:37:08.249603": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:37:08.264270": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:37:08.317482": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:37:08.329925": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T18:37:08.335953": {
+    "event": "preflight_complete",
+    "detail": "Incremental verification finished successfully."
+  },
+  "2025-11-25T20:55:01.470320": {
+    "event": "AUTO_HEAL",
+    "detail": "Missing ['app.py', 'verify_astra.py']"
+  },
+  "2025-11-25T22:10:04.123909": {
+    "event": "AUTO_HEAL",
+    "detail": "Missing ['app.py', 'verify_astra.py']"
+  },
+  "2025-11-25T22:10:04.563262": {
+    "event": "AUTO_HEAL",
+    "detail": "Missing ['app.py', 'verify_astra.py']"
+  },
+  "2025-11-25T22:10:04.567652": {
+    "event": "AUTO_HEAL",
+    "detail": "Missing ['app.py', 'verify_astra.py']"
+  },
+  "2025-11-25T22:35:56.864499": {
+    "event": "SHUTDOWN",
+    "detail": "Guardian terminated cleanly."
+  }
+}

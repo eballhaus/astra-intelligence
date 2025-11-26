@@ -1,0 +1,16 @@
+version: "3.9"
+
+services:
+  astra:
+    build: .
+    container_name: astra-intelligence
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./astra_logs:/app/astra_logs
+      - ./astra_cache:/app/astra_cache
+      - ./astra_modules:/app/astra_modules
+    restart: unless-stopped
+

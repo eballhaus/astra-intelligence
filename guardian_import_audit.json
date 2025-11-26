@@ -1,0 +1,22 @@
+{
+  "timestamp": "2025-11-24T04:51:46.117412",
+  "modules_checked": 4,
+  "results": [
+    {
+      "module": "astra_modules.guardian.guardian_v4",
+      "status": "OK"
+    },
+    {
+      "module": "astra_modules.guardian.guardian_sentinel",
+      "status": "OK"
+    },
+    {
+      "module": "astra_modules.guardian.auto_repair",
+      "status": "OK"
+    },
+    {
+      "module": "astra_modules.guardian.startup_hook",
+      "status": "OK"
+    }
+  ]
+}

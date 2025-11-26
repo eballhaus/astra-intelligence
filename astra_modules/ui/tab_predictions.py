@@ -14,7 +14,12 @@ import pandas as pd
 
 from astra_modules.guardian.guardian_v6 import GuardianV6 as GuardianV3
 from astra_modules.scanners.smart_scan import smart_scan
+<<<<<<< Updated upstream
 from astra_modules.chart_core.chart_engine import render_chart_html
+=======
+from astra_modules.chart_core.chart_engine import ChartEngine
+from astra_modules.ui.components.ticker_card import render_ticker_card
+>>>>>>> Stashed changes
 from astra_modules.engine.ranking_engine import RankingEngine
 from astra_modules.universe.universe_builder import UniverseBuilder
 
@@ -72,15 +77,30 @@ def render_predictions():
                 round(x.get("agent_scores", {}).get("neural", 0), 3),
                 round(x.get("agent_scores", {}).get("momentum", 0), 3),
                 round(x.get("agent_scores", {}).get("technical", 0), 3),
+<<<<<<< Updated upstream
                 round(x.get("fetch_meta", {}).get("last_price", 0), 3)
+=======
+                round(x.get("fetch_meta", {}).get("last_price", 0), 3),
+>>>>>>> Stashed changes
             ])
 
         df_stocks = pd.DataFrame(
             stock_rows,
             columns=[
+<<<<<<< Updated upstream
                 "Ticker", "Rank Score", "Astra Score",
                 "Neural", "Momentum", "Technical", "Price"
             ]
+=======
+                "Ticker",
+                "Rank Score",
+                "Astra Score",
+                "Neural",
+                "Momentum",
+                "Technical",
+                "Price",
+            ],
+>>>>>>> Stashed changes
         )
         st.dataframe(df_stocks, use_container_width=True, hide_index=True)
 
@@ -94,15 +114,30 @@ def render_predictions():
                 round(x.get("agent_scores", {}).get("neural", 0), 3),
                 round(x.get("agent_scores", {}).get("momentum", 0), 3),
                 round(x.get("agent_scores", {}).get("technical", 0), 3),
+<<<<<<< Updated upstream
                 round(x.get("fetch_meta", {}).get("last_price", 0), 3)
+=======
+                round(x.get("fetch_meta", {}).get("last_price", 0), 3),
+>>>>>>> Stashed changes
             ])
 
         df_crypto = pd.DataFrame(
             crypto_rows,
             columns=[
+<<<<<<< Updated upstream
                 "Ticker", "Rank Score", "Astra Score",
                 "Neural", "Momentum", "Technical", "Price"
             ]
+=======
+                "Ticker",
+                "Rank Score",
+                "Astra Score",
+                "Neural",
+                "Momentum",
+                "Technical",
+                "Price",
+            ],
+>>>>>>> Stashed changes
         )
         st.dataframe(df_crypto, use_container_width=True, hide_index=True)
 
