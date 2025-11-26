@@ -1,4 +1,5 @@
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 # app.py
 # Astra Intelligence Phase-90 Main Application
 
@@ -102,6 +103,34 @@ if BASE_DIR not in sys.path:
 #  Auto-start Guardian V6 and Astra Sentinel
 # =============================================================================
 
+=======
+"""
+Astra Intelligence – Phase-101 Autonomous Boot
+----------------------------------------------
+Fully autonomous boot integration for Guardian V6 and Astra Stability Sentinel.
+Ensures self-healing, background monitoring, and automatic environment verification.
+"""
+
+import os
+import sys
+import threading
+import subprocess
+import time
+import streamlit as st
+
+# =============================================================================
+#  Environment setup
+# =============================================================================
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+# =============================================================================
+#  Auto-start Guardian V6 and Astra Sentinel
+# =============================================================================
+
+>>>>>>> Stashed changes
 def _launch_guardian():
     """Launch Guardian V6 in silent background mode."""
     try:
@@ -169,6 +198,9 @@ def main():
 
 if __name__ == "__main__":
     print("🚀 Astra Intelligence App starting...")
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
     main()
 
