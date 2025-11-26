@@ -1,0 +1,27 @@
+# Astra Intelligence — Phase-101.8 Development Anchor
+
+CURRENT FOCUS:
+- Fix and finalize tab_dashboard.py layout (Phase-101.8 NeuralGlass)
+- Verify correct column alignment, chart interactivity, and data card design
+- Once verified: push entire dashboard/ folder to GitHub
+
+NEXT STEPS AFTER RELOAD:
+1. Confirm astra_modules/ui/dashboard/tab_dashboard.py compiles cleanly
+2. Ensure independent scroll for Stocks & Crypto columns
+3. Ensure chart shows red/green candles and indicators toggle
+4. After stable test: commit + push with message
+   "Phase-101.8 NeuralGlass Layout Stable"
+5. Begin upgrade to Phase-101.9 → add live AstraPredict overlay line
+
+ANCHOR POINT:
+GuardianV6 is stable (Phase-101)
+Dashboard modules exist:
+  - dashboard_cards.py
+  - dashboard_chart.py
+  - dashboard_data.py
+  - dashboard_sidebar.py
+  - dashboard_summary.py
+  - tab_dashboard.py (primary controller)
+
+If starting fresh GPT session:
+> "Astra Engineer, resume from Phase-101.8 anchor — we were debugging dashboard layout & interactivity."
