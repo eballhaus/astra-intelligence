@@ -1,0 +1,104 @@
+{
+  "metadata": {
+    "project": "Astra Intelligence",
+    "repository": "eballhaus/astra-intelligence",
+    "generated_at": "2025-11-28T18:30:41Z",
+    "astra_engine_version": "vMAX",
+    "guardian_verification": "V6 Active and Verified",
+    "description": "Comprehensive knowledge cache of the Astra Intelligence system architecture."
+  },
+  "structure": {
+    "root": [
+      "app.py",
+      "run_astra.py",
+      "verify_astra.py",
+      "launch.py",
+      "docker-compose.yml",
+      "pyproject.toml",
+      "requirements.txt",
+      "astra_learning.json",
+      "astra_agent_states.json",
+      "astra_guardian_audit.json",
+      "astra_watchlist.json"
+    ],
+    "astra_modules": {
+      "agents": "Implements Astra multi-agent system (MomentumAgent, RiskAgent, etc.)",
+      "chart_core": "Chart rendering and visualization components for dashboards.",
+      "core": "Main system logic including AstraPrime and feature builders.",
+      "devtools": "Development and debugging utilities.",
+      "engine": {
+        "ranking_engine.py": "Ranks agent outputs to produce unified intelligence signals.",
+        "scan_manager.py": "Manages scans across markets and agent subsystems.",
+        "state_bundle_builder.py": "Builds and maintains unified state bundles for Astra runtime."
+      },
+      "fetch_core": {
+        "fetch_crypto.py": "Fetches cryptocurrency data from multiple sources.",
+        "fetch_etf.py": "Retrieves ETF data and metadata.",
+        "fetch_stock.py": "Retrieves stock data from APIs.",
+        "fetch_unified.py": "Unified interface for fetching data across asset types.",
+        "fetcher.py": "Base fetch orchestration layer."
+      },
+      "forecast": {
+        "forecast_engine.py": "Generates predictive models and forecasts.",
+        "get_forecast.py": "Quick-access forecast interface."
+      },
+      "guardian": {
+        "guardian_v6.py": "Primary system protection and verification engine.",
+        "auto_repair.py": "Automated recovery for damaged modules or data.",
+        "guardian_defender.py": "Runtime defense and anomaly detection.",
+        "guardian_scanner.py": "Integrity and compliance scanner.",
+        "pipeline_sanitizer.py": "Sanitizes data and execution pipelines.",
+        "schema_contracts.py": "Validation contracts for system schemas."
+      },
+      "learning": {
+        "learning_engine.py": "Handles all neural training and inference processes.",
+        "continual_trainer.py": "Implements continual learning and retraining.",
+        "replay_buffer.py": "Experience replay system for reinforcement-style training.",
+        "paper_trader.py": "Simulated trading module for backtesting strategies.",
+        "performance_tracker.py": "Tracks agent and model performance.",
+        "scheduler.py": "Schedules periodic retraining tasks."
+      },
+      "scanners": "Implements market and technical scanners for agent data input.",
+      "state": {
+        "state_bundle_builder.py": "Constructs internal state representations for agents."
+      },
+      "system": "Handles runtime configuration, system paths, and base controls.",
+      "tabs": "Supplementary UI monitoring and analytics tabs.",
+      "ui": {
+        "tab_dashboard.py": "Main analytical dashboard (Streamlit).",
+        "tab_predictions.py": "Forecast visualization and metrics tab.",
+        "tab_guardian.py": "Guardian status and verification interface.",
+        "tab_learning.py": "Training performance visualization tab.",
+        "tab_system.py": "System health and environment monitoring tab."
+      },
+      "universe": "Defines and manages Astra’s universe of assets and symbols.",
+      "utils": {
+        "memory_engine.py": "Manages persistent and volatile memory across the system.",
+        "safe_api_wrapper.py": "Wraps external API calls safely with rate limiting and retries.",
+        "safe_df.py": "Ensures DataFrame operations are robust and consistent.",
+        "error_handler.py": "Centralized error logging and handling utilities.",
+        "helpers.py": "General helper and formatting utilities."
+      },
+      "api_keys.py": "Stores API key configurations securely.",
+      "astra_memory.py": "Implements Astra’s memory management system.",
+      "astra_memory.json": "Memory persistence and cache metadata.",
+      "universe_legacy.py": "Legacy universe builder for backward compatibility."
+    }
+  },
+  "verification_summary": {
+    "guardian": "✅ Verified",
+    "engine": "✅ Verified",
+    "core": "✅ Verified",
+    "state": "✅ Verified",
+    "learning": "✅ Verified",
+    "forecast": "✅ Verified",
+    "utils": "✅ Verified",
+    "ui": "✅ Verified",
+    "fetch_core": "✅ Verified",
+    "system": "✅ Verified",
+    "scanners": "✅ Verified",
+    "tabs": "✅ Verified",
+    "universe": "✅ Verified"
+  }
+}
+
