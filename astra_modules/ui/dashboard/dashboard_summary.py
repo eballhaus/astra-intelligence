@@ -5,10 +5,11 @@ dashboard_summary.py — Astra Market Overview
 Top-level market indices and crypto summary.
 """
 
-import streamlit as st
-import pandas as pd
-import numpy as np
 from datetime import datetime, timezone
+
+import numpy as np
+import pandas as pd
+import streamlit as st
 
 try:
     from astra_modules.fetch_core.fetch_unified import fetch_unified
@@ -47,7 +48,9 @@ def render_summary():
     df = None
     try:
         if fetch_unified:
-            df = fetch_unified("AAPL", interval="1d", limit=5)  # simple connectivity check
+            df = fetch_unified(
+                "AAPL", interval="1d", limit=5
+            )  # simple connectivity check
     except Exception:
         df = None
 
@@ -61,7 +64,11 @@ def render_summary():
 
     st.dataframe(
         df.style.applymap(
-            lambda v: "color: lime; font-weight:600;" if isinstance(v, (float, int)) and v > 0 else ""
+            lambda v: (
+                "color: lime; font-weight:600;"
+                if isinstance(v, (float, int)) and v > 0
+                else ""
+            )
         ),
         use_container_width=True,
         height=260,

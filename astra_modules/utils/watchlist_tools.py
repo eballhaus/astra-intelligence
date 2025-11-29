@@ -7,11 +7,12 @@ Handles persistent tracking of user-selected tickers.
 
 import json
 import os
+
 import streamlit as st
 
-WATCHLIST_PATH = os.path.abspath(os.path.join(
-    os.path.dirname(__file__), "../../astra_watchlist.json"
-))
+WATCHLIST_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "../../astra_watchlist.json")
+)
 
 
 def _load_watchlist() -> dict:

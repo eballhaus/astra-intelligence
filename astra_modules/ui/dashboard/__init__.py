@@ -12,9 +12,9 @@ from __future__ import annotations
 try:
     from .dashboard_cards import render_cards
     from .dashboard_chart import render_chart
-    from .dashboard_summary import render_summary
-    from .dashboard_sidebar import render_sidebar, load_theme
     from .dashboard_data import get_dashboard_data
+    from .dashboard_sidebar import load_theme, render_sidebar
+    from .dashboard_summary import render_summary
     from .tab_dashboard import render_dashboard_tab
 except Exception:
     # Fallback mode (safe load)

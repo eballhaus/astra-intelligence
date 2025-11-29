@@ -4,6 +4,7 @@
 # ──────────────────────────────────────────────
 
 import streamlit as st
+
 from astra_modules.ui.dashboard.theme_loader import apply_theme
 
 
@@ -28,7 +29,8 @@ def render_sidebar(active_tab: str = "Dashboard"):
 
     # Navigation links
     tabs = ["Dashboard", "Analytics", "Settings"]
-    selected_tab = st.sidebar.radio("Navigation", tabs, index=tabs.index(active_tab))
+    selected_tab = st.sidebar.radio(
+        "Navigation", tabs, index=tabs.index(active_tab))
 
     # Visual separator
     st.sidebar.markdown("<hr>", unsafe_allow_html=True)
@@ -47,4 +49,3 @@ def render_sidebar(active_tab: str = "Dashboard"):
     )
 
     return selected_tab
-

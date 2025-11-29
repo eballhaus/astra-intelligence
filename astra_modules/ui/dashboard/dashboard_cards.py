@@ -6,17 +6,16 @@ Displays stock and crypto performance cards with hover summary
 and "Track" button integration.
 """
 
-import streamlit as st
-from astra_modules.utils.watchlist_tools import (
-    add_to_watchlist, remove_from_watchlist, is_tracked
-)
-
-
-import streamlit as st
 import json
 from pathlib import Path
 
-WATCHLIST_FILE = Path("/Users/ericballhaus/Desktop/astra-intelligence/astra_watchlist.json")
+import streamlit as st
+
+
+WATCHLIST_FILE = Path(
+    "/Users/ericballhaus/Desktop/astra-intelligence/astra_watchlist.json"
+)
+
 
 def render_cards(items, category="stocks"):
     """

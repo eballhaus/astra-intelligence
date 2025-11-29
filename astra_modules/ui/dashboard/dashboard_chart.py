@@ -9,10 +9,10 @@ Renders interactive candlestick chart with:
  • Astra prediction line overlay
 """
 
-import streamlit as st
-import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
 
 
 def render_chart(data_bundle: dict, mode: str):
@@ -48,23 +48,66 @@ def render_chart(data_bundle: dict, mode: str):
     df["rsi"] = 100 - (100 / (1 + rs))
 
     if "astra_pred" not in df.columns:
-        df["astra_pred"] = df["close"] * (1 + np.sin(np.linspace(0, np.pi, len(df))) * 0.01)
+        df["astra_pred"] = df["close"] * (
+            1 + np.sin(np.linspace(0, np.pi, len(df))) * 0.01
+        )
 
     # Build chart
     fig = go.Figure()
 
-    fig.add_trace(go.Candlestick(
-        x=df["date"], open=df["open"], high=df["high"], low=df["low"], close=df["close"],
-        name="Price", increasing_line_color="lime", decreasing_line_color="red"
-    ))
-    fig.add_trace(go.Scatter(x=df["date"], y=df["ma10"], name="MA10", line=dict(width=1)))
-    fig.add_trace(go.Scatter(x=df["date"], y=df["ma30"], name="MA30", line=dict(width=1)))
-    fig.add_trace(go.Scatter(x=df["date"], y=df["bb_upper"], name="BB Upper", line=dict(width=1, dash="dot")))
-    fig.add_trace(go.Scatter(x=df["date"], y=df["bb_lower"], name="BB Lower", line=dict(width=1, dash="dot")))
-    fig.add_trace(go.Scatter(x=df["date"], y=df["astra_pred"], name="Astra Prediction", line=dict(width=2, dash="dash")))
+    fig.add_trace(
+        go.Candlestick(
+            x=df["date"],
+            open=df["open"],
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
+            name="Price",
+            increasing_line_color="lime",
+            decreasing_line_color="red",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(x=df["date"], y=df["ma10"], name="MA10", line=dict(width=1))
+    )
+    fig.add_trace(
+        go.Scatter(x=df["date"], y=df["ma30"], name="MA30", line=dict(width=1))
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=df["date"],
+            y=df["bb_upper"],
+            name="BB Upper",
+            line=dict(width=1, dash="dot"),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=df["date"],
+            y=df["bb_lower"],
+            name="BB Lower",
+            line=dict(width=1, dash="dot"),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=df["date"],
+            y=df["astra_pred"],
+            name="Astra Prediction",
+            line=dict(width=2, dash="dash"),
+        )
+    )
 
     if "volume" in df.columns:
-        fig.add_trace(go.Bar(x=df["date"], y=df["volume"], name="Volume", marker_color="rgba(150,150,255,0.4)", yaxis="y2"))
+        fig.add_trace(
+            go.Bar(
+                x=df["date"],
+                y=df["volume"],
+                name="Volume",
+                marker_color="rgba(150,150,255,0.4)",
+                yaxis="y2",
+            )
+        )
 
     fig.update_layout(
         template="plotly_dark",
@@ -74,8 +117,11 @@ def render_chart(data_bundle: dict, mode: str):
         xaxis_rangeslider_visible=False,
         yaxis=dict(title="Price"),
         yaxis2=dict(
-            overlaying="y", side="right", showgrid=False,
-            visible="volume" in df.columns, title="Volume"
+            overlaying="y",
+            side="right",
+            showgrid=False,
+            visible="volume" in df.columns,
+            title="Volume",
         ),
     )
 
