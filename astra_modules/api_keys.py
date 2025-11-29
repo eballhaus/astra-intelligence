@@ -9,7 +9,7 @@ fetch_stock, fetch_crypto, fetch_etf, and universe_builder.
 # -------------------------------
 ALPHA_VANTAGE_API_KEY = "YJVYAJJSKKXF3ZQB"
 
-FMP_API_KEY = "xbgYJPXsiwJ3coLczphQSBsghO7fTklM"   # Financial Modeling Prep
+FMP_API_KEY = "xbgYJPXsiwJ3coLczphQSBsghO7fTklM"  # Financial Modeling Prep
 
 TWELVEDATA_API_KEY = "452b5c89fc8747d4803ee6bda5f891b2"
 
@@ -29,7 +29,8 @@ MORALIS_API_KEY = (
 )
 
 # Backup crypto provider (some modules expect this)
-COINGECKO_KEY = None  # Coingecko no longer requires an API key (left for compatibility)
+# Coingecko no longer requires an API key (left for compatibility)
+COINGECKO_KEY = None
 
 # -------------------------------
 # NEWS API (future use)

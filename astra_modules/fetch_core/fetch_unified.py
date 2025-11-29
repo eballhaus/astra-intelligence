@@ -10,36 +10,38 @@ Unified data fetcher that:
  • Wrapped with GuardianV3 for total crash immunity
 """
 
-import requests
-import pandas as pd
-import numpy as np
+import os
 import time
 
-from astra_modules.api_keys import (
-    FINNHUB_API_KEY,
-    TWELVEDATA_API_KEY,
-    MORALIS_API_KEY,
-    ALPHA_VANTAGE_API_KEY,
-)
+import pandas as pd
+import requests
 
-from astra_modules.guardian.guardian_v3 import guardian
+from astra_modules.api_keys import FINNHUB_API_KEY, TWELVEDATA_API_KEY
+from astra_modules.guardian.guardian_v6 import GuardianV6
+
+guardian = GuardianV6(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
+)
 
 
 # ================================================================
 # HELPERS
 # ================================================================
 
+
 def _is_crypto(symbol: str):
     if symbol is None:
         return False
     sym = symbol.upper()
-    crypto_list = ["BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "BNB", "USDT", "USDC"]
+    crypto_list = ["BTC", "ETH", "SOL", "XRP",
+                   "ADA", "DOGE", "BNB", "USDT", "USDC"]
     return sym in crypto_list or len(sym) > 4
 
 
 # ================================================================
 # PHASE-90 TECHNICAL INDICATORS
 # ================================================================
+
 
 def compute_rsi(series, period=14):
     try:
@@ -50,6 +52,7 @@ def compute_rsi(series, period=14):
         return 100 - (100 / (1 + rs))
     except:
         return pd.Series([50] * len(series))
+
 
 def compute_macd(series):
     try:
@@ -66,6 +69,7 @@ def compute_macd(series):
 # STOCK FETCHERS (MULTI-API)
 # ================================================================
 
+
 def _fetch_stock_ohlcv_finnhub(symbol, days):
     try:
         now = int(time.time())
@@ -78,14 +82,16 @@ def _fetch_stock_ohlcv_finnhub(symbol, days):
         if r.get("s") != "ok":
             return pd.DataFrame()
 
-        df = pd.DataFrame({
-            "date": pd.to_datetime(r["t"], unit="s"),
-            "open": r["o"],
-            "high": r["h"],
-            "low": r["l"],
-            "close": r["c"],
-            "volume": r["v"]
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(r["t"], unit="s"),
+                "open": r["o"],
+                "high": r["h"],
+                "low": r["l"],
+                "close": r["c"],
+                "volume": r["v"],
+            }
+        )
         df["symbol"] = symbol
         return df
     except:
@@ -106,7 +112,8 @@ def _fetch_stock_ohlcv_twelvedata(symbol, days):
             return df
         df = df.rename(columns={"datetime": "date"})
         df["date"] = pd.to_datetime(df["date"])
-        df = df[["date", "open", "high", "low", "close", "volume"]].astype(float)
+        df = df[["date", "open", "high", "low",
+                 "close", "volume"]].astype(float)
         df["symbol"] = symbol
         return df
     except:
@@ -116,6 +123,7 @@ def _fetch_stock_ohlcv_twelvedata(symbol, days):
 # ================================================================
 # CRYPTO FETCHERS
 # ================================================================
+
 
 def _fetch_crypto_coingecko(symbol, days):
     try:
@@ -144,6 +152,7 @@ def _fetch_crypto_coingecko(symbol, days):
 # ================================================================
 # MASTER FETCH (PHASE-90)
 # ================================================================
+
 
 def fetch_unified(symbol, lookback=90):
     """

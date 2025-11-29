@@ -9,8 +9,8 @@ Handles:
 - generic callable protection
 """
 
-import time
 import json
+import time
 
 try:
     import requests

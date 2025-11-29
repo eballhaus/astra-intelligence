@@ -12,17 +12,17 @@ Performance:
     - Zero impact during live trading or data processing.
 """
 
-import os
-import json
 import hashlib
+import json
+import os
 import time
-import traceback
-import requests
 from datetime import datetime, timezone
+
+import requests
 
 # Guardian core integration (optional)
 try:
-    from astra_modules.guardian.guardian_v4 import guardian
+    from astra_modules.guardian.guardian_v6 import guardian
 except Exception:
     guardian = None
 
@@ -80,13 +80,15 @@ class GuardianSync:
         local_hash = file_sha256(path)
         remote_hash = get_github_file_hash(self.owner, self.repo, path)
 
-        match = (local_hash == remote_hash)
-        self.results.append({
-            "file": path,
-            "local_hash": local_hash,
-            "github_hash": remote_hash,
-            "match": match,
-        })
+        match = local_hash == remote_hash
+        self.results.append(
+            {
+                "file": path,
+                "local_hash": local_hash,
+                "github_hash": remote_hash,
+                "match": match,
+            }
+        )
         return match
 
     def run(self):

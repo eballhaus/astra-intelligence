@@ -1,206 +1,134 @@
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-# app.py
-# Astra Intelligence Phase-90 Main Application
+"""
+Astra Intelligence — Main App Controller (Phase-101.9)
+------------------------------------------------------
+Handles Streamlit tab navigation between:
+ • Dashboard (AstraGlass)
+ • Predictions
+ • Learning
+ • System Guardian
+All components are GuardianV6-secured and dynamically loaded.
+"""
 
-import os
 import streamlit as st
+import os
+import sys
+
+# ──────────────────────────────────────────────
+# Path setup
+# ──────────────────────────────────────────────
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+astra_path = os.path.join(BASE_DIR, "astra_modules")
+if astra_path not in sys.path:
+    sys.path.insert(0, astra_path)
+
+# ──────────────────────────────────────────────
+# Guardian Import
+# ──────────────────────────────────────────────
 from astra_modules.guardian.guardian_v6 import GuardianV6
+guardian = GuardianV6(BASE_DIR)
 
-# UI tab imports
-from astra_modules.ui.tab_dashboard import render_dashboard
-from astra_modules.ui.tab_predictions import render_predictions
-from astra_modules.ui.tab_learning import render_learning
+# ──────────────────────────────────────────────
+# Streamlit Base Config
+# ──────────────────────────────────────────────
+st.set_page_config(
+    page_title="Astra Intelligence | NeuralGlass",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# Optional: from astra_modules.ui.tab_monitoring import render_monitoring
+# ──────────────────────────────────────────────
+# Global Styles (NeuralGlass)
+# ──────────────────────────────────────────────
+st.markdown(
+    """
+    <style>
+    body { background-color:#0F172A; color:#F5F7FA; }
+    section.main > div { padding-top:1rem; padding-bottom:1rem; }
+    .stTabs [data-baseweb="tab-list"] { gap:12px; }
+    .stTabs [data-baseweb="tab"] {
+        background-color:rgba(255,255,255,0.05);
+        border-radius:12px;
+        padding:10px 16px;
+        font-weight:500;
+        color:#E5E7EB;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color:rgba(56,189,248,0.15);
+        border:1px solid rgba(56,189,248,0.25);
+        color:#38BDF8 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
+# ──────────────────────────────────────────────
+# Header
+# ──────────────────────────────────────────────
+st.markdown(
+    """
+    <div style='text-align:center;margin-bottom:20px;'>
+        <h1 style='color:#F5F7FA;margin-bottom:0;'>🌌 Astra Intelligence</h1>
+        <p style='color:#9DA5B4;margin-top:0;'>Phase-101.9 NeuralGlass | Guardian V6 Active</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-def main():
-    """Launch Astra Intelligence Phase-90 Streamlit application."""
+# ──────────────────────────────────────────────
+# Tabs
+# ──────────────────────────────────────────────
+tabs = st.tabs(["Dashboard", "Predictions", "Learning", "System Guardian"])
 
-    # ---------- GLOBAL PAGE CONFIG ----------
-    st.set_page_config(
-        page_title="Astra Intelligence – Phase-90",
-        page_icon="🚀",
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
-
-    # ---------- GUARDIAN INITIALIZATION ----------
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    guardian = GuardianV6(base_path)
-    guardian.safe_run(lambda: print(f">>> GuardianV6 initialized at {base_path}"))
-
-    # ---------- SIDEBAR NAVIGATION ----------
-    st.sidebar.markdown(
-        """
-        <h2 style='color:#6FA3EF;'>🧭 Navigation</h2>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    selected_tab = st.sidebar.radio(
-        "Select a tab:",
-        ["Dashboard", "Predictions", "Learning", "Monitoring"],
-        index=0,
-    )
-
-    st.sidebar.markdown(
-        "<p style='color:#6FA3EF;font-weight:600;'>🛡️ Guardian V6 verified system integrity.</p>",
-        unsafe_allow_html=True,
-    )
-
-    # ---------- MAIN ROUTING ----------
-    if selected_tab == "Dashboard":
-        render_dashboard()
-    elif selected_tab == "Predictions":
-        render_predictions()
-    elif selected_tab == "Learning":
-        render_learning()
-    elif selected_tab == "Monitoring":
-        st.info("Monitoring module under development for Phase-100.")
-    else:
-        st.error("Invalid tab selection.")
-
-    # ---------- FOOTER ----------
-    st.markdown(
-        """
-        <hr>
-        <div style='text-align:center;color:#6FA3EF;'>
-            © 2025 Astra Intelligence • Phase-90 Framework
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-# ---------- ENTRY POINT ----------
-if __name__ == "__main__":
-=======
-"""
-Astra Intelligence – Phase-101 Autonomous Boot
-----------------------------------------------
-Fully autonomous boot integration for Guardian V6 and Astra Stability Sentinel.
-Ensures self-healing, background monitoring, and automatic environment verification.
-"""
-
-import os
-import sys
-import threading
-import subprocess
-import time
-import streamlit as st
-
-# =============================================================================
-#  Environment setup
-# =============================================================================
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
-
-# =============================================================================
-#  Auto-start Guardian V6 and Astra Sentinel
-# =============================================================================
-
-=======
-"""
-Astra Intelligence – Phase-101 Autonomous Boot
-----------------------------------------------
-Fully autonomous boot integration for Guardian V6 and Astra Stability Sentinel.
-Ensures self-healing, background monitoring, and automatic environment verification.
-"""
-
-import os
-import sys
-import threading
-import subprocess
-import time
-import streamlit as st
-
-# =============================================================================
-#  Environment setup
-# =============================================================================
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
-
-# =============================================================================
-#  Auto-start Guardian V6 and Astra Sentinel
-# =============================================================================
-
->>>>>>> Stashed changes
-def _launch_guardian():
-    """Launch Guardian V6 in silent background mode."""
+# ===========================================================
+# 🧠 Dashboard
+# ===========================================================
+with tabs[0]:
     try:
-        subprocess.Popen(
-            [sys.executable, os.path.join(BASE_DIR, "astra_modules/guardian/guardian_v6.py")],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        print("🛡️ Guardian V6 auto-launched (silent mode).")
+        # ✅ Correct modern import
+        from astra_modules.ui.dashboard.tab_dashboard import render_dashboard_tab
+        render_dashboard_tab()
     except Exception as e:
-        print(f"⚠️ Failed to launch Guardian V6: {e}")
+        st.error("⚠️ Dashboard tab unavailable.")
+        st.warning(str(e))
 
-def _launch_sentinel():
-    """Launch the Astra Stability Sentinel watchdog."""
+# ===========================================================
+# 📊 Predictions
+# ===========================================================
+with tabs[1]:
     try:
-        subprocess.Popen(
-            [sys.executable, os.path.join(BASE_DIR, "astra_modules/system/astra_sentinel.py")],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        print("🛰️ Astra Sentinel active.")
+        from astra_modules.ui.tab_predictions import render_predictions_tab
+        render_predictions_tab()
     except Exception as e:
-        print(f"⚠️ Failed to launch Sentinel: {e}")
+        st.error("⚠️ Predictions tab unavailable.")
+        st.warning(str(e))
 
-# Start both background threads non-blocking
-threading.Thread(target=_launch_guardian, daemon=True).start()
-time.sleep(2)
-threading.Thread(target=_launch_sentinel, daemon=True).start()
+# ===========================================================
+# 📚 Learning
+# ===========================================================
+with tabs[2]:
+    try:
+        from astra_modules.ui.tab_learning import render_learning_tab
+        render_learning_tab()
+    except Exception as e:
+        st.error("⚠️ Learning tab unavailable.")
+        st.warning(str(e))
 
-# =============================================================================
-#  Streamlit UI Imports
-# =============================================================================
-
-from astra_modules.ui.tab_dashboard import render_dashboard
-from astra_modules.ui.tab_learning import render_learning
-from astra_modules.ui.tab_guardian import render_guardian
-
-# =============================================================================
-#  Streamlit App Layout
-# =============================================================================
-
-def main():
-    st.set_page_config(
-        page_title="Astra Intelligence – Market Dashboard",
-        page_icon="🧠",
-        layout="wide"
-    )
-
-    st.sidebar.title("⚙️ Navigation")
-    section = st.sidebar.radio("Go to section:", ["📊 Dashboard", "🧠 Learning Center", "🛡️ Guardian Monitor"])
-
-    if section == "📊 Dashboard":
-        render_dashboard()
-    elif section == "🧠 Learning Center":
-        render_learning()
-    elif section == "🛡️ Guardian Monitor":
+# ===========================================================
+# 🛡️ System Guardian
+# ===========================================================
+with tabs[3]:
+    try:
+        from astra_modules.ui.tab_guardian import render_guardian
         render_guardian()
+    except Exception as e:
+        st.error("⚠️ Guardian tab unavailable.")
+        st.warning(str(e))
 
-    st.sidebar.markdown("---")
-    st.sidebar.caption("Astra Phase-101 • Autonomous Boot Mode")
-
-# =============================================================================
-#  Entrypoint
-# =============================================================================
-
-if __name__ == "__main__":
-    print("🚀 Astra Intelligence App starting...")
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-    main()
-
+# ===========================================================
+# Footer
+# ===========================================================
+st.markdown("<hr style='opacity:0.15;'>", unsafe_allow_html=True)
+st.caption("🧠 Astra Intelligence | Phase-101.9 NeuralGlass Dashboard | © 2025")

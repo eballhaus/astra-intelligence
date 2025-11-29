@@ -178,4 +178,14 @@ cython_debug/
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
-.cursorindexingignore
+.cursorindexingignoreastra_backup_cache/modules_backup_*
+
+# Astra Backup & Cache
+astra_backup_cache/modules_backup_*
+astra_cache/
+astra_modules/ui/theme_DEPRECATED/
+astra_modules/_legacy_backup/
+**/__pycache__/
+*.pyc
+.DS_Store
+

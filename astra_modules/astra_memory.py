@@ -9,6 +9,7 @@ import streamlit as st
 # MEMORY SNAPSHOT LOAD / SAVE (SAFE FALLBACKS)
 # ------------------------------------------------------------
 
+
 def load_memory_snapshot():
     """
     Returns the last known learning/memory state.
@@ -46,6 +47,7 @@ def save_memory_snapshot(snapshot: dict):
 # BASIC DIAGNOSTICS / SUMMARY (OPTIONAL)
 # ------------------------------------------------------------
 
+
 def get_memory_summary():
     """
     Returns a simple human-readable summary for UI display.
@@ -55,7 +57,7 @@ def get_memory_summary():
         return {
             "entries": len(snap),
             "keys": list(snap.keys()),
-            "status": "ok" if snap else "empty"
+            "status": "ok" if snap else "empty",
         }
     except Exception:
         return {"entries": 0, "keys": [], "status": "error"}

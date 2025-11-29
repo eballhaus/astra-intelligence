@@ -7,6 +7,7 @@ Astra’s central intelligence layer:
 - Supports hybrid learning and multi-agent scoring
 """
 
+
 class AstraPrime:
     def __init__(self, agents, replay_buffer=None, paper_trader=None):
         """
@@ -33,7 +34,7 @@ class AstraPrime:
             "psychology": 0.10,
             "catalyst": 0.10,
             "technical": 0.15,
-            "neural": 0.20
+            "neural": 0.20,
         }
 
     # -----------------------------------------------------------
@@ -49,7 +50,7 @@ class AstraPrime:
                 return {
                     "score": score,
                     "risk_level": risk_level,
-                    "reasoning": reasoning
+                    "reasoning": reasoning,
                 }
 
             # All other agents return (score, reasoning)
@@ -57,10 +58,7 @@ class AstraPrime:
             return {"score": score, "reasoning": reasoning}
 
         except Exception as e:
-            return {
-                "score": 50,
-                "reasoning": f"{agent_name} failed: {e}"
-            }
+            return {"score": 50, "reasoning": f"{agent_name} failed: {e}"}
 
     # -----------------------------------------------------------
     # Phase-90 Data Aggregation
@@ -84,11 +82,13 @@ class AstraPrime:
 
         # Convert numeric → grade
         grade = (
-            "A+" if final_score >= 90 else
-            "A"  if final_score >= 80 else
-            "B"  if final_score >= 70 else
-            "C"  if final_score >= 60 else
-            "D"
+            "A+"
+            if final_score >= 90
+            else (
+                "A"
+                if final_score >= 80
+                else "B" if final_score >= 70 else "C" if final_score >= 60 else "D"
+            )
         )
 
         # -------------------------------------------------------
@@ -100,21 +100,17 @@ class AstraPrime:
                 price=data_bundle.get("current_price", 0),
                 direction="long",
                 meta={
-                    "state": data_bundle,   #  Phase-90 state object
+                    "state": data_bundle,  # Phase-90 state object
                     "prediction": final_score,
-                    "grade": grade
-                }
+                    "grade": grade,
+                },
             )
 
         if self.replay_buffer:
             self.replay_buffer.add(
                 state=data_bundle,
                 prediction=final_score,
-                outcome=None  # updated when trade closes
+                outcome=None,  # updated when trade closes
             )
 
-        return {
-            "final_score": final_score,
-            "grade": grade,
-            "agent_details": outputs
-        }
+        return {"final_score": final_score, "grade": grade, "agent_details": outputs}

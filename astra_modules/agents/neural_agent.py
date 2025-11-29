@@ -5,7 +5,6 @@ A Guardian-protected neural network agent for Astra Intelligence.
 Automatically initializes input/output dimensions and logs all events.
 """
 
-import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -34,13 +33,17 @@ class NeuralAgent:
     def __init__(self, guardian, input_size=32, hidden_size=64, output_size=1):
         self.guardian = guardian
         self.guardian._write_log("🧠 Initializing NeuralAgent...")
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu")
 
-        self.model = NeuralNet(input_size, hidden_size, output_size).to(self.device)
+        self.model = NeuralNet(input_size, hidden_size,
+                               output_size).to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
         self.criterion = nn.MSELoss()
 
-        self.guardian._write_log(f"✅ NeuralAgent initialized on {self.device} (Phase-101).")
+        self.guardian._write_log(
+            f"✅ NeuralAgent initialized on {self.device} (Phase-101)."
+        )
 
     # ------------------------------------------------------------------
 
@@ -57,7 +60,8 @@ class NeuralAgent:
             self.optimizer.step()
 
             loss_val = loss.item()
-            self.guardian._write_log(f"📉 Training step complete (loss={loss_val:.6f})")
+            self.guardian._write_log(
+                f"📉 Training step complete (loss={loss_val:.6f})")
             return loss_val
 
         except Exception as e:
@@ -77,4 +81,3 @@ class NeuralAgent:
         except Exception as e:
             self.guardian._write_log(f"⚠️ Prediction error: {e}")
             return None
-

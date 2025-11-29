@@ -14,14 +14,12 @@ Output:
  • Ranked predictions list for the Predictions Tab
 """
 
-from astra_modules.universe.universe_builder import UniverseBuilder
-from astra_modules.fetch_core.fetch_unified import fetch_unified
-from astra_modules.scanners.smart_scan import SmartScan
-from astra_modules.scanners.hybrid_scan import HybridScan
-
 from astra_modules.core.astra_prime import AstraPrime
-from astra_modules.state.state_bundle_builder import StateBundleBuilder
-from astra_modules.ranking.ranking_engine import RankingEngine
+from astra_modules.fetch_core.fetch_unified import (HybridScan, RankingEngine,
+                                                    SmartScan,
+                                                    StateBundleBuilder,
+                                                    fetch_unified)
+from astra_modules.universe.universe_builder import UniverseBuilder
 
 
 class ScanManager:
@@ -99,7 +97,7 @@ class ScanManager:
                     df=df,
                     fetch_meta=meta,
                     psychology_data=bundle["psychology"],
-                    catalyst_data=bundle["catalyst"]
+                    catalyst_data=bundle["catalyst"],
                 )
             except Exception:
                 continue

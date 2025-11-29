@@ -5,8 +5,8 @@ Stores structured learning experiences for Astra’s hybrid learning loop:
 Safe, stable, and fully compatible with ContinualTrainer + NeuralAgent.
 """
 
-from collections import deque
 import random
+from collections import deque
 
 
 class ReplayBuffer:
@@ -41,7 +41,7 @@ class ReplayBuffer:
             exp = {
                 "state": safe_state,
                 "prediction": float(prediction),
-                "outcome": float(outcome)
+                "outcome": float(outcome),
             }
 
             self.buffer.append(exp)

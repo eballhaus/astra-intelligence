@@ -28,7 +28,6 @@ Outputs:
     }
 """
 
-import numpy as np
 import pandas as pd
 
 
@@ -76,7 +75,7 @@ def build_state_bundle(symbol: str, df: pd.DataFrame):
     psychology_input = {
         "fear_greed": 50,
         "vix": float(latest.get("volatility", 18)),
-        "breadth": 50
+        "breadth": 50,
     }
 
     # ---------------------------
@@ -99,7 +98,9 @@ def build_state_bundle(symbol: str, df: pd.DataFrame):
         "macd": float(latest.get("macd", 0)),
         "macd_signal": float(latest.get("macd_signal", 0)),
         "volatility": float(latest.get("volatility", 1)),
-        "trend_strength": 60 if latest.get("ma_fast", 0) > latest.get("ma_slow", 0) else 40,
+        "trend_strength": (
+            60 if latest.get("ma_fast", 0) > latest.get("ma_slow", 0) else 40
+        ),
         "ma_fast": float(latest.get("ma_fast", 0)),
         "ma_slow": float(latest.get("ma_slow", 0)),
     }
@@ -124,7 +125,6 @@ def build_state_bundle(symbol: str, df: pd.DataFrame):
     bundle = {
         "symbol": symbol,
         "current_price": float(latest["close"]),
-
         "momentum": momentum_input,
         "volume": volume_input,
         "risk": risk_input,
@@ -132,7 +132,6 @@ def build_state_bundle(symbol: str, df: pd.DataFrame):
         "catalyst": catalyst_input,
         "technical": technical_input,
         "neural": neural_features,
-
         "sparkline": latest.get("sparkline", []),
         "volatility": float(latest.get("volatility", 0)),
         "price_change": float(latest.get("price_change", 0)),

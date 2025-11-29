@@ -14,27 +14,21 @@ def apply_plotly_theme(fig: go.Figure):
     """
 
     fig.update_layout(
-
         # -------------------------------------------------------
         # Background: Dark Matte + Light Transparency
         # -------------------------------------------------------
-        paper_bgcolor="rgba(18,18,18,0.25)",   # frosted glass panel
-        plot_bgcolor="rgba(0,0,0,0.0)",        # fully transparent plot area
-
+        paper_bgcolor="rgba(18,18,18,0.25)",  # frosted glass panel
+        plot_bgcolor="rgba(0,0,0,0.0)",  # fully transparent plot area
         # -------------------------------------------------------
         # Fonts
         # -------------------------------------------------------
         font=dict(
-            family="Arial, sans-serif",
-            size=12,
-            color="#E8E8E8"  # soft light gray
+            family="Arial, sans-serif", size=12, color="#E8E8E8"  # soft light gray
         ),
-
         # -------------------------------------------------------
         # Margins
         # -------------------------------------------------------
         margin=dict(t=35, b=25, l=55, r=25),
-
         # -------------------------------------------------------
         # Legend Style
         # -------------------------------------------------------
@@ -48,7 +42,6 @@ def apply_plotly_theme(fig: go.Figure):
             y=1.02,
             x=0.01,
         ),
-
         # -------------------------------------------------------
         # Axes Styling
         # -------------------------------------------------------
@@ -70,7 +63,6 @@ def apply_plotly_theme(fig: go.Figure):
             linecolor="rgba(255,255,255,0.20)",
             tickfont=dict(color="#CFCFCF"),
         ),
-
         # -------------------------------------------------------
         # Improve interaction feel
         # -------------------------------------------------------
@@ -80,18 +72,18 @@ def apply_plotly_theme(fig: go.Figure):
             font_size=12,
             font_color="#EAEAEA",
         ),
-
         transition_duration=0,
     )
 
     # -----------------------------------------------------------
     # Candlestick improvements
     # -----------------------------------------------------------
-    fig.update_traces(selector=dict(type="candlestick"),
-                      increasing_fillcolor="#1EB5A4",
-                      increasing_line_color="#1EB5A4",
-                      decreasing_fillcolor="#D45A6A",
-                      decreasing_line_color="#D45A6A",
-                      )
+    fig.update_traces(
+        selector=dict(type="candlestick"),
+        increasing_fillcolor="#1EB5A4",
+        increasing_line_color="#1EB5A4",
+        decreasing_fillcolor="#D45A6A",
+        decreasing_line_color="#D45A6A",
+    )
 
     return fig

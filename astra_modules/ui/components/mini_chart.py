@@ -1,9 +1,10 @@
-import streamlit as st
 import numpy as np
+import streamlit as st
 
 # ============================================================
 # ASTRA MINI CHART — SPARKLINE SVG (Neon Line)
 # ============================================================
+
 
 def render_mini_chart(data_points):
     """
@@ -11,7 +12,9 @@ def render_mini_chart(data_points):
     """
 
     if not data_points or len(data_points) < 2:
-        st.markdown("<div class='astra-mini-chart'>No chart data</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='astra-mini-chart'>No chart data</div>", unsafe_allow_html=True
+        )
         return
 
     arr = np.array(data_points, dtype=float)
@@ -30,7 +33,8 @@ def render_mini_chart(data_points):
     step = width / (len(normalized) - 1)
 
     # Convert to "x,y" format
-    points = " ".join(f"{i * step},{normalized[i] * height}" for i in range(len(arr)))
+    points = " ".join(
+        f"{i * step},{normalized[i] * height}" for i in range(len(arr)))
 
     # Color based on trend
     trend_color = "#3CEE72" if arr[-1] >= arr[0] else "#FF4E4E"

@@ -19,7 +19,6 @@ Perfect for Phase-90 learning loop.
 """
 
 import time
-from datetime import datetime
 
 
 class PaperTrader:
@@ -31,8 +30,8 @@ class PaperTrader:
         self.buffer = buffer
         self.guardian = guardian
 
-        self.open_positions = {}     # {ticker: {...}}
-        self.closed_positions = []   # list of closed trade dicts
+        self.open_positions = {}  # {ticker: {...}}
+        self.closed_positions = []  # list of closed trade dicts
 
     # ---------------------------------------------------------------------
     # Safe helper

@@ -6,6 +6,7 @@ Simple pill-style badges used to display selected tickers.
 
 import streamlit as st
 
+
 def render_ticker_badges(symbols):
     """
     Render tickers as pill-style badges on one horizontal row.
@@ -35,5 +36,5 @@ def render_ticker_badges(symbols):
                     {sym}
                 </div>
                 """,
-                unsafe_allow_html=True
+                unsafe_allow_html=True,
             )

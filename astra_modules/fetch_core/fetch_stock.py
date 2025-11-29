@@ -8,17 +8,12 @@ Priority:
 """
 
 import pandas as pd
-from datetime import datetime
 
-from astra_modules.api_keys import (
-    ALPHA_VANTAGE_API_KEY,
-    FMP_API_KEY,
-    TWELVE_DATA_API_KEY
-)
-
-from astra_modules.utils.safe_df import safe_df
-from astra_modules.utils.safe_api_wrapper import safe_api_call
+from astra_modules.api_keys import (ALPHA_VANTAGE_API_KEY, FMP_API_KEY,
+                                    TWELVE_DATA_API_KEY)
 from astra_modules.utils.caching import cache_set
+from astra_modules.utils.safe_api_wrapper import safe_api_call
+from astra_modules.utils.safe_df import safe_df
 
 
 # ---------------------------------------------------------
@@ -39,13 +34,15 @@ def fetch_alpha(symbol):
     df.index = pd.to_datetime(df.index)
     df = df.sort_index()
 
-    df = df.rename(columns={
-        "1. open": "open",
-        "2. high": "high",
-        "3. low": "low",
-        "4. close": "close",
-        "6. volume": "volume",
-    })
+    df = df.rename(
+        columns={
+            "1. open": "open",
+            "2. high": "high",
+            "3. low": "low",
+            "4. close": "close",
+            "6. volume": "volume",
+        }
+    )
 
     return safe_df(df)
 

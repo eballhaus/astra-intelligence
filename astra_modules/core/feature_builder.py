@@ -41,14 +41,17 @@ class FeatureBuilder:
 
         try:
             close = df["close"]
-            returns = close.pct_change()
+            close.pct_change()
 
             # ROC — Rate of Change
-            roc_5 = self.safe((close.iloc[-1] - close.iloc[-6]) / close.iloc[-6])
-            roc_10 = self.safe((close.iloc[-1] - close.iloc[-11]) / close.iloc[-11])
+            roc_5 = self.safe(
+                (close.iloc[-1] - close.iloc[-6]) / close.iloc[-6])
+            roc_10 = self.safe(
+                (close.iloc[-1] - close.iloc[-11]) / close.iloc[-11])
 
             # Price slope over 10 periods
-            slope = np.polyfit(range(len(close.tail(10))), close.tail(10), 1)[0]
+            slope = np.polyfit(range(len(close.tail(10))),
+                               close.tail(10), 1)[0]
             slope_norm = slope / close.iloc[-1]
 
         except Exception:
@@ -117,7 +120,8 @@ class FeatureBuilder:
         """Volume spikes."""
         try:
             vol = df["volume"]
-            vol_norm = self.safe(vol.iloc[-1] / vol.rolling(20).mean().iloc[-1])
+            vol_norm = self.safe(
+                vol.iloc[-1] / vol.rolling(20).mean().iloc[-1])
         except Exception:
             vol_norm = 1.0
 
@@ -158,9 +162,9 @@ class FeatureBuilder:
     # -------------------------------------------------------
     # MAIN FEATURE VECTOR BUILDER
     # -------------------------------------------------------
-    def build_features(self, df: pd.DataFrame,
-                       psychology_data=None,
-                       catalyst_data=None):
+    def build_features(
+        self, df: pd.DataFrame, psychology_data=None, catalyst_data=None
+    ):
         """
         Returns:
            full_feature_dict (for agents)
@@ -192,18 +196,20 @@ class FeatureBuilder:
         }
 
         # --- Neural Model Vector ---
-        neural_vector = np.array([
-            self.safe(full["roc_5"]),
-            self.safe(full["roc_10"]),
-            self.safe(full["slope_norm"]),
-            self.safe(full["volatility"]),
-            self.safe(full["ma_ratio"]),
-            self.safe(full["rsi"]) / 100.0,
-            self.safe(full["macd"]),
-            self.safe(full["vol_spike"]),
-            self.safe(full["curvature"]),
-            self.safe(full["psych_score"]),
-            self.safe(full["catalyst_score"]),
-        ])
+        neural_vector = np.array(
+            [
+                self.safe(full["roc_5"]),
+                self.safe(full["roc_10"]),
+                self.safe(full["slope_norm"]),
+                self.safe(full["volatility"]),
+                self.safe(full["ma_ratio"]),
+                self.safe(full["rsi"]) / 100.0,
+                self.safe(full["macd"]),
+                self.safe(full["vol_spike"]),
+                self.safe(full["curvature"]),
+                self.safe(full["psych_score"]),
+                self.safe(full["catalyst_score"]),
+            ]
+        )
 
         return full, neural_vector

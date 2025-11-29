@@ -1256,5 +1256,897 @@
   "2025-11-25T22:35:56.864499": {
     "event": "SHUTDOWN",
     "detail": "Guardian terminated cleanly."
+  },
+  "2025-11-25T23:25:42.266594": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:25:42.274883": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:25:59.776610": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:25:59.779684": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:26:33.188352": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:38:55.069344": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:38:55.072783": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:39:09.276322": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:39:09.279337": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:42:16.085427": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:42:16.088935": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:42:32.288346": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:42:32.291420": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:44:31.860938": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:44:31.864692": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:48:48.378674": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:48:48.382320": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:49:54.331205": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:52:37.564250": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:52:37.568000": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:55:13.329327": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:55:13.333158": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-25T23:59:24.607425": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T00:01:17.351801": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T00:01:32.075301": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T00:01:32.078785": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T00:04:22.360040": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T00:04:50.736406": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T00:04:50.739939": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T11:15:30.822291": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T11:15:30.825956": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T11:16:36.984627": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T11:16:54.127441": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T11:17:10.630714": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T11:20:58.237283": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T11:20:58.241299": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T11:22:15.002266": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T11:22:15.004342": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T11:25:03.173551": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T11:28:26.467074": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T11:28:44.935367": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T11:28:44.938786": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T11:31:14.241852": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:34:16.403042": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:34:16.408731": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:35:47.720176": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:35:47.725538": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:35:48.243662": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:37:04.540718": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:37:04.547283": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:37:04.908502": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:39:12.382605": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:39:12.387532": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:39:12.769307": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:39:12.772968": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:40:38.436158": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:40:38.444954": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:40:38.799804": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:40:38.802125": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:42:51.322672": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:42:51.330787": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:42:51.718437": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:42:51.721020": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:42:52.640832": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:42:52.645369": {
+    "event": "universe_error",
+    "detail": "Universe build failed: 'GuardianV6' object has no attribute 'self_heal'"
+  },
+  "2025-11-26T12:42:54.056794": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching AAPL (Day Trading)"
+  },
+  "2025-11-26T12:42:54.460364": {
+    "event": "runtime_error",
+    "detail": "'GuardianV6' object has no attribute 'validate_dataframe'"
+  },
+  "2025-11-26T12:45:50.657419": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:45:50.661930": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:45:51.048569": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:45:51.051489": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:45:51.892043": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:45:51.896675": {
+    "event": "universe_error",
+    "detail": "Universe build failed: 'GuardianV6' object has no attribute 'self_heal'"
+  },
+  "2025-11-26T12:45:53.545836": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching AAPL (Day Trading)"
+  },
+  "2025-11-26T12:45:54.005288": {
+    "event": "data_error",
+    "detail": "No data for AAPL"
+  },
+  "2025-11-26T12:45:54.030497": {
+    "event": "runtime_error",
+    "detail": "'date'"
+  },
+  "2025-11-26T12:46:50.314074": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:46:50.321002": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:46:51.991875": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching AAPL (Day Trading)"
+  },
+  "2025-11-26T12:46:52.335487": {
+    "event": "data_error",
+    "detail": "No data for AAPL"
+  },
+  "2025-11-26T12:46:52.341285": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching MSFT (Day Trading)"
+  },
+  "2025-11-26T12:46:52.760538": {
+    "event": "data_error",
+    "detail": "No data for MSFT"
+  },
+  "2025-11-26T12:46:52.766462": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching NVDA (Day Trading)"
+  },
+  "2025-11-26T12:46:53.371925": {
+    "event": "data_error",
+    "detail": "No data for NVDA"
+  },
+  "2025-11-26T12:46:53.377109": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching AMZN (Day Trading)"
+  },
+  "2025-11-26T12:46:53.809117": {
+    "event": "data_error",
+    "detail": "No data for AMZN"
+  },
+  "2025-11-26T12:46:53.813718": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching TSLA (Day Trading)"
+  },
+  "2025-11-26T12:46:55.018127": {
+    "event": "data_error",
+    "detail": "No data for TSLA"
+  },
+  "2025-11-26T12:46:55.024867": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching META (Day Trading)"
+  },
+  "2025-11-26T12:46:58.828828": {
+    "event": "data_error",
+    "detail": "No data for META"
+  },
+  "2025-11-26T12:46:58.836779": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching BTC-USD (Day Trading)"
+  },
+  "2025-11-26T12:46:59.024518": {
+    "event": "data_error",
+    "detail": "No data for BTC-USD"
+  },
+  "2025-11-26T12:46:59.026956": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching ETH-USD (Day Trading)"
+  },
+  "2025-11-26T12:46:59.184188": {
+    "event": "data_error",
+    "detail": "No data for ETH-USD"
+  },
+  "2025-11-26T12:46:59.188675": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching SOL-USD (Day Trading)"
+  },
+  "2025-11-26T12:46:59.315971": {
+    "event": "data_error",
+    "detail": "No data for SOL-USD"
+  },
+  "2025-11-26T12:46:59.320880": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching ADA-USD (Day Trading)"
+  },
+  "2025-11-26T12:46:59.472549": {
+    "event": "data_error",
+    "detail": "No data for ADA-USD"
+  },
+  "2025-11-26T12:46:59.476798": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching XRP-USD (Day Trading)"
+  },
+  "2025-11-26T12:46:59.594633": {
+    "event": "data_error",
+    "detail": "No data for XRP-USD"
+  },
+  "2025-11-26T12:46:59.598891": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching DOGE-USD (Day Trading)"
+  },
+  "2025-11-26T12:46:59.766936": {
+    "event": "data_error",
+    "detail": "No data for DOGE-USD"
+  },
+  "2025-11-26T12:48:31.102429": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:48:31.106630": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:48:31.109391": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:48:31.839550": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:48:31.841296": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:48:33.165079": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching AAPL (Day Trading)"
+  },
+  "2025-11-26T12:48:33.646668": {
+    "event": "data_error",
+    "detail": "No data for AAPL"
+  },
+  "2025-11-26T12:48:33.652003": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching MSFT (Day Trading)"
+  },
+  "2025-11-26T12:48:34.036918": {
+    "event": "data_error",
+    "detail": "No data for MSFT"
+  },
+  "2025-11-26T12:48:34.042709": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching NVDA (Day Trading)"
+  },
+  "2025-11-26T12:48:34.452326": {
+    "event": "data_error",
+    "detail": "No data for NVDA"
+  },
+  "2025-11-26T12:48:34.457278": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching AMZN (Day Trading)"
+  },
+  "2025-11-26T12:48:34.814137": {
+    "event": "data_error",
+    "detail": "No data for AMZN"
+  },
+  "2025-11-26T12:48:34.819138": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching TSLA (Day Trading)"
+  },
+  "2025-11-26T12:48:35.236202": {
+    "event": "data_error",
+    "detail": "No data for TSLA"
+  },
+  "2025-11-26T12:48:35.241874": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching META (Day Trading)"
+  },
+  "2025-11-26T12:48:35.618617": {
+    "event": "data_error",
+    "detail": "No data for META"
+  },
+  "2025-11-26T12:48:35.627135": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching BTC-USD (Day Trading)"
+  },
+  "2025-11-26T12:48:35.823206": {
+    "event": "data_error",
+    "detail": "No data for BTC-USD"
+  },
+  "2025-11-26T12:48:35.828802": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching ETH-USD (Day Trading)"
+  },
+  "2025-11-26T12:48:35.956730": {
+    "event": "data_error",
+    "detail": "No data for ETH-USD"
+  },
+  "2025-11-26T12:48:35.964906": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching SOL-USD (Day Trading)"
+  },
+  "2025-11-26T12:48:36.078782": {
+    "event": "data_error",
+    "detail": "No data for SOL-USD"
+  },
+  "2025-11-26T12:48:36.084781": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching ADA-USD (Day Trading)"
+  },
+  "2025-11-26T12:48:36.198903": {
+    "event": "data_error",
+    "detail": "No data for ADA-USD"
+  },
+  "2025-11-26T12:48:36.203864": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching XRP-USD (Day Trading)"
+  },
+  "2025-11-26T12:48:36.450055": {
+    "event": "data_error",
+    "detail": "No data for XRP-USD"
+  },
+  "2025-11-26T12:48:36.452021": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching DOGE-USD (Day Trading)"
+  },
+  "2025-11-26T12:48:36.558542": {
+    "event": "data_error",
+    "detail": "No data for DOGE-USD"
+  },
+  "2025-11-26T12:48:42.875627": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:48:42.877953": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:48:42.879955": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:48:43.458438": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:48:43.460129": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:48:45.020665": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching AAPL (Day Trading)"
+  },
+  "2025-11-26T12:48:45.890278": {
+    "event": "data_error",
+    "detail": "No data for AAPL"
+  },
+  "2025-11-26T12:48:45.896104": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching MSFT (Day Trading)"
+  },
+  "2025-11-26T12:48:46.318459": {
+    "event": "data_error",
+    "detail": "No data for MSFT"
+  },
+  "2025-11-26T12:48:46.326387": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching NVDA (Day Trading)"
+  },
+  "2025-11-26T12:48:46.817207": {
+    "event": "data_error",
+    "detail": "No data for NVDA"
+  },
+  "2025-11-26T12:48:46.822668": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching AMZN (Day Trading)"
+  },
+  "2025-11-26T12:48:47.211417": {
+    "event": "data_error",
+    "detail": "No data for AMZN"
+  },
+  "2025-11-26T12:48:47.218649": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching TSLA (Day Trading)"
+  },
+  "2025-11-26T12:48:47.677163": {
+    "event": "data_error",
+    "detail": "No data for TSLA"
+  },
+  "2025-11-26T12:48:47.684544": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching META (Day Trading)"
+  },
+  "2025-11-26T12:48:48.044375": {
+    "event": "data_error",
+    "detail": "No data for META"
+  },
+  "2025-11-26T12:48:48.051835": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching BTC-USD (Day Trading)"
+  },
+  "2025-11-26T12:48:48.171520": {
+    "event": "data_error",
+    "detail": "No data for BTC-USD"
+  },
+  "2025-11-26T12:48:48.177998": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching ETH-USD (Day Trading)"
+  },
+  "2025-11-26T12:48:48.304533": {
+    "event": "data_error",
+    "detail": "No data for ETH-USD"
+  },
+  "2025-11-26T12:48:48.311650": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching SOL-USD (Day Trading)"
+  },
+  "2025-11-26T12:48:48.441473": {
+    "event": "data_error",
+    "detail": "No data for SOL-USD"
+  },
+  "2025-11-26T12:48:48.448608": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching ADA-USD (Day Trading)"
+  },
+  "2025-11-26T12:48:48.579514": {
+    "event": "data_error",
+    "detail": "No data for ADA-USD"
+  },
+  "2025-11-26T12:48:48.585832": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching XRP-USD (Day Trading)"
+  },
+  "2025-11-26T12:48:48.706136": {
+    "event": "data_error",
+    "detail": "No data for XRP-USD"
+  },
+  "2025-11-26T12:48:48.714440": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching DOGE-USD (Day Trading)"
+  },
+  "2025-11-26T12:48:48.839819": {
+    "event": "data_error",
+    "detail": "No data for DOGE-USD"
+  },
+  "2025-11-26T12:57:24.713922": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:57:24.718002": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:57:25.484678": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:57:25.486499": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T12:57:27.482664": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching AAPL (Day Trading)"
+  },
+  "2025-11-26T12:57:27.877203": {
+    "event": "data_error",
+    "detail": "No data for AAPL"
+  },
+  "2025-11-26T12:57:27.884366": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching MSFT (Day Trading)"
+  },
+  "2025-11-26T12:57:28.253311": {
+    "event": "data_error",
+    "detail": "No data for MSFT"
+  },
+  "2025-11-26T12:57:28.260256": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching NVDA (Day Trading)"
+  },
+  "2025-11-26T12:57:28.726737": {
+    "event": "data_error",
+    "detail": "No data for NVDA"
+  },
+  "2025-11-26T12:57:28.734683": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching AMZN (Day Trading)"
+  },
+  "2025-11-26T12:57:29.052889": {
+    "event": "data_error",
+    "detail": "No data for AMZN"
+  },
+  "2025-11-26T12:57:29.060999": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching TSLA (Day Trading)"
+  },
+  "2025-11-26T12:57:29.397944": {
+    "event": "data_error",
+    "detail": "No data for TSLA"
+  },
+  "2025-11-26T12:57:29.404631": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching META (Day Trading)"
+  },
+  "2025-11-26T12:57:29.947039": {
+    "event": "data_error",
+    "detail": "No data for META"
+  },
+  "2025-11-26T12:57:29.956414": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching BTC-USD (Day Trading)"
+  },
+  "2025-11-26T12:57:30.451467": {
+    "event": "data_error",
+    "detail": "No data for BTC-USD"
+  },
+  "2025-11-26T12:57:30.458044": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching ETH-USD (Day Trading)"
+  },
+  "2025-11-26T12:57:30.590952": {
+    "event": "data_error",
+    "detail": "No data for ETH-USD"
+  },
+  "2025-11-26T12:57:30.596928": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching SOL-USD (Day Trading)"
+  },
+  "2025-11-26T12:57:30.720926": {
+    "event": "data_error",
+    "detail": "No data for SOL-USD"
+  },
+  "2025-11-26T12:57:30.727450": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching ADA-USD (Day Trading)"
+  },
+  "2025-11-26T12:57:30.845972": {
+    "event": "data_error",
+    "detail": "No data for ADA-USD"
+  },
+  "2025-11-26T12:57:30.854509": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching XRP-USD (Day Trading)"
+  },
+  "2025-11-26T12:57:30.981798": {
+    "event": "data_error",
+    "detail": "No data for XRP-USD"
+  },
+  "2025-11-26T12:57:30.988724": {
+    "event": "data_pipeline_start",
+    "detail": "Fetching DOGE-USD (Day Trading)"
+  },
+  "2025-11-26T12:57:31.118024": {
+    "event": "data_error",
+    "detail": "No data for DOGE-USD"
+  },
+  "2025-11-26T17:21:19.375786": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:21:19.878242": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:21:19.882791": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:21:20.782935": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:21:20.784897": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:26:44.396334": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:26:44.917965": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:26:44.921220": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:26:45.661960": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:26:45.663873": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:29:01.846274": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:29:02.359259": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:29:02.362283": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:29:03.095337": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:29:03.097280": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:30:13.710716": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:30:14.064431": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:30:14.067116": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:30:14.772518": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:30:14.774495": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:37:46.193905": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:37:47.439570": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:37:47.441459": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:37:47.444558": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:37:47.447554": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:37:47.453188": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:37:47.455502": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:37:47.457709": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:37:47.459618": {
+    "event": "startup",
+    "detail": "GuardianV6 initialized at /Users/ericballhaus/Desktop/astra-intelligence"
+  },
+  "2025-11-26T17:37:47.506348": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:37:47.513424": {
+    "event": "INIT",
+    "detail": "GuardianV6 started"
+  },
+  "2025-11-26T17:37:47.556716": {
+    "event": "preflight_complete",
+    "detail": "Incremental verification finished successfully."
+  },
+  "2025-11-26T17:37:47.562859": {
+    "event": "VERIFY",
+    "detail": "Integrity check passed"
+  },
+  "2025-11-26T17:37:47.639789": {
+    "event": "universe_error",
+    "detail": "Universe build failed: 'GuardianV6' object has no attribute 'self_heal'"
+  },
+  "2025-11-26T17:37:47.677353": {
+    "event": "VERIFY_FAIL",
+    "detail": "/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python: can't open file '/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/ui/dashboard/__init__.py/verify_astra.py': [Errno 20] Not a directory"
   }
 }

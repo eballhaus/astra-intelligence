@@ -10,6 +10,7 @@ Ranks tickers based on:
 Produces a single sortable numeric rank_score.
 """
 
+
 class RankingEngine:
     def __init__(self):
         pass
@@ -57,10 +58,10 @@ class RankingEngine:
         """
         try:
             return float(
-                0.50 * s["astra_score"] +
-                0.20 * s["momentum"] +
-                0.20 * s["technical"] +
-                0.10 * s["neural"]
+                0.50 * s["astra_score"]
+                + 0.20 * s["momentum"]
+                + 0.20 * s["technical"]
+                + 0.10 * s["neural"]
             )
         except Exception:
             return 0.0
@@ -88,11 +89,13 @@ class RankingEngine:
             s = self.extract_scores(packet)
             rank_score = self.compute_rank_score(s)
 
-            ranked.append({
-                "ticker": ticker,
-                "rank_score": rank_score,
-                "packet": packet,
-            })
+            ranked.append(
+                {
+                    "ticker": ticker,
+                    "rank_score": rank_score,
+                    "packet": packet,
+                }
+            )
 
         # highest first
         ranked.sort(key=lambda x: x["rank_score"], reverse=True)

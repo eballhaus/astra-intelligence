@@ -8,11 +8,13 @@ Now supports:
 • Protection against malformed API responses
 """
 
+from datetime import datetime, timedelta
+
 import pandas as pd
 import requests
-from datetime import datetime, timedelta
-from astra_modules.utils.safe_api_wrapper import safe_api_call
+
 from astra_modules.utils.df_cleaner import normalize_columns, strip_whitespace
+from astra_modules.utils.safe_api_wrapper import safe_api_call
 
 # ===============================================================
 # API KEYS
@@ -28,6 +30,7 @@ EOD_KEY = "6904e7a2ced028.25933984"
 # ===============================================================
 # UNIVERSAL CLEANING
 # ===============================================================
+
 
 def clean_ohlcv(df: pd.DataFrame):
     """
@@ -78,6 +81,7 @@ def clean_ohlcv(df: pd.DataFrame):
 # DATE FILTER
 # ===============================================================
 
+
 def limit_to_lookback(df, lookback_days):
     """Returns only rows within lookback window."""
     if df is None or df.empty:
@@ -95,6 +99,7 @@ def limit_to_lookback(df, lookback_days):
 # API FETCH FUNCTIONS
 # ===============================================================
 
+
 def fetch_finnhub(symbol, lookback_days):
     url = "https://finnhub.io/api/v1/stock/candle"
     params = {"symbol": symbol, "resolution": "D", "token": FINNHUB_KEY}
@@ -105,14 +110,16 @@ def fetch_finnhub(symbol, lookback_days):
     if data.get("s") != "ok":
         return None
 
-    df = pd.DataFrame({
-        "open": data["o"],
-        "high": data["h"],
-        "low": data["l"],
-        "close": data["c"],
-        "volume": data["v"],
-        "timestamp": data["t"],
-    })
+    df = pd.DataFrame(
+        {
+            "open": data["o"],
+            "high": data["h"],
+            "low": data["l"],
+            "close": data["c"],
+            "volume": data["v"],
+            "timestamp": data["t"],
+        }
+    )
 
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
     df.set_index("timestamp", inplace=True)
@@ -203,6 +210,7 @@ def fetch_eodhd(symbol, lookback_days):
 # ===============================================================
 # UNIVERSAL FETCH FUNCTION — FINAL
 # ===============================================================
+
 
 def fetch_ohlcv(symbol: str, lookback_days: int):
     """

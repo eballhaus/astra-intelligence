@@ -8,6 +8,7 @@ Evaluates short- and mid-term price momentum using:
 Outputs a normalized 0–1 score.
 """
 
+
 class MomentumAgent:
     def __init__(self):
         pass
@@ -59,10 +60,6 @@ class MomentumAgent:
         slope_score = self.normalize(slope)
 
         # Weighted momentum score
-        score = (
-            0.4 * roc5_score +
-            0.4 * roc10_score +
-            0.2 * slope_score
-        )
+        score = 0.4 * roc5_score + 0.4 * roc10_score + 0.2 * slope_score
 
         return float(score)

@@ -6,9 +6,9 @@ Works alongside GuardianV3 but handles UI-level failures, scoring faults,
 scanner issues, universe failures, and Streamlit duplicate-key crashes.
 """
 
-import traceback
 import json
 import time
+import traceback
 from pathlib import Path
 
 # Streamlit is optional in some backend calls
@@ -90,12 +90,13 @@ class AstraDefender:
                 "kwargs": {k: str(v) for k, v in kwargs.items()},
                 "error_type": type(e).__name__,
                 "error_msg": str(e),
-                "traceback": traceback.format_exc()
+                "traceback": traceback.format_exc(),
             }
             self.memory["errors"].append(error_info)
             self.save_memory()
 
-            print(f"⚠ AstraDefender caught unhandled error in {func.__name__}: {e}")
+            print(
+                f"⚠ AstraDefender caught unhandled error in {func.__name__}: {e}")
             traceback.print_exc()
 
             return None
@@ -150,7 +151,10 @@ class AstraDefender:
         # ---------------------------------------------
         # FIX: AttributeError — list instead of dict
         # ---------------------------------------------
-        if isinstance(e, AttributeError) and "'list' object has no attribute 'get'" in err_msg:
+        if (
+            isinstance(e, AttributeError)
+            and "'list' object has no attribute 'get'" in err_msg
+        ):
             print(f"⚡ Auto-fixed list→dict mismatch in {func.__name__}")
             try:
                 if len(args) > 0 and isinstance(args[0], list) and len(args[0]) > 0:
@@ -187,7 +191,8 @@ class AstraDefender:
 
         out = []
         for e in self.memory["errors"]:
-            out.append(f"{e['function']} → {e['error_type']}: {e['error_msg']}")
+            out.append(
+                f"{e['function']} → {e['error_type']}: {e['error_msg']}")
 
         return "\n".join(out)
 

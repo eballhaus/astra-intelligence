@@ -13,9 +13,8 @@ Used for:
 """
 
 import json
-from pathlib import Path
 from datetime import datetime
-
+from pathlib import Path
 
 MEMORY_FILE = "astra_learning.json"
 MAX_EVENTS = 2000  # cap to avoid unbounded growth
@@ -24,6 +23,7 @@ MAX_EVENTS = 2000  # cap to avoid unbounded growth
 # -----------------------------------------------------------
 # Internal helpers
 # -----------------------------------------------------------
+
 
 def _get_memory_path() -> Path:
     """
@@ -64,6 +64,7 @@ def _save_memory(data: dict) -> None:
 # -----------------------------------------------------------
 # Public API
 # -----------------------------------------------------------
+
 
 def record_performance(
     ticker: str,
@@ -134,7 +135,8 @@ def get_accuracy_stats(window: int = 200) -> dict:
         }
 
     # last `window` events that actually have an outcome
-    with_outcome = [e for e in events if e.get("outcome") is not None][-window:]
+    with_outcome = [e for e in events if e.get(
+        "outcome") is not None][-window:]
     n_with_outcome = len(with_outcome)
 
     if n_with_outcome == 0:
@@ -145,7 +147,8 @@ def get_accuracy_stats(window: int = 200) -> dict:
             "accuracy": None,
         }
 
-    correct = sum(1 for e in with_outcome if e.get("outcome") == e.get("prediction"))
+    correct = sum(1 for e in with_outcome if e.get(
+        "outcome") == e.get("prediction"))
     accuracy = correct / n_with_outcome if n_with_outcome else None
 
     return {
@@ -168,7 +171,8 @@ def get_learning_curve_points(window: int = 200) -> list[dict]:
         ]
     """
     data = _load_memory()
-    events = [e for e in data.get("events", []) if e.get("outcome") is not None]
+    events = [e for e in data.get("events", [])
+              if e.get("outcome") is not None]
 
     if not events:
         return []
@@ -180,9 +184,39 @@ def get_learning_curve_points(window: int = 200) -> list[dict]:
     for i, e in enumerate(events, start=1):
         if e.get("outcome") == e.get("prediction"):
             correct += 1
-        points.append({
-            "index": i,
-            "accuracy": correct / i
-        })
+        points.append({"index": i, "accuracy": correct / i})
 
     return points
+
+
+# === Compatibility Wrapper (Phase-101.8) ===
+class PerformanceTracker:
+    """Unified interface for performance tracking."""
+
+    def __init__(self):
+        self.memory = _load_memory()
+
+    def record(self, symbol: str, accuracy: float, timestamp=None):
+        """Record a new performance entry."""
+        from datetime import datetime
+
+        if timestamp is None:
+            timestamp = datetime.utcnow().isoformat()
+        record_performance(symbol=symbol, accuracy=accuracy,
+                           timestamp=timestamp)
+
+    def evaluate_accuracy(self, df_actual, df_forecast) -> float:
+        """Compute simple accuracy between actual and forecast values."""
+        try:
+            if "predicted" not in df_forecast.columns:
+                return 0.0
+            actual = df_actual["close"].tail(
+                len(df_forecast)).reset_index(drop=True)
+            predicted = df_forecast["predicted"].reset_index(drop=True)
+            return float((1 - abs((predicted - actual) / actual)).mean() * 100)
+        except Exception:
+            return 0.0
+
+    def get_recent_stats(self, window: int = 200):
+        """Return rolling accuracy statistics."""
+        return get_accuracy_stats(window)

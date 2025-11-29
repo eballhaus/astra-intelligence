@@ -10,7 +10,6 @@ Supports:
 Used by Learning Center + background agent.
 """
 
-import time
 from datetime import datetime, timedelta
 
 
@@ -26,8 +25,8 @@ class LearningScheduler:
         self.guardian = guardian
 
         self.last_train_time = None
-        self.interval_minutes = 30     # default every 30 minutes
-        self.min_buffer_samples = 50   # minimum samples required
+        self.interval_minutes = 30  # default every 30 minutes
+        self.min_buffer_samples = 50  # minimum samples required
 
     # -------------------------------------------------------------
     # SAFE WRAPPER
@@ -95,7 +94,7 @@ class LearningScheduler:
         return {
             "trained": bool(out),
             "timestamp": str(self.last_train_time),
-            "reason": "Manual"
+            "reason": "Manual",
         }
 
     # -------------------------------------------------------------

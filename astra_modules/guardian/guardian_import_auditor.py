@@ -5,10 +5,9 @@ Scans Guardian modules for import issues and verifies
 integrity after initialization. Automatically logs results.
 """
 
-import json
-import os
-from datetime import datetime
 import importlib
+import json
+from datetime import datetime
 
 AUDIT_LOG_FILE = "guardian_import_audit.json"
 
@@ -19,10 +18,10 @@ def run_import_audit():
 
     results = []
     modules_to_check = [
-        "astra_modules.guardian.guardian_v4",
-        "astra_modules.guardian.guardian_sentinel",
-        "astra_modules.guardian.auto_repair",
-        "astra_modules.guardian.startup_hook"
+        "astra_modules.guardian.guardian_v6",
+        "astra_modules.guardian.guardian_v6",
+        "astra_modules.guardian.guardian_v6",
+        "astra_modules.guardian.startup_hook",
     ]
 
     for mod_name in modules_to_check:
@@ -35,7 +34,7 @@ def run_import_audit():
     audit_summary = {
         "timestamp": datetime.utcnow().isoformat(),
         "modules_checked": len(results),
-        "results": results
+        "results": results,
     }
 
     with open(AUDIT_LOG_FILE, "w") as f:

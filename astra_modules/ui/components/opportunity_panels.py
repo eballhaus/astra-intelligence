@@ -4,6 +4,7 @@ Uses compact ticker cards + Astra theme.
 """
 
 import streamlit as st
+
 from astra_modules.ui.components.ticker_card import render_ticker_card
 
 
@@ -11,12 +12,15 @@ def _section_header(title: str, subtitle: str = ""):
     """
     Renders a consistent section header.
     """
-    st.markdown(f"""
+    st.markdown(
+        f"""
         <div style="margin-bottom: 8px;">
             <div style="font-size:20px; font-weight:700; color:#F5F7FA;">{title}</div>
             <div style="font-size:14px; color:#9DA5B4;">{subtitle}</div>
         </div>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
 
 def _render_grid(items: list):
@@ -49,8 +53,9 @@ def render_split_opportunities(stock_items: list, crypto_items: list):
     # STOCKS (LEFT SIDE)
     # -------------------------
     with left:
-        _section_header("📈 Top Stock Opportunities",
-                        "SmartScan + HybridScan scoring (Top 6)")
+        _section_header(
+            "📈 Top Stock Opportunities", "SmartScan + HybridScan scoring (Top 6)"
+        )
 
         _render_grid(stock_items)
 
@@ -58,8 +63,9 @@ def render_split_opportunities(stock_items: list, crypto_items: list):
     # CRYPTO (RIGHT SIDE)
     # -------------------------
     with right:
-        _section_header("💰 Top Crypto Opportunities",
-                        "SmartScan + HybridScan scoring (Top 6)")
+        _section_header(
+            "💰 Top Crypto Opportunities", "SmartScan + HybridScan scoring (Top 6)"
+        )
 
         # 2×3 grid for crypto
         cols = st.columns(2)

@@ -6,6 +6,7 @@ Lower volatility = higher score.
 Higher volatility = lower score.
 """
 
+
 class RiskAgent:
     def __init__(self):
         pass

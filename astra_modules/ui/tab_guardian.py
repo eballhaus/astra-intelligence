@@ -4,10 +4,12 @@ Guardian Monitor Tab – Phase-101
 Displays Astra Guardian V6 and Sentinel health information in real time.
 """
 
-import os
 import json
-import streamlit as st
+import os
 from datetime import datetime
+
+import streamlit as st
+
 
 def render_guardian():
     st.title("🛡️ Astra Guardian – System Monitor")
@@ -28,7 +30,9 @@ def render_guardian():
         except Exception as e:
             st.error(f"⚠️ Error reading sentinel report: {e}")
     else:
-        st.warning("Sentinel report not found yet. It will appear after first verification.")
+        st.warning(
+            "Sentinel report not found yet. It will appear after first verification."
+        )
 
     st.divider()
 
@@ -69,4 +73,3 @@ def render_guardian():
             st.info(f"Guardian log located at:\n{log_path}")
 
     st.caption(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-

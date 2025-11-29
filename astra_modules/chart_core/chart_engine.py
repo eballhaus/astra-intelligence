@@ -5,8 +5,8 @@ This restores the ChartEngine interface expected by older UI modules,
 wrapping Streamlit chart rendering around Astra's dataframes.
 """
 
-import streamlit as st
 import pandas as pd
+import streamlit as st
 
 
 class ChartEngine:
@@ -42,4 +42,3 @@ class ChartEngine:
             st.write(data)
 
         st.caption(f"{title} – rendered via ChartEngine compatibility layer.")
-

@@ -8,8 +8,8 @@ Provides:
 Caches are stored in-memory (per session).
 """
 
-import time
 import functools
+import time
 
 # Simple in-memory cache dictionary
 _CACHE = {}
@@ -41,6 +41,7 @@ def cache_set(key, value, ttl=300):
 # -------------------------------------------------------
 def timed_cache(seconds=300):
     """Simple time-based cache decorator."""
+
     def wrapper(func):
         cache = {}
 
@@ -58,4 +59,5 @@ def timed_cache(seconds=300):
             return result
 
         return inner
+
     return wrapper

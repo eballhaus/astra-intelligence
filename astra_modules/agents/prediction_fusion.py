@@ -7,22 +7,24 @@ outputs a single consensus forecast under GuardianV6.
 
 import os
 import sys
-import torch
 from pathlib import Path
 from statistics import mean, stdev
+
+import torch
+
+from astra_modules.agents.neural_agent import NeuralAgent
+from astra_modules.guardian.guardian_v6 import GuardianV6
 
 # --- Fix Python import path so "astra_modules" is accessible ---
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 # --------------------------------------------------------------
-
-from astra_modules.guardian.guardian_v6 import GuardianV6
-from astra_modules.agents.neural_agent import NeuralAgent
 
 
 class PredictionFusion:
     """
     Loads and manages multiple NeuralAgents for ensemble predictions.
     """
+
     def __init__(self, base_path=None, ensemble_size=3):
         self.base_path = base_path or os.getcwd()
         self.guardian = GuardianV6(self.base_path)
@@ -46,7 +48,8 @@ class PredictionFusion:
                     y = agent.predict(x)
                     preds.append(y.squeeze().tolist())
             except Exception as e:
-                self.guardian._write_log(f"⚠️ Agent {idx} prediction failed: {e}")
+                self.guardian._write_log(
+                    f"⚠️ Agent {idx} prediction failed: {e}")
 
         if not preds:
             return torch.zeros((x.shape[0], 1))
@@ -66,7 +69,9 @@ class PredictionFusion:
         if len(preds) < 2:
             return {"mean": 0.0, "std": 0.0}
 
-        flat_preds = [p for sub in preds for p in (sub if isinstance(sub, list) else [sub])]
+        flat_preds = [
+            p for sub in preds for p in (sub if isinstance(sub, list) else [sub])
+        ]
         return {
             "mean": float(mean(flat_preds)),
             "std": float(stdev(flat_preds)),
@@ -85,6 +90,7 @@ if __name__ == "__main__":
 
     print("🔮 Fused prediction output:")
     print(fused_pred)
-    print(f"📊 Consistency metrics: mean={consistency['mean']:.4f}, std={consistency['std']:.4f}")
+    print(
+        f"📊 Consistency metrics: mean={consistency['mean']:.4f}, std={consistency['std']:.4f}"
+    )
     print("✅ PredictionFusion test completed successfully.")
-

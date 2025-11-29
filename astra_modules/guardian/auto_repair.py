@@ -10,18 +10,15 @@ Impact:
     - Runs silently, safe to leave enabled.
 """
 
-import os
-import time
 import json
-import traceback
-import importlib
+import os
 import shutil
-import tempfile
+import time
 from datetime import datetime, timezone
 
 # Try to import Guardian for audit logging
 try:
-    from astra_modules.guardian.guardian_v4 import guardian
+    from astra_modules.guardian.guardian_v6 import guardian
 except Exception:
     guardian = None
 
@@ -87,16 +84,23 @@ class GuardianAutoRepair:
             backup_path = os.path.join(self.backup_dir, os.path.basename(path))
             if os.path.exists(backup_path):
                 shutil.copy(backup_path, path)
-                self.repair_log.append({"file": path, "action": "restored_from_backup"})
+                self.repair_log.append(
+                    {"file": path, "action": "restored_from_backup"})
                 return True
             else:
                 # Make a temporary "disabled" version instead of failing
                 with open(path, "a") as f:
-                    f.write("\n# [Auto-Repair] This file had syntax issues and was marked for review.\n")
-                self.repair_log.append({"file": path, "action": "disabled_with_comment"})
+                    f.write(
+                        "\n# [Auto-Repair] This file had syntax issues and was marked for review.\n"
+                    )
+                self.repair_log.append(
+                    {"file": path, "action": "disabled_with_comment"}
+                )
                 return False
         except Exception as e:
-            self.repair_log.append({"file": path, "error": str(e), "action": "repair_failed"})
+            self.repair_log.append(
+                {"file": path, "error": str(e), "action": "repair_failed"}
+            )
             return False
 
     # ------------------------------------------------------
@@ -148,7 +152,7 @@ class GuardianAutoRepair:
             checkpoint_file = "astra_phase_checkpoint.json"
             phase_data = {
                 "current_phase": "Phase-100 (Stable Guardian Stack)",
-                "next": "Phase-101.1 (GuardianSync content verification)"
+                "next": "Phase-101.1 (GuardianSync content verification)",
             }
             with open(checkpoint_file, "w") as f:
                 json.dump(phase_data, f, indent=2)

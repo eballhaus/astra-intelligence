@@ -7,8 +7,9 @@ the exact reason for '❌ Failed to load tab module' errors.
 
 import os
 import sys
-import importlib
+
 from astra_modules.guardian.environment_guardian import safe_import
+
 
 def trace_tab_load(tab_name="tab_dashboard"):
     print("\n🔍 Guardian Tab Load Trace")
@@ -35,6 +36,7 @@ def trace_tab_load(tab_name="tab_dashboard"):
         print("   ⚠️ No render_tab() or render() found in module.")
 
     print("--------------------------------------------------")
+
 
 if __name__ == "__main__":
     trace_tab_load()

@@ -9,6 +9,7 @@ import time
 
 DEFAULT_FILE = "learning_memory.json"
 
+
 class LearningStore:
     def __init__(self, file_path=DEFAULT_FILE, max_memory_days=90):
         self.file_path = file_path
@@ -38,8 +39,9 @@ class LearningStore:
         now = time.time()
         cutoff = now - self.max_memory_days * 86400
         if isinstance(self.data, dict) and "records" in self.data:
-            self.data["records"] = [r for r in self.data["records"]
-                                    if r.get("timestamp", now) >= cutoff]
+            self.data["records"] = [
+                r for r in self.data["records"] if r.get("timestamp", now) >= cutoff
+            ]
 
     def add_record(self, record):
         """Add a new learning record."""

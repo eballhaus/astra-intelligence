@@ -5,12 +5,9 @@ Ensures SmartScan, HybridScan, and Ranking Engine outputs remain valid,
 self-healing, and schema-consistent.
 """
 
-from .schema_contracts import (
-    SMARTSCAN_SCHEMA,
-    HYBRIDSCAN_SCHEMA,
-    RANKING_SCHEMA,
-)
-from .auto_repair import repair_dict, log_error
+from .auto_repair import log_error, repair_dict
+from .schema_contracts import (HYBRIDSCAN_SCHEMA, RANKING_SCHEMA,
+                               SMARTSCAN_SCHEMA)
 
 
 # -------------------------------------------------------------------
@@ -55,7 +52,9 @@ def sanitize_ranking_list(entries: list):
     - Each record matches RANKING_SCHEMA
     """
     if not entries or not isinstance(entries, list):
-        log_error("Guardian3: RankingEngine returned invalid or empty list — placeholder injected.")
+        log_error(
+            "Guardian3: RankingEngine returned invalid or empty list — placeholder injected."
+        )
         return [
             repair_dict(
                 {"ticker": "UNKNOWN", "final_score": 0},

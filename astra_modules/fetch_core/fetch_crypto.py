@@ -6,11 +6,11 @@ Fallback:
     2. CoinGecko
 """
 
-import requests
 import pandas as pd
+
 from astra_modules.api_keys import MORALIS_API_KEY
-from astra_modules.utils.safe_df import safe_df
 from astra_modules.utils.safe_api_wrapper import safe_api_call
+from astra_modules.utils.safe_df import safe_df
 
 
 def _to_df_ohlcv(records):
@@ -18,17 +18,21 @@ def _to_df_ohlcv(records):
         return pd.DataFrame()
 
     df = pd.DataFrame(records)
-    df.rename(columns={
-        "t": "timestamp",
-        "o": "open",
-        "h": "high",
-        "l": "low",
-        "c": "close",
-        "v": "volume"
-    }, inplace=True)
+    df.rename(
+        columns={
+            "t": "timestamp",
+            "o": "open",
+            "h": "high",
+            "l": "low",
+            "c": "close",
+            "v": "volume",
+        },
+        inplace=True,
+    )
 
     if "timestamp" in df:
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", errors="coerce")
+        df["timestamp"] = pd.to_datetime(
+            df["timestamp"], unit="ms", errors="coerce")
 
     for c in ["open", "high", "low", "close", "volume"]:
         if c in df:
@@ -54,7 +58,7 @@ def fetch_moralis(symbol, interval="1h"):
         "30m": "30",
         "1h": "60",
         "4h": "240",
-        "1d": "D"
+        "1d": "D",
     }
     resolution = res_map.get(interval, "60")
 
@@ -79,15 +83,8 @@ def fetch_moralis(symbol, interval="1h"):
 def fetch_coingecko(symbol, interval="1h"):
     token = symbol.lower()
 
-    days_map = {
-        "1m": 1,
-        "5m": 1,
-        "15m": 1,
-        "30m": 1,
-        "1h": 2,
-        "4h": 4,
-        "1d": 7
-    }
+    days_map = {"1m": 1, "5m": 1, "15m": 1,
+                "30m": 1, "1h": 2, "4h": 4, "1d": 7}
     days = days_map.get(interval, 2)
 
     url = f"https://api.coingecko.com/api/v3/coins/{token}/ohlc?vs_currency=usd&days={days}"
@@ -99,14 +96,16 @@ def fetch_coingecko(symbol, interval="1h"):
     rows = []
     for row in r:
         if len(row) == 5:
-            rows.append({
-                "timestamp": row[0],
-                "open": row[1],
-                "high": row[2],
-                "low": row[3],
-                "close": row[4],
-                "volume": None
-            })
+            rows.append(
+                {
+                    "timestamp": row[0],
+                    "open": row[1],
+                    "high": row[2],
+                    "low": row[3],
+                    "close": row[4],
+                    "volume": None,
+                }
+            )
 
     return _to_df_ohlcv(rows)
 

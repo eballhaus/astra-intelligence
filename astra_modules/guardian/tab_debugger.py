@@ -6,15 +6,12 @@ Diagnoses why tab modules fail to load in Astra.
 
 import importlib
 import traceback
-import os
+
 
 def debug_tab_import(tab_name="tab_dashboard"):
     print(f"\n🔍 Debugging tab import: {tab_name}")
     print("--------------------------------------------------")
-    search_paths = [
-        "astra_modules.ui",
-        "astra_modules.tabs"
-    ]
+    search_paths = ["astra_modules.ui", "astra_modules.tabs"]
 
     for path in search_paths:
         full_name = f"{path}.{tab_name}"
@@ -31,6 +28,7 @@ def debug_tab_import(tab_name="tab_dashboard"):
             print(f"❌ Failed to import {full_name}")
             traceback.print_exc()
         print("--------------------------------------------------")
+
 
 if __name__ == "__main__":
     debug_tab_import()

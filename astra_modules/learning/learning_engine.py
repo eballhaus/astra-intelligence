@@ -16,13 +16,12 @@
 #
 # =====================================================================
 
-import numpy as np
+from datetime import datetime
+
 import pandas as pd
-from datetime import datetime, timedelta
 
+from astra_modules.guardian.guardian_v6 import guardian
 from astra_modules.learning.learning_store import load_records
-from astra_modules.guardian.guardian_v3 import guardian
-
 
 # =====================================================================
 # GLOBAL DEFAULT WEIGHTS (Initial Seed)
@@ -34,9 +33,8 @@ LEARNING_STATE = {
     "trend_weight": 0.20,
     "hybrid_weight": 0.20,
     "confidence_weight": 0.20,
-
     "last_trained": None,
-    "samples_used": 0
+    "samples_used": 0,
 }
 
 
@@ -72,10 +70,10 @@ def _fit_weights(df):
 
     factors = {
         "momentum_weight": df["momentum10"],
-        "volatility_weight": df["volatility20"] * -1,    # lower vol = better
+        "volatility_weight": df["volatility20"] * -1,  # lower vol = better
         "trend_weight": df["slope10"],
         "hybrid_weight": df["hybrid_score"],
-        "confidence_weight": df["confidence"]
+        "confidence_weight": df["confidence"],
     }
 
     for weight_name, series in factors.items():
@@ -115,9 +113,12 @@ def train_learning_engine():
 
     # Drop rows with missing numeric data
     numeric_cols = [
-        "momentum10", "volatility20", "slope10",
-        "hybrid_score", "confidence",
-        "future_return"
+        "momentum10",
+        "volatility20",
+        "slope10",
+        "hybrid_score",
+        "confidence",
+        "future_return",
     ]
     df = df.dropna(subset=numeric_cols)
 
@@ -159,11 +160,11 @@ def learning_signal(feature_row):
 
     # Weighted composite score
     final = (
-        w["momentum_weight"]   * m +
-        w["volatility_weight"] * v_score +
-        w["trend_weight"]      * t +
-        w["hybrid_weight"]     * h +
-        w["confidence_weight"] * c
+        w["momentum_weight"] * m
+        + w["volatility_weight"] * v_score
+        + w["trend_weight"] * t
+        + w["hybrid_weight"] * h
+        + w["confidence_weight"] * c
     )
 
     return float(final)

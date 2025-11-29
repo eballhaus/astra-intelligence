@@ -7,6 +7,7 @@ Evaluates volume behavior using:
 Outputs a normalized 0–1 score.
 """
 
+
 class VolumeAgent:
     def __init__(self):
         pass

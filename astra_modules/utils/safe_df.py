@@ -6,7 +6,8 @@ HybridScan, and Advanced Chart.
 """
 
 import pandas as pd
-from astra_modules.guardian.guardian_v3 import guardian
+
+from astra_modules.guardian.guardian_v6 import guardian
 
 
 # =====================================================================
@@ -68,11 +69,13 @@ def safe_price_df(df, symbol="UNKNOWN"):
 # =====================================================================
 def _empty_template():
     """Return a safe empty dataframe so nothing breaks."""
-    return pd.DataFrame({
-        "datetime": pd.to_datetime([]),
-        "open": [],
-        "high": [],
-        "low": [],
-        "close": [],
-        "volume": [],
-    })
+    return pd.DataFrame(
+        {
+            "datetime": pd.to_datetime([]),
+            "open": [],
+            "high": [],
+            "low": [],
+            "close": [],
+            "volume": [],
+        }
+    )

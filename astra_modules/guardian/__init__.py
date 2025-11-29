@@ -1,70 +1,60 @@
 """
-astra_modules.guardian
-----------------------------------------------------
-Guardian package initialization for Astra Intelligence (Phase-90).
-Handles safe imports and auto-loading of Guardian V6 predictive system.
+Astra Intelligence — Guardian Package Bootstrap
+Phase-101.9 | GuardianV6 Active
 """
 
-# Core safe imports
-from .environment_guardian import (
-    safe_import,
-    check_environment
+from __future__ import annotations
+
+import importlib
+import logging
+from pathlib import Path
+
+# ──────────────────────────────────────────────
+# GuardianV6 Core
+# ──────────────────────────────────────────────
+try:
+    from astra_modules.guardian import guardian_v6 as guardian_core
+except ImportError as e:
+    raise ImportError(f"Failed to import GuardianV6 core: {e}") from e
+
+# ──────────────────────────────────────────────
+# Basic Logging Setup
+# ──────────────────────────────────────────────
+LOG_PATH = Path(__file__).resolve().parent / "guardian_v6.log"
+logging.basicConfig(
+    filename=LOG_PATH,
+    filemode="a",
+    level=logging.INFO,
+    format="%(asctime)s [GuardianV6] %(levelname)s: %(message)s",
 )
+logger = logging.getLogger("GuardianV6")
 
-# --- Guardian Core ---
-try:
-    from .guardian_v6 import GuardianV6
-    guardian = GuardianV6(__path__[0])
-    print("🛡️ Guardian V6 initialized successfully.")
-except Exception as e_v6:
-    guardian = None
-    print(f"[Guardian Init] ⚠️ Failed to load Guardian V6: {e_v6}")
 
-# --- Guardian Sentinel ---
-try:
-    from .guardian_sentinel import GuardianSentinel
-except Exception as e:
-    GuardianSentinel = None
-    print(f"[Guardian Init] ⚠️ Failed to load GuardianSentinel: {e}")
+# ──────────────────────────────────────────────
+# Initialization Wrapper
+# ──────────────────────────────────────────────
+def initialize_guardian(silent: bool = True) -> None:
+    """
+    Entry point for GuardianV6 initialization.
+    Loads self-monitoring and integrity checks.
+    """
+    try:
+        guardian_core.initialize_guardian()
+        if not silent:
+            print("🛡 GuardianV6 successfully initialized.")
+        logger.info("GuardianV6 initialization complete.")
+    except Exception as e:
+        logger.exception(f"GuardianV6 initialization failed: {e}")
+        raise
 
-# --- Guardian Auto-Repair (legacy + V6 helper) ---
-try:
-    from .auto_repair import GuardianAutoRepair
-except Exception:
-    GuardianAutoRepair = None
 
-try:
-    from .guardian_autofix import AutoFixEngine
-except Exception:
-    AutoFixEngine = None
+# ──────────────────────────────────────────────
+# Convenience Reload Hook
+# ──────────────────────────────────────────────
+def reload_guardian() -> None:
+    """Hot-reload GuardianV6 core."""
+    importlib.reload(guardian_core)
+    logger.info("GuardianV6 core reloaded.")
 
-# --- Guardian Scanner + Init Verifier ---
-try:
-    from .guardian_scanner import DirectoryScanner
-except Exception:
-    DirectoryScanner = None
 
-try:
-    from .guardian_init import InitVerifier
-except Exception:
-    InitVerifier = None
-
-# --- Startup Hook ---
-try:
-    from .startup_hook import run_startup_check
-except Exception as e:
-    run_startup_check = lambda: print(f"[Guardian Init] ⚠️ StartupHook missing: {e}")
-
-__all__ = [
-    "safe_import",
-    "check_environment",
-    "guardian",
-    "GuardianSentinel",
-    "GuardianAutoRepair",
-    "AutoFixEngine",
-    "DirectoryScanner",
-    "InitVerifier",
-    "run_startup_check",
-]
-
-print("✅ Guardian package initialized (Phase-90 / V6).")
+__all__ = ["initialize_guardian", "reload_guardian", "guardian_core"]

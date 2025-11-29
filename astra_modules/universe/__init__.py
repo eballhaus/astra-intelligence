@@ -1,10 +1,12 @@
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-# Universe module init
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-from .universe_builder import UniverseBuilder
+"""
+universe — Phase-90
+-------------------
+Handles Astra Intelligence market universe management.
 
-__all__ = ["UniverseBuilder"]
+This module initializes the Universe subsystem and provides
+a safe import path for UniverseBuilder and related tools.
+"""
+
+from astra_modules.universe.universe_builder import build_universe
+
+__all__ = ["build_universe"]

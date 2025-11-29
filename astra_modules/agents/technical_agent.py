@@ -7,6 +7,7 @@ Evaluates trend and market alignment using:
  • MA ratio
 """
 
+
 class TechnicalAgent:
     def __init__(self):
         pass
@@ -68,9 +69,5 @@ class TechnicalAgent:
         macd_s = self.normalize_macd(macd)
         ma_s = self.normalize_ma(ma_ratio)
 
-        score = (
-            0.4 * rsi_s +
-            0.3 * macd_s +
-            0.3 * ma_s
-        )
+        score = 0.4 * rsi_s + 0.3 * macd_s + 0.3 * ma_s
         return float(score)

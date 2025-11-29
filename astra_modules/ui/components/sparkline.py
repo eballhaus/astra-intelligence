@@ -3,14 +3,13 @@
 # Lightweight mini chart for dashboard cards
 # ===============================================================
 
-import streamlit as st
 import plotly.graph_objects as go
-import numpy as np
-
+import streamlit as st
 
 # ===============================================================
 # RENDER SPARKLINE
 # ===============================================================
+
 
 def render_sparkline(series):
     """
@@ -33,7 +32,7 @@ def render_sparkline(series):
             y=values,
             mode="lines",
             line=dict(color=color, width=2),
-            hoverinfo="skip"
+            hoverinfo="skip",
         )
     )
 
@@ -44,7 +43,7 @@ def render_sparkline(series):
         xaxis=dict(visible=False),
         yaxis=dict(visible=False),
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)"
+        plot_bgcolor="rgba(0,0,0,0)",
     )
 
     st.plotly_chart(fig, use_container_width=False)

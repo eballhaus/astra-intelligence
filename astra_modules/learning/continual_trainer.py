@@ -4,7 +4,7 @@ Reads from ReplayBuffer and trains the MicroNeuralModel.
 Supports hybrid supervised learning from PnL outcomes.
 """
 
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 
 class ContinualTrainer:
@@ -48,10 +48,7 @@ class ContinualTrainer:
                 # Binary label for logistic model
                 label = 1 if float(outcome) > 0 else 0
 
-                samples.append({
-                    "features": features,
-                    "label": label
-                })
+                samples.append({"features": features, "label": label})
 
             except Exception:
                 # Skip any corrupted record safely

@@ -7,15 +7,12 @@ Fallback order:
     3. EODHD
 """
 
-import requests
 import pandas as pd
-from astra_modules.api_keys import (
-    ALPHA_VANTAGE_API_KEY,
-    FMP_API_KEY,
-    EODHD_API_KEY
-)
-from astra_modules.utils.safe_df import safe_df
+
+from astra_modules.api_keys import (ALPHA_VANTAGE_API_KEY, EODHD_API_KEY,
+                                    FMP_API_KEY)
 from astra_modules.utils.safe_api_wrapper import safe_api_call
+from astra_modules.utils.safe_df import safe_df
 
 
 def _convert(records):
@@ -24,11 +21,11 @@ def _convert(records):
 
     df = pd.DataFrame(records)
 
-    df.rename(columns={
-        "date": "timestamp",
-        "datetime": "timestamp",
-        "time": "timestamp"
-    }, inplace=True)
+    df.rename(
+        columns={"date": "timestamp",
+                 "datetime": "timestamp", "time": "timestamp"},
+        inplace=True,
+    )
 
     if "timestamp" in df:
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
@@ -67,14 +64,16 @@ def fetch_alpha_vantage_etf(symbol, interval="60min"):
 
         rows = []
         for t, v in r[key].items():
-            rows.append({
-                "timestamp": t,
-                "open": v.get("1. open"),
-                "high": v.get("2. high"),
-                "low": v.get("3. low"),
-                "close": v.get("4. close"),
-                "volume": v.get("5. volume"),
-            })
+            rows.append(
+                {
+                    "timestamp": t,
+                    "open": v.get("1. open"),
+                    "high": v.get("2. high"),
+                    "low": v.get("3. low"),
+                    "close": v.get("4. close"),
+                    "volume": v.get("5. volume"),
+                }
+            )
 
         return _convert(rows)
 
@@ -123,11 +122,7 @@ def fetch_eodhd_etf(symbol, interval="1h"):
 # Unified ETF Fetch
 # -------------------------------------------------------
 def fetch_etf(symbol, interval="1h"):
-    for provider in [
-        fetch_alpha_vantage_etf,
-        fetch_fmp_etf,
-        fetch_eodhd_etf
-    ]:
+    for provider in [fetch_alpha_vantage_etf, fetch_fmp_etf, fetch_eodhd_etf]:
         df = provider(symbol, interval)
         if df is not None and not df.empty:
             return safe_df(df)

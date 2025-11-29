@@ -10,17 +10,16 @@ Purpose:
 Phase: 90 → 100 bridge (lightweight, zero-latency impact)
 """
 
-import os
-import sys
-import json
-import importlib
-import traceback
 import hashlib
+import importlib
+import json
+import os
+import traceback
 from datetime import datetime
 
 # Link with GuardianV4’s logger if available
 try:
-    from astra_modules.guardian.guardian_v4 import guardian
+    from astra_modules.guardian.guardian_v6 import guardian
 except Exception:
     guardian = None
 
@@ -31,14 +30,15 @@ class GuardianSentinel:
     def __init__(self, base_path=None, modules_to_check=None):
         self.base_path = base_path or os.getcwd()
         self.modules_to_check = modules_to_check or [
-            "astra_modules.guardian.guardian_v4",
+            "astra_modules.guardian.guardian_v6",
             "astra_modules.guardian.environment_guardian",
             "astra_modules.guardian",
             "astra_modules.agents",
             "astra_modules.core",
         ]
         self.log_path = os.path.join(self.base_path, "sentinel_report.json")
-        self.report = {"checked": [], "failed": [], "repaired": [], "timestamp": None}
+        self.report = {"checked": [], "failed": [],
+                       "repaired": [], "timestamp": None}
 
     # ==========================================================
     # Core Check Functions
@@ -58,11 +58,13 @@ class GuardianSentinel:
                 importlib.import_module(mod_name)
                 self.report["checked"].append(mod_name)
             except Exception as e:
-                self.report["failed"].append({
-                    "module": mod_name,
-                    "error": str(e),
-                    "traceback": traceback.format_exc()
-                })
+                self.report["failed"].append(
+                    {
+                        "module": mod_name,
+                        "error": str(e),
+                        "traceback": traceback.format_exc(),
+                    }
+                )
 
     def verify_file_hashes(self):
         """Cross-check hashes of known key modules with Guardian audit log."""
@@ -79,7 +81,8 @@ class GuardianSentinel:
 
         logged_hashes = {
             e["payload"].get("file"): e["payload"].get("hash")
-            for e in events if e["type"] == "file_integrity"
+            for e in events
+            if e["type"] == "file_integrity"
         }
 
         for file_path, logged_hash in logged_hashes.items():
@@ -87,10 +90,12 @@ class GuardianSentinel:
             if os.path.exists(abs_path):
                 current_hash = self.hash_file(abs_path)
                 if logged_hash and current_hash != logged_hash:
-                    self.report["failed"].append({
-                        "module": file_path,
-                        "error": "Hash mismatch — possible corruption."
-                    })
+                    self.report["failed"].append(
+                        {
+                            "module": file_path,
+                            "error": "Hash mismatch — possible corruption.",
+                        }
+                    )
 
     def repair_or_quarantine(self):
         """Placeholder for future auto-restore feature (Phase-100)."""
@@ -115,17 +120,20 @@ class GuardianSentinel:
 
         # Log to Guardian if available
         if guardian:
-            guardian.audit.record("sentinel_report", {
-                "checked": len(self.report["checked"]),
-                "failed": len(self.report["failed"]),
-                "timestamp": self.report["timestamp"]
-            })
+            guardian.audit.record(
+                "sentinel_report",
+                {
+                    "checked": len(self.report["checked"]),
+                    "failed": len(self.report["failed"]),
+                    "timestamp": self.report["timestamp"],
+                },
+            )
 
         # Return summary
         return {
             "checked": len(self.report["checked"]),
             "failed": len(self.report["failed"]),
-            "report_file": self.log_path
+            "report_file": self.log_path,
         }
 
 

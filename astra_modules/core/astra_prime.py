@@ -11,13 +11,13 @@ Enhancements:
 
 import numpy as np
 
-from astra_modules.agents.momentum_agent import MomentumAgent
-from astra_modules.agents.volume_agent import VolumeAgent
-from astra_modules.agents.risk_agent import RiskAgent
-from astra_modules.agents.psychology_agent import PsychologyAgent
 from astra_modules.agents.catalyst_agent import CatalystAgent
-from astra_modules.agents.technical_agent import TechnicalAgent
+from astra_modules.agents.momentum_agent import MomentumAgent
 from astra_modules.agents.neural_agent import NeuralAgent
+from astra_modules.agents.psychology_agent import PsychologyAgent
+from astra_modules.agents.risk_agent import RiskAgent
+from astra_modules.agents.technical_agent import TechnicalAgent
+from astra_modules.agents.volume_agent import VolumeAgent
 
 
 class AstraPrime:
@@ -88,28 +88,33 @@ class AstraPrime:
             "risk": self.risk.run({"volatility": latest["volatility"]}),
             "psych": self.psych.run({"psych_score": latest["psych_score"]}),
             "catalyst": self.catalyst.run({"catalyst_score": latest["catalyst_score"]}),
-            "technical": self.technical.run({
-                "rsi": latest["rsi"],
-                "macd": latest["macd"],
-                "ma_ratio": latest["ma_ratio"],
-            }),
+            "technical": self.technical.run(
+                {
+                    "rsi": latest["rsi"],
+                    "macd": latest["macd"],
+                    "ma_ratio": latest["ma_ratio"],
+                }
+            ),
         }
 
         # Neural input vector
-        vector = np.array([
-            latest["rsi"] / 100,
-            latest["macd"],
-            latest["ma_ratio"],
-            latest["momentum"],
-            latest["volatility"],
-            latest["vol_spike"],
-            latest["psych_score"],
-            latest["catalyst_score"],
-            fetch_meta.get("last_price", 0) / 1000.0,
-            (df["close"].pct_change().iloc[-5:].mean()),
-            (df["close"].pct_change().iloc[-20:].mean()),
-            (df["close"].pct_change().iloc[-1]),
-        ], dtype=float)
+        vector = np.array(
+            [
+                latest["rsi"] / 100,
+                latest["macd"],
+                latest["ma_ratio"],
+                latest["momentum"],
+                latest["volatility"],
+                latest["vol_spike"],
+                latest["psych_score"],
+                latest["catalyst_score"],
+                fetch_meta.get("last_price", 0) / 1000.0,
+                (df["close"].pct_change().iloc[-5:].mean()),
+                (df["close"].pct_change().iloc[-20:].mean()),
+                (df["close"].pct_change().iloc[-1]),
+            ],
+            dtype=float,
+        )
 
         a["neural"] = self.neural.predict(vector)
 
@@ -134,9 +139,14 @@ class AstraPrime:
     # GRADING SYSTEM
     # -----------------------------------------------------------
     def grade(self, score):
-        if score >= 0.80: return "A+"
-        if score >= 0.70: return "A"
-        if score >= 0.60: return "B"
-        if score >= 0.50: return "C"
-        if score >= 0.40: return "D"
+        if score >= 0.80:
+            return "A+"
+        if score >= 0.70:
+            return "A"
+        if score >= 0.60:
+            return "B"
+        if score >= 0.50:
+            return "C"
+        if score >= 0.40:
+            return "D"
         return "F"

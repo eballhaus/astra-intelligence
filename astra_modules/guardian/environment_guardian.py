@@ -6,15 +6,16 @@ and detailed diagnostics for Astra Intelligence modules.
 """
 
 import importlib
-import traceback
+import json
 import os
 import sys
+import traceback
 from datetime import datetime
-import json
 
 # ==========================================================
 # SAFE IMPORT FUNCTION (with detailed diagnostics)
 # ==========================================================
+
 
 def safe_import(module_name):
     """
@@ -24,7 +25,7 @@ def safe_import(module_name):
     log_entry = {
         "module": module_name,
         "status": "unknown",
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.utcnow().isoformat(),
     }
 
     try:
@@ -56,13 +57,16 @@ def safe_import(module_name):
     _log_import_result(log_entry)
     return None
 
+
 # ==========================================================
 # LOGGING HELPER — writes all import attempts to a file
 # ==========================================================
 
+
 def _log_import_result(entry):
     """Save import diagnostics to guardian_import_log.json"""
-    log_path = os.path.join("astra_modules", "guardian", "guardian_import_log.json")
+    log_path = os.path.join("astra_modules", "guardian",
+                            "guardian_import_log.json")
     logs = []
 
     if os.path.exists(log_path):
@@ -76,9 +80,11 @@ def _log_import_result(entry):
     with open(log_path, "w") as f:
         json.dump(logs, f, indent=2)
 
+
 # ==========================================================
 # ENVIRONMENT VALIDATION
 # ==========================================================
+
 
 def check_environment():
     """Perform environment consistency check for Astra."""
@@ -86,7 +92,7 @@ def check_environment():
         "cwd": os.getcwd(),
         "python": sys.version,
         "venv_active": sys.prefix != sys.base_prefix,
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.utcnow().isoformat(),
     }
 
     print("🧠 Environment Check:")
@@ -94,6 +100,7 @@ def check_environment():
         print(f"   {k}: {v}")
 
     return results
+
 
 # ==========================================================
 # RUN VALIDATION ON DIRECT EXECUTION

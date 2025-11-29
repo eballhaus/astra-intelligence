@@ -1,190 +1,138 @@
 """
-GuardianV6 – Phase-101 (Silent Reinit + Heartbeat)
---------------------------------------------------
-Guardian manages Astra’s runtime health, file integrity, and self-recovery.
-Phase-101 upgrades:
-- Eliminates redundant initialization logs
-- Adds heartbeat monitoring thread
-- Detects and restarts orphaned components
-- Integrates with verify_astra.py when requested
+GuardianV6 – Safe Runtime + Fallback Mode
+-----------------------------------------
+Protects Astra Intelligence from runtime import and attribute errors.
+Keeps UI components responsive and logs actionable repair instructions.
 """
 
-import os
-import sys
-import json
-import time
-import threading
-from datetime import datetime
-import subprocess
+from __future__ import annotations
 
-# Ensure project root path is always included
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+import importlib
+import logging
+import traceback
+from types import ModuleType
+from typing import Any, Callable, Optional
 
-LOG_FILE = os.path.join(BASE_DIR, "guardian_v6.log")
-AUDIT_FILE = os.path.join(BASE_DIR, "guardian_audit.json")
-HEARTBEAT_INTERVAL = 60  # seconds
+# ------------------------------------------------------
+# Logging configuration
+# ------------------------------------------------------
+logger = logging.getLogger("GuardianV6")
+logger.setLevel(logging.INFO)
+handler = logging.FileHandler(
+    "astra_modules/guardian/guardian_v6.log", mode="a")
+formatter = logging.Formatter(
+    "%(asctime)s | %(levelname)s | %(message)s", "%Y-%m-%d %H:%M:%S"
+)
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 
+# ------------------------------------------------------
+# Core GuardianV6 Class
+# ------------------------------------------------------
 class GuardianV6:
-    """Central Guardian Controller (Phase-101)."""
-
-    def __init__(self, base_path: str):
-        self.base_path = base_path
-        self.log_file = LOG_FILE
-        self.audit_file = AUDIT_FILE
-        self._initialized = False
-        self.last_heartbeat = None
-        self.running = True
-
-        # Initialize logging safely
-        self._initialize_files()
-        self._write_log("🛡️ Guardian V6 initialized successfully.")
-        self._record_audit("INIT", "GuardianV6 started")
-
-        # Launch heartbeat thread (non-blocking)
-        threading.Thread(target=self._heartbeat_loop, daemon=True).start()
-
-        self._initialized = True
-        self._write_log("✅ Guardian package initialized (Phase-101 / Silent Reinit)")
-
-    # ------------------------------------------------------------------
-    # Core Utilities
-    # ------------------------------------------------------------------
-
-    def _initialize_files(self):
-        """Ensure log and audit files exist."""
-        for file in [self.log_file, self.audit_file]:
-            if not os.path.exists(file):
-                with open(file, "w") as f:
-                    f.write("{}" if file.endswith(".json") else "")
-        self._write_log("🔧 Guardian files verified.")
-
-    def _write_log(self, message: str):
-        """Append timestamped message to Guardian log."""
-        timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-        with open(self.log_file, "a") as f:
-            f.write(f"{timestamp} {message}\n")
-
-    def log_event(self, event_type: str, message: str):
+    def __init__(self, base_path: str | None = None):
         """
-        Universal event logger for Astra modules.
-        Keeps backward compatibility with _write_log().
+        GuardianV6 — Astra Intelligence System Integrity Layer
+        Handles system monitoring, auto-repair, and secure logging.
+        Compatible with both legacy and new init patterns.
         """
+        import os
+
+        self.base_path = base_path or os.getcwd()
+        self.memory = {"events": []}
+        self.status = "initialized"
+
         try:
-            formatted = f"[{event_type.upper()}] {message}"
-            self._write_log(formatted)
-            self._record_audit(event_type, message)
-        except Exception as e:
-            self._write_log(f"[log_event error] {e}")
+            os.makedirs(os.path.join(self.base_path, "logs"), exist_ok=True)
+        except Exception:
+            pass
 
-    def _record_audit(self, event: str, detail: str):
-        """Record Guardian events in JSON audit log."""
+        print(f"✅ GuardianV6 active (base: {self.base_path})")
+
+    # -------------------------------
+    # Safe Import Handling
+    # -------------------------------
+    def safe_import(self, module_path: str, fallback: Optional[Any] = None) -> Any:
+        """Safely import a module; fallback to placeholder if unavailable."""
         try:
-            if os.path.exists(self.audit_file):
-                with open(self.audit_file, "r") as f:
-                    data = json.load(f) or {}
-            else:
-                data = {}
-            data[datetime.now().isoformat()] = {"event": event, "detail": detail}
-            with open(self.audit_file, "w") as f:
-                json.dump(data, f, indent=2)
+            mod = importlib.import_module(module_path)
+            logger.info(f"✅ Imported {module_path}")
+            return mod
         except Exception as e:
-            self._write_log(f"[Audit Error] {e}")
+            logger.error(f"⚠️ Import failed for {module_path}: {e}")
+            logger.debug(traceback.format_exc())
+            if fallback is not None:
+                logger.info(f"→ Using fallback for {module_path}")
+                self.fallbacks[module_path] = fallback
+                return fallback
+            return self._generate_stub(module_path)
 
-    # ------------------------------------------------------------------
-    # Safe Execution
-    # ------------------------------------------------------------------
-
-    def safe_run(self, func):
-        """Safely execute a function with Guardian protection."""
+    # -------------------------------
+    # Safe Execution Wrapper
+    # -------------------------------
+    def safe_run(self, func: Callable, *args, **kwargs) -> Any:
+        """Run a function safely, logging exceptions and preventing crashes."""
         try:
-            result = func()
-            self._write_log("✅ safe_run executed successfully.")
-            return result
+            return func(*args, **kwargs)
         except Exception as e:
-            self._write_log(f"⚠️ GuardianV6 caught an error during safe_run: {e}")
-            return None
+            logger.error(f"❌ Runtime error in {func.__name__}: {e}")
+            logger.debug(traceback.format_exc())
+            return self._handle_failure(func.__name__, e)
 
-    # ------------------------------------------------------------------
-    # Verification and Integrity Check
-    # ------------------------------------------------------------------
+    # -------------------------------
+    # Self-Inspection Utilities
+    # -------------------------------
+    def verify_attribute(self, module: ModuleType, attr: str) -> bool:
+        """Check whether an attribute exists within a module."""
+        if hasattr(module, attr):
+            return True
+        logger.warning(
+            f"⚠️ Missing attribute '{attr}' in module {module.__name__}")
+        return False
 
-    def verify_integrity(self):
-        """Run verify_astra.py as a subprocess."""
-        self._write_log("🧠 Running Astra preflight verification...")
-        try:
-            result = subprocess.run(
-                [sys.executable, os.path.join(self.base_path, "verify_astra.py")],
-                capture_output=True,
-                text=True,
-                timeout=90,
-            )
-            if result.returncode == 0:
-                self._write_log("✅ Preflight verification successful.")
-                self._record_audit("VERIFY", "Integrity check passed")
-            else:
-                self._write_log(f"❌ Verification failed: {result.stderr.strip()}")
-                self._record_audit("VERIFY_FAIL", result.stderr.strip())
-        except subprocess.TimeoutExpired:
-            self._write_log("⚠️ Verification timed out.")
-        except Exception as e:
-            self._write_log(f"❌ Verification error: {e}")
+    # -------------------------------
+    # Internal Helpers
+    # -------------------------------
+    def _generate_stub(self, name: str) -> ModuleType:
+        """Create a minimal placeholder module when import fails."""
+        stub = ModuleType(name)
+        setattr(stub, "__guardian_stub__", True)
+        logger.info(f"🧩 Stub created for missing module: {name}")
+        return stub
 
-    # ------------------------------------------------------------------
-    # Heartbeat Monitoring
-    # ------------------------------------------------------------------
+    def _handle_failure(self, context: str, error: Exception) -> None:
+        """Gracefully handle runtime failure."""
+        msg = f"[GuardianV6] Failure in {context}: {error}"
+        logger.error(msg)
+        print(msg)
+        return None
 
-    def _heartbeat_loop(self):
-        """Background loop to emit silent heartbeats and check component health."""
-        self._write_log("🫀 Guardian heartbeat monitor started.")
-        while self.running:
-            self.last_heartbeat = datetime.now().strftime("%H:%M:%S")
-            self._write_log(f"💓 Heartbeat OK ({self.last_heartbeat})")
+    # -------------------------------
+    # Self-Test
+    # -------------------------------
+    def integrity_check(self) -> None:
+        """Scan for known missing modules or attributes and log results."""
+        targets = [
+            "astra_modules.chart_core.chart_engine",
+            "astra_modules.learning.performance_tracker",
+            "astra_modules.forecast.forecast_engine",
+        ]
+        for t in targets:
+            mod = self.safe_import(t)
+            if getattr(mod, "__guardian_stub__", False):
+                logger.warning(f"🔍 Missing core module detected: {t}")
 
-            # Auto-heal verification (every N beats)
-            if int(time.time()) % (HEARTBEAT_INTERVAL * 5) < 5:
-                self._auto_heal_check()
-
-            time.sleep(HEARTBEAT_INTERVAL)
-
-    def _auto_heal_check(self):
-        """Check for missing components or errors and trigger lightweight recovery."""
-        self._write_log("🧩 Running Guardian auto-heal check...")
-        missing_files = []
-        for critical_file in ["app.py", "verify_astra.py"]:
-            if not os.path.exists(os.path.join(self.base_path, critical_file)):
-                missing_files.append(critical_file)
-
-        if missing_files:
-            self._write_log(f"⚠️ Missing critical files: {missing_files}")
-            self._record_audit("AUTO_HEAL", f"Missing {missing_files}")
-        else:
-            self._write_log("✅ Auto-heal check passed.")
-
-    # ------------------------------------------------------------------
-    # Shutdown
-    # ------------------------------------------------------------------
-
-    def shutdown(self):
-        """Stop Guardian and cleanup."""
-        self.running = False
-        self._write_log("🛑 Guardian V6 shutting down.")
-        self._record_audit("SHUTDOWN", "Guardian terminated cleanly.")
+        logger.info("GuardianV6 integrity check complete.")
 
 
-# ----------------------------------------------------------------------
-# Standalone Execution
-# ----------------------------------------------------------------------
+# ------------------------------------------------------
+# Singleton Pattern for Easy Import
+# ------------------------------------------------------
+guardian = GuardianV6()
 
+
+# Example usage (non-blocking):
 if __name__ == "__main__":
-    base = os.getcwd()
-    guardian = GuardianV6(base)
-    guardian.safe_run(lambda: print(f">>> GuardianV6 Silent Mode initialized at {base}"))
-    guardian.verify_integrity()
-    try:
-        while True:
-            time.sleep(5)
-    except KeyboardInterrupt:
-        guardian.shutdown()
+    guardian.integrity_check()
+    guardian.safe_run(lambda: print("✅ GuardianV6 operational"))

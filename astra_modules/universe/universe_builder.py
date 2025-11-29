@@ -7,7 +7,9 @@ Integrated with GuardianV6 for self-healing and logging.
 """
 
 import os
+
 import pandas as pd
+
 from astra_modules.guardian.guardian_v6 import GuardianV6
 
 guardian = GuardianV6(os.path.dirname(__file__))
@@ -53,6 +55,7 @@ def build_universe(source: str = None):
                     raise ValueError("CSV missing 'symbol' column.")
             elif source.endswith(".json"):
                 import json
+
                 with open(source, "r") as f:
                     data = json.load(f)
                     symbols = list(data.get("symbols", []))
@@ -62,7 +65,9 @@ def build_universe(source: str = None):
             symbols = default_universe
 
         symbols = guardian.self_heal(symbols, list, default_universe)
-        guardian.log_event("universe_build", f"Universe built with {len(symbols)} symbols.")
+        guardian.log_event(
+            "universe_build", f"Universe built with {len(symbols)} symbols."
+        )
         return symbols
 
     except Exception as e:
@@ -73,4 +78,3 @@ def build_universe(source: str = None):
 if __name__ == "__main__":
     builder = UniverseBuilder()
     print("Universe built successfully:", builder.build())
-

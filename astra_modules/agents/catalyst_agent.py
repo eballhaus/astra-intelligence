@@ -8,6 +8,7 @@ Evaluates catalyst conditions such as:
 Outputs a normalized 0–1 signal.
 """
 
+
 class CatalystAgent:
     def __init__(self):
         pass

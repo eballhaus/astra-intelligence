@@ -22,7 +22,7 @@ def get_forecast(symbol: str):
         "trend": "neutral",
         "confidence": 0.50,
         "prediction": "No strong signal",
-        "model": "Astra Forecast v1 (placeholder)"
+        "model": "Astra Forecast v1 (placeholder)",
     }
 
 

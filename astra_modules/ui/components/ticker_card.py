@@ -10,8 +10,14 @@ import streamlit as st
 # =====================================================================
 # INTERNAL CARD HTML BUILDER
 # =====================================================================
-def _render_card_html(symbol: str, price: float, final_score: float,
-                      buy_score: float, confidence: float, summary: str):
+def _render_card_html(
+    symbol: str,
+    price: float,
+    final_score: float,
+    buy_score: float,
+    confidence: float,
+    summary: str,
+):
     """
     Returns clean HTML for the floating-glass ticker card.
     """
@@ -139,7 +145,7 @@ def render_ticker_card(
             confidence,
             summary,
         ),
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
     # If user clicks → store symbol in session state

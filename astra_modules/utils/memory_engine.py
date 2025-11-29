@@ -15,10 +15,9 @@ Works with:
 import json
 import os
 import time
-from datetime import datetime, timedelta
 
 MEMORY_PATH = "astra_memory.json"
-MAX_DAYS = 90   # rolling window
+MAX_DAYS = 90  # rolling window
 
 
 class MemoryEngine:
@@ -81,8 +80,7 @@ class MemoryEngine:
     # ----------------------------------------------------------
     def get_history(self, symbol):
         return [
-            e for e in self.data["entries"]
-            if e["symbol"].upper() == symbol.upper()
+            e for e in self.data["entries"] if e["symbol"].upper() == symbol.upper()
         ]
 
     # ----------------------------------------------------------
@@ -114,11 +112,14 @@ class MemoryEngine:
         return {
             "symbol": symbol,
             "scan_count": len(scans),
-            "avg_buy_score": sum([s.get("buy_score", 0) for s in scans]) / max(1, len(scans)),
-            "avg_confidence": sum([s.get("confidence", 0) for s in scans]) / max(1, len(scans)),
-            "avg_ranking": sum([r.get("final_score", 0) for r in ranks]) / max(1, len(ranks)),
-            "forecasts": forecasts[-3:],    # last 3 forecasts
-            "summaries": summaries[-3:],    # last 3 summaries
+            "avg_buy_score": sum([s.get("buy_score", 0) for s in scans])
+            / max(1, len(scans)),
+            "avg_confidence": sum([s.get("confidence", 0) for s in scans])
+            / max(1, len(scans)),
+            "avg_ranking": sum([r.get("final_score", 0) for r in ranks])
+            / max(1, len(ranks)),
+            "forecasts": forecasts[-3:],  # last 3 forecasts
+            "summaries": summaries[-3:],  # last 3 summaries
         }
 
 
