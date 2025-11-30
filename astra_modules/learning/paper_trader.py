@@ -12,11 +12,12 @@ Responsibilities:
 • Never execute real trades (simulation only)
 """
 
-from datetime import datetime, timedelta
-import numpy as np
 import traceback
-from astra_modules.learning.replay_buffer import ReplayBuffer
+from datetime import datetime, timedelta
+
+
 from astra_modules.learning.performance_tracker import PerformanceTracker
+from astra_modules.learning.replay_buffer import ReplayBuffer
 
 
 class PaperTrader:
@@ -31,7 +32,9 @@ class PaperTrader:
         self.reward_scaler = reward_scaler
 
     # === Core Trading Logic ===
-    def open_trade(self, symbol: str, direction: str, confidence: float = 0.5, price: float = None):
+    def open_trade(
+        self, symbol: str, direction: str, confidence: float = 0.5, price: float = None
+    ):
         """Open a simulated trade position."""
         try:
             trade = {
@@ -42,10 +45,12 @@ class PaperTrader:
                 "entry_time": datetime.utcnow().isoformat(),
                 "exit_price": None,
                 "exit_time": None,
-                "reward": None
+                "reward": None,
             }
             self.open_trades.append(trade)
-            print(f"[Astra PaperTrader] 🟢 Opened {direction.upper()} trade for {symbol}")
+            print(
+                f"[Astra PaperTrader] 🟢 Opened {direction.upper()} trade for {symbol}"
+            )
         except Exception as e:
             print(f"[Astra PaperTrader] Failed to open trade: {e}")
 
@@ -53,7 +58,8 @@ class PaperTrader:
         """Close a simulated trade and compute reward."""
         try:
             # Find active trade
-            trade = next((t for t in self.open_trades if t["symbol"] == symbol), None)
+            trade = next(
+                (t for t in self.open_trades if t["symbol"] == symbol), None)
             if not trade:
                 return
 
@@ -79,7 +85,9 @@ class PaperTrader:
             self.closed_trades.append(trade)
             self.open_trades.remove(trade)
 
-            print(f"[Astra PaperTrader] 🔴 Closed {direction.upper()} trade for {symbol} | Reward: {reward:.2f}")
+            print(
+                f"[Astra PaperTrader] 🔴 Closed {direction.upper()} trade for {symbol} | Reward: {reward:.2f}"
+            )
 
             # Log to replay buffer
             self.buffer.add(
@@ -102,7 +110,8 @@ class PaperTrader:
         """Automatically close trades that have exceeded max holding time."""
         now = datetime.utcnow()
         expired = [
-            t for t in self.open_trades
+            t
+            for t in self.open_trades
             if (now - datetime.fromisoformat(t["entry_time"])) > self.max_hold
         ]
 
@@ -111,7 +120,8 @@ class PaperTrader:
             if symbol in latest_prices:
                 self.close_trade(symbol, latest_prices[symbol])
             else:
-                print(f"[Astra PaperTrader] Skipped expired trade (no price): {symbol}")
+                print(
+                    f"[Astra PaperTrader] Skipped expired trade (no price): {symbol}")
 
     def get_open_positions(self):
         """Return list of active paper trades."""

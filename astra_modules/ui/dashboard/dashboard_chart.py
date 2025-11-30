@@ -1,102 +1,120 @@
 """
-Astra Intelligence - Dashboard Chart
-------------------------------------
-Main visualization component for Astra’s dashboard.
-Renders interactive Plotly charts using live OHLCV data and Astra forecasts.
-
-Features:
-• Candlestick chart (100 days)
-• MA10, MA30, Bollinger Bands, RSI
-• Forecast overlay from forecast_engine
-• Auto handling of missing data
+Astra Intelligence — Advanced Candle Chart v3 (Syntax-safe)
+------------------------------------------------------------
+Shows Candles + MA10/30 + Bollinger Bands + RSI + MACD + Momentum
 """
 
 import streamlit as st
-import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime
+import pandas as pd
+import numpy as np
 
-from astra_modules.chart_core.plotly_theme import apply_plotly_theme
 
-def render_chart(data_bundle: dict, mode: str = "default"):
-    """
-    Render the main Astra dashboard chart for the given symbol.
-    Accepts a data_bundle from dashboard_data.load_dashboard_data().
-    """
+def render_chart(df: pd.DataFrame, symbol: str = ""):
+    if df is None or df.empty or "close" not in df.columns:
+        st.warning("⚠️ No data available for chart.")
+        return None
 
-    if not data_bundle or "df" not in data_bundle:
-        st.warning("No data available to display chart.")
-        return
+    try:
+        # ──────────────────────────────────────────
+        # Indicators
+        # ──────────────────────────────────────────
+        df = df.copy()
+        df["ma_fast"] = df["close"].ewm(span=10).mean()
+        df["ma_slow"] = df["close"].ewm(span=30).mean()
+        df["ma20"] = df["close"].rolling(20).mean()
+        df["upper"] = df["ma20"] + 2 * df["close"].rolling(20).std()
+        df["lower"] = df["ma20"] - 2 * df["close"].rolling(20).std()
 
-    df = data_bundle["df"]
-    if df is None or df.empty:
-        st.warning("No price data found for this symbol.")
-        return
+        # RSI
+        delta = df["close"].diff()
+        gain = delta.clip(lower=0).rolling(14).mean()
+        loss = -delta.clip(upper=0).rolling(14).mean()
+        rs = gain / (loss + 1e-9)
+        df["rsi"] = 100 - (100 / (1 + rs))
 
-    # Ensure datetime conversion
-    if "date" not in df.columns:
-        if "time" in df.columns:
-            df.rename(columns={"time": "date"}, inplace=True)
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        # MACD
+        ema12 = df["close"].ewm(span=12).mean()
+        ema26 = df["close"].ewm(span=26).mean()
+        df["macd"] = ema12 - ema26
+        df["macd_signal"] = df["macd"].ewm(span=9).mean()
 
-    symbol = data_bundle.get("symbol", "Unknown")
+        # Momentum
+        df["momentum"] = df["close"] - df["close"].shift(4)
 
-    # === Technical Indicators ===
-    df["MA10"] = df["close"].rolling(10).mean()
-    df["MA30"] = df["close"].rolling(30).mean()
+        # ──────────────────────────────────────────
+        # Build Plotly figure
+        # ──────────────────────────────────────────
+        fig = go.Figure()
 
-    df["BB_MID"] = df["MA10"]
-    df["BB_STD"] = df["close"].rolling(10).std()
-    df["BB_UPPER"] = df["BB_MID"] + 2 * df["BB_STD"]
-    df["BB_LOWER"] = df["BB_MID"] - 2 * df["BB_STD"]
-
-    # RSI Calculation
-    delta = df["close"].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / (loss + 1e-9)
-    df["RSI"] = 100 - (100 / (1 + rs))
-
-    # === Plotly Figure ===
-    fig = go.Figure()
-
-    # Candlestick
-    fig.add_trace(go.Candlestick(
-        x=df["date"],
-        open=df["open"], high=df["high"], low=df["low"], close=df["close"],
-        name="Price",
-        increasing_line_color="#00FF88",
-        decreasing_line_color="#FF4444",
-        showlegend=True
-    ))
-
-    # Moving Averages
-    fig.add_trace(go.Scatter(x=df["date"], y=df["MA10"],
-                             line=dict(color="#FFD700", width=1.5),
-                             name="MA10"))
-    fig.add_trace(go.Scatter(x=df["date"], y=df["MA30"],
-                             line=dict(color="#00BFFF", width=1.5),
-                             name="MA30"))
-
-    # Bollinger Bands
-    fig.add_trace(go.Scatter(x=df["date"], y=df["BB_UPPER"],
-                             line=dict(color="rgba(255,255,255,0.2)", width=1),
-                             name="Bollinger Upper"))
-    fig.add_trace(go.Scatter(x=df["date"], y=df["BB_LOWER"],
-                             line=dict(color="rgba(255,255,255,0.2)", width=1),
-                             fill="tonexty",
-                             name="Bollinger Lower"))
-
-    # === Astra Forecast Overlay ===
-    forecast = data_bundle.get("forecast")
-    if forecast and isinstance(forecast, dict):
-        direction = forecast.get("forecast_direction", "neutral").capitalize()
-        conf = forecast.get("confidence", 0.0)
-        st.markdown(
-            f"**Astra Forecast:** {direction} ({conf*100:.0f}% confidence)",
-            unsafe_allow_html=True
+        # Candles
+        fig.add_trace(
+            go.Candlestick(
+                x=df["date"],
+                open=df["open"],
+                high=df["high"],
+                low=df["low"],
+                close=df["close"],
+                name="Candles",
+                increasing_line_color="#16A34A",
+                decreasing_line_color="#DC2626",
+            )
         )
 
-        # Optional visual overlay (if provided)
-        if "forecast_line" in forecast:
-            forecast_line = forec_
+        # MAs
+        fig.add_trace(go.Scatter(x=df["date"], y=df["ma_fast"], mode="lines",
+                                 name="MA 10", line=dict(width=1.2)))
+        fig.add_trace(go.Scatter(x=df["date"], y=df["ma_slow"], mode="lines",
+                                 name="MA 30", line=dict(width=1.2, dash="dot")))
+
+        # Bollinger
+        fig.add_trace(go.Scatter(x=df["date"], y=df["upper"], mode="lines",
+                                 name="BB Upper",
+                                 line=dict(color="rgba(255,255,255,0.25)", width=0.8)))
+        fig.add_trace(go.Scatter(x=df["date"], y=df["lower"], mode="lines",
+                                 name="BB Lower",
+                                 line=dict(color="rgba(255,255,255,0.25)", width=0.8),
+                                 fill="tonexty",
+                                 fillcolor="rgba(255,255,255,0.05)"))
+
+        # Momentum
+        fig.add_trace(go.Bar(x=df["date"], y=df["momentum"], name="Momentum",
+                             marker_color="rgba(173,216,230,0.4)", yaxis="y2"))
+
+        # RSI
+        fig.add_trace(go.Scatter(x=df["date"], y=df["rsi"], name="RSI (14)",
+                                 line=dict(color="orange", width=1), yaxis="y3"))
+
+        # MACD
+        fig.add_trace(go.Scatter(x=df["date"], y=df["macd"], name="MACD",
+                                 line=dict(color="cyan", width=1.5), yaxis="y4"))
+        fig.add_trace(go.Scatter(x=df["date"], y=df["macd_signal"], name="Signal",
+                                 line=dict(color="magenta", width=1, dash="dot"), yaxis="y4"))
+
+        # ──────────────────────────────────────────
+        # Layout
+        # ──────────────────────────────────────────
+        fig.update_layout(
+            height=700,
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            margin=dict(l=40, r=20, t=60, b=40),
+            xaxis=dict(showgrid=False, color="#9CA3AF"),
+            yaxis=dict(title="Price", color="#E5E7EB"),
+            yaxis2=dict(title="Momentum", overlaying="y", side="right",
+                        showgrid=False, color="lightblue"),
+            yaxis3=dict(title="RSI", overlaying="y", side="left",
+                        position=0.02, range=[0, 100], color="orange"),
+            yaxis4=dict(title="MACD", overlaying="y", side="right",
+                        position=0.98, color="cyan"),
+            legend=dict(orientation="h", y=1.02, x=0.5,
+                        xanchor="center", font=dict(color="#E5E7EB")),
+            title=dict(text=f"📈 {symbol} — Advanced Chart", x=0.5,
+                       font=dict(color="#A7F3D0")),
+        )
+
+        return fig
+
+    except Exception as e:
+        st.error(f"🚨 Chart rendering error: {e}")
+        return None

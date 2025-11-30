@@ -21,6 +21,7 @@ except ImportError as e:
 # ──────────────────────────────────────────────
 try:
     from astra_modules.guardian.ui_integrity_lock import start_background_check
+
     start_background_check()
 except Exception as e:
     print(f"[Guardian] Integrity check skipped: {e}")
@@ -37,6 +38,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("StartupHook")
 
+
 # ──────────────────────────────────────────────
 # Bootstrap Logic
 # ──────────────────────────────────────────────
@@ -48,7 +50,9 @@ def startup_sequence(verbose: bool = False) -> None:
     """
     try:
         # Instantiate GuardianV6 core and run startup integrity check
-        guardian_instance = guardian_core.GuardianV6(base_path=str(Path(__file__).resolve().parent.parent))
+        guardian_instance = guardian_core.GuardianV6(
+            base_path=str(Path(__file__).resolve().parent.parent)
+        )
         guardian_instance.integrity_check()
 
         if verbose:

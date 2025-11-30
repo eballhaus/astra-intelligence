@@ -11,9 +11,10 @@ Responsibilities:
 • Persist new learning state via LearningStore
 """
 
-import numpy as np
 import traceback
 from datetime import datetime
+
+import numpy as np
 
 from astra_modules.learning.learning_store import LearningStore
 from astra_modules.learning.performance_tracker import PerformanceTracker
@@ -38,7 +39,8 @@ class LearningEngine:
                 print("[Astra LearningEngine] Loaded previous learning weights.")
                 return state
         except Exception as e:
-            print(f"[Astra LearningEngine] Warning: could not load previous state: {e}")
+            print(
+                f"[Astra LearningEngine] Warning: could not load previous state: {e}")
         return {"weights": np.ones(10), "timestamp": datetime.utcnow().isoformat()}
 
     def _save_state(self):
@@ -47,7 +49,8 @@ class LearningEngine:
             self.store.save_state(self.state)
             print("[Astra LearningEngine] Learning weights saved.")
         except Exception as e:
-            print(f"[Astra LearningEngine] Failed to save learning weights: {e}")
+            print(
+                f"[Astra LearningEngine] Failed to save learning weights: {e}")
 
     # === Core Learning Computations ===
     def _compute_correlation_weights(self):
@@ -63,7 +66,7 @@ class LearningEngine:
         try:
             X = np.array([s["state"] for s in samples])
             y = np.array([s["reward"] for s in samples])
-            preds = np.array([s["prediction"] for s in samples])
+            np.array([s["prediction"] for s in samples])
 
             # Correlation between state features and observed reward
             corr = np.corrcoef(X.T, y)[-1, :-1]
@@ -75,7 +78,8 @@ class LearningEngine:
             return corr
 
         except Exception as e:
-            print(f"[Astra LearningEngine] Correlation computation failed: {e}")
+            print(
+                f"[Astra LearningEngine] Correlation computation failed: {e}")
             traceback.print_exc()
             return self.state.get("weights", np.ones(10))
 
@@ -89,10 +93,14 @@ class LearningEngine:
 
         # Scale weights toward better-performing features
         performance_factor = (acc + win_rate) / 2.0
-        new_weights = self.state["weights"] * 0.8 + corr_weights * 0.2 * (1 + performance_factor)
+        new_weights = self.state["weights"] * 0.8 + corr_weights * 0.2 * (
+            1 + performance_factor
+        )
 
         # Normalize and clip
-        new_weights = np.clip(new_weights / (np.linalg.norm(new_weights) + 1e-9), -1.0, 1.0)
+        new_weights = np.clip(
+            new_weights / (np.linalg.norm(new_weights) + 1e-9), -1.0, 1.0
+        )
         return new_weights
 
     def train(self):
@@ -110,7 +118,8 @@ class LearningEngine:
             print("[Astra LearningEngine] ✅ Learning weights updated successfully.")
 
         except Exception as e:
-            print(f"[Astra LearningEngine] ❌ LearningEngine training failed: {e}")
+            print(
+                f"[Astra LearningEngine] ❌ LearningEngine training failed: {e}")
             traceback.print_exc()
 
 

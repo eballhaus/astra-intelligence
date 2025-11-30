@@ -18,9 +18,9 @@ from astra_modules.agents.psychology_agent import PsychologyAgent
 from astra_modules.agents.risk_agent import RiskAgent
 from astra_modules.agents.technical_agent import TechnicalAgent
 from astra_modules.agents.volume_agent import VolumeAgent
-
 # Astra Prime Startup Initialization
 from astra_modules.guardian.state_initializer import ensure_state_ready
+
 ensure_state_ready()
 
 

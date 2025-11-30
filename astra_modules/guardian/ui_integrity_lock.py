@@ -4,7 +4,10 @@ Runs lightweight verification of Astra's UI and repo integrity.
 Non-blocking; logs to guardian/logs/ui_integrity.log
 """
 
-import os, subprocess, threading, datetime, hashlib, sys
+import datetime
+import os
+import subprocess
+import threading
 
 LOG_PATH = "guardian/logs/ui_integrity.log"
 REQUIRED_GITIGNORE_RULES = [
@@ -17,21 +20,25 @@ REQUIRED_GITIGNORE_RULES = [
     ".DS_Store",
 ]
 
+
 def log(msg: str):
     os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
     with open(LOG_PATH, "a") as f:
         f.write(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] {msg}\n")
 
+
 def check_git_sync():
     try:
         local = subprocess.check_output(["git", "rev-parse", "HEAD"]).strip()
-        remote = subprocess.check_output(["git", "rev-parse", "origin/main"]).strip()
+        remote = subprocess.check_output(
+            ["git", "rev-parse", "origin/main"]).strip()
         if local != remote:
             log(f"⚠️  Git mismatch: local {local[:7]} vs remote {remote[:7]}")
         else:
             log("✅ Git HEAD matches origin/main")
     except Exception as e:
         log(f"⚠️  Git check failed: {e}")
+
 
 def check_structure():
     bad_paths = []
@@ -43,6 +50,7 @@ def check_structure():
         log(f"⚠️  Unexpected legacy folders: {bad_paths}")
     else:
         log("✅ No legacy or backup folders found")
+
 
 def check_ui_theme():
     themes = []
@@ -57,6 +65,7 @@ def check_ui_theme():
     else:
         log("⚠️  No theme found under astra_modules/ui")
 
+
 def check_gitignore():
     try:
         with open(".gitignore") as f:
@@ -69,6 +78,7 @@ def check_gitignore():
     except FileNotFoundError:
         log("⚠️  .gitignore not found")
 
+
 def run_all_checks():
     log("---- Astra Guardian Integrity Check Start ----")
     for check in [check_structure, check_ui_theme, check_gitignore, check_git_sync]:
@@ -78,9 +88,11 @@ def run_all_checks():
             log(f"⚠️  Check error: {e}")
     log("---- Astra Guardian Integrity Check Complete ----\n")
 
+
 def start_background_check():
     thread = threading.Thread(target=run_all_checks, daemon=True)
     thread.start()
+
 
 if __name__ == "__main__":
     start_background_check()

@@ -1,32 +1,43 @@
-from pathlib import Path
+# astra_modules/ui/dashboard/theme_loader.py
+
+"""
+AstraGlass Theme Loader — NeuralGlass Interface v3.0
+Handles global CSS injection for Astra Intelligence dashboards.
+Compatible with both `load_theme()` and legacy `apply_theme()`.
+"""
 
 import streamlit as st
+from pathlib import Path
+
+def load_theme():
+    """
+    Load and inject the AstraGlass theme CSS file into the Streamlit app.
+    This function should be called *after* st.set_page_config() but before
+    rendering any major UI components.
+    """
+    try:
+        css_path = Path(__file__).parent / "astra_theme.css"
+
+        if not css_path.exists():
+            st.warning("⚠️ Astra theme file not found: astra_theme.css missing.")
+            return
+
+        with open(css_path, "r", encoding="utf-8") as css_file:
+            css_content = css_file.read()
+
+        # Inject the CSS into Streamlit
+        st.markdown(f"<style>{css_content}</style>", unsafe_allow_html=True)
+
+    except Exception as e:
+        st.error(f"🚨 Failed to load Astra theme: {e}")
 
 
+# ---------------------------------------------------------------------
+# ✅ Backward compatibility for older modules using apply_theme()
+# ---------------------------------------------------------------------
 def apply_theme():
-    """Load AstraGlass theme once."""
-    css_path = Path(__file__).parent / "astra_theme.css"
-
-    # Force Streamlit to behave as 'light' base
-    st.markdown(
-        "<style>:root { color-scheme: light !important; }</style>",
-        unsafe_allow_html=True,
-    )
-
-    if css_path.exists():
-        with open(css_path, encoding="utf-8") as f:
-            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-
-    # Explicit gradient override so nothing can blank it out
-    st.markdown(
-        """
-        <style>
-        html, body, .stApp {
-            background: radial-gradient(circle at 25% 25%, rgba(17,24,39,0.95), rgba(3,7,18,0.98)) !important;
-            color: #E5E7EB !important;
-            font-family: 'Inter', sans-serif !important;
-        }
-        </style>
-    """,
-        unsafe_allow_html=True,
-    )
+    """
+    Legacy alias for load_theme() to maintain backward compatibility.
+    Use load_theme() moving forward.
+    """
+    load_theme()

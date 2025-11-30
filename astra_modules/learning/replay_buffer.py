@@ -10,12 +10,13 @@ Responsibilities:
 • Manage buffer size and cleanup
 """
 
-import os
 import json
+import os
 import random
-import numpy as np
 from datetime import datetime
 from pathlib import Path
+
+import numpy as np
 
 
 class ReplayBuffer:
@@ -34,7 +35,8 @@ class ReplayBuffer:
             if self.buffer_path.exists():
                 with open(self.buffer_path, "r") as f:
                     self.buffer = json.load(f)
-                print(f"[Astra ReplayBuffer] Loaded {len(self.buffer)} experiences.")
+                print(
+                    f"[Astra ReplayBuffer] Loaded {len(self.buffer)} experiences.")
         except Exception as e:
             print(f"[Astra ReplayBuffer] Warning: failed to load buffer: {e}")
             self.buffer = []
@@ -53,12 +55,15 @@ class ReplayBuffer:
         """Add a new experience tuple."""
         try:
             sample = {
-                "state": np.array(state).tolist() if isinstance(state, np.ndarray) else state,
+                "state": (
+                    np.array(state).tolist() if isinstance(
+                        state, np.ndarray) else state
+                ),
                 "prediction": float(prediction),
                 "reward": float(reward),
                 "symbol": symbol or "N/A",
                 "confidence": confidence,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.utcnow().isoformat(),
             }
 
             self.buffer.append(sample)

@@ -1,54 +1,40 @@
 """
-RiskAgent — Phase-90
-
-Scores volatility (risk).
-Lower volatility = higher score.
-Higher volatility = lower score.
+Astra Intelligence — RiskAgent (v2 Safe Extension)
+--------------------------------------------------
+Computes stop-loss and risk parameters for given symbols.
+Now includes universal compute_stop() for dashboard integration.
 """
 
+import numpy as np
+import pandas as pd
 
 class RiskAgent:
+    """
+    Evaluates volatility-adjusted risk and computes stop-loss levels.
+    """
+
     def __init__(self):
-        pass
+        self.default_stop_pct = 5.0  # fallback stop-loss 5%
 
-    def safe(self, value, default=0.02):
-        try:
-            if value is None:
-                return default
-            if isinstance(value, float) and (value != value):  # NaN
-                return default
-            return float(value)
-        except Exception:
-            return default
-
-    def normalize(self, vol):
+    def compute_stop(self, symbol: str, df: pd.DataFrame):
         """
-        Typical daily volatility:
-         - stable: <2%
-         - moderate: 2–4%
-         - high risk: >4%
-        Normalize to 0–1 score.
+        Compute a stop-loss price and percentage based on volatility.
+        Returns (stop_price, stop_loss_pct)
         """
         try:
-            if vol >= 0.06:
-                return 0.0
-            if vol <= 0.01:
-                return 1.0
-            return 1.0 - ((vol - 0.01) / (0.06 - 0.01))
-        except Exception:
-            return 0.5
+            if df is None or df.empty or "close" not in df.columns:
+                return None, -self.default_stop_pct
 
-    def run(self, inputs: dict) -> float:
-        """
-        inputs = {
-            "volatility": ...
-        }
-        """
+            closes = df["close"].astype(float)
+            current_price = closes.iloc[-1]
+            vol = closes.pct_change().std() * 100
 
-        if not isinstance(inputs, dict):
-            return 0.5
+            # Adjust stop-loss dynamically
+            stop_loss_pct = max(-3.0, min(-vol, -self.default_stop_pct))
+            stop_price = current_price * (1 + (stop_loss_pct / 100))
 
-        vol = self.safe(inputs.get("volatility", 0.02))
+            return round(stop_price, 2), round(stop_loss_pct, 2)
 
-        score = self.normalize(vol)
-        return float(score)
+        except Exception as e:
+            print(f"[RiskAgent] compute_stop() error for {symbol}: {e}")
+            return None, -self.default_stop_pct

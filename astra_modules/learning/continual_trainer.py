@@ -13,14 +13,13 @@ Responsibilities:
 This trainer is designed to run continuously and incrementally.
 """
 
-import random
-import numpy as np
 import traceback
-from datetime import datetime
 
-from astra_modules.learning.replay_buffer import ReplayBuffer
+import numpy as np
+
 from astra_modules.learning.learning_store import LearningStore
 from astra_modules.learning.performance_tracker import PerformanceTracker
+from astra_modules.learning.replay_buffer import ReplayBuffer
 
 
 class ContinualTrainer:
@@ -49,7 +48,8 @@ class ContinualTrainer:
                 return state
         except Exception as e:
             print(f"[Astra Trainer] Warning: could not load model: {e}")
-        return {"weights": np.random.rand(10), "bias": 0.0}  # fallback initial state
+        # fallback initial state
+        return {"weights": np.random.rand(10), "bias": 0.0}
 
     def _save_model(self):
         """Persist model state to LearningStore."""
@@ -81,7 +81,7 @@ class ContinualTrainer:
             grad = -2 * np.mean(X, axis=0) * mean_error
             self.model["weights"] -= self.learning_rate * grad
             self.model["bias"] -= self.learning_rate * mean_error
-            loss = float(np.mean(errors ** 2))
+            loss = float(np.mean(errors**2))
             return loss
         except Exception as e:
             print(f"[Astra Trainer] Train step failed: {e}")
@@ -110,7 +110,8 @@ class ContinualTrainer:
 
             avg_loss = np.mean(total_loss) if total_loss else 0.0
             self.performance.record_training_result(loss=avg_loss)
-            print(f"[Astra Trainer] ✅ Training complete | Avg Loss: {avg_loss:.6f}")
+            print(
+                f"[Astra Trainer] ✅ Training complete | Avg Loss: {avg_loss:.6f}")
 
             return True
 

@@ -12,9 +12,9 @@ Responsibilities:
 
 import json
 import os
-from pathlib import Path
-from datetime import datetime
 import traceback
+from datetime import datetime
+from pathlib import Path
 
 
 class LearningStore:
@@ -41,8 +41,8 @@ class LearningStore:
             "meta": {
                 "version": "1.0",
                 "engine": "astra_learning",
-                "notes": "Default initialized state"
-            }
+                "notes": "Default initialized state",
+            },
         }
 
     # === Core Persistence Methods ===
@@ -89,7 +89,7 @@ class LearningStore:
                 "timestamp": state.get("timestamp"),
                 "version": state.get("meta", {}).get("version", "unknown"),
                 "engine": state.get("meta", {}).get("engine", "unknown"),
-                "weights_count": len(state.get("weights", []))
+                "weights_count": len(state.get("weights", [])),
             }
         except Exception as e:
             print(f"[Astra LearningStore] Metadata retrieval failed: {e}")

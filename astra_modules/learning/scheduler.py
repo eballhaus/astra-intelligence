@@ -14,15 +14,15 @@ Responsibilities:
 This module runs continuously in the background once Astra is launched.
 """
 
-import time
 import threading
-from datetime import datetime, timedelta
+import time
+from datetime import datetime
 from typing import Optional
 
 from astra_modules.learning.continual_trainer import ContinualTrainer
 from astra_modules.learning.learning_engine import train_learning_engine
-from astra_modules.learning.replay_buffer import ReplayBuffer
 from astra_modules.learning.performance_tracker import PerformanceTracker
+from astra_modules.learning.replay_buffer import ReplayBuffer
 
 
 class LearningScheduler:
@@ -66,7 +66,9 @@ class LearningScheduler:
     def run_learning_cycle(self):
         """Execute a full learning cycle safely."""
         try:
-            print(f"[Astra Learning] 🚀 Starting learning cycle at {datetime.utcnow().isoformat()}")
+            print(
+                f"[Astra Learning] 🚀 Starting learning cycle at {datetime.utcnow().isoformat()}"
+            )
 
             # 1️⃣ Train neural model incrementally
             trainer = ContinualTrainer()
@@ -79,11 +81,15 @@ class LearningScheduler:
             stats = self.performance_tracker.get_recent_stats()
             accuracy = stats.get("accuracy", 0)
             win_rate = stats.get("win_rate", 0)
-            print(f"[Astra Learning] Accuracy: {accuracy:.2%} | Win Rate: {win_rate:.2%}")
+            print(
+                f"[Astra Learning] Accuracy: {accuracy:.2%} | Win Rate: {win_rate:.2%}"
+            )
 
             # 4️⃣ Update state
             self.mark_run()
-            print(f"[Astra Learning] ✅ Cycle completed successfully at {self.last_run.isoformat()}")
+            print(
+                f"[Astra Learning] ✅ Cycle completed successfully at {self.last_run.isoformat()}"
+            )
 
         except Exception as e:
             print(f"[Astra Learning] ⚠️ Learning cycle failed: {e}")
@@ -92,7 +98,9 @@ class LearningScheduler:
     def _background_loop(self):
         """Internal background thread loop for continuous operation."""
         self.is_running = True
-        print(f"[Astra Learning] Background scheduler started. Interval: {self.interval_minutes} min")
+        print(
+            f"[Astra Learning] Background scheduler started. Interval: {self.interval_minutes} min"
+        )
 
         while self.is_running:
             try:
@@ -109,7 +117,8 @@ class LearningScheduler:
             print("[Astra Learning] Scheduler is already running.")
             return
 
-        self.thread = threading.Thread(target=self._background_loop, daemon=True)
+        self.thread = threading.Thread(
+            target=self._background_loop, daemon=True)
         self.thread.start()
 
     def stop(self):

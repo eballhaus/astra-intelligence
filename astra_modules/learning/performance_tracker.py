@@ -13,6 +13,7 @@ Responsibilities:
 import json
 from datetime import datetime
 from pathlib import Path
+
 import numpy as np
 
 
@@ -51,7 +52,7 @@ class PerformanceTracker:
             record = {
                 "symbol": symbol,
                 "reward": reward,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.utcnow().isoformat(),
             }
             self.data["records"].append(record)
             # Keep last 1000 records only
@@ -63,10 +64,8 @@ class PerformanceTracker:
     def record_training_result(self, loss: float):
         """Log a training result entry."""
         try:
-            entry = {
-                "timestamp": datetime.utcnow().isoformat(),
-                "loss": float(loss)
-            }
+            entry = {"timestamp": datetime.utcnow().isoformat(),
+                     "loss": float(loss)}
             self.data["training_log"].append(entry)
             self.data["training_log"] = self.data["training_log"][-200:]
             self._save()
@@ -90,7 +89,7 @@ class PerformanceTracker:
             return {
                 "accuracy": float(accuracy),
                 "win_rate": float(win_rate),
-                "avg_reward": float(avg_reward)
+                "avg_reward": float(avg_reward),
             }
         except Exception as e:
             print(f"[Astra Tracker] Failed to compute stats: {e}")

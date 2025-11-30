@@ -1,25 +1,16 @@
-import streamlit as st
-from astra_modules.ui.dashboard.tab_dashboard import render_dashboard
+#!/usr/bin/env python3
+"""
+Safe Astra Dashboard Launcher
+Runs diagnostics first; only launches Streamlit if all checks pass.
+"""
 
-st.set_page_config(page_title="Astra Intelligence Dashboard", layout="wide")
+import subprocess, sys
 
-# --- Final override to defeat Streamlit's dark layer ---
-st.markdown("""
-<style>
-:root { color-scheme: light !important; }
-html, body, .stApp, [data-testid="stAppViewContainer"] {
-    background: radial-gradient(circle at 25% 25%, rgba(17,24,39,0.95), rgba(3,7,18,0.98)) !important;
-    color: #E5E7EB !important;
-    font-family: 'Inter', sans-serif !important;
-}
-[data-testid="stDecoration"],
-[data-testid="stHeader"],
-[data-testid="stStatusWidget"] {
-    background: transparent !important;
-}
-</style>
-""", unsafe_allow_html=True)
-# --------------------------------------------------------
+print("🧠 Running Astra Diagnostics...\n")
+result = subprocess.run([sys.executable, "astra_diagnostics.py"])
 
-render_dashboard()
-
+if result.returncode == 0:
+    print("\n✅ Diagnostics passed — launching Streamlit dashboard...\n")
+    subprocess.run([sys.executable, "-m", "streamlit", "run", "astra_modules/ui/dashboard/tab_dashboard.py"])
+else:
+    print("\n🚨 Diagnostics failed — fix issues before launching dashboard.")

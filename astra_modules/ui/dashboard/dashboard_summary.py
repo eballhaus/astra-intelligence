@@ -1,82 +1,86 @@
-# -*- coding: utf-8 -*-
 """
-dashboard_summary.py — Astra Market Overview
---------------------------------------------
-Top-level market indices and crypto summary.
+Astra Intelligence — Market Overview (No yfinance)
+Fetches live market indices and BTC using public APIs.
 """
 
-from datetime import datetime, timezone
-
-import numpy as np
-import pandas as pd
 import streamlit as st
+import requests
+from datetime import datetime
 
-try:
-    from astra_modules.fetch_core.fetch_unified import fetch_unified
-except Exception:
-    fetch_unified = None
-
-
-def _simulate_summary_data():
-    """Create simulated market summary data if fetch_unified is unavailable."""
-    now = datetime.now(timezone.utc)
-    data = {
-        "Symbol": ["AAPL", "TSLA", "BTC-USD", "ETH-USD"],
-        "Type": ["Stock", "Stock", "Crypto", "Crypto"],
-        "Price": np.round([192.5, 238.9, 41000, 2120], 2),
-        "Change (%)": np.round(np.random.randn(4) * 2, 2),
-        "Volume": np.random.randint(1_000_000, 10_000_000, 4),
-        "Updated": [now.strftime("%H:%M:%S")] * 4,
-    }
-    return pd.DataFrame(data)
+@st.cache_data(ttl=900)
+def fetch_market_data():
+    data = {}
+    try:
+        yahoo_url = (
+            "https://query1.finance.yahoo.com/v7/finance/quote"
+            "?symbols=^DJI,^GSPC,^IXIC"
+        )
+        res = requests.get(yahoo_url, timeout=5)
+        res.raise_for_status()
+        quotes = res.json().get("quoteResponse", {}).get("result", [])
+        for q in quotes:
+            symbol = q.get("symbol", "")
+            data[symbol] = {
+                "price": q.get("regularMarketPrice", 0),
+                "change": q.get("regularMarketChangePercent", 0),
+            }
+        btc = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price"
+            "?ids=bitcoin&vs_currencies=usd&include_24hr_change=true",
+            timeout=5,
+        ).json()["bitcoin"]
+        data["BTC-USD"] = {"price": btc["usd"], "change": btc["usd_24h_change"]}
+    except Exception as e:
+        st.warning(f"⚠️ Market overview load issue: {e}")
+    return data
 
 
 def render_summary():
-    """Render the market summary section."""
+    data = fetch_market_data()
+    indices = {
+        "DOW": "^DJI",
+        "S&P 500": "^GSPC",
+        "NASDAQ": "^IXIC",
+        "BTC/USD": "BTC-USD",
+    }
+
     st.markdown(
         """
-        <div style='text-align:center; padding:12px; border-radius:12px;
-        background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07);
-        margin-bottom:12px;'>
-            <h2 style='color:#F5F7FA; margin-bottom:0;'>🌐 Astra Market Overview</h2>
-            <p style='color:#9DA5B4; margin-top:4px;'>Phase-103 | Aggregated Market Sentiment</p>
+        <div style="text-align:center;margin-bottom:0.6rem;">
+            <h3 style="color:#A7F3D0;margin-bottom:0;">📊 Market Overview</h3>
+            <p style="color:#9CA3AF;margin-top:0;">Real-time global indices snapshot</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    df = None
-    try:
-        if fetch_unified:
-            df = fetch_unified(
-                "AAPL", interval="1d", limit=5
-            )  # simple connectivity check
-    except Exception:
-        df = None
-
-    if df is None or df.empty:
-        df = _simulate_summary_data()
-
-    # Format coloring
-    def color_change(val):
-        color = "lime" if val > 0 else "red"
-        return f"color: {color}; font-weight:600;"
-
-    st.dataframe(
-        df.style.applymap(
-            lambda v: (
-                "color: lime; font-weight:600;"
-                if isinstance(v, (float, int)) and v > 0
-                else ""
-            )
-        ),
-        use_container_width=True,
-        height=260,
-    )
+    cols = st.columns(len(indices))
+    for i, (label, key) in enumerate(indices.items()):
+        entry = data.get(key, {"price": None, "change": None})
+        price = entry["price"]
+        change = entry["change"]
+        if price is None:
+            with cols[i]:
+                st.markdown(
+                    f"<div style='background:rgba(255,255,255,0.03);border-radius:10px;"
+                    f"padding:0.8rem 1rem;text-align:center;border:1px solid rgba(255,255,255,0.05);color:#9CA3AF;'>"
+                    f"<b>{label}</b><br>—<br>n/a</div>",
+                    unsafe_allow_html=True,
+                )
+        else:
+            color = "lime" if change >= 0 else "tomato"
+            with cols[i]:
+                st.markdown(
+                    f"<div style='background:rgba(255,255,255,0.03);border-radius:10px;"
+                    f"padding:0.8rem 1rem;text-align:center;border:1px solid rgba(255,255,255,0.05);'>"
+                    f"<b style='color:#A7F3D0;'>{label}</b><br>"
+                    f"<span style='color:#E5E7EB;'>{price:,.2f}</span><br>"
+                    f"<span style='color:{color};'>{change:+.2f}%</span></div>",
+                    unsafe_allow_html=True,
+                )
 
     st.markdown(
-        "<p style='text-align:center;color:#9DA5B4;font-size:0.85em;margin-top:6px;'>"
-        "Data provided by Astra Intelligence • Live/Simulated Aggregation Engine"
-        "</p>",
+        f"<p style='text-align:center;color:#6B7280;font-size:0.8rem;margin-top:0.8rem;'>"
+        f"Last updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>",
         unsafe_allow_html=True,
     )

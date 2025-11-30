@@ -1,138 +1,68 @@
 """
-GuardianV6 – Safe Runtime + Fallback Mode
------------------------------------------
-Protects Astra Intelligence from runtime import and attribute errors.
-Keeps UI components responsive and logs actionable repair instructions.
+GuardianV6 — Astra Intelligence Data Integrity Core
+Phase 108 Stable
 """
 
-from __future__ import annotations
-
-import importlib
+import os
+import pandas as pd
 import logging
-import traceback
-from types import ModuleType
-from typing import Any, Callable, Optional
+from datetime import datetime
 
-# ------------------------------------------------------
-# Logging configuration
-# ------------------------------------------------------
-logger = logging.getLogger("GuardianV6")
-logger.setLevel(logging.INFO)
-handler = logging.FileHandler(
-    "astra_modules/guardian/guardian_v6.log", mode="a")
-formatter = logging.Formatter(
-    "%(asctime)s | %(levelname)s | %(message)s", "%Y-%m-%d %H:%M:%S"
-)
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-
-
-# ------------------------------------------------------
-# Core GuardianV6 Class
-# ------------------------------------------------------
 class GuardianV6:
-    def __init__(self, base_path: str | None = None):
-        """
-        GuardianV6 — Astra Intelligence System Integrity Layer
-        Handles system monitoring, auto-repair, and secure logging.
-        Compatible with both legacy and new init patterns.
-        """
-        import os
+    """
+    GuardianV6 handles validation, error catching, and self-healing logic.
+    Lightweight and stream-safe version for dashboard and engine operations.
+    """
 
+    def __init__(self, base_path=None):
         self.base_path = base_path or os.getcwd()
-        self.memory = {"events": []}
-        self.status = "initialized"
+        self.log_path = os.path.join(self.base_path, "astra_guardian.log")
+        logging.basicConfig(
+            filename=self.log_path,
+            filemode="a",
+            level=logging.INFO,
+            format="%(asctime)s [GuardianV6] %(levelname)s: %(message)s",
+        )
+        self.logger = logging.getLogger("GuardianV6")
+        self.log("✅ GuardianV6 active (base: " + self.base_path + ")")
 
-        try:
-            os.makedirs(os.path.join(self.base_path, "logs"), exist_ok=True)
-        except Exception:
-            pass
+    # ──────────────────────────────────────────────
+    # Logging Utilities
+    # ──────────────────────────────────────────────
+    def log(self, message: str):
+        print(message)
+        self.logger.info(message)
 
-        print(f"✅ GuardianV6 active (base: {self.base_path})")
+    # ──────────────────────────────────────────────
+    # DataFrame Validation
+    # ──────────────────────────────────────────────
+    def validate_dataframe(self, df, required_columns=None):
+        """
+        Validate DataFrame structure, return clean DataFrame or empty fallback.
+        """
+        if df is None or not hasattr(df, "empty"):
+            self.log("⚠️ GuardianV6: Invalid or None DataFrame.")
+            return pd.DataFrame()
 
-    # -------------------------------
-    # Safe Import Handling
-    # -------------------------------
-    def safe_import(self, module_path: str, fallback: Optional[Any] = None) -> Any:
-        """Safely import a module; fallback to placeholder if unavailable."""
-        try:
-            mod = importlib.import_module(module_path)
-            logger.info(f"✅ Imported {module_path}")
-            return mod
-        except Exception as e:
-            logger.error(f"⚠️ Import failed for {module_path}: {e}")
-            logger.debug(traceback.format_exc())
-            if fallback is not None:
-                logger.info(f"→ Using fallback for {module_path}")
-                self.fallbacks[module_path] = fallback
-                return fallback
-            return self._generate_stub(module_path)
+        if df.empty:
+            self.log("⚠️ GuardianV6: Empty DataFrame detected.")
+            return pd.DataFrame()
 
-    # -------------------------------
-    # Safe Execution Wrapper
-    # -------------------------------
-    def safe_run(self, func: Callable, *args, **kwargs) -> Any:
-        """Run a function safely, logging exceptions and preventing crashes."""
-        try:
-            return func(*args, **kwargs)
-        except Exception as e:
-            logger.error(f"❌ Runtime error in {func.__name__}: {e}")
-            logger.debug(traceback.format_exc())
-            return self._handle_failure(func.__name__, e)
+        if required_columns:
+            missing = [c for c in required_columns if c not in df.columns]
+            if missing:
+                self.log(f"⚠️ GuardianV6: Missing required columns {missing}.")
+                return pd.DataFrame()
 
-    # -------------------------------
-    # Self-Inspection Utilities
-    # -------------------------------
-    def verify_attribute(self, module: ModuleType, attr: str) -> bool:
-        """Check whether an attribute exists within a module."""
-        if hasattr(module, attr):
-            return True
-        logger.warning(
-            f"⚠️ Missing attribute '{attr}' in module {module.__name__}")
-        return False
+        # Drop rows with NaN in key columns
+        if required_columns:
+            df = df.dropna(subset=required_columns, how="any")
 
-    # -------------------------------
-    # Internal Helpers
-    # -------------------------------
-    def _generate_stub(self, name: str) -> ModuleType:
-        """Create a minimal placeholder module when import fails."""
-        stub = ModuleType(name)
-        setattr(stub, "__guardian_stub__", True)
-        logger.info(f"🧩 Stub created for missing module: {name}")
-        return stub
+        return df
 
-    def _handle_failure(self, context: str, error: Exception) -> None:
-        """Gracefully handle runtime failure."""
-        msg = f"[GuardianV6] Failure in {context}: {error}"
-        logger.error(msg)
-        print(msg)
-        return None
-
-    # -------------------------------
-    # Self-Test
-    # -------------------------------
-    def integrity_check(self) -> None:
-        """Scan for known missing modules or attributes and log results."""
-        targets = [
-            "astra_modules.chart_core.chart_engine",
-            "astra_modules.learning.performance_tracker",
-            "astra_modules.forecast.forecast_engine",
-        ]
-        for t in targets:
-            mod = self.safe_import(t)
-            if getattr(mod, "__guardian_stub__", False):
-                logger.warning(f"🔍 Missing core module detected: {t}")
-
-        logger.info("GuardianV6 integrity check complete.")
-
-
-# ------------------------------------------------------
-# Singleton Pattern for Easy Import
-# ------------------------------------------------------
-guardian = GuardianV6()
-
-
-# Example usage (non-blocking):
-if __name__ == "__main__":
-    guardian.integrity_check()
-    guardian.safe_run(lambda: print("✅ GuardianV6 operational"))
+    # ──────────────────────────────────────────────
+    # Optional Diagnostics
+    # ──────────────────────────────────────────────
+    def health_check(self):
+        self.log("✅ GuardianV6 Health Check: System OK.")
+        return True

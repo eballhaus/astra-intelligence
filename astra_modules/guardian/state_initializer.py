@@ -8,8 +8,8 @@ have valid JSON containers to write to.
 Runs automatically during system startup or dashboard load.
 """
 
-import os
 import json
+import os
 from pathlib import Path
 
 
@@ -38,7 +38,8 @@ class StateInitializer:
                 if not file_path.exists():
                     with open(file_path, "w") as f:
                         json.dump(default_content, f, indent=2)
-                    print(f"[Astra Guardian] Created missing file: {file_path}")
+                    print(
+                        f"[Astra Guardian] Created missing file: {file_path}")
             print("[Astra Guardian] ✅ State directory verified and ready.")
         except Exception as e:
             print(f"[Astra Guardian] ⚠️ State initialization failed: {e}")

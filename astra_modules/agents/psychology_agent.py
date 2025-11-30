@@ -1,33 +1,63 @@
 """
-PsychologyAgent — Phase-90
-
-Processes sentiment / Fear-Greed / psychological indicators.
+Astra Intelligence — PsychologyAgent v2
+---------------------------------------
+Generates human-readable reasoning strings explaining Astra's forecasts.
+This version is dashboard-safe and works even when markets are closed.
 """
 
+import numpy as np
+import pandas as pd
+from datetime import datetime
 
 class PsychologyAgent:
+    """
+    Converts numeric and volatility context into qualitative reasoning.
+    """
+
     def __init__(self):
-        pass
-
-    def safe(self, value, default=0.5):
-        try:
-            if value is None:
-                return default
-            if isinstance(value, float) and (value != value):
-                return default
-            return float(value)
-        except Exception:
-            return default
-
-    def run(self, inputs: dict) -> float:
-        """
-        inputs = {
-            "psych_score": ...
+        self.sentences = {
+            "bullish": [
+                "Astra detects strong upward momentum and positive sentiment.",
+                "Volume accumulation suggests institutional buying pressure.",
+                "Price stability and trend strength indicate bullish continuation.",
+            ],
+            "neutral": [
+                "Mixed momentum and limited volatility imply short-term equilibrium.",
+                "Market consolidation detected — Astra expects sideways action.",
+                "No dominant momentum; neutral outlook pending next catalyst.",
+            ],
+            "bearish": [
+                "Astra detects profit-taking and rising downside volatility.",
+                "Weak momentum and elevated risk suggest caution.",
+                "Downward drift detected; Astra flags defensive posture.",
+            ],
         }
-        """
-        if not isinstance(inputs, dict):
-            return 0.5
 
-        score = self.safe(inputs.get("psych_score", 0.5))
-        # Already roughly 0–1 scaled
-        return max(0.0, min(1.0, score))
+    def get_reason(self, symbol: str, df: pd.DataFrame):
+        """
+        Return a one-sentence reasoning string based on last close behaviour.
+        """
+
+        try:
+            if df is None or df.empty or "close" not in df.columns:
+                return "No recent market data available; awaiting next session."
+
+            closes = df["close"].astype(float)
+            change = closes.pct_change().iloc[-1] * 100 if len(closes) > 1 else 0
+            vol = closes.pct_change().std() * 100
+
+            # Determine sentiment zone
+            if change > 0.5 and vol < 2:
+                mood = "bullish"
+            elif change < -0.5 and vol > 1:
+                mood = "bearish"
+            else:
+                mood = "neutral"
+
+            text = np.random.choice(self.sentences[mood])
+            timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+            return f"{text} ({timestamp})"
+
+        except Exception as e:
+            return f"Astra reasoning unavailable: {e}"

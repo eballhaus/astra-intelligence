@@ -63,7 +63,7 @@ def build_candlestick_chart(
     df = add_indicators(df)
     fig = go.Figure()
 
-    # Candlestick
+    # Candlestick trace
     fig.add_trace(go.Candlestick(
         x=df["date"],
         open=df["open"],
@@ -72,11 +72,56 @@ def build_candlestick_chart(
         close=df["close"],
         name="Price",
         increasing_line_color="#00ff88",
-        decreasing_line_color="#ff4444",
+        decreasing_line_color="#ff4444"
     ))
 
     # Moving Averages
     fig.add_trace(go.Scatter(
         x=df["date"], y=df["MA10"],
         line=dict(width=1.5, color="#FFD700"),
-        name=
+        name="MA10"
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=df["MA30"],
+        line=dict(width=1.5, color="#1E90FF"),
+        name="MA30"
+    ))
+
+    # Bollinger Bands
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=df["BB_UPPER"],
+        line=dict(width=1, color="rgba(173,216,230,0.4)"),
+        name="Bollinger Upper",
+        hoverinfo="skip"
+    ))
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=df["BB_LOWER"],
+        line=dict(width=1, color="rgba(173,216,230,0.4)"),
+        fill="tonexty",
+        fillcolor="rgba(173,216,230,0.1)",
+        name="Bollinger Lower",
+        hoverinfo="skip"
+    ))
+
+    # Forecast Overlay (optional)
+    if include_forecast and forecast_df is not None and not forecast_df.empty:
+        fig.add_trace(go.Scatter(
+            x=forecast_df["date"],
+            y=forecast_df["forecast"],
+            line=dict(width=2, dash="dot", color="#FF00FF"),
+            name="Astra Forecast"
+        ))
+
+    # Layout styling
+    fig.update_layout(
+        title=f"{symbol} — Astra Intelligence Chart",
+        xaxis_title="Date",
+        yaxis_title="Price",
+        template="plotly_dark",
+        height=600,
+        margin=dict(l=40, r=40, t=60, b=40)
+    )
+
+    apply_plotly_theme(fig)
+    return fig
