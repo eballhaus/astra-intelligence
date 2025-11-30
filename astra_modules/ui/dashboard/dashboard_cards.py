@@ -1,67 +1,85 @@
-# -*- coding: utf-8 -*-
 """
-dashboard_cards.py — AstraGlass KPI Cards (Scrollable Columns)
---------------------------------------------------------------
-Displays stock and crypto performance cards with hover summary
-and "Track" button integration.
+Astra Intelligence - Dashboard Cards
+------------------------------------
+Displays symbol information cards with live data and Astra AI insights.
+
+Features:
+• Symbol, price, daily change %
+• Volatility and source
+• AI Forecast (direction + confidence)
+• Astra Rank Score (if available)
+• Watchlist support (⭐ / 🗑)
 """
 
+import streamlit as st
 import json
 from pathlib import Path
 
-import streamlit as st
+WATCHLIST_PATH = Path("astra_watchlist.json")
 
+def render_symbol_card(data_bundle: dict):
+    """Render a single symbol card with AI forecast and stats."""
 
-WATCHLIST_FILE = Path(
-    "/Users/ericballhaus/Desktop/astra-intelligence/astra_watchlist.json"
-)
+    symbol = data_bundle.get("symbol", "Unknown")
+    df = data_bundle.get("df")
+    if df is None or df.empty:
+        st.warning(f"No data available for {symbol}.")
+        return
 
+    latest_price = float(df["close"].iloc[-1])
+    prev_price = float(df["close"].iloc[-2]) if len(df) > 1 else latest_price
+    change_pct = ((latest_price - prev_price) / prev_price) * 100 if prev_price else 0
 
-def render_cards(items, category="stocks"):
-    """
-    Render interactive cards for Stocks or Crypto assets.
-    Supports hover expansion, persistent ⭐ tracking, and 🗑 removal.
-    """
-    # Load or initialize the watchlist
-    if WATCHLIST_FILE.exists():
-        with open(WATCHLIST_FILE, "r") as f:
-            watchlist = json.load(f)
-    else:
-        watchlist = {"stocks": [], "crypto": []}
+    forecast = data_bundle.get("forecast", {})
+    direction = forecast.get("forecast_direction", "neutral").capitalize()
+    confidence = forecast.get("confidence", 0.0)
+    rank_score = data_bundle.get("rank_score", None)
+    volatility = data_bundle.get("volatility", None)
 
-    for item in items:
-        symbol = item.get("symbol", "N/A")
-        price = item.get("price", 0)
-        change = item.get("change", 0.0)
-        source = item.get("source", "API")
+    # === Card Layout ===
+    st.markdown("---")
+    cols = st.columns([2, 2, 2, 2])
 
-        color = "#22C55E" if change >= 0 else "#EF4444"
-        st.markdown(
-            f"""
-            <div class="card-hover" style="padding:0.7rem;margin-bottom:0.6rem;border-radius:12px;
-                background:rgba(255,255,255,0.04);box-shadow:0 0 8px rgba(0,0,0,0.2);">
-                <h4 style="color:#A7F3D0;margin:0;">{symbol}</h4>
-                <p style="margin:0;font-size:0.9rem;color:#9CA3AF;">{source}</p>
-                <p style="color:{color};font-weight:600;">${price:.2f} ({change:+.2f}%)</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    # Symbol & Price
+    with cols[0]:
+        st.subheader(symbol)
+        st.metric("Price", f"${latest_price:.2f}", f"{change_pct:+.2f}%")
 
-        # Track / Remove buttons
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            if st.button(f"⭐ Track {symbol}", key=f"track_{category}_{symbol}"):
-                if symbol not in watchlist[category]:
-                    watchlist[category].append(symbol)
-                    st.toast(f"✅ {symbol} added to {category} watchlist")
+    # Rank / Volatility
+    with cols[1]:
+        if rank_score is not None:
+            st.metric("Astra Rank", f"{rank_score:.2f}")
+        if volatility is not None:
+            st.metric("Volatility", f"{volatility:.2f}")
 
-        with col2:
-            if st.button(f"🗑 Remove {symbol}", key=f"remove_{category}_{symbol}"):
-                if symbol in watchlist[category]:
-                    watchlist[category].remove(symbol)
-                    st.toast(f"🗑️ {symbol} removed from {category} watchlist")
+    # Forecast
+    with cols[2]:
+        st.metric("AI Forecast", direction, f"{confidence*100:.0f}% conf")
 
-    # Save updated watchlist
-    with open(WATCHLIST_FILE, "w") as f:
-        json.dump(watchlist, f, indent=2)
+    # Watchlist buttons
+    with cols[3]:
+        if st.button(f"⭐ Track {symbol}", key=f"track_{symbol}"):
+            update_watchlist(symbol, add=True)
+        if st.button(f"🗑 Remove", key=f"remove_{symbol}"):
+            update_watchlist(symbol, add=False)
+
+def update_watchlist(symbol: str, add: bool = True):
+    """Add or remove a symbol from the watchlist."""
+    try:
+        watchlist = []
+        if WATCHLIST_PATH.exists():
+            with open(WATCHLIST_PATH, "r") as f:
+                watchlist = json.load(f)
+
+        if add and symbol not in watchlist:
+            watchlist.append(symbol)
+        elif not add and symbol in watchlist:
+            watchlist.remove(symbol)
+
+        with open(WATCHLIST_PATH, "w") as f:
+            json.dump(watchlist, f, indent=2)
+
+        st.success(f"Watchlist updated: {symbol} {'added' if add else 'removed'}.")
+
+    except Exception as e:
+        st.error(f"Failed to update watchlist: {e}")

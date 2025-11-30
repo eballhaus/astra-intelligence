@@ -1,222 +1,112 @@
 """
-Astra 7.0 - Performance & Learning Tracker
-------------------------------------------
-Lightweight event logger so Astra can learn over time.
+Astra Intelligence - Performance Tracker
+----------------------------------------
+Logs Astra’s performance metrics and learning outcomes.
 
-Stores a rolling history of prediction events in:
-    asra_learning.json   (project root)
-
-Used for:
-- accuracy tracking
-- learning curves
-- future reinforcement logic
+Responsibilities:
+• Record forecast results and training metrics
+• Track reward statistics, win rate, and accuracy
+• Provide data for LearningEngine and dashboard display
+• Persist stats safely to disk
 """
 
 import json
 from datetime import datetime
 from pathlib import Path
-
-MEMORY_FILE = "astra_learning.json"
-MAX_EVENTS = 2000  # cap to avoid unbounded growth
+import numpy as np
 
 
-# -----------------------------------------------------------
-# Internal helpers
-# -----------------------------------------------------------
-
-
-def _get_memory_path() -> Path:
-    """
-    Resolve the JSON file location at the project root
-    (same level as app.py).
-    """
-    # __file__ = .../astra_modules/learning/performance_tracker.py
-    # parents[2] -> project root (.. / ..)
-    root = Path(__file__).resolve().parents[2]
-    return root / MEMORY_FILE
-
-
-def _load_memory() -> dict:
-    path = _get_memory_path()
-    if not path.exists():
-        return {"events": []}
-
-    try:
-        with path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        if "events" not in data or not isinstance(data["events"], list):
-            data["events"] = []
-        return data
-    except Exception as e:
-        print(f"[performance_tracker] load failed: {e}")
-        return {"events": []}
-
-
-def _save_memory(data: dict) -> None:
-    path = _get_memory_path()
-    try:
-        with path.open("w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-    except Exception as e:
-        print(f"[performance_tracker] save failed: {e}")
-
-
-# -----------------------------------------------------------
-# Public API
-# -----------------------------------------------------------
-
-
-def record_performance(
-    ticker: str,
-    mode: str,
-    prediction: str,
-    confidence: float | int | None,
-    actual_outcome: str | None = None,
-    profit_pct: float | None = None,
-) -> None:
-    """
-    Append a performance/learning event.
-
-    mode:
-        e.g. "scan", "hybrid_swing", "hybrid_day", "forecast"
-
-    prediction:
-        "BUY" / "SELL" / "HOLD" (or other labels later)
-
-    actual_outcome:
-        e.g. "BUY", "SELL", "HOLD" when you later verify result
-        (can be None at first)
-
-    This is intentionally VERY lightweight.
-    """
-    data = _load_memory()
-    events = data.get("events", [])
-
-    evt = {
-        "ts": datetime.utcnow().isoformat(),
-        "ticker": str(ticker).upper(),
-        "mode": str(mode),
-        "prediction": str(prediction),
-        "confidence": float(confidence) if confidence is not None else None,
-        "outcome": actual_outcome,
-        "profit_pct": profit_pct,
-    }
-
-    events.append(evt)
-
-    # keep only last MAX_EVENTS
-    if len(events) > MAX_EVENTS:
-        events = events[-MAX_EVENTS:]
-
-    data["events"] = events
-    _save_memory(data)
-
-
-def get_accuracy_stats(window: int = 200) -> dict:
-    """
-    Returns a high-level summary:
-
-    {
-      "total": total_events,
-      "with_outcome": n_with_outcome,
-      "correct": n_correct,
-      "accuracy": float or None
-    }
-    """
-    data = _load_memory()
-    events = data.get("events", [])
-
-    if not events:
-        return {
-            "total": 0,
-            "with_outcome": 0,
-            "correct": 0,
-            "accuracy": None,
-        }
-
-    # last `window` events that actually have an outcome
-    with_outcome = [e for e in events if e.get(
-        "outcome") is not None][-window:]
-    n_with_outcome = len(with_outcome)
-
-    if n_with_outcome == 0:
-        return {
-            "total": len(events),
-            "with_outcome": 0,
-            "correct": 0,
-            "accuracy": None,
-        }
-
-    correct = sum(1 for e in with_outcome if e.get(
-        "outcome") == e.get("prediction"))
-    accuracy = correct / n_with_outcome if n_with_outcome else None
-
-    return {
-        "total": len(events),
-        "with_outcome": n_with_outcome,
-        "correct": correct,
-        "accuracy": accuracy,
-    }
-
-
-def get_learning_curve_points(window: int = 200) -> list[dict]:
-    """
-    Returns data for plotting Astra's improvement over time.
-
-    Output:
-        [
-          {"index": 1, "accuracy": 0.50},
-          {"index": 2, "accuracy": 0.60},
-          ...
-        ]
-    """
-    data = _load_memory()
-    events = [e for e in data.get("events", [])
-              if e.get("outcome") is not None]
-
-    if not events:
-        return []
-
-    events = events[-window:]
-    points = []
-    correct = 0
-
-    for i, e in enumerate(events, start=1):
-        if e.get("outcome") == e.get("prediction"):
-            correct += 1
-        points.append({"index": i, "accuracy": correct / i})
-
-    return points
-
-
-# === Compatibility Wrapper (Phase-101.8) ===
 class PerformanceTracker:
-    """Unified interface for performance tracking."""
+    """Tracks performance and learning metrics for Astra Intelligence."""
 
     def __init__(self):
-        self.memory = _load_memory()
+        self.metrics_path = Path("astra_modules/state/astra_performance.json")
+        self.data = self._load()
 
-    def record(self, symbol: str, accuracy: float, timestamp=None):
-        """Record a new performance entry."""
-        from datetime import datetime
-
-        if timestamp is None:
-            timestamp = datetime.utcnow().isoformat()
-        record_performance(symbol=symbol, accuracy=accuracy,
-                           timestamp=timestamp)
-
-    def evaluate_accuracy(self, df_actual, df_forecast) -> float:
-        """Compute simple accuracy between actual and forecast values."""
+    # === Persistence ===
+    def _load(self):
+        """Load historical performance data."""
         try:
-            if "predicted" not in df_forecast.columns:
-                return 0.0
-            actual = df_actual["close"].tail(
-                len(df_forecast)).reset_index(drop=True)
-            predicted = df_forecast["predicted"].reset_index(drop=True)
-            return float((1 - abs((predicted - actual) / actual)).mean() * 100)
-        except Exception:
-            return 0.0
+            if self.metrics_path.exists():
+                with open(self.metrics_path, "r") as f:
+                    data = json.load(f)
+                    return data
+        except Exception as e:
+            print(f"[Astra Tracker] Warning: failed to load metrics: {e}")
+        return {"records": [], "training_log": []}
 
-    def get_recent_stats(self, window: int = 200):
-        """Return rolling accuracy statistics."""
-        return get_accuracy_stats(window)
+    def _save(self):
+        """Persist performance data."""
+        try:
+            self.metrics_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.metrics_path, "w") as f:
+                json.dump(self.data, f, indent=2)
+        except Exception as e:
+            print(f"[Astra Tracker] Warning: failed to save metrics: {e}")
+
+    # === Core Recording Methods ===
+    def record_performance(self, symbol: str, reward: float):
+        """Record a reward outcome for a forecast."""
+        try:
+            record = {
+                "symbol": symbol,
+                "reward": reward,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            self.data["records"].append(record)
+            # Keep last 1000 records only
+            self.data["records"] = self.data["records"][-1000:]
+            self._save()
+        except Exception as e:
+            print(f"[Astra Tracker] Failed to record performance: {e}")
+
+    def record_training_result(self, loss: float):
+        """Log a training result entry."""
+        try:
+            entry = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "loss": float(loss)
+            }
+            self.data["training_log"].append(entry)
+            self.data["training_log"] = self.data["training_log"][-200:]
+            self._save()
+        except Exception as e:
+            print(f"[Astra Tracker] Failed to record training result: {e}")
+
+    # === Statistics & Learning Data ===
+    def get_recent_stats(self, n: int = 200):
+        """Return recent accuracy, win rate, and average reward."""
+        try:
+            records = self.data.get("records", [])[-n:]
+            if not records:
+                return {"accuracy": 0.5, "win_rate": 0.5, "avg_reward": 0.0}
+
+            rewards = np.array([r["reward"] for r in records])
+            positive = np.sum(rewards > 0)
+            win_rate = positive / len(rewards)
+            avg_reward = np.mean(rewards)
+            accuracy = win_rate  # accuracy == win rate for trading outcomes
+
+            return {
+                "accuracy": float(accuracy),
+                "win_rate": float(win_rate),
+                "avg_reward": float(avg_reward)
+            }
+        except Exception as e:
+            print(f"[Astra Tracker] Failed to compute stats: {e}")
+            return {"accuracy": 0.5, "win_rate": 0.5, "avg_reward": 0.0}
+
+    def get_learning_curve(self, n: int = 50):
+        """Return recent training losses as a learning curve."""
+        try:
+            log = self.data.get("training_log", [])[-n:]
+            timestamps = [x["timestamp"] for x in log]
+            losses = [x["loss"] for x in log]
+            return {"timestamps": timestamps, "losses": losses}
+        except Exception as e:
+            print(f"[Astra Tracker] Failed to load learning curve: {e}")
+            return {"timestamps": [], "losses": []}
+
+    def get_accuracy_stats(self):
+        """Alias for get_recent_stats."""
+        return self.get_recent_stats()

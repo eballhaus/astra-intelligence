@@ -1,153 +1,122 @@
 """
-paper_trader.py — Phase-90
+Astra Intelligence - Paper Trader
+---------------------------------
+Simulated trading system for Astra Intelligence.
+Creates virtual trades from forecasts and tracks their results
+to feed into the learning system.
 
-Simulated trading engine for Astra Intelligence.
-Tracks:
- • Trade entries
- • Exits
- • PnL
- • Outcome labels for NeuralAgent training
- • Storage inside ReplayBuffer
-
-Supports:
- • open_trade()
- • close_trade()
- • get_open_positions()
- • get_closed_positions()
-
-Perfect for Phase-90 learning loop.
+Responsibilities:
+• Open & close paper trades based on Astra forecasts
+• Track PnL, accuracy, and duration
+• Send completed trade results to ReplayBuffer
+• Never execute real trades (simulation only)
 """
 
-import time
+from datetime import datetime, timedelta
+import numpy as np
+import traceback
+from astra_modules.learning.replay_buffer import ReplayBuffer
+from astra_modules.learning.performance_tracker import PerformanceTracker
 
 
 class PaperTrader:
-    def __init__(self, buffer, guardian=None):
-        """
-        buffer: ReplayBuffer instance
-        guardian: optional GuardianV3 for safe operations
-        """
-        self.buffer = buffer
-        self.guardian = guardian
+    """Simulates trade entries/exits and logs learning outcomes."""
 
-        self.open_positions = {}  # {ticker: {...}}
-        self.closed_positions = []  # list of closed trade dicts
+    def __init__(self, max_hold_minutes: int = 240, reward_scaler: float = 100):
+        self.open_trades = []
+        self.closed_trades = []
+        self.max_hold = timedelta(minutes=max_hold_minutes)
+        self.buffer = ReplayBuffer()
+        self.tracker = PerformanceTracker()
+        self.reward_scaler = reward_scaler
 
-    # ---------------------------------------------------------------------
-    # Safe helper
-    # ---------------------------------------------------------------------
-    def safe(self, func, *args, **kwargs):
-        """Guardian wrapper if available."""
-        if self.guardian:
-            return self.guardian.safe_run(func, *args, **kwargs)
+    # === Core Trading Logic ===
+    def open_trade(self, symbol: str, direction: str, confidence: float = 0.5, price: float = None):
+        """Open a simulated trade position."""
         try:
-            return func(*args, **kwargs)
-        except Exception:
-            return None
-
-    # ---------------------------------------------------------------------
-    # OPEN TRADE
-    # ---------------------------------------------------------------------
-    def open_trade(self, ticker, price, context=None):
-        """
-        Opens a paper trade for a ticker.
-        context = AstraPrime packet or metadata
-        """
-        ts = int(time.time())
-
-        trade = {
-            "ticker": ticker,
-            "entry_price": price,
-            "open_time": ts,
-            "context": context or {},
-        }
-
-        self.open_positions[ticker] = trade
-        return trade
-
-    # ---------------------------------------------------------------------
-    # CLOSE TRADE
-    # ---------------------------------------------------------------------
-    def close_trade(self, ticker, exit_price):
-        """
-        Closes a trade and computes outcome.
-        Also stores sample to ReplayBuffer.
-        """
-        if ticker not in self.open_positions:
-            return None
-
-        trade = self.open_positions.pop(ticker)
-        entry = trade["entry_price"]
-        pnl = exit_price - entry
-        label = 1 if pnl > 0 else 0
-
-        closed = {
-            "ticker": ticker,
-            "entry": entry,
-            "exit": exit_price,
-            "pnl": pnl,
-            "label": label,
-            "open_time": trade["open_time"],
-            "close_time": int(time.time()),
-            "context": trade.get("context", {}),
-        }
-
-        # Store closed trade
-        self.closed_positions.append(closed)
-
-        # ---------------------------------------------------------
-        # Store learning sample in ReplayBuffer
-        # ---------------------------------------------------------
-        packet = trade.get("context", {})
-        vector = packet.get("neural_vector")
-
-        if vector is not None:
-            sample = {
-                "vector": vector,
-                "label": label,
-                "ticker": ticker,
-                "pnl": pnl,
-                "timestamp": trade["open_time"],
+            trade = {
+                "symbol": symbol,
+                "direction": direction.lower(),
+                "confidence": confidence,
+                "entry_price": float(price) if price else None,
+                "entry_time": datetime.utcnow().isoformat(),
+                "exit_price": None,
+                "exit_time": None,
+                "reward": None
             }
-            self.safe(self.buffer.push, sample)
+            self.open_trades.append(trade)
+            print(f"[Astra PaperTrader] 🟢 Opened {direction.upper()} trade for {symbol}")
+        except Exception as e:
+            print(f"[Astra PaperTrader] Failed to open trade: {e}")
 
-        return closed
+    def close_trade(self, symbol: str, price: float):
+        """Close a simulated trade and compute reward."""
+        try:
+            # Find active trade
+            trade = next((t for t in self.open_trades if t["symbol"] == symbol), None)
+            if not trade:
+                return
 
-    # ---------------------------------------------------------------------
-    # GETTERS
-    # ---------------------------------------------------------------------
+            trade["exit_price"] = float(price)
+            trade["exit_time"] = datetime.utcnow().isoformat()
+
+            # Compute reward
+            direction = trade["direction"]
+            entry_price = trade["entry_price"] or price
+            price_change = (price - entry_price) / entry_price
+
+            if direction == "buy":
+                reward = price_change
+            elif direction == "sell":
+                reward = -price_change
+            else:
+                reward = 0.0
+
+            # Scale reward for training
+            reward *= self.reward_scaler
+
+            trade["reward"] = reward
+            self.closed_trades.append(trade)
+            self.open_trades.remove(trade)
+
+            print(f"[Astra PaperTrader] 🔴 Closed {direction.upper()} trade for {symbol} | Reward: {reward:.2f}")
+
+            # Log to replay buffer
+            self.buffer.add(
+                state=[entry_price, confidence],
+                prediction=confidence if direction == "buy" else -confidence,
+                reward=reward,
+                symbol=symbol,
+                confidence=confidence,
+            )
+
+            # Log performance
+            self.tracker.record_performance(symbol=symbol, reward=reward)
+
+        except Exception as e:
+            print(f"[Astra PaperTrader] Failed to close trade: {e}")
+            traceback.print_exc()
+
+    # === Automatic Maintenance ===
+    def auto_close_expired(self, latest_prices: dict):
+        """Automatically close trades that have exceeded max holding time."""
+        now = datetime.utcnow()
+        expired = [
+            t for t in self.open_trades
+            if (now - datetime.fromisoformat(t["entry_time"])) > self.max_hold
+        ]
+
+        for trade in expired:
+            symbol = trade["symbol"]
+            if symbol in latest_prices:
+                self.close_trade(symbol, latest_prices[symbol])
+            else:
+                print(f"[Astra PaperTrader] Skipped expired trade (no price): {symbol}")
+
     def get_open_positions(self):
-        """Return list of current open paper trades"""
-        return list(self.open_positions.values())
+        """Return list of active paper trades."""
+        return self.open_trades
 
-    def get_closed_positions(self):
-        """Return list of historical completed trades"""
-        return list(self.closed_positions)
-
-    # ---------------------------------------------------------------------
-    # UTILITY
-    # ---------------------------------------------------------------------
-    def auto_close_expired(self, price_lookup, max_minutes=120):
-        """
-        Optional utility: auto-close any trades older than max_minutes.
-        price_lookup(ticker) must return current price.
-
-        Useful for future Phase-100 auto-trading.
-        """
-        now = int(time.time())
-        to_close = []
-
-        for ticker, trade in list(self.open_positions.items()):
-            age_min = (now - trade["open_time"]) / 60
-            if age_min >= max_minutes:
-                to_close.append(ticker)
-
-        results = []
-        for t in to_close:
-            px = price_lookup(t)
-            if px:
-                closed = self.close_trade(t, px)
-                if closed:
-                    results.append(closed)
-
-        return results
+    def get_closed_positions(self, n: int = 20):
+        """Return most recent closed trades."""
+        return self.closed_trades[-n:]

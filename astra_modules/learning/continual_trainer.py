@@ -1,104 +1,120 @@
 """
-continual_trainer.py — Phase-90 Upgrade
-Reads from ReplayBuffer and trains the MicroNeuralModel.
-Supports hybrid supervised learning from PnL outcomes.
+Astra Intelligence - Continual Trainer
+--------------------------------------
+Continuously trains Astra's internal neural intelligence model using replayed experiences.
+
+Responsibilities:
+• Fetches training samples from ReplayBuffer
+• Runs online training steps on the neural model
+• Saves updated weights to LearningStore
+• Tracks loss and performance metrics
+• Operates safely under scheduler control
+
+This trainer is designed to run continuously and incrementally.
 """
 
-from typing import Any, Dict, List
+import random
+import numpy as np
+import traceback
+from datetime import datetime
+
+from astra_modules.learning.replay_buffer import ReplayBuffer
+from astra_modules.learning.learning_store import LearningStore
+from astra_modules.learning.performance_tracker import PerformanceTracker
 
 
 class ContinualTrainer:
-    def __init__(self, neural_agent, replay_buffer):
-        """
-        neural_agent: NeuralAgent instance
-        replay_buffer: ReplayBuffer instance
-        """
-        self.agent = neural_agent
-        self.buffer = replay_buffer
+    """
+    Main online trainer for Astra's learning system.
+    Performs incremental updates to the neural or statistical model using
+    small batches from ReplayBuffer.
+    """
 
-    # ==================================================================
-    # INTERNAL: CLEAN & VALIDATE TRAINING SAMPLES
-    # ==================================================================
-    def _extract_training_samples(self, batch) -> List[Dict[str, Any]]:
-        """
-        Converts replay buffer entries into valid training samples.
+    def __init__(self, batch_size: int = 32, learning_rate: float = 0.001):
+        self.batch_size = batch_size
+        self.learning_rate = learning_rate
+        self.store = LearningStore()
+        self.performance = PerformanceTracker()
 
-        ReplayBuffer entries look like:
-        {
-            "state": { "features": [...] },
-            "prediction": float,
-            "outcome": float   # PnL
-        }
-        """
-        samples = []
+        # Initialize model weights (can be neural or regression-based)
+        self.model = self._load_model()
 
-        for exp in batch:
-            try:
-                if not isinstance(exp, dict):
-                    continue
-
-                state = exp.get("state", {})
-                features = state.get("features")
-                outcome = exp.get("outcome", None)
-
-                # Skip malformed entries
-                if features is None or outcome is None:
-                    continue
-
-                # Binary label for logistic model
-                label = 1 if float(outcome) > 0 else 0
-
-                samples.append({"features": features, "label": label})
-
-            except Exception:
-                # Skip any corrupted record safely
-                continue
-
-        return samples
-
-    # ==================================================================
-    # TRAIN STEP
-    # ==================================================================
-    def train_step(self, batch: List[dict]):
-        """
-        Perform one training pass over a sample batch.
-        """
-
+    # === Model Management ===
+    def _load_model(self):
+        """Load model state from LearningStore."""
         try:
-            if not batch:
-                return "No data to train on."
-
-            samples = self._extract_training_samples(batch)
-            if not samples:
-                return "No valid samples with features/outcomes."
-
-            model = self.agent.model
-
-            trained = 0
-            for s in samples:
-                features = s["features"]
-                label = s["label"]
-
-                # Train micro neural model
-                model.train_step(features, label)
-                trained += 1
-
-            return f"Trained on {trained} samples."
-
+            state = self.store.load_state()
+            if state and "weights" in state:
+                print("[Astra Trainer] Loaded existing model weights.")
+                return state
         except Exception as e:
-            return f"[Trainer] Error during train_step: {e}"
+            print(f"[Astra Trainer] Warning: could not load model: {e}")
+        return {"weights": np.random.rand(10), "bias": 0.0}  # fallback initial state
 
-    # ==================================================================
-    # PUBLIC TRAIN METHOD
-    # ==================================================================
-    def train(self, batch_size: int = 64):
+    def _save_model(self):
+        """Persist model state to LearningStore."""
+        try:
+            self.store.save_state(self.model)
+            print("[Astra Trainer] Model weights saved.")
+        except Exception as e:
+            print(f"[Astra Trainer] Failed to save model: {e}")
+
+    # === Training Pipeline ===
+    def _prepare_batch(self, buffer: ReplayBuffer):
+        """Sample a mini-batch of training experiences."""
+        samples = buffer.sample(self.batch_size)
+        if not samples:
+            return None, None, None
+        X = np.array([s["state"] for s in samples])
+        y_true = np.array([s["reward"] for s in samples])
+        preds = np.array([s["prediction"] for s in samples])
+        return X, y_true, preds
+
+    def _train_step(self, X, y_true, preds):
         """
-        Main training loop. Pulls a sample batch from ReplayBuffer
-        and calls train_step().
+        Perform one gradient update step.
+        Placeholder implementation: adjust weights based on prediction error.
         """
         try:
-            batch = self.buffer.sample(batch_size)
-            return self.train_step(batch)
+            errors = y_true - preds
+            mean_error = np.mean(errors)
+            grad = -2 * np.mean(X, axis=0) * mean_error
+            self.model["weights"] -= self.learning_rate * grad
+            self.model["bias"] -= self.learning_rate * mean_error
+            loss = float(np.mean(errors ** 2))
+            return loss
+        except Exception as e:
+            print(f"[Astra Trainer] Train step failed: {e}")
+            return None
+
+    def train(self, buffer: ReplayBuffer):
+        """
+        Run a full continual learning session.
+        Pulls batches from ReplayBuffer and updates the model incrementally.
+        """
+        try:
+            total_loss = []
+            for i in range(5):  # 5 incremental mini-batch updates
+                X, y_true, preds = self._prepare_batch(buffer)
+                if X is None:
+                    print("[Astra Trainer] No replay samples available.")
+                    return False
+
+                loss = self._train_step(X, y_true, preds)
+                if loss is not None:
+                    total_loss.append(loss)
+                    print(f"[Astra Trainer] Batch {i+1}/5 | Loss: {loss:.6f}")
+
+            # Save updated weights
+            self._save_model()
+
+            avg_loss = np.mean(total_loss) if total_loss else 0.0
+            self.performance.record_training_result(loss=avg_loss)
+            print(f"[Astra Trainer] ✅ Training complete | Avg Loss: {avg_loss:.6f}")
+
+            return True
 
         except Exception as e:
-            return f"[Trainer] Error getting batch: {e}"
+            print(f"[Astra Trainer] ❌ Training failed: {e}")
+            traceback.print_exc()
+            return False

@@ -1,113 +1,137 @@
 """
-scheduler.py — Phase-90
+Astra Intelligence - Learning Scheduler
+---------------------------------------
+Autonomous background scheduler that manages Astra’s continual learning cycle.
 
-Background training scheduler for Astra Intelligence.
-Supports:
- • timed training loops (every X minutes)
- • condition-based training (buffer size threshold)
- • daily training routines
+Responsibilities:
+• Runs background retraining on a fixed interval (default 60 minutes)
+• Triggers continual trainer (neural updates)
+• Runs learning engine (correlation + weight adjustment)
+• Updates performance tracker
+• Logs all events safely without interrupting the main dashboard
+• Self-recovers from API or data interruptions
 
-Used by Learning Center + background agent.
+This module runs continuously in the background once Astra is launched.
 """
 
+import time
+import threading
 from datetime import datetime, timedelta
+from typing import Optional
+
+from astra_modules.learning.continual_trainer import ContinualTrainer
+from astra_modules.learning.learning_engine import train_learning_engine
+from astra_modules.learning.replay_buffer import ReplayBuffer
+from astra_modules.learning.performance_tracker import PerformanceTracker
 
 
 class LearningScheduler:
-    def __init__(self, trainer, buffer, guardian=None):
-        """
-        trainer: ContinualTrainer instance
-        buffer: ReplayBuffer instance
-        guardian: optional GuardianV3 for safety
-        """
-        self.trainer = trainer
-        self.buffer = buffer
-        self.guardian = guardian
+    """
+    Background learning controller for Astra.
+    Runs periodic training sessions to keep neural and weight models updated.
+    """
 
-        self.last_train_time = None
-        self.interval_minutes = 30  # default every 30 minutes
-        self.min_buffer_samples = 50  # minimum samples required
+    def __init__(self, interval_minutes: int = 60, min_new_samples: int = 10):
+        self.interval_minutes = interval_minutes
+        self.min_new_samples = min_new_samples
+        self.last_run: Optional[datetime] = None
+        self.is_running = False
+        self.thread: Optional[threading.Thread] = None
+        self.performance_tracker = PerformanceTracker()
+        self.replay_buffer = ReplayBuffer()
 
-    # -------------------------------------------------------------
-    # SAFE WRAPPER
-    # -------------------------------------------------------------
-    def safe(self, func, *args, **kwargs):
-        if self.guardian:
-            return self.guardian.safe_run(func, *args, **kwargs)
-        try:
-            return func(*args, **kwargs)
-        except Exception:
-            return None
-
-    # -------------------------------------------------------------
-    # CORE SCHEDULE CHECKER
-    # -------------------------------------------------------------
-    def should_train(self):
-        """
-        Returns True if:
-         • enough buffer samples exist
-         • it's been interval_minutes since last run
-        """
-        size = self.safe(self.buffer.size) or 0
-        if size < self.min_buffer_samples:
-            return False
-
+    # === Scheduler State ===
+    def should_train(self) -> bool:
+        """Check whether it’s time for the next training session."""
         now = datetime.utcnow()
 
-        if self.last_train_time is None:
+        if self.last_run is None:
             return True
 
-        delta = now - self.last_train_time
-        if delta >= timedelta(minutes=self.interval_minutes):
+        elapsed = (now - self.last_run).total_seconds() / 60
+        if elapsed >= self.interval_minutes:
+            return True
+
+        # Optional: also check replay buffer for new samples
+        if len(self.replay_buffer) >= self.min_new_samples:
             return True
 
         return False
 
-    # -------------------------------------------------------------
-    # TRAINING EXECUTOR
-    # -------------------------------------------------------------
-    def run_if_due(self):
-        """
-        Run training ONLY if the system decides it's time.
-        """
-        if not self.should_train():
-            return {"trained": False, "reason": "Not due or insufficient samples"}
+    def mark_run(self):
+        """Record the timestamp of the last training cycle."""
+        self.last_run = datetime.utcnow()
 
-        out = self.safe(self.trainer.train_step)
-        self.last_train_time = datetime.utcnow()
+    # === Core Learning Cycle ===
+    def run_learning_cycle(self):
+        """Execute a full learning cycle safely."""
+        try:
+            print(f"[Astra Learning] 🚀 Starting learning cycle at {datetime.utcnow().isoformat()}")
 
-        return {
-            "trained": bool(out),
-            "timestamp": str(self.last_train_time),
-        }
+            # 1️⃣ Train neural model incrementally
+            trainer = ContinualTrainer()
+            trainer.train(self.replay_buffer)
 
-    # -------------------------------------------------------------
-    # FORCE TRAINING
-    # -------------------------------------------------------------
-    def force_train(self):
-        """
-        Manual / emergency “train now”.
-        """
-        out = self.safe(self.trainer.train_step)
-        self.last_train_time = datetime.utcnow()
+            # 2️⃣ Update correlation and weighting models
+            train_learning_engine()
 
-        return {
-            "trained": bool(out),
-            "timestamp": str(self.last_train_time),
-            "reason": "Manual",
-        }
+            # 3️⃣ Evaluate current learning performance
+            stats = self.performance_tracker.get_recent_stats()
+            accuracy = stats.get("accuracy", 0)
+            win_rate = stats.get("win_rate", 0)
+            print(f"[Astra Learning] Accuracy: {accuracy:.2%} | Win Rate: {win_rate:.2%}")
 
-    # -------------------------------------------------------------
-    # DAILY SCHEDULE (RUN AT MIDNIGHT UTC)
-    # -------------------------------------------------------------
-    def run_daily(self):
-        """
-        Use in future daemon:
-         • At midnight UTC each day
-         • Perform full retraining
-        """
-        now = datetime.utcnow()
-        if now.hour == 0 and now.minute < 5:
-            return self.force_train()
+            # 4️⃣ Update state
+            self.mark_run()
+            print(f"[Astra Learning] ✅ Cycle completed successfully at {self.last_run.isoformat()}")
 
-        return {"trained": False, "reason": "Not daily window"}
+        except Exception as e:
+            print(f"[Astra Learning] ⚠️ Learning cycle failed: {e}")
+
+    # === Thread Management ===
+    def _background_loop(self):
+        """Internal background thread loop for continuous operation."""
+        self.is_running = True
+        print(f"[Astra Learning] Background scheduler started. Interval: {self.interval_minutes} min")
+
+        while self.is_running:
+            try:
+                if self.should_train():
+                    self.run_learning_cycle()
+                time.sleep(60)  # check every minute
+            except Exception as e:
+                print(f"[Astra Learning] ⚠️ Scheduler loop error: {e}")
+                time.sleep(300)
+
+    def start(self):
+        """Start the learning scheduler in a background thread."""
+        if self.thread and self.thread.is_alive():
+            print("[Astra Learning] Scheduler is already running.")
+            return
+
+        self.thread = threading.Thread(target=self._background_loop, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        """Stop the background scheduler safely."""
+        print("[Astra Learning] Scheduler stopping...")
+        self.is_running = False
+        if self.thread:
+            self.thread.join(timeout=5)
+        print("[Astra Learning] Scheduler stopped.")
+
+
+# === Entry Point ===
+if __name__ == "__main__":
+    """
+    Running this file directly will launch Astra’s autonomous learning scheduler.
+    It will run indefinitely, checking every minute for training conditions.
+    """
+    scheduler = LearningScheduler(interval_minutes=60)
+    scheduler.start()
+
+    try:
+        while True:
+            time.sleep(300)
+    except KeyboardInterrupt:
+        scheduler.stop()

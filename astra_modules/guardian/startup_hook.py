@@ -1,6 +1,6 @@
 """
 Astra Intelligence — Guardian Startup Hook
-Phase-101.9 | GuardianV6 Bootstrap
+Phase-101.9 | GuardianV6 Bootstrap + Integrity Verification
 """
 
 from __future__ import annotations
@@ -16,6 +16,18 @@ try:
 except ImportError as e:
     raise ImportError(f"Failed to import GuardianV6: {e}") from e
 
+# ──────────────────────────────────────────────
+# Import Integrity Lock (non-blocking background thread)
+# ──────────────────────────────────────────────
+try:
+    from astra_modules.guardian.ui_integrity_lock import start_background_check
+    start_background_check()
+except Exception as e:
+    print(f"[Guardian] Integrity check skipped: {e}")
+
+# ──────────────────────────────────────────────
+# Logging Configuration
+# ──────────────────────────────────────────────
 LOG_PATH = Path(__file__).resolve().parent / "guardian_v6.log"
 logging.basicConfig(
     filename=LOG_PATH,
@@ -25,7 +37,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("StartupHook")
 
-
 # ──────────────────────────────────────────────
 # Bootstrap Logic
 # ──────────────────────────────────────────────
@@ -33,12 +44,18 @@ def startup_sequence(verbose: bool = False) -> None:
     """
     Called automatically on system boot.
     Ensures GuardianV6 is active and reporting.
+    Also confirms integrity thread started.
     """
     try:
-        guardian_core.initialize_guardian()
+        # Instantiate GuardianV6 core and run startup integrity check
+        guardian_instance = guardian_core.GuardianV6(base_path=str(Path(__file__).resolve().parent.parent))
+        guardian_instance.integrity_check()
+
         if verbose:
             print("🧠 GuardianV6 startup sequence completed successfully.")
-        logger.info("GuardianV6 startup completed.")
+            print("🔒 UI integrity verifier running asynchronously.")
+        logger.info("GuardianV6 startup completed; integrity verifier active.")
+
     except Exception as e:
         logger.exception(f"GuardianV6 startup failed: {e}")
         raise RuntimeError(f"GuardianV6 startup failed: {e}") from e

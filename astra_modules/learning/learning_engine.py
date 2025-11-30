@@ -1,182 +1,143 @@
-# =====================================================================
-# learning_engine.py — Astra Phase-60 Learning Intelligence Core
-# =====================================================================
-# This module teaches Astra how to interpret the data stored
-# in learning_store.py and automatically adjust prediction /
-# ranking behavior over time.
-#
-# Key Features:
-#   ✔ Rolling 90-day training window
-#   ✔ Momentum + volatility learning
-#   ✔ Dynamic buy_score weighting
-#   ✔ Learn which hybrid signals predict success
-#   ✔ Robust fallbacks if data missing
-#   ✔ Guardian-safe numeric conversions
-#   ✔ Ultra-fast training (vectorized Pandas)
-#
-# =====================================================================
+"""
+Astra Intelligence - Learning Engine
+------------------------------------
+High-level intelligence system that updates Astra's learning weights
+based on recent performance metrics and experience data.
 
+Responsibilities:
+• Analyze recent performance (accuracy, reward trends)
+• Update weight correlations between agents and outcomes
+• Provide live learning signal to other modules (e.g., AstraPrime)
+• Persist new learning state via LearningStore
+"""
+
+import numpy as np
+import traceback
 from datetime import datetime
 
-import pandas as pd
-
-from astra_modules.guardian.guardian_v6 import guardian
-from astra_modules.learning.learning_store import load_records
-
-# =====================================================================
-# GLOBAL DEFAULT WEIGHTS (Initial Seed)
-# These evolve as Astra learns.
-# =====================================================================
-LEARNING_STATE = {
-    "momentum_weight": 0.25,
-    "volatility_weight": 0.15,
-    "trend_weight": 0.20,
-    "hybrid_weight": 0.20,
-    "confidence_weight": 0.20,
-    "last_trained": None,
-    "samples_used": 0,
-}
+from astra_modules.learning.learning_store import LearningStore
+from astra_modules.learning.performance_tracker import PerformanceTracker
+from astra_modules.learning.replay_buffer import ReplayBuffer
 
 
-# =====================================================================
-# SAFE NORMALIZATION
-# =====================================================================
-def _safe_norm(series):
-    if len(series) == 0:
-        return series
-    std = series.std()
-    if std == 0 or pd.isna(std):
-        return series * 0
-    return (series - series.mean()) / std
+class LearningEngine:
+    """Main adaptive intelligence engine that updates feature correlations and weights."""
+
+    def __init__(self):
+        self.store = LearningStore()
+        self.tracker = PerformanceTracker()
+        self.buffer = ReplayBuffer()
+        self.state = self._load_state()
+
+    # === State Management ===
+    def _load_state(self):
+        """Load last saved weight state from LearningStore."""
+        try:
+            state = self.store.load_state()
+            if state:
+                print("[Astra LearningEngine] Loaded previous learning weights.")
+                return state
+        except Exception as e:
+            print(f"[Astra LearningEngine] Warning: could not load previous state: {e}")
+        return {"weights": np.ones(10), "timestamp": datetime.utcnow().isoformat()}
+
+    def _save_state(self):
+        """Persist the current learning weights."""
+        try:
+            self.store.save_state(self.state)
+            print("[Astra LearningEngine] Learning weights saved.")
+        except Exception as e:
+            print(f"[Astra LearningEngine] Failed to save learning weights: {e}")
+
+    # === Core Learning Computations ===
+    def _compute_correlation_weights(self):
+        """
+        Compute new correlation weights based on replay buffer content.
+        This uses a simple covariance heuristic as a baseline.
+        """
+        samples = self.buffer.sample(100)
+        if not samples:
+            print("[Astra LearningEngine] No data available to compute correlations.")
+            return self.state.get("weights", np.ones(10))
+
+        try:
+            X = np.array([s["state"] for s in samples])
+            y = np.array([s["reward"] for s in samples])
+            preds = np.array([s["prediction"] for s in samples])
+
+            # Correlation between state features and observed reward
+            corr = np.corrcoef(X.T, y)[-1, :-1]
+            corr = np.nan_to_num(corr)
+
+            # Normalize correlation vector
+            corr = corr / (np.linalg.norm(corr) + 1e-9)
+            print("[Astra LearningEngine] Computed correlation weights.")
+            return corr
+
+        except Exception as e:
+            print(f"[Astra LearningEngine] Correlation computation failed: {e}")
+            traceback.print_exc()
+            return self.state.get("weights", np.ones(10))
+
+    def _adjust_weights_by_performance(self, corr_weights):
+        """
+        Adjust overall learning weights based on correlation and performance.
+        """
+        stats = self.tracker.get_recent_stats()
+        acc = stats.get("accuracy", 0.5)
+        win_rate = stats.get("win_rate", 0.5)
+
+        # Scale weights toward better-performing features
+        performance_factor = (acc + win_rate) / 2.0
+        new_weights = self.state["weights"] * 0.8 + corr_weights * 0.2 * (1 + performance_factor)
+
+        # Normalize and clip
+        new_weights = np.clip(new_weights / (np.linalg.norm(new_weights) + 1e-9), -1.0, 1.0)
+        return new_weights
+
+    def train(self):
+        """
+        Run the learning engine to update Astra’s meta-weights based on new data.
+        """
+        try:
+            corr_weights = self._compute_correlation_weights()
+            new_weights = self._adjust_weights_by_performance(corr_weights)
+
+            self.state["weights"] = new_weights
+            self.state["timestamp"] = datetime.utcnow().isoformat()
+
+            self._save_state()
+            print("[Astra LearningEngine] ✅ Learning weights updated successfully.")
+
+        except Exception as e:
+            print(f"[Astra LearningEngine] ❌ LearningEngine training failed: {e}")
+            traceback.print_exc()
 
 
-# =====================================================================
-# COMPUTE TRAINING LABELS
-# Outcome = next-day return
-# =====================================================================
-def _compute_targets(df):
-    df = df.sort_values("timestamp")
-    df["next_close"] = df["close"].shift(-1)
-    df["future_return"] = (df["next_close"] - df["close"]) / df["close"]
-    df = df.dropna(subset=["future_return"])
-    return df
-
-
-# =====================================================================
-# FIT WEIGHTS BASED ON HISTORICAL CORRELATION
-# =====================================================================
-def _fit_weights(df):
-    new_weights = {}
-
-    factors = {
-        "momentum_weight": df["momentum10"],
-        "volatility_weight": df["volatility20"] * -1,  # lower vol = better
-        "trend_weight": df["slope10"],
-        "hybrid_weight": df["hybrid_score"],
-        "confidence_weight": df["confidence"],
-    }
-
-    for weight_name, series in factors.items():
-        corr = df["future_return"].corr(series)
-        if pd.isna(corr):
-            corr = 0.0
-        new_weights[weight_name] = corr
-
-    # Normalize so weights sum to 1
-    total = sum(abs(v) for v in new_weights.values()) or 1
-    for k in new_weights:
-        new_weights[k] = float(new_weights[k] / total)
-
-    return new_weights
-
-
-# =====================================================================
-# MAIN TRAINING FUNCTION
-# =====================================================================
+# === External Entry Points ===
 def train_learning_engine():
+    """Public helper to train the learning engine once."""
+    engine = LearningEngine()
+    engine.train()
+
+
+def learning_signal():
     """
-    Loads last 90 days of records, learns correlations between
-    Astra’s signals and future performance.
+    Compute a short-term learning adjustment factor.
+    Used by AstraPrime and other modules to scale decisions dynamically.
+    Returns a float multiplier (e.g., 1.02 for positive learning trend).
     """
+    try:
+        tracker = PerformanceTracker()
+        stats = tracker.get_recent_stats()
 
-    df = load_records(as_dataframe=True)
-    if df.empty or len(df) < 50:
-        return LEARNING_STATE  # Not enough data yet
+        accuracy = stats.get("accuracy", 0.5)
+        win_rate = stats.get("win_rate", 0.5)
 
-    # Guardian cleanup
-    df = guardian.sanitize_df(df)
+        # Compute a small multiplier based on recent performance (±5%)
+        factor = 1.0 + ((accuracy + win_rate) / 2.0 - 0.5) * 0.1
+        return float(np.clip(factor, 0.9, 1.1))
 
-    # Compute training targets (next-day returns)
-    df = _compute_targets(df)
-    if df.empty:
-        return LEARNING_STATE
-
-    # Drop rows with missing numeric data
-    numeric_cols = [
-        "momentum10",
-        "volatility20",
-        "slope10",
-        "hybrid_score",
-        "confidence",
-        "future_return",
-    ]
-    df = df.dropna(subset=numeric_cols)
-
-    if df.empty:
-        return LEARNING_STATE
-
-    # Fit new weights
-    new_weights = _fit_weights(df)
-
-    # Update global state
-    LEARNING_STATE.update(new_weights)
-    LEARNING_STATE["last_trained"] = datetime.utcnow().isoformat()
-    LEARNING_STATE["samples_used"] = len(df)
-
-    return LEARNING_STATE
-
-
-# =====================================================================
-# PREDICTIVE SIGNAL — Combined Learning Score
-# Used by Ranking Engine.
-# =====================================================================
-def learning_signal(feature_row):
-    """
-    feature_row is a dict containing:
-       momentum10, volatility20, slope10, hybrid_score, confidence
-    """
-
-    w = LEARNING_STATE
-
-    # Guardian-safe extraction
-    m = feature_row.get("momentum10", 0)
-    v = feature_row.get("volatility20", 0)
-    t = feature_row.get("slope10", 0)
-    h = feature_row.get("hybrid_score", 0)
-    c = feature_row.get("confidence", 0)
-
-    # Lower volatility → better
-    v_score = -v
-
-    # Weighted composite score
-    final = (
-        w["momentum_weight"] * m
-        + w["volatility_weight"] * v_score
-        + w["trend_weight"] * t
-        + w["hybrid_weight"] * h
-        + w["confidence_weight"] * c
-    )
-
-    return float(final)
-
-
-# =====================================================================
-# EXTERNAL API FOR RANKING ENGINE
-# =====================================================================
-def get_learning_state():
-    return LEARNING_STATE
-
-
-def refresh_learning():
-    """Train immediately and return updated weights."""
-    return train_learning_engine()
+    except Exception as e:
+        print(f"[Astra Learning] Warning: learning_signal() failed: {e}")
+        return 1.0
