@@ -18,7 +18,7 @@ import asyncio
 import json
 import os
 from datetime import datetime
-from typing import Dict, Any
+from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
@@ -32,6 +32,7 @@ guardian = GuardianV7()
 # ============================================================
 
 TELEMETRY_PATH = os.path.join(os.getcwd(), "logs", "telemetry_latest.json")
+
 
 def get_guardian_telemetry() -> Dict[str, Any]:
     """
@@ -83,14 +84,24 @@ def get_dashboard_status() -> Dict[str, Any]:
 # 🧩 Data Normalization Utility
 # ============================================================
 
+
 def normalize_dataframe(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     """Clean and standardize a DataFrame for Astra dashboard visualization."""
     try:
         expected_cols = ["timestamp", "open", "high", "low", "close", "volume"]
         rename_map = {
-            "date": "timestamp", "time": "timestamp",
-            "o": "open", "h": "high", "l": "low", "c": "close", "v": "volume",
-            "Close": "close", "Open": "open", "High": "high", "Low": "low", "Volume": "volume"
+            "date": "timestamp",
+            "time": "timestamp",
+            "o": "open",
+            "h": "high",
+            "l": "low",
+            "c": "close",
+            "v": "volume",
+            "Close": "close",
+            "Open": "open",
+            "High": "high",
+            "Low": "low",
+            "Volume": "volume",
         }
         df.rename(columns=rename_map, inplace=True)
         df = df[[col for col in df.columns if col in expected_cols]]
@@ -110,14 +121,18 @@ def normalize_dataframe(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
 
         invalid = df[(df["close"] < 0) | (df["high"] < 0) | (df["low"] < 0)]
         if not invalid.empty:
-            guardian_log(f"[Data Normalize] ⚠️ Negative values found in {symbol}, dropping invalid rows.")
+            guardian_log(
+                f"[Data Normalize] ⚠️ Negative values found in {symbol}, dropping invalid rows."
+            )
             df = df[df["close"] >= 0]
 
-        guardian_log(f"[Data Normalize] ✅ Normalized {symbol} with {len(df)} records.")
+        guardian_log(
+            f"[Data Normalize] ✅ Normalized {symbol} with {len(df)} records.")
         return df.reset_index(drop=True)
 
     except Exception as e:
-        guardian_log(f"[Data Normalize] ❌ Normalization failed for {symbol}: {e}")
+        guardian_log(
+            f"[Data Normalize] ❌ Normalization failed for {symbol}: {e}")
         return df
 
 
@@ -125,19 +140,24 @@ def normalize_dataframe(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
 # 🌐 ASTRA LIVE DATA GATEWAY
 # ============================================================
 
+
 async def _fetch_api(api_name: str, symbol: str):
     """Async wrapper for Astra’s unified API client."""
     try:
         from astra_modules.core.api_client import get_symbol_data
+
         guardian_log(f"[AsyncData] 🔄 Fetching {symbol} via {api_name}...")
         df = get_symbol_data(symbol)
         if isinstance(df, pd.DataFrame) and not df.empty:
             df["source"] = api_name
             df = normalize_dataframe(df, symbol)
-            guardian_log(f"[AsyncData] ✅ {api_name} returned {len(df)} normalized rows for {symbol}")
+            guardian_log(
+                f"[AsyncData] ✅ {api_name} returned {len(df)} normalized rows for {symbol}"
+            )
             return df
         else:
-            guardian_log(f"[AsyncData] ⚠️ {api_name} returned no data for {symbol}")
+            guardian_log(
+                f"[AsyncData] ⚠️ {api_name} returned no data for {symbol}")
     except Exception as e:
         guardian_log(f"[AsyncData] ⚠️ API fetch failed for {symbol}: {e}")
     return pd.DataFrame()
@@ -150,7 +170,8 @@ async def get_symbol_data_async(symbol: str) -> pd.DataFrame:
     if df.empty:
         guardian_log(f"[AsyncData] ⚠️ No valid live data for {symbol}")
         return pd.DataFrame()
-    guardian_log(f"[AsyncData] ✅ Retrieved {len(df)} normalized rows for {symbol}")
+    guardian_log(
+        f"[AsyncData] ✅ Retrieved {len(df)} normalized rows for {symbol}")
     return df.reset_index(drop=True)
 
 
@@ -171,12 +192,14 @@ def get_symbol_data(symbol: str) -> pd.DataFrame:
 # 📦 MAIN DATA LOADER
 # ============================================================
 
+
 def load_data(symbol: str = "BTC/USD") -> pd.DataFrame:
     """
     Loads live or fallback market data for a given symbol.
     Integrates ensemble predictions and Guardian telemetry snapshot.
     """
-    guardian_log(f"[DashboardData] 🧠 Loading data for {symbol} (async mode)...")
+    guardian_log(
+        f"[DashboardData] 🧠 Loading data for {symbol} (async mode)...")
 
     try:
         df = asyncio.run(get_symbol_data_async(symbol))
@@ -204,57 +227,89 @@ def load_data(symbol: str = "BTC/USD") -> pd.DataFrame:
 
         # Inject ensemble predictions
         try:
-            from forecast.ensemble_engine import EnsembleEngine
+            from astra_modules.forecast.ensemble_engine import EnsembleEngine
+
             engine = EnsembleEngine()
             preds = engine.predict(df)
             if preds is not None and not preds.empty:
                 for col in preds.columns:
                     if col not in df.columns:
-                        df[col] = preds[col].values[0] if len(preds[col]) == 1 else preds[col].values
-                guardian_log(f"[DashboardData] 🎯 Predictions injected for {symbol}.")
+                        df[col] = (
+                            preds[col].values[0]
+                            if len(preds[col]) == 1
+                            else preds[col].values
+                        )
+                guardian_log(
+                    f"[DashboardData] 🎯 Predictions injected for {symbol}.")
         except Exception as pred_err:
-            guardian_log(f"[DashboardData] ⚠️ Prediction injection failed: {pred_err}")
+            guardian_log(
+                f"[DashboardData] ⚠️ Prediction injection failed: {pred_err}")
 
         # ✅ Embed Guardian telemetry summary into metadata
         telemetry = get_guardian_telemetry()
         df.attrs["guardian_status"] = telemetry
 
-        guardian_log(f"[DashboardData] ✅ Loaded {len(df)} rows for {symbol}. Telemetry integrated.")
+        guardian_log(
+            f"[DashboardData] ✅ Loaded {len(df)} rows for {symbol}. Telemetry integrated."
+        )
         return df
 
     except Exception as e:
-        guardian_log(f"[DashboardData] ⚠️ Fallback triggered for {symbol}: {e}")
+        guardian_log(
+            f"[DashboardData] ⚠️ Fallback triggered for {symbol}: {e}")
         np.random.seed(abs(hash(symbol)) % (10**6))
         dates = pd.date_range(end=pd.Timestamp.now(), periods=30)
 
         base_price = {
-            "BTC/USD": 45000, "ETH/USD": 2400, "SOL/USD": 60,
-            "AAPL": 190, "TSLA": 250, "NVDA": 470, "AMZN": 140,
-            "MSFT": 380, "GOOGL": 130, "ADA/USD": 0.45, "XRP/USD": 0.52, "DOGE/USD": 0.08,
+            "BTC/USD": 45000,
+            "ETH/USD": 2400,
+            "SOL/USD": 60,
+            "AAPL": 190,
+            "TSLA": 250,
+            "NVDA": 470,
+            "AMZN": 140,
+            "MSFT": 380,
+            "GOOGL": 130,
+            "ADA/USD": 0.45,
+            "XRP/USD": 0.52,
+            "DOGE/USD": 0.08,
         }.get(symbol, 100)
 
         drift = np.random.normal(0, base_price * 0.002, len(dates)).cumsum()
         prices = base_price + drift
-        df = pd.DataFrame({
-            "date": dates,
-            "open": prices - np.random.uniform(base_price * 0.001, base_price * 0.003, len(dates)),
-            "close": prices,
-            "price": prices,
-        })
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "open": prices
+                - np.random.uniform(base_price * 0.001,
+                                    base_price * 0.003, len(dates)),
+                "close": prices,
+                "price": prices,
+            }
+        )
         df["change"] = df["price"] - df["open"]
         df["percentchange"] = (df["change"] / df["open"]) * 100
 
         try:
-            from forecast.ensemble_engine import EnsembleEngine
+            from astra_modules.forecast.ensemble_engine import EnsembleEngine
+
             engine = EnsembleEngine()
             preds = engine.predict(df)
             if preds is not None and not preds.empty:
                 for col in preds.columns:
                     if col not in df.columns:
-                        df[col] = preds[col].values[0] if len(preds[col]) == 1 else preds[col].values
-                guardian_log(f"[DashboardData] 🧩 Mock predictions injected for {symbol}")
+                        df[col] = (
+                            preds[col].values[0]
+                            if len(preds[col]) == 1
+                            else preds[col].values
+                        )
+                guardian_log(
+                    f"[DashboardData] 🧩 Mock predictions injected for {symbol}"
+                )
         except Exception as mock_err:
-            guardian_log(f"[DashboardData] ⚠️ Mock prediction injection failed: {mock_err}")
+            guardian_log(
+                f"[DashboardData] ⚠️ Mock prediction injection failed: {mock_err}"
+            )
 
         # Add telemetry to fallback mode as well
         df.attrs["guardian_status"] = get_guardian_telemetry()

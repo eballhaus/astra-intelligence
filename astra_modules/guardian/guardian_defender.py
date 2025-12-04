@@ -13,7 +13,6 @@ from pathlib import Path
 
 # Streamlit is optional in some backend calls
 try:
-    import streamlit as st
 except Exception:
     st = None
 

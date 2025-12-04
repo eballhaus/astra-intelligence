@@ -28,7 +28,7 @@ def run_import_audit():
         try:
             importlib.import_module(mod_name)
             results.append({"module": mod_name, "status": "OK"})
-        except Exception as e:
+        except (ImportError, OSError) as e:
             results.append({"module": mod_name, "status": f"ERROR: {e}"})
 
     audit_summary = {
@@ -37,7 +37,7 @@ def run_import_audit():
         "results": results,
     }
 
-    with open(AUDIT_LOG_FILE, "w") as f:
+    with open(encoding="utf-8", AUDIT_LOG_FILE, "w") as f:
         json.dump(audit_summary, f, indent=2)
 
     print("\n🧩 Guardian Import Auditor Summary")
