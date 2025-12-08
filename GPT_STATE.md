@@ -32,3 +32,14 @@ ASTRA_CACHE_PATH=${ASTRA_BASE_PATH}/astra_cache
 REMOTE_MODE=false
 REMOTE_SERVER_URL=https://astra-intelligence.cloud
 
+
+## December 8, 2025 — Dashboard Chart and Live Data Stabilization
+
+### Summary of Work
+- **Live data operational** via AstraAPI using Alpha Vantage + TwelveData + FMP fallback.
+- Fixed `dashboard_data.py` caching and async-safe backend.
+- Rebuilt `dashboard_chart.py` with single-row safety, realistic OHLC generation, and SMA/RSI/Bollinger calculations.
+- Updated `tab_dashboard.py` with chart indicator integration and safe rendering.
+- Eliminated render crash (`unexpected keyword argument 'show_ma'`).
+- Remaining issue: candlesticks & indicators not rendering; likely in timestamp sorting (Step 4 verification).
+
