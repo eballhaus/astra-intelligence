@@ -7,12 +7,16 @@ Monitors TelemetryHub output and GuardianEngine health in real time.
 Generates proactive alerts and triggers optional recovery hooks.
 """
 
-import os, json, time, traceback
+import json
+import os
+import time
+import traceback
 from datetime import datetime
-from typing import Callable, Dict, Any, Optional
+from typing import Any, Callable, Dict, Optional
 
 TELEMETRY_PATH = os.path.join(os.getcwd(), "logs", "telemetry_latest.json")
 ALERT_LOG_PATH = os.path.join(os.getcwd(), "logs", "guardian_alerts.jsonl")
+
 
 class GuardianAlertManager:
     """Predictive alert engine monitoring Guardian telemetry snapshots."""
@@ -24,7 +28,7 @@ class GuardianAlertManager:
         check_interval: int = 60,
         loss_drift_threshold: float = 0.005,
         success_rate_threshold: float = 0.8,
-        heartbeat_stale_seconds: int = 600
+        heartbeat_stale_seconds: int = 600,
     ):
         self.restart_callback = restart_callback
         self.notify_callback = notify_callback
@@ -49,7 +53,9 @@ class GuardianAlertManager:
             return None
 
     # ------------------------------------------------------------------
-    def _log_alert(self, level: str, message: str, telemetry: Optional[Dict[str, Any]] = None):
+    def _log_alert(
+        self, level: str, message: str, telemetry: Optional[Dict[str, Any]] = None
+    ):
         """Append alert to log file and optional notification callback."""
         entry = {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -95,7 +101,10 @@ class GuardianAlertManager:
             # 2️⃣ Loss drift (increasing average loss over window)
             if len(self.history) >= 5:
                 recent_avg = sum(self.history[-5:]) / 5
-                past_avg = sum(self.history[:5]) / 5 if len(self.history) > 10 else recent_avg
+                past_avg = (
+                    sum(self.history[:5]) /
+                    5 if len(self.history) > 10 else recent_avg
+                )
                 if recent_avg - past_avg > self.loss_drift_threshold:
                     self._log_alert(
                         "warning",
@@ -114,7 +123,8 @@ class GuardianAlertManager:
                         telemetry,
                     )
                     if self.restart_callback:
-                        self._log_alert("info", "Attempting auto-restart via callback.")
+                        self._log_alert(
+                            "info", "Attempting auto-restart via callback.")
                         try:
                             self.restart_callback()
                         except Exception:

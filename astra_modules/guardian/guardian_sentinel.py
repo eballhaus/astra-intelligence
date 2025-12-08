@@ -19,7 +19,7 @@ from datetime import datetime
 
 # Link with GuardianV4’s logger if available
 try:
-    from astra_modules.guardian.guardian_v6 import guardian
+    from astra_modules.guardian.guardian_v7 import guardian
 except Exception:
     guardian = None
 
@@ -30,7 +30,7 @@ class GuardianSentinel:
     def __init__(self, base_path=None, modules_to_check=None):
         self.base_path = base_path or os.getcwd()
         self.modules_to_check = modules_to_check or [
-            "astra_modules.guardian.guardian_v6",
+            "astra_modules.guardian.guardian_v7",
             "astra_modules.guardian.environment_guardian",
             "astra_modules.guardian",
             "astra_modules.agents",

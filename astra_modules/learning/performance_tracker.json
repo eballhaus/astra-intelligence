@@ -1,0 +1,32 @@
+{
+    "MomentumAgent": {
+        "accuracy": 0.494,
+        "variance": 0.0,
+        "reliability": 0.16666666666666666
+    },
+    "TechnicalAgent": {
+        "accuracy": 0.494,
+        "variance": 0.0,
+        "reliability": 0.16666666666666666
+    },
+    "RiskAgent": {
+        "accuracy": 0.494,
+        "variance": 0.0,
+        "reliability": 0.16666666666666666
+    },
+    "VolumeAgent": {
+        "accuracy": 0.494,
+        "variance": 0.0,
+        "reliability": 0.16666666666666666
+    },
+    "NeuralAgent": {
+        "accuracy": 0.494,
+        "variance": 0.0,
+        "reliability": 0.16666666666666666
+    },
+    "CatalystAgent": {
+        "accuracy": 0.494,
+        "variance": 0.0,
+        "reliability": 0.16666666666666666
+    }
+}

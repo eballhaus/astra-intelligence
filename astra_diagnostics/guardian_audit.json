@@ -1,0 +1,20 @@
+[
+  {
+    "timestamp": "2025-12-03T11:56:54.229627",
+    "summary": {
+      "APIClient": "PASS",
+      "ALPHA_VANTAGE_API_KEY": "PASS",
+      "FMP_API_KEY": "PASS",
+      "FINNHUB_API_KEY": "PASS",
+      "EODHD_API_KEY": "PASS",
+      "MORALIS_API_KEY": "PASS",
+      "TWELVEDATA_API_KEY": "PASS",
+      "AlphaVantage": "PASS",
+      "FMP": "FAIL",
+      "Finnhub": "FAIL",
+      "EODHD": "FAIL",
+      "Moralis": "FAIL",
+      "TwelveData": "FAIL"
+    }
+  }
+]

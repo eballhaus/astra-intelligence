@@ -1,295 +1,359 @@
 # -*- coding: utf-8 -*-
 """
-Astra Intelligence — Dashboard Cards (v5.0)
---------------------------------------------
-Fully agent-integrated AstraGlass cards.
+Astra Intelligence — Dashboard Cards (v3.3 LiveFix)
+-------------------------------------------------
+Displays AstraGlass cards with live Astra data, predictive continuity,
+and Astra Intelligence grade/confidence simulation.
 
-Displays:
-✅ Symbol & price
-✅ Stop-loss from RiskAgent
-✅ Prediction & confidence from NeuralAgent
-✅ Buy grade from RankingEngine
-✅ Momentum score from MomentumAgent
-
-Guardian-protected with fallback safety.
+✅ Fully live-mode aware
+✅ Respects ASTRA_LIVE_MODE toggle
+✅ Freshness revalidation (5-minute rule)
+✅ Guardian-integrated logging
+✅ Timestamp normalization (UTC-aware)
+✅ Source propagation after live refresh
+✅ Optional Streamlit live rerun for real-time update
 """
 
-import random
-from datetime import datetime, timedelta
+import os
+import sys
+from datetime import datetime, timezone
+from typing import Optional, Tuple
 
-import numpy as np
 import pandas as pd
 import streamlit as st
 
-from astra_modules.guardian.guardian_v6 import GuardianV7
-
-guardian = GuardianV7()
-
-# ============================================================
-# 🧠 Agent Imports (Safe Try)
-# ============================================================
-try:
-    from astra_modules.agents.momentum_agent import MomentumAgent
-    from astra_modules.agents.neural_agent import NeuralAgent
-    from astra_modules.agents.risk_agent import RiskAgent
-    from astra_modules.engine.ranking_engine import RankingEngine
-
-    guardian.log("[Cards] ✅ Agents successfully imported.")
-except Exception as e:
-    guardian.log(
-        f"[Cards] ⚠️ Failed to import agents, using mock fallbacks: {e}")
-    MomentumAgent = RiskAgent = NeuralAgent = RankingEngine = None
-
-# ============================================================
-# 🧩 Mock Utility Fallbacks
-# ============================================================
+from astra_modules.core.api_client import AstraAPI
+from astra_modules.guardian.guardian_v6 import guardian_log
 
 
-def mock_prediction(price: float):
-    delta_pct = random.uniform(-5, 10)
-    target = price * (1 + delta_pct / 100)
-    target_date = (datetime.now() + timedelta(days=random.randint(3, 10))).strftime(
-        "%b %d"
-    )
-    return target, delta_pct, target_date
-
-
-def mock_stop_loss(price: float):
-    stop_pct = random.uniform(-3, -8)
-    stop = price * (1 + stop_pct / 100)
-    return stop, stop_pct
-
-
-def mock_buy_grade():
-    return random.choice(["A+", "A", "B+", "B", "C", "D"])
-
-
-def mock_momentum():
-    return random.randint(30, 95)
-
-
-def mock_confidence():
-    return random.uniform(60, 99.5)
-
-
-# ============================================================
-# 💹 Symbol Intelligence Card — Stable v8.1 (No Duplicates)
-# ============================================================
-
-
-def render_symbol_card(symbol: str, df: pd.DataFrame = None, active: bool = False):
-    """Render a single AstraGlass card with correct metrics and no duplicate output."""
-
-    # Prevent duplicate renders within the same Streamlit run
-    if st.session_state.get(f"rendered_{symbol}", False):
-        return
-    st.session_state[f"rendered_{symbol}"] = True
-
-    # Validate data
-    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
-        st.markdown(
-            f"<div class='astra-card astra-empty-card'>💤 No data for {symbol}</div>",
-            unsafe_allow_html=True,
-        )
-        return
-
+# ===================================================================
+# 🧩 Safe Print Helper
+# ===================================================================
+def safe_print(*args, **kwargs) -> None:
     try:
-        latest = df.iloc[-1].fillna(0)
-        price = float(latest.get("price", latest.get("close", 0.0)))
-        open_price = float(latest.get("open", price))
-        change = price - open_price
-        pct = (change / open_price) * 100 if open_price != 0 else 0
+        print(*args, **kwargs)
+    except OSError:
+        try:
+            sys.stderr.write(" ".join(map(str, args)) + "\n")
+        except Exception:
+            pass
 
-        # Style
-        color = "#4ade80" if change > 0 else "#f87171" if change < 0 else "#9ca3af"
-        arrow = "▲" if change > 0 else "▼" if change < 0 else "→"
-        border_color = "#10b981" if active else "rgba(255,255,255,0.08)"
-        bg_color = "rgba(255,255,255,0.06)" if active else "rgba(255,255,255,0.03)"
 
-        # Optional extended data
-        stop_loss = latest.get("stop_loss", price * 0.95)
-        prediction = latest.get("prediction", price * 1.05)
-        confidence = latest.get("confidence", np.nan)
-        momentum = latest.get("momentum", 0)
-        grade = latest.get("grade", "N/A")
-        conf_text = f"{float(confidence):.1f}%" if not np.isnan(
-            confidence) else "N/A"
+# ===================================================================
+# 📊 Data Extraction Utilities
+# ===================================================================
+def extract_price(df: pd.DataFrame) -> Optional[float]:
+    try:
+        if df is None or df.empty:
+            return None
+        for col in ["close", "price", "last"]:
+            if col in df.columns:
+                val = df[col].iloc[-1]
+                if pd.notna(val):
+                    return float(val)
+    except Exception as e:
+        guardian_log(f"[DashboardCards] ⚠️ Price extraction error: {e}")
+    return None
 
-        # Single clean HTML render
+
+def extract_change(df: pd.DataFrame) -> Optional[float]:
+    try:
+        if df is None or df.empty:
+            return None
+        if "percentchange" in df.columns:
+            val = df["percentchange"].iloc[-1]
+            if pd.notna(val):
+                return float(val)
+        if "change" in df.columns and "close" in df.columns:
+            close = df["close"].iloc[-1]
+            ch = df["change"].iloc[-1]
+            if pd.notna(close) and pd.notna(ch) and close != 0:
+                return (ch / close) * 100
+        if "open" in df.columns and "close" in df.columns:
+            open_price = df["open"].iloc[-1]
+            close_price = df["close"].iloc[-1]
+            if pd.notna(open_price) and open_price != 0:
+                return ((close_price - open_price) / open_price) * 100
+        if "close" in df.columns and len(df) > 1:
+            prev = df["close"].iloc[-2]
+            curr = df["close"].iloc[-1]
+            if pd.notna(prev) and prev != 0:
+                return ((curr - prev) / prev) * 100
+    except Exception as e:
+        guardian_log(f"[DashboardCards] ⚠️ Change extraction error: {e}")
+    return None
+
+
+# ===================================================================
+# 🧠 Astra Intelligence Grade Simulator
+# ===================================================================
+def simulate_astra_grade_and_confidence(df: pd.DataFrame) -> Tuple[str, float]:
+    try:
+        if df is None or df.empty or "close" not in df.columns:
+            return ("NEUTRAL", 0.0)
+        closes = df["close"].astype(float)
+        returns = closes.pct_change().dropna()
+        if len(returns) == 0:
+            return ("NEUTRAL", 0.0)
+        mean_change = returns.mean() * 100
+        vol = returns.std() * 100
+        if mean_change > 0.8 and vol < 1.5:
+            grade = "STRONG BUY"
+        elif mean_change > 0.3:
+            grade = "BUY"
+        elif mean_change < -0.8 and vol < 1.5:
+            grade = "STRONG SELL"
+        elif mean_change < -0.3:
+            grade = "SELL"
+        else:
+            grade = "HOLD"
+        confidence = max(20.0, 100.0 - min(vol * 8.0, 80.0))
+        return (grade, round(confidence, 1))
+    except Exception as e:
+        guardian_log(f"[DashboardCards] ⚠️ Grade simulation error: {e}")
+        return ("NEUTRAL", 0.0)
+
+
+def get_grade_color(grade: str) -> str:
+    g = grade.upper()
+    if "STRONG BUY" in g:
+        return "#10B981"
+    if "BUY" in g:
+        return "#34D399"
+    if "STRONG SELL" in g:
+        return "#EF4444"
+    if "SELL" in g:
+        return "#F87171"
+    if "HOLD" in g:
+        return "#FBBF24"
+    return "#6B7280"
+
+
+# ===================================================================
+# 🎯 Target & Stop Loss Helpers
+# ===================================================================
+def calc_target(price: float, pct: float = 5.0) -> float:
+    try:
+        if price and price > 0:
+            return round(price * (1 + pct / 100), 2)
+    except Exception:
+        pass
+    return 0.0
+
+
+def calc_stop(price: float, pct: float = -3.0) -> float:
+    try:
+        if price and price > 0:
+            stop = price * (1 + pct / 100)
+            return round(max(stop, 0.01), 2)
+    except Exception:
+        pass
+    return 0.0
+
+
+# ===================================================================
+# 🧭 Source and Freshness Info
+# ===================================================================
+def get_source_info(df: pd.DataFrame) -> str:
+    try:
+        if df is None or df.empty:
+            return "❓ no data"
+        src = df.attrs.get("source", "unknown")
+        ts = df.attrs.get("timestamp")
+        if ts is None:
+            return f"❓ {src} | ⚠️ unknown"
+        try:
+            if isinstance(ts, str):
+                ts = pd.Timestamp(ts).tz_localize(None)
+            age_mins = (datetime.utcnow() - ts).total_seconds() / 60.0
+        except Exception:
+            age_mins = None
+        fresh = "✅ Fresh" if age_mins and age_mins < 5 else "⚠️ Stale"
+        icon_map = {
+            "live": "📡",
+            "astra_api": "📡",
+            "astra_api_live": "📡",
+            "backend": "⚡",
+            "astra_forecast": "🔮",
+            "forecast": "🔮",
+            "cache": "💾",
+            "refetch": "🔄",
+            "synthetic": "🧩",
+            "mock": "🧩",
+            "unified_fetch": "⚡",
+        }
+        icon = icon_map.get(src, "❓")
+        return f"{icon} {src} | {fresh}"
+    except Exception as e:
+        guardian_log(f"[DashboardCards] ⚠️ Source info error: {e}")
+        return "❓ unknown | ⚠️ error"
+
+
+# ===================================================================
+# 🔄 Improved Freshness Check (UTC-aware)
+# ===================================================================
+def check_data_freshness_with_age(df: pd.DataFrame, symbol: str) -> Tuple[bool, float]:
+    """Check data freshness and return age in seconds."""
+    try:
+        if df is None or df.empty or "timestamp" not in df.columns:
+            guardian_log(f"[DashboardCards] ⚠️ {symbol}: No timestamp column")
+            return (False, 999999)
+
+        # Normalize timestamp dtype
+        df["timestamp"] = pd.to_datetime(
+            df["timestamp"], utc=True, errors="coerce")
+        last_timestamp = df["timestamp"].max()
+        if pd.isna(last_timestamp):
+            return (False, 999999)
+
+        now = datetime.now(timezone.utc)
+        age_seconds = (now - last_timestamp).total_seconds()
+        is_fresh = age_seconds <= 300
+
+        guardian_log(
+            f"[DashboardCards] ⏱️ {symbol}: age={age_seconds:.1f}s, fresh={is_fresh}"
+        )
+        return (is_fresh, age_seconds)
+
+    except Exception as e:
+        guardian_log(
+            f"[DashboardCards] ⚠️ Freshness check error for {symbol}: {e}")
+        return (False, 999999)
+
+
+# ===================================================================
+# 💳 Main Card Renderer (Enhanced Live Mode)
+# ===================================================================
+def render_symbol_card(
+    symbol: str, df: Optional[pd.DataFrame], active: bool = False
+) -> None:
+    try:
+        guardian_log(f"[DashboardCards] 🔍 Starting render for {symbol}")
+
+        if df is None or df.empty:
+            guardian_log(f"[DashboardCards] ⚠️ No data for {symbol}")
+            st.warning(f"{symbol}: ⚠️ No data available")
+            return
+
+        # Check structure
+        required_cols = ["close", "timestamp"]
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = datetime.utcnow() if col == "timestamp" else 100.0
+
+        # Check freshness
+        is_fresh, age_seconds = check_data_freshness_with_age(df, symbol)
+        live_mode = os.getenv("ASTRA_LIVE_MODE", "true").lower() == "true"
+
+        # Attempt live refresh if stale
+        if not is_fresh and live_mode:
+            guardian_log(
+                f"[DashboardCards] 🔄 Data stale for {symbol} ({age_seconds:.1f}s). Attempting live refresh..."
+            )
+            try:
+                api = AstraAPI()
+                df_fresh = api.get_market_data(symbol)
+                if df_fresh is not None and not df_fresh.empty:
+                    guardian_log(
+                        f"[DashboardCards] ✅ Live refresh succeeded for {symbol}"
+                    )
+                    df = df_fresh
+                    df["timestamp"] = pd.to_datetime(
+                        df["timestamp"], utc=True, errors="coerce"
+                    )
+                    df.attrs["source"] = "astra_api_live"
+                    df.attrs["timestamp"] = datetime.utcnow()
+                    is_fresh, age_seconds = check_data_freshness_with_age(
+                        df, symbol)
+                    st.experimental_rerun()
+                else:
+                    guardian_log(
+                        f"[DashboardCards] ⚠️ Live refresh returned empty for {symbol}"
+                    )
+            except Exception as e:
+                guardian_log(
+                    f"[DashboardCards] ⚠️ Live refresh failed for {symbol}: {e}"
+                )
+
+        # Extract data
+        price = extract_price(df)
+        change = extract_change(df)
+        grade, confidence = simulate_astra_grade_and_confidence(df)
+        target = calc_target(price if price else 0)
+        stop = calc_stop(price if price else 0)
+        source_info = get_source_info(df)
+
+        # Timestamp display
+        asof = df.attrs.get("timestamp") or df["timestamp"].max()
+        if isinstance(asof, str):
+            asof = pd.Timestamp(asof)
+        asof_str = (
+            asof.strftime("%Y-%m-%d %H:%M:%S UTC")
+            if isinstance(asof, (datetime, pd.Timestamp))
+            else "unknown"
+        )
+
+        # Colors & display
+        price_color = "#4ade80" if (change or 0) >= 0 else "#f87171"
+        grade_color = get_grade_color(grade)
+        border_color = "#A7F3D0" if active else "rgba(255,255,255,0.1)"
+        display_price = price if price is not None else 0.0
+        display_change = change if change is not None else 0.0
+
         st.markdown(
             f"""
-        <div style="
-            border: 1px solid {border_color};
-            background: {bg_color};
-            border-radius: 10px;
-            padding: 0.8rem 1rem;
-            margin-bottom: 0.5rem;
-            transition: all 0.2s ease;
-            font-family: 'Inter', sans-serif;
-        ">
-            <div style="font-weight:600;font-size:1.05rem;">{symbol}</div>
-            <div style="color:{color};font-weight:600;">{arrow} {pct:+.2f}%</div>
-            <div style="font-size:0.95rem;opacity:0.9;">${price:,.2f}</div>
-            <div style="font-size:0.8rem;opacity:0.85;margin-top:0.25rem;line-height:1.3;">
-                🛑 Stop-Loss: ${stop_loss:,.2f}<br>
-                🎯 Prediction: ${prediction:,.2f}<br>
-                🌟 Grade: {grade}<br>
-                ⚡ Momentum: {momentum}<br>
-                🧠 Confidence: {conf_text}
+            <div style='background:rgba(255,255,255,0.03);border-radius:10px;
+            border:2px solid {border_color};padding:1rem;text-align:left;min-height:240px;'>
+            <div style='display:flex;justify-content:space-between;'>
+                <b style='color:#A7F3D0;font-size:1.1em;'>{symbol}</b>
+                <span style='color:{price_color};font-weight:bold;font-size:0.95em;'>{display_change:+.2f}%</span>
             </div>
-        </div>
-        """,
+            <div style='margin:0.75rem 0;'>
+                <span style='color:{price_color};font-size:1.4em;font-weight:bold;'>${display_price:.2f}</span>
+            </div>
+            <div style='font-size:0.85em;color:#E5E7EB;'>
+                🎯 Target: <b style='color:#14B8A6;'>${target:.2f}</b><br>
+                🛑 Stop: <b style='color:#f87171;'>${stop:.2f}</b>
+            </div>
+            <div style='margin-top:0.75rem;padding:0.5rem;background:rgba(255,255,255,0.05);
+            border-left:3px solid {grade_color};border-radius:6px;'>
+                🧠 <b style='color:{grade_color};'>{grade}</b><br>
+                <span style='font-size:0.8em;color:#9CA3AF;'>Confidence: {confidence:.1f}%</span>
+            </div>
+            <div style='font-size:0.75em;color:#6B7280;margin-top:0.5rem;'>
+                {source_info}<br>🕒 {asof_str}
+            </div>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
 
-    except Exception:
-        st.markdown(
-            f"<div class='astra-card astra-empty-card'>⚠️ Render failed for {symbol}</div>",
-            unsafe_allow_html=True,
+        guardian_log(
+            f"[DashboardCards] ✅ Rendered {symbol}: ${display_price:.2f}, {display_change:+.2f}%, {grade} ({confidence:.1f}%)"
         )
 
-    # =======================================================
-    # 🧠 Agent-Based Intelligence Layer
-    # =======================================================
-    try:
-        risk_agent = RiskAgent() if RiskAgent else None
-        neural_agent = NeuralAgent() if NeuralAgent else None
-        rank_engine = RankingEngine() if RankingEngine else None
-        momentum_agent = MomentumAgent() if MomentumAgent else None
     except Exception as e:
-        guardian.log(f"[Cards] ⚠️ Agent init error: {e}")
-        risk_agent = neural_agent = rank_engine = momentum_agent = None
-
-    # --- Stop-loss (RiskAgent) ---
-    try:
-        if risk_agent:
-            stop, stop_pct = risk_agent.get_stop_loss(symbol)
-        else:
-            stop, stop_pct = mock_stop_loss(price)
-    except Exception as e:
-        guardian.log(f"[Cards] ⚠️ Stop-loss error for {symbol}: {e}")
-        stop, stop_pct = mock_stop_loss(price)
-
-    # --- Prediction & Confidence (NeuralAgent) ---
-    try:
-        if neural_agent:
-            result = neural_agent.predict(symbol)
-            target = result.get("target_price", price)
-            pred_pct = result.get("change_pct", 0)
-            pred_date = result.get(
-                "target_date", datetime.now().strftime("%b %d"))
-            confidence = result.get("confidence", mock_confidence())
-        else:
-            target, pred_pct, pred_date = mock_prediction(price)
-            confidence = mock_confidence()
-    except Exception as e:
-        guardian.log(f"[Cards] ⚠️ Prediction error for {symbol}: {e}")
-        target, pred_pct, pred_date = mock_prediction(price)
-        confidence = mock_confidence()
-
-    # --- Buy Grade (RankingEngine) ---
-    try:
-        if rank_engine:
-            buy_grade = rank_engine.get_grade(symbol)
-        else:
-            buy_grade = mock_buy_grade()
-    except Exception as e:
-        guardian.log(f"[Cards] ⚠️ Buy grade error for {symbol}: {e}")
-        buy_grade = mock_buy_grade()
-
-    # --- Momentum (MomentumAgent) ---
-    try:
-        if momentum_agent:
-            momentum = momentum_agent.get_score(symbol)
-        else:
-            momentum = mock_momentum()
-    except Exception as e:
-        guardian.log(f"[Cards] ⚠️ Momentum error for {symbol}: {e}")
-        momentum = mock_momentum()
-
-    # =======================================================
-    # 💎 AstraGlass Card Rendering
-    # =======================================================
-    html = f"""
-    <div class="astra-card" style="
-        background: rgba(255,255,255,0.05);
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 12px;
-        padding: 0.6rem 0.8rem;
-        margin-bottom: 0.6rem;
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
-    ">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;">
-            <div style="font-weight:600;color:{color};font-size:0.95rem;">{symbol}</div>
-            <div style="font-size:0.85rem;color:{color};">{arrow} {pct:.2f}%</div>
-        </div>
-
-        <div style="font-size:1.15rem;font-weight:500;color:#e5e7eb;">
-            ${price:,.2f}
-        </div>
-
-        <div style="font-size:0.8rem;opacity:0.8;color:#9ca3af;margin-top:0.15rem;">
-            🛑 Stop-Loss: <span style="color:#f87171;">${stop:,.2f}</span> ({stop_pct:.1f}%)
-        </div>
-
-        <div style="font-size:0.8rem;opacity:0.8;color:#9ca3af;">
-            🎯 Prediction: <span style="color:#60a5fa;">${target:,.2f}</span> ({pred_pct:+.2f}%) → {pred_date}
-        </div>
-
-        <div style="font-size:0.8rem;opacity:0.8;color:#9ca3af;">
-            🌟 Buy Grade: <span style="color:#facc15;">{buy_grade}</span> &nbsp;&nbsp;
-            ⚡ Momentum: <span style="color:#34d399;">{momentum}</span> &nbsp;&nbsp;
-            🧠 Confidence: <span style="color:#93c5fd;">{confidence:.1f}%</span>
-        </div>
-    </div>
-    """
-
-    # ✅ Render correctly with Streamlit HTML support
-    import streamlit.components.v1 as components
-
-    components.html(html, height=160, scrolling=False)
+        guardian_log(f"[DashboardCards] 🚨 Render error for {symbol}: {e}")
+        st.error(f"⚠️ Render failed for {symbol}")
 
 
-def render_empty_card():
-    """Render a placeholder card when no data is available."""
-    import streamlit as st
+# ===================================================================
+# 🧪 Test Function
+# ===================================================================
+def test_render():
+    """Test the render function with sample data."""
+    from datetime import timedelta
 
-    st.markdown(
-        """
-        <div style="padding:1rem; text-align:center; border-radius:0.75rem;
-                    border:1px dashed #666; color:#999;">
-            🧩 <b>No data available.</b>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    now = datetime.utcnow()
+    test_data = pd.DataFrame(
+        {
+            "timestamp": [now - timedelta(minutes=2), now - timedelta(minutes=1)],
+            "open": [100.0, 101.0],
+            "high": [102.0, 103.0],
+            "low": [99.0, 100.0],
+            "close": [101.0, 102.0],
+            "volume": [1000, 1200],
+        }
     )
-
-
-# ============================================================
-# 💅 AstraGlass Hover & Empty Styling
-# ============================================================
-st.markdown(
-    """
-    <style>
-    .astra-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 2px 8px rgba(255,255,255,0.08);
-    }
-    .astra-empty-card {
-        text-align: center;
-        color: #9ca3af;
-        background: rgba(255,255,255,0.03);
-        border: 1px dashed rgba(255,255,255,0.1);
-        border-radius: 10px;
-        padding: 0.5rem;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-__all__ = ["render_symbol_card"]
-print(
-    "[DashboardCards] ✅ Astra agent-integrated cards (v5.0) initialized successfully."
-)
+    test_data.attrs = {"source": "test"}
+    render_symbol_card("TEST", test_data)

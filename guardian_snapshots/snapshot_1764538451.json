@@ -1,0 +1,25 @@
+{
+  "timestamp": "2025-11-30T21:34:11.058526",
+  "modules": [
+    "forecast",
+    "ui",
+    ".DS_Store",
+    "core",
+    "fetch_core",
+    "learning",
+    "__init__.py",
+    "agents",
+    "utils",
+    "__pycache__",
+    "state",
+    "logs",
+    "astra_memory.py",
+    "chart_core",
+    "api_keys.py",
+    "_legacy_archive",
+    "guardian",
+    "universe",
+    "engine",
+    "astra_watchlist.json"
+  ]
+}

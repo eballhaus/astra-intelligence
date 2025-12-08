@@ -1,3 +1,5 @@
+from astra_modules.agents.base_agent import BaseAgent
+
 """
 Astra Intelligence — RiskAgent (v2 Safe Extension)
 --------------------------------------------------
@@ -5,10 +7,10 @@ Computes stop-loss and risk parameters for given symbols.
 Now includes universal compute_stop() for dashboard integration.
 """
 
-import numpy as np
 import pandas as pd
 
-class RiskAgent:
+
+class RiskAgent(BaseAgent):
     """
     Evaluates volatility-adjusted risk and computes stop-loss levels.
     """
@@ -38,3 +40,9 @@ class RiskAgent:
         except Exception as e:
             print(f"[RiskAgent] compute_stop() error for {symbol}: {e}")
             return None, -self.default_stop_pct
+
+    def predict(self, x=None):
+        """Temporary calibration stub."""
+        self.g_log(
+            f"[{self.__class__.__name__}] Predict placeholder executed.")
+        return 0.5

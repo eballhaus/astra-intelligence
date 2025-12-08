@@ -1,3 +1,5 @@
+from astra_modules.agents.base_agent import BaseAgent
+
 """
 CatalystAgent — Phase-90
 
@@ -9,7 +11,7 @@ Outputs a normalized 0–1 signal.
 """
 
 
-class CatalystAgent:
+class CatalystAgent(BaseAgent):
     def __init__(self):
         pass
 
@@ -34,3 +36,9 @@ class CatalystAgent:
 
         score = self.safe(inputs.get("catalyst_score", 0.0))
         return max(0.0, min(1.0, score))
+
+    def predict(self, x=None):
+        """Temporary calibration stub."""
+        self.g_log(
+            f"[{self.__class__.__name__}] Predict placeholder executed.")
+        return 0.5

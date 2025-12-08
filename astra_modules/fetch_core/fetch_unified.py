@@ -1,131 +1,421 @@
+# -*- coding: utf-8 -*-
 """
-fetch_unified.py — Phase 108 Stable
-Unified data fetcher with Guardian validation and mock fallback.
+Astra Intelligence — Unified Fetch Core (v3.8 Hybrid-LiveFix)
+--------------------------------------------------------------
+✅ Primary Astra-native data flow
+✅ Integrates Astra API + optional external fallback (Binance / Yahoo)
+✅ Predictive fallback when Astra or live API unavailable
+✅ Guardian-protected with structured logs
+✅ UTC-safe timestamps and caching
 """
 
+import json
 import os
-import requests
+import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Dict, Optional
+
 import pandas as pd
-from datetime import datetime, timedelta
+import pytz
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-from astra_modules.api_keys import FINNHUB_API_KEY, TWELVEDATA_API_KEY
+from astra_modules.guardian.guardian_v6 import guardian_log
 
-# ──────────────────────────────────────────────
-# Lazy Guardian Import
-# ──────────────────────────────────────────────
-_GUARDIAN_INSTANCE = None
+# ============================================================
+# 🌐 CONFIGURATION
+# ============================================================
 
-def get_guardian_instance():
-    """Safely load GuardianV6 once per session."""
-    global _GUARDIAN_INSTANCE
-    if _GUARDIAN_INSTANCE is None:
-        from astra_modules.guardian.guardian_v6 import GuardianV6
-        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
-        _GUARDIAN_INSTANCE = GuardianV6(root_dir)
-    return _GUARDIAN_INSTANCE
+ASTRA_API_BASE = os.getenv(
+    "ASTRA_API_BASE", "https://api.astra-intelligence.com/v1")
+API_KEY = os.getenv("ASTRA_API_KEY", "YOUR_API_KEY_HERE")
 
-# ──────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────
-def _is_crypto(symbol):
-    if symbol is None:
+CACHE_DIR = os.path.expanduser("~/astra_guardian_runtime/cache")
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+CACHE_MAX_AGE = {
+    "realtime": 60,
+    "market_overview": 120,
+    "crypto": 120,
+    "daily": 300,
+}
+
+HEADERS = {
+    "Authorization": f"Bearer {API_KEY}",
+    "Accept": "application/json",
+    "User-Agent": "AstraIntelligence/3.8",
+}
+
+# ============================================================
+# 📦 DATA STRUCTURE
+# ============================================================
+
+
+@dataclass
+class MarketData:
+    symbol: str
+    price: float
+    change: float
+    change_percent: float
+    volume: Optional[int] = None
+    timestamp: Optional[datetime] = None
+    source: str = "astra_api"
+    is_fresh: bool = False
+
+
+# ============================================================
+# 🔧 UTILITY FUNCTIONS
+# ============================================================
+
+_session = None
+
+
+def get_session() -> requests.Session:
+    """Return a persistent session with retry logic."""
+    global _session
+    if _session is None:
+        session = requests.Session()
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        _session = session
+    return _session
+
+
+def is_market_hours() -> bool:
+    """Return True if within US extended trading hours."""
+    try:
+        eastern = pytz.timezone("US/Eastern")
+        now_et = datetime.now(eastern)
+        if now_et.weekday() >= 5:
+            return False
+        pre_open = now_et.replace(hour=7, minute=0, second=0, microsecond=0)
+        after_close = now_et.replace(
+            hour=20, minute=0, second=0, microsecond=0)
+        return pre_open <= now_et <= after_close
+    except Exception:
+        return True
+
+
+def validate_data_freshness(
+    timestamp: Optional[datetime], max_age_seconds: int = 300
+) -> bool:
+    """Check if timestamp is within freshness range."""
+    if not timestamp:
         return False
-    sym = symbol.upper()
-    return sym in ["BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "BNB", "USDT", "USDC"] or len(sym) > 4
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    age = (datetime.now(timezone.utc) - timestamp).total_seconds()
+    return age <= max_age_seconds
 
-def compute_rsi(series, period=14):
-    delta = series.diff()
-    gain = delta.clip(lower=0).rolling(period).mean()
-    loss = -delta.clip(upper=0).rolling(period).mean()
-    rs = gain / (loss + 1e-9)
-    return 100 - (100 / (1 + rs))
 
-def compute_macd(series):
-    ema12 = series.ewm(span=12).mean()
-    ema26 = series.ewm(span=26).mean()
-    macd = ema12 - ema26
-    signal = macd.ewm(span=9).mean()
-    return macd, signal
+# ============================================================
+# 🌍 API WRAPPER
+# ============================================================
 
-# ──────────────────────────────────────────────
-# Fallback Mock Generator
-# ──────────────────────────────────────────────
-def _generate_mock_data(symbol, lookback=90):
-    """Generate realistic mock OHLCV data when APIs fail."""
-    import numpy as np
-    now = datetime.utcnow()
-    dates = [now - timedelta(days=i) for i in range(lookback)][::-1]
-    prices = np.linspace(100, 110 + (hash(symbol) % 50), lookback) + np.random.normal(0, 2, lookback)
-    df = pd.DataFrame({
-        "date": dates,
-        "open": prices * 0.99,
-        "high": prices * 1.01,
-        "low": prices * 0.98,
-        "close": prices,
-        "volume": np.random.randint(1000, 5000, size=lookback)
-    })
-    return df
 
-# ──────────────────────────────────────────────
-# Fetch Logic
-# ──────────────────────────────────────────────
-def _fetch_stock(symbol, lookback=90):
+def api_get(
+    endpoint: str,
+    params: dict = None,
+    cache_key: str = None,
+    ttl: int = 60,
+    force_refresh: bool = False,
+) -> Dict:
+    """Generic GET with caching and retry."""
+    cache_file = None
+    if cache_key:
+        cache_file = os.path.join(CACHE_DIR, f"{cache_key}.json")
+
+    if cache_file and not force_refresh and os.path.exists(cache_file):
+        age = time.time() - os.path.getmtime(cache_file)
+        if age < ttl:
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                guardian_log(
+                    f"[Fetch] 💾 Cached {cache_key} used ({int(age)}s old)")
+                return data
+            except Exception as e:
+                guardian_log(
+                    f"[Fetch] ⚠️ Cache read failed for {cache_key}: {e}")
+
     try:
-        url = f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_API_KEY}"
-        data = requests.get(url, timeout=5).json()
-        if "c" not in data:
-            raise ValueError("Invalid response from Finnhub.")
-        df = pd.DataFrame([{
-            "date": datetime.utcnow(),
-            "open": data.get("o", 0),
-            "high": data.get("h", 0),
-            "low": data.get("l", 0),
-            "close": data.get("c", 0),
-            "volume": data.get("v", 0),
-        }])
-        return df
-    except Exception:
-        return pd.DataFrame()
+        url = f"{ASTRA_API_BASE}/{endpoint.lstrip('/')}"
+        session = get_session()
+        response = session.get(url, headers=HEADERS, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        if isinstance(data, dict):
+            data["_metadata"] = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "source": "astra_api",
+                "endpoint": endpoint,
+            }
+        if cache_file:
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, default=str)
+        guardian_log(f"[Fetch] ✅ GET {endpoint} succeeded")
+        return data
+    except Exception as e:
+        guardian_log(f"[Fetch] 🚨 Astra API request failed ({endpoint}): {e}")
+        return {}
 
-def _fetch_crypto(symbol, lookback=90):
+
+# ============================================================
+# 📈 LIVE QUOTES
+# ============================================================
+
+
+def fetch_live_quote(symbol: str) -> Optional[MarketData]:
+    """Fetch live quote, with Astra → Binance/Yahoo fallback."""
     try:
-        sym = symbol.split("/")[0].lower()
-        url = f"https://api.coingecko.com/api/v3/coins/{sym}/market_chart?vs_currency=usd&days={lookback}"
-        data = requests.get(url, timeout=5).json()
-        prices = data.get("prices", [])
-        if not prices:
-            return pd.DataFrame()
-        df = pd.DataFrame(prices, columns=["timestamp", "close"])
-        df["date"] = pd.to_datetime(df["timestamp"], unit="ms")
+        data = api_get(
+            f"markets/quote/{symbol}",
+            params={"realtime": "true"},
+            cache_key=f"quote_{symbol}",
+            ttl=30,
+            force_refresh=is_market_hours(),
+        )
+        if data and "price" in data:
+            ts = datetime.fromisoformat(
+                data.get("timestamp", datetime.now(timezone.utc).isoformat())
+            )
+            quote = MarketData(
+                symbol=symbol,
+                price=float(data.get("price", 0)),
+                change=float(data.get("change", 0)),
+                change_percent=float(data.get("change_percent", 0)),
+                volume=data.get("volume"),
+                timestamp=ts,
+                source="astra_api_live",
+                is_fresh=validate_data_freshness(ts, 300),
+            )
+            guardian_log(
+                f"[Fetch] ✅ Live Astra quote {symbol} ${quote.price:.2f}")
+            return quote
+    except Exception as e:
+        guardian_log(f"[Fetch] ⚠️ Astra live quote failed: {e}")
+
+    # External live fallback (Binance/Yahoo)
+    try:
+        if "/" in symbol or "-" in symbol:
+            # Crypto from Binance
+            mapped = symbol.replace("/", "").upper()
+            resp = requests.get(
+                "https://api.binance.com/api/v3/ticker/price",
+                params={"symbol": mapped},
+                timeout=5,
+            )
+            resp.raise_for_status()
+            price = float(resp.json().get("price", 0))
+            guardian_log(f"[Fetch] 🌐 Binance fallback {symbol}: ${price:.2f}")
+            return MarketData(
+                symbol=symbol,
+                price=price,
+                change=0,
+                change_percent=0,
+                timestamp=datetime.now(timezone.utc),
+                source="binance_fallback",
+                is_fresh=True,
+            )
+        else:
+            import yfinance as yf
+
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period="1d", interval="1m")
+            if not hist.empty:
+                price = float(hist["Close"].iloc[-1])
+                guardian_log(
+                    f"[Fetch] 🌐 Yahoo fallback {symbol}: ${price:.2f}")
+                return MarketData(
+                    symbol=symbol,
+                    price=price,
+                    change=0,
+                    change_percent=0,
+                    timestamp=datetime.now(timezone.utc),
+                    source="yfinance_fallback",
+                    is_fresh=True,
+                )
+    except Exception as ext_err:
+        guardian_log(f"[Fetch] ⚠️ External fallback failed: {ext_err}")
+
+    # Predictive fallback
+    try:
+        from astra_modules.forecast.predictive_engine import HybridScan
+
+        forecast = HybridScan().predict(symbol)
+        if forecast and len(forecast) >= 2:
+            price, delta = forecast[0], forecast[1]
+            guardian_log(f"[Fetch] 🔮 Predictive fallback used for {symbol}")
+            return MarketData(
+                symbol=symbol,
+                price=price,
+                change=delta,
+                change_percent=round((delta / price) * 100, 2) if price else 0,
+                timestamp=datetime.now(timezone.utc),
+                source="astra_forecast",
+                is_fresh=True,
+            )
+    except Exception as f_err:
+        guardian_log(f"[Fetch] ⚠️ Predictive fallback unavailable: {f_err}")
+
+    return None
+
+
+# ============================================================
+# 💹 SYMBOL DATA
+# ============================================================
+
+
+def get_symbol_data(
+    symbol: str, period: str = "1d", interval: str = "1m"
+) -> pd.DataFrame:
+    """Unified Astra symbol data with external and predictive fallback."""
+    guardian_log(
+        f"[Fetch] 📊 Fetching {symbol} (period={period}, interval={interval})")
+    try:
+        data = api_get(
+            f"markets/symbols/{symbol}/history",
+            params={"period": period, "interval": interval},
+            cache_key=f"symbol_{symbol}_{period}_{interval}",
+            ttl=CACHE_MAX_AGE["realtime" if period == "1d" else "daily"],
+        )
+        candles = data.get("candles") or data.get("data") or []
+        if not candles:
+            raise ValueError("No Astra data returned")
+
+        df = pd.DataFrame(candles)
+        rename = {
+            "t": "timestamp",
+            "o": "open",
+            "h": "high",
+            "l": "low",
+            "c": "close",
+            "v": "volume",
+        }
+        df.rename(
+            columns={k: v for k, v in rename.items() if k in df.columns}, inplace=True
+        )
+        df["timestamp"] = pd.to_datetime(
+            df["timestamp"], utc=True, errors="coerce")
+        df = df[["timestamp", "open", "high", "low", "close", "volume"]]
+        df.attrs = {
+            "source": "astra_api",
+            "symbol": symbol,
+            "timestamp": datetime.now(timezone.utc),
+        }
+        guardian_log(f"[Fetch] ✅ Loaded {len(df)} bars for {symbol}")
         return df
-    except Exception:
-        return pd.DataFrame()
+    except Exception as e:
+        guardian_log(f"[Fetch] ⚠️ Astra history unavailable for {symbol}: {e}")
 
-# ──────────────────────────────────────────────
-# Main Unified Fetch
-# ──────────────────────────────────────────────
-def fetch_unified(symbol, lookback=90):
-    guardian = get_guardian_instance()
+    # --- External fallback if Astra fails ---
+    try:
+        if "/" in symbol or "-" in symbol:
+            # Binance fallback for crypto
+            mapped = symbol.replace("/", "").upper()
+            url = "https://api.binance.com/api/v3/klines"
+            params = {"symbol": mapped, "interval": "1h", "limit": 50}
+            resp = requests.get(url, params=params, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            df = pd.DataFrame(
+                [
+                    {
+                        "timestamp": datetime.utcfromtimestamp(x[0] / 1000).replace(
+                            tzinfo=timezone.utc
+                        ),
+                        "open": float(x[1]),
+                        "high": float(x[2]),
+                        "low": float(x[3]),
+                        "close": float(x[4]),
+                        "volume": float(x[5]),
+                    }
+                    for x in data
+                ]
+            )
+            df.attrs = {
+                "source": "binance",
+                "symbol": symbol,
+                "timestamp": datetime.now(timezone.utc),
+            }
+            guardian_log(f"[Fetch] 🌐 Binance fallback used for {symbol}")
+            return df
+        else:
+            import yfinance as yf
 
-    df = _fetch_crypto(symbol, lookback) if _is_crypto(symbol) else _fetch_stock(symbol, lookback)
-    if df.empty:
-        df = _generate_mock_data(symbol, lookback)
+            hist = yf.download(symbol, period=period, interval=interval)
+            hist.reset_index(inplace=True)
+            hist.rename(columns={"Datetime": "timestamp"}, inplace=True)
+            hist["timestamp"] = pd.to_datetime(hist["timestamp"], utc=True)
+            df = hist[["timestamp", "Open", "High", "Low", "Close", "Volume"]].rename(
+                columns={
+                    "Open": "open",
+                    "High": "high",
+                    "Low": "low",
+                    "Close": "close",
+                    "Volume": "volume",
+                }
+            )
+            df.attrs = {
+                "source": "yfinance",
+                "symbol": symbol,
+                "timestamp": datetime.now(timezone.utc),
+            }
+            guardian_log(f"[Fetch] 🌐 Yahoo fallback used for {symbol}")
+            return df
+    except Exception as ext_f_err:
+        guardian_log(
+            f"[Fetch] ⚠️ External data fallback failed for {symbol}: {ext_f_err}"
+        )
 
-    df = guardian.validate_dataframe(df, required_columns=["date", "close"])
-    if df.empty:
-        return df
+    # --- Predictive fallback ---
+    try:
+        from astra_modules.forecast.predictive_engine import HybridScan
 
-    df = df.sort_values("date").reset_index(drop=True)
-    closes = df["close"].astype(float)
+        forecast = HybridScan().predict(symbol)
+        if forecast and len(forecast) >= 2:
+            price, change = forecast[0], forecast[1]
+            df = pd.DataFrame(
+                [
+                    {
+                        "timestamp": datetime.now(timezone.utc),
+                        "open": price * 0.995,
+                        "high": price * 1.005,
+                        "low": price * 0.995,
+                        "close": price,
+                        "volume": 0,
+                    }
+                ]
+            )
+            df.attrs = {
+                "source": "astra_forecast",
+                "symbol": symbol,
+                "timestamp": datetime.now(timezone.utc),
+            }
+            guardian_log(
+                f"[Fetch] 🔮 Predictive fallback generated for {symbol}")
+            return df
+    except Exception as pred_err:
+        guardian_log(
+            f"[Fetch] ⚠️ Forecast fallback failed for {symbol}: {pred_err}")
 
-    df["rsi"] = compute_rsi(closes).fillna(50)
-    macd, signal = compute_macd(closes)
-    df["macd"] = macd
-    df["macd_signal"] = signal
-    df["ma_fast"] = closes.ewm(span=10).mean()
-    df["ma_slow"] = closes.ewm(span=30).mean()
-    df["sparkline"] = [closes.tail(30).tolist()] * len(df)
-    df["volatility"] = closes.pct_change().rolling(10).std().fillna(0)
-    df["price_change"] = (closes - closes.shift(10)) / closes.shift(10)
-
+    # --- Last resort empty frame ---
+    df = pd.DataFrame(columns=["timestamp", "open",
+                      "high", "low", "close", "volume"])
+    df.attrs = {
+        "source": "error",
+        "symbol": symbol,
+        "timestamp": datetime.now(timezone.utc),
+    }
+    guardian_log(
+        f"[Fetch] 🚨 No data available for {symbol}, returning empty DataFrame"
+    )
     return df

@@ -1,328 +1,331 @@
 # -*- coding: utf-8 -*-
 """
-Astra Intelligence — Dashboard Data Loader v9.1 (Async + Telemetry Edition)
----------------------------------------------------------------------------
-Unified async data loader for Astra Dashboard with multi-API live streaming.
+Astra Intelligence — Dashboard Data Loader (v2.4 LiveFix Guardian+Async Safe)
+----------------------------------------------------------------------------
+Unified data loader using Astra internal APIs with complete fallback chain.
 
-Upgrades:
-✅ Asynchronous 6-API data aggregation (Alpaca, Binance, Polygon, Coinbase, Kraken, Finnhub)
-✅ Guardian-aware exception handling
-✅ Schema normalization and deduplication
-✅ Symbol-aware fallback mode
-✅ Ensemble prediction injection
-✅ Guardian telemetry integration (Phase 2.9-B)
-✅ Up to 5× faster dashboard refresh
+🧠 Features:
+✅ Uses AstraAPI + internal backend only (no external feeds)
+✅ Predictive + synthetic fallback chain
+✅ Guardian-integrated logging
+✅ Smart caching + freshness validation
+✅ Live mode + UTC-aware timestamps
+✅ Async-safe backend handler for Streamlit event loops
 """
 
 import asyncio
-import json
 import os
-from datetime import datetime
-from typing import Any, Dict
+from datetime import datetime, timezone
+from typing import Optional
 
-import numpy as np
+import httpx
 import pandas as pd
 
-from astra_modules.guardian.guardian_v6 import GuardianV7, guardian_log
+from astra_modules.guardian.guardian_v6 import guardian_log
 
-guardian = GuardianV7()
+# ===================================================================
+# ⚙️ Configuration
+# ===================================================================
 
-# ============================================================
-# 📡 Guardian Telemetry Integration
-# ============================================================
+CACHE_DIR = "/tmp/astra_cache"
+STATE_CACHE_PATH = os.path.join(CACHE_DIR, "astra_state_cache.json")
+DATA_FRESHNESS_THRESHOLD = 300  # 5 minutes
+BACKEND_URL = os.getenv("ASTRA_BACKEND_URL", "http://127.0.0.1:8000")
 
-TELEMETRY_PATH = os.path.join(os.getcwd(), "logs", "telemetry_latest.json")
+os.makedirs(CACHE_DIR, exist_ok=True)
 
 
-def get_guardian_telemetry() -> Dict[str, Any]:
-    """
-    Reads the latest Guardian telemetry snapshot from TelemetryHub.
-    Returns safe defaults if unavailable or corrupted.
-    """
+# ===================================================================
+# 💾 Cache Management
+# ===================================================================
+
+
+def load_cached_data(symbol: str) -> Optional[pd.DataFrame]:
+    """Load locally cached data if available."""
     try:
-        if not os.path.exists(TELEMETRY_PATH):
-            guardian_log("⚠️ Telemetry file not found.")
-            return {
-                "status": "unavailable",
-                "message": "Telemetry snapshot missing.",
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
-
-        with open(TELEMETRY_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        return {
-            "timestamp": data.get("timestamp"),
-            "guardian_running": data.get("guardian_running", False),
-            "total_cycles": data.get("total_cycles", 0),
-            "success_rate": round(float(data.get("success_rate", 0.0)), 3),
-            "avg_loss": round(float(data.get("avg_loss", 0.0)), 6),
-            "status": "healthy" if data.get("guardian_running") else "inactive",
-        }
-    except Exception as e:
-        guardian_log(f"[Telemetry] ❌ Failed to read telemetry: {e}")
-        return {
-            "status": "error",
-            "message": f"Telemetry read failed: {e}",
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        }
-
-
-def get_dashboard_status() -> Dict[str, Any]:
-    """
-    Combines Guardian telemetry with high-level dashboard system info.
-    """
-    guardian_data = get_guardian_telemetry()
-    return {
-        "system": "Astra Intelligence",
-        "timestamp": guardian_data.get("timestamp"),
-        "guardian": guardian_data,
-    }
-
-
-# ============================================================
-# 🧩 Data Normalization Utility
-# ============================================================
-
-
-def normalize_dataframe(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
-    """Clean and standardize a DataFrame for Astra dashboard visualization."""
-    try:
-        expected_cols = ["timestamp", "open", "high", "low", "close", "volume"]
-        rename_map = {
-            "date": "timestamp",
-            "time": "timestamp",
-            "o": "open",
-            "h": "high",
-            "l": "low",
-            "c": "close",
-            "v": "volume",
-            "Close": "close",
-            "Open": "open",
-            "High": "high",
-            "Low": "low",
-            "Volume": "volume",
-        }
-        df.rename(columns=rename_map, inplace=True)
-        df = df[[col for col in df.columns if col in expected_cols]]
-
-        if "timestamp" in df.columns:
-            df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-
-        for col in ["open", "high", "low", "close", "volume"]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        df.dropna(subset=["open", "high", "low", "close"], inplace=True)
-        df.sort_values("timestamp", inplace=True)
-        df.drop_duplicates(subset="timestamp", inplace=True)
-        if "volume" in df.columns:
-            df["volume"].fillna(0, inplace=True)
-
-        invalid = df[(df["close"] < 0) | (df["high"] < 0) | (df["low"] < 0)]
-        if not invalid.empty:
-            guardian_log(
-                f"[Data Normalize] ⚠️ Negative values found in {symbol}, dropping invalid rows."
-            )
-            df = df[df["close"] >= 0]
-
-        guardian_log(
-            f"[Data Normalize] ✅ Normalized {symbol} with {len(df)} records.")
-        return df.reset_index(drop=True)
-
-    except Exception as e:
-        guardian_log(
-            f"[Data Normalize] ❌ Normalization failed for {symbol}: {e}")
+        cache_path = os.path.join(
+            CACHE_DIR, f"data_{symbol.replace('/', '_')}.csv")
+        if not os.path.exists(cache_path):
+            return None
+        df = pd.read_csv(cache_path)
+        df["timestamp"] = pd.to_datetime(
+            df["timestamp"], utc=True, errors="coerce")
+        guardian_log(f"[Cache] 💾 Loaded cached {symbol} ({len(df)} rows)")
         return df
-
-
-# ============================================================
-# 🌐 ASTRA LIVE DATA GATEWAY
-# ============================================================
-
-
-async def _fetch_api(api_name: str, symbol: str):
-    """Async wrapper for Astra’s unified API client."""
-    try:
-        from astra_modules.core.api_client import get_symbol_data
-
-        guardian_log(f"[AsyncData] 🔄 Fetching {symbol} via {api_name}...")
-        df = get_symbol_data(symbol)
-        if isinstance(df, pd.DataFrame) and not df.empty:
-            df["source"] = api_name
-            df = normalize_dataframe(df, symbol)
-            guardian_log(
-                f"[AsyncData] ✅ {api_name} returned {len(df)} normalized rows for {symbol}"
-            )
-            return df
-        else:
-            guardian_log(
-                f"[AsyncData] ⚠️ {api_name} returned no data for {symbol}")
     except Exception as e:
-        guardian_log(f"[AsyncData] ⚠️ API fetch failed for {symbol}: {e}")
-    return pd.DataFrame()
+        guardian_log(f"[Cache] ⚠️ Load error for {symbol}: {e}")
+        return None
 
 
-async def get_symbol_data_async(symbol: str) -> pd.DataFrame:
-    """Fetch live market data via Astra’s unified core API client."""
-    guardian_log(f"[AsyncData] 🚀 Launching async fetch for {symbol}...")
-    df = await _fetch_api("core_api_client", symbol)
-    if df.empty:
-        guardian_log(f"[AsyncData] ⚠️ No valid live data for {symbol}")
-        return pd.DataFrame()
-    guardian_log(
-        f"[AsyncData] ✅ Retrieved {len(df)} normalized rows for {symbol}")
-    return df.reset_index(drop=True)
-
-
-def get_symbol_data(symbol: str) -> pd.DataFrame:
-    """Synchronous wrapper for the async data fetch."""
+def save_cache(df: pd.DataFrame, symbol: str) -> None:
+    """Save dataframe to cache."""
     try:
-        return asyncio.run(get_symbol_data_async(symbol))
-    except RuntimeError:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        cache_path = os.path.join(
+            CACHE_DIR, f"data_{symbol.replace('/', '_')}.csv")
+        df.to_csv(cache_path, index=False)
+        guardian_log(f"[Cache] ✅ Saved {symbol} ({len(df)} rows)")
+    except Exception as e:
+        guardian_log(f"[Cache] ⚠️ Save error for {symbol}: {e}")
+
+
+# ===================================================================
+# 🔗 AstraAPI Integration (LIVE Data Enabled)
+# ===================================================================
+
+
+def fetch_from_astra_api(symbol: str) -> Optional[pd.DataFrame]:
+    """
+    Use AstraAPI to fetch REAL market data (live API-first).
+    Falls back gracefully to synthetic or cached sources if needed.
+    """
+    try:
+        # import the primary AstraAPI (which should now call your live feed)
+        from astra_modules.core.api_client import AstraAPI
+
+        api = AstraAPI()
+
+        # attempt live retrieval
+        df = api.get_data(symbol)
+        if df is not None and not df.empty:
+            df["timestamp"] = pd.to_datetime(
+                df["timestamp"], utc=True, errors="coerce")
+            df.attrs = {
+                "source": df.attrs.get("source", "my_api_live"),
+                "symbol": symbol,
+                "timestamp": datetime.now(timezone.utc),
+                "price": float(df["close"].iloc[-1]) if "close" in df.columns else None,
+                "data_fresh": True,
+                "confidence": df.attrs.get("confidence", 0.99),
+            }
+            guardian_log(
+                f"[AstraAPI] ✅ LIVE data loaded for {symbol} ({df.attrs['source']})"
+            )
+            save_cache(df, symbol)
+            return df
+
+        guardian_log(
+            f"[AstraAPI] ⚠️ No live data returned for {symbol}, fallback triggered."
+        )
+
+    except Exception as e:
+        guardian_log(f"[AstraAPI] ⚠️ Live data error for {symbol}: {e}")
+
+    # fallback chain
+    cached = load_cached_data(symbol)
+    if cached is not None:
+        guardian_log(f"[AstraAPI] 🔁 Using cached data for {symbol}")
+        return cached
+
+    try:
+        from astra_modules.scanners.synthetic_generator import \
+            generate_synthetic_data
+
+        guardian_log(
+            f"[AstraAPI] 🧪 Generating synthetic fallback for {symbol}")
+        return generate_synthetic_data(symbol)
+    except Exception as e:
+        guardian_log(f"[AstraAPI] ❌ Failed fallback for {symbol}: {e}")
+        return None
+
+
+# ===================================================================
+# 🌐 Backend Fallback (Async + Safe Wrapper)
+# ===================================================================
+
+
+async def fetch_from_backend_async(symbol: str) -> Optional[pd.DataFrame]:
+    """Fetch data from internal Astra backend (http://127.0.0.1:8000)."""
+    try:
+        url = f"{BACKEND_URL}/v1/data/{symbol}"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(url)
+            r.raise_for_status()
+            data = r.json()
+            if isinstance(data, dict) and "data" in data:
+                df = pd.DataFrame(data["data"])
+            else:
+                df = pd.DataFrame(data)
+            df["timestamp"] = pd.to_datetime(
+                df["timestamp"], utc=True, errors="coerce")
+            df.attrs = {"source": "backend",
+                        "timestamp": datetime.now(timezone.utc)}
+            guardian_log(f"[Backend] ✅ Received {len(df)} rows for {symbol}")
+            return df
+    except Exception as e:
+        guardian_log(f"[Backend] ⚠️ Fallback failed for {symbol}: {e}")
+        return None
+
+
+def fetch_from_backend(symbol: str) -> Optional[pd.DataFrame]:
+    """Async-safe backend wrapper that works in Streamlit environments."""
+    try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            guardian_log(f"[AsyncData] ⚙️ Using running loop for {symbol}")
-            return loop.create_task(get_symbol_data_async(symbol))
-        else:
-            return loop.run_until_complete(get_symbol_data_async(symbol))
-
-
-# ============================================================
-# 📦 MAIN DATA LOADER
-# ============================================================
-
-
-def load_data(symbol: str = "BTC/USD") -> pd.DataFrame:
-    """
-    Loads live or fallback market data for a given symbol.
-    Integrates ensemble predictions and Guardian telemetry snapshot.
-    """
-    guardian_log(
-        f"[DashboardData] 🧠 Loading data for {symbol} (async mode)...")
-
-    try:
-        df = asyncio.run(get_symbol_data_async(symbol))
-        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
-            raise ValueError("Empty or invalid dataset returned")
-
-        df.columns = [c.lower().strip() for c in df.columns]
-        if "price" not in df.columns:
-            if "close" in df.columns:
-                df["price"] = df["close"]
-            elif "last" in df.columns:
-                df["price"] = df["last"]
-            else:
-                df["price"] = np.nan
-
-        if "open" not in df.columns:
-            df["open"] = df["price"].shift(1).fillna(df["price"])
-
-        df["change"] = df["price"] - df["open"]
-        df["percentchange"] = (
-            ((df["change"] / df["open"]) * 100)
-            .replace([np.inf, -np.inf], 0.0)
-            .fillna(0.0)
-        )
-
-        # Inject ensemble predictions
-        try:
-            from astra_modules.forecast.ensemble_engine import EnsembleEngine
-
-            engine = EnsembleEngine()
-            preds = engine.predict(df)
-            if preds is not None and not preds.empty:
-                for col in preds.columns:
-                    if col not in df.columns:
-                        df[col] = (
-                            preds[col].values[0]
-                            if len(preds[col]) == 1
-                            else preds[col].values
-                        )
-                guardian_log(
-                    f"[DashboardData] 🎯 Predictions injected for {symbol}.")
-        except Exception as pred_err:
             guardian_log(
-                f"[DashboardData] ⚠️ Prediction injection failed: {pred_err}")
-
-        # ✅ Embed Guardian telemetry summary into metadata
-        telemetry = get_guardian_telemetry()
-        df.attrs["guardian_status"] = telemetry
-
-        guardian_log(
-            f"[DashboardData] ✅ Loaded {len(df)} rows for {symbol}. Telemetry integrated."
-        )
-        return df
-
-    except Exception as e:
-        guardian_log(
-            f"[DashboardData] ⚠️ Fallback triggered for {symbol}: {e}")
-        np.random.seed(abs(hash(symbol)) % (10**6))
-        dates = pd.date_range(end=pd.Timestamp.now(), periods=30)
-
-        base_price = {
-            "BTC/USD": 45000,
-            "ETH/USD": 2400,
-            "SOL/USD": 60,
-            "AAPL": 190,
-            "TSLA": 250,
-            "NVDA": 470,
-            "AMZN": 140,
-            "MSFT": 380,
-            "GOOGL": 130,
-            "ADA/USD": 0.45,
-            "XRP/USD": 0.52,
-            "DOGE/USD": 0.08,
-        }.get(symbol, 100)
-
-        drift = np.random.normal(0, base_price * 0.002, len(dates)).cumsum()
-        prices = base_price + drift
-        df = pd.DataFrame(
-            {
-                "date": dates,
-                "open": prices
-                - np.random.uniform(base_price * 0.001,
-                                    base_price * 0.003, len(dates)),
-                "close": prices,
-                "price": prices,
-            }
-        )
-        df["change"] = df["price"] - df["open"]
-        df["percentchange"] = (df["change"] / df["open"]) * 100
-
-        try:
-            from astra_modules.forecast.ensemble_engine import EnsembleEngine
-
-            engine = EnsembleEngine()
-            preds = engine.predict(df)
-            if preds is not None and not preds.empty:
-                for col in preds.columns:
-                    if col not in df.columns:
-                        df[col] = (
-                            preds[col].values[0]
-                            if len(preds[col]) == 1
-                            else preds[col].values
-                        )
-                guardian_log(
-                    f"[DashboardData] 🧩 Mock predictions injected for {symbol}"
-                )
-        except Exception as mock_err:
-            guardian_log(
-                f"[DashboardData] ⚠️ Mock prediction injection failed: {mock_err}"
+                f"[Backend] ⚙️ Event loop active — scheduling backend fetch for {symbol}"
             )
+            import nest_asyncio
 
-        # Add telemetry to fallback mode as well
-        df.attrs["guardian_status"] = get_guardian_telemetry()
+            nest_asyncio.apply()
+            return loop.run_until_complete(fetch_from_backend_async(symbol))
+        else:
+            return asyncio.run(fetch_from_backend_async(symbol))
+    except Exception as e:
+        guardian_log(f"[Backend] ⚠️ Sync fallback failed for {symbol}: {e}")
+        return None
+
+
+# ===================================================================
+# 🔮 Predictive + Synthetic Fallback
+# ===================================================================
+
+
+def get_predictive_forecast(symbol: str) -> Optional[pd.DataFrame]:
+    """Predictive fallback using Astra's forecast engine."""
+    try:
+        from astra_modules.forecast.predictive_engine import HybridScan
+
+        scan = HybridScan()
+        forecast = scan.predict(symbol)
+        if forecast and isinstance(forecast, (list, tuple)) and len(forecast) >= 2:
+            price, delta = float(forecast[0]), float(forecast[1])
+            guardian_log(f"[Forecast] 🔮 {symbol} → {price:.2f} ({delta:+.2f})")
+            now = datetime.now(timezone.utc)
+            df = pd.DataFrame(
+                [
+                    {
+                        "timestamp": now,
+                        "open": price * 0.995,
+                        "high": price * 1.005,
+                        "low": price * 0.995,
+                        "close": price,
+                        "volume": 1000,
+                    }
+                ]
+            )
+            df.attrs = {"source": "forecast", "timestamp": now}
+            return df
+    except Exception as e:
+        guardian_log(f"[Forecast] ⚠️ Predictive fallback failed: {e}")
+    return None
+
+
+def generate_synthetic_data(symbol: str) -> pd.DataFrame:
+    """Last-resort synthetic generator."""
+    import random
+
+    guardian_log(f"[Synthetic] ⚙️ Generating synthetic data for {symbol}")
+    now = datetime.now(timezone.utc)
+    df = pd.DataFrame(
+        [
+            {
+                "timestamp": now,
+                "open": random.uniform(50, 200),
+                "high": random.uniform(50, 200),
+                "low": random.uniform(50, 200),
+                "close": random.uniform(50, 200),
+                "volume": random.randint(1000, 10000),
+            }
+            for _ in range(30)
+        ]
+    )
+    df.attrs = {"source": "synthetic", "timestamp": now}
+    return df
+
+
+# ===================================================================
+# ✅ Unified Load Function
+# ===================================================================
+
+
+def load_data(symbol: str = "AAPL") -> pd.DataFrame:
+    """Unified Astra data loader with full fallback chain."""
+    guardian_log(f"[DashboardData] 🚀 Loading {symbol}")
+
+    # 1️⃣ AstraAPI
+    df = fetch_from_astra_api(symbol)
+    if df is not None and not df.empty:
+        save_cache(df, symbol)
         return df
 
+    # 2️⃣ Backend
+    df = fetch_from_backend(symbol)
+    if df is not None and not df.empty:
+        save_cache(df, symbol)
+        return df
 
-# ============================================================
-# 🧪 Standalone Test
-# ============================================================
+    # 3️⃣ Cache
+    df = load_cached_data(symbol)
+    if df is not None and not df.empty:
+        df.attrs = {"source": "cache", "timestamp": datetime.now(timezone.utc)}
+        guardian_log(f"[DashboardData] 💾 Using cached data for {symbol}")
+        return df
 
+    # 4️⃣ Predictive
+    df = get_predictive_forecast(symbol)
+    if df is not None and not df.empty:
+        return df
+
+    # 5️⃣ Synthetic (always works)
+    df = generate_synthetic_data(symbol)
+    guardian_log(f"[DashboardData] ✅ Synthetic fallback used for {symbol}")
+
+    # 🔧 Ensure minimal dataframe integrity
+    required_cols = ["timestamp", "open", "high", "low", "close", "volume"]
+    for col in required_cols:
+        if col not in df.columns:
+            guardian_log(f"[DashboardData] 🔧 Adding missing column: {col}")
+            if col == "timestamp":
+                df[col] = datetime.now(timezone.utc)
+            elif col == "volume":
+                df[col] = 1000
+            else:
+                df[col] = 100.0
+
+    if "close" not in df.columns or df["close"].isnull().all():
+        guardian_log(f"[DashboardData] 🔧 Creating close price column")
+        df["close"] = 100.0
+
+    df.dropna(subset=["close"], inplace=True)
+    df["timestamp"] = pd.to_datetime(
+        df["timestamp"], utc=True, errors="coerce")
+    df["timestamp"].fillna(datetime.now(timezone.utc), inplace=True)
+
+    guardian_log(
+        f"[DashboardData] ✅ Final dataframe for {symbol} "
+        f"from source: {df.attrs.get('source', 'unknown')} "
+        f"({len(df)} rows, columns: {list(df.columns)})"
+    )
+    return df
+
+
+# -------------------------------------------------------------------
+# 🕒 Legacy Compatibility: validate_data_freshness
+# -------------------------------------------------------------------
+def validate_data_freshness(df: pd.DataFrame, symbol: str) -> bool:
+    """Backward-compatible stub for dashboard_cards."""
+    try:
+        if df is None or df.empty or "timestamp" not in df.columns:
+            return False
+        last = pd.to_datetime(df["timestamp"].max(), utc=True, errors="coerce")
+        age = (datetime.now(timezone.utc) - last).total_seconds()
+        guardian_log(f"[Compat] ⏱️ {symbol} data age: {age:.1f}s")
+        return age <= DATA_FRESHNESS_THRESHOLD
+    except Exception as e:
+        guardian_log(f"[Compat] ⚠️ Freshness check failed for {symbol}: {e}")
+        return False
+
+
+# ===================================================================
+# 🧪 Self-test
+# ===================================================================
 if __name__ == "__main__":
-    guardian_log("🧩 Async DashboardData test run (v9.1)")
-    sample = load_data("BTC/USD")
-    print(sample.tail())
-    print("\nGuardian Telemetry Snapshot:")
-    print(sample.attrs.get("guardian_status"))
+    guardian_log("[DashboardData] 🔍 Self-test started")
+    for sym in ["AAPL", "BTC/USD", "TSLA"]:
+        df = load_data(sym)
+        print(f"{sym}: {len(df)} rows from {df.attrs.get('source')}")
+        print(f"  Columns: {list(df.columns)}")
+        print(
+            f"  Sample close: {df['close'].iloc[0] if 'close' in df.columns else 'MISSING'}"
+        )

@@ -1,3 +1,5 @@
+from astra_modules.agents.base_agent import BaseAgent
+
 """
 Astra Intelligence — PsychologyAgent v2
 ---------------------------------------
@@ -5,11 +7,13 @@ Generates human-readable reasoning strings explaining Astra's forecasts.
 This version is dashboard-safe and works even when markets are closed.
 """
 
-import numpy as np
-import pandas as pd
 from datetime import datetime
 
-class PsychologyAgent:
+import numpy as np
+import pandas as pd
+
+
+class PsychologyAgent(BaseAgent):
     """
     Converts numeric and volatility context into qualitative reasoning.
     """
@@ -43,7 +47,8 @@ class PsychologyAgent:
                 return "No recent market data available; awaiting next session."
 
             closes = df["close"].astype(float)
-            change = closes.pct_change().iloc[-1] * 100 if len(closes) > 1 else 0
+            change = closes.pct_change(
+            ).iloc[-1] * 100 if len(closes) > 1 else 0
             vol = closes.pct_change().std() * 100
 
             # Determine sentiment zone
@@ -61,3 +66,9 @@ class PsychologyAgent:
 
         except Exception as e:
             return f"Astra reasoning unavailable: {e}"
+
+    def predict(self, x=None):
+        """Temporary calibration stub."""
+        self.g_log(
+            f"[{self.__class__.__name__}] Predict placeholder executed.")
+        return 0.5

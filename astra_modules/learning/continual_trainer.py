@@ -17,7 +17,7 @@ Module Version: v2.3.1
 """
 
 import traceback
-from typing import Optional, Dict, Any, Tuple, List, Callable
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import numpy as np
 import numpy.typing as npt
@@ -32,14 +32,15 @@ class ContinualTrainer:
     Main online trainer for Astra's learning system.
     Performs incremental updates to the neural or statistical model using
     small batches from ReplayBuffer.
-    
+
     Phase 2.3 additions:
     - Forecast feedback integration
     - Dynamic feature dimension detection
     - Reward update mechanism
     """
 
-    AGENT_ORDER = ["momentum", "technical", "volume", "risk", "psychology", "neural"]
+    AGENT_ORDER = ["momentum", "technical",
+                   "volume", "risk", "psychology", "neural"]
 
     def __init__(
         self,
@@ -166,20 +167,27 @@ class ContinualTrainer:
             for i in range(self.train_steps):
                 X, y_true, preds = self._prepare_batch(buffer)
                 if X is None:
-                    self.log(f"No samples at batch {i+1}/{self.train_steps}. Stopping early.", "WARNING")
+                    self.log(
+                        f"No samples at batch {i+1}/{self.train_steps}. Stopping early.",
+                        "WARNING",
+                    )
                     break
                 loss = self._train_step(X, y_true, preds)
                 if loss is not None:
                     total_loss.append(loss)
-                    self.log(f"Batch {i+1}/{self.train_steps} | Loss: {loss:.6f}")
+                    self.log(
+                        f"Batch {i+1}/{self.train_steps} | Loss: {loss:.6f}")
             if total_loss:
                 self._save_model()
                 avg_loss = np.mean(total_loss)
                 self.performance.record_training_result(loss=avg_loss)
-                self.log(f"✅ Training complete | Batches: {len(total_loss)} | Avg Loss: {avg_loss:.6f}")
+                self.log(
+                    f"✅ Training complete | Batches: {len(total_loss)} | Avg Loss: {avg_loss:.6f}"
+                )
                 return True
             else:
-                self.log("No training performed (no samples available).", "WARNING")
+                self.log(
+                    "No training performed (no samples available).", "WARNING")
                 return False
         except Exception as e:
             self.log(f"Training failed: {e}", "ERROR")
@@ -247,7 +255,8 @@ class ContinualTrainer:
                 try:
                     self.performance.log_prediction(forecast)
                 except Exception as e:
-                    self.log(f"PerformanceTracker logging failed: {e}", "WARNING")
+                    self.log(
+                        f"PerformanceTracker logging failed: {e}", "WARNING")
 
             return True
         except Exception as e:
@@ -256,14 +265,19 @@ class ContinualTrainer:
             return False
 
     # === Phase 2.4: Outcome Updates ===
-    def update_forecast_outcome(self, symbol: str, timestamp: str, actual_return: float) -> bool:
+    def update_forecast_outcome(
+        self, symbol: str, timestamp: str, actual_return: float
+    ) -> bool:
         """
         Updates stored forecasts with realized market returns.
         Called when true price data becomes available.
         """
         try:
-            if self.replay_buffer is None or not hasattr(self.replay_buffer, "update_reward"):
-                self.log("ReplayBuffer does not support reward updates.", "WARNING")
+            if self.replay_buffer is None or not hasattr(
+                self.replay_buffer, "update_reward"
+            ):
+                self.log(
+                    "ReplayBuffer does not support reward updates.", "WARNING")
                 return False
 
             # Compute reward: positive if direction correct, scaled by return
@@ -273,10 +287,14 @@ class ContinualTrainer:
                     actual_sign = np.sign(actual_return)
                     reward = 1.0 if predicted_sign == actual_sign else -1.0
                     exp["reward"] = reward * abs(actual_return)
-                    self.log(f"Updated reward for {symbol} ({timestamp}) → {exp['reward']:.4f}")
+                    self.log(
+                        f"Updated reward for {symbol} ({timestamp}) → {exp['reward']:.4f}"
+                    )
                     return True
 
-            self.log(f"No matching forecast found for {symbol} at {timestamp}", "WARNING")
+            self.log(
+                f"No matching forecast found for {symbol} at {timestamp}", "WARNING"
+            )
             return False
         except Exception as e:
             self.log(f"Reward update failed: {e}", "ERROR")

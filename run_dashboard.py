@@ -1,16 +1,22 @@
-#!/usr/bin/env python3
-"""
-Safe Astra Dashboard Launcher
-Runs diagnostics first; only launches Streamlit if all checks pass.
-"""
+import os
+import sys
+import streamlit.web.cli as stcli
 
-import subprocess, sys
+# --- Force project root on sys.path and env variable ---
+repo_root = os.path.dirname(os.path.abspath(__file__))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+os.environ["PYTHONPATH"] = repo_root
 
-print("🧠 Running Astra Diagnostics...\n")
-result = subprocess.run([sys.executable, "astra_diagnostics.py"])
+# --- Optional debug print ---
+print(f"✅ Astra launch root: {repo_root}")
 
-if result.returncode == 0:
-    print("\n✅ Diagnostics passed — launching Streamlit dashboard...\n")
-    subprocess.run([sys.executable, "-m", "streamlit", "run", "astra_modules/ui/dashboard/tab_dashboard.py"])
-else:
-    print("\n🚨 Diagnostics failed — fix issues before launching dashboard.")
+# --- Launch Streamlit dashboard ---
+sys.argv = [
+    "streamlit",
+    "run",
+    "astra_modules/ui/dashboard/tab_dashboard.py",
+    "--server.headless=true",
+]
+sys.exit(stcli.main())
+

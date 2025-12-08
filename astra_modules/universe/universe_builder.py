@@ -3,16 +3,16 @@ Universe Builder – Phase-90 Unified Version
 -------------------------------------------
 Provides both the UniverseBuilder class (for legacy modules)
 and build_universe() function (for Phase-90 components).
-Integrated with GuardianV6 for self-healing and logging.
+Integrated with guardian_v7.for self-healing and logging.
 """
 
 import os
 
 import pandas as pd
 
-from astra_modules.guardian.guardian_v6 import GuardianV6
+from astra_modules.guardian import guardian_v7
 
-guardian = GuardianV6(os.path.dirname(__file__))
+guardian = guardian_v7
 
 
 class UniverseBuilder:

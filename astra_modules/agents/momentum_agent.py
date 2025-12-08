@@ -1,3 +1,5 @@
+from astra_modules.agents.base_agent import BaseAgent
+
 """
 MomentumAgent — Phase-90
 
@@ -9,7 +11,7 @@ Outputs a normalized 0–1 score.
 """
 
 
-class MomentumAgent:
+class MomentumAgent(BaseAgent):
     def __init__(self):
         pass
 
@@ -63,3 +65,9 @@ class MomentumAgent:
         score = 0.4 * roc5_score + 0.4 * roc10_score + 0.2 * slope_score
 
         return float(score)
+
+    def predict(self, x=None):
+        """Temporary calibration stub."""
+        self.g_log(
+            f"[{self.__class__.__name__}] Predict placeholder executed.")
+        return 0.5

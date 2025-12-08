@@ -35,7 +35,7 @@ def parse_repair_log(log_lines):
 def render_system_health():
     """Render the system health dashboard for Guardian + Integrity."""
     base_path = os.path.dirname(__file__)
-    guardian_log = os.path.join(base_path, "../../guardian_v6.log")
+    guardian_log = os.path.join(base_path, "../../guardian_v7.log")
     repair_log = os.path.join(
         base_path, "../../astra_logs/integrity_repairs.log")
 

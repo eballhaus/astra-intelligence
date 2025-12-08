@@ -33,13 +33,16 @@ from pathlib import Path
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 GUARDIAN_LOG_PATH = Path(__file__).resolve().parent / "guardian.log"
 FIX_REGISTRY_PATH = Path(ROOT_DIR) / "guardian_fixes.json"
-QUOTA_STATE_PATH = Path(__file__).resolve().parent / "guardian_quota_state.json"
+QUOTA_STATE_PATH = Path(__file__).resolve().parent / \
+    "guardian_quota_state.json"
 
 # ============================================================
 # SUPPRESS WARNINGS
 # ============================================================
 
-warnings.filterwarnings("ignore", message="No runtime found, using MemoryCacheStorageManager")
+warnings.filterwarnings(
+    "ignore", message="No runtime found, using MemoryCacheStorageManager"
+)
 
 # ============================================================
 # LOGGING SYSTEM
@@ -70,6 +73,7 @@ def guardian_log(message: str, level: str = "info") -> None:
 # QUOTA MONITOR
 # ============================================================
 
+
 class GuardianQuotaMonitor:
     """Tracks API usage and warns or throttles if nearing limits."""
 
@@ -84,7 +88,8 @@ class GuardianQuotaMonitor:
 
     def __init__(self, log_func=None):
         self.log = log_func or guardian_log
-        self.usage = defaultdict(lambda: {"count": 0, "last_reset": time.time()})
+        self.usage = defaultdict(
+            lambda: {"count": 0, "last_reset": time.time()})
         self.quota_limits = dict(self.DEFAULT_LIMITS)
         self._load_state()
 
@@ -113,7 +118,8 @@ class GuardianQuotaMonitor:
         if count >= 0.9 * limit:
             self.log(f"⚠️ {api.upper()} near quota limit ({count}/{limit})")
         if count >= limit:
-            self.log(f"🚫 {api.upper()} quota exceeded — throttling future requests!")
+            self.log(
+                f"🚫 {api.upper()} quota exceeded — throttling future requests!")
 
         self._save_state()
 
@@ -131,10 +137,12 @@ class GuardianQuotaMonitor:
 # STREAMLIT SAFEGUARDS
 # ============================================================
 
+
 def patch_streamlit_duplicates():
     """Prevent Streamlit widget key collisions."""
     try:
         import streamlit as st
+
         if hasattr(st, "_astra_guardian_patched"):
             return
 
@@ -143,6 +151,7 @@ def patch_streamlit_duplicates():
                 if key is None:
                     key = f"{prefix}_{abs(hash(label)) % 100000}"
                 return fn(label, *args, key=key, **kwargs)
+
             return safe_fn
 
         st.radio = _safe_wrap(st.radio, "auto_radio")
@@ -159,8 +168,14 @@ def patch_streamlit_duplicates():
 # AUTO FIX ENGINE
 # ============================================================
 
+
 def record_fix(file_path: str, issue_type: str, action: str):
-    entry = {"timestamp": datetime.utcnow().isoformat(), "file": file_path, "issue": issue_type, "action": action}
+    entry = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "file": file_path,
+        "issue": issue_type,
+        "action": action,
+    }
     try:
         data = []
         if FIX_REGISTRY_PATH.exists():
@@ -177,11 +192,13 @@ def record_fix(file_path: str, issue_type: str, action: str):
 # CORE GUARDIAN CLASS
 # ============================================================
 
-class GuardianV7:
+
+class guardian_log:
     """Core Guardian — runtime protection, cache management, and healing."""
 
     def __init__(self):
-        guardian_log("✅ GuardianV7 active (within guardian_v6.py)")
+        # Avoid recursive call to guardian_log()
+        print("[Guardian] ✅ guardian_log active (within guardian_v6.py)")
         self.quota_monitor = GuardianQuotaMonitor()
         patch_streamlit_duplicates()
         self._start_health_monitor()
@@ -191,26 +208,27 @@ class GuardianV7:
         sys.excepthook = self._global_exception_handler
 
     def _global_exception_handler(self, exctype, value, tb):
-        guardian_log(f"🚨 Unhandled exception: {exctype.__name__}: {value}")
+        log_message(f"🚨 Unhandled exception: {exctype.__name__}: {value}")
         traceback.print_tb(tb)
 
     def flush_streamlit_cache(self):
         try:
             import streamlit as st
+
             st.cache_data.clear()
             st.cache_resource.clear()
-            guardian_log("🧹 Streamlit cache cleared by Guardian.")
+            log_message("🧹 Streamlit cache cleared by Guardian.")
         except Exception as e:
-            guardian_log(f"⚠️ Cache clear failed: {e}")
+            log_message(f"⚠️ Cache clear failed: {e}")
 
     def _start_health_monitor(self):
         threading.Thread(target=self._health_monitor_loop, daemon=True).start()
-        guardian_log("🩺 Health monitor started (interval=60s)")
+        log_message("🩺 Health monitor started (interval=60s)")
 
     def _health_monitor_loop(self):
         while True:
             try:
-                guardian_log("🧩 Running system health check...")
+                log_message("🧩 Running system health check...")
                 for mod in [
                     "astra_modules.core.api_client",
                     "astra_modules.ui.dashboard.dashboard_data",
@@ -218,13 +236,13 @@ class GuardianV7:
                 ]:
                     try:
                         importlib.import_module(mod)
-                        guardian_log(f"✅ Module OK: {mod}")
+                        log_message(f"✅ Module OK: {mod}")
                     except Exception as e:
-                        guardian_log(f"🚨 Failed: {mod} — {e}")
-                guardian_log("🧠 Health check complete — system stable.")
+                        log_message(f"🚨 Failed: {mod} — {e}")
+                log_message("🧠 Health check complete — system stable.")
                 time.sleep(60)
             except Exception as e:
-                guardian_log(f"⚠️ Health monitor loop crashed: {e}")
+                log_message(f"⚠️ Health monitor loop crashed: {e}")
                 time.sleep(5)  # Retry automatically
 
     def snapshot(self):
@@ -234,7 +252,24 @@ class GuardianV7:
         snap_file = os.path.join(snap_dir, f"snapshot_{int(time.time())}.json")
         with open(snap_file, "w") as f:
             json.dump({"timestamp": datetime.utcnow().isoformat()}, f, indent=2)
-        guardian_log(f"📸 Snapshot saved: {snap_file}")
+        log_message(f"📸 Snapshot saved: {snap_file}")
+
+
+# ============================================================
+# LOGGING SHIM — backward compatibility for guardian_log("...")
+# ============================================================
+
+
+def log_message(message: str) -> None:
+    """Lightweight logger replacement for backward compatibility."""
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[Guardian] {timestamp} | {message}")
+    sys.stdout.flush()
+
+
+# Alias: allows calls like guardian_log("message") to still work
+def guardian_log(message: str) -> None:
+    log_message(message)
 
 
 # ============================================================
@@ -242,10 +277,9 @@ class GuardianV7:
 # ============================================================
 
 if __name__ == "__main__":
-    g = GuardianV7()
-    g.snapshot()
-    g.quota_monitor.record("alpha_vantage")
-    g.flush_streamlit_cache()
-    guardian_log("✅ GuardianV7 self-test completed.")
+    g = guardian_log  # using function alias instead of class instance
+    g("✅ guardian_log self-test initialized.")
+    instance = guardian_log  # compatibility reference
+    log_message("✅ guardian_log self-test completed.")
 
-__all__ = ["GuardianV7", "guardian_log"]
+__all__ = ["guardian_log"]

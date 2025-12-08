@@ -1,96 +1,61 @@
-"""
-PredictionFusion – Astra Intelligence (Phase-100C)
---------------------------------------------------
-Combines predictions from multiple NeuralAgents and
-outputs a single consensus forecast under GuardianV6.
-"""
-
+# -----------------------------------------------------------------
+# PredictionFusionV2 — weighted fusion using performance_tracker.json
+# -----------------------------------------------------------------
+import json
 import os
-import sys
-from pathlib import Path
-from statistics import mean, stdev
 
-import torch
-
-from astra_modules.agents.neural_agent import NeuralAgent
-from astra_modules.guardian.guardian_v6 import GuardianV6
-
-# --- Fix Python import path so "astra_modules" is accessible ---
-sys.path.append(str(Path(__file__).resolve().parents[2]))
-# --------------------------------------------------------------
+import numpy as np
 
 
-class PredictionFusion:
-    """
-    Loads and manages multiple NeuralAgents for ensemble predictions.
-    """
+class PredictionFusionV2:
+    """Weighted ensemble fusion using learned reliabilities."""
 
-    def __init__(self, base_path=None, ensemble_size=3):
-        self.base_path = base_path or os.getcwd()
-        self.guardian = GuardianV6(self.base_path)
-        self.agents = []
-        self.ensemble_size = ensemble_size
-        self._init_agents()
-        self.guardian._write_log("🤖 PredictionFusion initialized.")
+    def __init__(self, agents=None, tracker_path=None, guardian=None):
+        self.agents = agents or []
+        self.guardian = guardian
+        self.tracker_path = tracker_path or os.path.join(
+            "astra_modules", "learning", "performance_tracker.json"
+        )
+        self.weights = self._load_weights()
+        if self.guardian:
+            self.guardian._write_log(
+                "🧠 PredictionFusionV2 (weighted) initialized.")
 
-    def _init_agents(self):
-        for i in range(self.ensemble_size):
-            agent = NeuralAgent(base_path=self.base_path)
-            agent.load()
-            self.agents.append(agent)
+    def _load_weights(self):
+        try:
+            with open(self.tracker_path) as f:
+                data = json.load(f)
+            weights = {k: v["reliability"] for k, v in data.items()}
+            total = sum(weights.values()) or 1
+            return {k: v / total for k, v in weights.items()}
+        except Exception:
+            return {}
 
     def predict(self, x):
-        """Fuse multiple model outputs into a consensus forecast."""
-        preds = []
-        for idx, agent in enumerate(self.agents):
+        preds, names = [], []
+        for i, agent in enumerate(self.agents):
             try:
-                with torch.no_grad():
-                    y = agent.predict(x)
-                    preds.append(y.squeeze().tolist())
+                y = float(agent.predict(x))
+                preds.append(y)
+                name = agent.__class__.__name__
+                names.append(name)
             except Exception as e:
-                self.guardian._write_log(
-                    f"⚠️ Agent {idx} prediction failed: {e}")
+                print(f"⚠️ {agent.__class__.__name__} error: {e}")
 
         if not preds:
-            return torch.zeros((x.shape[0], 1))
+            return {"signal": 0.0, "confidence": 0.0, "weights": {}}
 
-        # Convert list of lists → tensor
-        preds_tensor = torch.tensor(preds)
-        avg_pred = preds_tensor.mean(dim=0).unsqueeze(1)
-        return avg_pred
+        preds = np.array(preds)
+        weights = np.array(
+            [self.weights.get(n, 1 / len(preds)) for n in names], dtype=float
+        )
+        weights /= weights.sum()
 
-    def evaluate_consistency(self, x):
-        """Optional: measure variance between agent outputs."""
-        preds = []
-        for agent in self.agents:
-            y = agent.predict(x)
-            preds.append(y.squeeze().tolist())
-
-        if len(preds) < 2:
-            return {"mean": 0.0, "std": 0.0}
-
-        flat_preds = [
-            p for sub in preds for p in (sub if isinstance(sub, list) else [sub])
-        ]
+        fused = float(np.dot(preds, weights))
+        variance = float(np.var(preds))
+        confidence = max(0.0, min(1.0, 1.0 - variance))
         return {
-            "mean": float(mean(flat_preds)),
-            "std": float(stdev(flat_preds)),
+            "signal": fused,
+            "confidence": confidence,
+            "weights": {n: float(w) for n, w in zip(names, weights)},
         }
-
-
-# -------------------------------------------------------------------
-# Direct test entry
-# -------------------------------------------------------------------
-if __name__ == "__main__":
-    pf = PredictionFusion()
-    x = torch.randn(5, 32)
-
-    fused_pred = pf.predict(x)
-    consistency = pf.evaluate_consistency(x)
-
-    print("🔮 Fused prediction output:")
-    print(fused_pred)
-    print(
-        f"📊 Consistency metrics: mean={consistency['mean']:.4f}, std={consistency['std']:.4f}"
-    )
-    print("✅ PredictionFusion test completed successfully.")

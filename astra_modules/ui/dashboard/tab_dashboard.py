@@ -1,147 +1,416 @@
 # -*- coding: utf-8 -*-
 """
-Astra Intelligence — Dashboard Layout
--------------------------------------
-Three-section interface:
-Left: Stocks
-Middle: Crypto
-Right: Advanced Chart
+Astra Intelligence — Dashboard Tab (v4.4 Final Guardian Safe)
+---------------------------------------------------------------
+Unified dashboard powered by Astra internal APIs.
+
+🧠 Features:
+✅ Uses AstraAPI + backend only (no external APIs)
+✅ Auto-detects top 6 stocks & cryptos dynamically
+✅ Guardian v6 integrated logging
+✅ AstraGlass UI
+✅ Cached, parallel loading
+✅ Fallback-safe (never blank)
+✅ Guardian-safe runtime protection
 """
 
+import concurrent.futures
+import os
+import sys
+from datetime import datetime, timezone
+from typing import Dict, List, Optional
+
+import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
-from astra_modules.ui.dashboard import (
-    dashboard_data,
-    dashboard_cards,
-    dashboard_chart,
-    dashboard_sidebar,
-    dashboard_summary,
+
+from astra_modules.core.api_client import AstraAPI
+from astra_modules.guardian.guardian_v6 import guardian_log
+from astra_modules.ui.dashboard.dashboard_cards import render_symbol_card
+from astra_modules.ui.dashboard.dashboard_chart import render_chart
+# -------------------------------------------------------------------
+# 🩹 EMERGENCY REAL-DATA HOTFIX — MUST LOAD BEFORE ASTRA IMPORTS
+# -------------------------------------------------------------------
+from astra_modules.ui.dashboard.dashboard_data import load_data
+
+# Ensure the project root is in the path
+sys.path.insert(
+    0, os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))
 )
-from astra_modules.ui.dashboard.theme_loader import load_theme
 
-# ----------------------------
-# 🌌 Astra Intelligence Dashboard
-# ----------------------------
+try:
+    from force_hotfix import nuke_and_patch
 
+    nuke_and_patch()
+    print("✅ [Dashboard] FORCE-HOTFIX applied successfully — live data mode active")
+except Exception as e:
+    print(f"⚠️ [Dashboard] Force hotfix failed: {e}")
+
+# -------------------------------------------------------------------
+# Standard Imports (AFTER hotfix patch)
+# -------------------------------------------------------------------
+
+
+# -------------------------------------------------------------------
+# 🧩 Optional Summary Import
+# -------------------------------------------------------------------
+try:
+    from astra_modules.ui.dashboard.summary_cards import render_summary
+except ImportError:
+    guardian_log(
+        "[Dashboard] ⚠️ summary_cards missing, using fallback summary renderer."
+    )
+
+    def render_summary():
+        st.info("ℹ️ Summary unavailable (summary_cards module not found).")
+
+
+# -------------------------------------------------------------------
+# ⚙️ Streamlit Page Config
+# -------------------------------------------------------------------
 st.set_page_config(
-    page_title="🧠 Astra Intelligence Dashboard",
+    page_title="Astra Intelligence Dashboard",
+    page_icon="🧠",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
-# Load Astra theme
-load_theme()
-
-# Header
+# -------------------------------------------------------------------
+# 🎨 AstraGlass Theme
+# -------------------------------------------------------------------
 st.markdown(
     """
-    <h1 style='text-align:center; color:#A7F3D0; font-weight:700;'>
-        🧠 Astra Intelligence Dashboard
-    </h1>
-    <p style='text-align:center; color:#9CA3AF;'>
-        Autonomous AI-driven Market Intelligence System
-    </p>
-    <hr style="margin-top:1rem;margin-bottom:1.5rem;border-color:rgba(255,255,255,0.1);">
+    <style>
+    body, .stApp {
+        background: linear-gradient(135deg, #0f1729 0%, #1e293b 100%) !important;
+        color: #E5E7EB !important;
+        font-family: 'Inter', 'Segoe UI', sans-serif !important;
+    }
+    .section-header {
+        color: #A7F3D0;
+        font-size: 1.4rem;
+        font-weight: 700;
+        margin: 2rem 0 1rem 0;
+        padding-bottom: 0.75rem;
+        border-bottom: 2px solid rgba(167,243,208,0.3);
+    }
+    .astra-box {
+        background: rgba(30,41,59,0.8);
+        border: 1px solid rgba(167,243,208,0.25);
+        border-radius: 12px;
+        padding: 1.25rem;
+        backdrop-filter: blur(10px);
+        transition: all 0.3s ease-in-out;
+    }
+    .astra-box:hover {
+        border-color: rgba(167,243,208,0.5);
+        background: rgba(30,41,59,0.95);
+        box-shadow: 0 0 15px rgba(167,243,208,0.1);
+    }
+    footer, header, #MainMenu {visibility:hidden;}
+    </style>
     """,
     unsafe_allow_html=True,
 )
 
-# Sidebar controls
-dashboard_sidebar.render_sidebar()
+# -------------------------------------------------------------------
+# 🔄 Auto-refresh
+# -------------------------------------------------------------------
+try:
+    from streamlit_autorefresh import st_autorefresh
 
-# Symbols
-symbols_stocks = ["AAPL", "MSFT", "TSLA", "GOOG", "AMZN", "NVDA"]
-symbols_crypto = ["BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "DOGE/USD", "ADA/USD"]
+    st_autorefresh(interval=60000, key="dashboard_refresh_v44")
+    guardian_log("[Dashboard] ⏱️ Auto-refresh enabled (60s interval)")
+except ImportError:
+    guardian_log("[Dashboard] ⚠️ streamlit_autorefresh missing.")
 
-# Fetch data
-with st.spinner("Loading market data..."):
-    stock_data = {sym: dashboard_data.load_data(sym) for sym in symbols_stocks}
-    crypto_data = {sym: dashboard_data.load_data(sym) for sym in symbols_crypto}
 
-# Define layout
-left_col, mid_col, right_col = st.columns([1.2, 1.2, 2.6], gap="large")
+# -------------------------------------------------------------------
+# ⚙️ Helpers
+# -------------------------------------------------------------------
+@st.cache_data(ttl=60)
+def cached_load(symbols: tuple) -> Dict[str, Optional[pd.DataFrame]]:
+    return load_symbols_parallel(list(symbols))
 
-# ----------------------------
-# LEFT COLUMN – STOCKS
-# ----------------------------
-with left_col:
-    st.markdown("### 📊 Stocks Overview")
-    st.markdown("<hr>", unsafe_allow_html=True)
 
-    # Scrollable container for stocks
+def load_symbols_parallel(
+    symbols: List[str], max_workers: int = 4
+) -> Dict[str, Optional[pd.DataFrame]]:
+    results = {}
+
+    def load_single(symbol: str):
+        try:
+            df = load_data(symbol)
+            return symbol, df if df is not None else None
+        except Exception as e:
+            guardian_log(f"[Dashboard] ⚠️ Load failed for {symbol}: {e}")
+            return symbol, None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for symbol, df in ex.map(load_single, symbols):
+            results[symbol] = df
+    return results
+
+
+def sanitize_dataframe(
+    df: Optional[pd.DataFrame], symbol: str
+) -> Optional[pd.DataFrame]:
+    """Ensure dataframe has minimum valid structure before rendering."""
+    try:
+        if df is None or df.empty:
+            guardian_log(f"[Sanitize] ⚠️ {symbol} empty or None")
+            return None
+        required_cols = {"timestamp", "close"}
+        if not required_cols.issubset(df.columns):
+            guardian_log(
+                f"[Sanitize] ⚠️ {symbol} missing required columns, repairing.")
+            now = datetime.now(timezone.utc)
+            last_close = df["close"].iloc[-1] if "close" in df.columns else 0
+            last_open = df["open"].iloc[-1] if "open" in df.columns else last_close
+            last_high = df["high"].iloc[-1] if "high" in df.columns else last_close
+            last_low = df["low"].iloc[-1] if "low" in df.columns else last_close
+            last_volume = df["volume"].iloc[-1] if "volume" in df.columns else 0
+            df = pd.DataFrame(
+                [
+                    {
+                        "timestamp": now,
+                        "open": last_open,
+                        "high": last_high,
+                        "low": last_low,
+                        "close": last_close,
+                        "volume": last_volume,
+                    }
+                ]
+            )
+        return df
+    except Exception as e:
+        guardian_log(f"[Sanitize] 🚨 {symbol} sanitization failed: {e}")
+        return None
+
+
+def detect_top_assets(category: str = "equity", limit: int = 6) -> List[str]:
+    """Auto-detect top assets using recent % change from AstraAPI."""
+    try:
+        api = AstraAPI()
+        symbols = api.list_symbols(category=category)
+        if not symbols:
+            raise ValueError("No symbols returned by AstraAPI")
+
+        perf_data = []
+        for s in symbols:
+            df = load_data(s)
+            if df is not None and not df.empty:
+                try:
+                    open_ = df.iloc[0].get("close", 0)
+                    close = df.iloc[-1].get("close", 0)
+                    pct = ((close - open_) / open_) * 100 if open_ else 0
+                    perf_data.append((s, pct))
+                except Exception:
+                    continue
+
+        if not perf_data:
+            raise ValueError("No performance data available")
+
+        sorted_syms = sorted(perf_data, key=lambda x: x[1], reverse=True)
+        top_syms = [s[0] for s in sorted_syms[:limit]]
+        guardian_log(f"[Dashboard] 🧠 Top {category.title()}s: {top_syms}")
+        return top_syms
+
+    except Exception as e:
+        guardian_log(
+            f"[Dashboard] ⚠️ Asset detection fallback ({category}): {e}")
+        return (
+            ["AAPL", "MSFT", "NVDA", "AMZN", "TSLA", "GOOGL"]
+            if category == "equity"
+            else ["BTC/USD", "ETH/USD", "SOL/USD", "ADA/USD", "XRP/USD", "DOGE/USD"]
+        )
+
+
+# -------------------------------------------------------------------
+# 🧠 Header
+# -------------------------------------------------------------------
+def render_header():
+    col1, col2, col3, col4 = st.columns([3, 1.2, 1.2, 1])
+    with col1:
+        st.markdown(
+            """
+            <h1 style='color:#A7F3D0;font-size:2.3rem;font-weight:800;margin-bottom:0;'>🧠 Astra Intelligence Dashboard</h1>
+            <p style='color:#9CA3AF;'>Real-time market intelligence powered by Astra Neural Networks</p>
+            """,
+            unsafe_allow_html=True,
+        )
+    with col2:
+        market_open = datetime.now(timezone.utc).hour in range(13, 21)
+        st.markdown(
+            f"<div class='astra-box' style='text-align:center;color:{'#10B981' if market_open else '#F59E0B'};'>"
+            f"<b>{'📈 OPEN' if market_open else '📉 CLOSED'}</b><br>"
+            f"<span style='color:#9CA3AF;font-size:0.8rem;'>Market</span></div>",
+            unsafe_allow_html=True,
+        )
+    with col3:
+        now_utc = datetime.now(timezone.utc).strftime("%H:%M:%S UTC")
+        st.markdown(
+            f"<div class='astra-box' style='text-align:center;'><b>⏱️ {now_utc}</b><br><span style='color:#9CA3AF;font-size:0.8rem;'>Live Time</span></div>",
+            unsafe_allow_html=True,
+        )
+    with col4:
+        if st.button("🔄 Refresh", use_container_width=True):
+            st.rerun()
+
+
+# -------------------------------------------------------------------
+# 📈 Equities
+# -------------------------------------------------------------------
+def render_equities_section():
     st.markdown(
-        """
-        <div style="height: 600px; overflow-y: auto; padding-right: 10px;">
-        """,
+        "<div class='section-header'>📈 Top Equities</div>", unsafe_allow_html=True
+    )
+    top_equities = detect_top_assets("equity", 6)
+    data = cached_load(tuple(top_equities))
+    cols = st.columns(3)
+    for i, s in enumerate(top_equities):
+        with cols[i % 3]:
+            df = sanitize_dataframe(data.get(s), s)
+            if df is not None and not df.empty:
+                render_symbol_card(s, df, active=(i == 0))
+            else:
+                st.warning(f"⚠️ No valid data for {s}")
+
+
+# -------------------------------------------------------------------
+# 💹 Crypto
+# -------------------------------------------------------------------
+def render_crypto_section():
+    st.markdown(
+        "<div class='section-header'>💹 Top Cryptocurrencies</div>",
+        unsafe_allow_html=True,
+    )
+    top_cryptos = detect_top_assets("crypto", 6)
+    data = cached_load(tuple(top_cryptos))
+    cols = st.columns(3)
+    for i, s in enumerate(top_cryptos):
+        with cols[i % 3]:
+            df = sanitize_dataframe(data.get(s), s)
+            if df is not None and not df.empty:
+                render_symbol_card(s, df)
+            else:
+                st.warning(f"⚠️ No valid data for {s}")
+
+
+# -------------------------------------------------------------------
+# 📊 Market Overview
+# -------------------------------------------------------------------
+def render_market_overview_chart():
+    st.markdown(
+        "<div class='section-header'>📊 Market Overview</div>", unsafe_allow_html=True
+    )
+    syms = detect_top_assets("equity", 4) + detect_top_assets("crypto", 2)
+    all_data = cached_load(tuple(syms))
+    chart_data = []
+    for s, df in all_data.items():
+        if df is not None and not df.empty:
+            try:
+                open_ = df.iloc[0]["close"]
+                close = df.iloc[-1]["close"]
+                pct = ((close - open_) / open_) * 100
+                chart_data.append({"symbol": s, "change": pct})
+            except Exception:
+                continue
+    if not chart_data:
+        st.info("ℹ️ Waiting for data...")
+        return
+    dfc = pd.DataFrame(chart_data)
+    colors = ["#4ade80" if c >= 0 else "#f87171" for c in dfc["change"]]
+    fig = go.Figure(
+        [
+            go.Bar(
+                x=dfc["symbol"],
+                y=dfc["change"],
+                text=[f"{c:+.2f}%" for c in dfc["change"]],
+                marker=dict(color=colors),
+            )
+        ]
+    )
+    fig.update_layout(
+        height=400,
+        paper_bgcolor="rgba(30,41,59,0.6)",
+        plot_bgcolor="rgba(30,41,59,0.3)",
+        font=dict(color="#E5E7EB"),
+    )
+    st.plotly_chart(fig, use_container_width=True,
+                    config={"displayModeBar": False})
+
+
+# -------------------------------------------------------------------
+# 📉 Advanced Chart
+# -------------------------------------------------------------------
+def render_advanced_chart_section():
+    st.markdown(
+        "<div class='section-header'>📉 Advanced Chart</div>", unsafe_allow_html=True
+    )
+
+    # Sidebar Controls for Indicators (UI Only — not directly used)
+    st.sidebar.markdown("### 🧩 Chart Indicators")
+    show_ma = st.sidebar.checkbox("📈 Moving Averages (MA20, MA50)", value=True)
+    show_rsi = st.sidebar.checkbox(
+        "💪 RSI (Relative Strength Index)", value=False)
+    show_macd = st.sidebar.checkbox("📊 MACD", value=False)
+    show_bbands = st.sidebar.checkbox("🎯 Bollinger Bands", value=False)
+    show_volume = st.sidebar.checkbox("🔊 Volume", value=True)
+
+    # Choose Asset
+    symbol = (
+        st.sidebar.text_input(
+            "Symbol", value=detect_top_assets("equity", 1)[0])
+        .upper()
+        .strip()
+    )
+
+    # Load Data
+    df = load_data(symbol)
+    df = sanitize_dataframe(df, symbol)
+
+    if df is not None and not df.empty:
+        st.markdown(f"### {symbol} — Technical View", unsafe_allow_html=True)
+
+        # ✅ FIXED CALL — clean, matches your dashboard_chart.py
+        render_chart(symbol, df)
+
+        # Displa
+
+
+# -------------------------------------------------------------------
+# 🧭 Footer
+# -------------------------------------------------------------------
+def render_footer():
+    now = datetime.now(timezone.utc)
+    st.markdown(
+        f"<div style='text-align:center;color:#9CA3AF;font-size:0.8rem;padding:2rem 0;'>"
+        f"🛡️ Guardian Protected • Auto-refresh 60s • Last update: {now.strftime('%H:%M:%S UTC')}<br>"
+        f"Astra Intelligence Dashboard v4.4 • {now.strftime('%Y-%m-%d')}</div>",
         unsafe_allow_html=True,
     )
 
-    for sym in symbols_stocks:
-        df = stock_data.get(sym)
-        if df is None or df.empty:
-            dashboard_cards.render_empty_card(sym)
-        else:
-            dashboard_cards.render_symbol_card(sym, df, include_reason=False)
 
-    st.markdown("</div>", unsafe_allow_html=True)
+# -------------------------------------------------------------------
+# 🚀 MAIN
+# -------------------------------------------------------------------
+def main():
+    guardian_log("[Dashboard] 🚀 Astra Dashboard v4.4 Live")
+    render_header()
+    render_equities_section()
+    render_crypto_section()
+    render_market_overview_chart()
+    render_advanced_chart_section()
+    render_summary()
+    render_footer()
+    guardian_log("[Dashboard] ✅ Dashboard Rendered Successfully")
 
-# ----------------------------
-# MIDDLE COLUMN – CRYPTO
-# ----------------------------
-with mid_col:
-    st.markdown("### 💎 Crypto Overview")
-    st.markdown("<hr>", unsafe_allow_html=True)
 
-    # Scrollable container for crypto
-    st.markdown(
-        """
-        <div style="height: 600px; overflow-y: auto; padding-right: 10px;">
-        """,
-        unsafe_allow_html=True,
-    )
-
-    for sym in symbols_crypto:
-        df = crypto_data.get(sym)
-        if df is None or df.empty:
-            dashboard_cards.render_empty_card(sym)
-        else:
-            dashboard_cards.render_symbol_card(sym, df, include_reason=False)
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# ----------------------------
-# RIGHT COLUMN – ADVANCED CHART
-# ----------------------------
-with right_col:
-    st.markdown("### 📈 Advanced Chart")
-    st.markdown("<hr>", unsafe_allow_html=True)
-
-    # Clickable symbol selector
-    active_symbol = st.session_state.get("active_symbol", "AAPL")
-
-    df_chart = stock_data.get(active_symbol)
-    if df_chart is None or df_chart.empty:
-        df_chart = crypto_data.get(active_symbol)
-
-    if df_chart is not None and not df_chart.empty:
-        chart = dashboard_chart.render_chart(df_chart, symbol=active_symbol)
-        if chart is not None:
-            st.plotly_chart(chart, use_container_width=True, config={"displayModeBar": False})
-        else:
-            st.warning("⚠️ Chart rendering failed.")
-    else:
-        st.warning("⚠️ No data available for chart. Check API keys or symbol configuration.")
-
-# ----------------------------
-# Footer Summary
-# ----------------------------
-st.markdown("<hr>", unsafe_allow_html=True)
-dashboard_summary.render_summary()
-
-st.markdown(
-    """
-    <p style='text-align:center; color:#6B7280; font-size:0.9rem; margin-top:1rem;'>
-        Astra Intelligence © 2025 — NeuralGlass Interface v3.0
-    </p>
-    """,
-    unsafe_allow_html=True,
-)
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        guardian_log(f"[Dashboard] 🚨 Fatal dashboard error: {e}")
+        st.error("🚨 Dashboard failed to render. Check Astra logs.")

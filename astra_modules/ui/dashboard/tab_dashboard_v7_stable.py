@@ -33,7 +33,7 @@ Used automatically as a fallback by Guardian if the active dashboard fails.
 import pandas as pd
 import traceback
 import streamlit as st
-from astra_modules.guardian.guardian_v6 import GuardianV7
+from astra_modules.guardian.guardian_v6 import guardian_log
 import streamlit.components.v1 as components
 
 
@@ -41,7 +41,7 @@ import streamlit.components.v1 as components
 # 🔒 Guardian Integration
 # -------------------------------------------------------------------
 
-guardian = GuardianV7()
+guardian = guardian_log()
 guardian.log("[Dashboard] 🚀 Initializing Astra Intelligence Dashboard Tab...")
 
 # Ensure integrity check runs only once per Streamlit session

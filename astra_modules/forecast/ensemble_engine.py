@@ -15,10 +15,11 @@ Author: Astra Intelligence Team
 """
 
 from __future__ import annotations
-import math
-import numpy as np
-from typing import Dict, Any, Callable
 
+import math
+from typing import Any, Callable, Dict
+
+import numpy as np
 
 # ──────────────────────────────────────────────
 # Type Aliases
@@ -33,7 +34,9 @@ class EnsembleEngine:
     into a unified ensemble score and confidence metric.
     """
 
-    def __init__(self, agents: Dict[str, AgentFunction], weights: Dict[str, float] | None = None):
+    def __init__(
+        self, agents: Dict[str, AgentFunction], weights: Dict[str, float] | None = None
+    ):
         """
         Args:
             agents:  dict of agent name → callable (symbol, data) → float [-1, 1]
@@ -64,7 +67,7 @@ class EnsembleEngine:
     def score(self, symbol: str, data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Computes weighted mean of agent scores and overall confidence.
-        
+
         Returns:
             {
               "symbol": str,
@@ -82,12 +85,16 @@ class EnsembleEngine:
             raw_scores[name] = s
 
         # Weighted mean aggregation
-        w_scores = np.array([raw_scores[a] * self.weights.get(a, 1.0) for a in raw_scores])
+        w_scores = np.array(
+            [raw_scores[a] * self.weights.get(a, 1.0) for a in raw_scores]
+        )
         ensemble_score = float(np.sum(w_scores))
 
         # Confidence = 1 − normalized variance of agent scores
         std = float(np.std(list(raw_scores.values())))
-        confidence = float(max(0.0, min(1.0, 1 - std)))  # low variance → high confidence
+        confidence = float(
+            max(0.0, min(1.0, 1 - std))
+        )  # low variance → high confidence
 
         return {
             "symbol": symbol.upper(),

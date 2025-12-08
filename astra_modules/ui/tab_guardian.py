@@ -16,7 +16,7 @@ def render_guardian():
     st.caption("Phase-101 • Real-time Sentinel and Guardian status")
 
     base_path = os.getcwd()
-    log_path = os.path.join(base_path, "guardian_v6.log")
+    log_path = os.path.join(base_path, "guardian_v7.log")
     sentinel_report_path = os.path.join(base_path, "sentinel_report.json")
 
     # --- Sentinel Status ---

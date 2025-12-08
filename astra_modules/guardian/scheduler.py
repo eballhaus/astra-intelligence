@@ -6,7 +6,7 @@ Phase 2.5: Automated Continual Learning Orchestration
 
 Purpose:
 Controls periodic retraining of Astra's ContinualTrainer using
-the ReplayBuffer, ensuring safe, incremental updates with 
+the ReplayBuffer, ensuring safe, incremental updates with
 Guardian supervision.
 
 Features:
@@ -20,13 +20,12 @@ Module Version: v1.3.0
 Author: Astra Intelligence Team
 """
 
-import time
 import json
 import threading
 import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Callable, Dict, Any, List
+from typing import Any, Callable, Dict, List, Optional
 
 from astra_modules.learning.continual_trainer import ContinualTrainer
 from astra_modules.learning.replay_buffer import ReplayBuffer
@@ -38,6 +37,7 @@ from astra_modules.learning.replay_buffer import ReplayBuffer
 @dataclass
 class SchedulerMetrics:
     """Tracks scheduler performance over time."""
+
     total_cycles: int = 0
     successful_cycles: int = 0
     failed_cycles: int = 0
@@ -51,7 +51,11 @@ class SchedulerMetrics:
         return self.successful_cycles / completed if completed else 0.0
 
     def average_loss(self) -> float:
-        return sum(self.recent_losses) / len(self.recent_losses) if self.recent_losses else 0.0
+        return (
+            sum(self.recent_losses) / len(self.recent_losses)
+            if self.recent_losses
+            else 0.0
+        )
 
     def record_loss(self, loss: Optional[float], max_records: int = 50):
         """Add a new loss to history (trimmed to recent window)."""
@@ -135,7 +139,9 @@ class LearningScheduler:
 
         self.running = True
         self.stop_event.clear()
-        self.thread = threading.Thread(target=self._run_loop, daemon=True, name="AstraLearningScheduler")
+        self.thread = threading.Thread(
+            target=self._run_loop, daemon=True, name="AstraLearningScheduler"
+        )
         self.thread.start()
         self.log("✅ Scheduler started in background thread")
         return True
@@ -180,14 +186,18 @@ class LearningScheduler:
         self.last_heartbeat = datetime.now()
         self.metrics.total_cycles += 1
         timestamp = self.last_heartbeat.strftime("%H:%M:%S")
-        self.log(f"─── Training Cycle #{self.metrics.total_cycles} at {timestamp} ───")
+        self.log(
+            f"─── Training Cycle #{self.metrics.total_cycles} at {timestamp} ───")
 
         try:
             # Pre-flight buffer validation (require 80% of batch size)
             buffer_size = self._get_buffer_size()
             required_size = max(1, int(self.trainer.batch_size * 0.8))
             if buffer_size < required_size:
-                self.log(f"Skipping cycle: insufficient samples ({buffer_size}/{required_size})", "INFO")
+                self.log(
+                    f"Skipping cycle: insufficient samples ({buffer_size}/{required_size})",
+                    "INFO",
+                )
                 self.metrics.skipped_cycles += 1
                 return
 
@@ -231,7 +241,8 @@ class LearningScheduler:
             status = self.trainer.get_status()
             self.log(f"Model Status:\n{json.dumps(status, indent=2)}")
 
-            last_loss = status.get("last_loss") if isinstance(status, dict) else None
+            last_loss = status.get("last_loss") if isinstance(
+                status, dict) else None
             self.metrics.record_loss(last_loss)
         except Exception as e:
             self.log(f"Error retrieving trainer status: {e}", "WARNING")
@@ -240,17 +251,25 @@ class LearningScheduler:
         """Handle failed training cycles with exponential backoff."""
         self.fail_count += 1
         self.metrics.failed_cycles += 1
-        self.log(f"❌ Training failed: {reason} ({self.fail_count}/{self.max_failures})", "WARNING")
+        self.log(
+            f"❌ Training failed: {reason} ({self.fail_count}/{self.max_failures})",
+            "WARNING",
+        )
 
         if self.fail_count >= self.max_failures:
             self.backoff_multiplier = min(
                 self.backoff_multiplier * 2,
                 self.max_backoff / self.interval,
             )
-            self.log(f"⚠️  Exponential backoff applied: {self.backoff_multiplier:.1f}x", "WARNING")
+            self.log(
+                f"⚠️  Exponential backoff applied: {self.backoff_multiplier:.1f}x",
+                "WARNING",
+            )
 
             if self.backoff_multiplier >= (self.max_backoff / self.interval):
-                self.log("⛔ Maximum backoff reached. Investigation recommended.", "ERROR")
+                self.log(
+                    "⛔ Maximum backoff reached. Investigation recommended.", "ERROR"
+                )
 
     def _cooldown(self) -> None:
         """Cooldown between cycles with immediate stop support."""
@@ -285,7 +304,11 @@ class LearningScheduler:
             "healthy": self.is_healthy(),
             "consecutive_failures": self.fail_count,
             "backoff_multiplier": round(self.backoff_multiplier, 2),
-            "last_heartbeat": self.last_heartbeat.strftime("%Y-%m-%d %H:%M:%S") if self.last_heartbeat else None,
+            "last_heartbeat": (
+                self.last_heartbeat.strftime("%Y-%m-%d %H:%M:%S")
+                if self.last_heartbeat
+                else None
+            ),
             "seconds_since_heartbeat": elapsed,
             "thread_alive": self.thread.is_alive() if self.thread else False,
         }

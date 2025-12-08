@@ -1,0 +1,34 @@
+[
+  {
+    "module": "astra_modules.ui.tab_dashboard",
+    "status": "success",
+    "timestamp": "2025-11-24T04:47:39.526839"
+  },
+  {
+    "module": "astra_modules.ui.tab_dashboard",
+    "status": "success",
+    "timestamp": "2025-11-24T04:52:57.776501"
+  },
+  {
+    "module": "astra_modules.ui.tab_dashboard",
+    "status": "success",
+    "timestamp": "2025-11-24T04:57:02.667606"
+  },
+  {
+    "module": "astra_modules.ui.tab_dashboard",
+    "status": "success",
+    "timestamp": "2025-11-24T04:57:17.548629"
+  },
+  {
+    "module": "astra_modules.ui.tab_dashboard",
+    "status": "exception",
+    "timestamp": "2025-11-24T05:05:36.238529",
+    "error": "'GuardianV4' object has no attribute 'defense_core'"
+  },
+  {
+    "module": "astra_modules.tabs.tab_dashboard",
+    "status": "not_found",
+    "timestamp": "2025-11-24T05:05:36.885977",
+    "error": "No module named 'astra_modules.tabs.tab_dashboard'"
+  }
+]

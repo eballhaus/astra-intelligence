@@ -19,9 +19,10 @@ Author: Astra Intelligence Team
 
 import math
 import numbers
-import pandas as pd
 from datetime import datetime
-from typing import Optional, Dict, Any, Callable
+from typing import Any, Callable, Dict, Optional
+
+import pandas as pd
 
 # ──────────────────────────────────────────────
 # Core Forecast Import
@@ -29,15 +30,14 @@ from typing import Optional, Dict, Any, Callable
 try:
     from .forecast_model import get_forecast
 except ImportError:
-    print("[ForecastEngine] WARNING: forecast_model.get_forecast not found. Using fallback.")
-    
+    print(
+        "[ForecastEngine] WARNING: forecast_model.get_forecast not found. Using fallback."
+    )
+
     def get_forecast(symbol: str) -> Dict[str, Any]:
         """Fallback forecast when base model unavailable."""
-        return {
-            "predicted_change": 0.0,
-            "confidence": 0.5,
-            "model": "fallback"
-        }
+        return {"predicted_change": 0.0, "confidence": 0.5, "model": "fallback"}
+
 
 # ──────────────────────────────────────────────
 # Ensemble Integration (Phase 2)
@@ -59,11 +59,11 @@ LogFunction = Callable[[str, str], None]
 class ForecastEngine:
     """
     Unified forecasting interface for Astra Intelligence.
-    
+
     Provides two prediction modes:
     1. Base prediction: Uses traditional forecast model
     2. Ensemble prediction: Multi-agent scoring with confidence aggregation
-    
+
     Both methods return standardized dictionary format for consistent
     integration with dashboard, learning systems, and API endpoints.
     """
@@ -73,14 +73,14 @@ class ForecastEngine:
     # ──────────────────────────────────────────────
     BULLISH_THRESHOLD = 0.2
     BEARISH_THRESHOLD = -0.2
-    ENSEMBLE_PCT_SCALE = 10.0       # maps [-1,1] → [-10%,+10%]
-    ENSEMBLE_PRICE_MULT = 0.1       # multiplier for price projection
+    ENSEMBLE_PCT_SCALE = 10.0  # maps [-1,1] → [-10%,+10%]
+    ENSEMBLE_PRICE_MULT = 0.1  # multiplier for price projection
     REQUIRED_COLUMNS = {"open", "high", "low", "close", "volume"}
 
     def __init__(self, log_callback: Optional[LogFunction] = None):
         """
         Initialize ForecastEngine with optional ensemble support.
-        
+
         Args:
             log_callback: Optional logging function with signature (message, level).
                           If None, uses default print-based logging.
@@ -96,7 +96,7 @@ class ForecastEngine:
         # Configure thresholds (can be overridden externally)
         self.thresholds = {
             "bullish": self.BULLISH_THRESHOLD,
-            "bearish": self.BEARISH_THRESHOLD
+            "bearish": self.BEARISH_THRESHOLD,
         }
 
         # Initialize ensemble if available
@@ -123,7 +123,9 @@ class ForecastEngine:
     def _create_null_agents(self) -> Dict[str, AgentFunction]:
         def _null_agent(symbol: str, data: Dict[str, Any]) -> float:
             return 0.0
-        names = ["momentum", "technical", "volume", "risk", "psychology", "neural"]
+
+        names = ["momentum", "technical", "volume",
+                 "risk", "psychology", "neural"]
         return {n: _null_agent for n in names}
 
     def inject_agents(self, real_agents: Dict[str, AgentFunction]) -> bool:
@@ -133,7 +135,9 @@ class ForecastEngine:
         try:
             self.ensemble.agents = real_agents
             self.ensemble_ready = True
-            self.log(f"Injected {len(real_agents)} real agents. Ensemble active.", "INFO")
+            self.log(
+                f"Injected {len(real_agents)} real agents. Ensemble active.", "INFO"
+            )
             return True
         except Exception as e:
             self.log(f"Agent injection failed: {e}", "ERROR")
@@ -147,7 +151,8 @@ class ForecastEngine:
             return False
         missing_cols = self.REQUIRED_COLUMNS - set(df.columns)
         if missing_cols:
-            self.log(f"{symbol}: Missing required columns: {missing_cols}", "WARNING")
+            self.log(
+                f"{symbol}: Missing required columns: {missing_cols}", "WARNING")
             return False
         return True
 
@@ -155,11 +160,13 @@ class ForecastEngine:
         try:
             last_close = df["close"].iloc[-1]
             if pd.isna(last_close) or not isinstance(last_close, numbers.Number):
-                self.log(f"{symbol}: Invalid close price (NaN/non-numeric).", "WARNING")
+                self.log(
+                    f"{symbol}: Invalid close price (NaN/non-numeric).", "WARNING")
                 return None
             price = float(last_close)
             if price <= 0 or price > 1_000_000:
-                self.log(f"{symbol}: Price {price} outside valid range.", "WARNING")
+                self.log(
+                    f"{symbol}: Price {price} outside valid range.", "WARNING")
                 return None
             return price
         except Exception as e:
@@ -183,7 +190,10 @@ class ForecastEngine:
             change_pct = base.get("predicted_change", 0.0)
             raw_conf = base.get("confidence", 0.5)
             if raw_conf < 0 or raw_conf > 1:
-                self.log(f"{symbol}: Confidence {raw_conf} out of range, clamping.", "WARNING")
+                self.log(
+                    f"{symbol}: Confidence {raw_conf} out of range, clamping.",
+                    "WARNING",
+                )
             confidence = max(0.0, min(1.0, raw_conf))
 
             current_price, predicted_price = None, None
@@ -211,9 +221,12 @@ class ForecastEngine:
             self.log(f"Base forecast error for {symbol}: {e}", "ERROR")
             return self._error_response(symbol, "base_forecast")
 
-    def predict_ensemble(self, symbol: str, df: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
+    def predict_ensemble(
+        self, symbol: str, df: Optional[pd.DataFrame] = None
+    ) -> Dict[str, Any]:
         if self.ensemble is None or not self.ensemble_ready:
-            self.log(f"{symbol}: Ensemble not ready — using base forecast.", "INFO")
+            self.log(
+                f"{symbol}: Ensemble not ready — using base forecast.", "INFO")
             return self.predict(symbol, df)
         try:
             data = df.to_dict() if self._validate_dataframe(df, symbol) else {}
@@ -221,12 +234,18 @@ class ForecastEngine:
 
             ensemble_score = result.get("ensemble_score", 0.0)
             if math.isnan(ensemble_score) or math.isinf(ensemble_score):
-                self.log(f"{symbol}: Invalid ensemble score ({ensemble_score}), resetting.", "WARNING")
+                self.log(
+                    f"{symbol}: Invalid ensemble score ({ensemble_score}), resetting.",
+                    "WARNING",
+                )
                 ensemble_score = 0.0
 
             raw_conf = result.get("confidence", 0.5)
             if raw_conf < 0 or raw_conf > 1:
-                self.log(f"{symbol}: Confidence {raw_conf} out of range, clamping.", "WARNING")
+                self.log(
+                    f"{symbol}: Confidence {raw_conf} out of range, clamping.",
+                    "WARNING",
+                )
             confidence = max(0.0, min(1.0, raw_conf))
 
             trend = self._calculate_trend(ensemble_score)
@@ -236,7 +255,9 @@ class ForecastEngine:
             if self._validate_dataframe(df, symbol):
                 current_price = self._extract_current_price(df, symbol)
                 if current_price is not None:
-                    predicted_price = current_price * (1 + ensemble_score * self.ENSEMBLE_PRICE_MULT)
+                    predicted_price = current_price * (
+                        1 + ensemble_score * self.ENSEMBLE_PRICE_MULT
+                    )
 
             output = {
                 "symbol": symbol.upper(),
@@ -247,7 +268,9 @@ class ForecastEngine:
                 "confidence": round(confidence, 3),
                 "trend": trend,
                 "ensemble_score": round(ensemble_score, 3),
-                "agent_scores": {k: round(v, 3) for k, v in result.get("scores", {}).items()},
+                "agent_scores": {
+                    k: round(v, 3) for k, v in result.get("scores", {}).items()
+                },
                 "model": self.model_name,
                 "source": "ensemble",
             }
@@ -290,10 +313,12 @@ class ForecastEngine:
     def __repr__(self):
         return f"<ForecastEngine model={self.model_name}, ensemble_ready={self.ensemble_ready}>"
 
+
 # ──────────────────────────────────────────────
 # Module-Level Convenience
 # ──────────────────────────────────────────────
 _global_engine: Optional[ForecastEngine] = None
+
 
 def get_engine() -> ForecastEngine:
     global _global_engine
@@ -301,8 +326,12 @@ def get_engine() -> ForecastEngine:
         _global_engine = ForecastEngine()
     return _global_engine
 
+
 def quick_forecast(symbol: str, df: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
     return get_engine().predict(symbol, df)
 
-def quick_ensemble_forecast(symbol: str, df: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
+
+def quick_ensemble_forecast(
+    symbol: str, df: Optional[pd.DataFrame] = None
+) -> Dict[str, Any]:
     return get_engine().predict_ensemble(symbol, df)

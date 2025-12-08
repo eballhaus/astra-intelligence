@@ -1,0 +1,30 @@
+[
+  {
+    "timestamp": "2025-12-07 17:06:25",
+    "signal": 0.419963,
+    "confidence": 0.96797,
+    "weights": {
+      "MomentumAgent": 0.16666666666666669,
+      "TechnicalAgent": 0.16666666666666669,
+      "RiskAgent": 0.16666666666666669,
+      "VolumeAgent": 0.16666666666666669,
+      "NeuralAgent": 0.16666666666666669,
+      "CatalystAgent": 0.16666666666666669
+    },
+    "confidence_delta": 0.0
+  },
+  {
+    "timestamp": "2025-12-07 17:32:27",
+    "signal": 0.386311,
+    "confidence": 0.928855,
+    "weights": {
+      "MomentumAgent": 0.16666666666666669,
+      "TechnicalAgent": 0.16666666666666669,
+      "RiskAgent": 0.16666666666666669,
+      "VolumeAgent": 0.16666666666666669,
+      "NeuralAgent": 0.16666666666666669,
+      "CatalystAgent": 0.16666666666666669
+    },
+    "confidence_delta": -0.032596
+  }
+]
