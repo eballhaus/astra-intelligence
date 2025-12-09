@@ -350,14 +350,13 @@ def render_advanced_chart_section():
         "<div class='section-header'>📉 Advanced Chart</div>", unsafe_allow_html=True
     )
 
-    # Sidebar Controls for Indicators (UI Only — not directly used)
+    # Sidebar Controls (for compatibility, not used directly)
     st.sidebar.markdown("### 🧩 Chart Indicators")
-    show_ma = st.sidebar.checkbox("📈 Moving Averages (MA20, MA50)", value=True)
-    show_rsi = st.sidebar.checkbox(
-        "💪 RSI (Relative Strength Index)", value=False)
-    show_macd = st.sidebar.checkbox("📊 MACD", value=False)
-    show_bbands = st.sidebar.checkbox("🎯 Bollinger Bands", value=False)
-    show_volume = st.sidebar.checkbox("🔊 Volume", value=True)
+    st.sidebar.checkbox("📈 Moving Averages (MA20, MA50)", value=True)
+    st.sidebar.checkbox("💪 RSI (Relative Strength Index)", value=False)
+    st.sidebar.checkbox("📊 MACD", value=False)
+    st.sidebar.checkbox("🎯 Bollinger Bands", value=False)
+    st.sidebar.checkbox("🔊 Volume", value=True)
 
     # Choose Asset
     symbol = (
@@ -371,13 +370,109 @@ def render_advanced_chart_section():
     df = load_data(symbol)
     df = sanitize_dataframe(df, symbol)
 
-    if df is not None and not df.empty:
-        st.markdown(f"### {symbol} — Technical View", unsafe_allow_html=True)
+    if df is None or df.empty:
+        st.warning(f"⚠️ No data available for {symbol}")
+        return
 
-        # ✅ FIXED CALL — clean, matches your dashboard_chart.py
-        render_chart(symbol, df)
+    st.markdown(f"### {symbol} — Technical View", unsafe_allow_html=True)
 
-        # Displa
+    # ✅ define fig before try, avoids NameError
+    fig = None
+
+    try:
+        # ✅ Build chart (from dashboard_chart.py)
+        fig = render_chart(symbol, df, height=900)
+
+        # ✅ Display chart
+        if fig is not None:
+            st.plotly_chart(fig, use_container_width=True)
+            guardian_log(f"[Dashboard] ✅ Rendered advanced chart for {symbol}")
+        else:
+            st.warning("⚠️ No chart returned from render_chart().")
+
+    except Exception as e:
+        import traceback
+
+        st.error(f"❌ Chart failed: {e}")
+        guardian_log(f"[Dashboard] ⚠️ Chart rendering error for {symbol}: {e}")
+        print(traceback.format_exc())
+
+    # ============================================================
+
+
+# Asset Selection
+# ============================================================
+
+# Select trading symbol (you can adapt this logic)
+symbol = (
+    st.text_input(
+        "Symbol",
+        value="AAPL",  # default fallback if detection fails
+        help="Enter a trading symbol (e.g., AAPL, BTC/USD, ETH/USD)",
+    )
+    .upper()
+    .strip()
+)
+
+
+# ============================================================
+# Load & Render Chart Section (Fixed & Clean)
+# ============================================================
+
+# Load Data
+df = load_data(symbol)
+df = sanitize_dataframe(df, symbol)
+
+if df is not None and not df.empty:
+    st.markdown(f"### {symbol} — Technical View", unsafe_allow_html=True)
+
+    # ✅ Define fig before use (avoids NameError if render_chart fails)
+    fig = None
+
+    try:
+        # Build chart from dashboard_chart.py
+        fig = render_chart(symbol, df, height=900)
+
+        # ✅ Display chart only once
+        if fig is not None:
+            st.plotly_chart(
+                fig,
+                width="stretch",  # replaces deprecated use_container_width
+                config={
+                    "displayModeBar": True,
+                    "displaylogo": False,
+                    "modeBarButtonsToAdd": ["drawline", "drawopenpath", "eraseshape"],
+                    "scrollZoom": True,
+                    "responsive": True,
+                },
+            )
+            guardian_log(f"[Dashboard] ✅ Rendered advanced chart for {symbol}")
+        else:
+            st.warning("⚠️ No chart returned from render_chart().")
+
+    except Exception as e:
+        import traceback
+
+        st.error(f"❌ Chart failed: {e}")
+        guardian_log(f"[Dashboard] ⚠️ Chart rendering error for {symbol}: {e}")
+        print(traceback.format_exc())
+
+    # ============================================================
+    # Optional Data Summary
+    # ============================================================
+    with st.expander("📊 Data Summary", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Current Price", f"${df['close'].iloc[-1]:.2f}")
+        with col2:
+            if len(df) > 1:
+                change_pct = (
+                    (df["close"].iloc[-1] - df["close"].iloc[-2]) /
+                    df["close"].iloc[-2]
+                ) * 100
+                st.metric("24h Change", f"{change_pct:+.2f}%")
+        with col3:
+            st.metric("Data Points", len(df))
 
 
 # -------------------------------------------------------------------

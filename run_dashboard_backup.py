@@ -34,6 +34,5 @@ sys.argv = [
     "astra_modules/ui/dashboard/tab_dashboard.py",
     "--server.headless=true",
 ]
-sys.exit(
-stcli.main())
+sys.exit(stcli.main())
 
