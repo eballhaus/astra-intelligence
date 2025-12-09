@@ -32,9 +32,9 @@ except Exception as e:
 # 🧩 Backward-Compatible Aliases
 # ------------------------------------------------------------
 if guardian_log:
-    sys.modules["astra_modules.guardian.guardian_log"] = guardian_log
+    sys.modules["astra_core.guardian.guardian_log"] = guardian_log
 if safe_yahoo_request:
-    sys.modules["astra_modules.guardian.safe_yahoo_request"] = safe_yahoo_request
+    sys.modules["astra_core.guardian.safe_yahoo_request"] = safe_yahoo_request
 
 # ------------------------------------------------------------
 # 🧠 Helper: Verify Guardian Integrity

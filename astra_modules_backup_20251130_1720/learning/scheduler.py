@@ -19,10 +19,10 @@ import time
 from datetime import datetime
 from typing import Optional
 
-from astra_modules.learning.continual_trainer import ContinualTrainer
-from astra_modules.learning.learning_engine import train_learning_engine
-from astra_modules.learning.performance_tracker import PerformanceTracker
-from astra_modules.learning.replay_buffer import ReplayBuffer
+from astra_core.learning.continual_trainer import ContinualTrainer
+from astra_core.learning.learning_engine import train_learning_engine
+from astra_core.learning.performance_tracker import PerformanceTracker
+from astra_core.learning.replay_buffer import ReplayBuffer
 
 
 class LearningScheduler:

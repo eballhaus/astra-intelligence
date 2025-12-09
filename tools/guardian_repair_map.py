@@ -13,17 +13,17 @@ TARGET_EXT = (".py",)
 
 # Mapping of old → new import paths
 REPAIR_MAP = {
-    "astra_modules.guardian.guardian_v3": "astra_modules.guardian.guardian_v6",
-    "astra_modules.guardian.guardian_v4": "astra_modules.guardian.guardian_v6",
-    "astra_modules.guardian.guardian_init": "astra_modules.guardian.guardian_v6",
-    "astra_modules.guardian.guardian_sentinel": "astra_modules.guardian.guardian_v6",
-    "astra_modules.guardian.guardian_sync": "astra_modules.guardian.guardian_v6",
-    "astra_modules.guardian.auto_repair": "astra_modules.guardian.guardian_v6",
-    "astra_modules.engine.scan_manager": "astra_modules.engine.phase90_unified",
-    "astra_modules.scanners.hybrid_scan": "astra_modules.fetch_core.fetch_unified",
-    "astra_modules.scanners.smart_scan": "astra_modules.fetch_core.fetch_unified",
-    "astra_modules.state.state_bundle_builder": "astra_modules.fetch_core.fetch_unified",
-    "astra_modules.ranking.ranking_engine": "astra_modules.fetch_core.fetch_unified",
+    "astra_core.guardian.guardian_v3": "astra_core.guardian.guardian_v6",
+    "astra_core.guardian.guardian_v4": "astra_core.guardian.guardian_v6",
+    "astra_core.guardian.guardian_init": "astra_core.guardian.guardian_v6",
+    "astra_core.guardian.guardian_sentinel": "astra_core.guardian.guardian_v6",
+    "astra_core.guardian.guardian_sync": "astra_core.guardian.guardian_v6",
+    "astra_core.guardian.auto_repair": "astra_core.guardian.guardian_v6",
+    "astra_core.engine.scan_manager": "astra_core.engine.phase90_unified",
+    "astra_core.scanners.hybrid_scan": "astra_core.fetch_core.fetch_unified",
+    "astra_core.scanners.smart_scan": "astra_core.fetch_core.fetch_unified",
+    "astra_core.state.state_bundle_builder": "astra_core.fetch_core.fetch_unified",
+    "astra_core.ranking.ranking_engine": "astra_core.fetch_core.fetch_unified",
 }
 
 # Regex patterns

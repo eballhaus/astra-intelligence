@@ -22,7 +22,7 @@ import requests
 
 # Guardian core integration (optional)
 try:
-    from astra_modules.guardian.guardian_v6 import guardian
+    from astra_core.guardian.guardian_v6 import guardian
 except Exception:
     guardian = None
 

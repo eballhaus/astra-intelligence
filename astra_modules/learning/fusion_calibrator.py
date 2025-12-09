@@ -10,14 +10,14 @@ from datetime import datetime, timezone
 
 import numpy as np
 
-from astra_modules.agents.catalyst_agent import CatalystAgent
+from astra_core.agents.catalyst_agent import CatalystAgent
 # ---- import your real agents here ----
-from astra_modules.agents.momentum_agent import MomentumAgent
-from astra_modules.agents.neural_agent import NeuralAgent
-from astra_modules.agents.prediction_fusion import PredictionFusionV2
-from astra_modules.agents.risk_agent import RiskAgent
-from astra_modules.agents.technical_agent import TechnicalAgent
-from astra_modules.agents.volume_agent import VolumeAgent
+from astra_core.agents.momentum_agent import MomentumAgent
+from astra_core.agents.neural_agent import NeuralAgent
+from astra_core.agents.prediction_fusion import PredictionFusionV2
+from astra_core.agents.risk_agent import RiskAgent
+from astra_core.agents.technical_agent import TechnicalAgent
+from astra_core.agents.volume_agent import VolumeAgent
 
 # --------------------------------------
 
@@ -94,7 +94,7 @@ def main():
 
     # === Guardian Fusion Optimizer Auto-Integration ===
     try:
-        from astra_modules.learning.guardian_fusion_optimizer import \
+        from astra_core.learning.guardian_fusion_optimizer import \
             GuardianFusionOptimizer
 
         optimizer = GuardianFusionOptimizer()

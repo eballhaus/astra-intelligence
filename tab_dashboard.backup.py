@@ -13,10 +13,10 @@ Features:
 
 import streamlit as st
 
-from astra_modules.ui.dashboard.dashboard_cards import render_symbol_card
-from astra_modules.ui.dashboard.dashboard_chart import render_chart
-from astra_modules.ui.dashboard.dashboard_data import load_dashboard_data
-from astra_modules.ui.dashboard.dashboard_summary import render_summary  # optional
+from astra_core.ui.dashboard.dashboard_cards import render_symbol_card
+from astra_core.ui.dashboard.dashboard_chart import render_chart
+from astra_core.ui.dashboard.dashboard_data import load_dashboard_data
+from astra_core.ui.dashboard.dashboard_summary import render_summary  # optional
 
 st.set_page_config(
     page_title="Astra Intelligence Dashboard",

@@ -7,7 +7,7 @@ Centralized data structure validator and normalizer for all Astra modules.
 import pandas as pd
 import json
 import os
-from astra_modules.guardian import guardian_log
+from astra_core.guardian import guardian_log
 
 guardian = guardian_log()
 

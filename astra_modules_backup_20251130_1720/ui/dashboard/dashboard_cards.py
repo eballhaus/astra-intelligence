@@ -8,7 +8,7 @@ Now hardened with guardian_log compatibility and data normalization.
 
 import pandas as pd
 import streamlit as st
-from astra_modules.guardian import guardian_log
+from astra_core.guardian import guardian_log
 
 guardian = guardian_log()
 

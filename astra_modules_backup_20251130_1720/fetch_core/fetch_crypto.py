@@ -8,9 +8,9 @@ Fallback:
 
 import pandas as pd
 
-from astra_modules.api_keys import MORALIS_API_KEY
-from astra_modules.utils.safe_api_wrapper import safe_api_call
-from astra_modules.utils.safe_df import safe_df
+from astra_core.api_keys import MORALIS_API_KEY
+from astra_core.utils.safe_api_wrapper import safe_api_call
+from astra_core.utils.safe_df import safe_df
 
 
 def _to_df_ohlcv(records):

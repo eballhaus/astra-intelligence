@@ -21,7 +21,7 @@ if project_root not in sys.path:
 # ============================================================
 
 try:
-    from astra_modules.guardian import guardian_v6
+    from astra_core.guardian import guardian_v6
 except Exception as e:
     raise ImportError(f"Failed to import guardian_v6: {e}") from e
 
@@ -52,10 +52,10 @@ def initialize_guardian():
 def verify_core_modules():
     """Verify that Astra core dependencies are available before runtime."""
     modules = [
-        "astra_modules.fetch_core.fetch_unified",
-        "astra_modules.ui.dashboard.dashboard_data",
-        "astra_modules.ui.dashboard.dashboard_chart",
-        "astra_modules.guardian.guardian_v6",
+        "astra_core.fetch_core.fetch_unified",
+        "astra_core.ui.dashboard.dashboard_data",
+        "astra_core.ui.dashboard.dashboard_chart",
+        "astra_core.guardian.guardian_v6",
     ]
     missing = []
     for mod in modules:

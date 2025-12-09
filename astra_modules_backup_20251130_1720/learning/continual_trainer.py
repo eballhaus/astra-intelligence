@@ -17,9 +17,9 @@ import traceback
 
 import numpy as np
 
-from astra_modules.learning.learning_store import LearningStore
-from astra_modules.learning.performance_tracker import PerformanceTracker
-from astra_modules.learning.replay_buffer import ReplayBuffer
+from astra_core.learning.learning_store import LearningStore
+from astra_core.learning.performance_tracker import PerformanceTracker
+from astra_core.learning.replay_buffer import ReplayBuffer
 
 
 class ContinualTrainer:

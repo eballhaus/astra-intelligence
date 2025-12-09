@@ -15,8 +15,8 @@ Responsibilities:
 import traceback
 from datetime import datetime, timedelta
 
-from astra_modules.learning.performance_tracker import PerformanceTracker
-from astra_modules.learning.replay_buffer import ReplayBuffer
+from astra_core.learning.performance_tracker import PerformanceTracker
+from astra_core.learning.replay_buffer import ReplayBuffer
 
 
 class PaperTrader:

@@ -5,7 +5,7 @@ Handles error messages and clean Streamlit display.
 
 import streamlit as st
 
-from astra_modules.chart_core.chart_engine import render_chart
+from astra_core.chart_core.chart_engine import render_chart
 
 
 def chart_container(symbol: str):

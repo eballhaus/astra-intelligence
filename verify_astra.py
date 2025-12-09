@@ -22,7 +22,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from astra_modules.guardian.guardian_v6 import GuardianV6
+from astra_core.guardian.guardian_v6 import GuardianV6
 
 guardian = GuardianV6(str(PROJECT_ROOT))
 TRACK_FILE = PROJECT_ROOT / "last_verified_files.json"

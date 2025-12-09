@@ -24,7 +24,7 @@ for dirpath, dirnames, filenames in os.walk(ROOT):
 
         if PATTERN_IMPORT.search(text):
             new_text = PATTERN_IMPORT.sub(
-                "from astra_modules.guardian.guardian_v6 import guardian_log", new_text
+                "from astra_core.guardian.guardian_v6 import guardian_log", new_text
             )
             changed = True
 

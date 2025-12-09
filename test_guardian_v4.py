@@ -7,7 +7,7 @@ defense system and prints live risk + action outputs.
 
 import random
 import time
-from astra_modules.guardian.guardian_v4 import guardian
+from astra_core.guardian.guardian_v4 import guardian
 
 
 def generate_signal():

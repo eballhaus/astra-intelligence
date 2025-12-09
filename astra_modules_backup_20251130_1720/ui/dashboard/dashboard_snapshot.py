@@ -10,7 +10,7 @@ import os
 import zipfile
 import datetime
 import glob
-from astra_modules.guardian import guardian_log
+from astra_core.guardian import guardian_log
 
 guardian = guardian_log()
 

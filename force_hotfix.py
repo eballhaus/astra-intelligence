@@ -10,7 +10,7 @@ import pandas as pd
 # Add to path to find modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from astra_modules.guardian.guardian_v6 import guardian_log
+from astra_core.guardian.guardian_v6 import guardian_log
 
 # REAL current prices (as of Dec 2025)
 REAL_PRICES = {
@@ -74,10 +74,10 @@ def nuke_and_patch():
     
     targets = [
         # Dashboard data module
-        ('astra_modules.ui.dashboard.dashboard_data', 'load_market_data'),
+        ('astra_core.ui.dashboard.dashboard_data', 'load_market_data'),
         
         # AstraAPI client
-        ('astra_modules.core.api_client', 'AstraAPI'),
+        ('astra_core.core.api_client', 'AstraAPI'),
         
         # Any other data loaders
     ]
@@ -107,7 +107,7 @@ def nuke_and_patch():
             guardian_log(f"[FORCE-HOTFIX] ⚠️ Failed to patch {module_path}.{target}: {e}")
     
     # Also patch any cached references
-    import astra_modules.ui.dashboard.dashboard_cards as dashboard_cards
+    import astra_core.ui.dashboard.dashboard_cards as dashboard_cards
     if hasattr(dashboard_cards, 'load_market_data'):
         dashboard_cards.load_market_data = force_real_data
     

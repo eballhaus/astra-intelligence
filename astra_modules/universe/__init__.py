@@ -7,6 +7,6 @@ This module initializes the Universe subsystem and provides
 a safe import path for UniverseBuilder and related tools.
 """
 
-from astra_modules.universe.universe_builder import build_universe
+from astra_core.universe.universe_builder import build_universe
 
 __all__ = ["build_universe"]

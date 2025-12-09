@@ -16,7 +16,7 @@ import zipfile
 import importlib
 from datetime import datetime
 
-from astra_modules.guardian.guardian_v6 import guardian_log
+from astra_core.guardian.guardian_v6 import guardian_log
 
 guardian = guardian_log()
 GUARDIAN_FLAG_FILE = "/tmp/astra_dashboard_guardian_active"
@@ -45,7 +45,7 @@ def verify_dashboard():
     all_ok = True
 
     for module_name, expected_funcs in required_modules.items():
-        full_name = f"astra_modules.ui.dashboard.{module_name}"
+        full_name = f"astra_core.ui.dashboard.{module_name}"
         try:
             mod = importlib.import_module(full_name)
             guardian.log(f"[DashboardGuardian] ✅ Loaded {full_name}")

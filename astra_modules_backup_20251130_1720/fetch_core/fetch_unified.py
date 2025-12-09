@@ -18,7 +18,7 @@ import time
 import pandas as pd
 from datetime import datetime
 
-from astra_modules.guardian.guardian_v6 import guardian_log
+from astra_core.guardian.guardian_v6 import guardian_log
 
 guardian = guardian_log()
 

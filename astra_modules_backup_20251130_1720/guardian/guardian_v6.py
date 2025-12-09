@@ -144,10 +144,10 @@ def monitor_system_health(interval=60):
     guardian_log("🩺 Health monitor thread started (interval = 60s).")
 
     modules = [
-        "astra_modules.fetch_core.fetch_unified",
-        "astra_modules.ui.dashboard.dashboard_data",
-        "astra_modules.ui.dashboard.dashboard_chart",
-        "astra_modules.guardian.guardian_v6",
+        "astra_core.fetch_core.fetch_unified",
+        "astra_core.ui.dashboard.dashboard_data",
+        "astra_core.ui.dashboard.dashboard_chart",
+        "astra_core.guardian.guardian_v6",
     ]
 
     while _health_monitor_running:
@@ -170,7 +170,7 @@ _last_api_call = 0
 def safe_yahoo_request(url: str, fallback_symbol="AAPL"):
     """Guardian-safe Yahoo Finance request with rate limiting."""
     import requests
-    from astra_modules.fetch_core import fetch_unified
+    from astra_core.fetch_core import fetch_unified
     global _last_api_call
 
     now = time.time()

@@ -21,8 +21,8 @@ import traceback
 # -------------------------------------------------------------------
 # 🔒 Guardian Integration
 # -------------------------------------------------------------------
-from astra_modules.guardian.guardian_v6 import guardian_log
-from astra_modules.ui.dashboard.dashboard_guardian import ensure_dashboard_integrity
+from astra_core.guardian.guardian_v6 import guardian_log
+from astra_core.ui.dashboard.dashboard_guardian import ensure_dashboard_integrity
 
 guardian = guardian_log()
 guardian.log("[Dashboard] 🚀 Initializing Astra Intelligence Dashboard Tab...")
@@ -36,7 +36,7 @@ if "dashboard_checked" not in st.session_state:
 # 📦 Dashboard Imports
 # -------------------------------------------------------------------
 try:
-    from astra_modules.ui.dashboard import (
+    from astra_core.ui.dashboard import (
         render_sidebar,
         render_chart,
         load_data,

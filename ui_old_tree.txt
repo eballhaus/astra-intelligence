@@ -1,0 +1,64 @@
+astra_modules/ui_old/tab_guardian.py
+astra_modules/ui_old/.DS_Store
+astra_modules/ui_old/__init__.py
+astra_modules/ui_old/__pycache__/__init__.cpython-312 2.pyc
+astra_modules/ui_old/__pycache__/__init__.cpython-312.pyc
+astra_modules/ui_old/dashboard/dashboard_data.py.bak
+astra_modules/ui_old/dashboard/dashboard_data.py
+astra_modules/ui_old/dashboard/dashboard_cards.py
+astra_modules/ui_old/dashboard/dashboard_snapshot.py
+astra_modules/ui_old/dashboard/theme_loader.py
+astra_modules/ui_old/dashboard/.DS_Store
+astra_modules/ui_old/dashboard/dashboard_assistant.py
+astra_modules/ui_old/dashboard/dashboard_sidebar.py.bak
+astra_modules/ui_old/dashboard/dashboard_guardian.py.bak
+astra_modules/ui_old/dashboard/tab_dashboard_v7_stable.py
+astra_modules/ui_old/dashboard/dashboard_chart.py
+astra_modules/ui_old/dashboard/dashboard_assistant.py.bak
+astra_modules/ui_old/dashboard/tab_dashboard.py.bak
+astra_modules/ui_old/dashboard/tab_learning.py
+astra_modules/ui_old/dashboard/.streamlit/config.toml
+astra_modules/ui_old/dashboard/dashboard_data_safe_patch.py
+astra_modules/ui_old/dashboard/dashboard_sidebar.py
+astra_modules/ui_old/dashboard/__init__.py
+astra_modules/ui_old/dashboard/dashboard_snapshot.py.bak
+astra_modules/ui_old/dashboard/__pycache__/dashboard_data.cpython-312 2.pyc
+astra_modules/ui_old/dashboard/__pycache__/summary_cards.cpython-312.pyc
+astra_modules/ui_old/dashboard/__pycache__/__init__.cpython-312 2.pyc
+astra_modules/ui_old/dashboard/__pycache__/summary_cards.cpython-312 2.pyc
+astra_modules/ui_old/dashboard/__pycache__/dashboard_sidebar.cpython-312 2.pyc
+astra_modules/ui_old/dashboard/__pycache__/dashboard_cards.cpython-312.pyc
+astra_modules/ui_old/dashboard/__pycache__/theme_loader.cpython-312 2.pyc
+astra_modules/ui_old/dashboard/__pycache__/dashboard_sidebar.cpython-312.pyc
+astra_modules/ui_old/dashboard/__pycache__/theme_loader.cpython-312.pyc
+astra_modules/ui_old/dashboard/__pycache__/dashboard_chart.cpython-312.pyc
+astra_modules/ui_old/dashboard/__pycache__/dashboard_chart.cpython-312 2.pyc
+astra_modules/ui_old/dashboard/__pycache__/dashboard_data.cpython-312.pyc
+astra_modules/ui_old/dashboard/__pycache__/__init__.cpython-312.pyc
+astra_modules/ui_old/dashboard/__pycache__/dashboard_cards.cpython-312 2.pyc
+astra_modules/ui_old/dashboard/dashboard_guardian.py
+astra_modules/ui_old/dashboard/summary_cards.py
+astra_modules/ui_old/dashboard/dashboard_cards.py.bak
+astra_modules/ui_old/dashboard/dashboard_chart.py.backup
+astra_modules/ui_old/dashboard/astra_theme.css
+astra_modules/ui_old/dashboard/tab_dashboard_patch.py
+astra_modules/ui_old/dashboard/tab_predictions.py
+astra_modules/ui_old/dashboard/dashboard_contract.json
+astra_modules/ui_old/dashboard/dashboard_data_safe_patch.py.bak
+astra_modules/ui_old/dashboard/dashboard_chart.py.bak
+astra_modules/ui_old/dashboard/__init__.py.bak
+astra_modules/ui_old/dashboard/dashboard_summary.py.bak
+astra_modules/ui_old/dashboard/test_app.py
+astra_modules/ui_old/components/hover_summary.py
+astra_modules/ui_old/components/.DS_Store
+astra_modules/ui_old/components/ticker_card_placeholder.py
+astra_modules/ui_old/components/ticker_badges.py
+astra_modules/ui_old/components/mini_chart.py
+astra_modules/ui_old/components/advanced_chart.py
+astra_modules/ui_old/components/score_bars.py
+astra_modules/ui_old/components/__init__.py
+astra_modules/ui_old/components/layout_controls.py
+astra_modules/ui_old/components/opportunity_panels.py
+astra_modules/ui_old/components/sparkline.py
+astra_modules/ui_old/components/ticker_card.py
+astra_modules/ui_old/tab_system.py

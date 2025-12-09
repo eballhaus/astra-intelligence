@@ -32,7 +32,7 @@ else:
 # 2. Check fetch_unified signature
 # ------------------------------
 try:
-    import astra_modules.fetch_core.fetch_unified as fu
+    import astra_core.fetch_core.fetch_unified as fu
     sig = inspect.signature(fu.fetch_unified)
     if str(sig) != "(symbol: str, lookback_days: int = 90)":
         fail(f"fetch_unified signature incorrect: {sig}")

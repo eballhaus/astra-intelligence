@@ -19,9 +19,9 @@ from datetime import datetime
 print("\n🔧 Initializing Astra Guardian Stack...")
 
 try:
-    from astra_modules.guardian.auto_repair import GuardianAutoRepair
-    from astra_modules.guardian.startup_hook import run_startup_check
-    from astra_modules.guardian.guardian_import_auditor import run_import_audit
+    from astra_core.guardian.auto_repair import GuardianAutoRepair
+    from astra_core.guardian.startup_hook import run_startup_check
+    from astra_core.guardian.guardian_import_auditor import run_import_audit
 
     # Silent Auto-Repair
     repair = GuardianAutoRepair()

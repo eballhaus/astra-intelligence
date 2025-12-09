@@ -1,0 +1,40 @@
+import sysn
+def safe_print(*args, **kwargs):n
+    try:n
+        print(*args, **kwargs)n
+    except OSError:n
+        try:n
+            sys.stderr.write(" ".join(map(str, args)) + "\n")n
+        except Exception:n
+            passn
+import pandas as pd
+import traceback
+from pathlib import Path
+
+def load_data() -> pd.DataFrame | None:
+    """Load and normalize dashboard data safely (patched version)."""
+    try:
+        data_path = Path(__file__).resolve().parent / "sample_data.csv"
+        if data_path.exists():
+            df = pd.read_csv(data_path)
+        else:
+            # Fallback dummy data
+            df = pd.DataFrame([
+                {"symbol": "AAPL", "price": 195.3, "change": 0.4},
+                {"symbol": "TSLA", "price": 250.1, "change": -1.2},
+                {"symbol": "NVDA", "price": 481.6, "change": 1.1},
+            ])
+
+        # 🧩 Sanitize None/NaN fields
+        for col in df.columns:
+            if df[col].dtype == object:
+                df[col] = df[col].fillna("")
+        if "symbol" not in df.columns:
+            df["symbol"] = ""
+
+        return df
+
+    except Exception as e:
+        print(f"[DashboardData] ⚠️ Failed to load data: {e}")
+        traceback.print_exc()
+        return pd.DataFrame(columns=["symbol", "price", "change"])

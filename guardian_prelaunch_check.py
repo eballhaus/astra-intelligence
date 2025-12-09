@@ -11,14 +11,14 @@ required_paths = [
     "astra_modules/fetch_core",
 ]
 required_modules = [
-    "astra_modules.guardian.guardian_v6",
-    "astra_modules.fetch_core.fetch_unified",
-    "astra_modules.ui.dashboard.dashboard_data",
-    "astra_modules.ui.dashboard.dashboard_chart",
-    "astra_modules.ui.dashboard.dashboard_cards",
-    "astra_modules.ui.dashboard.dashboard_sidebar",
-    "astra_modules.ui.dashboard.dashboard_summary",
-    "astra_modules.ui.dashboard.dashboard_assistant",
+    "astra_core.guardian.guardian_v6",
+    "astra_core.fetch_core.fetch_unified",
+    "astra_core.ui.dashboard.dashboard_data",
+    "astra_core.ui.dashboard.dashboard_chart",
+    "astra_core.ui.dashboard.dashboard_cards",
+    "astra_core.ui.dashboard.dashboard_sidebar",
+    "astra_core.ui.dashboard.dashboard_summary",
+    "astra_core.ui.dashboard.dashboard_assistant",
 ]
 required_tab_files = [
     "astra_modules/ui/dashboard/tab_dashboard.py",

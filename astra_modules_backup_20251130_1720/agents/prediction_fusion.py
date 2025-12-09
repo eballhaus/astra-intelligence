@@ -5,7 +5,7 @@ This module fuses multiple AI agent predictions (RiskAgent,
 PsychologyAgent, RankingEngine, etc.) into a unified confidence score.
 """
 
-from astra_modules.guardian import guardian_v6
+from astra_core.guardian import guardian_v6
 
 class PredictionFusion:
     """Combines multiple agent predictions into a unified score."""

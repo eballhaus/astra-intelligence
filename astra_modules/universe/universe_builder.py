@@ -10,7 +10,7 @@ import os
 
 import pandas as pd
 
-from astra_modules.guardian import guardian_v7
+from astra_core.guardian import guardian_v7
 
 guardian = guardian_v7
 

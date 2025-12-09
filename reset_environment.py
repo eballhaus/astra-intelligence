@@ -56,8 +56,8 @@ def clear_import_cache():
 
 def run_guardian():
     print("🛡 Running environment guardian checks...")
-    from astra_modules.guardian.environment_guardian import verify_fetch_signature
-    from astra_modules.guardian.environment_guardian import verify_no_stale_imports
+    from astra_core.guardian.environment_guardian import verify_fetch_signature
+    from astra_core.guardian.environment_guardian import verify_no_stale_imports
 
     verify_fetch_signature()
     verify_no_stale_imports()

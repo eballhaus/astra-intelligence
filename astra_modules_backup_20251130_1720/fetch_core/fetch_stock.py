@@ -9,11 +9,11 @@ Priority:
 
 import pandas as pd
 
-from astra_modules.api_keys import (ALPHA_VANTAGE_API_KEY, FMP_API_KEY,
+from astra_core.api_keys import (ALPHA_VANTAGE_API_KEY, FMP_API_KEY,
                                     TWELVE_DATA_API_KEY)
-from astra_modules.utils.caching import cache_set
-from astra_modules.utils.safe_api_wrapper import safe_api_call
-from astra_modules.utils.safe_df import safe_df
+from astra_core.utils.caching import cache_set
+from astra_core.utils.safe_api_wrapper import safe_api_call
+from astra_core.utils.safe_df import safe_df
 
 
 # ---------------------------------------------------------

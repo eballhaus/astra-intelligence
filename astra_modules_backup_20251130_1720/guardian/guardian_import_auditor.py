@@ -18,10 +18,10 @@ def run_import_audit():
 
     results = []
     modules_to_check = [
-        "astra_modules.guardian.guardian_v6",
-        "astra_modules.guardian.guardian_v6",
-        "astra_modules.guardian.guardian_v6",
-        "astra_modules.guardian.startup_hook",
+        "astra_core.guardian.guardian_v6",
+        "astra_core.guardian.guardian_v6",
+        "astra_core.guardian.guardian_v6",
+        "astra_core.guardian.startup_hook",
     ]
 
     for mod_name in modules_to_check:

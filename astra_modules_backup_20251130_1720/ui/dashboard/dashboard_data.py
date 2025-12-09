@@ -6,9 +6,9 @@ for all dashboard components (charts, cards, summaries, etc.)
 """
 
 import pandas as pd
-from astra_modules.guardian import guardian_log
-from astra_modules.guardian.schema_validator import validate_and_normalize
-from astra_modules.fetch_core import fetch_unified
+from astra_core.guardian import guardian_log
+from astra_core.guardian.schema_validator import validate_and_normalize
+from astra_core.fetch_core import fetch_unified
 
 guardian = guardian_log()
 

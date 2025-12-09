@@ -21,7 +21,7 @@ def debug_data_flow(symbol="AAPL"):
     # Test 1: Direct AstraAPI call
     print("\n📡 Test 1: Direct AstraAPI call")
     try:
-        from astra_modules.core.api_client import AstraAPI
+        from astra_core.core.api_client import AstraAPI
         api = AstraAPI()
         df_api = api.get_market_data(symbol)
         print(f"   Shape: {df_api.shape}")
@@ -54,7 +54,7 @@ def debug_data_flow(symbol="AAPL"):
     # Test 2: Dashboard data loader
     print("\n📊 Test 2: Dashboard data loader")
     try:
-        from astra_modules.ui.dashboard.dashboard_data import load_data
+        from astra_core.ui.dashboard.dashboard_data import load_data
         df_dash = load_data(symbol)
         print(f"   Shape: {df_dash.shape}")
         print(f"   Columns: {list(df_dash.columns)}")

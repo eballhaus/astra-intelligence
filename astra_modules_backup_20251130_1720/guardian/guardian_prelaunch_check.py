@@ -9,13 +9,13 @@ from .guardian_v6 import guardian_log
 
 def run_guardian_prelaunch_check():
     modules = [
-        "astra_modules.fetch_core.fetch_unified",
-        "astra_modules.ui.dashboard.dashboard_data",
-        "astra_modules.ui.dashboard.dashboard_chart",
-        "astra_modules.ui.dashboard.dashboard_cards",
-        "astra_modules.ui.dashboard.dashboard_sidebar",
-        "astra_modules.ui.dashboard.dashboard_summary",
-        "astra_modules.ui.dashboard.dashboard_assistant",
+        "astra_core.fetch_core.fetch_unified",
+        "astra_core.ui.dashboard.dashboard_data",
+        "astra_core.ui.dashboard.dashboard_chart",
+        "astra_core.ui.dashboard.dashboard_cards",
+        "astra_core.ui.dashboard.dashboard_sidebar",
+        "astra_core.ui.dashboard.dashboard_summary",
+        "astra_core.ui.dashboard.dashboard_assistant",
     ]
     guardian_log("🧠 Guardian pre-launch verification started...")
     for mod in modules:

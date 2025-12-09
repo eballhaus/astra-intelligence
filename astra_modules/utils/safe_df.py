@@ -7,7 +7,7 @@ HybridScan, and Advanced Chart.
 
 import pandas as pd
 
-from astra_modules.guardian.guardian_v7 import guardian
+from astra_core.guardian.guardian_v7 import guardian
 
 
 # =====================================================================

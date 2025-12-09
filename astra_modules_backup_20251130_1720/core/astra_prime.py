@@ -11,15 +11,15 @@ Enhancements:
 
 import numpy as np
 
-from astra_modules.agents.catalyst_agent import CatalystAgent
-from astra_modules.agents.momentum_agent import MomentumAgent
-from astra_modules.agents.neural_agent import NeuralAgent
-from astra_modules.agents.psychology_agent import PsychologyAgent
-from astra_modules.agents.risk_agent import RiskAgent
-from astra_modules.agents.technical_agent import TechnicalAgent
-from astra_modules.agents.volume_agent import VolumeAgent
+from astra_core.agents.catalyst_agent import CatalystAgent
+from astra_core.agents.momentum_agent import MomentumAgent
+from astra_core.agents.neural_agent import NeuralAgent
+from astra_core.agents.psychology_agent import PsychologyAgent
+from astra_core.agents.risk_agent import RiskAgent
+from astra_core.agents.technical_agent import TechnicalAgent
+from astra_core.agents.volume_agent import VolumeAgent
 # Astra Prime Startup Initialization
-from astra_modules.guardian.state_initializer import ensure_state_ready
+from astra_core.guardian.state_initializer import ensure_state_ready
 
 ensure_state_ready()
 

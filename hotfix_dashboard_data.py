@@ -18,7 +18,7 @@ import requests
 import pandas as pd
 from datetime import datetime, timezone
 
-from astra_modules.guardian.guardian_v6 import guardian_log
+from astra_core.guardian.guardian_v6 import guardian_log
 from real_data_fetcher import fetch_real_market_data
 
 

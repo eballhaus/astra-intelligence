@@ -13,8 +13,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 import requests
 
-from astra_modules.utils.df_cleaner import normalize_columns, strip_whitespace
-from astra_modules.utils.safe_api_wrapper import safe_api_call
+from astra_core.utils.df_cleaner import normalize_columns, strip_whitespace
+from astra_core.utils.safe_api_wrapper import safe_api_call
 
 # ===============================================================
 # API KEYS

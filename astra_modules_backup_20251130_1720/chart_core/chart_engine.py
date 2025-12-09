@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from astra_modules.chart_core.plotly_theme import apply_plotly_theme
+from astra_core.chart_core.plotly_theme import apply_plotly_theme
 
 
 # ======================================================

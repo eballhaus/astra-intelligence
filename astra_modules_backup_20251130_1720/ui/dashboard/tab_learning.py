@@ -17,12 +17,12 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # --- Guardian Import ---
-from astra_modules.guardian import guardian_v6
+from astra_core.guardian import guardian_v6
 
 # Optional imports for learning systems
 try:
-    from astra_modules.learning.learning_engine import LearningEngine
-    from astra_modules.learning.replay_buffer import ReplayBuffer
+    from astra_core.learning.learning_engine import LearningEngine
+    from astra_core.learning.replay_buffer import ReplayBuffer
 except ImportError:
     guardian_v6.guardian_log("⚠️ Learning modules not found — using safe mode.")
 

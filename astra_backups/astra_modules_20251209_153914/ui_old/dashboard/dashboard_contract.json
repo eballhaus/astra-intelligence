@@ -1,0 +1,33 @@
+{
+  "version": "1.0.0",
+  "description": "Contract for Astra Intelligence Dashboard Layout and Components",
+  "required_modules": {
+    "tab_dashboard": {
+      "required_functions": ["render_dashboard", "render_cards_section", "render_chart_section"]
+    },
+    "dashboard_cards": {
+      "required_functions": ["render_symbol_card", "render_empty_card"]
+    },
+    "dashboard_chart": {
+      "required_functions": ["render_chart"]
+    },
+    "dashboard_data": {
+      "required_functions": ["load_data", "get_summary"]
+    },
+    "dashboard_sidebar": {},
+    "dashboard_summary": {
+      "required_functions": ["render_summary"]
+    }
+  },
+  "layout_order": [
+    "dashboard_sidebar",
+    "dashboard_summary",
+    "dashboard_cards",
+    "dashboard_chart"
+  ],
+  "integrity_rules": {
+    "must_import_guardian": true,
+    "must_use_schema_validation": true,
+    "must_log_exceptions": true
+  }
+}

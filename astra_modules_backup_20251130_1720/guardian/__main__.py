@@ -1,7 +1,7 @@
 """
 Astra Guardian Main Entrypoint
 ------------------------------
-Allows you to run `python -m astra_modules.guardian` directly.
+Allows you to run `python -m astra_core.guardian` directly.
 Automatically initializes guardian_log, runs pre-flight checks,
 and confirms environment health before Streamlit dashboard launch.
 """
