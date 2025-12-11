@@ -1,6 +1,8 @@
-import streamlit as st
-import requests
 from datetime import datetime
+
+import requests
+import streamlit as st
+
 cat << "EOF" > astra_modules / ui / dashboard / dashboard_summary.py
 """
 Astra Intelligence — Market Overview (No yfinance)

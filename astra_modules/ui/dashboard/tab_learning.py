@@ -4,13 +4,14 @@
 Visual interface for Astra’s reinforcement learning and memory systems.
 """
 
-from astra_core.guardian import guardian_v6
 import os
 import sys
 from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+
+from astra_core.guardian import guardian_v6
 
 # --- Ensure project root path ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
