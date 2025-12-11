@@ -114,9 +114,3 @@ class AstraPrime:
             )
 
         return {"final_score": final_score, "grade": grade, "agent_details": outputs}
-
-    def predict(self, x=None):
-        """Temporary calibration stub."""
-        self.g_log(
-            f"[{self.__class__.__name__}] Predict placeholder executed.")
-        return 0.5

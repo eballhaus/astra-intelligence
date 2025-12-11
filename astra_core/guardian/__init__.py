@@ -2,7 +2,7 @@
 # Guardian Fallback Initialization (Compatible with Astra v7–v8)
 # =============================================================================
 
-class guardian_log:
+class GuardianLog:
     """Safe fallback Guardian logger supporting both call and .log() methods."""
     def __init__(self, *args, **kwargs):
         # Allow initialization with or without message
@@ -10,7 +10,7 @@ class guardian_log:
             self.__call__(*args, **kwargs)
 
     def __call__(self, *args, **kwargs):
-        """Allow calling guardian_log('msg') directly."""
+        """Allow calling guardian('msg') directly."""
         try:
             msg = " ".join(str(a) for a in args)
             print("[Guardian Log]", msg)
@@ -26,7 +26,7 @@ class guardian_log:
             pass
 
 
-# Allow legacy code to use guardian_log() as a standalone function
+# Allow legacy code to use guardian_log_func("message")
 def guardian_log_func(*args, **kwargs):
     try:
         msg = " ".join(str(a) for a in args)
@@ -35,18 +35,25 @@ def guardian_log_func(*args, **kwargs):
         pass
 
 
-# Create a global guardian instance for cross-module use
-guardian = guardian_log()
+# -----------------------------------------------------------------------------
+# Create a global guardian fallback instance for cross-module use
+# -----------------------------------------------------------------------------
+guardian = GuardianLog()
 
 print("[Guardian] ✅ Fallback guardian_log class and instance initialized safely.")
 
-# --- guardian_log callable wrapper fix (2025-12-09) ---
+# -----------------------------------------------------------------------------
+# Unified wrapper: allow `guardian_log("msg")` or `guardian.log("msg")`
+# -----------------------------------------------------------------------------
 def guardian_log(*args, **kwargs):
-    """Allow guardian_log('message') to call the guardian instance safely."""
+    """Unified fallback function for legacy calls."""
     try:
-        from astra_core.guardian import guardian
-        guardian.log(*args, **kwargs)
-    except Exception as e:
-        print("[Guardian Log Wrapper Error]", e)
-# --- end wrapper fix ---
+        from astra_core.guardian.guardian_v6 import guardian as g6
+        g6.log(*args, **kwargs)
+    except Exception:
+        msg = " ".join(str(a) for a in args)
+        print("[Guardian Log Fallback]", msg)
 
+# -----------------------------------------------------------------------------
+# End of file
+# -----------------------------------------------------------------------------

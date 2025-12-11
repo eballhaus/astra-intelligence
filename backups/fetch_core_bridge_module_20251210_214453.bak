@@ -1,0 +1,20 @@
+import sys, os
+import pandas as pd
+
+# --- Bridge: use advanced Astra unified fetch system ---
+ADVANCED_FETCH_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../astra_modules_backup_20251130_1720"))
+if ADVANCED_FETCH_PATH not in sys.path:
+    sys.path.append(ADVANCED_FETCH_PATH)
+
+try:
+    from fetch_core import fetch_unified
+    print("[FetchBridge] ✅ Advanced fetch_unified loaded from astra_modules_backup_20251130_1720")
+except Exception as e:
+    print("[FetchBridge] ⚠️ Advanced fetcher import failed:", e)
+    # --- fallback: basic local fetcher ---
+    import yfinance as yf
+    class FetchUnified:
+        def get_symbol_data(self, symbol):
+            data = yf.download(symbol, period="5d", interval="1h", progress=False)
+            return data.reset_index()
+    fetch_unified = FetchUnified()

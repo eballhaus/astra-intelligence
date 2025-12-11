@@ -1,5 +1,3 @@
-from astra_core.agents.base_agent import BaseAgent
-
 """
 Astra Intelligence — PsychologyAgent v2
 ---------------------------------------
@@ -13,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 
-class PsychologyAgent(BaseAgent):
+class PsychologyAgent:
     """
     Converts numeric and volatility context into qualitative reasoning.
     """
@@ -66,9 +64,3 @@ class PsychologyAgent(BaseAgent):
 
         except Exception as e:
             return f"Astra reasoning unavailable: {e}"
-
-    def predict(self, x=None):
-        """Temporary calibration stub."""
-        self.g_log(
-            f"[{self.__class__.__name__}] Predict placeholder executed.")
-        return 0.5

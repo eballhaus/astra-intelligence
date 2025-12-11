@@ -1,5 +1,3 @@
-from astra_core.agents.base_agent import BaseAgent
-
 """
 VolumeAgent — Phase-90
 
@@ -10,7 +8,7 @@ Outputs a normalized 0–1 score.
 """
 
 
-class VolumeAgent(BaseAgent):
+class VolumeAgent:
     def __init__(self):
         pass
 
@@ -54,9 +52,3 @@ class VolumeAgent(BaseAgent):
 
         score = self.normalize(vol)
         return float(score)
-
-    def predict(self, x=None):
-        """Temporary calibration stub."""
-        self.g_log(
-            f"[{self.__class__.__name__}] Predict placeholder executed.")
-        return 0.5

@@ -14,10 +14,13 @@ Handles sidebar rendering for the Astra Intelligence UI.
 
 import streamlit as st
 import pandas as pd
-from astra_core.guardian.guardian_v6 import guardian_log
+from astra_core.guardian.guardian_v6 import guardian
+
 from astra_core.fetch_core import fetch_unified
 
-guardian = guardian_log.log()
+# Removed bad assignment
+from astra_core.guardian.guardian_v6 import guardian
+
 
 # ------------------------------------------------------------
 # ⚙️ Market Overview (Safe API Fetch)

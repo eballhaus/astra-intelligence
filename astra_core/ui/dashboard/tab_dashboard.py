@@ -1,115 +1,38 @@
-# ============================================================
-# Astra Intelligence Dashboard Tab — Clean Bootstrap Section
-# ============================================================
-
+import importlib
 import streamlit as st
-import pandas as pd
-import traceback
 
-# Guardian Initialization
-from astra_core.guardian.guardian_v6 import guardian_boot
-from astra_core.guardian import guardian as guardian_log
+# --- Reload dashboard modules dynamically to prevent Streamlit cache bugs ---
+import astra_core.ui.dashboard.dashboard_sidebar as sidebar
+import astra_core.ui.dashboard.dashboard_data as data
+import astra_core.ui.dashboard.dashboard_cards as cards
+import astra_core.ui.dashboard.dashboard_summary as summary
 
-guardian = getattr(guardian_log, 'log', guardian_log)
-guardian_boot()
+for mod in (sidebar, data, cards, summary):
+    importlib.reload(mod)
 
-# -------------------------------------------------------------------
-# 📦 Dashboard Imports (Safe Load)
-# -------------------------------------------------------------------
-try:
-    from astra_core.ui.dashboard import (
-        render_sidebar,
-        render_chart,
-        load_data,
-        render_symbol_card,
-        render_summary,
-    )
-except Exception as e:
-    print("[Dashboard] ⚠️ Safe load mode activated —", e)
-    st.stop()
+# --- Rebind key functions safely ---
+render_sidebar = getattr(sidebar, "render_sidebar", None)
+load_data = getattr(data, "load_data", None)
+render_symbol_card = getattr(cards, "render_symbol_card", None)
+render_summary = getattr(summary, "render_summary", None)
 
-# -------------------------------------------------------------------
-# 🎨 UI Layout Setup
-# -------------------------------------------------------------------
-st.set_page_config(
-    page_title="Astra Intelligence Dashboard",
-    layout="wide",
-    page_icon="🧠",
-)
+# --- Guardian logging ---
+from astra_core.guardian.guardian_v6 import guardian_log
+guardian = guardian_log("Astra Dashboard initialized safely.")
 
-st.markdown(
-    """
-    <style>
-    body {
-        background-color: #0b0f17;
-        color: #e5e7eb;
-        font-family: 'Inter', sans-serif;
-    }
-    .main-title {
-        font-size: 2rem;
-        font-weight: 600;
-        color: #A7F3D0;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+st.title("Astra Intelligence — Market Dashboard")
 
-st.markdown("<div class='main-title'>🧠 Astra Intelligence — Market Dashboard</div>", unsafe_allow_html=True)
-
-# -------------------------------------------------------------------
-# 🧩 Sidebar
-# -------------------------------------------------------------------
-try:
-    selected_tab = render_sidebar()
-except Exception as e:
-    guardian.log(f"[Sidebar] ⚠️ Sidebar render failed: {e}")
-    st.error(f"⚠️ Sidebar render failed: {e}")
-    selected_tab = "Overview"
-
-# -------------------------------------------------------------------
-# 📊 Data Loading
-# -------------------------------------------------------------------
-try:
-    df = load_data(selected_tab)
-    if df is None or df.empty:
-        st.warning("⚠️ No data available to display.")
-        guardian.log("[Dashboard] ⚠️ Empty dataset returned from load_data().")
-except Exception as e:
-    guardian.log(f"[Dashboard] ⚠️ Data load error: {e}")
-    st.error(f"⚠️ Data load error: {e}")
-    df = pd.DataFrame()
-
-# -------------------------------------------------------------------
-# 📈 Chart Section
-# -------------------------------------------------------------------
-try:
-    if not df.empty:
-        render_chart(df, symbol=selected_tab)
-    else:
-        st.warning("⚠️ No valid data available for chart rendering.")
-except Exception as e:
-    guardian.log(f"[Dashboard] 🚨 Chart rendering failed: {e}")
-    st.error(f"🚨 Chart rendering error: {e}")
-    traceback.print_exc()
-
-# -------------------------------------------------------------------
-# 💠 Symbol Cards & Summary
-# -------------------------------------------------------------------
-try:
-    render_symbol_card(selected_tab, df)
-    render_summary(df)
-except Exception as e:
-    guardian.log(f"[Dashboard] ⚠️ Card or summary render failed: {e}")
-    st.error(f"⚠️ Card or summary render failed: {e}")
-
-# -------------------------------------------------------------------
-# ✅ Final Status
-# -------------------------------------------------------------------
-guardian.log("[Dashboard] ✅ Dashboard fully loaded and verified.")
-st.success("✅ Dashboard loaded successfully. Guardian protection is active.")
-
-if 'df' in locals() and df is not None and not df.empty:
-    st.dataframe(df.head())
+# --- Validate functions before proceeding ---
+if not all(callable(f) for f in [render_sidebar, load_data, render_symbol_card]):
+    guardian.log("One or more dashboard functions not callable — attempting recovery.")
+    st.error("Dashboard function load error — please restart Streamlit.")
 else:
-    st.warning("⚠️ No market data available — try fetching a valid symbol or check your internet connection.")
+    try:
+        selected_tab = render_sidebar()
+        df = load_data(selected_tab)
+        render_symbol_card(selected_tab, df)
+        render_summary(df)
+        st.success("Dashboard loaded successfully. Guardian protection is active.")
+    except Exception as e:
+        guardian.log(f"Dashboard runtime error: {e}")
+        st.error(f"Dashboard initialization failed: {e}")

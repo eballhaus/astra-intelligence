@@ -10,9 +10,12 @@ import os
 import zipfile
 import datetime
 import glob
-from astra_core.guardian import guardian_log
+from astra_core.guardian.guardian_v6 import guardian
 
-guardian = guardian_log.log()
+
+# Removed bad assignment
+from astra_core.guardian.guardian_v6 import guardian
+
 
 # ============================================================
 # 🗂️ CONFIG

@@ -16,9 +16,12 @@ import zipfile
 import importlib
 from datetime import datetime
 
-from astra_core.guardian.guardian_v6 import guardian_log
+from astra_core.guardian.guardian_v6 import guardian
 
-guardian = guardian_log.log()
+
+# Removed bad assignment
+from astra_core.guardian.guardian_v6 import guardian
+
 GUARDIAN_FLAG_FILE = "/tmp/astra_dashboard_guardian_active"
 SNAPSHOT_DIR = os.path.expanduser("~/astra_guardian_runtime/snapshots")
 os.makedirs(SNAPSHOT_DIR, exist_ok=True)

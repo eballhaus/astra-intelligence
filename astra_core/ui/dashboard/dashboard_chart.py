@@ -1,5 +1,6 @@
-from astra_core.guardian import guardian as guardian_log
-guardian = getattr(guardian_log, 'log', guardian_log)
+from astra_core.guardian.guardian_v6 import guardian
+
+guardian = guardian
 """
 Astra Intelligence — Advanced Candle Chart v4.2
 ------------------------------------------------

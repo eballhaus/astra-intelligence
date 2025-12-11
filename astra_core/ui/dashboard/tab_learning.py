@@ -17,20 +17,21 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # --- Guardian Import ---
-from astra_core.guardian import guardian_v6
+from astra_core.guardian.guardian_v6 import guardian
+
 
 # Optional imports for learning systems
 try:
     from astra_core.learning.learning_engine import LearningEngine
     from astra_core.learning.replay_buffer import ReplayBuffer
 except ImportError:
-    guardian_v6.guardian_log.log("⚠️ Learning modules not found — using safe mode.")
+    guardian_v6.guardian.log("⚠️ Learning modules not found — using safe mode.")
 
 
 def render_learning_tab():
     """Render the Astra Learning Engine monitoring interface."""
     guardian = guardian_v6
-    guardian.guardian_log.log("🧠 Learning tab initialized successfully.")
+    guardian.guardian.log("🧠 Learning tab initialized successfully.")
 
     st.markdown(
         """
@@ -50,9 +51,9 @@ def render_learning_tab():
         engine = LearningEngine()
         if hasattr(engine, "get_status"):
             stats = engine.get_status()
-            guardian.guardian_log.log("✅ LearningEngine connected.")
+            guardian.guardian.log("✅ LearningEngine connected.")
     except Exception as e:
-        guardian.guardian_log.log(f"⚠️ LearningEngine unavailable: {e}", level="warning")
+        guardian.guardian.log(f"⚠️ LearningEngine unavailable: {e}", level="warning")
 
     cols = st.columns(3)
     with cols[0]:
@@ -69,7 +70,7 @@ def render_learning_tab():
         df = pd.DataFrame(buffer.sample(10)) if hasattr(buffer, "sample") else pd.DataFrame()
     except Exception as e:
         df = pd.DataFrame()
-        guardian.guardian_log.log(f"⚠️ ReplayBuffer unavailable: {e}", level="warning")
+        guardian.guardian.log(f"⚠️ ReplayBuffer unavailable: {e}", level="warning")
 
     if not df.empty:
         st.dataframe(df, use_container_width=True, height=300)

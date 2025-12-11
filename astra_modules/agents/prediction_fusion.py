@@ -1,61 +1,44 @@
-# -----------------------------------------------------------------
-# PredictionFusionV2 — weighted fusion using performance_tracker.json
-# -----------------------------------------------------------------
-import json
-import os
+"""
+🧠 prediction_fusion.py — Astra Prediction Fusion Agent
+--------------------------------------------------------
+This module fuses multiple AI agent predictions (RiskAgent,
+PsychologyAgent, RankingEngine, etc.) into a unified confidence score.
+"""
 
-import numpy as np
+from astra_core.guardian import guardian_v6
 
+class PredictionFusion:
+    """Combines multiple agent predictions into a unified score."""
 
-class PredictionFusionV2:
-    """Weighted ensemble fusion using learned reliabilities."""
+    def __init__(self):
+        guardian_v6.guardian_log("🧠 Initializing PredictionFusion Agent...")
+        self.guardian_root = guardian_v6.root_dir
+        self.agents = {}
 
-    def __init__(self, agents=None, tracker_path=None, guardian=None):
-        self.agents = agents or []
-        self.guardian = guardian
-        self.tracker_path = tracker_path or os.path.join(
-            "astra_modules", "learning", "performance_tracker.json"
-        )
-        self.weights = self._load_weights()
-        if self.guardian:
-            self.guardian._write_log(
-                "🧠 PredictionFusionV2 (weighted) initialized.")
+    def register_agent(self, name: str, agent_ref):
+        """Register a new predictive agent."""
+        self.agents[name] = agent_ref
+        guardian_v6.guardian_log(f"✅ Registered agent: {name}")
 
-    def _load_weights(self):
+    def fuse_predictions(self, predictions: dict):
+        """
+        Combine predictions from multiple agents into a single weighted score.
+        Placeholder logic for now — will evolve with model learning.
+        """
+        if not predictions:
+            return {"score": 0.0, "confidence": 0.0}
+
         try:
-            with open(self.tracker_path) as f:
-                data = json.load(f)
-            weights = {k: v["reliability"] for k, v in data.items()}
-            total = sum(weights.values()) or 1
-            return {k: v / total for k, v in weights.items()}
-        except Exception:
-            return {}
+            avg_score = sum(predictions.values()) / len(predictions)
+            confidence = min(max(avg_score, 0.0), 1.0)
+            guardian_v6.guardian_log(f"🧩 Fused prediction score: {confidence:.2f}")
+            return {"score": avg_score, "confidence": confidence}
+        except Exception as e:
+            guardian_v6.guardian_log(f"⚠️ PredictionFusion error: {e}", level="error")
+            return {"score": 0.0, "confidence": 0.0}
 
-    def predict(self, x):
-        preds, names = [], []
-        for i, agent in enumerate(self.agents):
-            try:
-                y = float(agent.predict(x))
-                preds.append(y)
-                name = agent.__class__.__name__
-                names.append(name)
-            except Exception as e:
-                print(f"⚠️ {agent.__class__.__name__} error: {e}")
 
-        if not preds:
-            return {"signal": 0.0, "confidence": 0.0, "weights": {}}
-
-        preds = np.array(preds)
-        weights = np.array(
-            [self.weights.get(n, 1 / len(preds)) for n in names], dtype=float
-        )
-        weights /= weights.sum()
-
-        fused = float(np.dot(preds, weights))
-        variance = float(np.var(preds))
-        confidence = max(0.0, min(1.0, 1.0 - variance))
-        return {
-            "signal": fused,
-            "confidence": confidence,
-            "weights": {n: float(w) for n, w in zip(names, weights)},
-        }
+if __name__ == "__main__":
+    fusion = PredictionFusion()
+    sample = {"RiskAgent": 0.6, "RankingEngine": 0.8, "PsychologyAgent": 0.7}
+    print(fusion.fuse_predictions(sample))

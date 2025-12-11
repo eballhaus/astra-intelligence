@@ -1,0 +1,107 @@
+# ============================================================
+# Astra Intelligence — Dashboard Data Layer (v3.7 Final Stable)
+# ============================================================
+"""
+Provides clean, validated, and Guardian-safe access to market data
+for all dashboard components (charts, cards, summaries, etc.)
+"""
+
+import pandas as pd
+from astra_core.guardian.guardian_v6 import guardian
+
+from astra_modules.fetch_core import fetch_unified
+
+guardian.log("[DashboardData] ✅ Module loaded successfully.")
+
+
+# ============================================================
+# 🩺 LOCAL FALLBACK VALIDATOR
+# ============================================================
+def validate_and_normalize(raw_data, source="unknown"):
+    """
+    Lightweight fallback validator if the main data_validation module is missing.
+    Ensures the input data becomes a clean DataFrame with required fields.
+    """
+    try:
+        if isinstance(raw_data, pd.DataFrame):
+            df = raw_data.copy()
+        elif isinstance(raw_data, list):
+            df = pd.DataFrame(raw_data)
+        elif isinstance(raw_data, dict):
+            df = pd.DataFrame([raw_data])
+        else:
+            guardian.log(f"[DashboardData] ⚠️ Unexpected data format from {source}.")
+            return pd.DataFrame()
+
+        # Normalize column names
+        df.columns = [c.strip().lower() for c in df.columns]
+
+        # Drop null or empty rows
+        df = df.dropna(how="all")
+
+        return df
+    except Exception as e:
+        guardian.log(f"[DashboardData] ⚠️ Validation failed for {source}: {e}")
+        return pd.DataFrame()
+
+
+# ============================================================
+# 🧩 LOAD DATA (Unified Astra Pipeline)
+# ============================================================
+def load_data(symbol: str) -> pd.DataFrame:
+    """
+    Unified data loader for dashboard.
+    Fetches from Astra's unified data source, validates schema,
+    and returns a DataFrame ready for visualization.
+    """
+    try:
+        raw = fetch_unified.get_symbol_data(symbol)
+        if raw is None or len(raw) == 0:
+            guardian.log(f"[DashboardData] ⚠️ No data returned for {symbol}.")
+            return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+        df = validate_and_normalize(raw, "fetch_unified")
+
+        # Ensure expected structure
+        for col in ["timestamp", "open", "high", "low", "close", "volume"]:
+            if col not in df.columns:
+                if col == "timestamp":
+                    df[col] = pd.date_range(end=pd.Timestamp.now(), periods=len(df))
+                elif col in ["open", "high", "low", "close"]:
+                    df[col] = df.get("price", 0)
+                elif col == "volume":
+                    df[col] = 1000.0
+
+        guardian.log(f"[DashboardData] ✅ Loaded {symbol} ({len(df)} rows).")
+        return df
+
+    except Exception as e:
+        guardian.log(f"[DashboardData] 🚨 Failed to load data for {symbol}: {e}")
+        return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+
+# ============================================================
+# 🧠 HIGHER-LEVEL ACCESSORS
+# ============================================================
+def get_price_series(symbol: str) -> pd.Series:
+    """Return only the close price series for fast charting."""
+    try:
+        df = load_data(symbol)
+        return df["close"]
+    except Exception as e:
+        guardian.log(f"[DashboardData] ⚠️ Price series fetch failed for {symbol}: {e}")
+        return pd.Series(dtype=float)
+
+
+def get_latest_snapshot(symbol: str) -> dict:
+    """Return the latest snapshot (close, volume, timestamp)."""
+    try:
+        df = load_data(symbol)
+        if df.empty:
+            return {}
+        latest = df.iloc[-1].to_dict()
+        latest["symbol"] = symbol
+        return latest
+    except Exception as e:
+        guardian.log(f"[DashboardData] ⚠️ Snapshot fetch failed for {symbol}: {e}")
+        return {}

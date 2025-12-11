@@ -1,5 +1,3 @@
-from astra_core.agents.base_agent import BaseAgent
-
 """
 TechnicalAgent — Phase-90
 
@@ -10,7 +8,7 @@ Evaluates trend and market alignment using:
 """
 
 
-class TechnicalAgent(BaseAgent):
+class TechnicalAgent:
     def __init__(self):
         pass
 
@@ -73,9 +71,3 @@ class TechnicalAgent(BaseAgent):
 
         score = 0.4 * rsi_s + 0.3 * macd_s + 0.3 * ma_s
         return float(score)
-
-    def predict(self, x=None):
-        """Temporary calibration stub."""
-        self.g_log(
-            f"[{self.__class__.__name__}] Predict placeholder executed.")
-        return 0.5
