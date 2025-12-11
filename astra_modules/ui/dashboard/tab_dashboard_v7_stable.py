@@ -11,9 +11,11 @@ Stable, verified baseline of the Astra Intelligence dashboard.
 ✅ Streamlit-safe (no duplicate widget or re-run crashes)
 """
 
+from astra_core.guardian import guardian_log
 import traceback
-import streamlit as st
+
 import pandas as pd
+import streamlit as st
 import streamlit.components.v1 as components
 
 # -------------------------------------------------------------------
@@ -21,16 +23,21 @@ import streamlit.components.v1 as components
 # -------------------------------------------------------------------
 try:
     from astra_modules.guardian.guardian_v6 import guardian_log
+
     guardian = guardian_log()
     if guardian is None:
         raise ValueError("guardian_log() returned None")
-    guardian.log("[Dashboard] 🚀 Initializing Astra Intelligence Dashboard Tab...")
+    guardian.log(
+        "[Dashboard] 🚀 Initializing Astra Intelligence Dashboard Tab...")
 except Exception as e:
+
     class GuardianStub:
         def log(self, msg: str) -> None:
             print("[GuardianStub]", msg)
+
         def trace(self, msg: str) -> None:
             print("[GuardianStub TRACE]", msg)
+
     guardian = GuardianStub()
     guardian.log(f"[Dashboard] ⚠️ Guardian failed to initialize: {e}")
 
@@ -38,10 +45,15 @@ except Exception as e:
 # 🧩 Dashboard Integrity Check
 # -------------------------------------------------------------------
 try:
-    from astra_modules.ui.dashboard.dashboard_guardian import ensure_dashboard_integrity
+    from astra_modules.ui.dashboard.dashboard_guardian import \
+        ensure_dashboard_integrity
 except Exception:
+
     def ensure_dashboard_integrity() -> None:
-        print("[Dashboard Integrity] ⚠️ Using fallback integrity check (module missing).")
+        print(
+            "[Dashboard Integrity] ⚠️ Using fallback integrity check (module missing)."
+        )
+
 
 if "dashboard_checked" not in st.session_state:
     ensure_dashboard_integrity()
@@ -65,14 +77,13 @@ except Exception as e:
 # 🎨 Page Setup
 # -------------------------------------------------------------------
 st.set_page_config(
-    page_title="Astra Intelligence Dashboard",
-    layout="wide",
-    page_icon="🧠"
+    page_title="Astra Intelligence Dashboard", layout="wide", page_icon="🧠"
 )
 
 # Apply theme if possible
 try:
     from astra_modules.ui.dashboard.theme_loader import apply_theme
+
     apply_theme()
     guardian.log("[Theme] ✅ Astra visual theme applied successfully.")
 except Exception:
@@ -125,13 +136,14 @@ except Exception as e:
 # 💠 Symbol Cards & Summary
 # -------------------------------------------------------------------
 STOCK_SYMBOLS = ["AAPL", "MSFT", "NVDA", "AMZN", "TSLA", "GOOGL"]
-CRYPTO_SYMBOLS = ["BTC/USD", "ETH/USD", "SOL/USD", "ADA/USD", "XRP/USD", "DOGE/USD"]
+CRYPTO_SYMBOLS = ["BTC/USD", "ETH/USD",
+                  "SOL/USD", "ADA/USD", "XRP/USD", "DOGE/USD"]
 CONTAINER_HEIGHT = 580
 
 try:
     st.markdown("---")
     st.subheader("💼 Market Performance")
-    col_stocks, col_crypto, col_future = st.columns([1,1,1])
+    col_stocks, col_crypto, col_future = st.columns([1, 1, 1])
 
     # --- Stocks ---
     with col_stocks:
@@ -142,7 +154,8 @@ try:
                 guardian.log(f"[DEBUG] Rendering stock card: {symbol}")
                 render_symbol_card(symbol, df_sym)
             except Exception as e:
-                guardian.log(f"[Dashboard] ⚠️ Stock card failed: {symbol} — {e}")
+                guardian.log(
+                    f"[Dashboard] ⚠️ Stock card failed: {symbol} — {e}")
                 st.warning(f"⚠️ {symbol}: Unable to load data")
 
     # --- Crypto ---
@@ -154,13 +167,17 @@ try:
                 guardian.log(f"[DEBUG] Rendering crypto card: {symbol}")
                 render_symbol_card(symbol, df_sym)
             except Exception as e:
-                guardian.log(f"[Dashboard] ⚠️ Crypto card failed: {symbol} — {e}")
+                guardian.log(
+                    f"[Dashboard] ⚠️ Crypto card failed: {symbol} — {e}")
                 st.warning(f"⚠️ {symbol}: Unable to load data")
 
     # --- Futures/Insights ---
     with col_future:
         st.markdown("### 🧠 Insights (Coming Soon)")
-        components.html(f"<div style='height:{CONTAINER_HEIGHT}px; overflow-y:auto; text-align:center; color:#aaa;'>Reserved for Astra neural insights.</div>", height=CONTAINER_HEIGHT)
+        components.html(
+            f"<div style='height:{CONTAINER_HEIGHT}px; overflow-y:auto; text-align:center; color:#aaa;'>Reserved for Astra neural insights.</div>",
+            height=CONTAINER_HEIGHT,
+        )
 
     # --- Summary ---
     st.markdown("---")
@@ -178,33 +195,42 @@ except Exception as e:
 guardian.log("[Dashboard] ✅ Dashboard fully loaded and verified.")
 st.success("🧠 Astra Intelligence Dashboard is active and Guardian-protected.")
 
-from astra_core.guardian import guardian_log
+
 try:
     guardian = guardian_log()
     if guardian is None:
-        raise ValueError('guardian_log returned None')
+        raise ValueError("guardian_log returned None")
 except Exception:
+
     class GuardianStub:
-        def log(self, msg): print('[GuardianStub]', msg)
+        def log(self, msg):
+            print("[GuardianStub]", msg)
+
     guardian = GuardianStub()
 
-from astra_core.guardian import guardian_log
+
 try:
     guardian = guardian_log()
     if guardian is None:
-        raise ValueError('guardian_log returned None')
+        raise ValueError("guardian_log returned None")
 except Exception:
+
     class GuardianStub:
-        def log(self, msg): print('[GuardianStub]', msg)
+        def log(self, msg):
+            print("[GuardianStub]", msg)
+
     guardian = GuardianStub()
 
 # Guardian fallback stub
-from astra_core.guardian import guardian_log
+
 try:
     guardian = guardian_log()
     if guardian is None:
-        raise ValueError('guardian_log returned None')
+        raise ValueError("guardian_log returned None")
 except Exception:
+
     class GuardianStub:
-        def log(self, msg): print('[GuardianStub]', msg)
+        def log(self, msg):
+            print("[GuardianStub]", msg)
+
     guardian = GuardianStub()

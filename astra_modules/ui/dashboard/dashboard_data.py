@@ -91,18 +91,18 @@ if __name__ == "__main__":
     guardian.log("🧩 Dashboard Data self-test starting...")
     print(load_data("BTC/USD").head())
 
-from astra_core.fetch_core import fetch_unified
 
 def load_data(symbol):
     """Pull live market data via fetch_unified"""
     return fetch_unified(symbol)
 
-from astra_core.fetch_core import fetch_unified
 
 def load_data(symbol):
     return fetch_unified(symbol)
 
+
 # load_data wrapper for dashboard
-from astra_core.fetch_core import fetch_unified
+
+
 def load_data(symbol):
     return fetch_unified(symbol)

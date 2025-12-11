@@ -144,16 +144,22 @@ def render_symbol_card(symbol: str, df: pd.DataFrame, include_reason: bool = Tru
 # 🧩  EMPTY CARD FALLBACK
 # ==========================
 
+
 def render_empty_card(*args, **kwargs):
     """Fallback card renderer for safe mode."""
     import streamlit as st
-    st.write('⚠️ Empty card (fallback)')
+
+    st.write("⚠️ Empty card (fallback)")
+
 
 def render_empty_card(*args, **kwargs):
     import streamlit as st
-    st.write('⚠️ Empty card (fallback)')
+
+    st.write("⚠️ Empty card (fallback)")
+
 
 # render_empty_card stub
 def render_empty_card(*args, **kwargs):
     import streamlit as st
-    st.write('⚠️ Empty card (fallback)')
+
+    st.write("⚠️ Empty card (fallback)")
