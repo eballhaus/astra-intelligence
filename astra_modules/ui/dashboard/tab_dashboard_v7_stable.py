@@ -11,12 +11,13 @@ Stable, verified baseline of the Astra Intelligence dashboard.
 ✅ Streamlit-safe (no duplicate widget or re-run crashes)
 """
 
-from astra_core.guardian import guardian_log
 import traceback
 
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+
+from astra_core.guardian import guardian_log
 
 # -------------------------------------------------------------------
 # 🔒 Guardian Initialization with Fallback
