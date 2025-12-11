@@ -13,16 +13,17 @@ Features:
 ✅ Guardian event logging for every UI load
 """
 
-import os
-import streamlit as st
-import pandas as pd
 import traceback
+
+import pandas as pd
+import streamlit as st
 
 # -------------------------------------------------------------------
 # 🔒 Guardian Integration
 # -------------------------------------------------------------------
 from astra_core.guardian.guardian_v6 import guardian_log
-from astra_core.ui.dashboard.dashboard_guardian import ensure_dashboard_integrity
+from astra_core.ui.dashboard.dashboard_guardian import \
+    ensure_dashboard_integrity
 
 guardian = guardian_log()
 guardian.log("[Dashboard] 🚀 Initializing Astra Intelligence Dashboard Tab...")
@@ -36,13 +37,9 @@ if "dashboard_checked" not in st.session_state:
 # 📦 Dashboard Imports
 # -------------------------------------------------------------------
 try:
-    from astra_core.ui.dashboard import (
-        render_sidebar,
-        render_chart,
-        load_data,
-        render_symbol_card,
-        render_summary,
-    )
+    from astra_core.ui.dashboard import (load_data, render_chart,
+                                         render_sidebar, render_summary,
+                                         render_symbol_card)
 except Exception as e:
     guardian.log(f"[Dashboard] 🚨 Failed to import dashboard components: {e}")
     st.error("⚠️ Dashboard components failed to load.")
@@ -75,7 +72,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.markdown("<div class='main-title'>🧠 Astra Intelligence — Market Dashboard</div>", unsafe_allow_html=True)
+st.markdown(
+    "<div class='main-title'>🧠 Astra Intelligence — Market Dashboard</div>",
+    unsafe_allow_html=True,
+)
 
 # -------------------------------------------------------------------
 # 🧩 Sidebar

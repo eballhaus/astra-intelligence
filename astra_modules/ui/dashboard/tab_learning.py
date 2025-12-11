@@ -4,11 +4,13 @@
 Visual interface for Astra’s reinforcement learning and memory systems.
 """
 
+from astra_core.guardian import guardian_v6
 import os
 import sys
-import streamlit as st
-import pandas as pd
 from datetime import datetime
+
+import pandas as pd
+import streamlit as st
 
 # --- Ensure project root path ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -17,14 +19,14 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # --- Guardian Import ---
-from astra_core.guardian import guardian_v6
 
 # Optional imports for learning systems
 try:
     from astra_core.learning.learning_engine import LearningEngine
     from astra_core.learning.replay_buffer import ReplayBuffer
 except ImportError:
-    guardian_v6.guardian_log("⚠️ Learning modules not found — using safe mode.")
+    guardian_v6.guardian_log(
+        "⚠️ Learning modules not found — using safe mode.")
 
 
 def render_learning_tab():
@@ -52,7 +54,8 @@ def render_learning_tab():
             stats = engine.get_status()
             guardian.guardian_log("✅ LearningEngine connected.")
     except Exception as e:
-        guardian.guardian_log(f"⚠️ LearningEngine unavailable: {e}", level="warning")
+        guardian.guardian_log(
+            f"⚠️ LearningEngine unavailable: {e}", level="warning")
 
     cols = st.columns(3)
     with cols[0]:
@@ -60,16 +63,24 @@ def render_learning_tab():
     with cols[1]:
         st.metric("Episodes", stats.get("episodes", "N/A"))
     with cols[2]:
-        st.metric("Last Update", stats.get("last_update", datetime.now().strftime("%H:%M:%S")))
+        st.metric(
+            "Last Update", stats.get(
+                "last_update", datetime.now().strftime("%H:%M:%S"))
+        )
 
     # --- Replay Buffer Overview ---
     st.subheader("🧩 Replay Buffer Overview")
     try:
         buffer = ReplayBuffer()
-        df = pd.DataFrame(buffer.sample(10)) if hasattr(buffer, "sample") else pd.DataFrame()
+        df = (
+            pd.DataFrame(buffer.sample(10))
+            if hasattr(buffer, "sample")
+            else pd.DataFrame()
+        )
     except Exception as e:
         df = pd.DataFrame()
-        guardian.guardian_log(f"⚠️ ReplayBuffer unavailable: {e}", level="warning")
+        guardian.guardian_log(
+            f"⚠️ ReplayBuffer unavailable: {e}", level="warning")
 
     if not df.empty:
         st.dataframe(df, use_container_width=True, height=300)

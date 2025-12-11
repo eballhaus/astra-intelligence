@@ -6,9 +6,10 @@ for all dashboard components (charts, cards, summaries, etc.)
 """
 
 import pandas as pd
+
+from astra_core.fetch_core import fetch_unified
 from astra_core.guardian import guardian_log
 from astra_core.guardian.schema_validator import validate_and_normalize
-from astra_core.fetch_core import fetch_unified
 
 guardian = guardian_log()
 
@@ -16,6 +17,7 @@ guardian = guardian_log()
 # ============================================================
 # 🧩 LOAD DATA (Restored Wrapper)
 # ============================================================
+
 
 def load_data(symbol: str) -> pd.DataFrame:
     """
@@ -29,7 +31,8 @@ def load_data(symbol: str) -> pd.DataFrame:
 
         # Simulate basic OHLCV structure for charts if not present
         if "timestamp" not in df.columns:
-            df["timestamp"] = pd.date_range(end=pd.Timestamp.now(), periods=len(df))
+            df["timestamp"] = pd.date_range(
+                end=pd.Timestamp.now(), periods=len(df))
         if "open" not in df.columns:
             df["open"] = df["price"]
         if "high" not in df.columns:
@@ -45,13 +48,17 @@ def load_data(symbol: str) -> pd.DataFrame:
         return df
 
     except Exception as e:
-        guardian.log(f"[DashboardData] 🚨 Failed to load data for {symbol}: {e}")
-        return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+        guardian.log(
+            f"[DashboardData] 🚨 Failed to load data for {symbol}: {e}")
+        return pd.DataFrame(
+            columns=["timestamp", "open", "high", "low", "close", "volume"]
+        )
 
 
 # ============================================================
 # 🧠 HIGHER-LEVEL ACCESSORS (OPTIONAL)
 # ============================================================
+
 
 def get_price_series(symbol: str) -> pd.Series:
     """Return just the closing price series."""

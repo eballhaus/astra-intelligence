@@ -11,9 +11,11 @@ try:
     from astra_core.engine import *  # if available
     from astra_core.fetch_core import *  # market data bridge
     from astra_core.state import *  # internal state access
+
     print("[AstraCompat] 🔁 astra_backend → redirected to astra_core subsystems.")
 except Exception as e:
     print("[AstraCompat] ⚠️ Limited astra_backend stub active:", e)
+
 
 # Minimal callable placeholder
 def initialize_backend():

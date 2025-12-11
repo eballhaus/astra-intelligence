@@ -20,6 +20,7 @@ try:
 except Exception as e:
     print("[FetchBridge] ⚠️ Advanced fetcher import failed:", e)
     # --- fallback: basic local fetcher ---
+    import yfinance as yf
     def get_symbol_data(self, symbol):
         data = yf.download(symbol, period="5d", interval="1h", progress=False)
         return data.reset_index()
@@ -29,35 +30,3 @@ class FetchUnified:
         data = yf.download(symbol, period="5d", interval="1h", progress=False)
         return data.reset_index()
 #     fetch_unified = FetchUnified()
-
-# ======================================================================
-# Internal offline data generator for Astra Intelligence
-# (Replaces all external finance dependencies)
-# ======================================================================
-import random
-import pandas as pd
-from datetime import datetime, timedelta
-
-class FetchUnified:
-    def get_symbol_data(self, symbol: str):
-        """
-        Internal fallback data generator for Astra Intelligence.
-        Generates synthetic OHLC data when no live datafeed is connected.
-        """
-        now = datetime.utcnow()
-        data = []
-        base_price = 100 + random.random() * 50
-        for i in range(20):
-            open_p = base_price + random.uniform(-2, 2)
-            high_p = open_p + random.uniform(0, 3)
-            low_p = open_p - random.uniform(0, 3)
-            close_p = random.choice([high_p, low_p, open_p])
-            data.append({
-                "datetime": now - timedelta(hours=20 - i),
-                "open": round(open_p, 2),
-                "high": round(high_p, 2),
-                "low": round(low_p, 2),
-                "close": round(close_p, 2)
-            })
-        df = pd.DataFrame(data)
-        return df

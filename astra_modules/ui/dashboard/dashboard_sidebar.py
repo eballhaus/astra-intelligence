@@ -12,16 +12,18 @@ Handles sidebar rendering for the Astra Intelligence UI.
 
 """
 
-import streamlit as st
 import pandas as pd
-from astra_core.guardian.guardian_v6 import guardian_log
+import streamlit as st
+
 from astra_core.fetch_core import fetch_unified
+from astra_core.guardian.guardian_v6 import guardian_log
 
 guardian = guardian_log()
 
 # ------------------------------------------------------------
 # ⚙️ Market Overview (Safe API Fetch)
 # ------------------------------------------------------------
+
 
 def load_market_overview():
     """
@@ -36,12 +38,14 @@ def load_market_overview():
     except Exception as e:
         guardian.log(f"[Sidebar] ⚠️ Market overview load issue: {e}")
         # fallback placeholder data
-        df = pd.DataFrame({
-            "Symbol": ["^DJI", "^GSPC", "^IXIC"],
-            "Price": [35000, 4500, 14000],
-            "Change": [0.12, -0.05, 0.22],
-            "PercentChange": [0.34, -0.11, 0.18],
-        })
+        df = pd.DataFrame(
+            {
+                "Symbol": ["^DJI", "^GSPC", "^IXIC"],
+                "Price": [35000, 4500, 14000],
+                "Change": [0.12, -0.05, 0.22],
+                "PercentChange": [0.34, -0.11, 0.18],
+            }
+        )
         guardian.log("[Sidebar] 🧩 Using fallback market overview data.")
         return df
 
@@ -49,6 +53,7 @@ def load_market_overview():
 # ------------------------------------------------------------
 # 🧠 Sidebar Rendering
 # ------------------------------------------------------------
+
 
 def render_sidebar():
     """
@@ -63,7 +68,8 @@ def render_sidebar():
 
         # Tabs / Navigation Options
         try:
-            tab_options = ["Overview", "Markets", "Crypto", "AI Insights", "Settings"]
+            tab_options = ["Overview", "Markets",
+                           "Crypto", "AI Insights", "Settings"]
             selected_tab = st.radio(
                 "Select Section:",
                 tab_options,
@@ -109,8 +115,6 @@ def render_sidebar():
             )
         except Exception as e:
             guardian.log(f"[Sidebar] ⚠️ Settings render issue: {e}")
-            auto_refresh = True
-            theme_choice = "AstraGlass"
 
         # Footer
         st.markdown("---")

@@ -1,12 +1,12 @@
-cat << 'EOF' > astra_modules/ui/dashboard/dashboard_summary.py
+import streamlit as st
+import requests
+from datetime import datetime
+cat << "EOF" > astra_modules / ui / dashboard / dashboard_summary.py
 """
 Astra Intelligence — Market Overview (No yfinance)
 Fetches live market indices and BTC using public APIs.
 """
 
-import streamlit as st
-import requests
-from datetime import datetime
 
 # Simple caching to avoid constant network requests
 @st.cache_data(ttl=900)  # refresh every 15 minutes
@@ -109,4 +109,6 @@ def render_summary():
         f"Last updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>",
         unsafe_allow_html=True,
     )
+
+
 EOF

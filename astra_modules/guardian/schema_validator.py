@@ -4,9 +4,11 @@
 Centralized data structure validator and normalizer for all Astra modules.
 """
 
-import pandas as pd
 import json
 import os
+
+import pandas as pd
+
 from astra_core.guardian import guardian_log
 
 guardian = guardian_log()
@@ -36,16 +38,19 @@ if not os.path.exists(SCHEMA_PATH):
     with open(SCHEMA_PATH, "w") as f:
         json.dump(DEFAULT_SCHEMAS, f, indent=2)
 
+
 def validate_and_normalize(data, module_name: str) -> pd.DataFrame:
     schema = DEFAULT_SCHEMAS.get(module_name)
     if not schema:
-        guardian.log(f"[Schema] No schema for {module_name}. Skipping validation.")
+        guardian.log(
+            f"[Schema] No schema for {module_name}. Skipping validation.")
         return _ensure_dataframe(data)
     df = _ensure_dataframe(data)
     for field in schema["expected_fields"]:
         if field not in df.columns:
             df[field] = None
-            guardian.log(f"[Schema] Added missing column '{field}' for {module_name}.")
+            guardian.log(
+                f"[Schema] Added missing column '{field}' for {module_name}.")
     for field, dtype in schema["types"].items():
         if field in df.columns:
             try:
@@ -54,12 +59,17 @@ def validate_and_normalize(data, module_name: str) -> pd.DataFrame:
                 elif dtype == "float":
                     df[field] = pd.to_numeric(df[field], errors="coerce")
                 elif dtype == "int":
-                    df[field] = pd.to_numeric(df[field], errors="coerce", downcast="integer")
+                    df[field] = pd.to_numeric(
+                        df[field], errors="coerce", downcast="integer"
+                    )
                 elif dtype == "str":
                     df[field] = df[field].astype(str)
             except Exception as e:
-                guardian.log(f"[Schema Warning] {module_name}: failed to cast {field} to {dtype}: {e}")
+                guardian.log(
+                    f"[Schema Warning] {module_name}: failed to cast {field} to {dtype}: {e}"
+                )
     return df
+
 
 def _ensure_dataframe(data):
     if isinstance(data, pd.DataFrame):
@@ -71,5 +81,7 @@ def _ensure_dataframe(data):
         return pd.DataFrame([data])
     if isinstance(data, list):
         return pd.DataFrame(data)
-    guardian.log(f"[Schema] Unexpected data type {type(data)}. Returning empty DataFrame.")
+    guardian.log(
+        f"[Schema] Unexpected data type {type(data)}. Returning empty DataFrame."
+    )
     return pd.DataFrame()

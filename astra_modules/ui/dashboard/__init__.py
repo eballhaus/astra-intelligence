@@ -8,6 +8,7 @@ Ensures all dashboard components import safely without blocking Streamlit startu
 """
 
 from __future__ import annotations
+
 import importlib
 import sys
 
@@ -56,7 +57,8 @@ else:
 
     for _mod in _submodules.keys():
         try:
-            _submodules[_mod] = importlib.import_module(f".{_mod}", __package__)
+            _submodules[_mod] = importlib.import_module(
+                f".{_mod}", __package__)
         except Exception as e:
             print(f"[Dashboard] ⚠️ Failed to import submodule {_mod}: {e}")
 
@@ -84,4 +86,6 @@ else:
         "theme_loader",
     ]
 
-    print("[Dashboard] ✅ Dashboard package initialized successfully (Streamlit-safe mode).")
+    print(
+        "[Dashboard] ✅ Dashboard package initialized successfully (Streamlit-safe mode)."
+    )

@@ -10,7 +10,7 @@ Fallback order:
 import pandas as pd
 
 from astra_core.api_keys import (ALPHA_VANTAGE_API_KEY, EODHD_API_KEY,
-                                    FMP_API_KEY)
+                                 FMP_API_KEY)
 from astra_core.utils.safe_api_wrapper import safe_api_call
 from astra_core.utils.safe_df import safe_df
 

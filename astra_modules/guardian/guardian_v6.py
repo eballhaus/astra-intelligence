@@ -15,12 +15,12 @@ Stabilized & Streamlit-safe version:
 ✅ Fix registry logging
 """
 
+import importlib
+import json
 import os
 import sys
-import json
-import time
 import threading
-import importlib
+import time
 import traceback
 from datetime import datetime
 
@@ -43,6 +43,7 @@ base_dir = os.path.join(root_dir, "astra_modules")
 # 🧩 LOGGING SYSTEM
 # ============================================================
 
+
 def guardian_log(message: str, level: str = "info"):
     """Centralized Guardian logging with timestamp."""
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
@@ -60,6 +61,7 @@ guardian_log(f"🧠 Guardian runtime logs stored safely at {_guardian_root}")
 # ============================================================
 # ⚙️ FIX REGISTRY
 # ============================================================
+
 
 def record_fix(file_path: str, issue_type: str, action: str):
     """Record any auto-fix event to guardian_fixes.json."""
@@ -81,40 +83,58 @@ def record_fix(file_path: str, issue_type: str, action: str):
     except Exception as e:
         guardian_log(f"⚠️ Failed to record fix: {e}", level="warning")
 
+
 # ============================================================
 # 🧩 STREAMLIT PROTECTION
 # ============================================================
+
 
 def patch_streamlit_duplicates():
     """Automatically assigns unique widget keys to prevent Streamlit ID conflicts."""
     try:
         import streamlit as st
+
         if hasattr(st, "_astra_guardian_patched"):
             return
 
-        old_radio, old_selectbox, old_checkbox, old_slider = st.radio, st.selectbox, st.checkbox, st.slider
+        old_radio, old_selectbox, old_checkbox, old_slider = (
+            st.radio,
+            st.selectbox,
+            st.checkbox,
+            st.slider,
+        )
 
         def safe_radio(label, options, key=None, *args, **kwargs):
-            if key is None: key = f"auto_radio_{abs(hash(label)) % 100000}"
+            if key is None:
+                key = f"auto_radio_{abs(hash(label)) % 100000}"
             return old_radio(label, options, key=key, *args, **kwargs)
 
         def safe_selectbox(label, options, key=None, *args, **kwargs):
-            if key is None: key = f"auto_select_{abs(hash(label)) % 100000}"
+            if key is None:
+                key = f"auto_select_{abs(hash(label)) % 100000}"
             return old_selectbox(label, options, key=key, *args, **kwargs)
 
         def safe_checkbox(label, key=None, *args, **kwargs):
-            if key is None: key = f"auto_check_{abs(hash(label)) % 100000}"
+            if key is None:
+                key = f"auto_check_{abs(hash(label)) % 100000}"
             return old_checkbox(label, key=key, *args, **kwargs)
 
         def safe_slider(label, *args, key=None, **kwargs):
-            if key is None: key = f"auto_slider_{abs(hash(label)) % 100000}"
+            if key is None:
+                key = f"auto_slider_{abs(hash(label)) % 100000}"
             return old_slider(label, *args, key=key, **kwargs)
 
-        st.radio, st.selectbox, st.checkbox, st.slider = safe_radio, safe_selectbox, safe_checkbox, safe_slider
+        st.radio, st.selectbox, st.checkbox, st.slider = (
+            safe_radio,
+            safe_selectbox,
+            safe_checkbox,
+            safe_slider,
+        )
         st._astra_guardian_patched = True
         guardian_log("🧩 Streamlit duplicate widget protection enabled.")
     except Exception as e:
         guardian_log(f"⚠️ Streamlit patch failed: {e}", level="warning")
+
 
 # ============================================================
 # 🔍 MODULE HEALTH MONITOR (Thread-Safe)
@@ -122,6 +142,7 @@ def patch_streamlit_duplicates():
 
 _health_monitor_running = False
 _last_health_check = 0
+
 
 def check_module(module_name: str):
     """Safely import a module and verify integrity."""
@@ -138,7 +159,8 @@ def monitor_system_health(interval=60):
     """Runs periodic integrity checks without reloading Streamlit."""
     global _health_monitor_running, _last_health_check
     if _health_monitor_running:
-        guardian_log("⚠️ Health monitor already running — skipping duplicate start.")
+        guardian_log(
+            "⚠️ Health monitor already running — skipping duplicate start.")
         return
     _health_monitor_running = True
     guardian_log("🩺 Health monitor thread started (interval = 60s).")
@@ -161,16 +183,20 @@ def monitor_system_health(interval=60):
         guardian_log("🧠 Health check complete — system stable.")
         time.sleep(interval)
 
+
 # ============================================================
 # 🚫 YAHOO API FIREWALL — with throttling
 # ============================================================
 
 _last_api_call = 0
 
+
 def safe_yahoo_request(url: str, fallback_symbol="AAPL"):
     """Guardian-safe Yahoo Finance request with rate limiting."""
     import requests
+
     from astra_core.fetch_core import fetch_unified
+
     global _last_api_call
 
     now = time.time()
@@ -187,16 +213,19 @@ def safe_yahoo_request(url: str, fallback_symbol="AAPL"):
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
-        guardian_log(f"🚫 API firewall triggered — rerouting to fetch_unified: {e}")
+        guardian_log(
+            f"🚫 API firewall triggered — rerouting to fetch_unified: {e}")
         try:
             return fetch_unified.get_symbol_data(fallback_symbol)
         except Exception as inner:
             guardian_log(f"❌ Fallback fetch failed: {inner}")
             return None
 
+
 # ============================================================
 # 🧠 GUARDIANV7 CLASS
 # ============================================================
+
 
 class guardian_log:
     """Central Guardian AI immune system."""
@@ -213,9 +242,11 @@ class guardian_log:
         """Clear Streamlit caches to prevent stale state."""
         try:
             import streamlit as st
+
             st.cache_data.clear()
             st.cache_resource.clear()
-            guardian_log("🧹 Streamlit cache cleared automatically by Guardian.")
+            guardian_log(
+                "🧹 Streamlit cache cleared automatically by Guardian.")
         except Exception as e:
             guardian_log(f"⚠️ Failed to clear Streamlit cache: {e}")
 
@@ -229,7 +260,9 @@ class guardian_log:
     def _global_exception_handler(self, exctype, value, tb):
         guardian_log(f"🚨 Global exception caught: {exctype.__name__}: {value}")
         if "StreamlitDuplicateElementKey" in str(value):
-            guardian_log("🧩 Detected Streamlit duplicate key issue — clearing cache and continuing.")
+            guardian_log(
+                "🧩 Detected Streamlit duplicate key issue — clearing cache and continuing."
+            )
             self.flush_streamlit_cache()
             return
         traceback.print_tb(tb)
@@ -245,6 +278,7 @@ class guardian_log:
         with open(snap_file, "w") as f:
             json.dump(data, f, indent=2)
         guardian_log(f"📸 Snapshot saved: {snap_file}")
+
 
 # ============================================================
 # 🚀 ENTRYPOINT

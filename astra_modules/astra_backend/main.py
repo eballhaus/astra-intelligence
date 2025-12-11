@@ -7,12 +7,17 @@ print("[AstraCompat] ✅ astra_backend.main loaded (compatibility stub).")
 
 try:
     from fastapi import FastAPI
+
     from astra_core.fetch_core import fetch_unified
+
     app = FastAPI(title="Astra Intelligence Backend (Compat Mode)")
 
     @app.get("/")
     async def root():
-        return {"status": "ok", "message": "Astra Intelligence Backend active (compat mode)"}
+        return {
+            "status": "ok",
+            "message": "Astra Intelligence Backend active (compat mode)",
+        }
 
     @app.get("/data/{symbol}")
     async def get_symbol_data(symbol: str):

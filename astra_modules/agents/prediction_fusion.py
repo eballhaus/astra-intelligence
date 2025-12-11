@@ -7,6 +7,7 @@ PsychologyAgent, RankingEngine, etc.) into a unified confidence score.
 
 from astra_core.guardian import guardian_v6
 
+
 class PredictionFusion:
     """Combines multiple agent predictions into a unified score."""
 
@@ -31,10 +32,12 @@ class PredictionFusion:
         try:
             avg_score = sum(predictions.values()) / len(predictions)
             confidence = min(max(avg_score, 0.0), 1.0)
-            guardian_v6.guardian_log(f"🧩 Fused prediction score: {confidence:.2f}")
+            guardian_v6.guardian_log(
+                f"🧩 Fused prediction score: {confidence:.2f}")
             return {"score": avg_score, "confidence": confidence}
         except Exception as e:
-            guardian_v6.guardian_log(f"⚠️ PredictionFusion error: {e}", level="error")
+            guardian_v6.guardian_log(
+                f"⚠️ PredictionFusion error: {e}", level="error")
             return {"score": 0.0, "confidence": 0.0}
 
 

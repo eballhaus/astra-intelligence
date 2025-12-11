@@ -5,7 +5,9 @@ Verifies the integrity of core modules before full dashboard startup.
 """
 
 import importlib
+
 from .guardian_v6 import guardian_log
+
 
 def run_guardian_prelaunch_check():
     modules = [
@@ -26,6 +28,7 @@ def run_guardian_prelaunch_check():
             guardian_log(f"🚨 Failed to load {mod}: {e}")
     guardian_log("🧩 Guardian pre-launch verification complete.")
     return True
+
 
 if __name__ == "__main__":
     run_guardian_prelaunch_check()
