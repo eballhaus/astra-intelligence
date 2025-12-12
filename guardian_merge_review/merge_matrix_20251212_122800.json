@@ -1,0 +1,746 @@
+[
+  {
+    "module": "core",
+    "file": "__init__.py",
+    "status": "identical",
+    "mirror_path": "astra_modules/core/__init__.py",
+    "main_path": "core/__init__.py",
+    "mirror_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "module": "core",
+    "file": "feature_builder.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/core/feature_builder.py",
+    "main_path": "",
+    "mirror_hash": "b76544c627270fb18c27583b3e07a43dd71016eed47c175b0b285f306d0199f0"
+  },
+  {
+    "module": "core",
+    "file": "astra_prime.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/core/astra_prime.py",
+    "main_path": "",
+    "mirror_hash": "a21882061e783ac85c2057b44037e782e746e9909253be0f5c2fe1fd468aac57"
+  },
+  {
+    "module": "engine",
+    "file": "ranking_engine.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/engine/ranking_engine.py",
+    "main_path": "",
+    "mirror_hash": "ebc32a18cfe4ebb6b5f3bf66f9a5d0d012257a8ce1a23db0b6abcab62445fab1"
+  },
+  {
+    "module": "engine",
+    "file": "__init__.py",
+    "status": "identical",
+    "mirror_path": "astra_modules/engine/__init__.py",
+    "main_path": "engine/__init__.py",
+    "mirror_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "module": "engine",
+    "file": "scan_manager.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/engine/scan_manager.py",
+    "main_path": "",
+    "mirror_hash": "76efc4697b0b0d9ebf7cd53f6e4fbd06044ea5810efc0057bdbe14d3015e5f76"
+  },
+  {
+    "module": "engine",
+    "file": "state_bundle_builder.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/engine/state_bundle_builder.py",
+    "main_path": "",
+    "mirror_hash": "4a285f39a11ebd6e8b63f8a4ae888f460457478a12640291ad4208d61b4f0390"
+  },
+  {
+    "module": "guardian",
+    "file": "tab_debugger.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/tab_debugger.py",
+    "main_path": "",
+    "mirror_hash": "e019c83600801fc087899bee8476cc288203143bfad1373412f192b04f9f924a"
+  },
+  {
+    "module": "guardian",
+    "file": "guardian_v6.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/guardian_v6.py",
+    "main_path": "",
+    "mirror_hash": "46865468d51715f579bf949737aab6b8cc32688a4ee7460414636e23b7a523b2"
+  },
+  {
+    "module": "guardian",
+    "file": "auto_repair.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/auto_repair.py",
+    "main_path": "",
+    "mirror_hash": "daf2bf0e0f82902937daac0250633bba3fe9f95a93b14a364c3511782d81dd43"
+  },
+  {
+    "module": "guardian",
+    "file": "environment_guardian.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/environment_guardian.py",
+    "main_path": "",
+    "mirror_hash": "9c7216b65580adca680f87a4f14d2cec1f371827c927b0cd5295fefc5c3e4036"
+  },
+  {
+    "module": "guardian",
+    "file": "startup_hook.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/startup_hook.py",
+    "main_path": "",
+    "mirror_hash": "a7b47ddbd7d093e1846232c60a0d3b9de670de7459e2ff1cbacd0ef26eaaefbc"
+  },
+  {
+    "module": "guardian",
+    "file": "guardian_scanner.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/guardian_scanner.py",
+    "main_path": "",
+    "mirror_hash": "18fed4bff6281f7af0b9a2b0d03bdcc15cab817142021b7d844269b1d191f76c"
+  },
+  {
+    "module": "guardian",
+    "file": "schema_validator.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/schema_validator.py",
+    "main_path": "",
+    "mirror_hash": "493df8b78883b5869de07e77b6591bf4dbddaa2b0e0ce01d45516679f7b30fc2"
+  },
+  {
+    "module": "guardian",
+    "file": "pipeline_sanitizer.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/pipeline_sanitizer.py",
+    "main_path": "",
+    "mirror_hash": "ef9af623bc55be8493c51cc8ef94dd3f946bce667fa9ad324f942139ca01e18e"
+  },
+  {
+    "module": "guardian",
+    "file": "guardian_sync.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/guardian_sync.py",
+    "main_path": "",
+    "mirror_hash": "873f76bea40c28fb74bcfa27dbcb43a6dfbce7cbebabc64e9d22e3cb323a6351"
+  },
+  {
+    "module": "guardian",
+    "file": "guardian_import_auditor.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/guardian_import_auditor.py",
+    "main_path": "",
+    "mirror_hash": "6a23a06db3a88c39baaa741c3427e66b1eb5c3a50449f91b9ad2f5e02716e34f"
+  },
+  {
+    "module": "guardian",
+    "file": "__init__.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/__init__.py",
+    "main_path": "",
+    "mirror_hash": "0b2fdc1147de3ef47f3db12ccba277cc3e1702c38a1cec8d7c4ac314f236c433"
+  },
+  {
+    "module": "guardian",
+    "file": "guardian_sentinel.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/guardian_sentinel.py",
+    "main_path": "",
+    "mirror_hash": "6ccf6370cacc9c822240fb041f559dd5f65f415083984c30037aa6cc98aa0109"
+  },
+  {
+    "module": "guardian",
+    "file": "guardian_prelaunch_check.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/guardian_prelaunch_check.py",
+    "main_path": "",
+    "mirror_hash": "cf17c1a067b3060cfd60b317d77e0223a442d73b1b82817d8ceccadf09aa86e1"
+  },
+  {
+    "module": "guardian",
+    "file": "tab_loader_trace.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/tab_loader_trace.py",
+    "main_path": "",
+    "mirror_hash": "4f8ee4af2a2ad8f79c3bcacd16ad2d1641942bc1ad66b57ddb32a7464c71568b"
+  },
+  {
+    "module": "guardian",
+    "file": "state_initializer.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/state_initializer.py",
+    "main_path": "",
+    "mirror_hash": "11d4018bbfb0346648e12d730305dc3e31bba424ce3b156fd9198abf3804ddfd"
+  },
+  {
+    "module": "guardian",
+    "file": "schema_contracts.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/schema_contracts.py",
+    "main_path": "",
+    "mirror_hash": "6c1b698fa62cb10c834079223bb2d68d5a73869c2cf1ea40b8f55e33349c8da7"
+  },
+  {
+    "module": "guardian",
+    "file": "guardian_autofix.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/guardian_autofix.py",
+    "main_path": "",
+    "mirror_hash": "fdbf61a0335104327e4550eb109cb24ef744c2268627d19274ad68baf0d47e0c"
+  },
+  {
+    "module": "guardian",
+    "file": "guardian_defender.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/guardian_defender.py",
+    "main_path": "",
+    "mirror_hash": "9e9c5602d99f955fe64d8626ad7e83d6bcf534d3deaa1e3dc73ff319647eb8d9"
+  },
+  {
+    "module": "guardian",
+    "file": "__main__.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/__main__.py",
+    "main_path": "",
+    "mirror_hash": "c63bbe0912563f79d3a514f0d53f01ca085fc557adc5968c116456892e02aab8"
+  },
+  {
+    "module": "guardian",
+    "file": "ui_integrity_lock.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/guardian/ui_integrity_lock.py",
+    "main_path": "",
+    "mirror_hash": "855a6d0a87c5f8ca051ac8386ead7968595db5860fb50f1808f9e7eae1c3fa34"
+  },
+  {
+    "module": "ui",
+    "file": "tab_guardian.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/tab_guardian.py",
+    "main_path": "",
+    "mirror_hash": "0753f3027c217881db47eb286da45ebc1233fb2b7de994952eac3504d305aa09"
+  },
+  {
+    "module": "ui",
+    "file": "__init__.py",
+    "status": "identical",
+    "mirror_path": "astra_modules/ui/__init__.py",
+    "main_path": "ui/__init__.py",
+    "mirror_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "module": "ui",
+    "file": "tab_system.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/tab_system.py",
+    "main_path": "",
+    "mirror_hash": "4f929d51a03818619f26244efe72c866bd51d51ac6760677509ced483d1bae9f"
+  },
+  {
+    "module": "ui",
+    "file": "dashboard/dashboard_data.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/dashboard/dashboard_data.py",
+    "main_path": "",
+    "mirror_hash": "8146ffe780a39de8a0b8ea1a6e65a4c4daab5ab8526842f0a12bd0b557fbc3a6"
+  },
+  {
+    "module": "ui",
+    "file": "dashboard/dashboard_cards.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/dashboard/dashboard_cards.py",
+    "main_path": "",
+    "mirror_hash": "0b3d3903030238852a67265907b916c31815367e83538c8951ed370e0d568dda"
+  },
+  {
+    "module": "ui",
+    "file": "dashboard/dashboard_snapshot.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/dashboard/dashboard_snapshot.py",
+    "main_path": "",
+    "mirror_hash": "32f4427ad43cf764b29c8c051adee78b21312e085601ebf273a41c46eb75dc33"
+  },
+  {
+    "module": "ui",
+    "file": "dashboard/theme_loader.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/dashboard/theme_loader.py",
+    "main_path": "",
+    "mirror_hash": "24cb2c029ca095645f62ec417856126c2f0d1a86a92fdb8946efd95d8f8da156"
+  },
+  {
+    "module": "ui",
+    "file": "dashboard/tab_dashboard.py",
+    "status": "newer_in_mirror",
+    "mirror_path": "astra_modules/ui/dashboard/tab_dashboard.py",
+    "main_path": "ui/dashboard/tab_dashboard.py",
+    "mirror_hash": "8b90cf2f546c1df056003ddb1f9e4ab31f705cb146aad7f4aaeb75bdc6f2f1a2"
+  },
+  {
+    "module": "ui",
+    "file": "dashboard/dashboard_assistant.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/dashboard/dashboard_assistant.py",
+    "main_path": "",
+    "mirror_hash": "eeb46906c8cac0c02f15a4c0976cc88fc8899cda9bed8fc53ad2fa87b0aa27d3"
+  },
+  {
+    "module": "ui",
+    "file": "dashboard/tab_dashboard_v7_stable.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/dashboard/tab_dashboard_v7_stable.py",
+    "main_path": "",
+    "mirror_hash": "dab838e06f8219e62a360f6b23c71f01bc36f692088173a340d085f415adfa18"
+  },
+  {
+    "module": "ui",
+    "file": "dashboard/dashboard_chart.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/dashboard/dashboard_chart.py",
+    "main_path": "",
+    "mirror_hash": "f92fc15a98ac3c4812b2d790ca1e67bb3df99c3c40b02482df3ba65134b6d405"
+  },
+  {
+    "module": "ui",
+    "file": "dashboard/tab_learning.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/dashboard/tab_learning.py",
+    "main_path": "",
+    "mirror_hash": "4781b75d7253cd25a3ca706d0bbe8e5a8d69d93f1773035cf085331ac22c2dff"
+  },
+  {
+    "module": "ui",
+    "file": "dashboard/dashboard_summary 2.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/dashboard/dashboard_summary 2.py",
+    "main_path": "",
+    "mirror_hash": "e2a30ae65f22bf6f7ed4044f09561c25e643ec4570aa956fdfa1f00e14aad8de"
+  },
+  {
+    "module": "ui",
+    "file": "dashboard/dashboard_sidebar.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/dashboard/dashboard_sidebar.py",
+    "main_path": "",
+    "mirror_hash": "77eef3a13183450c9134051959ef9ecc7ec8b46e8e8566e037bf5dd5f975703e"
+  },
+  {
+    "module": "ui",
+    "file": "dashboard/__init__.py",
+    "status": "newer_in_mirror",
+    "mirror_path": "astra_modules/ui/dashboard/__init__.py",
+    "main_path": "ui/dashboard/__init__.py",
+    "mirror_hash": "1769587555b13ef92efe7bbe9f3473c8d6345cf6a1d2deebca8629d23db60d2d"
+  },
+  {
+    "module": "ui",
+    "file": "dashboard/dashboard_guardian.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/dashboard/dashboard_guardian.py",
+    "main_path": "",
+    "mirror_hash": "9607d37d3f2a248052113219682a525baf1f2a57e0a0606689808dc90d06b5b7"
+  },
+  {
+    "module": "ui",
+    "file": "dashboard/tab_predictions.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/dashboard/tab_predictions.py",
+    "main_path": "",
+    "mirror_hash": "bf971a17a828fb3bbb0cc13b0e65a10af08200666331dacca8e86d45f6d09cac"
+  },
+  {
+    "module": "ui",
+    "file": "dashboard/test_app.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/dashboard/test_app.py",
+    "main_path": "",
+    "mirror_hash": "dfc5898646a7d14372db358c21b8e98a98231157c7b2043c20c92c7bfb27fb9c"
+  },
+  {
+    "module": "ui",
+    "file": "dashboard/dashboard_summary.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/dashboard/dashboard_summary.py",
+    "main_path": "",
+    "mirror_hash": "b5f540046dc21484225c3d2ff7b562c2feb6e0b3d6daae9aceea2763aad9add1"
+  },
+  {
+    "module": "ui",
+    "file": "components/hover_summary.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/components/hover_summary.py",
+    "main_path": "",
+    "mirror_hash": "9eecc1e64420e800e2dbfa1bbc457bdbace57c6c5fea1bd68c4fb81fd1e243e9"
+  },
+  {
+    "module": "ui",
+    "file": "components/ticker_card_placeholder.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/components/ticker_card_placeholder.py",
+    "main_path": "",
+    "mirror_hash": "628bbab28ddb91463beed8525091f3b32bcefb1c7dfebe1ea2f7ded58e4c7d52"
+  },
+  {
+    "module": "ui",
+    "file": "components/ticker_badges.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/components/ticker_badges.py",
+    "main_path": "",
+    "mirror_hash": "37c51426d1c3a3137449127954307cec7e0220c2ae45ef84597526bc019b9036"
+  },
+  {
+    "module": "ui",
+    "file": "components/mini_chart.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/components/mini_chart.py",
+    "main_path": "",
+    "mirror_hash": "affdd7f5a6339f45cf1ac5304de10a0cceca1d0011b9f47879ee6692e58a0f3c"
+  },
+  {
+    "module": "ui",
+    "file": "components/advanced_chart.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/components/advanced_chart.py",
+    "main_path": "",
+    "mirror_hash": "dab282575922a2234ef3dde421861d0ea8eef3d97f22e63bb05a1d7749f00b2b"
+  },
+  {
+    "module": "ui",
+    "file": "components/score_bars.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/components/score_bars.py",
+    "main_path": "",
+    "mirror_hash": "43fc194d1b67049afe618b99a837e2f9cb177fb8bdf81814bc1b53d301ea8b56"
+  },
+  {
+    "module": "ui",
+    "file": "components/__init__.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/components/__init__.py",
+    "main_path": "",
+    "mirror_hash": "523848744bdf7664f63317a06620c2076c22f590f2c2b2d316b3d1aeebbf5c10"
+  },
+  {
+    "module": "ui",
+    "file": "components/layout_controls.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/components/layout_controls.py",
+    "main_path": "",
+    "mirror_hash": "051031b9c96732c5c114247558c055d768b627459c86358f9046671447d44522"
+  },
+  {
+    "module": "ui",
+    "file": "components/opportunity_panels.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/components/opportunity_panels.py",
+    "main_path": "",
+    "mirror_hash": "4caf5f0dfc3f432d94893d13880c5887022f0c55844092dccd0e0b11d8340f98"
+  },
+  {
+    "module": "ui",
+    "file": "components/sparkline.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/components/sparkline.py",
+    "main_path": "",
+    "mirror_hash": "ce14d186e918a4476441ddd80c2ad1b1dd73616ce7b51885108e9060bb870568"
+  },
+  {
+    "module": "ui",
+    "file": "components/ticker_card.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/ui/components/ticker_card.py",
+    "main_path": "",
+    "mirror_hash": "8180596210eec23499fd6aae3a6ac98896bdd9e90c792c2ec8d48e8c5aea04b9"
+  },
+  {
+    "module": "agents",
+    "file": "volume_agent.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/agents/volume_agent.py",
+    "main_path": "",
+    "mirror_hash": "ecdcfafe1408ed7c23d1da362d01dfbb766a4235cfa1b15f5079d275f9256613"
+  },
+  {
+    "module": "agents",
+    "file": "technical_agent.py",
+    "status": "newer_in_mirror",
+    "mirror_path": "astra_modules/agents/technical_agent.py",
+    "main_path": "agents/technical_agent.py",
+    "mirror_hash": "ead8d4c78c990eccfd6785767a9d185e22cc5298876994277628d8058dfcb270"
+  },
+  {
+    "module": "agents",
+    "file": "momentum_agent.py",
+    "status": "newer_in_mirror",
+    "mirror_path": "astra_modules/agents/momentum_agent.py",
+    "main_path": "agents/momentum_agent.py",
+    "mirror_hash": "5770832bb1aef9d412e8fbf426320ca9fa3f24d691166a1eeb7435f0f0c39533"
+  },
+  {
+    "module": "agents",
+    "file": "psychology_agent.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/agents/psychology_agent.py",
+    "main_path": "",
+    "mirror_hash": "9751400c0ed48902803fc4c05dcb7df442c1c3d4046bdbf23ce2a505bba55eac"
+  },
+  {
+    "module": "agents",
+    "file": "prediction_fusion.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/agents/prediction_fusion.py",
+    "main_path": "",
+    "mirror_hash": "f61070cff7971908ad3ad76bbce2fbb340e0d76e62ed49b895d040c52d739048"
+  },
+  {
+    "module": "agents",
+    "file": "__init__.py",
+    "status": "identical",
+    "mirror_path": "astra_modules/agents/__init__.py",
+    "main_path": "agents/__init__.py",
+    "mirror_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "module": "agents",
+    "file": "main_agent.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/agents/main_agent.py",
+    "main_path": "",
+    "mirror_hash": "247a9e1eebe02d78f2d74231ea5d06ef49569096e87a30b228af8c7591cbe25a"
+  },
+  {
+    "module": "agents",
+    "file": "catalyst_agent.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/agents/catalyst_agent.py",
+    "main_path": "",
+    "mirror_hash": "035e841e7990c9b2e12fcae9ef5cdaf4b06a1c4c822e90af32d203a3d2b7dd4c"
+  },
+  {
+    "module": "agents",
+    "file": "continual_trainer.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/agents/continual_trainer.py",
+    "main_path": "",
+    "mirror_hash": "e49b336c49d7a364afb134937db8bb18827aec6173fa1ec915c9bca13d37b916"
+  },
+  {
+    "module": "agents",
+    "file": "neural_agent.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/agents/neural_agent.py",
+    "main_path": "",
+    "mirror_hash": "6509aa2737493bbb64b3322d7399ec8007c3e92ee2bab3d8c0f20c8367a21b67"
+  },
+  {
+    "module": "agents",
+    "file": "risk_agent.py",
+    "status": "older_in_mirror",
+    "mirror_path": "astra_modules/agents/risk_agent.py",
+    "main_path": "agents/risk_agent.py",
+    "mirror_hash": "e13e7627e1d1cd61aadc818505917068bcfa24b0de82ef523bc9f7df28790d39"
+  },
+  {
+    "module": "forecast",
+    "file": "__init__.py",
+    "status": "older_in_mirror",
+    "mirror_path": "astra_modules/forecast/__init__.py",
+    "main_path": "forecast/__init__.py",
+    "mirror_hash": "807e1c83a6db8280f2f173c6164d03603d8f4c557ee8136d69361b3bcebcdfe4"
+  },
+  {
+    "module": "forecast",
+    "file": "get_forecast.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/forecast/get_forecast.py",
+    "main_path": "",
+    "mirror_hash": "a84bf899d559e7b35dda117d2afeb1437a676af409f5a77bff8cff52965ee6f6"
+  },
+  {
+    "module": "forecast",
+    "file": "forecast_engine.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/forecast/forecast_engine.py",
+    "main_path": "",
+    "mirror_hash": "f790988c16d056af4d3cdd93a574764e34ed70831300fc1b8131a5c7df0578f9"
+  },
+  {
+    "module": "learning",
+    "file": "learning_engine.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/learning/learning_engine.py",
+    "main_path": "",
+    "mirror_hash": "aecfeabf981defd59ecd1113b38ef0f260bfadb0f6c385322c52210b625b572f"
+  },
+  {
+    "module": "learning",
+    "file": "__init__.py",
+    "status": "older_in_mirror",
+    "mirror_path": "astra_modules/learning/__init__.py",
+    "main_path": "learning/__init__.py",
+    "mirror_hash": "3e64f4efed0794afe837e806cb41414ec24dbd6c31e5e07c8a6d315b96b272dd"
+  },
+  {
+    "module": "learning",
+    "file": "paper_trader.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/learning/paper_trader.py",
+    "main_path": "",
+    "mirror_hash": "ed7dfb709ee3703d21cf77a244eb05fa482582875c20a960da296bc3ce521c8a"
+  },
+  {
+    "module": "learning",
+    "file": "learning_store.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/learning/learning_store.py",
+    "main_path": "",
+    "mirror_hash": "a7d228990e28242f7e14224b30937846965b67e3966d8e0cf4e7fc9354c1aade"
+  },
+  {
+    "module": "learning",
+    "file": "continual_trainer.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/learning/continual_trainer.py",
+    "main_path": "",
+    "mirror_hash": "c05dbbaf4c4bce11f3a771f5553954ff11203506ea3dffff9585b4d1e342e60d"
+  },
+  {
+    "module": "learning",
+    "file": "replay_buffer.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/learning/replay_buffer.py",
+    "main_path": "",
+    "mirror_hash": "69e561e42a09175c17afb3ce7b90c140fbf0fb5f12068106a084d33dd5eb83b3"
+  },
+  {
+    "module": "learning",
+    "file": "scheduler.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/learning/scheduler.py",
+    "main_path": "",
+    "mirror_hash": "e5fa47550c997cbcce95b33fda9ecad74890e0f208df25156c994acac4bb1a54"
+  },
+  {
+    "module": "learning",
+    "file": "performance_tracker.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/learning/performance_tracker.py",
+    "main_path": "",
+    "mirror_hash": "64fe13b0d3b4f7e6205502ec725a3cb4f5222ccc9f8fbb640f729cdb60ccf925"
+  },
+  {
+    "module": "chart_core",
+    "file": "chart_engine.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/chart_core/chart_engine.py",
+    "main_path": "",
+    "mirror_hash": "ac0966d2deda8652050df608151ae3a947766268dfc18bea011b10ecf427ce35"
+  },
+  {
+    "module": "chart_core",
+    "file": "__init__.py",
+    "status": "older_in_mirror",
+    "mirror_path": "astra_modules/chart_core/__init__.py",
+    "main_path": "chart_core/__init__.py",
+    "mirror_hash": "388f2381689ef47acad84e3c91bcb71c0f6e203f0289c521da996a80d8e7f399"
+  },
+  {
+    "module": "chart_core",
+    "file": "plotly_theme.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/chart_core/plotly_theme.py",
+    "main_path": "",
+    "mirror_hash": "1af69895cd361f08140e30e68688788cbc6e0e14dbc404d4db4d414501f22db1"
+  },
+  {
+    "module": "chart_core",
+    "file": "chart_container.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/chart_core/chart_container.py",
+    "main_path": "",
+    "mirror_hash": "5dbf974c969839739c65dbc2b93fca071dd36b37183532f8cf1518b5210bfed5"
+  },
+  {
+    "module": "utils",
+    "file": "clean_price_df.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/utils/clean_price_df.py",
+    "main_path": "",
+    "mirror_hash": "d32869ee12b6b69ca9706f927a22407d605032b290772f9bb2af0034dfe959ee"
+  },
+  {
+    "module": "utils",
+    "file": "__init__.py",
+    "status": "older_in_mirror",
+    "mirror_path": "astra_modules/utils/__init__.py",
+    "main_path": "utils/__init__.py",
+    "mirror_hash": "ed0dc1c725c44e4b77b66e6dae1b8b4f22fc3e810238ad1088afb42945404764"
+  },
+  {
+    "module": "utils",
+    "file": "caching.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/utils/caching.py",
+    "main_path": "",
+    "mirror_hash": "36360367c5049c15694e8e74ac0094b6063f44a5e45c39b736e17a45993a5559"
+  },
+  {
+    "module": "utils",
+    "file": "safe_api_wrapper.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/utils/safe_api_wrapper.py",
+    "main_path": "",
+    "mirror_hash": "411f33b986a0396246e8d23c6d9c43d55fd55ac44c61dc3547b9bfd5d12119fb"
+  },
+  {
+    "module": "utils",
+    "file": "memory_engine.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/utils/memory_engine.py",
+    "main_path": "",
+    "mirror_hash": "02569d9db43d021a75bf3815247660ebbb5d81a932cbe9e12fa67c866ff982d8"
+  },
+  {
+    "module": "utils",
+    "file": "error_handler.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/utils/error_handler.py",
+    "main_path": "",
+    "mirror_hash": "d1446da39194e76a1e72654f423a00d2bd00c6af1772448bab09542db1f10758"
+  },
+  {
+    "module": "utils",
+    "file": "safe_df.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/utils/safe_df.py",
+    "main_path": "",
+    "mirror_hash": "610b1dcb1b84eea85eb9f322ff4de4cd6acdbe7d5d27644e504bdcf3f60c9883"
+  },
+  {
+    "module": "utils",
+    "file": "helpers.py",
+    "status": "older_in_mirror",
+    "mirror_path": "astra_modules/utils/helpers.py",
+    "main_path": "utils/helpers.py",
+    "mirror_hash": "64c8826fe3c35e306ab08db46d0e7da6dc1ea055ff4c16008435d6058b63cd0b"
+  },
+  {
+    "module": "utils",
+    "file": "df_cleaner.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/utils/df_cleaner.py",
+    "main_path": "",
+    "mirror_hash": "4165ca09aecfe057933f99768e7b4492a448f3fe85de556a031c435eeaba75ee"
+  },
+  {
+    "module": "utils",
+    "file": "watchlist_tools.py",
+    "status": "unique",
+    "mirror_path": "astra_modules/utils/watchlist_tools.py",
+    "main_path": "",
+    "mirror_hash": "8b81885dd3173acc622c412963cb0f0610751e71dc65cb4f35fab1dc6c7af451"
+  }
+]

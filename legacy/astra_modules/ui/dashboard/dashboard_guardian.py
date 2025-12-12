@@ -1,0 +1,172 @@
+"""
+DashboardGuardian — Astra UI Integrity Layer
+--------------------------------------------
+Verifies that all dashboard components are intact and auto-repairs missing or
+broken elements using guardian_log’s health system.
+
+✅ Prevents duplicate runs under Streamlit
+✅ Uses guardian_log for consistent logging
+✅ Validates dashboard imports and key functions
+✅ Auto-snapshots and rollback support
+"""
+
+import importlib
+import os
+import time
+import zipfile
+from datetime import datetime
+
+from astra_core.guardian.guardian_v6 import guardian_log
+
+guardian = guardian_log()
+GUARDIAN_FLAG_FILE = "/tmp/astra_dashboard_guardian_active"
+SNAPSHOT_DIR = os.path.expanduser("~/astra_guardian_runtime/snapshots")
+os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+
+# ------------------------------------------------------------
+# 🧠 Core Verification Logic
+# ------------------------------------------------------------
+
+
+def verify_dashboard():
+    """
+    Checks whether dashboard submodules are available and functional.
+    Returns True if all are OK, False otherwise.
+    """
+    required_modules = {
+        "tab_dashboard": [
+            "render_dashboard",
+            "render_cards_section",
+            "render_chart_section",
+        ],
+        "dashboard_cards": ["render_empty_card", "render_symbol_card"],
+        "dashboard_chart": ["render_chart"],
+        "dashboard_data": ["load_data"],
+        "dashboard_sidebar": ["render_sidebar"],
+        "dashboard_summary": ["render_summary"],
+    }
+
+    guardian.log("[DashboardGuardian] 🧠 Starting UI integrity verification...")
+    all_ok = True
+
+    for module_name, expected_funcs in required_modules.items():
+        full_name = f"astra_core.ui.dashboard.{module_name}"
+        try:
+            mod = importlib.import_module(full_name)
+            guardian.log(f"[DashboardGuardian] ✅ Loaded {full_name}")
+            for func in expected_funcs:
+                if not hasattr(mod, func):
+                    guardian.log(
+                        f"[DashboardGuardian] 🚨 Missing function '{func}' in {module_name}"
+                    )
+                    all_ok = False
+        except Exception as e:
+            guardian.log(
+                f"[DashboardGuardian] 🚨 Failed to import {full_name}: {e}")
+            all_ok = False
+
+    if all_ok:
+        guardian.log(
+            "[DashboardGuardian] ✅ All dashboard modules verified successfully."
+        )
+    else:
+        guardian.log(
+            "[DashboardGuardian] ⚠️ Dashboard integrity check found issues.")
+    return all_ok
+
+
+# ------------------------------------------------------------
+# 💾 Snapshot System
+# ------------------------------------------------------------
+
+
+def create_dashboard_snapshot():
+    """Creates a timestamped snapshot of the dashboard directory."""
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d_%H-%M-%S")
+    snapshot_path = os.path.join(
+        SNAPSHOT_DIR, f"ui_dashboard_{timestamp}_pre_repair.zip"
+    )
+    dashboard_dir = os.path.join(os.path.dirname(__file__), "")
+    with zipfile.ZipFile(snapshot_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, files in os.walk(dashboard_dir):
+            for file in files:
+                path = os.path.join(root, file)
+                zipf.write(path, os.path.relpath(path, dashboard_dir))
+    guardian.log(
+        f"[Snapshot] 📦 Created dashboard snapshot: {os.path.basename(snapshot_path)}"
+    )
+    return snapshot_path
+
+
+def restore_latest_snapshot():
+    """Restores from the most recent dashboard snapshot."""
+    try:
+        files = [f for f in os.listdir(SNAPSHOT_DIR) if f.endswith(".zip")]
+        if not files:
+            guardian.log(
+                "[Snapshot] ⚠️ No snapshots available for restoration.")
+            return
+        latest = sorted(files)[-1]
+        snapshot_path = os.path.join(SNAPSHOT_DIR, latest)
+        dashboard_dir = os.path.dirname(__file__)
+        with zipfile.ZipFile(snapshot_path, "r") as zipf:
+            zipf.extractall(dashboard_dir)
+        guardian.log(f"[Snapshot] ♻️ Restored from snapshot: {latest}")
+    except Exception as e:
+        guardian.log(
+            f"[Snapshot] ⚠️ Failed to restore dashboard snapshot: {e}")
+
+
+# ------------------------------------------------------------
+# 🔄 Repair & Integrity Enforcement
+# ------------------------------------------------------------
+
+
+def ensure_dashboard_integrity():
+    """
+    Verifies dashboard integrity and repairs if broken.
+    Automatically avoids multiple runs under Streamlit reruns.
+    """
+    if os.path.exists(GUARDIAN_FLAG_FILE):
+        guardian.log(
+            "[DashboardGuardian] ⚙️ Integrity check already running — skipping duplicate start."
+        )
+        return
+
+    with open(GUARDIAN_FLAG_FILE, "w") as f:
+        f.write(str(time.time()))
+
+    guardian.log("[DashboardGuardian] 🧩 Starting dashboard integrity check...")
+
+    try:
+        if verify_dashboard():
+            guardian.log(
+                "[DashboardGuardian] ✅ Dashboard integrity confirmed.")
+        else:
+            guardian.log(
+                "[DashboardGuardian] ⚠️ Dashboard verification failed — initiating repair."
+            )
+            create_dashboard_snapshot()
+            restore_latest_snapshot()
+            if verify_dashboard():
+                guardian.log(
+                    "[DashboardGuardian] ✅ Repair successful after restore.")
+            else:
+                guardian.log(
+                    "[DashboardGuardian] 🚨 Dashboard still failing after repair."
+                )
+    finally:
+        if os.path.exists(GUARDIAN_FLAG_FILE):
+            os.remove(GUARDIAN_FLAG_FILE)
+        guardian.log("[DashboardGuardian] 🧠 Integrity check complete.")
+
+
+# ------------------------------------------------------------
+# 🚀 Entry for standalone test
+# ------------------------------------------------------------
+
+if __name__ == "__main__":
+    guardian.log(
+        "[DashboardGuardian] 🚀 Standalone dashboard integrity check started.")
+    ensure_dashboard_integrity()
+    guardian.log("[DashboardGuardian] ✅ Completed standalone dashboard test.")

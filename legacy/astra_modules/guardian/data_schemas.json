@@ -1,0 +1,48 @@
+{
+  "fetch_unified": {
+    "expected_fields": [
+      "symbol",
+      "price",
+      "percent_change"
+    ],
+    "types": {
+      "symbol": "str",
+      "price": "float",
+      "percent_change": "float"
+    }
+  },
+  "dashboard_data": {
+    "expected_fields": [
+      "timestamp",
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume"
+    ],
+    "types": {
+      "timestamp": "datetime64[ns]",
+      "open": "float",
+      "high": "float",
+      "low": "float",
+      "close": "float",
+      "volume": "float"
+    }
+  },
+  "learning_engine": {
+    "expected_fields": [
+      "episode",
+      "reward",
+      "action",
+      "state",
+      "next_state"
+    ],
+    "types": {
+      "episode": "int",
+      "reward": "float",
+      "action": "str",
+      "state": "object",
+      "next_state": "object"
+    }
+  }
+}

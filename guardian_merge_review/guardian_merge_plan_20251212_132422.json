@@ -1,0 +1,98 @@
+[
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/core/feature_builder.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/core/feature_builder.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/core/astra_prime.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/core/astra_prime.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/astra_memory.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/core/astra_memory.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/engine/ranking_engine.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/engine/ranking_engine.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/engine/scan_manager.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/engine/scan_manager.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/engine/state_bundle_builder.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/engine/state_bundle_builder.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/astra_backend.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/engine/astra_backend.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/guardian/guardian_v6.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/guardian/guardian_v6.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/guardian/guardian_sync.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/guardian/guardian_sync.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/guardian/guardian_defender.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/guardian/guardian_defender.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/guardian/guardian_import_auditor.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/guardian/guardian_import_auditor.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/guardian/pipeline_sanitizer.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/guardian/pipeline_sanitizer.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/guardian/schema_validator.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/guardian/schema_validator.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/guardian/state_initializer.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/guardian/state_initializer.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/guardian/startup_hook.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/guardian/startup_hook.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/guardian/environment_guardian.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/guardian/environment_guardian.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/guardian/ui_integrity_lock.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/guardian/ui_integrity_lock.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/fetch_core/fetch_crypto.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/fetch_core/fetch_crypto.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/fetch_core/fetch_etf.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/fetch_core/fetch_etf.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/fetch_core/fetch_stock.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/fetch_core/fetch_stock.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/fetch_core/fetch_unified.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/fetch_core/fetch_unified.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/fetch_core/fetcher.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/fetch_core/fetcher.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/universe/universe_builder.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/universe/universe_builder.py"
+  },
+  {
+    "from": "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/api_keys.py",
+    "to": "/Users/ericballhaus/Desktop/astra-intelligence/guardian/security/api_keys.py"
+  }
+]
