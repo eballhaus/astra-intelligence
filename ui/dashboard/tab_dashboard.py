@@ -1,82 +1,14 @@
-# -*- coding: utf-8 -*-
-"""
-Astra Intelligence — Dashboard Tab (v4.4 Final Guardian Safe)
----------------------------------------------------------------
-Unified dashboard powered by Astra internal APIs.
-"""
-
-import concurrent.futures
-import os
-import sys
-from datetime import datetime, timezone
-from typing import Dict, List, Optional
-
-import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 from guardian.guardian_v6 import guardian_log
-
-# -------------------------------------------------------------------
-# ✅ Updated imports for new Astra project structure
-# -------------------------------------------------------------------
-from core.api_client import AstraAPI
-from ui.dashboard.dashboard_cards import render_symbol_card
-from ui.dashboard.dashboard_chart import render_chart
-from ui.dashboard.dashboard_data import load_data
-
-# Ensure the project root is in the path
-sys.path.insert(
-    0,
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-)
-
-try:
-    from force_hotfix import nuke_and_patch
-
-    nuke_and_patch()
-    print("✅ [Dashboard] FORCE-HOTFIX applied successfully — live data mode active")
-except Exception as e:
-    print(f"⚠️ [Dashboard] Force-hotfix unavailable: {e}")
-
-# -------------------------------------------------------------------
-# Standard Imports (AFTER hotfix patch)
-# -------------------------------------------------------------------
-
-
-# -------------------------------------------------------------------
-# 🧩 Optional Summary Import
-# -------------------------------------------------------------------
-try:
-    from astra_core.ui.dashboard.summary_cards import render_summary
-except ImportError:
-    guardian_log(
-        "[Dashboard] ⚠️ summary_cards missing, using fallback summary renderer."
-    )
-
-    def render_summary():
-        st.info("ℹ️ Summary unavailable (summary_cards module not found).")
-
-
-# -------------------------------------------------------------------
-# ⚙️ Streamlit Page Config
-# -------------------------------------------------------------------
-st.set_page_config(
-    page_title="Astra Intelligence Dashboard",
-    page_icon="🧠",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
-
 # -------------------------------------------------------------------
 # 🎨 AstraGlass Theme
 # -------------------------------------------------------------------
-st.markdown(
-    """
+st.markdown("""
     <style>
     body, .stApp {
         background: linear-gradient(135deg, #0f1729 0%, #1e293b 100%) !important;
         color: #E5E7EB !important;
-        font-family: 'Inter', 'Segoe UI', sans-serif !important;
+        font-family: "Inter", "Segoe UI", sans-serif !important;
     }
     .section-header {
         color: #A7F3D0;
@@ -101,16 +33,13 @@ st.markdown(
     }
     footer, header, #MainMenu {visibility:hidden;}
     </style>
-    """,
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
 # -------------------------------------------------------------------
 # 🔄 Auto-refresh
 # -------------------------------------------------------------------
 try:
     from streamlit_autorefresh import st_autorefresh
-
     st_autorefresh(interval=60000, key="dashboard_refresh_v44")
     guardian_log("[Dashboard] ⏱️ Auto-refresh enabled (60s interval)")
 except ImportError:
@@ -120,14 +49,7 @@ except ImportError:
 # -------------------------------------------------------------------
 # ⚙️ Helpers
 # -------------------------------------------------------------------
-@st.cache_data(ttl=60)
-def cached_load(symbols: tuple) -> Dict[str, Optional[pd.DataFrame]]:
-    return load_symbols_parallel(list(symbols))
-
-
-def load_symbols_parallel(
-    symbols: List[str], max_workers: int = 4
-) -> Dict[str, Optional[pd.DataFrame]]:
+def load_symbols_parallel(symbols: List[str], max_workers: int = 4) -> Dict[str, Optional[pd.DataFrame]]:
     results = {}
 
     def load_single(symbol: str):
@@ -144,9 +66,7 @@ def load_symbols_parallel(
     return results
 
 
-def sanitize_dataframe(
-    df: Optional[pd.DataFrame], symbol: str
-) -> Optional[pd.DataFrame]:
+def sanitize_dataframe(df: Optional[pd.DataFrame], symbol: str) -> Optional[pd.DataFrame]:
     """Ensure dataframe has minimum valid structure before rendering."""
     try:
         if df is None or df.empty:
@@ -162,16 +82,14 @@ def sanitize_dataframe(
             last_low = df["low"].iloc[-1] if "low" in df.columns else last_close
             last_volume = df["volume"].iloc[-1] if "volume" in df.columns else 0
             df = pd.DataFrame(
-                [
-                    {
-                        "timestamp": now,
-                        "open": last_open,
-                        "high": last_high,
-                        "low": last_low,
-                        "close": last_close,
-                        "volume": last_volume,
-                    }
-                ]
+                [{
+                    "timestamp": now,
+                    "open": last_open,
+                    "high": last_high,
+                    "low": last_low,
+                    "close": last_close,
+                    "volume": last_volume,
+                }]
             )
         return df
     except Exception as e:
@@ -179,10 +97,20 @@ def sanitize_dataframe(
         return None
 
 
+# -------------------------------------------------------------------
+# 🕓 Lazy-load AstraAPI (safe, cached once)
+# -------------------------------------------------------------------
+@st.cache_resource
+def get_api():
+    from core.api_client import AstraAPI
+    return AstraAPI()
+
 def detect_top_assets(category: str = "equity", limit: int = 6) -> List[str]:
     """Auto-detect top assets using recent % change from AstraAPI."""
+    import time
+    t0 = time.time()
     try:
-        api = AstraAPI()
+        api = get_api()
         symbols = api.list_symbols(category=category)
         if not symbols:
             raise ValueError("No symbols returned by AstraAPI")
@@ -202,9 +130,11 @@ def detect_top_assets(category: str = "equity", limit: int = 6) -> List[str]:
         if not perf_data:
             raise ValueError("No performance data available")
 
+        guardian_log(f"[Timing] ⏱️ Sorting {len(perf_data)} assets...")
         sorted_syms = sorted(perf_data, key=lambda x: x[1], reverse=True)
         top_syms = [s[0] for s in sorted_syms[:limit]]
         guardian_log(f"[Dashboard] 🧠 Top {category.title()}s: {top_syms}")
+        guardian_log(f"[Timing] ✅ detect_top_assets done ({category}) in {time.time()-t0:.2f}s")
         return top_syms
 
     except Exception as e:
@@ -268,35 +198,18 @@ def render_equities_section():
 
 
 # -------------------------------------------------------------------
-# 💹 Crypto
-# -------------------------------------------------------------------
-def render_crypto_section():
-    st.markdown(
-        "<div class='section-header'>💹 Top Cryptocurrencies</div>",
-        unsafe_allow_html=True,
-    )
-    top_cryptos = detect_top_assets("crypto", 6)
-    data = cached_load(tuple(top_cryptos))
-    cols = st.columns(3)
-    for i, s in enumerate(top_cryptos):
-        with cols[i % 3]:
-            df = sanitize_dataframe(data.get(s), s)
-            if df is not None and not df.empty:
-                render_symbol_card(s, df)
-            else:
-                st.warning(f"⚠️ No valid data for {s}")
-
-
-# -------------------------------------------------------------------
 # 📊 Market Overview
 # -------------------------------------------------------------------
 def render_market_overview_chart():
     st.markdown(
-        "<div class='section-header'>📊 Market Overview</div>", unsafe_allow_html=True
+        "<div class='section-header'>📊 Market Overview</div>",
+        unsafe_allow_html=True,
     )
+
     syms = detect_top_assets("equity", 4) + detect_top_assets("crypto", 2)
     all_data = cached_load(tuple(syms))
     chart_data = []
+
     for s, df in all_data.items():
         if df is not None and not df.empty:
             try:
@@ -305,28 +218,32 @@ def render_market_overview_chart():
                 pct = ((close - open_) / open_) * 100
                 chart_data.append({"symbol": s, "change": pct})
             except Exception:
+                guardian_log(f"[Dashboard] ⚠️ Market overview calculation failed for {s}")
                 continue
+
     if not chart_data:
         st.info("ℹ️ Waiting for data...")
         return
+
     dfc = pd.DataFrame(chart_data)
     colors = ["#4ade80" if c >= 0 else "#f87171" for c in dfc["change"]]
-    fig = go.Figure(
-        [
-            go.Bar(
-                x=dfc["symbol"],
-                y=dfc["change"],
-                text=[f"{c:+.2f}%" for c in dfc["change"]],
-                marker=dict(color=colors),
-            )
-        ]
-    )
+
+    fig = go.Figure([
+        go.Bar(
+            x=dfc["symbol"],
+            y=dfc["change"],
+            text=[f"{c:+.2f}%" for c in dfc["change"]],
+            marker=dict(color=colors),
+        )
+    ])
+
     fig.update_layout(
         height=400,
         paper_bgcolor="rgba(30,41,59,0.6)",
         plot_bgcolor="rgba(30,41,59,0.3)",
         font=dict(color="#E5E7EB"),
     )
+
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
@@ -363,7 +280,7 @@ def render_advanced_chart_section():
 
     st.markdown(f"### {symbol} — Technical View", unsafe_allow_html=True)
 
-    # ✅ define fig before try, avoids NameError
+    # ✅ Define fig before try, avoids NameError
     fig = None
 
     try:
@@ -379,67 +296,6 @@ def render_advanced_chart_section():
 
     except Exception as e:
         import traceback
-
-        st.error(f"❌ Chart failed: {e}")
-        guardian_log(f"[Dashboard] ⚠️ Chart rendering error for {symbol}: {e}")
-        print(traceback.format_exc())
-
-    # ============================================================
-
-
-# Asset Selection
-# ============================================================
-
-# Select trading symbol (you can adapt this logic)
-symbol = (
-    st.text_input(
-        "Symbol",
-        value="AAPL",  # default fallback if detection fails
-        help="Enter a trading symbol (e.g., AAPL, BTC/USD, ETH/USD)",
-    )
-    .upper()
-    .strip()
-)
-
-
-# ============================================================
-# Load & Render Chart Section (Fixed & Clean)
-# ============================================================
-
-# Load Data
-df = load_data(symbol)
-df = sanitize_dataframe(df, symbol)
-
-if df is not None and not df.empty:
-    st.markdown(f"### {symbol} — Technical View", unsafe_allow_html=True)
-
-    # ✅ Define fig before use (avoids NameError if render_chart fails)
-    fig = None
-
-    try:
-        # Build chart from dashboard_chart.py
-        fig = render_chart(symbol, df, height=900)
-
-        # ✅ Display chart only once
-        if fig is not None:
-            st.plotly_chart(
-                fig,
-                width="stretch",  # replaces deprecated use_container_width
-                config={
-                    "displayModeBar": True,
-                    "displaylogo": False,
-                    "modeBarButtonsToAdd": ["drawline", "drawopenpath", "eraseshape"],
-                    "scrollZoom": True,
-                    "responsive": True,
-                },
-            )
-            guardian_log(f"[Dashboard] ✅ Rendered advanced chart for {symbol}")
-        else:
-            st.warning("⚠️ No chart returned from render_chart().")
-
-    except Exception as e:
-        import traceback
-
         st.error(f"❌ Chart failed: {e}")
         guardian_log(f"[Dashboard] ⚠️ Chart rendering error for {symbol}: {e}")
         print(traceback.format_exc())
@@ -489,9 +345,86 @@ def main():
     guardian_log("[Dashboard] ✅ Dashboard Rendered Successfully")
 
 
+# -------------------------------------------------------------------
+# 🧠 BACKGROUND LEARNING CONTROL (UI INTEGRATION)
+# -------------------------------------------------------------------
+    import streamlit as st
+from guardian.guardian_v6 import guardian_log
+
+# -------------------------------------------------------------------
+# ⚡ Quick Pandas Loader Patch (skip heavy IO backends)
+# -------------------------------------------------------------------
+import sys, types
+if "pandas.io.api" not in sys.modules:
+    fake = types.ModuleType("pandas.io.api")
+    for m in [
+        "pandas.io.excel", "pandas.io.feather_format", "pandas.io.orc",
+        "pandas.io.sas", "pandas.io.gbq", "pandas.io.html",
+        "pandas.io.parquet", "pandas.io.xml", "pandas.io.sql",
+    ]:
+        sys.modules[m] = fake
+
+# -------------------------------------------------------------------
+# 🚀 ENTRY POINT (FAST LOAD OPTIMIZED)
+# -------------------------------------------------------------------
 if __name__ == "__main__":
+    import streamlit as st
+    from guardian.guardian_v6 import guardian_log
+
     try:
+        # 🚀 Faster startup — disable automatic loop start for now
+        # toggle_background_learning(on=True, interval_minutes=5)
         main()
+
+        # 🧭 Manual background loop control (on-demand)
+        st.divider()
+        st.subheader("⚙️ Background Learning Control")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("▶️ Start Background Learning"):
+                toggle_background_learning(on=True)
+        with col2:
+            if st.button("⏹ Stop Background Learning"):
+                toggle_background_learning(on=False)
+
     except Exception as e:
         guardian_log(f"[Dashboard] 🚨 Fatal dashboard error: {e}")
         st.error("🚨 Dashboard failed to render. Check Astra logs.")
+
+
+# -------------------------------------------------------------------
+# 🧠 BACKGROUND LEARNING CONTROL (FINAL CLEAN VERSION)
+# -------------------------------------------------------------------
+_background_loop = None  # keep global reference
+
+
+def _lazy_import_background_loop():
+    """Import BackgroundLoop only when needed (lazy load)."""
+    from engine.background_loop import BackgroundLoop
+    return BackgroundLoop
+
+
+def toggle_background_learning(on: bool = True, interval_minutes: int = 10):
+    """
+    Start or stop the background learning loop (lazy import, safe).
+    """
+    import streamlit as st
+    from guardian.guardian_v6 import guardian_log
+    global _background_loop
+
+    BackgroundLoop = _lazy_import_background_loop()
+
+    if on:
+        if _background_loop and getattr(_background_loop, "running", False):
+            st.info("ℹ️ Background learning already running.")
+            return
+        _background_loop = BackgroundLoop(interval_minutes=interval_minutes)
+        _background_loop.start()
+        st.success(f"✅ Background learning started (interval: {interval_minutes} min)")
+    else:
+        if _background_loop:
+            _background_loop.stop()
+            st.warning("⏹ Background learning stopped.")
+        else:
+            st.info("ℹ️ No background learning loop active.")
