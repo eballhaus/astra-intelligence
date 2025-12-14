@@ -33,8 +33,7 @@ def render_mini_chart(data_points):
     step = width / (len(normalized) - 1)
 
     # Convert to "x,y" format
-    points = " ".join(
-        f"{i * step},{normalized[i] * height}" for i in range(len(arr)))
+    points = " ".join(f"{i * step},{normalized[i] * height}" for i in range(len(arr)))
 
     # Color based on trend
     trend_color = "#3CEE72" if arr[-1] >= arr[0] else "#FF4E4E"

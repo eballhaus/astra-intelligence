@@ -11,7 +11,6 @@ Usage:
 import os
 import json
 from datetime import datetime
-from astra_core.guardian.guardian_v4 import guardian
 from astra_core.guardian.auto_repair import GuardianAutoRepair
 from astra_core.guardian.startup_hook import run_startup_check
 from astra_core.guardian.guardian_sync import GuardianSync

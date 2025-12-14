@@ -25,8 +25,7 @@ def load_theme():
         css_path = Path(__file__).parent / "astra_theme.css"
 
         if not css_path.exists():
-            st.warning(
-                "⚠️ Astra theme file not found: astra_theme.css missing.")
+            st.warning("⚠️ Astra theme file not found: astra_theme.css missing.")
             return
 
         with open(css_path, "r", encoding="utf-8") as css_file:

@@ -107,8 +107,7 @@ def render_advanced_chart(symbol: str, df: pd.DataFrame):
         margin=dict(l=20, r=20, t=40, b=20),
         xaxis_title="Date",
         yaxis_title="Price ($)",
-        xaxis=dict(showgrid=True, gridcolor="#222222",
-                   rangeslider_visible=False),
+        xaxis=dict(showgrid=True, gridcolor="#222222", rangeslider_visible=False),
         yaxis=dict(showgrid=True, gridcolor="#222222"),
         legend=dict(
             bgcolor="rgba(0,0,0,0)", orientation="h", x=0, y=1.15, font=dict(size=12)

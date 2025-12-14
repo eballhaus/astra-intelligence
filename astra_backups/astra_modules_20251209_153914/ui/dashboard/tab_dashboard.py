@@ -27,13 +27,12 @@ from ui.dashboard.dashboard_data import load_data
 # Ensure the project root is in the path
 sys.path.insert(
     0,
-    os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    ),
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
 )
 
 try:
     from force_hotfix import nuke_and_patch
+
     nuke_and_patch()
     print("✅ [Dashboard] FORCE-HOTFIX applied successfully — live data mode active")
 except Exception as e:
@@ -155,8 +154,7 @@ def sanitize_dataframe(
             return None
         required_cols = {"timestamp", "close"}
         if not required_cols.issubset(df.columns):
-            guardian_log(
-                f"[Sanitize] ⚠️ {symbol} missing required columns, repairing.")
+            guardian_log(f"[Sanitize] ⚠️ {symbol} missing required columns, repairing.")
             now = datetime.now(timezone.utc)
             last_close = df["close"].iloc[-1] if "close" in df.columns else 0
             last_open = df["open"].iloc[-1] if "open" in df.columns else last_close
@@ -210,8 +208,7 @@ def detect_top_assets(category: str = "equity", limit: int = 6) -> List[str]:
         return top_syms
 
     except Exception as e:
-        guardian_log(
-            f"[Dashboard] ⚠️ Asset detection fallback ({category}): {e}")
+        guardian_log(f"[Dashboard] ⚠️ Asset detection fallback ({category}): {e}")
         return (
             ["AAPL", "MSFT", "NVDA", "AMZN", "TSLA", "GOOGL"]
             if category == "equity"
@@ -330,8 +327,7 @@ def render_market_overview_chart():
         plot_bgcolor="rgba(30,41,59,0.3)",
         font=dict(color="#E5E7EB"),
     )
-    st.plotly_chart(fig, use_container_width=True,
-                    config={"displayModeBar": False})
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
 # -------------------------------------------------------------------
@@ -352,8 +348,7 @@ def render_advanced_chart_section():
 
     # Choose Asset
     symbol = (
-        st.sidebar.text_input(
-            "Symbol", value=detect_top_assets("equity", 1)[0])
+        st.sidebar.text_input("Symbol", value=detect_top_assets("equity", 1)[0])
         .upper()
         .strip()
     )
@@ -459,8 +454,7 @@ if df is not None and not df.empty:
         with col2:
             if len(df) > 1:
                 change_pct = (
-                    (df["close"].iloc[-1] - df["close"].iloc[-2]) /
-                    df["close"].iloc[-2]
+                    (df["close"].iloc[-1] - df["close"].iloc[-2]) / df["close"].iloc[-2]
                 ) * 100
                 st.metric("24h Change", f"{change_pct:+.2f}%")
         with col3:

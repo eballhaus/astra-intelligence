@@ -8,9 +8,7 @@ Enhanced with Guardian Phase-100 stack:
 Runs automatically on launch with minimal performance impact.
 """
 
-import os
 import json
-import time
 from datetime import datetime
 
 # ==========================================================
@@ -35,11 +33,16 @@ try:
 
     print("\n🧩 Guardian Phase-100 Boot Summary")
     print("--------------------------------------------------")
-    print(json.dumps({
-        "auto_repair": repair_summary if repair_summary else "OK",
-        "startup_check": startup_summary if startup_summary else "OK",
-        "timestamp": datetime.utcnow().isoformat()
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "auto_repair": repair_summary if repair_summary else "OK",
+                "startup_check": startup_summary if startup_summary else "OK",
+                "timestamp": datetime.utcnow().isoformat(),
+            },
+            indent=2,
+        )
+    )
     print("--------------------------------------------------\n")
 
 except Exception as e:

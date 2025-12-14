@@ -18,8 +18,7 @@ import traceback
 # ────────────────────────────────────────────────
 def safe_log(message: str) -> None:
     """Store messages in memory to avoid I/O errors."""
-    _astra_dashboard_log = getattr(
-        sys.modules[__name__], "_astra_dashboard_log", [])
+    _astra_dashboard_log = getattr(sys.modules[__name__], "_astra_dashboard_log", [])
     _astra_dashboard_log.append(message)
     sys.modules[__name__]._astra_dashboard_log = _astra_dashboard_log
 
@@ -41,8 +40,7 @@ def safe_traceback_store() -> None:
 # 🧱 One-time import guard
 # ────────────────────────────────────────────────
 if getattr(sys.modules.get(__name__), "_astra_dashboard_initialized", False):
-    safe_log(
-        "[Dashboard] ⚠️ Reload prevented — dashboard package already initialized.")
+    safe_log("[Dashboard] ⚠️ Reload prevented — dashboard package already initialized.")
 else:
     sys.modules[__name__]._astra_dashboard_initialized = True
 
@@ -82,8 +80,7 @@ else:
 
     for _mod in _submodules.keys():
         try:
-            _submodules[_mod] = importlib.import_module(
-                f".{_mod}", __package__)
+            _submodules[_mod] = importlib.import_module(f".{_mod}", __package__)
         except Exception as e:
             safe_log(f"[Dashboard] ⚠️ Failed to import submodule {_mod}: {e}")
             safe_traceback_store()

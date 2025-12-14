@@ -18,10 +18,10 @@ from astra_core.guardian.guardian_v6 import guardian
 from astra_core.guardian.guardian_v6 import guardian
 
 
-
 # ============================================================
 # 🧩 Safe Normalization Utility
 # ============================================================
+
 
 def normalize_dataframe(df, symbol: str) -> pd.DataFrame:
     """Ensure df is a valid DataFrame with required columns."""
@@ -34,16 +34,18 @@ def normalize_dataframe(df, symbol: str) -> pd.DataFrame:
         # If None or empty → placeholder
         if df is None or df.empty:
             guardian.log(f"[Guardian Info] {symbol}: Empty or None DataFrame received.")
-            df = pd.DataFrame(columns=[
-                "close",
-                "astra_stop_loss",
-                "astra_stop_loss_pct",
-                "astra_pred_price",
-                "astra_pred_change",
-                "astra_confidence",
-                "astra_grade",
-                "astra_reason",
-            ])
+            df = pd.DataFrame(
+                columns=[
+                    "close",
+                    "astra_stop_loss",
+                    "astra_stop_loss_pct",
+                    "astra_pred_price",
+                    "astra_pred_change",
+                    "astra_confidence",
+                    "astra_grade",
+                    "astra_reason",
+                ]
+            )
 
         # Ensure required columns exist
         required_cols = [
@@ -72,6 +74,7 @@ def normalize_dataframe(df, symbol: str) -> pd.DataFrame:
 # 🪄  CARD RENDERER
 # ============================================================
 
+
 def render_symbol_card(symbol: str, df: pd.DataFrame, include_reason: bool = True):
     """Render a clean Astra AI decision card using live engine output."""
     try:
@@ -91,15 +94,20 @@ def render_symbol_card(symbol: str, df: pd.DataFrame, include_reason: bool = Tru
                 change = 0.0
 
         # Astra metadata with safe fallbacks
-        stop_loss_price = float(latest.get("astra_stop_loss", price * 0.95) or price * 0.95)
+        stop_loss_price = float(
+            latest.get("astra_stop_loss", price * 0.95) or price * 0.95
+        )
         stop_loss_pct = float(latest.get("astra_stop_loss_pct", -5.0) or -5.0)
         pred_price = float(latest.get("astra_pred_price", price * 1.05) or price * 1.05)
         pred_change = float(latest.get("astra_pred_change", +5.0) or +5.0)
         confidence = latest.get("astra_confidence", "80%") or "80%"
         grade = latest.get("astra_grade", "B") or "B"
-        reason = latest.get(
-            "astra_reason", "Market momentum and positive sentiment detected."
-        ) or "Market momentum and positive sentiment detected."
+        reason = (
+            latest.get(
+                "astra_reason", "Market momentum and positive sentiment detected."
+            )
+            or "Market momentum and positive sentiment detected."
+        )
 
         # Optional reason line
         reason_html = f"<br>🧠 <i>{reason}</i>" if include_reason else ""
@@ -138,7 +146,8 @@ def render_symbol_card(symbol: str, df: pd.DataFrame, include_reason: bool = Tru
 # ==========================
 
 
-def render_empty_card(title='Empty', message='No data available'):
+def render_empty_card(title="Empty", message="No data available"):
     import streamlit as st
+
     st.markdown(f"### {title}")
     st.info(message)

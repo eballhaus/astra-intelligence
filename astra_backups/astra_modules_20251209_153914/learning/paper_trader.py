@@ -57,8 +57,7 @@ class PaperTrader:
         """Close a simulated trade and compute reward."""
         try:
             # Find active trade
-            trade = next(
-                (t for t in self.open_trades if t["symbol"] == symbol), None)
+            trade = next((t for t in self.open_trades if t["symbol"] == symbol), None)
             if not trade:
                 return
 
@@ -119,8 +118,7 @@ class PaperTrader:
             if symbol in latest_prices:
                 self.close_trade(symbol, latest_prices[symbol])
             else:
-                print(
-                    f"[Astra PaperTrader] Skipped expired trade (no price): {symbol}")
+                print(f"[Astra PaperTrader] Skipped expired trade (no price): {symbol}")
 
     def get_open_positions(self):
         """Return list of active paper trades."""

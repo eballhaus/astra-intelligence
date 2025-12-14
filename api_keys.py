@@ -1,0 +1,16 @@
+"""
+api_keys.py — Astra Intelligence Unified Key File
+-------------------------------------------------
+Central location for all API keys used by fetch_core modules.
+"""
+
+MORALIS_API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6IjUxNGFmZTQ0LTA5NjQtNGY0OS1iMzY0LTBhY2IzNGI1Yzc4MyIsIm9yZ0lkIjoiNDc5MDgyIiwidXNlcklkIjoiNDkyODc5IiwidHlwZUlkIjoiMGE0Yzg2YjMtNTFjMC00MzIwLWI2YzYtODU3NmY5NDhhZWYyIiwidHlwZSI6IlBST0pFQ1QiLCJpYXQiOjE3NjIwNTQ0NzYsImV4cCI6NDkxNzgxNDQ3Nn0.qD2enThc_vEplne8qVqOxDJrCUherTPWb-jmpebvkyI"
+ALPHAVANTAGE_API_KEY = "YJVYAJJSKKXF3ZQB"
+TWELVEDATA_API_KEY = "452b5c89fc8747d4803ee6bda5f891b2"
+FINNHUB_API_KEY = "d4vg9bpr01qs25evsod0d4vg9bpr01qs25evsodg"
+EODHD_API_KEY = "6904e7a2ced028.25933984"
+DATAJOCKEY_API_KEY = "6c5005bf08972158807105350f31446afcb41165eb73acae8413"
+SIMFIN_API_KEY = "ed5d0804-84b8-45b6-b898-51db3914943b"
+POLYGON_API_KEY = "2xN5LiGfDAZMNe21C_QW_qVkpcgNnIR4"
+NASDAQ_API_KEY = "tEq8HXsPNkswXUXzgvMu"
+

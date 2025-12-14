@@ -110,8 +110,7 @@ class ContinualTrainer:
 
             avg_loss = np.mean(total_loss) if total_loss else 0.0
             self.performance.record_training_result(loss=avg_loss)
-            print(
-                f"[Astra Trainer] ✅ Training complete | Avg Loss: {avg_loss:.6f}")
+            print(f"[Astra Trainer] ✅ Training complete | Avg Loss: {avg_loss:.6f}")
 
             return True
 

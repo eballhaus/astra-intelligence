@@ -256,8 +256,7 @@ class guardian_log:
 # LOGGING SHIM — backward compatibility for guardian_log("...")
 # ============================================================
 
-from datetime import datetime
-import sys
+
 
 def log_message(message: str) -> None:
     """Lightweight logger replacement for backward compatibility."""
@@ -271,6 +270,7 @@ def log_message(message: str) -> None:
 # ------------------------------------------------------------
 class guardian_log:
     """Unified legacy logger class for dashboard and backend compatibility."""
+
     @staticmethod
     def info(msg: str):
         log_message(f"ℹ️ {msg}")

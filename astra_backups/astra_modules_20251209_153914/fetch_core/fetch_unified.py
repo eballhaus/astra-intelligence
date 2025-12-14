@@ -28,8 +28,7 @@ from astra_modules.guardian.guardian_v6 import guardian_log
 # 🌐 CONFIGURATION
 # ============================================================
 
-ASTRA_API_BASE = os.getenv(
-    "ASTRA_API_BASE", "https://api.astra-intelligence.com/v1")
+ASTRA_API_BASE = os.getenv("ASTRA_API_BASE", "https://api.astra-intelligence.com/v1")
 API_KEY = os.getenv("ASTRA_API_KEY", "YOUR_API_KEY_HERE")
 
 CACHE_DIR = os.path.expanduser("~/astra_guardian_runtime/cache")
@@ -97,8 +96,7 @@ def is_market_hours() -> bool:
         if now_et.weekday() >= 5:
             return False
         pre_open = now_et.replace(hour=7, minute=0, second=0, microsecond=0)
-        after_close = now_et.replace(
-            hour=20, minute=0, second=0, microsecond=0)
+        after_close = now_et.replace(hour=20, minute=0, second=0, microsecond=0)
         return pre_open <= now_et <= after_close
     except Exception:
         return True
@@ -139,12 +137,10 @@ def api_get(
             try:
                 with open(cache_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                guardian_log(
-                    f"[Fetch] 💾 Cached {cache_key} used ({int(age)}s old)")
+                guardian_log(f"[Fetch] 💾 Cached {cache_key} used ({int(age)}s old)")
                 return data
             except Exception as e:
-                guardian_log(
-                    f"[Fetch] ⚠️ Cache read failed for {cache_key}: {e}")
+                guardian_log(f"[Fetch] ⚠️ Cache read failed for {cache_key}: {e}")
 
     try:
         url = f"{ASTRA_API_BASE}/{endpoint.lstrip('/')}"
@@ -197,8 +193,7 @@ def fetch_live_quote(symbol: str) -> Optional[MarketData]:
                 source="astra_api_live",
                 is_fresh=validate_data_freshness(ts, 300),
             )
-            guardian_log(
-                f"[Fetch] ✅ Live Astra quote {symbol} ${quote.price:.2f}")
+            guardian_log(f"[Fetch] ✅ Live Astra quote {symbol} ${quote.price:.2f}")
             return quote
     except Exception as e:
         guardian_log(f"[Fetch] ⚠️ Astra live quote failed: {e}")
@@ -232,8 +227,7 @@ def fetch_live_quote(symbol: str) -> Optional[MarketData]:
             hist = ticker.history(period="1d", interval="1m")
             if not hist.empty:
                 price = float(hist["Close"].iloc[-1])
-                guardian_log(
-                    f"[Fetch] 🌐 Yahoo fallback {symbol}: ${price:.2f}")
+                guardian_log(f"[Fetch] 🌐 Yahoo fallback {symbol}: ${price:.2f}")
                 return MarketData(
                     symbol=symbol,
                     price=price,
@@ -278,8 +272,7 @@ def get_symbol_data(
     symbol: str, period: str = "1d", interval: str = "1m"
 ) -> pd.DataFrame:
     """Unified Astra symbol data with external and predictive fallback."""
-    guardian_log(
-        f"[Fetch] 📊 Fetching {symbol} (period={period}, interval={interval})")
+    guardian_log(f"[Fetch] 📊 Fetching {symbol} (period={period}, interval={interval})")
     try:
         data = api_get(
             f"markets/symbols/{symbol}/history",
@@ -303,8 +296,7 @@ def get_symbol_data(
         df.rename(
             columns={k: v for k, v in rename.items() if k in df.columns}, inplace=True
         )
-        df["timestamp"] = pd.to_datetime(
-            df["timestamp"], utc=True, errors="coerce")
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
         df = df[["timestamp", "open", "high", "low", "close", "volume"]]
         df.attrs = {
             "source": "astra_api",
@@ -400,16 +392,13 @@ def get_symbol_data(
                 "symbol": symbol,
                 "timestamp": datetime.now(timezone.utc),
             }
-            guardian_log(
-                f"[Fetch] 🔮 Predictive fallback generated for {symbol}")
+            guardian_log(f"[Fetch] 🔮 Predictive fallback generated for {symbol}")
             return df
     except Exception as pred_err:
-        guardian_log(
-            f"[Fetch] ⚠️ Forecast fallback failed for {symbol}: {pred_err}")
+        guardian_log(f"[Fetch] ⚠️ Forecast fallback failed for {symbol}: {pred_err}")
 
     # --- Last resort empty frame ---
-    df = pd.DataFrame(columns=["timestamp", "open",
-                      "high", "low", "close", "volume"])
+    df = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
     df.attrs = {
         "source": "error",
         "symbol": symbol,

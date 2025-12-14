@@ -1,3 +1,7 @@
+from guardian.guardian_v6 import Guardian
+
+g = Guardian()
+
 # -*- coding: utf-8 -*-
 """
 Astra Intelligence — Unified Fetch Core (API Native v7)
@@ -27,8 +31,7 @@ guardian = guardian_log()
 # ============================================================
 
 # Replace these with your actual API endpoints
-ASTRA_API_BASE = os.getenv(
-    "ASTRA_API_BASE", "https://api.astra-intelligence.io/v1")
+ASTRA_API_BASE = os.getenv("ASTRA_API_BASE", "https://api.astra-intelligence.io/v1")
 API_KEY = os.getenv("ASTRA_API_KEY", "YOUR_API_KEY_HERE")
 
 HEADERS = {"Authorization": f"Bearer {API_KEY}", "Accept": "application/json"}
@@ -56,8 +59,7 @@ def api_get(endpoint: str, params: dict = None, cache_key: str = None, ttl: int 
                     with open(cache_file, "r") as f:
                         return json.load(f)
                 except Exception:
-                    guardian.log(
-                        f"[Fetch] ⚠️ Cache read failed for {cache_key}")
+                    guardian.log(f"[Fetch] ⚠️ Cache read failed for {cache_key}")
 
     try:
         url = f"{ASTRA_API_BASE}/{endpoint.lstrip('/')}"
@@ -98,16 +100,14 @@ def get_market_overview(symbols=None):
             raise ValueError("Empty response from Astra API")
 
         df = pd.DataFrame(data.get("markets", []))
-        guardian.log(
-            f"[Fetch] ✅ Market overview fetched for {len(df)} symbols.")
+        guardian.log(f"[Fetch] ✅ Market overview fetched for {len(df)} symbols.")
         return df
     except Exception as e:
         guardian.log(f"[Fetch] ⚠️ Market overview fallback triggered: {e}")
         # Return minimal placeholder data
         return pd.DataFrame(
             [
-                {"symbol": "SPX", "price": 4500,
-                    "change": 0.1, "percentChange": 0.25},
+                {"symbol": "SPX", "price": 4500, "change": 0.1, "percentChange": 0.25},
                 {
                     "symbol": "NDX",
                     "price": 15500,
@@ -150,8 +150,7 @@ def get_symbol_data(symbol: str):
             df["date"] = pd.to_datetime(df["timestamp"], unit="s")
 
         df = df.rename(
-            columns={"o": "open", "h": "high",
-                     "l": "low", "c": "close", "v": "volume"}
+            columns={"o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"}
         )
 
         df = df[["date", "open", "high", "low", "close", "volume"]]

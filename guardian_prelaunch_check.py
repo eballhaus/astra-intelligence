@@ -1,5 +1,7 @@
 # guardian_prelaunch_check.py
-import os, sys, importlib
+import os
+import sys
+import importlib
 
 project_root = os.path.abspath(os.getcwd())
 if project_root not in sys.path:
@@ -52,4 +54,3 @@ for mod in required_modules:
 print("-----------------------------------")
 print("If no 🚨 items appear, Astra is ready to launch!\n")
 print("Next:  streamlit run astra_modules/ui/dashboard/tab_dashboard.py\n")
-

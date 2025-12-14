@@ -110,21 +110,29 @@ else:
     # 🧩 Final Confirmation
     # -------------------------------------------------------------------
     if guardian:
-        guardian.log("[Dashboard] ✅ Dashboard package initialized successfully (Streamlit-safe mode).")
-    print("[Dashboard] ✅ Dashboard package initialized successfully (Streamlit-safe mode).")
+        guardian.log(
+            "[Dashboard] ✅ Dashboard package initialized successfully (Streamlit-safe mode)."
+        )
+    print(
+        "[Dashboard] ✅ Dashboard package initialized successfully (Streamlit-safe mode)."
+    )
 
 # === Safe Mode Override Patch ===
 try:
     import builtins
+
     if getattr(builtins, "DASHBOARD_SAFE_MODE", None):
         builtins.DASHBOARD_SAFE_MODE = False
-        print("[DashboardCompat] ⚙️ Safe mode override: dashboard functions restored to normal mode.")
+        print(
+            "[DashboardCompat] ⚙️ Safe mode override: dashboard functions restored to normal mode."
+        )
 except Exception as e:
     print("[DashboardCompat] ⚠️ Failed to override safe mode:", e)
 
 # === Astra Dashboard Safe Mode Override ===
 try:
     import builtins
+
     # Disable global safe mode flag if set
     builtins.DASHBOARD_SAFE_MODE = False
 
@@ -134,7 +142,10 @@ try:
         dashboard_data,
         dashboard_cards,
     )
-    print("[DashboardCompat] 🧠 Safe mode override — restoring real dashboard functions.")
+
+    print(
+        "[DashboardCompat] 🧠 Safe mode override — restoring real dashboard functions."
+    )
 
     # Replace any None placeholders with the real ones
     builtins.render_sidebar = getattr(dashboard_sidebar, "render_sidebar", None)

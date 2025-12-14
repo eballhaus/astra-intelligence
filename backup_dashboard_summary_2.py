@@ -1,6 +1,7 @@
 from astra_core.guardian import guardian as guardian_log
-guardian = getattr(guardian_log, 'log', guardian_log)
-cat << 'EOF' > astra_modules/ui/dashboard/dashboard_summary.py
+
+guardian = getattr(guardian_log, "log", guardian_log)
+cat << "EOF" > astra_modules / ui / dashboard / dashboard_summary.py
 """
 Astra Intelligence — Market Overview (No yfinance)
 Fetches live market indices and BTC using public APIs.
@@ -9,6 +10,7 @@ Fetches live market indices and BTC using public APIs.
 import streamlit as st
 import requests
 from datetime import datetime
+
 
 # Simple caching to avoid constant network requests
 @st.cache_data(ttl=900)  # refresh every 15 minutes
@@ -111,4 +113,6 @@ def render_summary():
         f"Last updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>",
         unsafe_allow_html=True,
     )
+
+
 EOF

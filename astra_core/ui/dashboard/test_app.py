@@ -1,6 +1,6 @@
 from astra_core.guardian.guardian_v6 import guardian
 
-guardian = getattr(guardian_log, 'log', guardian_log)
+guardian = getattr(guardian_log, "log", guardian_log)
 
 import streamlit as st
 

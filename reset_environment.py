@@ -10,7 +10,6 @@ Run manually whenever Astra breaks.
 • Verifies fetch signatures
 """
 
-import os
 import shutil
 import sys
 import importlib
@@ -24,6 +23,7 @@ MOD_DIR = ROOT / "astra_modules"
 # ===============================================================
 # CLEAN .PYC + __pycache__
 # ===============================================================
+
 
 def clear_pycache():
     print("🧹 Clearing __pycache__ folders...")
@@ -41,6 +41,7 @@ def clear_pycache():
 # CLEAN IMPORT CACHE
 # ===============================================================
 
+
 def clear_import_cache():
     print("🔄 Clearing import cache...")
     for name in list(sys.modules.keys()):
@@ -53,6 +54,7 @@ def clear_import_cache():
 # ===============================================================
 # VALIDATE SIGNATURES
 # ===============================================================
+
 
 def run_guardian():
     print("🛡 Running environment guardian checks...")
@@ -68,6 +70,7 @@ def run_guardian():
 # ===============================================================
 # MASTER RESET FUNCTION
 # ===============================================================
+
 
 def reset_environment():
     print("\n==========================================")

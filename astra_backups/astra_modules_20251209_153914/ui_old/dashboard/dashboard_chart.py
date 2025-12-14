@@ -80,10 +80,8 @@ def render_chart(symbol: str, df: pd.DataFrame, height: int = 900):
                 base = df["close"].iloc[-1] if "close" in df.columns else 100.0
                 df[col] = base
 
-    df["timestamp"] = pd.to_datetime(
-        df["timestamp"], utc=True, errors="coerce")
-    df = df.dropna(subset=["timestamp"]).sort_values(
-        "timestamp").reset_index(drop=True)
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+    df = df.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
 
     # ============================================================
     # ✅ Step 3 — Handle single-row data (synthetic history)
@@ -260,8 +258,7 @@ def render_chart(symbol: str, df: pd.DataFrame, height: int = 900):
     # ============================================================
 
     if show_macd and "MACD" in df.columns and "MACD_Hist" in df.columns:
-        colors = ["#26a69a" if val >=
-                  0 else "#ef5350" for val in df["MACD_Hist"]]
+        colors = ["#26a69a" if val >= 0 else "#ef5350" for val in df["MACD_Hist"]]
         fig.add_trace(
             go.Bar(
                 x=df["timestamp"],
@@ -306,8 +303,7 @@ def render_chart(symbol: str, df: pd.DataFrame, height: int = 900):
         showlegend=True,
         hovermode="x unified",
         xaxis_rangeslider_visible=False,
-        legend=dict(orientation="h", yanchor="bottom",
-                    y=1.02, xanchor="right", x=1),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(l=40, r=40, t=60, b=40),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
@@ -319,10 +315,8 @@ def render_chart(symbol: str, df: pd.DataFrame, height: int = 900):
     fig.update_xaxes(title_text="Time", row=rows, col=1)
 
     # 🔧 FIX: Add explicit return statement so Streamlit can render
-    guardian_log(
-        f"[Chart] ✅ Rendered advanced chart for {symbol} ({len(df)} points)")
-    print(
-        f"[Chart Debug] Returning fig type: {type(fig)} with {len(fig.data)} traces")
+    guardian_log(f"[Chart] ✅ Rendered advanced chart for {symbol} ({len(df)} points)")
+    print(f"[Chart Debug] Returning fig type: {type(fig)} with {len(fig.data)} traces")
     return fig  # 🔧 FIX
 
 

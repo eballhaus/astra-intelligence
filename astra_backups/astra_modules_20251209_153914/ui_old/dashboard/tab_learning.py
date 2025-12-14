@@ -26,8 +26,7 @@ try:
     from astra_modules.learning.learning_engine import LearningEngine
     from astra_modules.learning.replay_buffer import ReplayBuffer
 except ImportError:
-    guardian_v7.guardian_log(
-        "⚠️ Learning modules not found — using safe mode.")
+    guardian_v7.guardian_log("⚠️ Learning modules not found — using safe mode.")
 
 
 def render_learning_tab():
@@ -55,8 +54,7 @@ def render_learning_tab():
             stats = engine.get_status()
             guardian.guardian_log("✅ LearningEngine connected.")
     except Exception as e:
-        guardian.guardian_log(
-            f"⚠️ LearningEngine unavailable: {e}", level="warning")
+        guardian.guardian_log(f"⚠️ LearningEngine unavailable: {e}", level="warning")
 
     cols = st.columns(3)
     with cols[0]:
@@ -65,8 +63,7 @@ def render_learning_tab():
         st.metric("Episodes", stats.get("episodes", "N/A"))
     with cols[2]:
         st.metric(
-            "Last Update", stats.get(
-                "last_update", datetime.now().strftime("%H:%M:%S"))
+            "Last Update", stats.get("last_update", datetime.now().strftime("%H:%M:%S"))
         )
 
     # --- Replay Buffer Overview ---
@@ -80,8 +77,7 @@ def render_learning_tab():
         )
     except Exception as e:
         df = pd.DataFrame()
-        guardian.guardian_log(
-            f"⚠️ ReplayBuffer unavailable: {e}", level="warning")
+        guardian.guardian_log(f"⚠️ ReplayBuffer unavailable: {e}", level="warning")
 
     if not df.empty:
         st.dataframe(df, use_container_width=True, height=300)

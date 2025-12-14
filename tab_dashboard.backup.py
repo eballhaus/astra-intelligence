@@ -15,13 +15,12 @@ import streamlit as st
 
 from astra_core.ui.dashboard.dashboard_cards import render_symbol_card
 from astra_core.ui.dashboard.dashboard_chart import render_chart
-from astra_core.ui.dashboard.dashboard_data import load_dashboard_data
 from astra_core.ui.dashboard.dashboard_summary import render_summary  # optional
 
 st.set_page_config(
     page_title="Astra Intelligence Dashboard",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
 
@@ -40,12 +39,14 @@ def app():
     symbols_input = st.sidebar.text_area(
         "Enter symbols (comma-separated):",
         value=", ".join(default_symbols),
-        help="Example: AAPL, MSFT, BTC/USD, ETH/USD"
+        help="Example: AAPL, MSFT, BTC/USD, ETH/USD",
     )
 
     symbols = [s.strip().upper() for s in symbols_input.split(",") if s.strip()]
 
-    refresh = st.sidebar.button("🔄 Refresh Data", help="Fetch latest market & forecast data")
+    refresh = st.sidebar.button(
+        "🔄 Refresh Data", help="Fetch latest market & forecast data"
+    )
 
     if not symbols:
         st.warning("Please enter at least one symbol to begin.")
@@ -62,7 +63,9 @@ def app():
         return
 
     if not data_bundles:
-        st.warning("No data available. Please check your API connections or symbol names.")
+        st.warning(
+            "No data available. Please check your API connections or symbol names."
+        )
         return
 
     # === Summary Section (Optional) ===
@@ -91,4 +94,3 @@ def app():
                 app()
             elif __name__ == "__main__":
                 app()
-

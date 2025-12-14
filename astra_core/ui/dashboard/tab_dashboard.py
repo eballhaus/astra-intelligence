@@ -18,6 +18,7 @@ render_summary = getattr(summary, "render_summary", None)
 
 # --- Guardian logging ---
 from astra_core.guardian.guardian_v6 import guardian_log
+
 guardian = guardian_log("Astra Dashboard initialized safely.")
 
 st.title("Astra Intelligence — Market Dashboard")
@@ -36,3 +37,30 @@ else:
     except Exception as e:
         guardian.log(f"Dashboard runtime error: {e}")
         st.error(f"Dashboard initialization failed: {e}")
+
+# --- Phase7 Compatibility Patch ---
+try:
+    from astra_core.ui.dashboard.tab_dashboard import render_tab as render_dashboard_tab
+except Exception:
+    def render_dashboard_tab(*args, **kwargs):
+        import streamlit as st; st.warning('⚠️ Dashboard tab temporarily unavailable.'); return None
+
+
+# --- Phase7.5 Dashboard Restoration ---
+def render_dashboard_tab():
+    """Phase-7.5 Streamlit Dashboard Renderer."""
+    import streamlit as st
+    from astra_core.guardian.guardian_v6 import GuardianV6
+
+    st.title("📊 Astra Intelligence — NeuralGlass Dashboard")
+    st.caption("Phase-7.5 | FastBoot Engine + Guardian V6 Active")
+
+    try:
+        guardian = GuardianV6()
+        status = getattr(guardian, "status", "Unknown")
+        st.success(f"Guardian Status: {status}")
+    except Exception as e:
+        st.warning(f"Guardian not fully initialized: {e}")
+
+    st.divider()
+    st.info("Overview: Data systems operational — awaiting live market data stream.")

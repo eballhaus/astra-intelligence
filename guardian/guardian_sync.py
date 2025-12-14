@@ -133,3 +133,21 @@ class GuardianSync:
 if __name__ == "__main__":
     sync = GuardianSync()
     sync.run()
+
+    # ---------------------------------------------------------------
+    # Astra Background Learning — Startup Hook
+    # ---------------------------------------------------------------
+    try:
+        from engine.background_loop import BackgroundLoop
+
+        # Safety: only start if no other BackgroundLoop thread is already running
+        if not any("BackgroundLoop" in str(t) for t in threading.enumerate()):
+            loop = BackgroundLoop(interval_minutes=10)
+            loop.start()
+            print("[Guardian Sync] ✅ Background learning loop started.")
+        else:
+            print(
+                "[Guardian Sync] ℹ️ Background loop already running — skipping duplicate start."
+            )
+    except Exception as e:
+        print(f"[Guardian Sync] ⚠️ Could not start background loop: {e}")

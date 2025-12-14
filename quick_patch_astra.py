@@ -8,7 +8,9 @@ tab_dashboard = root / "astra_core/ui/dashboard/tab_dashboard.py"
 if tab_dashboard.exists():
     txt = tab_dashboard.read_text()
     if "from astra_core.guardian import guardian as guardian" not in txt:
-        txt = txt.replace("import guardian", "from astra_core.guardian import guardian as guardian")
+        txt = txt.replace(
+            "import guardian", "from astra_core.guardian import guardian as guardian"
+        )
         if "from astra_core.guardian import guardian" not in txt:
             txt = "from astra_core.guardian import guardian as guardian\n" + txt
         tab_dashboard.write_text(txt)
@@ -18,9 +20,7 @@ if tab_dashboard.exists():
 sv = root / "astra_core/guardian/schema_validator.py"
 if not sv.exists():
     sv.write_text(
-        "# auto-generated fallback\n"
-        "def validate_schema(data):\n"
-        "    return True\n"
+        "# auto-generated fallback\n" "def validate_schema(data):\n" "    return True\n"
     )
     print("✅ Created schema_validator fallback")
 
@@ -36,4 +36,3 @@ if not fc.exists():
     print("✅ Created fetch_core fallback")
 
 print("✨ Quick-patch complete.")
-

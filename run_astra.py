@@ -26,7 +26,13 @@ climate = np.random.randn(30) * 0.5 + 20
 social = np.random.randn(30) * 0.3 + 10
 
 builder.tensor = pd.DataFrame(
-    {"date": dates, "market": market, "energy": energy, "climate": climate, "social": social}
+    {
+        "date": dates,
+        "market": market,
+        "energy": energy,
+        "climate": climate,
+        "social": social,
+    }
 ).set_index("date")
 
 print("📊 Data collected:", builder.tensor.head(2), "\n")
@@ -61,7 +67,7 @@ print("🛡️ Guardian check complete.\n")
 harmony = HarmonyScoreCalculator()
 score = harmony.compute_score(
     model_core.stability_index,
-    empathic_metrics=0.85  # placeholder for Empathic Framework result
+    empathic_metrics=0.85,  # placeholder for Empathic Framework result
 )
 
 print(f"🌍 Humanity & Planet Harmony Score: {score:.3f}")

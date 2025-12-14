@@ -16,13 +16,22 @@ data = fetch_unified(symbol)
 
 if isinstance(data, pd.DataFrame) and not data.empty:
     latest = data.iloc[-1]
-    open_p, high_p, low_p, close_p = latest["open"], latest["high"], latest["low"], latest["close"]
+    open_p, high_p, low_p, close_p = (
+        latest["open"],
+        latest["high"],
+        latest["low"],
+        latest["close"],
+    )
 
     # --- Derived values ---
     stop_loss = round(close_p * 0.95, 2)
     prediction = round(close_p * 1.05, 2)
     diff = round(((close_p - open_p) / open_p) * 100, 2)
-    sentiment = "🧠 Market momentum and positive sentiment detected." if diff > 0 else "⚠️ Weak momentum detected."
+    sentiment = (
+        "🧠 Market momentum and positive sentiment detected."
+        if diff > 0
+        else "⚠️ Weak momentum detected."
+    )
 
     # --- Display ---
     st.metric("💵 Price", f"${close_p:.2f}", f"{diff:+.2f}%")
@@ -34,4 +43,6 @@ if isinstance(data, pd.DataFrame) and not data.empty:
     # --- Chart ---
     st.line_chart(data[["open", "high", "low", "close"]])
 else:
-    st.error("❌ No data available. The internal fetch_unified() returned empty or invalid data.")
+    st.error(
+        "❌ No data available. The internal fetch_unified() returned empty or invalid data."
+    )

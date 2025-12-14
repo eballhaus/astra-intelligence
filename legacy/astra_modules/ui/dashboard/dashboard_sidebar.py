@@ -68,8 +68,7 @@ def render_sidebar():
 
         # Tabs / Navigation Options
         try:
-            tab_options = ["Overview", "Markets",
-                           "Crypto", "AI Insights", "Settings"]
+            tab_options = ["Overview", "Markets", "Crypto", "AI Insights", "Settings"]
             selected_tab = st.radio(
                 "Select Section:",
                 tab_options,

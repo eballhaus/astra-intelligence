@@ -57,8 +57,7 @@ else:
 
     for _mod in _submodules.keys():
         try:
-            _submodules[_mod] = importlib.import_module(
-                f".{_mod}", __package__)
+            _submodules[_mod] = importlib.import_module(f".{_mod}", __package__)
         except Exception as e:
             print(f"[Dashboard] ⚠️ Failed to import submodule {_mod}: {e}")
 

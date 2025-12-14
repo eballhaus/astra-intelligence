@@ -45,8 +45,7 @@ class PsychologyAgent:
                 return "No recent market data available; awaiting next session."
 
             closes = df["close"].astype(float)
-            change = closes.pct_change(
-            ).iloc[-1] * 100 if len(closes) > 1 else 0
+            change = closes.pct_change().iloc[-1] * 100 if len(closes) > 1 else 0
             vol = closes.pct_change().std() * 100
 
             # Determine sentiment zone

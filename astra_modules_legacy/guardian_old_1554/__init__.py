@@ -59,7 +59,6 @@ else:
     try:
         # Try a lightweight self-test (initializes Guardian)
         guardian = guardian.log()
-        guardian.log(
-            "[Guardian] ✅ guardian_log instance initialized via __init__.py")
+        guardian.log("[Guardian] ✅ guardian_log instance initialized via __init__.py")
     except Exception as e:
         print(f"[Guardian] ⚠️ guardian_log instance init failed: {e}")

@@ -22,8 +22,7 @@ import streamlit as st
 # 🔒 Guardian Integration
 # -------------------------------------------------------------------
 from astra_core.guardian.guardian_v6 import guardian_log
-from astra_core.ui.dashboard.dashboard_guardian import \
-    ensure_dashboard_integrity
+from astra_core.ui.dashboard.dashboard_guardian import ensure_dashboard_integrity
 
 guardian = guardian_log()
 guardian.log("[Dashboard] 🚀 Initializing Astra Intelligence Dashboard Tab...")
@@ -37,9 +36,13 @@ if "dashboard_checked" not in st.session_state:
 # 📦 Dashboard Imports
 # -------------------------------------------------------------------
 try:
-    from astra_core.ui.dashboard import (load_data, render_chart,
-                                         render_sidebar, render_summary,
-                                         render_symbol_card)
+    from astra_core.ui.dashboard import (
+        load_data,
+        render_chart,
+        render_sidebar,
+        render_summary,
+        render_symbol_card,
+    )
 except Exception as e:
     guardian.log(f"[Dashboard] 🚨 Failed to import dashboard components: {e}")
     st.error("⚠️ Dashboard components failed to load.")

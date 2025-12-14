@@ -65,8 +65,7 @@ try:
     guardian_v7.guardian_log("📡 TelemetryHub initialized successfully.")
 except Exception as e:
     telemetry = None
-    guardian_v7.guardian_log(
-        f"⚠️ TelemetryHub not available: {e}", level="warning")
+    guardian_v7.guardian_log(f"⚠️ TelemetryHub not available: {e}", level="warning")
 
 # ============================================================
 # 🚀 INITIALIZATION FUNCTIONS
@@ -77,10 +76,8 @@ def initialize_guardian():
     """Initialize GuardianV6 and perform startup checks."""
     try:
         guardian_instance = guardian_v7
-        guardian_v7.guardian_log(
-            "🔐 Guardian Startup Hook initialized successfully.")
-        guardian_v7.guardian_log(
-            f"📁 Guardian root directory: {guardian_v7.root_dir}")
+        guardian_v7.guardian_log("🔐 Guardian Startup Hook initialized successfully.")
+        guardian_v7.guardian_log(f"📁 Guardian root directory: {guardian_v7.root_dir}")
         guardian_v7.guardian_log(
             f"🧩 Guardian log file: {guardian_v7.GUARDIAN_LOG_PATH}"
         )
@@ -135,8 +132,7 @@ def run_startup_diagnostics():
         )
         return True
     except Exception as e:
-        guardian_v7.guardian_log(
-            f"❌ Guardian diagnostics failed: {e}", level="error")
+        guardian_v7.guardian_log(f"❌ Guardian diagnostics failed: {e}", level="error")
         traceback.print_exc()
         return False
 
@@ -159,8 +155,7 @@ def start_astra_system(heartbeat_interval: int = 300):
     """
     global guardian_engine, forecast_engine, _running
 
-    guardian_v7.guardian_log(
-        "🚀 Starting Astra Intelligence background systems...")
+    guardian_v7.guardian_log("🚀 Starting Astra Intelligence background systems...")
 
     try:
         # Initialize ForecastEngine if available
@@ -201,8 +196,7 @@ def start_astra_system(heartbeat_interval: int = 300):
             import threading
             import time
 
-            from astra_modules.guardian.alert_manager import \
-                GuardianAlertManager
+            from astra_modules.guardian.alert_manager import GuardianAlertManager
 
             def restart_guardian():
                 guardian_v7.guardian_log(
@@ -228,8 +222,7 @@ def start_astra_system(heartbeat_interval: int = 300):
                 name="GuardianAlertThread",
             ).start()
 
-            guardian_v7.guardian_log(
-                "🧠 GuardianAlertManager running in background.")
+            guardian_v7.guardian_log("🧠 GuardianAlertManager running in background.")
         except Exception as alert_err:
             guardian_v7.guardian_log(
                 f"⚠️ Failed to start AlertManager: {alert_err}", level="warning"
@@ -238,11 +231,9 @@ def start_astra_system(heartbeat_interval: int = 300):
 
         _running = True
         guardian_v7.guardian_log("🟢 Astra Intelligence runtime is now active.")
-        guardian_v7.guardian_log(
-            "──────────────────────────────────────────────")
+        guardian_v7.guardian_log("──────────────────────────────────────────────")
         guardian_v7.guardian_log("Press Ctrl+C to stop the system.")
-        guardian_v7.guardian_log(
-            "──────────────────────────────────────────────")
+        guardian_v7.guardian_log("──────────────────────────────────────────────")
 
         # Persistent health and telemetry loop
         last_heartbeat = 0
@@ -266,12 +257,10 @@ def start_astra_system(heartbeat_interval: int = 300):
             time.sleep(5)  # Main loop tick frequency
 
     except KeyboardInterrupt:
-        guardian_v7.guardian_log(
-            "🛑 Shutdown signal received.", level="warning")
+        guardian_v7.guardian_log("🛑 Shutdown signal received.", level="warning")
         shutdown_astra_system()
     except Exception as e:
-        guardian_v7.guardian_log(
-            f"❌ Fatal error in startup_hook: {e}", level="error")
+        guardian_v7.guardian_log(f"❌ Fatal error in startup_hook: {e}", level="error")
         traceback.print_exc()
         shutdown_astra_system()
 
@@ -315,8 +304,7 @@ def emit_heartbeat_summary():
             )
 
     except Exception as e:
-        guardian_v7.guardian_log(
-            f"⚠️ Heartbeat telemetry failed: {e}", level="warning")
+        guardian_v7.guardian_log(f"⚠️ Heartbeat telemetry failed: {e}", level="warning")
         traceback.print_exc()
 
 
@@ -336,8 +324,7 @@ def shutdown_astra_system():
             guardian_engine.stop()
             guardian_v7.guardian_log("✅ GuardianEngine stopped.")
     except Exception as e:
-        guardian_v7.guardian_log(
-            f"⚠️ Error during shutdown: {e}", level="warning")
+        guardian_v7.guardian_log(f"⚠️ Error during shutdown: {e}", level="warning")
         traceback.print_exc()
 
     guardian_v7.guardian_log("🟢 Astra Intelligence shutdown complete.")
@@ -349,13 +336,11 @@ def shutdown_astra_system():
 
 if __name__ == "__main__":
     guardian = initialize_guardian()
-    guardian.guardian_log(
-        "🚀 Guardian Startup Hook executing from main context.")
+    guardian.guardian_log("🚀 Guardian Startup Hook executing from main context.")
     diagnostics_passed = run_startup_diagnostics()
 
     if diagnostics_passed:
         # For testing, reduce heartbeat interval to 30 seconds
         start_astra_system(heartbeat_interval=300)
     else:
-        guardian.guardian_log(
-            "❌ Diagnostics failed — startup aborted.", level="error")
+        guardian.guardian_log("❌ Diagnostics failed — startup aborted.", level="error")

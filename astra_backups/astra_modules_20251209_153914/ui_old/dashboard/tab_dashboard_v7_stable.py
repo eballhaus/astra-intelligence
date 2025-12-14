@@ -85,8 +85,7 @@ except Exception:
     try:
         with open("astra_modules/ui/dashboard/astra_theme.css") as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-            guardian.log(
-                "[Theme] ✅ Loaded Astra theme from CSS file (fallback).")
+            guardian.log("[Theme] ✅ Loaded Astra theme from CSS file (fallback).")
     except Exception as css_err:
         guardian.log(f"[Theme] ⚠️ Failed to apply Astra theme: {css_err}")
 
@@ -121,8 +120,7 @@ try:
     aapl_data = load_data("AAPL")
 
     if (btc_data is None or btc_data.empty) and (aapl_data is None or aapl_data.empty):
-        guardian.log(
-            "[Dashboard] ⚠️ Both BTC/USD and AAPL datasets returned empty.")
+        guardian.log("[Dashboard] ⚠️ Both BTC/USD and AAPL datasets returned empty.")
         st.info("ℹ️ Using offline fallback data for visualization.")
 except Exception as e:
     guardian.log(f"[Dashboard] ⚠️ Failed to preload key symbol data: {e}")
@@ -152,8 +150,7 @@ try:
 
     # --- Symbol Lists ---
     stock_symbols = ["AAPL", "MSFT", "NVDA", "AMZN", "TSLA", "GOOGL"]
-    crypto_symbols = ["BTC/USD", "ETH/USD",
-                      "SOL/USD", "ADA/USD", "XRP/USD", "DOGE/USD"]
+    crypto_symbols = ["BTC/USD", "ETH/USD", "SOL/USD", "ADA/USD", "XRP/USD", "DOGE/USD"]
 
     # --- Three columns ---
     col_stocks, col_crypto, col_future = st.columns([1, 1, 1])
@@ -183,8 +180,7 @@ try:
                 with st.container():
                     render_symbol_card(symbol, df)
             except Exception as e:
-                guardian.log(
-                    f"[Dashboard] ⚠️ Stock card render issue: {symbol} — {e}")
+                guardian.log(f"[Dashboard] ⚠️ Stock card render issue: {symbol} — {e}")
                 st.warning(f"⚠️ {symbol} data unavailable.")
         # Wrap all cards into scrollable HTML zone
         components.html(SCROLL_WRAPPER.format(content=""), height=580)
@@ -199,8 +195,7 @@ try:
                 with st.container():
                     render_symbol_card(symbol, df)
             except Exception as e:
-                guardian.log(
-                    f"[Dashboard] ⚠️ Crypto card render issue: {symbol} — {e}")
+                guardian.log(f"[Dashboard] ⚠️ Crypto card render issue: {symbol} — {e}")
                 st.warning(f"⚠️ {symbol} data unavailable.")
         components.html(SCROLL_WRAPPER.format(content=""), height=580)
 

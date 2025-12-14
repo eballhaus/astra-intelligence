@@ -75,8 +75,7 @@ def render_sidebar() -> str:
 
         selected_tab = "Overview"
         try:
-            tab_options = ["Overview", "Markets",
-                           "Crypto", "AI Insights", "Settings"]
+            tab_options = ["Overview", "Markets", "Crypto", "AI Insights", "Settings"]
             selected_tab = st.radio(
                 "Select Section:",
                 tab_options,
@@ -106,8 +105,7 @@ def render_sidebar() -> str:
                 # Numeric safety checks
                 for col in ["Price", "Change", "PercentChange"]:
                     if col in df.columns:
-                        df[col] = pd.to_numeric(
-                            df[col], errors="coerce").fillna(0.0)
+                        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
                 # Render overview safely
                 for _, row in df.iterrows():

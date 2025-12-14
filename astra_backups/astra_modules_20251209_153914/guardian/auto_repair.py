@@ -84,8 +84,7 @@ class GuardianAutoRepair:
             backup_path = os.path.join(self.backup_dir, os.path.basename(path))
             if os.path.exists(backup_path):
                 shutil.copy(backup_path, path)
-                self.repair_log.append(
-                    {"file": path, "action": "restored_from_backup"})
+                self.repair_log.append({"file": path, "action": "restored_from_backup"})
                 return True
             else:
                 # Make a temporary "disabled" version instead of failing

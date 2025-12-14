@@ -65,8 +65,7 @@ def safe_import(module_name):
 
 def _log_import_result(entry):
     """Save import diagnostics to guardian_import_log.json"""
-    log_path = os.path.join("astra_modules", "guardian",
-                            "guardian_import_log.json")
+    log_path = os.path.join("astra_modules", "guardian", "guardian_import_log.json")
     logs = []
 
     if os.path.exists(log_path):

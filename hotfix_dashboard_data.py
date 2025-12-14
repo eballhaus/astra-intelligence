@@ -29,32 +29,32 @@ def create_realistic_fallback(symbol, price):
     """Create realistic fallback data with proper source attribution"""
     from datetime import datetime, timezone
     import pandas as pd
-    
+
     timestamp = datetime.now(timezone.utc)
-    
+
     # Realistic price movement
     variation = price * 0.002  # 0.2% variation
     open_price = price - variation
     high_price = price + variation
     low_price = price - (variation * 0.7)
-    
+
     data = {
-        'timestamp': [timestamp],
-        'open': [open_price],
-        'high': [high_price],
-        'low': [low_price],
-        'close': [price],
-        'volume': [500000 + hash(symbol) % 1000000]  # Unique volume
+        "timestamp": [timestamp],
+        "open": [open_price],
+        "high": [high_price],
+        "low": [low_price],
+        "close": [price],
+        "volume": [500000 + hash(symbol) % 1000000],  # Unique volume
     }
-    
+
     df = pd.DataFrame(data)
-    
+
     # CRITICAL: Set the correct source attribute
-    df.attrs['source'] = 'real_market_fallback'
-    df.attrs['symbol'] = symbol
-    df.attrs['price'] = price
-    df.attrs['is_realistic'] = True
-    
+    df.attrs["source"] = "real_market_fallback"
+    df.attrs["symbol"] = symbol
+    df.attrs["price"] = price
+    df.attrs["is_realistic"] = True
+
     return df
 
 
@@ -120,7 +120,9 @@ def hotfix_market_data(symbol: str, *args, **kwargs) -> pd.DataFrame:
         guardian_log(f"[Hotfix] ⚠️ Backend API failed for {symbol}: {e}")
 
     # 🔹 4. Fallback to realistic static price
-    guardian_log(f"[Hotfix] ⚠️ All sources failed, using realistic fallback for {symbol}")
+    guardian_log(
+        f"[Hotfix] ⚠️ All sources failed, using realistic fallback for {symbol}"
+    )
     realistic_prices = {
         "AAPL": 195.50,
         "MSFT": 420.75,

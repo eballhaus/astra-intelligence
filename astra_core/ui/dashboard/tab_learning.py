@@ -17,7 +17,6 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # --- Guardian Import ---
-from astra_core.guardian.guardian_v6 import guardian
 
 
 # Optional imports for learning systems
@@ -61,13 +60,19 @@ def render_learning_tab():
     with cols[1]:
         st.metric("Episodes", stats.get("episodes", "N/A"))
     with cols[2]:
-        st.metric("Last Update", stats.get("last_update", datetime.now().strftime("%H:%M:%S")))
+        st.metric(
+            "Last Update", stats.get("last_update", datetime.now().strftime("%H:%M:%S"))
+        )
 
     # --- Replay Buffer Overview ---
     st.subheader("🧩 Replay Buffer Overview")
     try:
         buffer = ReplayBuffer()
-        df = pd.DataFrame(buffer.sample(10)) if hasattr(buffer, "sample") else pd.DataFrame()
+        df = (
+            pd.DataFrame(buffer.sample(10))
+            if hasattr(buffer, "sample")
+            else pd.DataFrame()
+        )
     except Exception as e:
         df = pd.DataFrame()
         guardian.guardian.log(f"⚠️ ReplayBuffer unavailable: {e}", level="warning")

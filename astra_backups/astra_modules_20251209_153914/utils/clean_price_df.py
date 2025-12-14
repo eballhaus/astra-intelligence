@@ -41,8 +41,7 @@ def drop_invalid_rows(df: pd.DataFrame) -> pd.DataFrame:
 def sort_and_index(df: pd.DataFrame) -> pd.DataFrame:
     """Sort chronologically and set index to datetime."""
     # Try to find a date column:
-    date_cols = [c for c in df.columns if "date" in c.lower()
-                 or "time" in c.lower()]
+    date_cols = [c for c in df.columns if "date" in c.lower() or "time" in c.lower()]
     if date_cols:
         col = date_cols[0]
         df[col] = pd.to_datetime(df[col], errors="coerce")

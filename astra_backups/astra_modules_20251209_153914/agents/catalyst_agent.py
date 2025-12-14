@@ -39,6 +39,5 @@ class CatalystAgent(BaseAgent):
 
     def predict(self, x=None):
         """Temporary calibration stub."""
-        self.g_log(
-            f"[{self.__class__.__name__}] Predict placeholder executed.")
+        self.g_log(f"[{self.__class__.__name__}] Predict placeholder executed.")
         return 0.5

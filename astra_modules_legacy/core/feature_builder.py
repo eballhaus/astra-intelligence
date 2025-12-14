@@ -44,14 +44,11 @@ class FeatureBuilder:
             close.pct_change()
 
             # ROC — Rate of Change
-            roc_5 = self.safe(
-                (close.iloc[-1] - close.iloc[-6]) / close.iloc[-6])
-            roc_10 = self.safe(
-                (close.iloc[-1] - close.iloc[-11]) / close.iloc[-11])
+            roc_5 = self.safe((close.iloc[-1] - close.iloc[-6]) / close.iloc[-6])
+            roc_10 = self.safe((close.iloc[-1] - close.iloc[-11]) / close.iloc[-11])
 
             # Price slope over 10 periods
-            slope = np.polyfit(range(len(close.tail(10))),
-                               close.tail(10), 1)[0]
+            slope = np.polyfit(range(len(close.tail(10))), close.tail(10), 1)[0]
             slope_norm = slope / close.iloc[-1]
 
         except Exception:
@@ -120,8 +117,7 @@ class FeatureBuilder:
         """Volume spikes."""
         try:
             vol = df["volume"]
-            vol_norm = self.safe(
-                vol.iloc[-1] / vol.rolling(20).mean().iloc[-1])
+            vol_norm = self.safe(vol.iloc[-1] / vol.rolling(20).mean().iloc[-1])
         except Exception:
             vol_norm = 1.0
 

@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import numpy as np
 
 from astra_modules.agents.catalyst_agent import CatalystAgent
+
 # ---- import your real agents here ----
 from astra_modules.agents.momentum_agent import MomentumAgent
 from astra_modules.agents.neural_agent import NeuralAgent
@@ -34,10 +35,8 @@ def main():
         CatalystAgent(),
     ]
 
-    tracker_path = os.path.join(
-        "astra_modules", "learning", "performance_tracker.json")
-    log_path = os.path.join("astra_modules", "logs",
-                            "fusion_calibration_log.json")
+    tracker_path = os.path.join("astra_modules", "learning", "performance_tracker.json")
+    log_path = os.path.join("astra_modules", "logs", "fusion_calibration_log.json")
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
     # --- simple synthetic ground truth for demo ---
@@ -51,8 +50,7 @@ def main():
             preds = np.array(preds) > 0.5
             acc = float(np.mean(preds == y_true))
             var = float(np.var(preds))
-            results[agent.__class__.__name__] = {
-                "accuracy": acc, "variance": var}
+            results[agent.__class__.__name__] = {"accuracy": acc, "variance": var}
             print(f"✅ {agent.__class__.__name__}: acc={acc:.3f}, var={var:.3f}")
         except Exception as e:
             print(f"⚠️ {agent.__class__.__name__} failed: {e}")
@@ -94,8 +92,9 @@ def main():
 
     # === Guardian Fusion Optimizer Auto-Integration ===
     try:
-        from astra_modules.learning.guardian_fusion_optimizer import \
-            GuardianFusionOptimizer
+        from astra_modules.learning.guardian_fusion_optimizer import (
+            GuardianFusionOptimizer,
+        )
 
         optimizer = GuardianFusionOptimizer()
         optimized_output = optimizer.optimize(fusion_output)

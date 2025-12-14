@@ -200,8 +200,7 @@ def check_data_freshness_with_age(df: pd.DataFrame, symbol: str) -> Tuple[bool, 
             return (False, 999999)
 
         # Normalize timestamp dtype
-        df["timestamp"] = pd.to_datetime(
-            df["timestamp"], utc=True, errors="coerce")
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
         last_timestamp = df["timestamp"].max()
         if pd.isna(last_timestamp):
             return (False, 999999)
@@ -216,8 +215,7 @@ def check_data_freshness_with_age(df: pd.DataFrame, symbol: str) -> Tuple[bool, 
         return (is_fresh, age_seconds)
 
     except Exception as e:
-        guardian_log(
-            f"[DashboardCards] ⚠️ Freshness check error for {symbol}: {e}")
+        guardian_log(f"[DashboardCards] ⚠️ Freshness check error for {symbol}: {e}")
         return (False, 999999)
 
 
@@ -263,8 +261,7 @@ def render_symbol_card(
                     )
                     df.attrs["source"] = "astra_api_live"
                     df.attrs["timestamp"] = datetime.utcnow()
-                    is_fresh, age_seconds = check_data_freshness_with_age(
-                        df, symbol)
+                    is_fresh, age_seconds = check_data_freshness_with_age(df, symbol)
                     st.experimental_rerun()
                 else:
                     guardian_log(

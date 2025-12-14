@@ -1,6 +1,6 @@
 from astra_core.guardian.guardian_v6 import guardian
 
-guardian = getattr(guardian_log, 'log', guardian_log)
+guardian = getattr(guardian_log, "log", guardian_log)
 
 """
 Astra Intelligence — Predictions Tab
@@ -17,8 +17,7 @@ import streamlit as st
 def render_predictions_tab() -> None:
     """Render Astra Intelligence predictions display."""
     st.markdown("## 💡 Predictions Overview")
-    st.markdown(
-        "Displays current model predictions, signals, and confidence levels.")
+    st.markdown("Displays current model predictions, signals, and confidence levels.")
 
     # Placeholder demo data
     data = {
@@ -36,5 +35,4 @@ def render_predictions_tab() -> None:
     )
 
     st.markdown("---")
-    st.caption(
-        "Model predictions refreshed dynamically by NeuralAgent micro-model.")
+    st.caption("Model predictions refreshed dynamically by NeuralAgent micro-model.")

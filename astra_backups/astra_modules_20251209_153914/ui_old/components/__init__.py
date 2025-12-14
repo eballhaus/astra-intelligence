@@ -2,8 +2,7 @@
 
 from .hover_summary import render_hover_summary
 from .mini_chart import render_mini_chart
-from .score_bars import (render_buy_bar, render_safety_bar,
-                         render_volatility_bar)
+from .score_bars import render_buy_bar, render_safety_bar, render_volatility_bar
 from .ticker_card import render_ticker_card
 
 __all__ = [

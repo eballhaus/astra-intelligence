@@ -1,3 +1,7 @@
+from guardian.guardian_v6 import Guardian
+
+g = Guardian()
+
 """
 Astra 7.0 - ETF Data Fetcher (Phase 45)
 ---------------------------------------
@@ -9,10 +13,8 @@ Fallback order:
 
 import pandas as pd
 
-from astra_core.api_keys import (ALPHA_VANTAGE_API_KEY, EODHD_API_KEY,
-                                 FMP_API_KEY)
-from astra_core.utils.safe_api_wrapper import safe_api_call
-from astra_core.utils.safe_df import safe_df
+from utils.safe_api_wrapper import safe_api_call
+from utils.safe_df import safe_df
 
 
 def _convert(records):
@@ -22,8 +24,7 @@ def _convert(records):
     df = pd.DataFrame(records)
 
     df.rename(
-        columns={"date": "timestamp",
-                 "datetime": "timestamp", "time": "timestamp"},
+        columns={"date": "timestamp", "datetime": "timestamp", "time": "timestamp"},
         inplace=True,
     )
 
@@ -44,13 +45,13 @@ def _convert(records):
 # Alpha Vantage
 # -------------------------------------------------------
 def fetch_alpha_vantage_etf(symbol, interval="60min"):
-    if not ALPHA_VANTAGE_API_KEY:
+    if not ALPHAVANTAGE_API_KEY:
         return pd.DataFrame()
 
     url = (
         f"https://www.alphavantage.co/query?"
         f"function=TIME_SERIES_INTRADAY&symbol={symbol}&interval={interval}"
-        f"&outputsize=full&apikey={ALPHA_VANTAGE_API_KEY}"
+        f"&outputsize=full&apikey={ALPHAVANTAGE_API_KEY}"
     )
 
     def run():
@@ -84,12 +85,9 @@ def fetch_alpha_vantage_etf(symbol, interval="60min"):
 # FMP
 # -------------------------------------------------------
 def fetch_fmp_etf(symbol, interval="1hour"):
-    if not FMP_API_KEY:
         return pd.DataFrame()
 
-    url = (
-        f"https://financialmodelingprep.com/api/v3/historical-chart/"
-        f"{interval}/{symbol}?apikey={FMP_API_KEY}"
+url = (
     )
 
     def run():

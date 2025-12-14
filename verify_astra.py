@@ -12,7 +12,6 @@ This script:
 import os
 import sys
 import json
-import time
 import compileall
 from pathlib import Path
 from datetime import datetime
@@ -113,7 +112,9 @@ def verify_data_files():
 
 
 def main():
-    print(f"\n🧠 Astra Intelligence – Preflight Check ({datetime.now():%Y-%m-%d %H:%M:%S})")
+    print(
+        f"\n🧠 Astra Intelligence – Preflight Check ({datetime.now():%Y-%m-%d %H:%M:%S})"
+    )
     print("------------------------------------------------------------")
     print("🔍 Running incremental syntax verification...")
 
@@ -133,9 +134,10 @@ def main():
 
     print("✅ Astra environment verified successfully.")
     print("🚀 Ready to launch Streamlit:  poetry run streamlit run app.py")
-    guardian.log_event("preflight_complete", "Incremental verification finished successfully.")
+    guardian.log_event(
+        "preflight_complete", "Incremental verification finished successfully."
+    )
 
 
 if __name__ == "__main__":
     main()
-

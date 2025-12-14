@@ -1,16 +1,25 @@
+from guardian.guardian_v6 import Guardian
+
+g = Guardian()
+
 """
 Astra 7.0 - Crypto Fetcher (Phase 45)
 ------------------------------------
-Fallback:
-    1. Moralis
-    2. CoinGecko
+Source:
+    Moralis v2.2 (Primary)
+Notes:
+    - Removed CoinGecko fallback
+    - Integrated Guardian for rate tracking and logging
+    - Uses safe_api_call() and safe_df() wrappers
 """
 
 import pandas as pd
+import requests
 
-from astra_core.api_keys import MORALIS_API_KEY
-from astra_core.utils.safe_api_wrapper import safe_api_call
-from astra_core.utils.safe_df import safe_df
+from api_keys import MORALIS_API_KEY
+from utils.safe_api_wrapper import safe_api_call
+from utils.safe_df import safe_df
+from guardian.guardian_v6 import Guardian
 
 
 def _to_df_ohlcv(records):
@@ -31,8 +40,7 @@ def _to_df_ohlcv(records):
     )
 
     if "timestamp" in df:
-        df["timestamp"] = pd.to_datetime(
-            df["timestamp"], unit="ms", errors="coerce")
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", errors="coerce")
 
     for c in ["open", "high", "low", "close", "volume"]:
         if c in df:
@@ -44,11 +52,19 @@ def _to_df_ohlcv(records):
 
 
 # -------------------------------------------------------
-# Moralis
+# Moralis v2.2
 # -------------------------------------------------------
 def fetch_moralis(symbol, interval="1h"):
+    """
+    Fetch OHLCV data from Moralis v2.2
+    Example:
+        https://deep-index.moralis.io/api/v2.2/eth/market-data/ohlcv
+    """
     if not MORALIS_API_KEY:
         return pd.DataFrame()
+
+    g = Guardian()
+    g.api_ping("Moralis")
 
     token = symbol.lower()
     res_map = {
@@ -62,61 +78,35 @@ def fetch_moralis(symbol, interval="1h"):
     }
     resolution = res_map.get(interval, "60")
 
-    url = (
-        f"https://deep-index.moralis.io/api/v2/market-data/ohlcv/"
-        f"{token}/usd?resolution={resolution}&limit=5000"
-    )
-
+    url = f"https://deep-index.moralis.io/api/v2.2/eth/market-data/ohlcv/{token}/usd"
+    params = {"resolution": resolution, "limit": 5000}
     headers = {"X-API-Key": MORALIS_API_KEY}
 
-    r = safe_api_call(url)
-    if not r or "result" not in r:
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        response.raise_for_status()
+        r = response.json()
+    except Exception as e:
+        g.log_error("Moralis", str(e))
         return pd.DataFrame()
 
-    records = r["result"].get("data", [])
+    if not r or "result" not in r or "data" not in r["result"]:
+        g.log_error("Moralis", "Empty or invalid response")
+        return pd.DataFrame()
+
+    records = r["result"]["data"]
     return _to_df_ohlcv(records)
-
-
-# -------------------------------------------------------
-# CoinGecko (backup)
-# -------------------------------------------------------
-def fetch_coingecko(symbol, interval="1h"):
-    token = symbol.lower()
-
-    days_map = {"1m": 1, "5m": 1, "15m": 1,
-                "30m": 1, "1h": 2, "4h": 4, "1d": 7}
-    days = days_map.get(interval, 2)
-
-    url = f"https://api.coingecko.com/api/v3/coins/{token}/ohlc?vs_currency=usd&days={days}"
-
-    r = safe_api_call(url)
-    if not isinstance(r, list):
-        return pd.DataFrame()
-
-    rows = []
-    for row in r:
-        if len(row) == 5:
-            rows.append(
-                {
-                    "timestamp": row[0],
-                    "open": row[1],
-                    "high": row[2],
-                    "low": row[3],
-                    "close": row[4],
-                    "volume": None,
-                }
-            )
-
-    return _to_df_ohlcv(rows)
 
 
 # -------------------------------------------------------
 # Unified
 # -------------------------------------------------------
 def fetch_crypto(symbol, interval="1h"):
-    for provider in [fetch_moralis, fetch_coingecko]:
-        df = provider(symbol, interval)
-        if df is not None and not df.empty:
-            return safe_df(df)
-
+    """
+    Unified crypto fetcher (Moralis only).
+    Returns a safe DataFrame with OHLCV data.
+    """
+    df = fetch_moralis(symbol, interval)
+    if df is not None and not df.empty:
+        return safe_df(df)
     return pd.DataFrame()

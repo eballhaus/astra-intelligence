@@ -36,8 +36,7 @@ def render_system_health():
     """Render the system health dashboard for Guardian + Integrity."""
     base_path = os.path.dirname(__file__)
     guardian_log = os.path.join(base_path, "../../guardian_v6.log")
-    repair_log = os.path.join(
-        base_path, "../../astra_logs/integrity_repairs.log")
+    repair_log = os.path.join(base_path, "../../astra_logs/integrity_repairs.log")
 
     st.title("🛡️ Astra System Health Monitor")
     st.caption("Phase-90 • GuardianV6 + IntegrityBuilder Status")
@@ -47,8 +46,7 @@ def render_system_health():
     # ----------------------------------------------------------------
     st.subheader("GuardianV6 Status")
     guardian_lines = read_last_lines(guardian_log, 10)
-    guardian_active = any(
-        "GuardianV6 initialized" in l for l in guardian_lines)
+    guardian_active = any("GuardianV6 initialized" in l for l in guardian_lines)
     last_guardian_event = (
         guardian_lines[-1].strip() if guardian_lines else "No log entries"
     )
@@ -67,15 +65,13 @@ def render_system_health():
     repair_lines = read_last_lines(repair_log, 15)
     total_repairs, last_repair = parse_repair_log(repair_lines)
     last_run = next(
-        (l for l in reversed(repair_lines)
-         if "Integrity Builder phase complete" in l),
+        (l for l in reversed(repair_lines) if "Integrity Builder phase complete" in l),
         None,
     )
 
     col3, col4 = st.columns(2)
     col3.metric("Repairs Performed", total_repairs)
-    col4.metric("Last Repair Activity",
-                last_run or "No recent integrity checks")
+    col4.metric("Last Repair Activity", last_run or "No recent integrity checks")
 
     with st.expander("📋 View Integrity Log"):
         st.text("\n".join(repair_lines))

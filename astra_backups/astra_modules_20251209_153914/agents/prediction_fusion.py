@@ -18,8 +18,7 @@ class PredictionFusionV2:
         )
         self.weights = self._load_weights()
         if self.guardian:
-            self.guardian._write_log(
-                "🧠 PredictionFusionV2 (weighted) initialized.")
+            self.guardian._write_log("🧠 PredictionFusionV2 (weighted) initialized.")
 
     def _load_weights(self):
         try:

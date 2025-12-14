@@ -30,8 +30,7 @@ def log(msg: str):
 def check_git_sync():
     try:
         local = subprocess.check_output(["git", "rev-parse", "HEAD"]).strip()
-        remote = subprocess.check_output(
-            ["git", "rev-parse", "origin/main"]).strip()
+        remote = subprocess.check_output(["git", "rev-parse", "origin/main"]).strip()
         if local != remote:
             log(f"⚠️  Git mismatch: local {local[:7]} vs remote {remote[:7]}")
         else:

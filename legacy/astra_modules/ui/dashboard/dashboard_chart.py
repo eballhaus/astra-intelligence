@@ -36,8 +36,7 @@ def render_chart(df: pd.DataFrame, symbol: str = ""):
         # Normalize date/time columns (prevents 'date' key errors)
         # ──────────────────────────────────────────
         possible_date_cols = ["date", "timestamp", "Datetime", "time", "Date"]
-        found_date_col = next(
-            (c for c in possible_date_cols if c in df.columns), None)
+        found_date_col = next((c for c in possible_date_cols if c in df.columns), None)
 
         if not found_date_col:
             st.warning("⚠️ No date or timestamp column found in data.")
@@ -115,8 +114,7 @@ def render_chart(df: pd.DataFrame, symbol: str = ""):
                 y=df["ma_slow"],
                 mode="lines",
                 name="MA30",
-                line=dict(width=1.2, dash="dot",
-                          color="rgba(255,255,255,0.3)"),
+                line=dict(width=1.2, dash="dot", color="rgba(255,255,255,0.3)"),
             )
         )
         fig.add_trace(
@@ -240,8 +238,7 @@ def render_chart(df: pd.DataFrame, symbol: str = ""):
             yaxis=dict(
                 title="Price", color="#E5E7EB", gridcolor="rgba(255,255,255,0.05)"
             ),
-            yaxis2=dict(overlaying="y", side="right",
-                        showgrid=False, color="#14B8A6"),
+            yaxis2=dict(overlaying="y", side="right", showgrid=False, color="#14B8A6"),
             yaxis3=dict(
                 title="RSI",
                 overlaying="y",
@@ -290,8 +287,7 @@ def render_chart(df: pd.DataFrame, symbol: str = ""):
             ),
         )
 
-        st.plotly_chart(fig, use_container_width=True,
-                        config={"displayModeBar": False})
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         return fig
 
     except Exception as e:

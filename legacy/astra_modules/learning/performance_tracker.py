@@ -64,8 +64,7 @@ class PerformanceTracker:
     def record_training_result(self, loss: float):
         """Log a training result entry."""
         try:
-            entry = {"timestamp": datetime.utcnow().isoformat(),
-                     "loss": float(loss)}
+            entry = {"timestamp": datetime.utcnow().isoformat(), "loss": float(loss)}
             self.data["training_log"].append(entry)
             self.data["training_log"] = self.data["training_log"][-200:]
             self._save()

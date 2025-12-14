@@ -1,96 +1,121 @@
-import sys, os
-import pandas as pd
-import importlib.util
+import os, requests, pandas as pd, datetime as dt
 
-# === Ensure legacy alias for astra_modules is active ===
-LEGACY_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../astra_modules_backup_20251130_1720"))
-if os.path.exists(LEGACY_PATH) and "astra_modules" not in sys.modules:
-    sys.path.append(LEGACY_PATH)
-    spec_path = os.path.join(LEGACY_PATH, "__init__.py")
-    spec = importlib.util.spec_from_file_location("astra_modules", spec_path) if os.path.exists(spec_path) else None
-    astra_modules = importlib.util.module_from_spec(spec) if spec else None
-    if spec and astra_modules:
-        sys.modules["astra_modules"] = astra_modules
-        print("[FetchBridge] ✅ 'astra_modules' alias registered for astra_modules_backup_20251130_1720")
+# =====================================================
+# Astra Intelligence — FetchCore v7.8 (Full 6-Source Live)
+# =====================================================
 
-# --- Bridge: use advanced Astra unified fetch system ---
-try:
-#     import fetch_core.fetch_unified as fetch_unified
-    print("[FetchBridge] ✅ Advanced fetch_unified module loaded successfully.")
-except Exception as e:
-    print("[FetchBridge] ⚠️ Advanced fetcher import failed:", e)
-    # --- fallback: basic local fetcher ---
-    def get_symbol_data(self, symbol):
-        data = yf.download(symbol, period="5d", interval="1h", progress=False)
-        return data.reset_index()
-#     fetch_unified = FetchUnified()
-class FetchUnified:
-    def get_symbol_data(self, symbol):
-        data = yf.download(symbol, period="5d", interval="1h", progress=False)
-        return data.reset_index()
-#     fetch_unified = FetchUnified()
+def fetch_unified(symbol: str, interval: str = "1h", limit: int = 100):
+    symbol = symbol.upper()
+    df, used = None, []
+    def ok(v): return v and str(v).strip().lower() not in ["none", "null", ""]
 
-# ======================================================================
-# Internal offline data generator for Astra Intelligence
-# (Replaces all external finance dependencies)
-# ======================================================================
-import random
-import pandas as pd
-from datetime import datetime, timedelta
+    # --- 1️⃣ TwelveData ---
+    if ok(os.getenv("TWELVEDATA_KEY")):
+        try:
+            r = requests.get("https://api.twelvedata.com/time_series",
+                             params={"symbol": symbol, "interval": interval, "apikey": os.getenv("TWELVEDATA_KEY")},
+                             timeout=10)
+            j = r.json()
+            if "values" in j:
+                df = pd.DataFrame(j["values"])
+                df.columns = [c.lower() for c in df.columns]
+                df["datetime"] = pd.to_datetime(df["datetime"])
+                df["symbol"] = symbol
+                used.append("TwelveData")
+        except Exception as e:
+            print(f"[FetchCore] ⚠️ TwelveData: {e}")
 
-class FetchUnified:
-    def get_symbol_data(self, symbol: str):
-        """
-        Internal fallback data generator for Astra Intelligence.
-        Generates synthetic OHLC data when no live datafeed is connected.
-        """
-        now = datetime.utcnow()
-        data = []
-        base_price = 100 + random.random() * 50
-        for i in range(20):
-            open_p = base_price + random.uniform(-2, 2)
-            high_p = open_p + random.uniform(0, 3)
-            low_p = open_p - random.uniform(0, 3)
-            close_p = random.choice([high_p, low_p, open_p])
-            data.append({
-                "datetime": now - timedelta(hours=20 - i),
-                "open": round(open_p, 2),
-                "high": round(high_p, 2),
-                "low": round(low_p, 2),
-                "close": round(close_p, 2)
-            })
-        df = pd.DataFrame(data)
-        return df
+    # --- 2️⃣ FMP Realtime Quote ---
+    if df is None and ok(os.getenv("FMP_KEY")):
+        try:
+            url = f"https://financialmodelingprep.com/api/v3/quote/{symbol}?apikey={os.getenv('FMP_KEY')}"
+            r = requests.get(url, timeout=10)
+            j = r.json()
+            if isinstance(j, list) and len(j) > 0:
+                q = j[0]
+                df = pd.DataFrame([{
+                    "datetime": dt.datetime.now(),
+                    "open": q.get("open"), "high": q.get("dayHigh"),
+                    "low": q.get("dayLow"), "close": q.get("price"),
+                    "volume": q.get("volume"), "symbol": symbol
+                }])
+                used.append("FMP (Realtime)")
+        except Exception as e:
+            print(f"[FetchCore] ⚠️ FMP: {e}")
 
-    """Fallback stub for fetch_unified to allow dashboard to run."""
-    return None
+    # --- 3️⃣ Finnhub ---
+    if df is None and ok(os.getenv("FINNHUB_KEY")):
+        try:
+            r = requests.get(f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={os.getenv('FINNHUB_KEY')}", timeout=10)
+            j = r.json()
+            if "c" in j:
+                df = pd.DataFrame([{
+                    "datetime": dt.datetime.now(),
+                    "open": j.get("o"), "high": j.get("h"),
+                    "low": j.get("l"), "close": j.get("c"),
+                    "volume": j.get("v", 0), "symbol": symbol
+                }])
+                used.append("Finnhub")
+        except Exception as e:
+            print(f"[FetchCore] ⚠️ Finnhub: {e}")
 
-    return None
+    # --- 4️⃣ EODHD ---
+    if df is None and ok(os.getenv("EODHD_KEY")):
+        try:
+            url = f"https://eodhd.com/api/real-time/{symbol}.US?api_token={os.getenv('EODHD_KEY')}&fmt=json"
+            r = requests.get(url, timeout=10)
+            j = r.json()
+            if "close" in j:
+                df = pd.DataFrame([{
+                    "datetime": dt.datetime.fromtimestamp(j.get("timestamp", dt.datetime.now().timestamp())),
+                    "open": j.get("open"), "high": j.get("high"),
+                    "low": j.get("low"), "close": j.get("close"),
+                    "volume": j.get("volume"), "symbol": symbol
+                }])
+                used.append("EODHD")
+        except Exception as e:
+            print(f"[FetchCore] ⚠️ EODHD: {e}")
 
-def load_data(symbol):
-    import pandas as pd
-    # Return empty DataFrame fallback
-    return pd.DataFrame({'price':[0.0], 'change':[0.0], 'prediction':[0.0], 'confidence':[0.8]})
+    # --- 5️⃣ Alpha Vantage (Daily) ---
+    if df is None and ok(os.getenv("ALPHAVANTAGE_KEY")):
+        try:
+            url = "https://www.alphavantage.co/query"
+            params = {"function": "TIME_SERIES_DAILY", "symbol": symbol, "apikey": os.getenv("ALPHAVANTAGE_KEY")}
+            j = requests.get(url, params=params, timeout=10).json()
+            if "Time Series (Daily)" in j:
+                data = j["Time Series (Daily)"]
+                recs = [{
+                    "datetime": pd.to_datetime(d),
+                    "open": float(v["1. open"]), "high": float(v["2. high"]),
+                    "low": float(v["3. low"]), "close": float(v["4. close"]),
+                    "volume": float(v["5. volume"]), "symbol": symbol
+                } for d, v in list(data.items())[:limit]]
+                df = pd.DataFrame(recs)
+                used.append("Alpha Vantage")
+        except Exception as e:
+            print(f"[FetchCore] ⚠️ Alpha Vantage: {e}")
 
-import pandas as pd
+    # --- 6️⃣ Moralis v2.2 (Crypto) ---
+    if df is None and symbol in ["BTC", "ETH"]:
+        try:
+            url = "https://deep-index.moralis.io/api/v2.2/market-data/ohlcv"
+            headers = {"X-API-Key": os.getenv("MORALIS_KEY", "")}
+            params = {"symbol": f"{symbol.lower()}/usd", "chain": "eth", "resolution": "1h"}
+            r = requests.get(url, headers=headers, params=params, timeout=10)
+            j = r.json()
+            if "result" in j:
+                df = pd.DataFrame(j["result"])
+                used.append("Moralis v2.2")
+        except Exception as e:
+            print(f"[FetchCore] ⚠️ Moralis: {e}")
 
-def load_data(symbol):
-    """Fallback safe data for dashboard"""
-    return pd.DataFrame([{
-        'symbol': symbol,
-        'price': 0.0,
-        'high': 0.0,
-        'low': 0.0,
-        'change': 0.0,
-        'prediction': 0.0,
-        'confidence': 0.8
-    }])
+    if df is None or df.empty:
+        print("[Astra FetchCore] ❌ All sources failed.")
+        return pd.DataFrame()
 
-from astra_core.fetch_core import fetch_unified
+    print(f"[Astra FetchCore] ✅ Data fetched from {', '.join(used)} — {len(df)} rows.")
+    return df
 
-def fetch_unified(*args, **kwargs):
-    return None
-
-# Fallback fetch_unified
-def fetch_unified(*args, **kwargs):
-    return None
+# =====================================================
+# End of File
+# =====================================================

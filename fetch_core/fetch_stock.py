@@ -1,3 +1,7 @@
+from guardian.guardian_v6 import Guardian
+
+g = Guardian()
+
 """
 Astra 7.0 - Unified Stock Fetcher (Phase 45)
 --------------------------------------------
@@ -9,11 +13,9 @@ Priority:
 
 import pandas as pd
 
-from astra_core.api_keys import (ALPHA_VANTAGE_API_KEY, FMP_API_KEY,
-                                 TWELVE_DATA_API_KEY)
-from astra_core.utils.caching import cache_set
-from astra_core.utils.safe_api_wrapper import safe_api_call
-from astra_core.utils.safe_df import safe_df
+from utils.caching import cache_set
+from utils.safe_api_wrapper import safe_api_call
+from utils.safe_df import safe_df
 
 
 # ---------------------------------------------------------
@@ -23,7 +25,7 @@ def fetch_alpha(symbol):
     url = (
         f"https://www.alphavantage.co/query?"
         f"function=TIME_SERIES_DAILY_ADJUSTED&symbol={symbol}"
-        f"&apikey={ALPHA_VANTAGE_API_KEY}"
+        f"&apikey={ALPHAVANTAGE_API_KEY}"
     )
 
     data = safe_api_call(url)
@@ -51,7 +53,6 @@ def fetch_alpha(symbol):
 # Financial Modeling Prep
 # ---------------------------------------------------------
 def fetch_fmp(symbol):
-    url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}?apikey={FMP_API_KEY}"
 
     data = safe_api_call(url)
     if not data or "historical" not in data:

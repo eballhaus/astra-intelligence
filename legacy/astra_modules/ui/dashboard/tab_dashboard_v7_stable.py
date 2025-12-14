@@ -28,8 +28,7 @@ try:
     guardian = guardian_log()
     if guardian is None:
         raise ValueError("guardian_log() returned None")
-    guardian.log(
-        "[Dashboard] 🚀 Initializing Astra Intelligence Dashboard Tab...")
+    guardian.log("[Dashboard] 🚀 Initializing Astra Intelligence Dashboard Tab...")
 except Exception as e:
 
     class GuardianStub:
@@ -46,8 +45,7 @@ except Exception as e:
 # 🧩 Dashboard Integrity Check
 # -------------------------------------------------------------------
 try:
-    from astra_modules.ui.dashboard.dashboard_guardian import \
-        ensure_dashboard_integrity
+    from astra_modules.ui.dashboard.dashboard_guardian import ensure_dashboard_integrity
 except Exception:
 
     def ensure_dashboard_integrity() -> None:
@@ -137,8 +135,7 @@ except Exception as e:
 # 💠 Symbol Cards & Summary
 # -------------------------------------------------------------------
 STOCK_SYMBOLS = ["AAPL", "MSFT", "NVDA", "AMZN", "TSLA", "GOOGL"]
-CRYPTO_SYMBOLS = ["BTC/USD", "ETH/USD",
-                  "SOL/USD", "ADA/USD", "XRP/USD", "DOGE/USD"]
+CRYPTO_SYMBOLS = ["BTC/USD", "ETH/USD", "SOL/USD", "ADA/USD", "XRP/USD", "DOGE/USD"]
 CONTAINER_HEIGHT = 580
 
 try:
@@ -155,8 +152,7 @@ try:
                 guardian.log(f"[DEBUG] Rendering stock card: {symbol}")
                 render_symbol_card(symbol, df_sym)
             except Exception as e:
-                guardian.log(
-                    f"[Dashboard] ⚠️ Stock card failed: {symbol} — {e}")
+                guardian.log(f"[Dashboard] ⚠️ Stock card failed: {symbol} — {e}")
                 st.warning(f"⚠️ {symbol}: Unable to load data")
 
     # --- Crypto ---
@@ -168,8 +164,7 @@ try:
                 guardian.log(f"[DEBUG] Rendering crypto card: {symbol}")
                 render_symbol_card(symbol, df_sym)
             except Exception as e:
-                guardian.log(
-                    f"[Dashboard] ⚠️ Crypto card failed: {symbol} — {e}")
+                guardian.log(f"[Dashboard] ⚠️ Crypto card failed: {symbol} — {e}")
                 st.warning(f"⚠️ {symbol}: Unable to load data")
 
     # --- Futures/Insights ---

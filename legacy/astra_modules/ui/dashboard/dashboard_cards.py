@@ -24,14 +24,12 @@ def normalize_dataframe(df, symbol: str) -> pd.DataFrame:
     try:
         # Convert dict → DataFrame
         if isinstance(df, dict):
-            guardian.log(
-                f"[Guardian Notice] {symbol}: Converting dict to DataFrame.")
+            guardian.log(f"[Guardian Notice] {symbol}: Converting dict to DataFrame.")
             df = pd.DataFrame([df])
 
         # If None or empty → placeholder
         if df is None or df.empty:
-            guardian.log(
-                f"[Guardian Info] {symbol}: Empty or None DataFrame received.")
+            guardian.log(f"[Guardian Info] {symbol}: Empty or None DataFrame received.")
             df = pd.DataFrame(
                 columns=[
                     "close",
@@ -96,8 +94,7 @@ def render_symbol_card(symbol: str, df: pd.DataFrame, include_reason: bool = Tru
             latest.get("astra_stop_loss", price * 0.95) or price * 0.95
         )
         stop_loss_pct = float(latest.get("astra_stop_loss_pct", -5.0) or -5.0)
-        pred_price = float(latest.get("astra_pred_price",
-                           price * 1.05) or price * 1.05)
+        pred_price = float(latest.get("astra_pred_price", price * 1.05) or price * 1.05)
         pred_change = float(latest.get("astra_pred_change", +5.0) or +5.0)
         confidence = latest.get("astra_confidence", "80%") or "80%"
         grade = latest.get("astra_grade", "B") or "B"

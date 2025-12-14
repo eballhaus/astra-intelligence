@@ -6,8 +6,7 @@ self-healing, and schema-consistent.
 """
 
 from .auto_repair import log_error, repair_dict
-from .schema_contracts import (HYBRIDSCAN_SCHEMA, RANKING_SCHEMA,
-                               SMARTSCAN_SCHEMA)
+from .schema_contracts import HYBRIDSCAN_SCHEMA, RANKING_SCHEMA, SMARTSCAN_SCHEMA
 
 
 # -------------------------------------------------------------------

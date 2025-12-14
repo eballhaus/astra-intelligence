@@ -113,8 +113,7 @@ def fetch_index_data() -> Dict[str, Dict[str, Any]]:
                 )
 
             except Exception as e:
-                guardian_log(
-                    f"[SummaryCards] ⚠️ Fetch failed for {meta['name']}: {e}")
+                guardian_log(f"[SummaryCards] ⚠️ Fetch failed for {meta['name']}: {e}")
 
         if not data:
             guardian_log(
@@ -223,8 +222,7 @@ def render_summary() -> None:
 if __name__ == "__main__":
     guardian_log("[SummaryCards] 🔍 Running self-test...")
 
-    st.set_page_config(page_title="Market Summary Test",
-                       page_icon="📊", layout="wide")
+    st.set_page_config(page_title="Market Summary Test", page_icon="📊", layout="wide")
 
     st.markdown(
         """

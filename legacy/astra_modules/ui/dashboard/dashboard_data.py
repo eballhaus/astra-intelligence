@@ -31,8 +31,7 @@ def load_data(symbol: str) -> pd.DataFrame:
 
         # Simulate basic OHLCV structure for charts if not present
         if "timestamp" not in df.columns:
-            df["timestamp"] = pd.date_range(
-                end=pd.Timestamp.now(), periods=len(df))
+            df["timestamp"] = pd.date_range(end=pd.Timestamp.now(), periods=len(df))
         if "open" not in df.columns:
             df["open"] = df["price"]
         if "high" not in df.columns:
@@ -48,8 +47,7 @@ def load_data(symbol: str) -> pd.DataFrame:
         return df
 
     except Exception as e:
-        guardian.log(
-            f"[DashboardData] 🚨 Failed to load data for {symbol}: {e}")
+        guardian.log(f"[DashboardData] 🚨 Failed to load data for {symbol}: {e}")
         return pd.DataFrame(
             columns=["timestamp", "open", "high", "low", "close", "volume"]
         )

@@ -51,8 +51,7 @@ class ContinualTrainer:
         )
 
         if not self.agent:
-            self.guardian._write_log(
-                "⚠️ No agent provided – skipping training.")
+            self.guardian._write_log("⚠️ No agent provided – skipping training.")
             return
 
         if self.buffer.size() == 0:
@@ -73,5 +72,4 @@ class ContinualTrainer:
                     f"⚠️ Iteration {i+1}/{iterations} failed – skipping."
                 )
 
-        self.guardian._write_log(
-            "✅ ContinualTrainer step completed successfully.")
+        self.guardian._write_log("✅ ContinualTrainer step completed successfully.")

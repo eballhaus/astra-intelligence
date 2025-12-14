@@ -47,8 +47,7 @@ class PsychologyAgent(BaseAgent):
                 return "No recent market data available; awaiting next session."
 
             closes = df["close"].astype(float)
-            change = closes.pct_change(
-            ).iloc[-1] * 100 if len(closes) > 1 else 0
+            change = closes.pct_change().iloc[-1] * 100 if len(closes) > 1 else 0
             vol = closes.pct_change().std() * 100
 
             # Determine sentiment zone
@@ -69,6 +68,5 @@ class PsychologyAgent(BaseAgent):
 
     def predict(self, x=None):
         """Temporary calibration stub."""
-        self.g_log(
-            f"[{self.__class__.__name__}] Predict placeholder executed.")
+        self.g_log(f"[{self.__class__.__name__}] Predict placeholder executed.")
         return 0.5

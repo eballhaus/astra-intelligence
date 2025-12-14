@@ -35,8 +35,7 @@ class ReplayBuffer:
             if self.buffer_path.exists():
                 with open(self.buffer_path, "r") as f:
                     self.buffer = json.load(f)
-                print(
-                    f"[Astra ReplayBuffer] Loaded {len(self.buffer)} experiences.")
+                print(f"[Astra ReplayBuffer] Loaded {len(self.buffer)} experiences.")
         except Exception as e:
             print(f"[Astra ReplayBuffer] Warning: failed to load buffer: {e}")
             self.buffer = []
@@ -46,7 +45,7 @@ class ReplayBuffer:
         try:
             os.makedirs(self.buffer_path.parent, exist_ok=True)
             with open(self.buffer_path, "w") as f:
-                json.dump(self.buffer[-self.capacity:], f, indent=2)
+                json.dump(self.buffer[-self.capacity :], f, indent=2)
         except Exception as e:
             print(f"[Astra ReplayBuffer] Warning: failed to save buffer: {e}")
 
@@ -56,8 +55,7 @@ class ReplayBuffer:
         try:
             sample = {
                 "state": (
-                    np.array(state).tolist() if isinstance(
-                        state, np.ndarray) else state
+                    np.array(state).tolist() if isinstance(state, np.ndarray) else state
                 ),
                 "prediction": float(prediction),
                 "reward": float(reward),
@@ -68,7 +66,7 @@ class ReplayBuffer:
 
             self.buffer.append(sample)
             if len(self.buffer) > self.capacity:
-                self.buffer = self.buffer[-self.capacity:]
+                self.buffer = self.buffer[-self.capacity :]
 
             self._save()
         except Exception as e:

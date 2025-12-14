@@ -1,14 +1,16 @@
 import os
 import sys
+
 # === Astra Intelligence Dashboard Launcher (Safe Mode Compatible) ===
 # Works with Streamlit ≥1.28 — prevents RuntimeError: Runtime instance already exists!
 
-import sys
+
 if __name__ == "__main__" and hasattr(sys, "_called_from_test") is False:
     pass  # prevents double Streamlit start
 
 
-import os, sys
+import sys
+
 try:
     import streamlit.web.cli as stcli
 except ImportError:
@@ -34,6 +36,4 @@ sys.argv = [
     "astra_modules/ui/dashboard/tab_dashboard.py",
     "--server.headless=true",
 ]
-sys.exit(
-stcli.main())
-
+sys.exit(stcli.main())

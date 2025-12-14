@@ -39,8 +39,7 @@ class LearningEngine:
                 print("[Astra LearningEngine] Loaded previous learning weights.")
                 return state
         except Exception as e:
-            print(
-                f"[Astra LearningEngine] Warning: could not load previous state: {e}")
+            print(f"[Astra LearningEngine] Warning: could not load previous state: {e}")
         return {"weights": np.ones(10), "timestamp": datetime.utcnow().isoformat()}
 
     def _save_state(self):
@@ -49,8 +48,7 @@ class LearningEngine:
             self.store.save_state(self.state)
             print("[Astra LearningEngine] Learning weights saved.")
         except Exception as e:
-            print(
-                f"[Astra LearningEngine] Failed to save learning weights: {e}")
+            print(f"[Astra LearningEngine] Failed to save learning weights: {e}")
 
     # === Core Learning Computations ===
     def _compute_correlation_weights(self):
@@ -78,8 +76,7 @@ class LearningEngine:
             return corr
 
         except Exception as e:
-            print(
-                f"[Astra LearningEngine] Correlation computation failed: {e}")
+            print(f"[Astra LearningEngine] Correlation computation failed: {e}")
             traceback.print_exc()
             return self.state.get("weights", np.ones(10))
 
@@ -118,8 +115,7 @@ class LearningEngine:
             print("[Astra LearningEngine] ✅ Learning weights updated successfully.")
 
         except Exception as e:
-            print(
-                f"[Astra LearningEngine] ❌ LearningEngine training failed: {e}")
+            print(f"[Astra LearningEngine] ❌ LearningEngine training failed: {e}")
             traceback.print_exc()
 
 

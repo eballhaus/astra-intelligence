@@ -33,11 +33,9 @@ class NeuralAgent:
     def __init__(self, guardian, input_size=32, hidden_size=64, output_size=1):
         self.guardian = guardian
         self.guardian._write_log("🧠 Initializing NeuralAgent...")
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.model = NeuralNet(input_size, hidden_size,
-                               output_size).to(self.device)
+        self.model = NeuralNet(input_size, hidden_size, output_size).to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
         self.criterion = nn.MSELoss()
 
@@ -60,8 +58,7 @@ class NeuralAgent:
             self.optimizer.step()
 
             loss_val = loss.item()
-            self.guardian._write_log(
-                f"📉 Training step complete (loss={loss_val:.6f})")
+            self.guardian._write_log(f"📉 Training step complete (loss={loss_val:.6f})")
             return loss_val
 
         except Exception as e:

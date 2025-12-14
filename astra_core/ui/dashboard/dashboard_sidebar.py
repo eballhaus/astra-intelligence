@@ -19,12 +19,12 @@ from astra_core.guardian.guardian_v6 import guardian
 from astra_core.fetch_core import fetch_unified
 
 # Removed bad assignment
-from astra_core.guardian.guardian_v6 import guardian
 
 
 # ------------------------------------------------------------
 # ⚙️ Market Overview (Safe API Fetch)
 # ------------------------------------------------------------
+
 
 def load_market_overview():
     """
@@ -39,12 +39,14 @@ def load_market_overview():
     except Exception as e:
         guardian.log(f"[Sidebar] ⚠️ Market overview load issue: {e}")
         # fallback placeholder data
-        df = pd.DataFrame({
-            "Symbol": ["^DJI", "^GSPC", "^IXIC"],
-            "Price": [35000, 4500, 14000],
-            "Change": [0.12, -0.05, 0.22],
-            "PercentChange": [0.34, -0.11, 0.18],
-        })
+        df = pd.DataFrame(
+            {
+                "Symbol": ["^DJI", "^GSPC", "^IXIC"],
+                "Price": [35000, 4500, 14000],
+                "Change": [0.12, -0.05, 0.22],
+                "PercentChange": [0.34, -0.11, 0.18],
+            }
+        )
         guardian.log("[Sidebar] 🧩 Using fallback market overview data.")
         return df
 
@@ -52,6 +54,7 @@ def load_market_overview():
 # ------------------------------------------------------------
 # 🧠 Sidebar Rendering
 # ------------------------------------------------------------
+
 
 def render_sidebar():
     """

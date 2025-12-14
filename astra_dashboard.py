@@ -11,6 +11,7 @@ st.set_page_config(page_title="Astra Intelligence", layout="wide")
 st.title("🌌 Astra Intelligence — Live Dashboard (Safe Mode)")
 st.caption("Phase 7.3 — Contextual Forecasting & Adaptive Scenario Planning")
 
+
 # === Load state files ===
 @st.cache_data
 def load_json(file_path):
@@ -20,6 +21,7 @@ def load_json(file_path):
     except Exception as e:
         st.error(f"Error loading {file_path}: {e}")
         return {}
+
 
 base = Path(__file__).parent
 agent_states = load_json(base / "astra_agent_states.json")
@@ -36,11 +38,19 @@ st.divider()
 st.header("🧠 Agent Confidence Overview")
 
 if agent_states:
-    df = pd.DataFrame([
-        {"Agent": k, "Confidence": v.get("confidence", 0), "Accuracy": v.get("accuracy", 0)}
-        for k, v in agent_states.items()
-    ])
-    fig = px.bar(df, x="Agent", y="Confidence", color="Accuracy", title="Agent Confidence Levels")
+    df = pd.DataFrame(
+        [
+            {
+                "Agent": k,
+                "Confidence": v.get("confidence", 0),
+                "Accuracy": v.get("accuracy", 0),
+            }
+            for k, v in agent_states.items()
+        ]
+    )
+    fig = px.bar(
+        df, x="Agent", y="Confidence", color="Accuracy", title="Agent Confidence Levels"
+    )
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.warning("No agent state data loaded.")
@@ -54,14 +64,20 @@ else:
 
 # === Contextual Forecast Summary ===
 st.header("🌐 Contextual Forecast Summary")
-st.info("""
+st.info(
+    """
 Astra combines agent ensemble predictions with contextual data (news, sentiment, catalysts) 
 to produce adaptive, scenario-based forecasts. Guardian v7 monitors for contextual bias.
-""")
+"""
+)
 
 scenarios = ["Baseline", "Bullish", "Bearish", "Volatile"]
 probabilities = [0.42, 0.29, 0.18, 0.11]
-fig2 = px.pie(values=probabilities, names=scenarios, title="Scenario Tree — Bayesian Forecast Weights")
+fig2 = px.pie(
+    values=probabilities,
+    names=scenarios,
+    title="Scenario Tree — Bayesian Forecast Weights",
+)
 st.plotly_chart(fig2, use_container_width=True)
 
 # === Guardian Audit Section ===
@@ -77,4 +93,3 @@ st.sidebar.divider()
 st.sidebar.info("Next Phase → 8.0: Deployment & Optimization")
 
 st.toast("Astra Dashboard initialized safely — no live trading active.")
-

@@ -159,8 +159,7 @@ def monitor_system_health(interval=60):
     """Runs periodic integrity checks without reloading Streamlit."""
     global _health_monitor_running, _last_health_check
     if _health_monitor_running:
-        guardian_log(
-            "⚠️ Health monitor already running — skipping duplicate start.")
+        guardian_log("⚠️ Health monitor already running — skipping duplicate start.")
         return
     _health_monitor_running = True
     guardian_log("🩺 Health monitor thread started (interval = 60s).")
@@ -213,8 +212,7 @@ def safe_yahoo_request(url: str, fallback_symbol="AAPL"):
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
-        guardian_log(
-            f"🚫 API firewall triggered — rerouting to fetch_unified: {e}")
+        guardian_log(f"🚫 API firewall triggered — rerouting to fetch_unified: {e}")
         try:
             return fetch_unified.get_symbol_data(fallback_symbol)
         except Exception as inner:
@@ -245,8 +243,7 @@ class guardian_log:
 
             st.cache_data.clear()
             st.cache_resource.clear()
-            guardian_log(
-                "🧹 Streamlit cache cleared automatically by Guardian.")
+            guardian_log("🧹 Streamlit cache cleared automatically by Guardian.")
         except Exception as e:
             guardian_log(f"⚠️ Failed to clear Streamlit cache: {e}")
 

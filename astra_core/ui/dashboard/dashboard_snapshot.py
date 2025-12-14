@@ -14,7 +14,6 @@ from astra_core.guardian.guardian_v6 import guardian
 
 
 # Removed bad assignment
-from astra_core.guardian.guardian_v6 import guardian
 
 
 # ============================================================
@@ -32,6 +31,7 @@ MAX_SNAPSHOTS = 10  # Keep only the 10 most recent
 # ============================================================
 # 📦 CREATE SNAPSHOT
 # ============================================================
+
 
 def create_snapshot(tag: str = "auto"):
     """Create a zip snapshot of all dashboard files and contract."""
@@ -59,6 +59,7 @@ def create_snapshot(tag: str = "auto"):
 # ♻️ ROLLBACK SNAPSHOT
 # ============================================================
 
+
 def rollback_to_latest():
     """Restore the latest snapshot if available."""
     try:
@@ -84,6 +85,7 @@ def rollback_to_latest():
 # 🧹 SNAPSHOT CLEANUP
 # ============================================================
 
+
 def _cleanup_old_snapshots():
     """Keep only the newest N snapshots."""
     zips = sorted(glob.glob(os.path.join(SNAPSHOT_DIR, "ui_dashboard_*.zip")))
@@ -92,7 +94,9 @@ def _cleanup_old_snapshots():
         for path in old:
             try:
                 os.remove(path)
-                guardian.log(f"[Snapshot] 🗑️ Deleted old snapshot: {os.path.basename(path)}")
+                guardian.log(
+                    f"[Snapshot] 🗑️ Deleted old snapshot: {os.path.basename(path)}"
+                )
             except Exception as e:
                 guardian.log(f"[Snapshot] ⚠️ Failed to delete {path}: {e}")
 

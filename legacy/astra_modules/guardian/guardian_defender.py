@@ -95,8 +95,7 @@ class AstraDefender:
             self.memory["errors"].append(error_info)
             self.save_memory()
 
-            print(
-                f"⚠ AstraDefender caught unhandled error in {func.__name__}: {e}")
+            print(f"⚠ AstraDefender caught unhandled error in {func.__name__}: {e}")
             traceback.print_exc()
 
             return None
@@ -191,8 +190,7 @@ class AstraDefender:
 
         out = []
         for e in self.memory["errors"]:
-            out.append(
-                f"{e['function']} → {e['error_type']}: {e['error_msg']}")
+            out.append(f"{e['function']} → {e['error_type']}: {e['error_msg']}")
 
         return "\n".join(out)
 

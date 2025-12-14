@@ -42,15 +42,13 @@ if not os.path.exists(SCHEMA_PATH):
 def validate_and_normalize(data, module_name: str) -> pd.DataFrame:
     schema = DEFAULT_SCHEMAS.get(module_name)
     if not schema:
-        guardian.log(
-            f"[Schema] No schema for {module_name}. Skipping validation.")
+        guardian.log(f"[Schema] No schema for {module_name}. Skipping validation.")
         return _ensure_dataframe(data)
     df = _ensure_dataframe(data)
     for field in schema["expected_fields"]:
         if field not in df.columns:
             df[field] = None
-            guardian.log(
-                f"[Schema] Added missing column '{field}' for {module_name}.")
+            guardian.log(f"[Schema] Added missing column '{field}' for {module_name}.")
     for field, dtype in schema["types"].items():
         if field in df.columns:
             try:

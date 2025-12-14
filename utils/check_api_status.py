@@ -6,7 +6,9 @@ print("🔍 Astra API Diagnostic Utility")
 try:
     from core.api_client import AstraAPI
 except ModuleNotFoundError:
-    print("❌ Could not import core.api_client — check PYTHONPATH and directory structure.")
+    print(
+        "❌ Could not import core.api_client — check PYTHONPATH and directory structure."
+    )
     print("PYTHONPATH =", os.getenv("PYTHONPATH"))
     raise SystemExit(1)
 
@@ -19,7 +21,6 @@ try:
     result = api.get_quote("AAPL")
     print("✅ Live API response:")
     print(result)
-except Exception as e:
+except Exception:
     print("❌ API check failed.")
     traceback.print_exc()
-

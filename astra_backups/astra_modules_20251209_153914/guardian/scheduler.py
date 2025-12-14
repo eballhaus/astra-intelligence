@@ -186,8 +186,7 @@ class LearningScheduler:
         self.last_heartbeat = datetime.now()
         self.metrics.total_cycles += 1
         timestamp = self.last_heartbeat.strftime("%H:%M:%S")
-        self.log(
-            f"─── Training Cycle #{self.metrics.total_cycles} at {timestamp} ───")
+        self.log(f"─── Training Cycle #{self.metrics.total_cycles} at {timestamp} ───")
 
         try:
             # Pre-flight buffer validation (require 80% of batch size)
@@ -241,8 +240,7 @@ class LearningScheduler:
             status = self.trainer.get_status()
             self.log(f"Model Status:\n{json.dumps(status, indent=2)}")
 
-            last_loss = status.get("last_loss") if isinstance(
-                status, dict) else None
+            last_loss = status.get("last_loss") if isinstance(status, dict) else None
             self.metrics.record_loss(last_loss)
         except Exception as e:
             self.log(f"Error retrieving trainer status: {e}", "WARNING")

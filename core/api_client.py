@@ -7,6 +7,7 @@ Replace this with your real Astra API logic when ready.
 
 import datetime
 
+
 class AstraAPI:
     def __init__(self):
         print("[AstraAPI] Placeholder client initialized successfully.")
@@ -17,6 +18,5 @@ class AstraAPI:
             "symbol": symbol,
             "timestamp": datetime.datetime.utcnow().isoformat(),
             "value": 123.45,
-            "status": "ok"
+            "status": "ok",
         }
-

@@ -4,7 +4,9 @@ import re
 
 ROOT = os.path.dirname(__file__)
 
-PATTERN_IMPORT = re.compile(r"from\s+astra_modules\.guardian\.guardian_v7\s+import\s+guardian_log")
+PATTERN_IMPORT = re.compile(
+    r"from\s+astra_modules\.guardian\.guardian_v7\s+import\s+guardian_log"
+)
 PATTERN_REF = re.compile(r"\bGuardianV7\b")
 
 replacements = []
@@ -44,4 +46,3 @@ for path, old, new in replacements:
         f.write(new)
 print(f"✅ Total files updated: {len(replacements)}")
 ø
-

@@ -31,8 +31,7 @@ def _to_df_ohlcv(records):
     )
 
     if "timestamp" in df:
-        df["timestamp"] = pd.to_datetime(
-            df["timestamp"], unit="ms", errors="coerce")
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", errors="coerce")
 
     for c in ["open", "high", "low", "close", "volume"]:
         if c in df:
@@ -83,8 +82,7 @@ def fetch_moralis(symbol, interval="1h"):
 def fetch_coingecko(symbol, interval="1h"):
     token = symbol.lower()
 
-    days_map = {"1m": 1, "5m": 1, "15m": 1,
-                "30m": 1, "1h": 2, "4h": 4, "1d": 7}
+    days_map = {"1m": 1, "5m": 1, "15m": 1, "30m": 1, "1h": 2, "4h": 4, "1d": 7}
     days = days_map.get(interval, 2)
 
     url = f"https://api.coingecko.com/api/v3/coins/{token}/ohlc?vs_currency=usd&days={days}"

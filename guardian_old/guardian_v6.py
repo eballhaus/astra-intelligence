@@ -6,7 +6,9 @@ def auto_restore_dashboard_if_broken():
     Guardian fallback: restores dashboard from stable version
     if the active dashboard fails to import or causes runtime crash.
     """
-    import shutil, os
+    import shutil
+    import os
+
     main_dashboard = "astra_modules/ui/dashboard/tab_dashboard.py"
     stable_dashboard = "astra_modules/ui/dashboard/tab_dashboard_v7_stable.py"
 
@@ -19,4 +21,3 @@ def auto_restore_dashboard_if_broken():
             guardian_log("[Guardian] 🛡️ Restored dashboard from stable fallback.")
         else:
             guardian_log("[Guardian] ⚠️ Stable dashboard fallback not found.")
-

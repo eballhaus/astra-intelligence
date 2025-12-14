@@ -25,8 +25,7 @@ class TelemetryHub:
         self.base_dir = base_dir or os.path.join(os.getcwd(), "logs")
         os.makedirs(self.base_dir, exist_ok=True)
         self.telemetry_path = os.path.join(self.base_dir, "telemetry.jsonl")
-        self.snapshot_path = os.path.join(
-            self.base_dir, "telemetry_latest.json")
+        self.snapshot_path = os.path.join(self.base_dir, "telemetry_latest.json")
 
     def record(self, data: Dict[str, Any]) -> None:
         """Safely write telemetry entry to rolling log and snapshot."""

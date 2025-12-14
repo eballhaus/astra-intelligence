@@ -15,10 +15,13 @@ Output:
 """
 
 from astra_modules.core.astra_prime import AstraPrime
-from astra_modules.fetch_core.fetch_unified import (HybridScan, RankingEngine,
-                                                    SmartScan,
-                                                    StateBundleBuilder,
-                                                    fetch_unified)
+from astra_modules.fetch_core.fetch_unified import (
+    HybridScan,
+    RankingEngine,
+    SmartScan,
+    StateBundleBuilder,
+    fetch_unified,
+)
 from astra_modules.universe.universe_builder import UniverseBuilder
 
 

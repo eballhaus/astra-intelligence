@@ -34,8 +34,7 @@ class RankingEngine:
 
             closes = df["close"].astype(float)
             returns = closes.pct_change().dropna()
-            momentum = (closes.iloc[-1] / closes.iloc[-5]
-                        ) - 1 if len(closes) > 5 else 0
+            momentum = (closes.iloc[-1] / closes.iloc[-5]) - 1 if len(closes) > 5 else 0
             volatility = returns.std() * 100
 
             # Simple scoring formula

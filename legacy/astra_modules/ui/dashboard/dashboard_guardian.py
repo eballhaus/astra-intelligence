@@ -61,8 +61,7 @@ def verify_dashboard():
                     )
                     all_ok = False
         except Exception as e:
-            guardian.log(
-                f"[DashboardGuardian] 🚨 Failed to import {full_name}: {e}")
+            guardian.log(f"[DashboardGuardian] 🚨 Failed to import {full_name}: {e}")
             all_ok = False
 
     if all_ok:
@@ -70,8 +69,7 @@ def verify_dashboard():
             "[DashboardGuardian] ✅ All dashboard modules verified successfully."
         )
     else:
-        guardian.log(
-            "[DashboardGuardian] ⚠️ Dashboard integrity check found issues.")
+        guardian.log("[DashboardGuardian] ⚠️ Dashboard integrity check found issues.")
     return all_ok
 
 
@@ -103,8 +101,7 @@ def restore_latest_snapshot():
     try:
         files = [f for f in os.listdir(SNAPSHOT_DIR) if f.endswith(".zip")]
         if not files:
-            guardian.log(
-                "[Snapshot] ⚠️ No snapshots available for restoration.")
+            guardian.log("[Snapshot] ⚠️ No snapshots available for restoration.")
             return
         latest = sorted(files)[-1]
         snapshot_path = os.path.join(SNAPSHOT_DIR, latest)
@@ -113,8 +110,7 @@ def restore_latest_snapshot():
             zipf.extractall(dashboard_dir)
         guardian.log(f"[Snapshot] ♻️ Restored from snapshot: {latest}")
     except Exception as e:
-        guardian.log(
-            f"[Snapshot] ⚠️ Failed to restore dashboard snapshot: {e}")
+        guardian.log(f"[Snapshot] ⚠️ Failed to restore dashboard snapshot: {e}")
 
 
 # ------------------------------------------------------------
@@ -140,8 +136,7 @@ def ensure_dashboard_integrity():
 
     try:
         if verify_dashboard():
-            guardian.log(
-                "[DashboardGuardian] ✅ Dashboard integrity confirmed.")
+            guardian.log("[DashboardGuardian] ✅ Dashboard integrity confirmed.")
         else:
             guardian.log(
                 "[DashboardGuardian] ⚠️ Dashboard verification failed — initiating repair."
@@ -149,8 +144,7 @@ def ensure_dashboard_integrity():
             create_dashboard_snapshot()
             restore_latest_snapshot()
             if verify_dashboard():
-                guardian.log(
-                    "[DashboardGuardian] ✅ Repair successful after restore.")
+                guardian.log("[DashboardGuardian] ✅ Repair successful after restore.")
             else:
                 guardian.log(
                     "[DashboardGuardian] 🚨 Dashboard still failing after repair."
@@ -166,7 +160,6 @@ def ensure_dashboard_integrity():
 # ------------------------------------------------------------
 
 if __name__ == "__main__":
-    guardian.log(
-        "[DashboardGuardian] 🚀 Standalone dashboard integrity check started.")
+    guardian.log("[DashboardGuardian] 🚀 Standalone dashboard integrity check started.")
     ensure_dashboard_integrity()
     guardian.log("[DashboardGuardian] ✅ Completed standalone dashboard test.")

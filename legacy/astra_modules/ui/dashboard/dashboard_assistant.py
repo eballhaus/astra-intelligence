@@ -23,8 +23,7 @@ class AstraAssistant:
     def __init__(self, guardian=None):
         self.guardian = guardian
         self.log_path = (
-            Path(__file__).resolve().parents[2] /
-            "guardian" / "guardian_v6.log"
+            Path(__file__).resolve().parents[2] / "guardian" / "guardian_v6.log"
         )
         self.history_file = (
             Path(__file__).resolve().parents[3] / "astra_chat_history.json"
@@ -107,8 +106,7 @@ class AstraAssistant:
         """
 
         response = self.query_llama(prompt)
-        self.history.append(
-            {"time": timestamp, "user": question, "astra": response})
+        self.history.append({"time": timestamp, "user": question, "astra": response})
         self.save_history()
         return response
 

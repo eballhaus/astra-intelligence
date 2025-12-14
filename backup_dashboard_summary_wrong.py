@@ -1,13 +1,17 @@
 def safe_render_wrapper(func):
     def wrapper(*a, **k):
-        df = k.get('df') if 'df' in k else (a[0] if a else None)
-        if df is None or getattr(df, 'empty', True):
+        df = k.get("df") if "df" in k else (a[0] if a else None)
+        if df is None or getattr(df, "empty", True):
             print(f"[Dashboard] ⚠️ Skipping {func.__name__} — empty DataFrame")
             return
         return func(*a, **k)
+
     return wrapper
+
+
 from astra_core.guardian.guardian_v6 import guardian
-guardian = getattr(guardian_log, 'log', guardian_log)
+
+guardian = getattr(guardian_log, "log", guardian_log)
 """
 Astra Intelligence — Market Overview (No yfinance)
 Fetches live market indices and BTC using public APIs.
@@ -41,8 +45,7 @@ def fetch_market_data():
             "?ids=bitcoin&vs_currencies=usd&include_24hr_change=true",
             timeout=5,
         ).json()["bitcoin"]
-        data["BTC-USD"] = {"price": btc["usd"],
-                           "change": btc["usd_24h_change"]}
+        data["BTC-USD"] = {"price": btc["usd"], "change": btc["usd_24h_change"]}
     except Exception as e:
         st.warning(f"⚠️ Market overview load issue: {e}")
     return data

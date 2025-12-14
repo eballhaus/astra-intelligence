@@ -43,13 +43,11 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 def load_cached_data(symbol: str) -> Optional[pd.DataFrame]:
     """Load locally cached data if available."""
     try:
-        cache_path = os.path.join(
-            CACHE_DIR, f"data_{symbol.replace('/', '_')}.csv")
+        cache_path = os.path.join(CACHE_DIR, f"data_{symbol.replace('/', '_')}.csv")
         if not os.path.exists(cache_path):
             return None
         df = pd.read_csv(cache_path)
-        df["timestamp"] = pd.to_datetime(
-            df["timestamp"], utc=True, errors="coerce")
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
         guardian_log(f"[Cache] 💾 Loaded cached {symbol} ({len(df)} rows)")
         return df
     except Exception as e:
@@ -61,8 +59,7 @@ def save_cache(df: pd.DataFrame, symbol: str) -> None:
     """Save dataframe to cache."""
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
-        cache_path = os.path.join(
-            CACHE_DIR, f"data_{symbol.replace('/', '_')}.csv")
+        cache_path = os.path.join(CACHE_DIR, f"data_{symbol.replace('/', '_')}.csv")
         df.to_csv(cache_path, index=False)
         guardian_log(f"[Cache] ✅ Saved {symbol} ({len(df)} rows)")
     except Exception as e:
@@ -88,8 +85,7 @@ def fetch_from_astra_api(symbol: str) -> Optional[pd.DataFrame]:
         # attempt live retrieval
         df = api.get_data(symbol)
         if df is not None and not df.empty:
-            df["timestamp"] = pd.to_datetime(
-                df["timestamp"], utc=True, errors="coerce")
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
             df.attrs = {
                 "source": df.attrs.get("source", "my_api_live"),
                 "symbol": symbol,
@@ -118,11 +114,9 @@ def fetch_from_astra_api(symbol: str) -> Optional[pd.DataFrame]:
         return cached
 
     try:
-        from astra_modules.scanners.synthetic_generator import \
-            generate_synthetic_data
+        from astra_modules.scanners.synthetic_generator import generate_synthetic_data
 
-        guardian_log(
-            f"[AstraAPI] 🧪 Generating synthetic fallback for {symbol}")
+        guardian_log(f"[AstraAPI] 🧪 Generating synthetic fallback for {symbol}")
         return generate_synthetic_data(symbol)
     except Exception as e:
         guardian_log(f"[AstraAPI] ❌ Failed fallback for {symbol}: {e}")
@@ -146,10 +140,8 @@ async def fetch_from_backend_async(symbol: str) -> Optional[pd.DataFrame]:
                 df = pd.DataFrame(data["data"])
             else:
                 df = pd.DataFrame(data)
-            df["timestamp"] = pd.to_datetime(
-                df["timestamp"], utc=True, errors="coerce")
-            df.attrs = {"source": "backend",
-                        "timestamp": datetime.now(timezone.utc)}
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+            df.attrs = {"source": "backend", "timestamp": datetime.now(timezone.utc)}
             guardian_log(f"[Backend] ✅ Received {len(df)} rows for {symbol}")
             return df
     except Exception as e:
@@ -284,12 +276,11 @@ def load_data(symbol: str = "AAPL") -> pd.DataFrame:
                 df[col] = 100.0
 
     if "close" not in df.columns or df["close"].isnull().all():
-        guardian_log(f"[DashboardData] 🔧 Creating close price column")
+        guardian_log("[DashboardData] 🔧 Creating close price column")
         df["close"] = 100.0
 
     df.dropna(subset=["close"], inplace=True)
-    df["timestamp"] = pd.to_datetime(
-        df["timestamp"], utc=True, errors="coerce")
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
     df["timestamp"].fillna(datetime.now(timezone.utc), inplace=True)
 
     guardian_log(

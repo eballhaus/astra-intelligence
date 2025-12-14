@@ -44,8 +44,7 @@ def verify_dashboard():
 
     for module_name, required_funcs in required_modules.items():
         try:
-            mod = importlib.import_module(
-                f"astra_modules.ui.dashboard.{module_name}")
+            mod = importlib.import_module(f"astra_modules.ui.dashboard.{module_name}")
             for func in required_funcs:
                 if not hasattr(mod, func):
                     safe_print(
@@ -54,8 +53,7 @@ def verify_dashboard():
                     all_ok = False
             safe_print(f"[Guardian] ✅ Module OK: {module_name}")
         except Exception as e:
-            safe_print(
-                f"[Guardian] ❌ Failed to import module '{module_name}': {e}")
+            safe_print(f"[Guardian] ❌ Failed to import module '{module_name}': {e}")
             all_ok = False
 
     return all_ok

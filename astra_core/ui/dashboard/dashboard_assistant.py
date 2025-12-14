@@ -6,7 +6,6 @@ Understands Astra Intelligence context, system health, and trading state.
 """
 
 import streamlit as st
-import os
 import json
 import subprocess
 from datetime import datetime
@@ -22,13 +21,19 @@ except ImportError:
 class AstraAssistant:
     def __init__(self, guardian=None):
         self.guardian = guardian
-        self.log_path = Path(__file__).resolve().parents[2] / "guardian" / "guardian_v6.log"
-        self.history_file = Path(__file__).resolve().parents[3] / "astra_chat_history.json"
+        self.log_path = (
+            Path(__file__).resolve().parents[2] / "guardian" / "guardian_v6.log"
+        )
+        self.history_file = (
+            Path(__file__).resolve().parents[3] / "astra_chat_history.json"
+        )
         self.load_history()
         self.model_mode = "ollama" if self._detect_ollama() else "transformers"
 
         if self.model_mode == "transformers" and pipeline:
-            self.model = pipeline("text-generation", model="meta-llama/Llama-3-8b", device_map="auto")
+            self.model = pipeline(
+                "text-generation", model="meta-llama/Llama-3-8b", device_map="auto"
+            )
         else:
             self.model = None
 
@@ -56,14 +61,17 @@ class AstraAssistant:
     def query_llama(self, prompt: str):
         """Send prompt to local LLaMA via Ollama or Transformers."""
         if self.model_mode == "ollama":
-            result = subprocess.run(["ollama", "run", "llama3", prompt],
-                                    capture_output=True, text=True)
+            result = subprocess.run(
+                ["ollama", "run", "llama3", prompt], capture_output=True, text=True
+            )
             return result.stdout.strip()
         elif self.model_mode == "transformers" and self.model:
             result = self.model(prompt, max_length=400, temperature=0.7)
             return result[0]["generated_text"]
         else:
-            return "⚠️ No AI model available. Please install Ollama or Hugging Face LLaMA."
+            return (
+                "⚠️ No AI model available. Please install Ollama or Hugging Face LLaMA."
+            )
 
     def get_context(self):
         """Fetch system context from Guardian and Astra modules."""
@@ -104,7 +112,9 @@ class AstraAssistant:
     def render_chat_ui(self):
         """Render chat interface inside Streamlit sidebar."""
         st.markdown("### 🤖 Astra Assistant")
-        st.caption("Ask questions about Guardian, market data, or Astra Intelligence internals.")
+        st.caption(
+            "Ask questions about Guardian, market data, or Astra Intelligence internals."
+        )
 
         for chat in reversed(self.history[-5:]):
             st.markdown(f"🧑‍💻 **You ({chat['time']}):** {chat['user']}")

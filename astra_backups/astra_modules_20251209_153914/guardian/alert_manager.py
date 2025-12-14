@@ -102,8 +102,7 @@ class GuardianAlertManager:
             if len(self.history) >= 5:
                 recent_avg = sum(self.history[-5:]) / 5
                 past_avg = (
-                    sum(self.history[:5]) /
-                    5 if len(self.history) > 10 else recent_avg
+                    sum(self.history[:5]) / 5 if len(self.history) > 10 else recent_avg
                 )
                 if recent_avg - past_avg > self.loss_drift_threshold:
                     self._log_alert(
@@ -123,8 +122,7 @@ class GuardianAlertManager:
                         telemetry,
                     )
                     if self.restart_callback:
-                        self._log_alert(
-                            "info", "Attempting auto-restart via callback.")
+                        self._log_alert("info", "Attempting auto-restart via callback.")
                         try:
                             self.restart_callback()
                         except Exception:

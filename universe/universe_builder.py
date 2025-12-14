@@ -3,16 +3,30 @@ Universe Builder – Phase-90 Unified Version
 -------------------------------------------
 Provides both the UniverseBuilder class (for legacy modules)
 and build_universe() function (for Phase-90 components).
-Integrated with guardian_v6.for self-healing and logging.
+Integrated with guardian_v6 for self-healing and logging.
 """
 
 import os
-
 import pandas as pd
+import json
+from core.cache_manager import CacheManager
 
-from astra_core.guardian import guardian_v6
+# Import guardian safely
+try:
+    from guardian.guardian_v6 import guardian_log, self_heal, log_event, _write_log
+except Exception:
+    # Fallback if Guardian isn't loaded yet (FastBoot mode)
+    def guardian_log(msg):
+        print(f"[LazyGuardian] {msg}")
 
-guardian = guardian_v6
+    def self_heal(value, expected_type, default):
+        return default if not isinstance(value, expected_type) else value
+
+    def log_event(event_type, message):
+        print(f"[LazyGuardian-Event] {event_type}: {message}")
+
+    def _write_log(msg):
+        print(f"[LazyGuardian-Write] {msg}")
 
 
 class UniverseBuilder:
@@ -20,7 +34,7 @@ class UniverseBuilder:
 
     def __init__(self, source: str = None):
         self.source = source
-        guardian._write_log("UniverseBuilder initialized.")
+        _write_log("UniverseBuilder initialized.")
 
     def build(self):
         """Build or load the universe from CSV/JSON/default."""
@@ -41,7 +55,16 @@ def build_universe(source: str = None):
     list
         A list of trading symbols or assets.
     """
-    guardian._write_log("Building universe...")
+    import os
+    if os.getenv("ASTRA_FASTBOOT") == "1":
+        guardian_log("[FastBoot] Skipping full universe build.")
+        return []
+
+    cached = CacheManager.get("universe_symbols")
+    if cached is not None:
+        return cached
+
+    _write_log("Building universe...")
 
     default_universe = ["AAPL", "MSFT", "GOOG", "NVDA", "AMZN"]
 
@@ -54,8 +77,6 @@ def build_universe(source: str = None):
                 else:
                     raise ValueError("CSV missing 'symbol' column.")
             elif source.endswith(".json"):
-                import json
-
                 with open(source, "r") as f:
                     data = json.load(f)
                     symbols = list(data.get("symbols", []))
@@ -64,14 +85,13 @@ def build_universe(source: str = None):
         else:
             symbols = default_universe
 
-        symbols = guardian.self_heal(symbols, list, default_universe)
-        guardian.log_event(
-            "universe_build", f"Universe built with {len(symbols)} symbols."
-        )
+        symbols = self_heal(symbols, list, default_universe)
+        log_event("universe_build", f"Universe built with {len(symbols)} symbols.")
+        CacheManager.set("universe_symbols", symbols, ttl_seconds=3600)
         return symbols
 
     except Exception as e:
-        guardian.log_event("universe_error", f"Universe build failed: {e}")
+        log_event("universe_error", f"Universe build failed: {e}")
         return default_universe
 
 

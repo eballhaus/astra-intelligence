@@ -37,8 +37,7 @@ class GuardianSentinel:
             "astra_core.core",
         ]
         self.log_path = os.path.join(self.base_path, "sentinel_report.json")
-        self.report = {"checked": [], "failed": [],
-                       "repaired": [], "timestamp": None}
+        self.report = {"checked": [], "failed": [], "repaired": [], "timestamp": None}
 
     # ==========================================================
     # Core Check Functions

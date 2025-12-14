@@ -15,7 +15,7 @@ def trace_tab_load(tab_name="tab_dashboard"):
     print("\n🔍 Guardian Tab Load Trace")
     print("--------------------------------------------------")
     print(f"🧭 Current Working Directory: {os.getcwd()}")
-    print(f"📦 sys.path:")
+    print("📦 sys.path:")
     for p in sys.path:
         print("   ", p)
 

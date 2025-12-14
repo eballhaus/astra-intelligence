@@ -124,8 +124,7 @@ class ForecastEngine:
         def _null_agent(symbol: str, data: Dict[str, Any]) -> float:
             return 0.0
 
-        names = ["momentum", "technical", "volume",
-                 "risk", "psychology", "neural"]
+        names = ["momentum", "technical", "volume", "risk", "psychology", "neural"]
         return {n: _null_agent for n in names}
 
     def inject_agents(self, real_agents: Dict[str, AgentFunction]) -> bool:
@@ -151,8 +150,7 @@ class ForecastEngine:
             return False
         missing_cols = self.REQUIRED_COLUMNS - set(df.columns)
         if missing_cols:
-            self.log(
-                f"{symbol}: Missing required columns: {missing_cols}", "WARNING")
+            self.log(f"{symbol}: Missing required columns: {missing_cols}", "WARNING")
             return False
         return True
 
@@ -160,13 +158,11 @@ class ForecastEngine:
         try:
             last_close = df["close"].iloc[-1]
             if pd.isna(last_close) or not isinstance(last_close, numbers.Number):
-                self.log(
-                    f"{symbol}: Invalid close price (NaN/non-numeric).", "WARNING")
+                self.log(f"{symbol}: Invalid close price (NaN/non-numeric).", "WARNING")
                 return None
             price = float(last_close)
             if price <= 0 or price > 1_000_000:
-                self.log(
-                    f"{symbol}: Price {price} outside valid range.", "WARNING")
+                self.log(f"{symbol}: Price {price} outside valid range.", "WARNING")
                 return None
             return price
         except Exception as e:
@@ -225,8 +221,7 @@ class ForecastEngine:
         self, symbol: str, df: Optional[pd.DataFrame] = None
     ) -> Dict[str, Any]:
         if self.ensemble is None or not self.ensemble_ready:
-            self.log(
-                f"{symbol}: Ensemble not ready — using base forecast.", "INFO")
+            self.log(f"{symbol}: Ensemble not ready — using base forecast.", "INFO")
             return self.predict(symbol, df)
         try:
             data = df.to_dict() if self._validate_dataframe(df, symbol) else {}

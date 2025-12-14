@@ -1,8 +1,9 @@
 import pandas as pd
-from astra_modules.fetch_core import fetch_unified
+from astra_core.fetch_core import fetch_unified
 from astra_core.guardian.guardian_v6 import guardian_log
 
 guardian = guardian_log("🧠 [DashboardData] Astra unified data fetcher online.")
+
 
 def load_data(selected_tab):
     """Load data for the given dashboard tab using Astra’s advanced fetch_unified."""

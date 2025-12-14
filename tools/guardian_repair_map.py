@@ -30,6 +30,7 @@ REPAIR_MAP = {
 IMPORT_PATTERN = re.compile(r"^from\s+([\w\.]+)\s+import\s+.*$", re.MULTILINE)
 IMPORT_LINE_PATTERN = re.compile(r"^import\s+([\w\.]+)", re.MULTILINE)
 
+
 def repair_file(path: Path):
     text = path.read_text(encoding="utf-8")
     original_text = text
@@ -41,6 +42,7 @@ def repair_file(path: Path):
         path.write_text(text, encoding="utf-8")
         print(f"🔧 Repaired imports in: {path.relative_to(BASE_DIR.parent)}")
 
+
 def run_repair():
     print("🚀 Starting Astra Guardian Repair Map (Phase-101.9)")
     for root, _, files in os.walk(BASE_DIR):
@@ -50,6 +52,6 @@ def run_repair():
     print("\n✅ GuardianV6 alignment complete.")
     print("Next step: run ./setup_dev_env.sh to confirm clean imports.\n")
 
+
 if __name__ == "__main__":
     run_repair()
-

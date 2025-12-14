@@ -1,8 +1,9 @@
-import os, importlib.util, sys
+import os
 
 BASE_DIR = "astra_core"
 
 print("🔍 Scanning Astra Core for missing imports...\n")
+
 
 def validate_imports(base):
     for root, _, files in os.walk(base):
@@ -20,6 +21,6 @@ def validate_imports(base):
                         except Exception:
                             print(f"[⚠️ Missing] {rel} → {mod}")
 
+
 validate_imports(BASE_DIR)
 print("\n✅ Integrity scan complete.")
-

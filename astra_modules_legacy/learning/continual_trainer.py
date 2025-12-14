@@ -39,8 +39,7 @@ class ContinualTrainer:
     - Reward update mechanism
     """
 
-    AGENT_ORDER = ["momentum", "technical",
-                   "volume", "risk", "psychology", "neural"]
+    AGENT_ORDER = ["momentum", "technical", "volume", "risk", "psychology", "neural"]
 
     def __init__(
         self,
@@ -175,8 +174,7 @@ class ContinualTrainer:
                 loss = self._train_step(X, y_true, preds)
                 if loss is not None:
                     total_loss.append(loss)
-                    self.log(
-                        f"Batch {i+1}/{self.train_steps} | Loss: {loss:.6f}")
+                    self.log(f"Batch {i+1}/{self.train_steps} | Loss: {loss:.6f}")
             if total_loss:
                 self._save_model()
                 avg_loss = np.mean(total_loss)
@@ -186,8 +184,7 @@ class ContinualTrainer:
                 )
                 return True
             else:
-                self.log(
-                    "No training performed (no samples available).", "WARNING")
+                self.log("No training performed (no samples available).", "WARNING")
                 return False
         except Exception as e:
             self.log(f"Training failed: {e}", "ERROR")
@@ -255,8 +252,7 @@ class ContinualTrainer:
                 try:
                     self.performance.log_prediction(forecast)
                 except Exception as e:
-                    self.log(
-                        f"PerformanceTracker logging failed: {e}", "WARNING")
+                    self.log(f"PerformanceTracker logging failed: {e}", "WARNING")
 
             return True
         except Exception as e:
@@ -276,8 +272,7 @@ class ContinualTrainer:
             if self.replay_buffer is None or not hasattr(
                 self.replay_buffer, "update_reward"
             ):
-                self.log(
-                    "ReplayBuffer does not support reward updates.", "WARNING")
+                self.log("ReplayBuffer does not support reward updates.", "WARNING")
                 return False
 
             # Compute reward: positive if direction correct, scaled by return

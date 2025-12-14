@@ -117,8 +117,7 @@ class LearningScheduler:
             print("[Astra Learning] Scheduler is already running.")
             return
 
-        self.thread = threading.Thread(
-            target=self._background_loop, daemon=True)
+        self.thread = threading.Thread(target=self._background_loop, daemon=True)
         self.thread.start()
 
     def stop(self):

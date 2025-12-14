@@ -136,8 +136,7 @@ async def get_market_overview(symbols: str) -> Dict[str, Any]:
                 }
             )
 
-        guardian_log(
-            f"[Backend] ✅ Market overview retrieved for {len(syms)} symbols")
+        guardian_log(f"[Backend] ✅ Market overview retrieved for {len(syms)} symbols")
         return {
             "data": data,
             "count": len(data),
@@ -208,8 +207,7 @@ def _cache_set(symbol: str, data: List[Dict[str, Any]]) -> None:
             "data": data,
             "timestamp": time.time(),
         }
-        guardian_log(
-            f"[BackendCache] 💾 Cached {len(data)} records for {symbol}")
+        guardian_log(f"[BackendCache] 💾 Cached {len(data)} records for {symbol}")
     except Exception as e:
         guardian_log(f"[BackendCache] ⚠️ Cache set error: {e}")
 
@@ -232,8 +230,7 @@ async def fetch_from_module(api_name: str, symbol: str) -> pd.DataFrame:
         pd.DataFrame: Data from API or empty DataFrame on failure.
     """
     try:
-        module = __import__(
-            f"astra_modules.apis.{api_name}", fromlist=["get_data"])
+        module = __import__(f"astra_modules.apis.{api_name}", fromlist=["get_data"])
 
         # Prefer async version if available
         if hasattr(module, "get_data_async"):
@@ -252,8 +249,7 @@ async def fetch_from_module(api_name: str, symbol: str) -> pd.DataFrame:
             )
             return df
 
-        guardian_log(
-            f"[Backend] ⚠️ {api_name} returned empty DataFrame for {symbol}")
+        guardian_log(f"[Backend] ⚠️ {api_name} returned empty DataFrame for {symbol}")
 
     except Exception as e:
         guardian_log(f"[Backend] ⚠️ {api_name} fetch failed for {symbol}: {e}")
@@ -299,8 +295,7 @@ async def get_data(symbol: str) -> ORJSONResponse:
     # ===================================================================
     cached = _cache_get(symbol)
     if cached is not None:
-        guardian_log(
-            f"[Backend] 💾 Cache hit for {symbol} ({len(cached)} records)")
+        guardian_log(f"[Backend] 💾 Cache hit for {symbol} ({len(cached)} records)")
         safe_json = orjson.dumps(cached, default=_json_safe_default)
         return ORJSONResponse(content=orjson.loads(safe_json))
 
@@ -315,8 +310,7 @@ async def get_data(symbol: str) -> ORJSONResponse:
         df = api.get_market_data(symbol)
 
         if df is not None and not df.empty:
-            guardian_log(
-                f"[Backend] ✅ AstraAPI provided {len(df)} rows for {symbol}")
+            guardian_log(f"[Backend] ✅ AstraAPI provided {len(df)} rows for {symbol}")
             data = df.to_dict(orient="records")
             _cache_set(symbol, data)
             safe_json = orjson.dumps(data, default=_json_safe_default)
@@ -373,8 +367,7 @@ async def get_data(symbol: str) -> ORJSONResponse:
         data = mock_df.to_dict(orient="records")
         _cache_set(symbol, data)
 
-        guardian_log(
-            f"[Backend] 🧩 Mock data served for {symbol} ({len(data)} rows)")
+        guardian_log(f"[Backend] 🧩 Mock data served for {symbol} ({len(data)} rows)")
         safe_json = orjson.dumps(data, default=_json_safe_default)
         return ORJSONResponse(content=orjson.loads(safe_json))
 
@@ -439,8 +432,7 @@ async def get_data(symbol: str) -> ORJSONResponse:
             if pd.api.types.is_datetime64_any_dtype(df[col]):
                 df[col] = df[col].astype(str)
             else:
-                df[col] = df[col].apply(
-                    lambda x: x.item() if hasattr(x, "item") else x)
+                df[col] = df[col].apply(lambda x: x.item() if hasattr(x, "item") else x)
 
         data = df.to_dict(orient="records")
 
@@ -455,8 +447,7 @@ async def get_data(symbol: str) -> ORJSONResponse:
                     record[key] = str(value)
 
         _cache_set(symbol, data)
-        guardian_log(
-            f"[Backend] ✅ Served {len(df)} normalized records for {symbol}")
+        guardian_log(f"[Backend] ✅ Served {len(df)} normalized records for {symbol}")
 
         safe_json = orjson.dumps(data, default=_json_safe_default)
         return ORJSONResponse(content=orjson.loads(safe_json))

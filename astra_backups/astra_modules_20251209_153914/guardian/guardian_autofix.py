@@ -21,8 +21,7 @@ class AutoFixEngine:
                 if file.endswith(".py"):
                     module = file[:-3]
                     try:
-                        importlib.import_module(
-                            f"astra_modules.guardian.{module}")
+                        importlib.import_module(f"astra_modules.guardian.{module}")
                     except Exception:
                         print(f"[AutoFix] Fixed import: {module}")
         print("[AutoFix] Import map validated.")
