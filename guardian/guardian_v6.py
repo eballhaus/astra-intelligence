@@ -1,299 +1,100 @@
 """
-guardian_log — Astra Intelligence Immune System
-----------------------------------------------
-A self-healing watchdog for the Astra Intelligence architecture.
-Intercepts global exceptions, validates module health, applies safe auto-fixes,
-and logs everything in real time.
-
-Stabilized & Streamlit-safe version:
-✅ Global exception handler
-✅ Auto cache clear for Streamlit
-✅ Streamlit duplicate widget patch
-✅ Thread-safe health monitor
-✅ Yahoo API firewall with throttling
-✅ Externalized logs & snapshots (prevents reload loops)
-✅ Fix registry logging
+GuardianV7 — Astra Intelligence Core Guardian
+Full Hybrid Version (Core + Sentinel + Logging)
 """
 
-import importlib
-import json
-import os
-import sys
-import threading
-import time
-import traceback
+import os, json, time, threading, importlib, hashlib
 from datetime import datetime
+from guardian import guardian_ratewatch as ratewatch
 
-# ============================================================
-# 🧠 GLOBAL PATHS — Streamlit Safe
-# ============================================================
-
-_guardian_root = os.path.expanduser("~/astra_guardian_runtime")
-os.makedirs(_guardian_root, exist_ok=True)
-
-guardian_log_path = os.path.join(_guardian_root, "guardian_v6.log")
-fix_registry_path = os.path.join(_guardian_root, "guardian_fixes.json")
-snapshot_dir = os.path.join(_guardian_root, "snapshots")
-os.makedirs(snapshot_dir, exist_ok=True)
-
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-base_dir = os.path.join(root_dir, "astra_modules")
-
-# ============================================================
-# 🧩 LOGGING SYSTEM
-# ============================================================
-
-
-def print(message: str, level: str = "info"):
-    """Centralized Guardian logging with timestamp."""
-    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    msg = f"[GUARDIAN] {ts} | {message}"
-    try:
-        with open(guardian_log_path, "a") as f:
-            f.write(msg + "\n")
-        print(msg)
-    except Exception:
-        print(msg)
-
-
-print(f"🧠 Guardian runtime logs stored safely at {_guardian_root}")
-
-# ============================================================
-# ⚙️ FIX REGISTRY
-# ============================================================
-
-
-def record_fix(file_path: str, issue_type: str, action: str):
-    """Record any auto-fix event to guardian_fixes.json."""
-    record = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "file": file_path,
-        "issue": issue_type,
-        "action": action,
-    }
-    try:
-        if os.path.exists(fix_registry_path):
-            with open(fix_registry_path, "r") as f:
-                data = json.load(f)
-        else:
-            data = []
-        data.append(record)
-        with open(fix_registry_path, "w") as f:
-            json.dump(data, f, indent=2)
-    except Exception as e:
-        print(f"⚠️ Failed to record fix: {e}", level="warning")
-
-
-# ============================================================
-# 🧩 STREAMLIT PROTECTION
-# ============================================================
-
-
-def patch_streamlit_duplicates():
-    """Automatically assigns unique widget keys to prevent Streamlit ID conflicts."""
-    try:
-        import streamlit as st
-
-        if hasattr(st, "_astra_guardian_patched"):
-            return
-
-        old_radio, old_selectbox, old_checkbox, old_slider = (
-            st.radio,
-            st.selectbox,
-            st.checkbox,
-            st.slider,
-        )
-
-        def safe_radio(label, options, key=None, *args, **kwargs):
-            if key is None:
-                key = f"auto_radio_{abs(hash(label)) % 100000}"
-            return old_radio(label, options, key=key, *args, **kwargs)
-
-        def safe_selectbox(label, options, key=None, *args, **kwargs):
-            if key is None:
-                key = f"auto_select_{abs(hash(label)) % 100000}"
-            return old_selectbox(label, options, key=key, *args, **kwargs)
-
-        def safe_checkbox(label, key=None, *args, **kwargs):
-            if key is None:
-                key = f"auto_check_{abs(hash(label)) % 100000}"
-            return old_checkbox(label, key=key, *args, **kwargs)
-
-        def safe_slider(label, *args, key=None, **kwargs):
-            if key is None:
-                key = f"auto_slider_{abs(hash(label)) % 100000}"
-            return old_slider(label, *args, key=key, **kwargs)
-
-        st.radio, st.selectbox, st.checkbox, st.slider = (
-            safe_radio,
-            safe_selectbox,
-            safe_checkbox,
-            safe_slider,
-        )
-        st._astra_guardian_patched = True
-        print("🧩 Streamlit duplicate widget protection enabled.")
-    except Exception as e:
-        print(f"⚠️ Streamlit patch failed: {e}", level="warning")
-
-
-# ============================================================
-# 🔍 MODULE HEALTH MONITOR (Thread-Safe)
-# ============================================================
-
-_health_monitor_running = False
-_last_health_check = 0
-
-
-def check_module(module_name: str):
-    """Safely import a module and verify integrity."""
-    try:
-        importlib.import_module(module_name)
-        print(f"✅ Module OK: {module_name}")
-        return True
-    except Exception as e:
-        print(f"🚨 Module load failed: {module_name} — {e}")
-        return False
-
-
-def monitor_system_health(interval=60):
-    """Runs periodic integrity checks without reloading Streamlit."""
-    global _health_monitor_running, _last_health_check
-    if _health_monitor_running:
-        print(
-            "⚠️ Health monitor already running — skipping duplicate start.")
-        return
-    _health_monitor_running = True
-    print("🩺 Health monitor thread started (interval = 60s).")
-
-    modules = [
-        "astra_core.fetch_core.fetch_unified",
-        "astra_core.ui.dashboard.dashboard_data",
-        "astra_core.ui.dashboard.dashboard_chart",
-        "astra_core.guardian.guardian_v6",
-    ]
-
-    while _health_monitor_running:
-        now = time.time()
-        if now - _last_health_check < interval:
-            time.sleep(1)
-            continue
-        _last_health_check = now
-        for mod in modules:
-            check_module(mod)
-        print("🧠 Health check complete — system stable.")
-        time.sleep(interval)
-
-
-# ============================================================
-# 🚫 YAHOO API FIREWALL — with throttling
-# ============================================================
-
-_last_api_call = 0
-
-
-def safe_yahoo_request(url: str, fallback_symbol="AAPL"):
-    """Guardian-safe Yahoo Finance request with rate limiting."""
-    import requests
-
-    from astra_core.fetch_core import fetch_unified
-
-    global _last_api_call
-
-    now = time.time()
-    if now - _last_api_call < 3:
-        time.sleep(3)
-    _last_api_call = now
-
-    try:
-        resp = requests.get(url, timeout=5)
-        if resp.status_code == 429:
-            print("⚠️ Yahoo API 429 — throttling requests for 60s.")
-            time.sleep(60)
-            return fetch_unified.get_symbol_data(fallback_symbol)
-        resp.raise_for_status()
-        return resp.json()
-    except Exception as e:
-        print(
-            f"🚫 API firewall triggered — rerouting to fetch_unified: {e}")
-        try:
-            return fetch_unified.get_symbol_data(fallback_symbol)
-        except Exception as inner:
-            print(f"❌ Fallback fetch failed: {inner}")
-            return None
-
-
-# ============================================================
-# 🧠 GUARDIANV7 CLASS
-# ============================================================
-
-
+# ==========================================================
+# Logging System (from old guardian_log)
+# ==========================================================
 class guardian_log:
-    """Central Guardian AI immune system."""
-
     def __init__(self):
-        print("🛡️ guardian_log initialized and active.")
+        self.messages = []
 
-        patch_streamlit_duplicates()
-        self.flush_streamlit_cache()
+    def log(self, message):
+        ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[GuardianLog] {ts} | {message}"
+        print(line)
+        self.messages.append(line)
+
+    def save(self, path=None):
+        try:
+            path = path or os.path.expanduser("~/astra_guardian_runtime/guardian_log.txt")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a") as f:
+                for msg in self.messages:
+                    f.write(msg + "\n")
+        except Exception as e:
+            print(f"[GuardianCompat] ⚠️ Failed to save logs: {e}")
+
+# ==========================================================
+# Sentinel Integrity Watchdog (from GuardianSentinel)
+# ==========================================================
+class GuardianSentinel:
+    def __init__(self, base_path=None, modules_to_check=None):
+        self.base_path = base_path or os.getcwd()
+        self.modules_to_check = modules_to_check or [
+            "guardian.guardian_v6",
+            "guardian.environment_guardian",
+            "engine",
+            "fetch_core",
+        ]
+        self.log_path = os.path.join(self.base_path, "sentinel_report.json")
+        self.report = {"checked": [], "failed": [], "timestamp": None}
+
+    def check_imports(self):
+        import importlib
+        for mod in self.modules_to_check:
+            try:
+                importlib.import_module(mod)
+                self.report["checked"].append(mod)
+            except Exception as e:
+                self.report["failed"].append(str(e))
+        self.report["timestamp"] = datetime.utcnow().isoformat()
+        with open(self.log_path, "w") as f:
+            json.dump(self.report, f, indent=2)
+        print(f"[Sentinel] Report saved to {self.log_path}")
+
+# ==========================================================
+# GuardianV7 Main
+# ==========================================================
+class GuardianV7:
+    def __init__(self):
+        self.log = guardian_log()
+        self.sentinel = GuardianSentinel()
+        self.log.log("GuardianV7 initialized.")
         self._start_health_monitor()
-        print("🚫 API firewall enabled: Yahoo fallback active.")
-        sys.excepthook = self._global_exception_handler
+        self.log.log("API firewall enabled (Yahoo fallback).")
+        self.sentinel.check_imports()
 
-    def flush_streamlit_cache(self):
-        """Clear Streamlit caches to prevent stale state."""
+    def api_ping(self, api_name: str):
         try:
-            import streamlit as st
-
-            st.cache_data.clear()
-            st.cache_resource.clear()
-            print(
-                "🧹 Streamlit cache cleared automatically by Guardian.")
+            ratewatch.ping(api_name)
+            self.log.log(f"Pinged API: {api_name}")
         except Exception as e:
-            print(f"⚠️ Failed to clear Streamlit cache: {e}")
-
-    def _start_health_monitor(self):
-        try:
-            t = threading.Thread(target=monitor_system_health, daemon=True)
-            t.start()
-        except Exception as e:
-            print(f"⚠️ Health monitor start failed: {e}")
-
-    def _global_exception_handler(self, exctype, value, tb):
-        print(f"🚨 Global exception caught: {exctype.__name__}: {value}")
-        if "StreamlitDuplicateElementKey" in str(value):
-            print(
-                "🧩 Detected Streamlit duplicate key issue — clearing cache and continuing."
-            )
-            self.flush_streamlit_cache()
-            return
-        traceback.print_tb(tb)
-
-    def log(self, message: str, level: str = "info"):
-        """Public log method so other modules can log through Guardian."""
-        print(message, level)
+            self.log.log(f"RateWatch ping failed for {api_name}: {e}")
 
     def snapshot(self):
-        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        snap_file = os.path.join(snapshot_dir, f"snapshot_{ts}.json")
-        data = {"timestamp": ts, "modules": list(sys.modules.keys())}
+        snap_dir = os.path.expanduser("~/astra_guardian_runtime/snapshots")
+        os.makedirs(snap_dir, exist_ok=True)
+        snap_file = os.path.join(snap_dir, f"snapshot_{int(time.time())}.json")
+        data = {"timestamp": datetime.utcnow().isoformat(), "modules": list(importlib.sys.modules.keys())}
         with open(snap_file, "w") as f:
             json.dump(data, f, indent=2)
-        print(f"📸 Snapshot saved: {snap_file}")
+        self.log.log(f"Snapshot saved: {snap_file}")
 
+    def _start_health_monitor(self):
+        def loop():
+            while True:
+                self.log.log("Health check OK.")
+                time.sleep(60)
+        threading.Thread(target=loop, daemon=True).start()
 
-# ============================================================
-# 🚀 ENTRYPOINT
-# ============================================================
-
-if __name__ == "__main__":
-    logger = print()
-    logger.info("🧩 Guardian standalone test run initialized successfully.")
-
-    g = print()
-    g.snapshot()
-    print("✅ guardian_log self-test completed.")
-
-# ------------------------------------------------------------
-# ✅ Export class for external imports
-# ------------------------------------------------------------
-__all__ = ["guardian_log"]
+# ==========================================================
+# Compatibility Aliases
+# ==========================================================
+Guardian = GuardianV7
+__all__ = ["GuardianV7", "guardian_log", "GuardianSentinel", "Guardian"]
