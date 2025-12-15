@@ -1,7 +1,8 @@
-from api_keys import MORALIS_API_KEY
-import astra_modules.utils.safe_df as safe_df
-import requests
 import pandas as pd
+import requests
+
+import astra_modules.utils.safe_df as safe_df
+from api_keys import MORALIS_API_KEY
 from astra_modules.guardian.guardian_v7 import Guardian
 
 g = Guardian()

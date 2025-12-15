@@ -1,20 +1,22 @@
 # -------------------------------------------------------------------
 # 🧠 Astra Quick Mode — Skip Guardian full audit in UI sessions
 # -------------------------------------------------------------------
-from core.api_client import AstraAPI
-from astra_modules.ui.dashboard.dashboard_data import load_data
-from astra_modules.ui.dashboard.dashboard_chart import render_chart
-from astra_modules.ui.dashboard.dashboard_cards import render_symbol_card
-from astra_modules.guardian.guardian_v7 import guardian_log
-import streamlit as st
-import plotly.graph_objects as go
-import pandas as pd
-from typing import Dict, List, Optional
-from datetime import datetime, timezone
-import types
-import sys
 import concurrent.futures
 import os
+import sys
+import types
+from datetime import datetime, timezone
+from typing import Dict, List, Optional
+
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
+from astra_modules.guardian.guardian_v7 import guardian_log
+from astra_modules.ui.dashboard.dashboard_cards import render_symbol_card
+from astra_modules.ui.dashboard.dashboard_chart import render_chart
+from astra_modules.ui.dashboard.dashboard_data import load_data
+from core.api_client import AstraAPI
 
 os.environ.setdefault("ASTRA_UI_MODE", "1")
 

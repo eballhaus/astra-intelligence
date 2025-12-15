@@ -2,11 +2,12 @@
 # 🌌 ASTRA DASHBOARD v4.4 — Optimized Version (Phase 6 Auto-Swap Ready)
 # -------------------------------------------------------------------
 
-from core.cache_manager import CacheManager
-from astra_modules.utils.guardian_lazy import get_guardian, is_guardian_ready
 import os
 
 import streamlit as st
+
+from astra_modules.utils.guardian_lazy import get_guardian, is_guardian_ready
+from core.cache_manager import CacheManager
 
 os.environ["ASTRA_FASTBOOT"] = "1"
 

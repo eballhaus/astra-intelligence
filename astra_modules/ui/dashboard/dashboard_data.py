@@ -9,7 +9,6 @@ from typing import Optional
 
 import pandas as pd
 
-
 CACHE_DIR = "/tmp/astra_cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
 

@@ -1,9 +1,10 @@
-from core import cache_manager
-from astra_modules.utils.safe_api_wrapper import safe_api_call
-import astra_modules.utils.safe_df as safe_df
 import pandas as pd
+
+import astra_modules.utils.safe_df as safe_df
 from astra_modules.fetch.api_router import get_best
 from astra_modules.guardian.guardian_v7 import Guardian
+from astra_modules.utils.safe_api_wrapper import safe_api_call
+from core import cache_manager
 
 g = Guardian()
 

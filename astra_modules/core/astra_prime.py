@@ -9,17 +9,19 @@ Enhancements:
  • clean integration with StateBundleBuilder & NeuralAgent
 """
 
-from guardian.state_initializer import ensure_state_ready
-from agents.volume_agent import VolumeAgent
-from agents.technical_agent import TechnicalAgent
-from agents.risk_agent import RiskAgent
-from agents.psychology_agent import PsychologyAgent
-from agents.neural_agent import NeuralAgent
-from agents.momentum_agent import MomentumAgent
-from agents.catalyst_agent import CatalystAgent
-import numpy as np
 import os
 import sys
+
+import numpy as np
+
+from agents.catalyst_agent import CatalystAgent
+from agents.momentum_agent import MomentumAgent
+from agents.neural_agent import NeuralAgent
+from agents.psychology_agent import PsychologyAgent
+from agents.risk_agent import RiskAgent
+from agents.technical_agent import TechnicalAgent
+from agents.volume_agent import VolumeAgent
+from guardian.state_initializer import ensure_state_ready
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
