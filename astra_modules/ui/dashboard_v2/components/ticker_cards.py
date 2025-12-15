@@ -1,6 +1,9 @@
-import streamlit as st
-import requests, json
+import json
 from pathlib import Path
+
+import requests
+import streamlit as st
+
 
 def fetch_price(symbol: str, api_sources: dict):
     url = api_sources.get("price_api")
@@ -11,22 +14,29 @@ def fetch_price(symbol: str, api_sources: dict):
         d = r.json()
         return {
             "price": round(d.get("price", 0), 4),
-            "change_pct": round(d.get("change_pct", 0), 2)
+            "change_pct": round(d.get("change_pct", 0), 2),
         }
     except Exception:
         return {"price": "—", "change_pct": "—"}
 
+
 def render_ticker_section(title: str, symbols: list, api_sources: dict):
     st.subheader(title)
-    rows = [symbols[i:i+3] for i in range(0, len(symbols), 3)]
+    rows = [symbols[i: i + 3] for i in range(0, len(symbols), 3)]
     for row in rows:
         cols = st.columns(len(row))
         for col, sym in zip(cols, row):
             d = fetch_price(sym, api_sources)
-            change_color = "🟢" if isinstance(d["change_pct"], (int,float)) and d["change_pct"] > 0 else "🔴"
-            col.metric(sym, f"${d['price']}", f"{change_color} {d['change_pct']}%")
+            change_color = (
+                "🟢"
+                if isinstance(d["change_pct"], (int, float)) and d["change_pct"] > 0
+                else "🔴"
+            )
+            col.metric(sym, f"${d['price']}",
+                       f"{change_color} {d['change_pct']}%")
 
-def render_ticker_cards(symbols=None, api_sources: dict=None):
+
+def render_ticker_cards(symbols=None, api_sources: dict = None):
     """
     symbols: optional list of tickers to display
     api_sources: dict of API endpoints

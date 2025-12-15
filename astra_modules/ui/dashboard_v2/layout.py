@@ -1,8 +1,11 @@
-import streamlit as st
-from astra_modules.ui.dashboard_v2.components.cards_section import render_cards_section
-from astra_modules.ui.dashboard_v2.components.advanced_chart import render_advanced_chart
-from astra_modules.ui.dashboard_v2 import data_hooks
 import pandas as pd
+import streamlit as st
+
+from astra_modules.ui.dashboard_v2.components.advanced_chart import \
+    render_advanced_chart
+from astra_modules.ui.dashboard_v2.components.cards_section import \
+    render_cards_section
+
 
 def render_layout(data=None):
     st.title("🧠 Astra Intelligence — Dashboard 2.1")

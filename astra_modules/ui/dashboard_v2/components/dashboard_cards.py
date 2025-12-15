@@ -1,4 +1,4 @@
-from astra_modules.guardian.guardian_v7 import guardian_log
+
 # -*- coding: utf-8 -*-
 """
 Astra Intelligence — Dashboard Cards (v5.0)
@@ -6,11 +6,10 @@ Astra Intelligence — Dashboard Cards (v5.0)
 Fully agent-integrated AstraGlass cards.
 """
 
-import random
-from datetime import datetime, timedelta
-import numpy as np
+
 import pandas as pd
 import streamlit as st
+
 from astra_modules.guardian.guardian_v7 import Guardian
 
 guardian = Guardian()
@@ -20,10 +19,12 @@ try:
     from astra_modules.agents.neural_agent import NeuralAgent
     from astra_modules.agents.risk_agent import RiskAgent
     from astra_modules.engine.ranking_engine import RankingEngine
+
     print("[Cards] ✅ Agents successfully imported.")
 except Exception as e:
     print(f"[Cards] ⚠️ Failed to import agents: {e}")
     MomentumAgent = RiskAgent = NeuralAgent = RankingEngine = None
+
 
 # ============================================================
 # 💹 Symbol Intelligence Card
@@ -72,13 +73,16 @@ def render_symbol_card(symbol: str, df: pd.DataFrame = None, active: bool = Fals
     </div>
     """
     import streamlit.components.v1 as components
+
     components.html(html, height=150, scrolling=False)
+
 
 # ============================================================
 # 🧩 Empty Card Placeholder
 # ============================================================
 def render_empty_card():
     import streamlit as st
+
     st.markdown(
         """
         <div style="padding:1rem;text-align:center;border-radius:10px;
@@ -90,18 +94,22 @@ def render_empty_card():
         unsafe_allow_html=True,
     )
 
+
 __all__ = ["render_symbol_card", "render_empty_card"]
 
 # ============================================================
 # 🛡️ Safe Guardian Logger Wrapper
 # ============================================================
 try:
-    from astra_modules.guardian.guardian_v7 import guardian_log
+    pass
+
     def safe_log(msg):
         try:
             safe_log(msg)
         except Exception:
             print(msg)
+
 except Exception:
+
     def safe_log(msg):
         print(msg)

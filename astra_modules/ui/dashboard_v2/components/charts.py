@@ -1,6 +1,7 @@
-import streamlit as st
 import pandas as pd
 import plotly.express as px
+import streamlit as st
+
 
 def render_charts(data: dict):
     try:
@@ -8,7 +9,8 @@ def render_charts(data: dict):
         if df.empty:
             st.warning("No forecast data to display.")
             return
-        fig = px.line(df, x="timestamp", y="prediction", title="Forecast vs Actual")
+        fig = px.line(df, x="timestamp", y="prediction",
+                      title="Forecast vs Actual")
         st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
         st.error(f"Chart rendering error: {e}")

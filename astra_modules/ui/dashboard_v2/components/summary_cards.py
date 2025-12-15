@@ -1,5 +1,6 @@
 import streamlit as st
 
+
 def render_summary_cards(data: dict):
     cols = st.columns(4)
     metrics = {

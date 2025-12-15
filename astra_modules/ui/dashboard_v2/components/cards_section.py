@@ -1,11 +1,14 @@
-import streamlit as st
 import pandas as pd
-from astra_modules.ui.dashboard_v2.components.dashboard_cards import render_symbol_card, render_empty_card
+import streamlit as st
+
 from astra_modules.ui.dashboard_v2 import data_hooks
+from astra_modules.ui.dashboard_v2.components.dashboard_cards import (
+    render_empty_card, render_symbol_card)
 
 # --- Stock and Crypto lists (Astra can later auto-pick top 6 of each) ---
 STOCKS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL"]
 CRYPTOS = ["BTCUSD", "ETHUSD", "SOLUSD", "AVAXUSD", "BNBUSD", "ADAUSD"]
+
 
 def render_cards_section():
     """Render Stocks and Crypto cards in two responsive columns with live data."""
