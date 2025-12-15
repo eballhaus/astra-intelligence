@@ -1,3 +1,6 @@
+from utils.safe_df import safe_df
+from utils.safe_api_wrapper import safe_api_call
+import pandas as pd
 from guardian.guardian_v6 import Guardian
 
 g = Guardian()
@@ -11,11 +14,6 @@ Fallback order:
     3. EODHD
 """
 
-import pandas as pd
-
-from utils.safe_api_wrapper import safe_api_call
-from utils.safe_df import safe_df
-
 
 def _convert(records):
     if not records:
@@ -24,9 +22,12 @@ def _convert(records):
     df = pd.DataFrame(records)
 
     df.rename(
-        columns={"date": "timestamp", "datetime": "timestamp", "time": "timestamp"},
+    columns={
+        "date": "timestamp",
+        "datetime": "timestamp",
+        "time": "timestamp"},
         inplace=True,
-    )
+         )
 
     if "timestamp" in df:
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
@@ -85,14 +86,15 @@ def fetch_alpha_vantage_etf(symbol, interval="60min"):
 # FMP
 # -------------------------------------------------------
 def fetch_fmp_etf(symbol, interval="1hour"):
-        return pd.DataFrame()
+    return pd.DataFrame()
+
 
 url = (
-    )
+)
 
-    def run():
-        r = safe_api_call(url)
-        return _convert(r or [])
+def run():
+    r = safe_api_call(url)
+    return _convert(r or [])
 
     return run()
 

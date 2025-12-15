@@ -1,0 +1,22 @@
+Sun Dec 14 17:47:10 2025  === ASTRA CLEANUP PLAN • MODE B++ ===
+Sun Dec 14 17:47:11 2025  [SCAN] 89 top-level imports mapped.
+Sun Dec 14 17:47:24 2025  [CHECK] Sanity OK
+Sun Dec 14 17:47:28 2025  [CHECK] Sanity OK
+Sun Dec 14 17:47:31 2025  [ARCHIVE] /Users/ericballhaus/Desktop/astra-intelligence/astra_backups → /Users/ericballhaus/Desktop/astra-intelligence/astra_backups_archive_2025Q4.tar.gz
+Sun Dec 14 17:47:31 2025  [CHECK] Sanity OK
+Sun Dec 14 17:47:33 2025  [DEL] /Users/ericballhaus/Desktop/astra-intelligence/__pycache__
+Sun Dec 14 17:47:33 2025  [DEL] /Users/ericballhaus/Desktop/astra-intelligence/forecast/__pycache__
+Sun Dec 14 17:47:33 2025  [DEL] /Users/ericballhaus/Desktop/astra-intelligence/astra_core/__pycache__
+Sun Dec 14 17:47:33 2025  [DEL] /Users/ericballhaus/Desktop/astra-intelligence/fetch_core/__pycache__
+Sun Dec 14 17:47:33 2025  [DEL] /Users/ericballhaus/Desktop/astra-intelligence/learning/__pycache__
+Sun Dec 14 17:47:33 2025  [DEL] /Users/ericballhaus/Desktop/astra-intelligence/agents/__pycache__
+Sun Dec 14 17:47:33 2025  [DEL] /Users/ericballhaus/Desktop/astra-intelligence/utils/__pycache__
+Sun Dec 14 17:47:33 2025  [DEL] /Users/ericballhaus/Desktop/astra-intelligence/state/__pycache__
+Sun Dec 14 17:47:33 2025  [DEL] /Users/ericballhaus/Desktop/astra-intelligence/guardian/__pycache__
+Sun Dec 14 17:47:33 2025  [DEL] /Users/ericballhaus/Desktop/astra-intelligence/engine/__pycache__
+Sun Dec 14 17:47:33 2025  [DEL] /Users/ericballhaus/Desktop/astra-intelligence/astra_core/ui/__pycache__
+Sun Dec 14 17:47:33 2025  [DEL] /Users/ericballhaus/Desktop/astra-intelligence/astra_core/guardian/__pycache__
+Sun Dec 14 17:47:33 2025  [DEL] /Users/ericballhaus/Desktop/astra-intelligence/astra_core/ui/dashboard/__pycache__
+Sun Dec 14 17:47:33 2025  Cleanup complete.
+Sun Dec 14 17:47:34 2025  [CHECK] Sanity OK
+Sun Dec 14 17:47:34 2025  Summary log: /Users/ericballhaus/Desktop/astra-intelligence/astra_backups/cleanup_log.json

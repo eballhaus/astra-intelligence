@@ -1,0 +1,64 @@
+=== ASTRA INVENTORY (engine, guardian, scanners) ===
+
+
+--- engine/ ---
+engine
+├── __init__.py
+├── __pycache__
+│   ├── __init__.cpython-312.pyc
+│   ├── preload_thread.cpython-312.pyc
+│   └── ranking_engine.cpython-312.pyc
+├── astra_backend.py
+├── background_loop.py
+├── orchestrator.py
+├── preload_thread.py
+├── ranking_engine.py
+├── scan_manager.py
+├── state_bundle_builder.py
+└── strategy_engine.py
+
+2 directories, 12 files
+
+
+--- guardian/ ---
+guardian
+├── __pycache__
+│   ├── environment_guardian.cpython-312.pyc
+│   ├── guardian_defender.cpython-312.pyc
+│   ├── guardian_ratewatch.cpython-312.pyc
+│   ├── guardian_sentinel.cpython-312.pyc
+│   ├── guardian_v6.cpython-312.pyc
+│   └── state_initializer.cpython-312.pyc
+├── api_health_monitor.py
+├── environment_guardian.py
+├── guardian_defender.py
+├── guardian_import_auditor.py
+├── guardian_ratewatch.py
+├── guardian_sentinel.py
+├── guardian_sync.py
+├── guardian_v6 copy 2.py
+├── guardian_v6 copy.py
+├── guardian_v6.bak_20251212_134141
+├── guardian_v6.bak_20251214_1650
+├── guardian_v6.bak_20251214_1655
+├── guardian_v6.bak_snapshot_20251214_1655
+├── guardian_v6.py
+├── pipeline_sanitizer.py
+├── schema_validator.py
+├── security
+│   └── api_keys.py
+├── startup_hook.py
+├── state_initializer.py
+└── ui_integrity_lock.py
+
+3 directories, 26 files
+
+
+--- scanners/ ---
+scanners
+├── __init__.py
+├── momentum_scanner.py
+├── technical_scanner.py
+└── volume_scanner.py
+
+1 directory, 4 files

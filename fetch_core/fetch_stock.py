@@ -1,3 +1,4 @@
+from fetch_core.api_router import get_best
 from guardian.guardian_v6 import Guardian
 
 g = Guardian()
@@ -13,7 +14,7 @@ Priority:
 
 import pandas as pd
 
-from utils.caching import cache_set
+from core import cache_manager
 from utils.safe_api_wrapper import safe_api_call
 from utils.safe_df import safe_df
 
@@ -89,10 +90,12 @@ def fetch_twelve(symbol):
 # Unified Stock Fetch
 # ---------------------------------------------------------
 def fetch_stock(symbol, interval="1h"):
+    api_choice = get_best(["ALPHAVANTAGE","TWELVEDATA","FINNHUB","EODHD","POLYGON","DATAJOCKEY","SIMFIN"])
+    print(f"[API ROUTER] Using {api_choice} for stock fetch")
     for provider in [fetch_alpha, fetch_fmp, fetch_twelve]:
         df = provider(symbol)
         if df is not None and not df.empty:
-            cache_set(symbol, df)
+            cache_manager.set(symbol, df)
             return df
 
     return pd.DataFrame()
