@@ -1,0 +1,37 @@
+
+Fetch (astra_modules.fetch.fetch_unified) FAILED:
+Traceback (most recent call last):
+  File "/Users/ericballhaus/Desktop/astra-intelligence/astra_system_validation.py", line 32, in test_import
+    mod = importlib.import_module(module_path)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1310, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 999, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/fetch/__init__.py", line 1, in <module>
+    from astra_modules.fetch import fetch_unified, fetch_crypto, fetch_stock, fetch_etf, fetcher, api_router, async_router, async_router_cache
+  File "/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/fetch/fetch_stock.py", line 19, in <module>
+    from astra_modules.utils.safe_df import safe_df
+ImportError: cannot import name 'safe_df' from 'astra_modules.utils.safe_df' (/Users/ericballhaus/Desktop/astra-intelligence/astra_modules/utils/safe_df.py)
+
+
+📊 Astra Intelligence Validation Summary:
+Guardian                  ✅ OK
+Engine                    ✅ OK
+Fetch                     ❌ Import error: ImportError
+UI                        ✅ OK
+State                     ✅ OK
+Agents                    ✅ OK
+Forecast                  ✅ OK
+Learning                  ✅ OK
+Utils                     ✅ OK
+Guardian→Engine link      ✅ OK

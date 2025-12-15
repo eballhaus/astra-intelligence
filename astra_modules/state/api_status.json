@@ -1,0 +1,38 @@
+[
+  {
+    "name": "TwelveData",
+    "status": 200,
+    "ok": true,
+    "body": "{\"meta\":{\"symbol\":\"SPY\",\"interval\":\"1h\",\"currency\":\"USD\",\"exchange_timezone\":\"America/New_York\",\"exchange\":\"NYSE\",\"mic_code\":\"ARCX\",\"type\":\"ETF\"},\"values\":[{\"datetime\":\"2025-12-12 15:30:00\",\"open\":\"68..."
+  },
+  {
+    "name": "Finnhub",
+    "status": 401,
+    "ok": false,
+    "body": "{\"error\":\"Invalid API key.\"}"
+  },
+  {
+    "name": "EODHD",
+    "status": 200,
+    "ok": true,
+    "body": "[{\"date\":\"2024-12-16\",\"open\":606,\"high\":607.7795,\"low\":605.21,\"close\":606.79,\"adjusted_close\":599.4921,\"volume\":43695180},{\"date\":\"2024-12-17\",\"open\":604.19,\"high\":605.17,\"low\":602.885,\"close\":604.29,..."
+  },
+  {
+    "name": "AlphaVantage",
+    "status": 200,
+    "ok": true,
+    "body": "{\n    \"Information\": \"Thank you for using Alpha Vantage! This is a premium endpoint. You may subscribe to any of the premium plans at https://www.alphavantage.co/premium/ to instantly unlock all premi..."
+  },
+  {
+    "name": "FMP",
+    "status": 401,
+    "ok": false,
+    "body": "{\n  \"Error Message\": \"Invalid API KEY. Feel free to create a Free API Key or visit https://site.financialmodelingprep.com/faqs?search=why-is-my-api-key-invalid for more information.\"\n}"
+  },
+  {
+    "name": "Moralis",
+    "status": 404,
+    "ok": false,
+    "body": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot GET /api/v2.2/market-data/ohlcv/latest</pre>\n</body>\n</html>\n"
+  }
+]
