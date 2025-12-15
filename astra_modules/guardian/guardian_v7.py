@@ -23,3 +23,4 @@ class Guardian:
 
 
 guardian_log = guardian_boot
+GuardianV7 = Guardian

@@ -1,38 +1,16 @@
 """
-Astra Intelligence — API Keys
-This file defines ALL API_KEY names exactly as required across fetch_unified,
-fetch_stock, fetch_crypto, fetch_etf, and universe_builder.
+Astra Intelligence – Centralized environment key loader.
+All keys come from system environment variables.
 """
 
-# -------------------------------
-# STOCK + MARKET DATA PROVIDERS
-# -------------------------------
-ALPHA_VANTAGE_API_KEY = "YJVYAJJSKKXF3ZQB"
+import os
 
-FMP_API_KEY = "xbgYJPXsiwJ3coLczphQSBsghO7fTklM"  # Financial Modeling Prep
-
-TWELVEDATA_API_KEY = "452b5c89fc8747d4803ee6bda5f891b2"
-
-FINNHUB_API_KEY = "d42ee5hr01qorleqvvb0d42ee5hr01qorleqvvbg"
-
-EODHD_API_KEY = "6904e7a2ced028.25933984"
-
-# -------------------------------
-# CRYPTO PROVIDERS
-# -------------------------------
-MORALIS_API_KEY = (
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-    "eyJub25jZSI6IjUxNGFmZTQ0LTA5NjQtNGY0OS1iMzY0LTBhY2IzNGI1Yzc4MyIsIm9yZ0lkIjoiNDc5MDgy"
-    "IiwidXNlcklkIjoiNDkyODc5IiwidHlwZUlkIjoiMGE0Yzg2YjMtNTFjMC00MzIwLWI2YzYtODU3NmY5NDhh"
-    "ZWYyIiwidHlwZSI6IlBST0pFQ1QiLCJpYXQiOjE3NjIwNTQ0NzYsImV4cCI6NDkxNzgxNDQ3Nn0."
-    "qD2enThc_vEplne8qVqOxDJrCUherTPWb-jmpebvkyI"
-)
-
-# Backup crypto provider (some modules expect this)
-# Coingecko no longer requires an API key (left for compatibility)
-COINGECKO_KEY = None
-
-# -------------------------------
-# NEWS API (future use)
-# -------------------------------
-NEWS_API_KEY = None
+ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
+TWELVEDATA_API_KEY    = os.getenv("TWELVEDATA_API_KEY")
+FINNHUB_API_KEY       = os.getenv("FINNHUB_API_KEY")
+EODHD_API_KEY         = os.getenv("EODHD_API_KEY")
+MORALIS_API_KEY       = os.getenv("MORALIS_API_KEY")
+DATAJOCKEY_API_KEY    = os.getenv("DATAJOCKEY_API_KEY")
+SIMFIN_API_KEY        = os.getenv("SIMFIN_API_KEY")
+POLYGON_API_KEY       = os.getenv("POLYGON_API_KEY")
+NASDAQ_API_KEY        = os.getenv("NASDAQ_API_KEY")
