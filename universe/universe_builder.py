@@ -1,9 +1,14 @@
+# ============================================================
+# ✅ Unified Guardian V7 Integration
+# ============================================================
+from astra_modules.guardian.guardian_v7 import guardian_log
+
 """
 Universe Builder – Phase-90 Unified Version
 -------------------------------------------
 Provides both the UniverseBuilder class (for legacy modules)
 and build_universe() function (for Phase-90 components).
-Integrated with guardian_v6 for self-healing and logging.
+Integrated with guardian_v7 for self-healing and logging.
 """
 
 import os
@@ -13,7 +18,7 @@ from core.cache_manager import CacheManager
 
 # Import guardian safely
 try:
-    from guardian.guardian_v6 import guardian_log, self_heal, log_event, _write_log
+    from guardian.guardian_v7 import guardian_log, self_heal, log_event, _write_log
 except Exception:
     # Fallback if Guardian isn't loaded yet (FastBoot mode)
     def guardian_log(msg):
@@ -98,3 +103,58 @@ def build_universe(source: str = None):
 if __name__ == "__main__":
     builder = UniverseBuilder()
     print("Universe built successfully:", builder.build())
+
+# ============================================================
+# ⚙️ Caching + Mode-Aware Universe Logic (Astra vMAX)
+# ============================================================
+
+import json, time, os
+from astra_modules.core.trade_mode import get_trade_mode
+
+CACHE_PATH = os.path.join(os.path.dirname(__file__), "universe_cache.json")
+
+def load_cached_universe():
+    """Load cached universe if recent (≤12h)."""
+    if not os.path.exists(CACHE_PATH):
+        return None
+    try:
+        age = time.time() - os.path.getmtime(CACHE_PATH)
+        if age > 43200:
+            guardian_log("[UniverseBuilder] Cache expired (>12h)")
+            return None
+        with open(CACHE_PATH, "r") as f:
+            data = json.load(f)
+            guardian_log(f"[UniverseBuilder] Loaded {len(data)} cached assets.")
+            return data
+    except Exception as e:
+        guardian_log(f"[UniverseBuilder] ⚠️ Cache load failed: {e}")
+        return None
+
+def save_universe_cache(data):
+    """Save universe cache safely."""
+    try:
+        with open(CACHE_PATH, "w") as f:
+            json.dump(data, f, indent=2)
+        guardian_log(f"[UniverseBuilder] ✅ Cached {len(data)} assets.")
+    except Exception as e:
+        guardian_log(f"[UniverseBuilder] ⚠️ Cache save failed: {e}")
+
+def build_universe_optimized(source: str = None):
+    """Adaptive universe builder that respects day/swing trade mode."""
+    mode = get_trade_mode()
+    guardian_log(f"[UniverseBuilder] Mode={mode} | Building universe...")
+
+    cached = load_cached_universe()
+    if cached:
+        return cached
+
+    # Placeholder static universes (replace later with SmartScan or API integration)
+    if mode == "day":
+        universe = {"stocks": ["AAPL","NVDA","MSFT","AMZN","TSLA","META"],
+                    "crypto": ["BTC","ETH","SOL","BNB","ADA","AVAX"]}
+    else:
+        universe = {"stocks": ["GOOGL","UNH","V","JPM","XOM","LLY"],
+                    "crypto": ["MATIC","DOT","LINK","ATOM","NEAR","XRP"]}
+
+    save_universe_cache(universe)
+    return universe

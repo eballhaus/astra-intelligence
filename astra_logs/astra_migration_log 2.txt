@@ -1,0 +1,64 @@
+🚀 Astra Intelligence v7.5 – Safe-Write Migration Starting
+Backup folder: /Users/ericballhaus/Desktop/astra-intelligence/archive/pre_migration_backup_20251215_115234
+📦 Backing up: /Users/ericballhaus/Desktop/astra-intelligence/guardian → /Users/ericballhaus/Desktop/astra-intelligence/archive/pre_migration_backup_20251215_115234/guardian
+📦 Backing up: /Users/ericballhaus/Desktop/astra-intelligence/engine → /Users/ericballhaus/Desktop/astra-intelligence/archive/pre_migration_backup_20251215_115234/engine
+📦 Backing up: /Users/ericballhaus/Desktop/astra-intelligence/fetch_core → /Users/ericballhaus/Desktop/astra-intelligence/archive/pre_migration_backup_20251215_115234/fetch_core
+📦 Backing up: /Users/ericballhaus/Desktop/astra-intelligence/ui → /Users/ericballhaus/Desktop/astra-intelligence/archive/pre_migration_backup_20251215_115234/ui
+📦 Backing up: /Users/ericballhaus/Desktop/astra-intelligence/state → /Users/ericballhaus/Desktop/astra-intelligence/archive/pre_migration_backup_20251215_115234/state
+📦 Backing up: /Users/ericballhaus/Desktop/astra-intelligence/agents → /Users/ericballhaus/Desktop/astra-intelligence/archive/pre_migration_backup_20251215_115234/agents
+📦 Backing up: /Users/ericballhaus/Desktop/astra-intelligence/forecast → /Users/ericballhaus/Desktop/astra-intelligence/archive/pre_migration_backup_20251215_115234/forecast
+📦 Backing up: /Users/ericballhaus/Desktop/astra-intelligence/learning → /Users/ericballhaus/Desktop/astra-intelligence/archive/pre_migration_backup_20251215_115234/learning
+📦 Backing up: /Users/ericballhaus/Desktop/astra-intelligence/utils → /Users/ericballhaus/Desktop/astra-intelligence/archive/pre_migration_backup_20251215_115234/utils
+📦 Backing up: /Users/ericballhaus/Desktop/astra-intelligence/chart_core → /Users/ericballhaus/Desktop/astra-intelligence/archive/pre_migration_backup_20251215_115234/chart_core
+📦 Backing up: /Users/ericballhaus/Desktop/astra-intelligence/scanners → /Users/ericballhaus/Desktop/astra-intelligence/archive/pre_migration_backup_20251215_115234/scanners
+📦 Backing up: /Users/ericballhaus/Desktop/astra-intelligence/core → /Users/ericballhaus/Desktop/astra-intelligence/archive/pre_migration_backup_20251215_115234/core
+✅ Merged: /Users/ericballhaus/Desktop/astra-intelligence/guardian → /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/guardian
+✅ Merged: /Users/ericballhaus/Desktop/astra-intelligence/engine → /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/engine
+✅ Merged: /Users/ericballhaus/Desktop/astra-intelligence/fetch_core → /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/fetch
+✅ Merged: /Users/ericballhaus/Desktop/astra-intelligence/ui → /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/ui
+✅ Merged: /Users/ericballhaus/Desktop/astra-intelligence/state → /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/state
+✅ Merged: /Users/ericballhaus/Desktop/astra-intelligence/agents → /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/agents
+✅ Merged: /Users/ericballhaus/Desktop/astra-intelligence/forecast → /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/forecast
+✅ Merged: /Users/ericballhaus/Desktop/astra-intelligence/learning → /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/learning
+✅ Merged: /Users/ericballhaus/Desktop/astra-intelligence/utils → /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/utils
+✅ Merged: /Users/ericballhaus/Desktop/astra-intelligence/chart_core → /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/chart_core
+✅ Merged: /Users/ericballhaus/Desktop/astra-intelligence/scanners → /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/scanners
+✅ Merged: /Users/ericballhaus/Desktop/astra-intelligence/core → /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/core
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/core/cache_orchestrator.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/agents/prediction_fusion.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/utils/performance_monitor.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/utils/safe_df.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/fetch/async_router.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/fetch/fetch_crypto.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/fetch/fetch_unified.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/fetch/fetch_stock.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/fetch/fetch_etf.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/fetch/fetcher.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/fetch/async_router_cache.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/guardian/startup_hook.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/guardian/schema_validator.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/guardian/guardian_sync.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/guardian/guardian_sentinel.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/engine/scan_manager.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/engine/background_loop.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/ui/archive/tab_dashboard_broken_20251212_2349.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/ui/archive/tab_dashboard_forcehotfix_cleanup_20251213_0011.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/ui/archive/tab_dashboard_backup_20251212_2357.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/ui/archive/tab_dashboard_timingclean_20251213_0007.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/ui/archive/tab_dashboard_backup_20251212_2345.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/ui/archive/tab_dashboard_safeedit_20251213_0002.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/ui/archive/tab_dashboard_prettyfix_20251212_2350.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/ui/archive/tab_dashboard_timingfix_20251213_0005.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/ui/dashboard/dashboard_data.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/ui/dashboard/tab_dashboard.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/ui/dashboard/dashboard_sidebar.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/ui/dashboard/tab_dashboard.backup.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/ui/dashboard/tab_dashboard_pre92_backup.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/ui/dashboard/tab_dashboard_diagnostic.py
+🔁 Imports rewritten in /Users/ericballhaus/Desktop/astra-intelligence/astra_modules/core/guardian/guardian_v7.py
+🗃 Archived: /Users/ericballhaus/Desktop/astra-intelligence/astra_core → /Users/ericballhaus/Desktop/astra-intelligence/archive/astra_core_archived_20251215
+🗃 Archived: /Users/ericballhaus/Desktop/astra-intelligence/astra_modules_legacy → /Users/ericballhaus/Desktop/astra-intelligence/archive/astra_modules_legacy_archived_20251215
+🗃 Archived: /Users/ericballhaus/Desktop/astra-intelligence/guardian_old → /Users/ericballhaus/Desktop/astra-intelligence/archive/guardian_old_archived_20251215
+🗃 Archived: /Users/ericballhaus/Desktop/astra-intelligence/guardian_merge_review → /Users/ericballhaus/Desktop/astra-intelligence/archive/guardian_merge_review_archived_20251215
+🔍 Running Guardian diagnostics...
+✅ Safe-Write Migration complete. See astra_migration_log.txt for details.

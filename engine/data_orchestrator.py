@@ -6,7 +6,7 @@ Bridges AstraAPI (multi-API client) with dashboard and agents.
 """
 
 from core.api_client import AstraAPI
-from core.guardian.guardian_v7 import guardian
+from core.guardian.guardian_v7 import GuardianV7, guardian_log
 import pandas as pd
 from datetime import datetime
 import time
@@ -23,7 +23,7 @@ class DataOrchestrator:
             symbols = ["BTC/USD", "AAPL", "SPY"]
 
         frames = []
-        guardian.log(
+        guardian_log.info(
             f"[DataOrchestrator] 🧠 Initiating live data pull for {len(symbols)} symbols."
         )
 
@@ -37,19 +37,19 @@ class DataOrchestrator:
                     df["symbol"] = sym
                     df["latency_s"] = latency
                     frames.append(df)
-                    guardian.log(
+                    guardian_log.info(
                         f"[DataOrchestrator] ✅ {sym} fetched successfully "
                         f"(rows={len(df)}, latency={latency}s)"
                     )
                 else:
-                    guardian.warn(
+                    guardian_log.warn(
                         f"[DataOrchestrator] ⚠️ Empty DataFrame returned for {sym}"
                     )
             except Exception as e:
-                guardian.error(f"[DataOrchestrator] ❌ Failed to fetch {sym}: {e}")
+                guardian_log.error(f"[DataOrchestrator] ❌ Failed to fetch {sym}: {e}")
 
         if not frames:
-            guardian.error("[DataOrchestrator] ❌ No data frames returned from any API.")
+            guardian_log.error("[DataOrchestrator] ❌ No data frames returned from any API.")
             return pd.DataFrame(
                 columns=["symbol", "price", "change", "timestamp", "latency_s"]
             )
@@ -66,7 +66,7 @@ class DataOrchestrator:
                     (combined["close"] - combined["open"]) / combined["open"]
                 ) * 100
             except Exception as e:
-                guardian.warn(f"[DataOrchestrator] ⚠️ Change% issue: {e}")
+                guardian_log.warn(f"[DataOrchestrator] ⚠️ Change% issue: {e}")
                 combined["change"] = 0.0
         else:
             combined["change"] = 0.0
@@ -75,7 +75,7 @@ class DataOrchestrator:
             if col in combined.columns:
                 combined[col] = pd.to_numeric(combined[col], errors="coerce").fillna(0)
 
-        guardian.log(
+        guardian_log.info(
             f"[DataOrchestrator] 🧩 Aggregation complete — {len(combined)} rows, "
             f"{combined['symbol'].nunique()} symbols."
         )
