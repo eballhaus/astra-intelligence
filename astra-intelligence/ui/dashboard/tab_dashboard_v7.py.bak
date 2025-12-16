@@ -1,17 +1,23 @@
+# -*- coding: utf-8 -*-
 """
-
-import sys, os
-sys.path.append(os.path.expanduser("~/Desktop/astra-intelligence"))
+Astra Intelligence — Hydra Dashboard (Phase 7)
 Integrates Hydra Sentiment, Funnel Ranking, Guardian V7, and Brain Context.
 """
 
 import streamlit as st
 import pandas as pd
+import time
+
 from engine.data_orchestrator import DataOrchestrator
 from engine.data_funnel import select_top_assets as get_top_assets
-from engine.data_orchestrator import DataOrchestrator
+from astra_modules.engine.data_hydra import get_market_sentiment
+from astra_modules.engine.personal_brain import contextual_insight
+from guardian.guardian_v7 import guardian_log
+from ui.dashboard.dashboard_chart import render_chart
+
 
 def render_dashboard():
+    st.title("🚀 Astra Intelligence — Hydra Dashboard (Phase 7)")
 
     orchestrator = DataOrchestrator()
 

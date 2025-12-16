@@ -9,6 +9,8 @@ Fixes 'PatchedGuardianLog object is not callable' by directly referencing guardi
 # guardian = GuardianV6  # removed old alias
 # guardian_boot = GuardianV6  # removed obsolete alias  # simple alias for backward compatibility
 
+import sys
+import datetime
 __all__ = ["guardian", "guardian_boot"]
 Guardian = guardian_v7 = globals()
 
@@ -28,8 +30,6 @@ GuardianV7 = Guardian
 # ✅ FIX: Local guardian_log definition to avoid self-import
 # ============================================================
 
-import datetime
-import sys
 
 def guardian_log(message: str):
     """Safe local logging method for GuardianV7"""
@@ -37,11 +37,11 @@ def guardian_log(message: str):
     sys.stdout.write(f"[GUARDIAN] {timestamp} | {message}\n")
     sys.stdout.flush()
 
+
 # ============================================================
 # ✅ Finalized Guardian V7 Local Logger
 # ============================================================
 
-import datetime, sys
 
 def guardian_log(message: str):
     """Stable, circular-safe Guardian logger"""

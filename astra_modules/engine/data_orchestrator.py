@@ -5,6 +5,11 @@ Astra Intelligence — Data Orchestrator (Guardian v7 Integrated)
 Bridges AstraAPI (multi-API client) with dashboard and agents.
 """
 
+from astra_modules.engine.rate_safe_fetcher import rate_safe_get
+from astra_modules.guardian.security import api_keys
+from astra_modules.guardian.guardian_v7 import guardian_log
+from astra_modules.engine.rate_safe_fetcher import rate_safe_get, time
+import requests
 import time
 from datetime import datetime
 
@@ -87,17 +92,15 @@ class DataOrchestrator:
         )
         return combined[["symbol", "price", "change", "timestamp", "latency_s"]]
 
+
 # ============================================================
 # 🧠 ASTRA INTELLIGENCE — Multi-API Smart Feed Extension
 # Integrates Moralis (crypto) + TwelveData + Finnhub + Alpha Vantage fallback
 # ============================================================
 
-from astra_modules.guardian.guardian_v7 import guardian_log
-from astra_modules.guardian.security import api_keys
-import requests
-from astra_modules.engine.rate_safe_fetcher import rate_safe_get, time
 
 API_ORDER = ["moralis", "twelvedata", "finnhub", "alphavantage"]
+
 
 def get_data(symbol, asset_type="stock"):
     """Unified data access with fallback rotation."""
@@ -112,13 +115,15 @@ def get_data(symbol, asset_type="stock"):
             elif api == "alphavantage":
                 return get_stock_alphavantage(symbol)
         except Exception as e:
-            guardian_log(f"[DataOrchestrator] {api.upper()} failed for {symbol}: {e}")
+            guardian_log(
+                f"[DataOrchestrator] {api.upper()} failed for {symbol}: {e}")
             continue
     guardian_log(f"[DataOrchestrator] ❌ All APIs failed for {symbol}")
     return None
 
 
 # ------------------------- Individual Handlers -------------------------
+
 
 def get_crypto_moralis(symbol: str):
     """Fetch live crypto price from Moralis API v2.3."""
@@ -148,7 +153,8 @@ def get_stock_finnhub(symbol: str):
     """Fetch latest quote from Finnhub."""
     url = f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={api_keys.FINNHUB_API_KEY}"
     r = requests.get(url, timeout=10).json()
-    price = r.get("c"); change = r.get("dp")
+    price = r.get("c")
+    change = r.get("dp")
     guardian_log(f"[Finnhub] {symbol} → {price} ({change}%)")
     return {"price": price, "change": change}
 
@@ -156,7 +162,11 @@ def get_stock_finnhub(symbol: str):
 def get_stock_alphavantage(symbol: str):
     """Fetch daily close price from Alpha Vantage."""
     url = f"https://www.alphavantage.co/query"
-    params = {"function": "TIME_SERIES_DAILY", "symbol": symbol, "apikey": api_keys.ALPHA_VANTAGE_API_KEY}
+    params = {
+        "function": "TIME_SERIES_DAILY",
+        "symbol": symbol,
+        "apikey": api_keys.ALPHA_VANTAGE_API_KEY,
+    }
     r = requests.get(url, params=params, timeout=10).json()
     latest = next(iter(r.get("Time Series (Daily)", {}).values()), {})
     price = latest.get("4. close")
@@ -168,29 +178,33 @@ def get_stock_alphavantage(symbol: str):
 # 🔁 ASTRA SELF-HEALING DATA FETCH SYSTEM (Crypto + Stocks)
 # ============================================================
 
-import requests
-from astra_modules.engine.rate_safe_fetcher import rate_safe_get
-from astra_modules.guardian.guardian_v7 import guardian_log
-from astra_modules.guardian.security import api_keys
 
 def get_crypto_price(symbol: str):
-
     """Fetch crypto price with caching and backup API fallback to avoid rate limits."""
-    import os, requests, time
+    import time
+
+    import requests
+
     from astra_modules.guardian.guardian_v7 import guardian_log
-    api_keys = __import__("astra_modules.guardian.security.api_keys", fromlist=[""])
+
+    api_keys = __import__(
+        "astra_modules.guardian.security.api_keys", fromlist=[""])
     _cache = getattr(get_crypto_price, "_cache", {})
     now = time.time()
 
     # ✅ Reuse cached price if less than 60 seconds old
     if symbol in _cache and now - _cache[symbol]["time"] < 60:
-        guardian_log(f"[Cache] {symbol} reused cached price: {_cache[symbol]['price']}")
+        guardian_log(
+            f"[Cache] {symbol} reused cached price: {_cache[symbol]['price']}")
         return {"price": _cache[symbol]["price"]}
 
     # --- PRIMARY: TwelveData ---
     try:
         td_key = getattr(api_keys, "TWELVE_DATA_API_KEY", None)
-        r = rate_safe_get("https://api.twelvedata.com/price", params={"symbol": f"{symbol}/USD", "apikey": td_key})
+        r = rate_safe_get(
+            "https://api.twelvedata.com/price",
+            params={"symbol": f"{symbol}/USD", "apikey": td_key},
+        )
         data = r.json()
         price = float(data.get("price", 0))
         if price:
@@ -222,28 +236,49 @@ def get_crypto_price(symbol: str):
     return {"price": None}
 
     """Fetch crypto price using hybrid fallback."""
-    import os, requests
+
+    import requests
+
     from astra_modules.guardian.guardian_v7 import guardian_log
-    api_keys = __import__("astra_modules.guardian.security.api_keys", fromlist=[""])
+
+    api_keys = __import__(
+        "astra_modules.guardian.security.api_keys", fromlist=[""])
 
     # Try CoinMarketCap first
     try:
         cmc_key = getattr(api_keys, "COINMARKETCAP_API_KEY", None)
         headers = {"X-CMC_PRO_API_KEY": cmc_key} if cmc_key else {}
-        r = requests.get(f"https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol={symbol}&convert=USD", headers=headers, timeout=5)
-        data = r.json(); price = data.get("data", {}).get(symbol, {}).get("quote", {}).get("USD", {}).get("price")
+        r = requests.get(
+            f"https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol={symbol}&convert=USD",
+            headers=headers,
+            timeout=5,
+        )
+        data = r.json()
+        price = (
+            data.get("data", {})
+            .get(symbol, {})
+            .get("quote", {})
+            .get("USD", {})
+            .get("price")
+        )
         if price:
-            guardian_log(f"[CMC] {symbol} → {price}"); return {"price": price}
+            guardian_log(f"[CMC] {symbol} → {price}")
+            return {"price": price}
     except Exception as e:
         guardian_log(f"[CMC] ❌ {symbol} failed: {e}")
 
     # Try TwelveData next
     try:
         td_key = getattr(api_keys, "TWELVE_DATA_API_KEY", None)
-        r = rate_safe_get("https://api.twelvedata.com/price", params={"symbol": f"{symbol}/USD", "apikey": td_key})
-        data = r.json(); price = data.get("price")
+        r = rate_safe_get(
+            "https://api.twelvedata.com/price",
+            params={"symbol": f"{symbol}/USD", "apikey": td_key},
+        )
+        data = r.json()
+        price = data.get("price")
         if price:
-            guardian_log(f"[TwelveData] {symbol} → {price}"); return {"price": price}
+            guardian_log(f"[TwelveData] {symbol} → {price}")
+            return {"price": price}
     except Exception as e:
         guardian_log(f"[TwelveData] ❌ {symbol} failed: {e}")
 
@@ -256,7 +291,8 @@ def get_crypto_price(symbol: str):
 
     # Try Moralis
     try:
-        r = requests.get(moralis_url, headers=headers, params=params, timeout=8)
+        r = requests.get(moralis_url, headers=headers,
+                         params=params, timeout=8)
         if r.status_code == 200:
             data = r.json()
             price = data.get("price")
@@ -287,7 +323,8 @@ def get_crypto_price(symbol: str):
     # Final fallback → TwelveData
     try:
         td_url = "https://api.twelvedata.com/price"
-        params = {"symbol": f"{symbol}/USD", "apikey": api_keys.TWELVE_DATA_API_KEY}
+        params = {"symbol": f"{symbol}/USD",
+                  "apikey": api_keys.TWELVE_DATA_API_KEY}
         r = requests.get(td_url, params=params, timeout=8)
         data = r.json()
         price = data.get("price")
@@ -299,6 +336,7 @@ def get_crypto_price(symbol: str):
 
     guardian_log(f"[DataOrchestrator] ❌ All sources failed for {symbol}")
     return None
+
 
 # ============================================================
 # 🧠 Moralis Symbol Mapper (BTC → bitcoin-usd)
@@ -315,24 +353,33 @@ PAIR_MAP = {
     "DOGE": "dogecoin-usd",
 }
 
-def get_crypto_price(symbol: str):
 
+def get_crypto_price(symbol: str):
     """Fetch crypto price with caching and backup API fallback to avoid rate limits."""
-    import os, requests, time
+    import time
+
+    import requests
+
     from astra_modules.guardian.guardian_v7 import guardian_log
-    api_keys = __import__("astra_modules.guardian.security.api_keys", fromlist=[""])
+
+    api_keys = __import__(
+        "astra_modules.guardian.security.api_keys", fromlist=[""])
     _cache = getattr(get_crypto_price, "_cache", {})
     now = time.time()
 
     # ✅ Reuse cached price if less than 60 seconds old
     if symbol in _cache and now - _cache[symbol]["time"] < 60:
-        guardian_log(f"[Cache] {symbol} reused cached price: {_cache[symbol]['price']}")
+        guardian_log(
+            f"[Cache] {symbol} reused cached price: {_cache[symbol]['price']}")
         return {"price": _cache[symbol]["price"]}
 
     # --- PRIMARY: TwelveData ---
     try:
         td_key = getattr(api_keys, "TWELVE_DATA_API_KEY", None)
-        r = rate_safe_get("https://api.twelvedata.com/price", params={"symbol": f"{symbol}/USD", "apikey": td_key})
+        r = rate_safe_get(
+            "https://api.twelvedata.com/price",
+            params={"symbol": f"{symbol}/USD", "apikey": td_key},
+        )
         data = r.json()
         price = float(data.get("price", 0))
         if price:
@@ -364,28 +411,49 @@ def get_crypto_price(symbol: str):
     return {"price": None}
 
     """Fetch crypto price using hybrid fallback."""
-    import os, requests
+
+    import requests
+
     from astra_modules.guardian.guardian_v7 import guardian_log
-    api_keys = __import__("astra_modules.guardian.security.api_keys", fromlist=[""])
+
+    api_keys = __import__(
+        "astra_modules.guardian.security.api_keys", fromlist=[""])
 
     # Try CoinMarketCap first
     try:
         cmc_key = getattr(api_keys, "COINMARKETCAP_API_KEY", None)
         headers = {"X-CMC_PRO_API_KEY": cmc_key} if cmc_key else {}
-        r = requests.get(f"https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol={symbol}&convert=USD", headers=headers, timeout=5)
-        data = r.json(); price = data.get("data", {}).get(symbol, {}).get("quote", {}).get("USD", {}).get("price")
+        r = requests.get(
+            f"https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol={symbol}&convert=USD",
+            headers=headers,
+            timeout=5,
+        )
+        data = r.json()
+        price = (
+            data.get("data", {})
+            .get(symbol, {})
+            .get("quote", {})
+            .get("USD", {})
+            .get("price")
+        )
         if price:
-            guardian_log(f"[CMC] {symbol} → {price}"); return {"price": price}
+            guardian_log(f"[CMC] {symbol} → {price}")
+            return {"price": price}
     except Exception as e:
         guardian_log(f"[CMC] ❌ {symbol} failed: {e}")
 
     # Try TwelveData next
     try:
         td_key = getattr(api_keys, "TWELVE_DATA_API_KEY", None)
-        r = rate_safe_get("https://api.twelvedata.com/price", params={"symbol": f"{symbol}/USD", "apikey": td_key})
-        data = r.json(); price = data.get("price")
+        r = rate_safe_get(
+            "https://api.twelvedata.com/price",
+            params={"symbol": f"{symbol}/USD", "apikey": td_key},
+        )
+        data = r.json()
+        price = data.get("price")
         if price:
-            guardian_log(f"[TwelveData] {symbol} → {price}"); return {"price": price}
+            guardian_log(f"[TwelveData] {symbol} → {price}")
+            return {"price": price}
     except Exception as e:
         guardian_log(f"[TwelveData] ❌ {symbol} failed: {e}")
 

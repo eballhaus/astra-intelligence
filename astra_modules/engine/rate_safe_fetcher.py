@@ -1,11 +1,16 @@
-import time, requests
+import time
+
+import requests
+
 from astra_modules.guardian.guardian_v7 import guardian_log
-from astra_modules.guardian import security
 
 _cache = {}
 _last_call = {}
 
-def rate_safe_get(url, params=None, headers=None, key_name="TwelveData", ttl=60, cooldown=7):
+
+def rate_safe_get(
+    url, params=None, headers=None, key_name="TwelveData", ttl=60, cooldown=7
+):
     """Fetch URL safely with caching & per-source cooldown."""
     global _cache, _last_call
     key = f"{url}|{params}"
@@ -20,12 +25,14 @@ def rate_safe_get(url, params=None, headers=None, key_name="TwelveData", ttl=60,
     last = _last_call.get(key_name, 0)
     if now - last < cooldown:
         wait = round(cooldown - (now - last), 2)
-        guardian_log(f"[RateSafe] Waiting {wait}s before next {key_name} call...")
+        guardian_log(
+            f"[RateSafe] Waiting {wait}s before next {key_name} call...")
         time.sleep(wait)
 
     try:
         guardian_log(f"[RateSafe] Fetching from {key_name}: {params}")
-        r = requests.get(url, params=params or {}, headers=headers or {}, timeout=6)
+        r = requests.get(url, params=params or {},
+                         headers=headers or {}, timeout=6)
         _last_call[key_name] = time.time()
         if r.status_code == 200:
             data = r.json()
@@ -35,4 +42,3 @@ def rate_safe_get(url, params=None, headers=None, key_name="TwelveData", ttl=60,
     except Exception as e:
         guardian_log(f"[RateSafe] ❌ {key_name} failed: {e}")
     return {}
-

@@ -42,3 +42,41 @@ class GuardianV7:
 
 # Create a global Guardian instance and unified logger alias
 guardian_log = GuardianV7()
+
+# ============================================================
+# === ASTRA GUARDIAN — Rate & Quota Monitor (v1) =============
+# ============================================================
+import time
+
+_api_counters = {}
+
+def rate_safe(api_name, interval=60, daily_limit=None):
+    """Prevent overuse of the same API globally."""
+    now = time.time()
+    rec = _api_counters.get(api_name, {"ts": 0, "count": 0})
+
+    if now - rec["ts"] < interval:
+        guardian_log.info(f"[RateSafe] {api_name} cooldown active ({interval}s).")
+        return False
+
+    if daily_limit and rec["count"] >= daily_limit:
+        guardian_log.warn(f"[RateSafe] {api_name} daily limit reached ({daily_limit}).")
+        return False
+
+    _api_counters[api_name] = {"ts": now, "count": rec["count"] + 1}
+    return True
+
+def api_usage_report():
+    """Print a summary of API usage counts."""
+    guardian_log.info("[Guardian] API Usage Summary:")
+    for api, rec in _api_counters.items():
+        guardian_log.info(f"  {api}: {rec['count']} calls today.")
+
+
+# --- Patch: Add warning() compatibility if missing ---
+try:
+    if not hasattr(guardian_log, "warning"):
+        guardian_log.warning = guardian_log.info
+        guardian_log.info("[Guardian] Added .warning() alias for compatibility.")
+except Exception as e:
+    print("[Guardian Patch] Failed to add warning alias:", e)
