@@ -1,13 +1,10 @@
-import time
+import random
 
 def get_market_sentiment():
-    """
-    Fallback Hydra sentiment provider.
-    Returns mock data when the real Hydra module is unavailable.
-    """
+    """Mock function returning simple market sentiment data."""
+    sentiments = ["Bullish", "Bearish", "Neutral"]
+    confidence = round(random.uniform(0.5, 0.95), 2)
     return {
-        "summary": "Neutral",
-        "fear_greed": "45 (Fear)",
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+        "sentiment": random.choice(sentiments),
+        "confidence": confidence
     }
-

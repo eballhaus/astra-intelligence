@@ -1,52 +1,47 @@
-# -*- coding: utf-8 -*-
-"""
-Astra Intelligence — Dashboard Data Loader (v2.4 LiveFix Guardian+Async Safe)
----------------------------------------------------------------------------
-Unified data loader using Astra internal APIs with complete fallback chain.
-"""
 import asyncio, os, httpx, pandas as pd
 from datetime import datetime, timezone
 from typing import Optional
-from astra_core.guardian.guardian_v6 import guardian
+from core.guardian.guardian_v7 import GuardianV7
 
-CACHE_DIR = "/tmp/astra_cache"
+guardian = GuardianV7()
+CACHE_DIR = '/tmp/astra_cache'
 os.makedirs(CACHE_DIR, exist_ok=True)
 
-def load_cached_data(symbol: str) -> Optional[pd.DataFrame]:
+async def fetch_symbol(symbol: str) -> pd.DataFrame:
     try:
-        path = os.path.join(CACHE_DIR, f"data_{symbol.replace('/', '_')}.csv")
-        if not os.path.exists(path): return None
-        df = pd.read_csv(path)
-        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
-        print(f"[Cache] 💾 Loaded cached {symbol} ({len(df)} rows)")
-        return df
-    except Exception as e:
-        print(f"[Cache] ⚠️ Load error for {symbol}: {e}")
-        return None
-
-def save_cache(df: pd.DataFrame, symbol: str):
-    try:
-        path = os.path.join(CACHE_DIR, f"data_{symbol.replace('/', '_')}.csv")
-        df.to_csv(path, index=False)
-        print(f"[Cache] ✅ Saved {symbol} ({len(df)} rows)")
-    except Exception as e:
-        print(f"[Cache] ⚠️ Save error for {symbol}: {e}")
-
-# simplified unified loader
-def load_data(symbol: str = "AAPL") -> pd.DataFrame:
-    import requests
-    import pandas as pd
-    API_URL = "http://127.0.0.1:8000"
-    def load_data(symbol="AAPL"):
-        try:
-            r = requests.get(f"{API_URL}/v1/data/{symbol}", timeout=5)
+        guardian.info(f'Fetching data for {symbol}')
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(f'https://api.astra-intelligence.ai/data/{symbol}')
             if r.status_code != 200:
-                print(f"[DashboardData] ⚠️ API returned {r.status_code}")
+                guardian.warning(f'{symbol} API returned {r.status_code}')
                 return pd.DataFrame()
-            data = r.json().get("data", [])
-            df = pd.DataFrame(data)
-            print(f"[DashboardData] ✅ Loaded {len(df)} rows for {symbol}")
+            df = pd.DataFrame(r.json().get('data', []))
             return df
-        except Exception as e:
-            print(f"[DashboardData] ❌ Failed to load {symbol}: {e}")
-            return pd.DataFrame()
+    except Exception as e:
+        guardian.error(f'Failed to fetch {symbol}: {e}')
+        return pd.DataFrame()
+
+def load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
+    try:
+        stocks = asyncio.run(fetch_symbol('SPY'))
+        cryptos = asyncio.run(fetch_symbol('BTC-USD'))
+
+        if stocks is None or stocks.empty:
+            guardian.warning('Stocks data unavailable; substituting mock data.')
+            stocks = pd.DataFrame({
+                'symbol': ['AAPL','TSLA','NVDA','MSFT','AMZN','GOOG'],
+                'price': [195,256,467,423,173,142]
+            })
+
+        if cryptos is None or cryptos.empty:
+            guardian.warning('Crypto data unavailable; substituting mock data.')
+            cryptos = pd.DataFrame({
+                'symbol': ['BTC','ETH','SOL','XRP','ADA','DOGE'],
+                'price': [47200,2450,105,0.65,0.54,0.12]
+            })
+
+        guardian.info('✅ Data load complete')
+        return stocks, cryptos
+    except Exception as e:
+        guardian.error(f'load_data failed: {e}')
+        return pd.DataFrame(), pd.DataFrame()

@@ -1,0 +1,11 @@
+{
+  "ALPHA_VANTAGE_API_KEY": "your_alpha_vantage_key_here",
+  "TWELVEDATA_API_KEY": "452b5c89fc8747d4803ee6bda5f891b2",
+  "FINNHUB_API_KEY": "your_finnhub_key_here",
+  "EODHD_API_KEY": "your_eodhd_key_here",
+  "MORALIS_API_KEY": "your_moralis_key_here",
+  "DATAJOCKEY_API_KEY": "your_datajockey_key_here",
+  "SIMFIN_API_KEY": "your_simfin_key_here",
+  "POLYGON_API_KEY": "your_polygon_key_here",
+  "NASDAQ_API_KEY": "your_nasdaq_key_here"
+}

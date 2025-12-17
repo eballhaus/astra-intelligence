@@ -1,42 +1,49 @@
-
 import streamlit as st
-from engine.data_orchestrator import fetch_live_data
-from astra_modules.engine.data_hydra import hydra_sentiment_global
+from ui.dashboard.dashboard_sidebar import render_sidebar
+from ui.dashboard.dashboard_data import load_data
+from ui.dashboard.dashboard_cards import render_symbol_card
+from ui.dashboard.dashboard_chart import render_chart
+from ui.dashboard.dashboard_summary import render_summary
 
-def tab_dashboard_live(symbol="AAPL"):
-    """Hydra Live Dashboard — fetch and visualize live data."""
-    st.header(f"📊 Live Hydra Dashboard – {symbol}")
+def render_dashboard():
+    st.title('🚀 Astra Intelligence — Hydra Dashboard v8')
 
-    with st.spinner("Fetching live data..."):
-        df = fetch_live_data(symbol)
-        sentiment = hydra_sentiment_global(symbol)
-    
-    if df.empty:
-        st.warning(f"No live data found for {symbol} — using fallback.")
-    else:
-        st.success(f"✅ Live data fetched for {symbol}")
+    # --- Sidebar ---
+    config = render_sidebar()
+    symbol = config.get('symbol', 'SPX')
 
-    # Live metric cards
-    try:
-        price = df['c'].iloc[-1]
-        open_ = df['o'].iloc[-1]
-        delta = price - open_
-        st.metric(label="Last Price", value=f"${price:.2f}", delta=f"{delta:+.2f}")
-        st.caption(f"Hydra Sentiment: {sentiment:.2f}")
-    except Exception:
-        st.info("Live cards unavailable — data incomplete.")
+    # --- Load Data ---
+    df_stocks, df_cryptos = load_data()
 
-    # Render live chart
-    try:
-        import plotly.graph_objects as go
-        fig = go.Figure(data=[go.Candlestick(
-            x=df['t'],
-            open=df['o'],
-            high=df['h'],
-            low=df['l'],
-            close=df['c']
-        )])
-        st.plotly_chart(fig, use_container_width=True)
-    except Exception as e:
-        st.error(f"Chart render failed: {e}")
+    if 'selected_symbol' not in st.session_state:
+        st.session_state.selected_symbol = symbol
 
+    # --- Two Column Layout (Stocks / Cryptos) ---
+    st.markdown('---')
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader('🏦 Top Stocks')
+        if df_stocks is not None and not df_stocks.empty:
+            for _, row in df_stocks.head(6).iterrows():
+                render_symbol_card(row)
+        else:
+            st.info('No stock data available.')
+
+    with col2:
+        st.subheader('💠 Top Cryptos')
+        if df_cryptos is not None and not df_cryptos.empty:
+            for _, row in df_cryptos.head(6).iterrows():
+                render_symbol_card(row)
+        else:
+            st.info('No crypto data available.')
+
+    # --- Unified Chart ---
+    st.markdown('---')
+    selected = st.session_state.selected_symbol
+    st.subheader(f'📈 Astra Advanced Chart — {selected}')
+    render_chart(selected)
+
+    # --- Contextual Insights ---
+    st.markdown('---')
+    render_summary({'trend': 'Neutral', 'volatility': 'Moderate', 'confidence': 72})

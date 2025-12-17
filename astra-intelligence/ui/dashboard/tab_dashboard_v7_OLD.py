@@ -1,3 +1,7 @@
+from ui.dashboard.dashboard_chart import render_chart
+from engine.data_hydra import get_market_sentiment
+import sys, os; sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+import sys, os; sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 """
 
 import sys, os

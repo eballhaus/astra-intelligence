@@ -9,8 +9,9 @@ Fixes 'PatchedGuardianLog object is not callable' by directly referencing guardi
 # guardian = GuardianV6  # removed old alias
 # guardian_boot = GuardianV6  # removed obsolete alias  # simple alias for backward compatibility
 
-import sys
 import datetime
+import sys
+
 __all__ = ["guardian", "guardian_boot"]
 Guardian = guardian_v7 = globals()
 

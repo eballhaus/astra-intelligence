@@ -1,0 +1,91 @@
+# ============================================================
+# GuardianStreamManager
+# Live Data Streaming via TwelveData WebSocket API
+# ============================================================
+
+import json
+import threading
+import websocket
+import time
+from datetime import datetime
+from core.guardian.guardian_secure_api import GuardianSecureAPI
+
+
+class GuardianStreamManager:
+    def __init__(self, symbols=None, on_update=None):
+        self.api = GuardianSecureAPI()
+        self.api_key = self.api.keys.get("TWELVEDATA_API_KEY")
+        self.url = "wss://ws.twelvedata.com/v1/quotes/price?apikey=${self.api_key}"
+        self.symbols = symbols or ["SPY", "BTC/USD"]
+        self.on_update = on_update
+        self.ws = None
+        self._stop_event = threading.Event()
+        self._thread = None
+
+    def _on_message(self, ws, message):
+        try:
+            data = json.loads(message)
+            if "price" in data:
+                print(f"[GuardianStream] 💹 Live update: {data['symbol']} @ {data['price']}")
+                if self.on_update:
+                    self.on_update(data)
+        except Exception as e:
+            print(f"[GuardianStream] ⚠️ Message error: {e}")
+
+    def _on_error(self, ws, error):
+        print(f"[GuardianStream] ⚠️ WebSocket error: {error}")
+
+    def _on_close(self, ws, close_status_code, close_msg):
+        print(f"[GuardianStream] 🔌 Connection closed ({close_status_code}): {close_msg}")
+        if not self._stop_event.is_set():
+            print("[GuardianStream] 🔁 Reconnecting in 5s...")
+            time.sleep(5)
+            self._connect()
+
+    def _on_open(self, ws):
+        print("[GuardianStream] ✅ Connected to TwelveData WebSocket.")
+        for symbol in self.symbols:
+            payload = {"action": "subscribe", "params": {"symbols": symbol}, "apikey": self.api_key}
+            ws.send(json.dumps(payload))
+            print(f"[GuardianStream] 📡 Subscribed to {symbol}")
+
+    def _connect(self):
+        try:
+            self.ws = websocket.WebSocketApp(
+                self.url,
+                on_open=self._on_open,
+                on_message=self._on_message,
+                on_error=self._on_error,
+                on_close=self._on_close,
+            )
+            self.ws.run_forever(ping_interval=30, ping_timeout=10)
+        except Exception as e:
+            print(f"[GuardianStream] ❌ Connection error: {e}")
+            time.sleep(5)
+            self._connect()
+
+    def start(self):
+        if self._thread and self._thread.is_alive():
+            print("[GuardianStream] Already running.")
+            return
+        print("[GuardianStream] 🚀 Starting live data stream...")
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._connect, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        print("[GuardianStream] 🛑 Stopping stream...")
+        self._stop_event.set()
+        if self.ws:
+            self.ws.close()
+
+
+# Optional: Simple test
+if __name__ == "__main__":
+    def handle_update(data):
+        print(f"[LearningEngine] Received tick: {data}")
+
+    stream = GuardianStreamManager(symbols=["SPY", "BTC/USD"], on_update=handle_update)
+    stream.start()
+    time.sleep(30)
+    stream.stop()
