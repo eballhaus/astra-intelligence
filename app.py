@@ -1,3 +1,9 @@
+import sys, os
+ROOT = os.path.abspath(os.path.dirname(__file__))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+import sys, os; sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+import sys, os; sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 """
 Astra Intelligence — Main App Controller (Phase-101.9)
 ------------------------------------------------------
@@ -6,7 +12,7 @@ Handles Streamlit tab navigation between:
  • Predictions
  • Learning
  • System Guardian
-All components are GuardianV6-secured and dynamically loaded.
+All components are GuardianV7-secured and dynamically loaded.
 """
 
 import streamlit as st
@@ -26,9 +32,9 @@ if astra_path not in sys.path:
 # ──────────────────────────────────────────────
 # Guardian Import
 # ──────────────────────────────────────────────
-from astra_core.guardian.guardian_v6 import GuardianV6
+from astra_modules.guardian.guardian_v6 import GuardianV7
 
-guardian = GuardianV6(BASE_DIR)
+guardian = GuardianV7()
 
 # ──────────────────────────────────────────────
 # Streamlit Base Config
@@ -88,22 +94,13 @@ tabs = st.tabs(["Dashboard", "Predictions", "Learning", "System Guardian"])
 # ===========================================================
 # 🧠 Dashboard
 # ===========================================================
-with tabs[0]:
-    try:
-        # ✅ Correct modern import
-        from astra_core.ui.dashboard.tab_dashboard import render_dashboard_tab
-
-        render_dashboard_tab()
-    except Exception as e:
-        st.error("⚠️ Dashboard tab unavailable.")
-        st.warning(str(e))
 
 # ===========================================================
 # 📊 Predictions
 # ===========================================================
 with tabs[1]:
     try:
-        from astra_core.ui.tab_predictions import render_predictions_tab
+        from core.ui.tab_predictions import render_predictions_tab
 
         render_predictions_tab()
     except Exception as e:
@@ -115,7 +112,7 @@ with tabs[1]:
 # ===========================================================
 with tabs[2]:
     try:
-        from astra_core.ui.tab_learning import render_learning_tab
+        from core.ui.tab_learning import render_learning_tab
 
         render_learning_tab()
     except Exception as e:
@@ -127,7 +124,7 @@ with tabs[2]:
 # ===========================================================
 with tabs[3]:
     try:
-        from astra_core.ui.tab_guardian import render_guardian
+        from core.ui.tab_guardian import render_guardian
 
         render_guardian()
     except Exception as e:
@@ -139,3 +136,10 @@ with tabs[3]:
 # ===========================================================
 st.markdown("<hr style='opacity:0.15;'>", unsafe_allow_html=True)
 st.caption("🧠 Astra Intelligence | Phase-101.9 NeuralGlass Dashboard | © 2025")
+try:
+    from ui.dashboard.tab_dashboard import render_dashboard as render_dashboard_tab
+    render_dashboard_tab()
+except Exception as e:
+    import traceback
+    st.error("⚠️ Dashboard tab unavailable.")
+    st.code(traceback.format_exc())

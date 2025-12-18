@@ -1,49 +1,42 @@
-# -*- coding: utf-8 -*-
-"""
-Astra Intelligence — Dashboard Main Tab (Phase 5)
--------------------------------------------------
-Orchestrates Sidebar, Data Loader, and Orchestrator for live Astra display.
-"""
-import sys, os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
-
 import streamlit as st
-from ui.dashboard.dashboard_sidebar import render_sidebar
-from ui.dashboard.dashboard_data import load_data
-from engine.data_orchestrator import DataOrchestrator
+from engine.data_orchestrator import fetch_live_data
+from astra_modules.engine.data_hydra import hydra_sentiment_global
 
-st.set_page_config(page_title="Astra Intelligence Dashboard", layout="wide")
 
-selected_tab = render_sidebar()
-orchestrator = DataOrchestrator()
+def tab_dashboard_live(symbol="AAPL"):
+    """Hydra Live Dashboard — fetch and visualize live data."""
+    st.header(f"📊 Live Hydra Dashboard – {symbol}")
 
-st.title("🚀 Astra Intelligence Dashboard")
-st.caption("Guardian v7 — Live Mode")
+    with st.spinner("Fetching live data..."):
+        df = fetch_live_data(symbol)
+        sentiment = hydra_sentiment_global(symbol)
 
-if selected_tab == "Overview":
-    symbols = ["AAPL", "TSLA", "BTC/USD", "ETH/USD", "SPY", "NVDA"]
-    df_live = orchestrator.get_live_market_data(symbols)
-    if df_live is not None and not df_live.empty:
-        st.dataframe(df_live)
+    if df.empty:
+        st.warning(f"No live data found for {symbol} — using fallback.")
     else:
-        st.warning("⚠️ No live data available.")
+        st.success(f"✅ Live data fetched for {symbol}")
 
-elif selected_tab == "Markets":
-    df = load_data("AAPL")
-    if df is not None and not df.empty:
-        st.line_chart(df[["timestamp", "close"]].set_index("timestamp"))
-    else:
-        st.warning("⚠️ Unable to load market data.")
+    # Live metric cards
+    try:
+        price = df["c"].iloc[-1]
+        open_ = df["o"].iloc[-1]
+        delta = price - open_
+        st.metric(label="Last Price", value=f"${price:.2f}", delta=f"{delta:+.2f}")
+        st.caption(f"Hydra Sentiment: {sentiment:.2f}")
+    except Exception:
+        st.info("Live cards unavailable — data incomplete.")
 
-elif selected_tab == "Crypto":
-    df = load_data("BTC/USD")
-    if df is not None and not df.empty:
-        st.line_chart(df[["timestamp", "close"]].set_index("timestamp"))
-    else:
-        st.warning("⚠️ Unable to load crypto data.")
+    # Render live chart
+    try:
+        import plotly.graph_objects as go
 
-elif selected_tab == "AI Insights":
-    st.info("🧠 Coming soon — Astra AI Forecast Integration.")
-
-elif selected_tab == "Settings":
-    st.success("⚙️ Customize themes and preferences in the sidebar.")
+        fig = go.Figure(
+            data=[
+                go.Candlestick(
+                    x=df["t"], open=df["o"], high=df["h"], low=df["l"], close=df["c"]
+                )
+            ]
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"Chart render failed: {e}")
