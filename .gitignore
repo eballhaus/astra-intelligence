@@ -1,0 +1,44 @@
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+*.log
+*.bak
+*.tmp
+*.json
+
+# ===== Virtual environments =====
+venv/
+.env/
+*.env
+
+# ===== State & backup files =====
+state/
+gpt_state/
+learning/learning_state.json
+learning/learning_metrics.json
+*.sentinel.bak
+
+# ===== Node / UI build files =====
+node_modules/
+dist/
+build/
+package-lock.json
+
+# ===== IDE / System =====
+.DS_Store
+.vscode/
+.idea/
+_quarantine/
+
+# ===== Backups & Logs =====
+backups/
+legacy_backups/
+astra_logs/
+*.zip
+*.tar.gz
+
+legacy_backups/
+astra_logs/
+backups/
+venv/

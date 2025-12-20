@@ -1,0 +1,15 @@
+INFO:     Will watch for changes in these directories: ['/Users/ericballhaus/Desktop/astra-intelligence']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [63184] using StatReload
+INFO:     Started server process [63187]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [63187]
+[Guardian] ✅ Fallback guardian_log class and instance initialized safely.
+[GUARDIAN] 2025-12-10 20:24:43 | 🧠 Guardian runtime logs stored safely at /Users/ericballhaus/astra_guardian_runtime
+[Guardian] ✅ guardian_v6 verified and ready.
+[Guardian Fallback] [Backend] 🚀 Astra Intelligence Backend v2.5a initialized
+INFO:     Stopping reloader process [63184]

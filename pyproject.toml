@@ -1,0 +1,26 @@
+[tool.ruff]
+exclude = [
+  "venv",
+  "__pycache__",
+  "archive",
+  "legacy_backups",
+  "backups_learning",
+  "astra_modules_legacy_archived_20251215",
+]
+
+[tool.black]
+exclude = '''
+(
+  /(
+      \.git
+    | \.mypy_cache
+    | \.ruff_cache
+    | \.venv
+    | venv
+    | archive
+    | legacy_backups
+    | backups_learning
+  )/
+)
+'''
+

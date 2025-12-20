@@ -1,0 +1,6 @@
+/Users/ericballhaus/Desktop/astra-intelligence/engine/learning_manager_BACKUP.py
+/Users/ericballhaus/Desktop/astra-intelligence/gpt_state/gpt_state_2025-12-11_00-00-00.md .py
+/Users/ericballhaus/Desktop/astra-intelligence/gpt_state/gpt_state_2025-12-14 22-31.py
+/Users/ericballhaus/Desktop/astra-intelligence/performance/performance_logger.py
+/Users/ericballhaus/Desktop/astra-intelligence/tools/verify_api_pool_safeedit_20251214_1811 2.py
+/Users/ericballhaus/Desktop/astra-intelligence/tools/verify_api_pool_safeedit_20251214_1811.py

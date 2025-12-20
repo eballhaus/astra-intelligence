@@ -1,0 +1,83 @@
+=== ASTRA INVENTORY (state, forecast, ui, utils) ===
+
+
+--- state/ ---
+state
+├── __init__.py
+├── __pycache__
+│   ├── __init__.cpython-312.pyc
+│   └── planetary_tensor_builder.cpython-312.pyc
+├── api_status.json
+├── cache_store.json
+├── GPT_STATE_v3.9.json
+├── GPT_STATE_v3.9.md
+├── performance_state.json
+└── planetary_tensor_builder.py
+
+2 directories, 9 files
+
+
+--- forecast/ ---
+forecast
+├── __init__.py
+├── __pycache__
+│   ├── __init__.cpython-312.pyc
+│   └── holistic_model_core.cpython-312.pyc
+└── holistic_model_core.py
+
+2 directories, 4 files
+
+
+--- ui/ ---
+ui
+├── __init__.py
+├── __pycache__
+│   ├── __init__.cpython-312.pyc
+│   └── dashboard.cpython-312.pyc
+├── dashboard
+│   ├── __init__.py
+│   ├── __pycache__
+│   ├── tab_dashboard_backup_20251212_2345.py
+│   ├── tab_dashboard_backup_20251212_2357.py
+│   ├── tab_dashboard_broken_20251212_2349.py
+│   ├── tab_dashboard_forcehotfix_cleanup_20251213_0011.py
+│   ├── tab_dashboard_prettyfix_20251212_2350.py
+│   ├── tab_dashboard_safeedit_20251213_0002.py
+│   ├── tab_dashboard_timingclean_20251213_0007.py
+│   ├── tab_dashboard_timingfix_20251213_0005.py
+│   ├── tab_dashboard.backup.py
+│   └── tab_dashboard.py
+├── dashboard_core.py
+├── dashboard.py
+└── tab_performance.py
+
+4 directories, 17 files
+
+
+--- utils/ ---
+utils
+├── __init__.py
+├── __pycache__
+│   ├── __init__.cpython-312.pyc
+│   ├── async_loader.cpython-312.pyc
+│   ├── deferred_imports.cpython-312.pyc
+│   ├── df_cleaner.cpython-312.pyc
+│   ├── guardian_lazy.cpython-312.pyc
+│   ├── performance_profiler.cpython-312.pyc
+│   ├── safe_api_wrapper.cpython-312.pyc
+│   └── safe_df.cpython-312.pyc
+├── async_loader.py
+├── check_api_status.py
+├── deferred_imports.py
+├── df_cleaner.py
+├── guardian_autoswap.py
+├── guardian_lazy.backup.py
+├── guardian_lazy.py
+├── helpers.py
+├── lazy_imports.py
+├── performance_monitor.py
+├── performance_profiler.py
+├── safe_api_wrapper.py
+└── safe_df.py
+
+2 directories, 22 files

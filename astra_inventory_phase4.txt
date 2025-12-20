@@ -1,0 +1,81 @@
+=== ASTRA INVENTORY (legacy, learning, memory, chart_core, backups) ===
+
+
+--- legacy/ ---
+legacy
+└── astra_modules
+    ├── __init__.py
+    ├── __pycache__
+    ├── _legacy_archive
+    ├── agents
+    ├── astra_backend
+    ├── astra_backend.py
+    ├── astra_memory.py
+    ├── astra_watchlist.json
+    ├── chart_core
+    ├── core
+    ├── engine
+    ├── fetch_core
+    ├── forecast
+    ├── guardian
+    ├── learning
+    ├── state
+    ├── ui
+    ├── universe
+    └── utils
+
+17 directories, 4 files
+
+
+--- learning/ ---
+learning
+├── __init__.py
+└── __pycache__
+    └── __init__.cpython-312.pyc
+
+2 directories, 2 files
+
+
+--- memory/ ---
+memory
+├── __init__.py
+└── quantum_memory_bridge.py
+
+1 directory, 2 files
+
+
+--- chart_core/ ---
+chart_core
+└── __init__.py
+
+1 directory, 1 file
+
+
+--- astra_backups/ ---
+astra_backups
+└── astra_modules_20251209_153914
+    ├── __init__.py
+    ├── __pycache__
+    ├── _archive_2025
+    ├── _legacy_archive
+    ├── agents
+    ├── apis
+    ├── astra_backend
+    ├── astra_memory.py
+    ├── astra_watchlist.json
+    ├── chart_core
+    ├── core
+    ├── engine
+    ├── fetch_core
+    ├── forecast
+    ├── guardian
+    ├── guardian_backup
+    ├── learning
+    ├── logs
+    ├── state
+    ├── ui
+    ├── ui_old
+    ├── universe
+    └── utils
+
+22 directories, 3 files

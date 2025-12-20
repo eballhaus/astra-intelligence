@@ -1,0 +1,4 @@
+#!/bin/zsh
+cd ~/Desktop/ai_trading_dashboard
+source ~/streamlit_env/bin/activate
+streamlit run swing_dashboard_app.py --server.port 8610

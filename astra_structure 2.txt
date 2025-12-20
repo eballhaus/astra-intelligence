@@ -1,0 +1,128 @@
+.
+├── _sanity_backups
+├── _snapshots_guardian_20251214_1633
+│   └── fetch_core
+├── agents
+├── astra_archives
+│   └── cleanup_20251214_1657
+├── astra_backup_cache
+├── astra_backups
+│   └── cleanup_safe
+├── astra_core
+│   ├── __pycache__
+│   ├── agents
+│   ├── chart_core
+│   ├── compat
+│   ├── config
+│   ├── core
+│   ├── engine
+│   ├── forecast
+│   ├── guardian
+│   │   └── __pycache__
+│   ├── learning
+│   ├── state
+│   ├── ui
+│   │   ├── __pycache__
+│   │   ├── components
+│   │   └── dashboard
+│   └── utils
+├── astra_diagnostics
+├── astra_intelligence.egg-info
+├── astra_logs
+├── astra_models
+├── astra_modules
+│   └── state
+├── astra_modules_legacy
+│   ├── _archive_2025
+│   ├── _legacy_archive
+│   ├── agents
+│   │   └── agents -> ../agents
+│   ├── apis
+│   ├── astra_backend
+│   │   └── astra_modules
+│   ├── chart_core
+│   ├── core
+│   │   └── core -> ../core
+│   ├── engine
+│   │   └── engine -> ../engine
+│   ├── fetch_core
+│   ├── forecast
+│   │   └── forecast -> ../forecast
+│   ├── guardian_backup
+│   ├── guardian_old_1554
+│   │   └── logs
+│   ├── learning
+│   │   └── data
+│   ├── logs
+│   ├── state
+│   │   └── state -> ../state
+│   ├── ui -> ../ui
+│   ├── ui_old
+│   │   ├── components
+│   │   ├── dashboard
+│   │   ├── logs
+│   │   └── ui -> ../ui
+│   ├── universe
+│   └── utils
+│       └── utils -> ../utils
+├── astra-intelligence
+│   └── gpt_state
+├── backups
+│   ├── old_api_key_files
+│   ├── phase7_pre_integration
+│   └── ui_dashboard
+├── chart_core
+├── core
+│   ├── __pycache__
+│   └── guardian
+│       └── __pycache__
+├── docs
+├── engine
+│   └── __pycache__
+├── ethics
+├── fetch_core
+├── forecast
+├── gpt_state
+├── guardian
+│   ├── __pycache__
+│   ├── backup_archive
+│   └── security
+├── guardian_fix_backups
+├── guardian_merge_review
+├── guardian_old
+│   └── logs
+├── guardian_snapshots
+├── intel
+├── learning
+├── legacy_backups
+│   └── backups
+│       ├── astra_backup_20251209_182154
+│       └── import_fix_20251210_213214
+├── logs
+├── memory
+├── network
+├── performance
+├── scanners
+├── state
+├── tools
+├── ui
+│   ├── __pycache__
+│   ├── archive
+│   └── dashboard
+│       └── __pycache__
+├── universe
+├── utils
+└── venv
+    ├── bin
+    ├── etc
+    │   └── jupyter
+    ├── include
+    │   └── python3.12
+    ├── lib
+    │   └── python3.12
+    ├── share
+    │   ├── jupyter
+    │   └── man
+    └── share 2
+
+126 directories

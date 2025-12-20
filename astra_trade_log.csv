@@ -1,0 +1,12 @@
+timestamp,ticker,signal,entry_price,confidence,mode,outcome_%
+2025-11-07 13:13:15,AAPL,SELL,269.77,0.0,Swing Trading,-0.0
+2025-11-07 13:13:27,AAPL,SELL,269.77,0.0,Day Trading,-0.0
+2025-11-07 13:21:29,AAPL,SELL,269.77,0.0,Swing Trading,-0.0
+2025-11-07 13:28:26,AAPL,SELL,269.77,0.0,Swing Trading,-0.0
+2025-11-07 13:32:07,AAPL,SELL,269.77,0.0,Swing Trading,-0.0
+2025-11-07 13:45:43,AAPL,SELL,269.77,0.0,Swing Trading,-0.0
+2025-11-07 13:47:09,AAPL,SELL,269.77,0.0,Swing Trading,-0.0
+2025-11-07 13:52:15,AAPL,SELL,269.77,0.0,Swing Trading,-0.0
+2025-11-07 15:06:41,AAPL,SELL,269.77,0.0,Swing Trading,-0.0
+2025-11-07 16:40:54,AAPL,SELL,269.77,0.0,Swing Trading,-0.0
+2025-11-07 16:51:52,AAPL,SELL,269.77,0.0,Swing Trading,-0.0

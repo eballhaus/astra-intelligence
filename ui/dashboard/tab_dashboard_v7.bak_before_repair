@@ -1,0 +1,77 @@
+# -*- coding: utf-8 -*-
+"""
+Astra Intelligence - NeuralGlass Dashboard (v7)
+-----------------------------------------------
+Displays live intelligence data, grades, and predictions
+with smooth layout and live updates.
+"""
+
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+from datetime import datetime
+from engine.data_orchestrator import fetch_live_data
+
+
+def render_dashboard():
+    """Main dashboard layout"""
+    st.header("📊 Astra Intelligence Dashboard")
+    st.caption("Real-time predictions and confidence analytics powered by NeuralGlass.")
+
+    try:
+        live_data = fetch_live_data()
+
+        if not live_data or len(live_data) == 0:
+            st.warning("⚠️ No live data available.")
+            return
+
+        df = pd.DataFrame(live_data)
+        required_cols = {"symbol", "grade", "confidence", "price", "timestamp"}
+        missing = required_cols - set(df.columns)
+        if missing:
+            st.error(f"Missing columns in data: {missing}")
+            return
+
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+
+        # Summary metrics
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Assets Tracked", len(df))
+        c2.metric("Avg Confidence", f"{df['confidence'].mean():.1f}%")
+        c3.metric("A-Grade Picks", (df['grade'].str.startswith('A')).sum())
+        st.divider()
+
+        # Top performers
+        st.subheader("🏆 Top Signals")
+        top_df = df.sort_values("confidence", ascending=False).head(5)
+        for _, row in top_df.iterrows():
+            with st.container(border=True):
+                st.write(f"**{row['symbol']}** — Grade {row['grade']}")
+                st.write(f"Confidence: {row['confidence']:.1f}%")
+                st.write(f"Price: ${row['price']:.2f}")
+                st.caption(f"Updated: {row['timestamp']}")
+
+        st.divider()
+
+        # Charts
+        st.subheader("📈 Confidence Distribution")
+        st.plotly_chart(
+            px.histogram(df, x="confidence", nbins=20, template="plotly_dark"),
+            use_container_width=True
+        )
+
+        st.subheader("💹 Confidence Over Time")
+        st.plotly_chart(
+            px.line(df.sort_values("timestamp"),
+                    x="timestamp", y="confidence",
+                    color="grade", template="plotly_dark"),
+            use_container_width=True
+        )
+
+        # Footer
+        st.caption(f"Last Updated: {df['timestamp'].max().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    except Exception as e:
+        st.error(f"❌ Dashboard Error: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())

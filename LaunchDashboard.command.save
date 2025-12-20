@@ -1,0 +1,16 @@
+#!/bin/zsh
+echo "🚀 Launching AI Trading Dashboard..."
+
+# Navigate to the dashboard folder
+cd "$HOME/Desktop/ai_trading_dashboard" || exit
+
+# Activate Streamlit environment
+if [ -d "$HOME/streamlit_env" ]; then
+    source "$HOME/streamlit_env/bin/activate"
+else
+    echo "⚠️ Streamlit environment not found at ~/streamlit_env"
+    exit 1
+fi
+
+# Run the new stable version
+streamlit run "$HOME/Desktop/ai_trading_dashboard/ai_trading_dashboard_stable_full_version.py" --server.port 8610

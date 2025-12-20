@@ -1,0 +1,46 @@
+diff --git a/astra_core/ui/dashboard/tab_dashboard.py b/astra_core/ui/dashboard/tab_dashboard.py
+--- a/astra_core/ui/dashboard/tab_dashboard.py
++++ b/astra_core/ui/dashboard/tab_dashboard.py
+@@ -10,10 +10,9 @@
+-# Guardian Initialization
+-from astra_core.guardian.guardian_v6 import guardian_boot
+-from astra_core.guardian import guardian as guardian_log
+-
+-guardian = getattr(guardian_log, 'log', guardian_log)
+-guardian_boot()
++# Guardian Initialization — fixed
++from astra_core.guardian.guardian_v6 import guardian_boot, guardian
++guardian_boot()
++guardian.log("[Dashboard] ✅ Guardian online")
+
+diff --git a/astra_core/ui/dashboard/dashboard_sidebar.py b/astra_core/ui/dashboard/dashboard_sidebar.py
+--- a/astra_core/ui/dashboard/dashboard_sidebar.py
++++ b/astra_core/ui/dashboard/dashboard_sidebar.py
+@@ -1,6 +1,6 @@
+-from astra_core.guardian import guardian_log
++from astra_core.guardian.guardian_v6 import guardian
+
+-guardian_log("[Sidebar] 🧩 Sidebar initialized")
++guardian.log("[Sidebar] 🧩 Sidebar initialized")
+
+diff --git a/astra_core/ui/dashboard/dashboard_cards.py b/astra_core/ui/dashboard/dashboard_cards.py
+--- a/astra_core/ui/dashboard/dashboard_cards.py
++++ b/astra_core/ui/dashboard/dashboard_cards.py
+@@ -1,6 +1,6 @@
+-from astra_core.guardian import guardian_log
++from astra_core.guardian.guardian_v6 import guardian
+
+-guardian_log("[Cards] 🧩 Card renderer loaded")
++guardian.log("[Cards] 🧩 Card renderer loaded")
+
+diff --git a/astra_core/ui/dashboard/dashboard_data.py b/astra_core/ui/dashboard/dashboard_data.py
+--- a/astra_core/ui/dashboard/dashboard_data.py
++++ b/astra_core/ui/dashboard/dashboard_data.py
+@@ -23,7 +23,8 @@
+ try:
+-    # existing import or logic here
++    # existing import or logic here
++    pass
+ except Exception as e:
+-    guardian_log(f"[Data] ⚠️ Error loading data: {e}")
++    guardian.log(f"[Data] ⚠️ Error loading data: {e}")
