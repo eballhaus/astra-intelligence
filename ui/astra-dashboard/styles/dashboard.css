@@ -1,0 +1,42 @@
+/* --- AstraGlass+ (Readable, Bright, Carded Layout) --- */
+.dashboard-root {
+  --bg0: #0a1026;
+  --bg1: #0b132f;
+  --panel: rgba(255,255,255,0.08);
+  --panel2: rgba(255,255,255,0.12);
+  --stroke: rgba(255,255,255,0.15);
+  --stroke2: rgba(255,255,255,0.25);
+  --text: #e9edfa;
+  --muted: rgba(233,237,250,0.8);
+  --muted2: rgba(233,237,250,0.55);
+  --shadow: 0 14px 40px rgba(0,0,0,0.4);
+  --shadow2: 0 10px 22px rgba(0,0,0,0.3);
+  background:
+    radial-gradient(1200px 520px at 50% 0%, rgba(120,170,255,0.25) 0%, rgba(120,170,255,0) 60%),
+    linear-gradient(180deg, var(--bg0) 0%, var(--bg1) 100%);
+  color: var(--text);
+  font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  min-height: 100vh;
+  padding-bottom: 60px;
+}
+
+/* Astra Card */
+.astra-card {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid var(--stroke2);
+  border-radius: 16px;
+  box-shadow: 0 10px 24px rgba(0,0,0,0.25);
+  padding: 14px;
+  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+  cursor: pointer;
+}
+.astra-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(255,255,255,0.4);
+  background: rgba(255,255,255,0.12);
+}
+.astra-symbol { font-size: 20px; font-weight: 700; color: #ffffff; }
+.astra-price { font-size: 18px; font-weight: 700; color: #e9edfa; }
+.astra-sub { font-size: 13px; color: var(--muted); display:flex; justify-content:space-between; }
+.up { color: #4ef58b; font-weight: 700; }
+.down { color: #ff6b6b; font-weight: 700; }
