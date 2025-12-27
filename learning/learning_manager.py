@@ -1,37 +1,45 @@
-"""
-learning_manager.py — Astra Learning Manager
-Handles background micro-learning cycles for NeuralAgent retraining.
-"""
+from learning.learning_engine import learning_signal
+import json, os
+from datetime import datetime, timezone
+from learning.learning_engine import LearningEngine
 
-import asyncio
-import threading
-from core.guardian.guardian_v7 import GuardianV7
-from learning.learning_engine import train_learning_engine as start_learning_cycle
-from learning.performance_tracker import PerformanceTracker
+def start_background_learning(test_mode=False):
+    """Runs a single learning update and logs metrics to state/learning_metrics.json"""
+    # Run the learning signal or training step
+    metrics = learning_signal()
 
-guardian = GuardianV7()
-tracker = PerformanceTracker()
+    # Ensure metrics is always a dictionary
+    if not isinstance(metrics, dict):
+        metrics = {"avg_reward": float(metrics)}
 
+    # Add timestamp
+    metrics["timestamp"] = datetime.now(timezone.utc).isoformat()
 
-async def background_learning():
-    guardian.info("🔁 Astra Learning Manager started.")
-    while True:
+    metrics_path = os.path.join("state", "learning_metrics.json")
+
+    # Load existing data if present
+    if os.path.exists(metrics_path):
         try:
-            # Run frequent micro-learning cycles
-            start_learning_cycle()
-            guardian.info("✅ Micro-learning cycle completed successfully.")
-        except Exception as e:
-            guardian.error(f"Learning cycle error: {e}")
-        await asyncio.sleep(900)  # 15 minutes
+            with open(metrics_path, "r") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = []
+    else:
+        existing = []
 
+    # Convert single dict to list if needed
+    if isinstance(existing, dict):
+        existing = [existing]
 
-def start_background_learning():
-    """Start the learning loop in a background thread."""
-    def run_loop():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(background_learning())
+    # Append and trim to last 25 cycles
+    existing.append(metrics)
+    existing = existing[-25:]
 
-    t = threading.Thread(target=run_loop, daemon=True)
-    t.start()
-    return t
+    # Save updated list
+    with open(metrics_path, "w") as f:
+        json.dump(existing, f, indent=2)
+
+    print("[Astra LearningManager] ✅ Logged new metrics cycle")
+
+if __name__ == "__main__":
+    start_background_learning(test_mode=True)
