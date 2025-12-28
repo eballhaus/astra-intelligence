@@ -1,0 +1,222 @@
+:root{
+  /* Astra Glass / Screenshot Tokens */
+  --bg-0:#060C1D;
+  --bg-1:#172841;
+  --panel-0:#1D3352;
+  --panel-1:#243F65;
+  --panel-2:#294A7D;
+  --header:#31599A;
+
+  --text:#F8F8F8;
+  --muted:#889AA0;
+
+  --border:rgba(200,196,194,0.35);
+  --border-strong:rgba(200,196,194,0.55);
+
+  --accent-teal:#577278;
+  --accent-orange:#C85A37;
+
+  --green:#22C55E;
+  --red:#EF4444;
+  --amber:#F59E0B;
+
+  --shadow:0 14px 40px rgba(0,0,0,0.35);
+}
+
+body, html, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  color: var(--text);
+  background: radial-gradient(circle at top, var(--header) 0%, var(--bg-0) 75%);
+  font-family: 'Inter', sans-serif;
+}
+
+.dashboard-root, .app-root {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: transparent;
+}
+
+/* Panels (cards, chart, overview) */
+.panel, .card, .chart-container, .overview-strip {
+  background: linear-gradient(180deg, var(--panel-2), var(--panel-0));
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  color: var(--text);
+}
+
+/* Text variations */
+.muted, .label {
+  color: var(--muted);
+}
+
+/* Accent / signals */
+.accent-teal { color: var(--accent-teal); }
+.accent-orange { color: var(--accent-orange); }
+
+.up { color: var(--green); }
+.down { color: var(--red); }
+.neutral { color: var(--amber); }
+
+/* === Astra Layout Restore (no color changes) === */
+.dashboard-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: transparent;
+  padding: 1.5rem;
+  gap: 1.5rem;
+}
+
+.dashboard-header {
+  text-align: center;
+  font-size: 1.8rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: var(--text);
+}
+
+.market-overview {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  background: linear-gradient(180deg, var(--panel-1), var(--panel-0));
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  color: var(--text);
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.2fr;
+  gap: 1rem;
+  flex: 1;
+}
+
+/* Columns */
+.stock-column,
+.crypto-column,
+.chart-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Cards */
+.card {
+  background: linear-gradient(180deg, var(--panel-2), var(--panel-0));
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  box-shadow: var(--shadow);
+  padding: 1rem;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.4);
+}
+
+.asset-type {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.price {
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.change.positive { color: var(--green); }
+.change.negative { color: var(--red); }
+
+.prediction, .grade, .reason {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.chart-placeholder {
+  background: linear-gradient(180deg, var(--panel-1), var(--panel-0));
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  border-radius: 1rem;
+  min-height: 600px;
+}
+
+/* === Layout Lock: Astra Canonical Dashboard (no color changes) === */
+.dashboard-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  gap: 1.25rem;
+  padding: 1.25rem;
+}
+
+.dashboard-header {
+  text-align: center;
+  color: var(--text);
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.market-overview {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  font-size: 0.9rem;
+  color: var(--muted);
+  background: linear-gradient(180deg, var(--panel-1), var(--panel-0));
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  box-shadow: var(--shadow);
+  padding: 0.5rem;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.3fr;
+  gap: 1rem;
+  flex: 1;
+}
+
+.stock-column,
+.crypto-column,
+.chart-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.card {
+  background: linear-gradient(180deg, var(--panel-2), var(--panel-0));
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  box-shadow: var(--shadow);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+}
+
+.price {
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.change.positive { color: var(--green); }
+.change.negative { color: var(--red); }
+
+@media (max-width: 1100px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
