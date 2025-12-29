@@ -110,7 +110,7 @@ async def predict_live():
     def fetch_live_data():
         return getattr(astra_orch, "fetch_live_data", lambda: {"price": None, "mock": True})()
     def learning_signal(data):
-        return getattr(astra_orch, "learning_signal", lambda d: {"signal": "buy", "confidence": 0.0})(data)
+        return getattr(astra_orch, "learning_signal", lambda d: {"signal": "hold", "confidence": 0.0})(data)
     """Read-only live prediction endpoint."""
     try:
         from engine.orchestrator import fetch_live_data, learning_signal
@@ -123,7 +123,7 @@ async def predict_live():
             try:
                 from learning.paper_trader import PaperTrader
                 trader = PaperTrader()
-                if preds.get("signal") != "buy": trader.open_trade(symbol=preds.get("assets", ["BTC/USD"])[0], direction=preds.get("signal"), confidence=preds.get("confidence", 0.5))
+                if preds.get("signal") != "hold": trader.open_trade(preds)
             except Exception as trade_err:
                 print("PaperTrader error:", trade_err)
         threading.Thread(target=async_papertrade, args=(predictions,), daemon=True).start()

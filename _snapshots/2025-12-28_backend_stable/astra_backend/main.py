@@ -110,23 +110,12 @@ async def predict_live():
     def fetch_live_data():
         return getattr(astra_orch, "fetch_live_data", lambda: {"price": None, "mock": True})()
     def learning_signal(data):
-        return getattr(astra_orch, "learning_signal", lambda d: {"signal": "buy", "confidence": 0.0})(data)
+        return getattr(astra_orch, "learning_signal", lambda d: {"signal": "hold", "confidence": 0.0})(data)
     """Read-only live prediction endpoint."""
     try:
         from engine.orchestrator import fetch_live_data, learning_signal
         log.log("INFO", "[predict_live] → Calling fetch_live_data()"); live_data = fetch_live_data(); log.log("INFO", f"[predict_live] ✅ fetch_live_data() complete: {type(live_data)}")
         log.log("INFO", "[predict_live] → Calling learning_signal()"); predictions = learning_signal(live_data); log.log("INFO", "[predict_live] ✅ learning_signal() complete")
-        # 🚀 Forward live predictions to PaperTrader asynchronously
-        # 🚀 Forward live predictions to PaperTrader asynchronously
-        import threading
-        def async_papertrade(preds):
-            try:
-                from learning.paper_trader import PaperTrader
-                trader = PaperTrader()
-                if preds.get("signal") != "buy": trader.open_trade(symbol=preds.get("assets", ["BTC/USD"])[0], direction=preds.get("signal"), confidence=preds.get("confidence", 0.5))
-            except Exception as trade_err:
-                print("PaperTrader error:", trade_err)
-        threading.Thread(target=async_papertrade, args=(predictions,), daemon=True).start()
         return {"success": True, "timestamp": __import__("time").time(), "data": predictions}
     except Exception as e:
         return {"success": False, "error": str(e)}

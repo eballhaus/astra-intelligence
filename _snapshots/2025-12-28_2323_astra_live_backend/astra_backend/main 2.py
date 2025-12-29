@@ -25,7 +25,7 @@ import pandas as pd
 from fastapi import FastAPI
 from fastapi.responses import ORJSONResponse
 
-from core.guardian.guardian_v7 import GuardianV7 as guardian
+from core.guardian.guardian_v6 import guardian
 
 # ===================================================================
 # 🧩 Safe JSON Serialization Utility
@@ -65,15 +65,8 @@ app = FastAPI(
     default_response_class=ORJSONResponse,
 )
 
-from core.guardian.guardian_v7 import GuardianV7
-# Hotfix: add missing internal attributes for GuardianV7
-if not hasattr(GuardianV7, "_lock"):
-    import threading
-    GuardianV7._lock = threading.Lock()
-if not hasattr(GuardianV7, "_events"):
-    GuardianV7._events = []
-guardian = GuardianV7()
-guardian.log("INFO", "[Backend] 🚀 Astra Intelligence Backend v2.5a initialized")
+guardian.log("[Backend] 🚀 Astra Intelligence Backend v2.5a initialized")
+
 # ===================================================================
 # 📡 Health Check Endpoint
 # ===================================================================
@@ -97,39 +90,6 @@ def health_check() -> Dict[str, Any]:
 
 
 # ===================================================================
-# ===================================================================
-# 🔮 Live Prediction Endpoint
-# ===================================================================
-@app.get("/predict/live")
-async def predict_live():
-    from astra_dashboard.engine.orchestrator import Orchestrator as AstraOrchestrator
-    astra_orch = AstraOrchestrator()
-    import time
-    from core.guardian.guardian_v7 import GuardianV7
-    log = GuardianV7()
-    def fetch_live_data():
-        return getattr(astra_orch, "fetch_live_data", lambda: {"price": None, "mock": True})()
-    def learning_signal(data):
-        return getattr(astra_orch, "learning_signal", lambda d: {"signal": "buy", "confidence": 0.0})(data)
-    """Read-only live prediction endpoint."""
-    try:
-        from engine.orchestrator import fetch_live_data, learning_signal
-        log.log("INFO", "[predict_live] → Calling fetch_live_data()"); live_data = fetch_live_data(); log.log("INFO", f"[predict_live] ✅ fetch_live_data() complete: {type(live_data)}")
-        log.log("INFO", "[predict_live] → Calling learning_signal()"); predictions = learning_signal(live_data); log.log("INFO", "[predict_live] ✅ learning_signal() complete")
-        # 🚀 Forward live predictions to PaperTrader asynchronously
-        # 🚀 Forward live predictions to PaperTrader asynchronously
-        import threading
-        def async_papertrade(preds):
-            try:
-                from learning.paper_trader import PaperTrader
-                trader = PaperTrader()
-                if preds.get("signal") != "buy": trader.open_trade(symbol=preds.get("assets", ["BTC/USD"])[0], direction=preds.get("signal"), confidence=preds.get("confidence", 0.5))
-            except Exception as trade_err:
-                print("PaperTrader error:", trade_err)
-        threading.Thread(target=async_papertrade, args=(predictions,), daemon=True).start()
-        return {"success": True, "timestamp": __import__("time").time(), "data": predictions}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
 # 📊 Market Overview Endpoint
 # ===================================================================
 
@@ -151,14 +111,7 @@ async def get_market_overview(symbols: str) -> Dict[str, Any]:
         syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
 
         if not syms:
-            # Forward predictions to PaperTrader (non-blocking)
-            try:
-                from learning.paper_trader import PaperTrader
-                trader = PaperTrader()
-                trader.process(predictions)
-            except Exception as trade_err:
-                print("PaperTrader error:", trade_err)
-                return {"error": "No symbols provided", "data": []}
+            return {"error": "No symbols provided", "data": []}
 
         data = []
         for s in syms:
@@ -184,13 +137,6 @@ async def get_market_overview(symbols: str) -> Dict[str, Any]:
             )
 
         guardian.log(f"[Backend] ✅ Market overview retrieved for {len(syms)} symbols")
-        # Forward predictions to PaperTrader (non-blocking)
-        try:
-            from learning.paper_trader import PaperTrader
-            trader = PaperTrader()
-            trader.process(predictions)
-        except Exception as trade_err:
-            print("PaperTrader error:", trade_err)
         return {
             "data": data,
             "count": len(data),
@@ -200,13 +146,6 @@ async def get_market_overview(symbols: str) -> Dict[str, Any]:
 
     except Exception as e:
         guardian.log(f"[Backend] ⚠️ Market overview error: {e}")
-        # Forward predictions to PaperTrader (non-blocking)
-        try:
-            from learning.paper_trader import PaperTrader
-            trader = PaperTrader()
-            trader.process(predictions)
-        except Exception as trade_err:
-            print("PaperTrader error:", trade_err)
         return {"error": str(e), "data": []}
 
 
@@ -346,7 +285,7 @@ async def get_data(symbol: str) -> ORJSONResponse:
     # Step 1: Validate input
     # ===================================================================
     if not symbol or not isinstance(symbol, str):
-        guardian.log("INFO", "[Backend] ⚠️ Invalid or missing symbol parameter")
+        guardian.log("[Backend] ⚠️ Invalid or missing symbol parameter")
         return ORJSONResponse(
             status_code=400, content={"error": "Invalid symbol provided"}
         )
@@ -475,7 +414,7 @@ async def get_data(symbol: str) -> ORJSONResponse:
     # Step 7: Guardian quota tracking
     # ===================================================================
     try:
-        from core.guardian.guardian_v7 import GuardianV7 as guardian
+        from core.guardian.guardian_v6 import guardian
 
         guardian = guardian.log()
         for api in API_MODULES:
@@ -527,5 +466,5 @@ async def get_data(symbol: str) -> ORJSONResponse:
 if __name__ == "__main__":
     import uvicorn
 
-    guardian.log("INFO", "[Backend] 🧪 Starting Astra Backend in standalone mode")
+    guardian.log("[Backend] 🧪 Starting Astra Backend in standalone mode")
     uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")
