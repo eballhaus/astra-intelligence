@@ -14,7 +14,7 @@ export default function Dashboard() {
 
   const loadData = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/api/live-data");
+      const res = await fetch("http://127.0.0.1:8011/dashboard/live");
       let data = await res.json();
 
       // --- Add static Astra metrics (temporary until backend supports it) ---

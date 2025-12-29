@@ -1,0 +1,23 @@
+./_quarantine/dashboard_archives/dashboard_data.py
+./_quarantine/dashboard_archives/dashboard_data_BACKUP_20251216_1240.py
+./_quarantine/dashboard_archives/dashboard_cards.py
+./_quarantine/dashboard_archives/dashboard_snapshot.py
+./_quarantine/dashboard_archives/dashboard_data_backup.py
+./_quarantine/dashboard_archives/dashboard_assistant.py
+./_quarantine/dashboard_archives/dashboard_sidebar_BACKUP_20251216_1221.py
+./_quarantine/dashboard_archives/dashboard_chart.py
+./_quarantine/dashboard_archives/dashboard_data_safe_patch.py
+./_quarantine/dashboard_archives/dashboard_sidebar.py
+./_quarantine/dashboard_archives/dashboard_data 3.py
+./_quarantine/dashboard_archives/dashboard_guardian.py
+./_quarantine/dashboard_archives/dashboard_data_pre_fix_2025-12-14_2239.py
+./_quarantine/dashboard_archives/dashboard_app.py
+./_quarantine/dashboard_archives/dashboard.py
+./_quarantine/dashboard_archives/dashboard_core.py
+./_quarantine/dashboard_archives/dashboard_data 4.py
+./_quarantine/dashboard_archives/dashboard_chart_BACKUP_20251216_1221.py
+./_quarantine/dashboard_archives/dashboard_summary_2.py
+./_quarantine/dashboard_archives/dashboard_data_broken_2025-12-14_2142.py
+./_quarantine/dashboard_archives/dashboard_data_BACKUP_20251216_1242.py
+./_quarantine/dashboard_archives/dashboard_summary.py
+./dashboard_backend.py

@@ -1,5 +1,5 @@
 # >>> ASTRA INTELLIGENCE — LIVE DATA ORCHESTRATOR (ACTIVE VERSION) <<<
-from guardian.guardian_v7 import GuardianV7
+from astra_dashboard.core.guardian.guardian_v7 import GuardianV7
 from engine.ranking_engine import RankingEngine
 from agents.personas.momentum_agent import MomentumAgent
 from agents.personas.technical_agent import TechnicalAgent
@@ -26,7 +26,6 @@ def fetch_live_data(symbols=["AAPL","TSLA","AMZN","MSFT","GOOG","NVDA"]):
     risk = RiskAgent()
     psychology = PsychologyAgent()
     ranking = RankingEngine()
-    )
 
     enriched = []
     for item in raw_data:

@@ -1,0 +1,1 @@
+print("✅ Fetch module loaded.")

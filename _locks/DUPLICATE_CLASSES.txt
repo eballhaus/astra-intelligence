@@ -1,0 +1,393 @@
+									if (enforcePureMode && context.hasPureGlobals && !ignoreComment) throw atRule.error("Selector in at-rule\"" + selector$1 + "\" is not pure (pure selectors must contain at least one local class or id)");
+								else throw decl.error(`referenced class name "${className$1}" in ${decl.prop} not found`);
+							"Incorrect composition, expected class named",
+						// Reset stack for `
+						`Composition is only allowed when selector is single local class name not in "${lastLocalIdentifiers.join('", "')}"`,
+						class WarnFalseIifeUmdPlugin {
+						if (isNotPure && isNodeWithoutDeclarations(rule) && !ignoreComment) throw rule.error("Selector \"" + rule.selector + "\" is not pure (pure selectors must contain at least one local class or id)");
+						name = "class field initializer";
+						name = "class static block";
+					// 2. classes (class declaration, class expression)
+					// skip a variable of class itself name in the class scope
+					if (!node.value) throw new Error("Invalid class or id selector syntax");
+				 *   class A { constructor() { ... } }
+				 *   class A { foo = function() { ... } }
+				 *   class A { foo() { ... } }
+				 *   class A { get foo() { ... } }
+				 *   class A { set foo() { ... } }
+				 *   class A { static foo() { ... } }
+				 * Class field initializers and class static blocks are implicit functions. Therefore,
+				'"agent-base" has no default implementation, you must subclass and override `callback()`'
+				"Disallow characters which are made with multiple code points in character class syntax",
+				"Require or disallow an empty line between class members",
+				// Can't happen, as it is a parser to have a missing class body, but let's code defensively here.
+				// CSS modules need IDs even when not in chunks, for generating CSS class names(i.e. [id]-[local])
+				// Inside of class bodies are always strict mode.
+				// Skips "arguments" or variables of a class name in the class scope of ClassDeclaration.
+				// The definition of the class member itself
+				// The super class expression in class scopes behaves weird
+				// We get ranges of all super class expressions to make
+				throw new Error(`Unknown class name
+			 * `class { static toString() { return a } }`
+			 * `class { static valueOf() { return a } }`
+			 * Checks tokens from the head of this class body to the first MethodDefinition or the end of this class body.
+			 * Checks tokens from this MethodDefinition to the next MethodDefinition or the end of this class body.
+			 * For example, `class C { static foo = C; static { bar = C; } }` is valid.
+			 * Instance fields defined in a subclass are never created if the constructor of the subclass
+			 * only block-scoped variables (such as let and const variables or class and function declarations)
+			 * Post-process the class members and report any remaining members.
+			 * Prevent crashing on parsers which do not require class constructor
+			 * Since private members can only be accessed in the current class context,
+			 * This rule does not apply to class static blocks, but we have to track them so
+			 * we can safely assume that all usages are within the current class body.
+			// `export default class {}` as `ClassDeclaration`, both with `id = null`.
+			// Add class name in scope for recursive calls
+			// continuation characters should not apply to class fields
+			// disregard the `foo` in `class {foo(){}}` but keep it in `class {[foo](){}}`
+			// disregard the `foo` in `class {foo=bar}` but keep it in `class {[foo]=bar}` and `class {bar=foo}`
+			// For CSS modules, i.e. `.class { composes
+			// of a character class in a `u` RegExp. /\-/u throws, but
+			always
+			description
+			if (node.type !== "class") throw new Error("composition is only allowed when selector is single 
+			if (node.type !== "pseudo" || node.value !== "
+			if (node.type !== "selector" || node.length !== 1) throw new Error("composition is only allowed when selector is single 
+			if (node.type !== "selector" || node.nodes.length !== 1) throw new Error(`composition is only allowed when selector is single 
+			missingGetterInClass
+			missingSetterInClass
+			missingThis
+			never
+			return "class static block body";
+			return {...base} // assumption
+			SubIter = Function('Iter', 'return class SubIter extends Iter {};')(Iter);
+			SubSubIter = Function('SubIter', 'return class SubSubIter extends SubIter {};')(SubIter);
+			throw new Error(`Unknown character class kind
+			ViteLessManager ??= class ViteManager extends FileManager {
+		 *      For class field initializers, this can be any node that is PropertyDefinition#value.
+		 *      For class static blocks, this is StaticBlock.
+		 *     class C {
+		 * - hasExtends
+		 * @param {ASTNode} curNode Current class member node.
+		 * @param {ASTNode} nextNode Next class member node.
+		 * @param {ASTNode} node The class member node to check.
+		 * @param {ASTNode} node The node of class declarations to check.
+		 * @param {string} type The class member type to check.
+		 * @returns {boolean} `true` if the class member node matched the type.
+		 * @returns {boolean} True if parent class implements interfaces
+		 * @returns {boolean} True if the comment is at class end.
+		 * @returns {boolean} True if the comment is at class start.
+		 * @returns {boolean} true if the number is the initial value of a class field.
+		 * @returns {boolean} Whether it's a static method generic shadowing class generic
+		 * @returns {boolean} Whether or not the variable of the class name in the class scope of ClassDeclaration.
+		 * `=`, `&&=`, `||=` or `??=` and the right-hand side is an anonymous class or function.
+		 * a part of the next class member node instead of the one it technically belongs to.
+		 * Check if a class field has a dangling underscore
+		 * Check if the node's parent class implements any interfaces
+		 * Check the parentheses around the super class of the given class definition.
+		 * Checks for a part of a class body.
+		 * Checks for static method generic shadowing class generic
+		 * Checks if a variable of the class name in the class scope of ClassDeclaration.
+		 * Checks the given class body.
+		 * class Foo {
+		 * class or function; otherwise, `false`.
+		 * ClassDeclaration creates two variables of its name into its outer scope and its class scope.
+		 * Gets a pair of tokens that should be used to check lines between two class member nodes.
+		 * Pushes a `this` scope (non-arrow function, class static block, or class field initializer) information to the stack.
+		 * Returns whether or not comments are at the class end or not.
+		 * Returns whether or not comments are at the class start or not.
+		 * Returns whether the number is the initial value of a class field.
+		 * side is an anonymous class or function and the left-hand side is an *unparenthesized*
+		 * So we should ignore the variable in the class scope.
+		 * the class field name is "get", "set", or "static", or if
+		 * This checks tokens from a specified token to a next MethodDefinition or the end of class body.
+		 * token, but is on the line where the next class member starts - this returns the preceding
+		"useDefineForClassFields"
+		*     class to use. It must be the `WebSocket` class or class that extends it
+		* @param  {string} localName Usually a class name
+		// Create class manually, cause #502
+		// disregard the `foo` in `class {foo(){}}` but keep it in `class {[foo](){}}`
+		// disregard the `foo` in `class {foo=bar}` but keep it in `class {[foo]=bar}` and `class {bar=foo}`
+		// For CSS modules, i.e. `.class { composes
+		// Track reported nodes to avoid duplicate reports. For example, on class declarations.
+		description
+		Emit ECMAScript standard class fields.
+		Ensure non-undefined class properties are initialized in the constructor.
+		t.test('class inheritance', { skip
+		This class can be in these states
+	                // export default class foo {}
+	                node.prelude.id = null; // pre-init property to avoid multiple hidden class for generate
+	    __extends(DraftMap, _super); // Create class manually, cause #502
+	    __extends(DraftSet, _super); // Create class manually, cause #502
+	    DuplicateConstructor
+	    return class Comparison {
+	    throw new TypeError("Cannot call a class as a function");
+	   * Pass true to use the ES2015 `Proxy` class when creating drafts, which is
+	 * - `class A { '#foo' = () => {}; }`  ....... `method '#foo'`
+	 * - `class A { '#foo'() {} }`  .............. `method '#foo'`
+	 * - `class A { ['foo']() {} }`
+	 * - `class A { ['foo']() {} }`  ............. `method 'foo'`
+	 * - `class A { [foo]() {} }`
+	 * - `class A { [foo]() {} }`  ............... `method`
+	 * - `class A { *['foo']() {} }`
+	 * - `class A { *['foo']() {} }`  ............ `generator method 'foo'`
+	 * - `class A { *[foo]() {} }`
+	 * - `class A { *[foo]() {} }`  .............. `generator method`
+	 * - `class A { *foo() {} }`
+	 * - `class A { *foo() {} }`  ................ `generator method 'foo'`
+	 * - `class A { #foo = () => {}; }`  ......... `private method #foo`
+	 * - `class A { #foo() {} }`  ................ `private method #foo`
+	 * - `class A { async ['foo']() {} }`
+	 * - `class A { async ['foo']() {} }`  ....... `async method 'foo'`
+	 * - `class A { async [foo]() {} }`
+	 * - `class A { async [foo]() {} }`  ......... `async method`
+	 * - `class A { async foo() {} }`
+	 * - `class A { async foo() {} }`  ........... `async method 'foo'`
+	 * - `class A { constructor() {} }`
+	 * - `class A { constructor() {} }`  ......... `constructor`
+	 * - `class A { foo = () => {}; }`  .......... `method 'foo'`
+	 * - `class A { foo = (a, b) => {} }`
+	 * - `class A { foo = function bar() {}; }`  . `method 'foo'`
+	 * - `class A { foo = function() {} }`
+	 * - `class A { foo = function() {}; }`  ..... `method 'foo'`
+	 * - `class A { foo() {} }`
+	 * - `class A { foo() {} }`  ................. `method 'foo'`
+	 * - `class A { get foo() {} }`
+	 * - `class A { get foo() {} }`  ............. `getter 'foo'`
+	 * - `class A { set foo(a) {} }`
+	 * - `class A { set foo(a) {} }`  ............ `setter 'foo'`
+	 * - `class A { static *foo() {} }`
+	 * - `class A { static *foo() {} }`  ......... `static generator method 'foo'`
+	 * - `class A { static #foo = () => {}; }`  .. `static private method #foo`
+	 * - `class A { static #foo() {} }`  ......... `static private method #foo`
+	 * - `class A { static async foo() {} }`
+	 * - `class A { static async foo() {} }`  .... `static async method 'foo'`
+	 * - `class A { static foo = () => {}; }`  ... `static method 'foo'`
+	 * - `class A { static foo = function() {} }`
+	 * - `class A { static foo() {} }`
+	 * - `class A { static foo() {} }`  .......... `static method 'foo'`
+	 * - `class A { static get foo() {} }`
+	 * - `class A { static get foo() {} }`  ...... `static getter 'foo'`
+	 * - `class A { static set foo(a) {} }`
+	 * - `class A { static set foo(a) {} }`  ..... `static setter 'foo'`
+	 * @param {ClassDeclaration | MaybeNamedClassDeclaration} statement class declaration
+	 * @param {ClassExpression | ClassDeclaration | MaybeNamedClassDeclaration} classy a class node
+	 * @param {ClassExpression} expression the class expression
+	 * @param {Function} TokenCommentCursor The class of the cursor which iterates the mix of tokens and comments.
+	 * @param {Function} TokenCursor The class of the cursor which iterates tokens only.
+	 * @param {string} className The class name to check.
+	 * @param className - Non-empty string with CSS class name to add to popup container
+	 * @param className - Non-empty string with CSS class name to add/remove
+	 * @param className - Non-empty string with CSS class name to remove from marker element
+	 * @param className - Non-empty string with CSS class name to remove from popup container
+	 * @param className - on-empty string with CSS class name to add to marker element
+	 * @returns {ESLintPrivateMembers} The instance's private class members.
+	 * @returns if the class was removed return false, if class was added, then return true
+	 * @returns if the class was removed return false, if class was added, then return true, undefined if there is no container
+	 * @throws {Error} When an unknown class name is passed.
+	 * Add or remove the given CSS class on the marker element, depending on whether the element currently has that class.
+	 * Add or remove the given CSS class on the popup container, depending on whether the container currently has that class.
+	 * Adds a CSS class to the marker element.
+	 * Adds a CSS class to the popup container element.
+	 * class Foo {
+	 * Get the private class members of a given ESLint instance for tests.
+	 * metadata needed to reconstruct the StructArray base class during
+	 * modules, class field initializers, and class static blocks, this means
+	 * Normalizes the array by calling the superclass method and catching/rethrowing
+	 * Otherwise, your class instance will never be drafted, which means it won't be
+	 * Pass true to use the ES2015 `Proxy` class when creating drafts, which is
+	 * Pass true to use the ES2015 `Proxy` class when creating drafts, which is
+	 * Removes a CSS class from the marker element.
+	 * Removes a CSS class from the popup container element.
+	 * Rule to disallow characters which are made with multiple code points in character class syntax.
+	 * Rule to disallow duplicate class members.
+	 * Rule to disallow reassigning class members.
+	 * Rule to disallow unused private class members.
+	 * Rule to enforce that class methods utilize `this`.
+	 * Rule to require or disallow an empty line between class members.
+	 * Space-separated CSS class names to add to marker element.
+	 * Space-separated CSS class names to add to popup container
+	 * Special case
+	 * To let Immer treat your class instances as plain immutable objects
+	 * Utility class to assist managing values for text-variable-anchor-offset property. Create instances from
+	"description"
+	/** Part of a class definition that is used to build a server */
+	// Look for inner scope variables too (like in class Foo { t() { Foo } })
+	// TODO
+	# Keep the class dict-less.
+	# Make the class dict-less.
+	class ArticleModel {
+	class Assertion {
+	class At {
+	class C
+	class Case {
+	class CheapRuler {
+	class Coalesce {
+	class Coercion {
+	class Collator {
+	class CollatorExpression {
+	class Color {
+	class CompoundExpression {
+	class DirEntry {
+	class Distance {
+	class DraftMap extends Map {
+	class DraftSet extends Set {
+	class EvaluationContext {
+	class ExpressionParsingError extends Error {
+	class extends Parser {
+	class FormatExpression {
+	class Formatted {
+	class FormattedSection {
+	class FsEventsHandler {
+	class FSWatcher extends EventEmitter {
+	class IdleService {
+	class ImageExpression {
+	class In {
+	class IndexOf {
+	class InstanceCache<T extends (new (...args
+	class Interpolate {
+	class Length {
+	class Let {
+	class Literal {
+	class Logger {
+	class Match {
+	class MyClass {}
+	class News {
+	class NodeAppBuilder {
+	class NodeFsHandler {
+	class NumberFormat {
+	class Padding {
+	class ParsingContext {
+	class ParsingError {
+	class PrettyFormatPluginError extends Error {
+	class ReaddirpStream extends Readable {
+	class ResolvedImage {
+	class RuntimeError {
+	class Scope {
+	class ServerBuilder {
+	class SetDeprecatedArray extends Set {
+	class Slice {
+	class Step {
+	class StyleExpression {
+	class TinyQueue {
+	class ValidationError {
+	class Var {
+	class VariableAnchorOffsetCollection {
+	class WatchHelper {
+	class Within {
+	class ZoomConstantExpression {
+	class ZoomDependentExpression {
+	export class Agent extends EventEmitter {
+	export class ArgError extends Error {
+	new (class CachedSourceSerializer {
+	new (class ConcatSourceSerializer {
+	new (class OriginalSourceSerializer {
+	new (class PositionSerializer {
+	new (class PrefixSourceSerializer {
+	new (class RawSourceSerializer {
+	new (class ReplaceSourceSerializer {
+	new (class SourceLocationSerializer {
+	new (class SourceMapSourceSerializer {
+	new (class ValidationErrorSerializer {
+	t.notOk(isCallable(classAnonymous), 'anonymous class constructors are not callable');
+	t.notOk(isCallable(classAnonymousCommentedOneLine), 'anonymous one-line class constructors with comments in the signature are not callable');
+	t.notOk(isCallable(classConstructor), 'class constructors are not callable');
+	t.notOk(isCallable(commentedClass), 'class constructors with comments in the signature are not callable');
+	t.notOk(isCallable(commentedClassOneLine), 'one-line class constructors with comments in the signature are not callable');
+	t.ok(isCallable(returnClass), 'function with string " class " is callable');
+	The 
+	var BatchedHash$1 = class {
+	var BulkUpdateDecorator$1 = class {
+	var CloseEvent = class extends Event$1 {
+	var Core = class Core {
+	var DirEntry = class {
+	var ErrorEvent = class extends Event$1 {
+	var Event$1 = class {
+	var FileSystemLoader = class {
+	var FsEventsHandler$1 = class {
+	var FSWatcher = class extends EventEmitter$3 {
+	var Limiter$1 = class {
+	var MessageEvent = class extends Event$1 {
+	var MockResponse = class {
+	var NodeFsHandler$1 = class {
+	var Parser$1 = class {
+	var PerMessageDeflate$4 = class {
+	var ProxyServer = class ProxyServer extends node_events_1.EventEmitter {
+	var ReaddirpStream = class ReaddirpStream extends Readable$1 {
+	var Receiver$2 = class extends Writable$1 {
+	var Sender$2 = class Sender$2 {
+	var WasmHash = class {
+	var WatchHelper = class {
+	var WebSocket$2 = class WebSocket$2 extends EventEmitter$2 {
+	var WebSocketServer$1 = class extends EventEmitter$1 {
+    
+        
+            
+                    
+                                                                                                                                                                                                                                                                                                                                                                                     * @returns Returns the `FileEnumerator` class if its requirable, otherwise `undefined`.
+                                    if (typeIdx !== 0 /* TokenType.class */ && typeIdx !== 2 /* TokenType.interface */) {
+                                  "subclass of CodePrinter.")
+                                'in a class component. React Hooks must be called in a ' +
+                                // 1. multiple export default of class declaration or function declaration by checking NodeFlags.Default
+                                // A Class + Property merge is made for a `module.exports.Member = class {}`, and it doesn't serialize well as either a class _or_ a property symbol - in fact, _it behaves like an alias!_
+                                // MethodDeclaration and AccessorDeclaration can appear in a class directly
+                                // This is to properly report an error in the case "export default { }" is after export default of class declaration or function declaration.
+                                ts.Diagnostics.Class_0_incorrectly_implements_class_1_Did_you_mean_to_extend_1_and_inherit_its_members_as_a_subclass 
+                            // 1. mixed static and instance class members
+                            // class A<T, |
+                            // exclude `prototype` when writing a class expression as a type literal, as per
+                            // export class x { }
+                            // export default class { }
+                            // For `class C { }` remove the whitespace inside the braces.
+                            // If some superclass added this property, don't add it again.
+                            // If the module is merged with a value, we must get the type of the class and add its propertes (for inherited static methods).
+                            // If there is a base type, if every signature in the class is identical to a signature in the baseType, elide all the declarations
+                            // If we didn't come from static member of class or interface,
+                            // interface members can't have initializers, however class members _can_
+                            // Looks like a `module.exports.Sub = class {}` - if we serialize `symbol` as a class, the result will have no members,
+                            // members when intersecting a (this-)instantiations of a class with its raw base or another instance
+                            // Note that we will not include methods/accessors of a class because they would require
+                            // Only class declarations are allowed to be used as a type (in a heritage clause),
+                            // Only value-only-meaning symbols can be correctly encoded as class statics, type/namespace/alias meaning symbols
+                            // Type parameter is the this type, and its declaration is the class declaration.
+                            // var C = class D<T, |
+                            class A { foo(a
+                            class B { foo(c
+                            containingNodeKind === 228 /* SyntaxKind.ClassExpression */ || // var C = class D< |
+                            f'Expected a `TypedDict` class inside `Unpack[...]`, got {unpack_type!r}',
+                            reason
+                            return 0 /* TokenType.class */;
+                            return containingNodeKind === 260 /* SyntaxKind.ClassDeclaration */ // class A { |
+                            return true; // class member already made for this name
+                          "(pure selectors must contain at least one local class or id)"
+                        !isClassInstanceSide(typeToSerialize) && // While a class instance is potentially representable as a NS, prefer printing a reference to the instance type and serializing the class
+                        //       @y method(x, y) {} // <-- decorator y should be resolved at the class declaration, not the method.
+                        //       method(@y x, y) {} // <-- decorator y should be resolved at the class declaration, not the parameter.
+                        //   @param(1 as T) // <-- T should resolve to the type alias outside of class C
+                        //   class C {
+                        //   class C<T> {}
+                        //   or the containing class declares instance member variables with initializers.
+                        // - The containing class is a derived class.
+                        // (The class may have more than one base type via declaration merging with an interface with the
+                        // A slash within a character class is permissible,
+                        // But should block
+                        // class c extends React.Component { a
+                        // class Decorators are resolved outside of the class to avoid referencing type parameters of that class.
+                        // Declare a 'member' if the container is an ES5 class or ES6 constructor
+                        // Decorators are resolved at the class declaration. Resolving at the parameter
+                        // eg, `namespace A { export class B {} }; exports = A.B;`
+                        // from the parent class declaration.
+                        // however, class declaration parsing allows for undefined names, so syntactically invalid
+                        // If the class declaration doesn't have a name, it should have a default modifier.
+                        // If the decorator's parent is a class element, we resolve the 'this' container
+                        // if the refactored function is a constructor, we must also check if the references to its class are valid
+                        // intersects with the class in the value space.
+                        // of the class constructor body but are not permitted to reference parameters or
+                        // properties to write, i.e. `abstract class C { }` becomes `abstract new () => {}`
+                        // record an alias as the class name is not in scope for statics.
+                        // Should not block
+                        // The below is used to lookup type parameters within a class or interface, as they are added to the class/interface locals
+                        // The generated variable which stores the class must be block-scoped.
+                        // the grandparent class declaration.
+                        // The type parameters of a class are not in scope in the base class expression.
+                        // this function is a class method or object function property shorthand
+                     

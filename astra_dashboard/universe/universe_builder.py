@@ -1,0 +1,168 @@
+# ============================================================
+# ✅ Unified Guardian V7 Integration
+# ============================================================
+from astra_modules.guardian.guardian_v7 import guardian_log
+
+"""
+Universe Builder – Phase-90 Unified Version
+-------------------------------------------
+Provides both the UniverseBuilder class (for legacy modules)
+and build_universe() function (for Phase-90 components).
+Integrated with guardian_v7 for self-healing and logging.
+"""
+
+import os
+import pandas as pd
+import json
+from astra_dashboard.core.cache_manager import CacheManager
+
+# Import guardian safely
+try:
+    from guardian.guardian_v7 import guardian_log, self_heal, log_event, _write_log
+except Exception:
+    # Fallback if Guardian isn't loaded yet (FastBoot mode)
+    def guardian_log(msg):
+        print(f"[LazyGuardian] {msg}")
+
+    def self_heal(value, expected_type, default):
+        return default if not isinstance(value, expected_type) else value
+
+    def log_event(event_type, message):
+        print(f"[LazyGuardian-Event] {event_type}: {message}")
+
+    def _write_log(msg):
+        print(f"[LazyGuardian-Write] {msg}")
+
+
+class UniverseBuilder:
+    """Legacy-compatible UniverseBuilder class."""
+
+    def __init__(self, source: str = None):
+        self.source = source
+        _write_log("UniverseBuilder initialized.")
+
+    def build(self):
+        """Build or load the universe from CSV/JSON/default."""
+        return build_universe(self.source)
+
+
+def build_universe(source: str = None):
+    """
+    Safely build or load Astra’s universe list.
+
+    Parameters
+    ----------
+    source : str, optional
+        Path to a CSV, JSON, or dataset file defining the universe.
+
+    Returns
+    -------
+    list
+        A list of trading symbols or assets.
+    """
+    import os
+
+    if os.getenv("ASTRA_FASTBOOT") == "1":
+        guardian_log("[FastBoot] Skipping full universe build.")
+        return []
+
+    cached = CacheManager.get("universe_symbols")
+    if cached is not None:
+        return cached
+
+    _write_log("Building universe...")
+
+    default_universe = ["AAPL", "MSFT", "GOOG", "NVDA", "AMZN"]
+
+    try:
+        if source and os.path.exists(source):
+            if source.endswith(".csv"):
+                df = pd.read_csv(source)
+                if "symbol" in df.columns:
+                    symbols = df["symbol"].dropna().unique().tolist()
+                else:
+                    raise ValueError("CSV missing 'symbol' column.")
+            elif source.endswith(".json"):
+                with open(source, "r") as f:
+                    data = json.load(f)
+                    symbols = list(data.get("symbols", []))
+            else:
+                raise ValueError("Unsupported file format.")
+        else:
+            symbols = default_universe
+
+        symbols = self_heal(symbols, list, default_universe)
+        log_event("universe_build", f"Universe built with {len(symbols)} symbols.")
+        CacheManager.set("universe_symbols", symbols, ttl_seconds=3600)
+        return symbols
+
+    except Exception as e:
+        log_event("universe_error", f"Universe build failed: {e}")
+        return default_universe
+
+
+if __name__ == "__main__":
+    builder = UniverseBuilder()
+    print("Universe built successfully:", builder.build())
+
+# ============================================================
+# ⚙️ Caching + Mode-Aware Universe Logic (Astra vMAX)
+# ============================================================
+
+import time
+from astra_modules.core.trade_mode import get_trade_mode
+
+CACHE_PATH = os.path.join(os.path.dirname(__file__), "universe_cache.json")
+
+
+def load_cached_universe():
+    """Load cached universe if recent (≤12h)."""
+    if not os.path.exists(CACHE_PATH):
+        return None
+    try:
+        age = time.time() - os.path.getmtime(CACHE_PATH)
+        if age > 43200:
+            guardian_log("[UniverseBuilder] Cache expired (>12h)")
+            return None
+        with open(CACHE_PATH, "r") as f:
+            data = json.load(f)
+            guardian_log(f"[UniverseBuilder] Loaded {len(data)} cached assets.")
+            return data
+    except Exception as e:
+        guardian_log(f"[UniverseBuilder] ⚠️ Cache load failed: {e}")
+        return None
+
+
+def save_universe_cache(data):
+    """Save universe cache safely."""
+    try:
+        with open(CACHE_PATH, "w") as f:
+            json.dump(data, f, indent=2)
+        guardian_log(f"[UniverseBuilder] ✅ Cached {len(data)} assets.")
+    except Exception as e:
+        guardian_log(f"[UniverseBuilder] ⚠️ Cache save failed: {e}")
+
+
+def build_universe_optimized(source: str = None):
+    """Adaptive universe builder that respects day/swing trade mode."""
+    mode = get_trade_mode()
+    guardian_log(f"[UniverseBuilder] Mode={mode} | Building universe...")
+
+    cached = load_cached_universe()
+    if cached:
+        return cached
+
+    # Placeholder static universes (replace later with SmartScan or API integration)
+    if mode == "day":
+        universe = {
+            "stocks": ["AAPL", "NVDA", "MSFT", "AMZN", "TSLA", "META"],
+            "crypto": ["BTC", "ETH", "SOL", "BNB", "ADA", "AVAX"],
+        }
+    else:
+        universe = {
+            "stocks": ["GOOGL", "UNH", "V", "JPM", "XOM", "LLY"],
+            "crypto": ["MATIC", "DOT", "LINK", "ATOM", "NEAR", "XRP"],
+        }
+
+    save_universe_cache(universe)
+    return universe

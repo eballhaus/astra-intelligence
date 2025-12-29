@@ -1,0 +1,26 @@
+.market-strip {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 2.5rem;
+  font-size: 0.9rem;
+  opacity: 0.85;
+  margin-bottom: 1rem;
+}
+
+.market-strip .item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.market-strip .label {
+  color: #cbd5e1;
+}
+
+.market-strip .value {
+  font-weight: 500;
+}
+
+.market-strip .up { color: #4ade80; }
+.market-strip .down { color: #f87171; }

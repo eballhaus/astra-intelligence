@@ -1,0 +1,956 @@
+./forecast/astra_prime.py.bak.bak
+./forecast/astra_prime.py.bak
+./legacy_backups
+./legacy_backups/freeze_20251221_144013/learning/archive
+./legacy_backups/freeze_20251221_144013/learning/fusion_calibrator.py.bak
+./legacy_backups/freeze_20251221_144013/learning/fusion_calibrator.bak_before_repair
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/@jest/core/build/SnapshotInteractiveMode.js
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/@jest/core/build/plugins/UpdateSnapshotsInteractive.d.ts
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/@jest/core/build/plugins/UpdateSnapshots.js
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/@jest/core/build/plugins/UpdateSnapshots.d.ts
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/@jest/core/build/plugins/UpdateSnapshotsInteractive.js
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/@jest/core/build/SnapshotInteractiveMode.d.ts
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/@jest/reporters/build/getSnapshotSummary.js
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/@jest/reporters/build/getSnapshotStatus.d.ts
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/@jest/reporters/build/getSnapshotStatus.js
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/@jest/reporters/build/getSnapshotSummary.d.ts
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/undici-types/snapshot-agent.d.ts
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/eslint-plugin-testing-library/rules/no-wait-for-snapshot.js
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/jest-snapshot
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/jest-snapshot/build/printSnapshot.js
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/jest-snapshot/build/InlineSnapshots.d.ts
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/jest-snapshot/build/SnapshotResolver.d.ts
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/jest-snapshot/build/InlineSnapshots.js
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/jest-snapshot/build/SnapshotResolver.js
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/jest-snapshot/build/printSnapshot.d.ts
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/plotly.js/src/snapshot
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/eslint-plugin-jest/docs/rules/no-interpolation-in-snapshots.md
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/eslint-plugin-jest/docs/rules/no-large-snapshots.md
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/eslint-plugin-jest/lib/processors/snapshot-processor.js
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/eslint-plugin-jest/lib/rules/no-large-snapshots.js
+./legacy_backups/freeze_20251221_144013/ui_dashboard/astra-dashboard/node_modules/eslint-plugin-jest/lib/rules/no-interpolation-in-snapshots.js
+./legacy_backups/freeze_20251221_144013/engine/preload_thread.py.sentinel.bak
+./legacy_backups/freeze_20251221_144013/engine/ranking_engine.py.sentinel.bak
+./legacy_backups/freeze_20251221_144013/engine/learning_manager.py.sentinel.bak
+./legacy_backups/freeze_20251221_144013/engine/archive
+./legacy_backups/freeze_20251221_144013/engine/background_loop.bak_before_repair
+./legacy_backups/freeze_20251221_144013/engine/scan_manager.bak_before_repair
+./legacy_backups/freeze_20251221_144013/engine/scan_manager.py.sentinel.bak
+./legacy_backups/freeze_20251221_144013/engine/background_loop.py.sentinel.bak
+./legacy_backups/freeze_20251221_144013/engine/data_orchestrator.failsafe.bak
+./legacy_backups/archive
+./legacy_backups/backups
+./legacy_backups/backups/.!2490!astra_backup_phase4_20251212_131549.zip
+./legacy_backups/backups/.!2592!astra_backup_phase4_20251212_131549.zip
+./legacy_backups/backups/.!2464!astra_backup_phase4_20251212_131549.zip
+./legacy_backups/backups/import_fix_20251210_213214/universe_builder.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/summary_cards.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/schema_validator.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/astra_api_eodhd.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/astra_api_finnhub.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/tab_learning.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/safe_df.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/astra_api_fmp.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/tab_guardian.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/astra_api_fmp.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/guardian_sync.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/data_orchestrator.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/guardian_scanner.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/guardian_v7.py.bak.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/universe_builder.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/legacy_imports.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/astra_api_alpha_vantage.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/guardian_v6.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/guardian_sync.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/summary_cards.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/fetch_unified.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/astra_api_eodhd.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/schema_validator.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/astra_api_moralis.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/main.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/predictive_engine.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/astra_api_twelvedata.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/guardian_v7.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/tab_learning.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/startup_hook.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/legacy_imports.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/startup_hook.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/guardian_import_auditor.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/astra_api_finnhub.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/safe_df.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/astra_api_alpha_vantage.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/guardian_scanner.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/tab_guardian.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/tab_system.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/tab_system.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/startup_hook.py.bak.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/guardian_sentinel.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/guardian_v7.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/auto_repair.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/astra_api_moralis.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/guardian_v6.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/main.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/auto_repair.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/data_orchestrator.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/guardian_import_auditor.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/predictive_engine.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/guardian_sentinel.py.bak
+./legacy_backups/backups/import_fix_20251210_213214/astra_api_twelvedata.py.bak.bak
+./legacy_backups/backups/import_fix_20251210_213214/fetch_unified.py.bak.bak
+./legacy_backups/backups/astra_backup_phase4_20251212_131549.zip
+./legacy_backups/backups/.!2537!astra_backup_phase4_20251212_131549.zip
+./legacy_backups/backups/astra_backup_20251209_182154
+./_quarantine/dashboard_archives
+./_quarantine/dashboard_archives/backup_dashboard_summary_wrong.py
+./_quarantine/dashboard_archives/launch_dashboard_BACKUP_20251216_1231.py
+./_quarantine/dashboard_archives/dashboard_data_BACKUP_20251216_1240.py
+./_quarantine/dashboard_archives/dashboard_snapshot.py
+./_quarantine/dashboard_archives/launch_dashboard_BACKUP_20251216_1234.py
+./_quarantine/dashboard_archives/dashboard_data_backup.py
+./_quarantine/dashboard_archives/dashboard_sidebar_BACKUP_20251216_1221.py
+./_quarantine/dashboard_archives/launch_dashboard_BACKUP_20251216_1230.py
+./_quarantine/dashboard_archives/tab_dashboard_backup_20251212_2357.py
+./_quarantine/dashboard_archives/tab_dashboard_v7_BACKUP_20251216_1157.py
+./_quarantine/dashboard_archives/tab_dashboard.backup.py
+./_quarantine/dashboard_archives/tab_dashboard_backup_20251212_2345.py
+./_quarantine/dashboard_archives/backup_dashboard_summary_2.py
+./_quarantine/dashboard_archives/dashboard_chart_BACKUP_20251216_1221.py
+./_quarantine/dashboard_archives/tab_dashboard_pre92_backup.py
+./_quarantine/dashboard_archives/run_dashboard_backup.py
+./_quarantine/dashboard_archives/dashboard_data_BACKUP_20251216_1242.py
+./_quarantine/dashboard_archives/tab_dashboard_backup.py
+./_quarantine/dashboard_archives/launch_dashboard_BACKUP_20251216_1232.py
+./_quarantine/dashboard_archives/launch_dashboard_BACKUP_20251216_1236.py
+./_quarantine/bak_files/continual_trainer.py 9.bak
+./_quarantine/bak_files/dashboard_cards.py 12.bak
+./_quarantine/bak_files/_util.py 2.bak
+./_quarantine/bak_files/guardian_import_auditor.py 3.bak
+./_quarantine/bak_files/mod.py 2.bak
+./_quarantine/bak_files/fetcher.py 9.bak
+./_quarantine/bak_files/forecast_engine.py 3.bak
+./_quarantine/bak_files/_unselected.py 4.bak
+./_quarantine/bak_files/test_fillna.py 3.bak
+./_quarantine/bak_files/test_isin.py 2.bak
+./_quarantine/bak_files/_surface.py 2.bak
+./_quarantine/bak_files/_tickformatstop.py 2.bak
+./_quarantine/bak_files/tab_dashboard_backup_20251212_2357 2.py 6.bak
+./_quarantine/bak_files/guardian_sentinel 2.py 3.bak
+./_quarantine/bak_files/ticker_badges.py 3.bak
+./_quarantine/bak_files/parser.py 3.bak
+./_quarantine/bak_files/score_bars.py 4.bak
+./_quarantine/bak_files/astra_memory.py 9.bak
+./_quarantine/bak_files/_config.py 3.bak
+./_quarantine/bak_files/guardian_defender 2.py 3.bak
+./_quarantine/bak_files/deferred_imports.py 4.bak
+./_quarantine/bak_files/tab_dashboard_safeedit_20251213_0002.py 6.bak
+./_quarantine/bak_files/tab_dashboard_backup_20251212_2345.py 6.bak
+./_quarantine/bak_files/types.py 5.bak
+./_quarantine/bak_files/scheduler.py 7.bak
+./_quarantine/bak_files/api_router 2.py 2.bak
+./_quarantine/bak_files/test_categorical.py 5.bak
+./_quarantine/bak_files/tools.py 5.bak
+./_quarantine/bak_files/orchestrator 2.py 3.bak
+./_quarantine/bak_files/_constants.py 3.bak
+./_quarantine/bak_files/state_initializer.py 4.bak
+./_quarantine/bak_files/planetary_tensor_builder.py 3.bak
+./_quarantine/bak_files/base.py 7.bak
+./_quarantine/bak_files/ranking_engine.py 6.bak
+./_quarantine/bak_files/learning_store.py 3.bak
+./_quarantine/bak_files/api_client 2.py 4.bak
+./_quarantine/bak_files/state_initializer.py 5.bak
+./_quarantine/bak_files/base.py 6.bak
+./_quarantine/bak_files/ui_integrity_lock.py 3.bak
+./_quarantine/bak_files/tools.py 4.bak
+./_quarantine/bak_files/lazy_imports.py 6.bak
+./_quarantine/bak_files/dashboard_data_backup.py 3.bak
+./_quarantine/bak_files/constants.py 2.bak
+./_quarantine/bak_files/parallel.py 2.bak
+./_quarantine/bak_files/fetch_etf 2.py 3.bak
+./_quarantine/bak_files/test_categorical.py 4.bak
+./_quarantine/bak_files/test_array.py 4.bak
+./_quarantine/bak_files/types.py 4.bak
+./_quarantine/bak_files/dashboard_sidebar 2.py 6.bak
+./_quarantine/bak_files/scheduler.py 6.bak
+./_quarantine/bak_files/_tickfont.py 4.bak
+./_quarantine/bak_files/_textfont.py 3.bak
+./_quarantine/bak_files/__main__.py 9.bak
+./_quarantine/bak_files/data_orchestrator.py 3.bak
+./_quarantine/bak_files/_config.py 2.bak
+./_quarantine/bak_files/test_api.py 3.bak
+./_quarantine/bak_files/deferred_imports.py 5.bak
+./_quarantine/bak_files/helpers 2.py 3.bak
+./_quarantine/bak_files/astra_memory.py 8.bak
+./_quarantine/bak_files/df_cleaner 2.py 3.bak
+./_quarantine/bak_files/ensemble_engine.py 4.bak
+./_quarantine/bak_files/regime_agent.py 4.bak
+./_quarantine/bak_files/_unselected.py 5.bak
+./_quarantine/bak_files/opportunity_panels.py 3.bak
+./_quarantine/bak_files/api_keys.py 3.bak
+./_quarantine/bak_files/fetcher.py 8.bak
+./_quarantine/bak_files/continual_trainer.py 8.bak
+./_quarantine/bak_files/test_inference.py 2.bak
+./_quarantine/bak_files/_insidetextfont.py 2.bak
+./_quarantine/bak_files/dashboard_chart.py 7.bak
+./_quarantine/bak_files/environment_guardian.py 3.bak
+./_quarantine/bak_files/harmony_score_calculator 2.py 4.bak
+./_quarantine/bak_files/logger 2.py 3.bak
+./_quarantine/bak_files/parse.py 2.bak
+./_quarantine/bak_files/lazy_imports 2.py 2.bak
+./_quarantine/bak_files/guardian_autoswap.py 3.bak
+./_quarantine/bak_files/guardian_scanner.py 3.bak
+./_quarantine/bak_files/df_cleaner.py 5.bak
+./_quarantine/bak_files/feature_builder.py 8.bak
+./_quarantine/bak_files/core.py 4.bak
+./_quarantine/bak_files/tab_dashboard_backup_20251212_2357 2.py 5.bak
+./_quarantine/bak_files/safe_api_wrapper.py 5.bak
+./_quarantine/bak_files/conftest.py 9.bak
+./_quarantine/bak_files/test_join.py 5.bak
+./_quarantine/bak_files/test_utils.py 3.bak
+./_quarantine/bak_files/dashboard 2.py 4.bak
+./_quarantine/bak_files/scheduler.py 4.bak
+./_quarantine/bak_files/lazy_imports.py 4.bak
+./_quarantine/bak_files/session.py 2.bak
+./_quarantine/bak_files/testing.py 2.bak
+./_quarantine/bak_files/dashboard_cards 2.py 8.bak
+./_quarantine/bak_files/fetch_stock.py 7.bak
+./_quarantine/bak_files/streams.py 2.bak
+./_quarantine/bak_files/dashboard_summary.py 8.bak
+./_quarantine/bak_files/base.py 4.bak
+./_quarantine/bak_files/memory_engine.py 4.bak
+./_quarantine/bak_files/_shape.py 2.bak
+./_quarantine/bak_files/ranking_engine.py 5.bak
+./_quarantine/bak_files/test_align.py 2.bak
+./_quarantine/bak_files/ranking_engine.py 4.bak
+./_quarantine/bak_files/base.py 5.bak
+./_quarantine/bak_files/dashboard_summary.py 9.bak
+./_quarantine/bak_files/pipeline_sanitizer.py 4.bak
+./_quarantine/bak_files/state_initializer.py 6.bak
+./_quarantine/bak_files/fetch_stock.py 6.bak
+./_quarantine/bak_files/tab_dashboard_forcehotfix_cleanup_20251213_0011.py 5.bak
+./_quarantine/bak_files/testing.py 3.bak
+./_quarantine/bak_files/lazy_imports.py 5.bak
+./_quarantine/bak_files/__init__ 2.py 2.bak
+./_quarantine/bak_files/scheduler.py 5.bak
+./_quarantine/bak_files/dashboard_sidebar 2.py 5.bak
+./_quarantine/bak_files/test_arithmetic.py.bak
+./_quarantine/bak_files/astra_api_moralis.py 7.bak
+./_quarantine/bak_files/test_rename_axis.py 2.bak
+./_quarantine/bak_files/momentum_scanner.py 3.bak
+./_quarantine/bak_files/test_data.py 2.bak
+./_quarantine/bak_files/conftest.py 8.bak
+./_quarantine/bak_files/safe_api_wrapper.py 4.bak
+./_quarantine/bak_files/utils.py 10.bak
+./_quarantine/bak_files/test_contains.py 4.bak
+./_quarantine/bak_files/test_value_counts.py 3.bak
+./_quarantine/bak_files/core.py 5.bak
+./_quarantine/bak_files/environment_guardian 2.py 4.bak
+./_quarantine/bak_files/df_cleaner.py 4.bak
+./_quarantine/bak_files/feature_builder.py 9.bak
+./_quarantine/bak_files/tab_dashboard_safeedit_20251213_0002 2.py 5.bak
+./_quarantine/bak_files/tab_system.py 4.bak
+./_quarantine/bak_files/dashboard_cards.py 10.bak
+./_quarantine/bak_files/style.py 2.bak
+./_quarantine/bak_files/test_time_series.py 2.bak
+./_quarantine/bak_files/astra_backend 2.py 3.bak
+./_quarantine/bak_files/harmony_score_calculator 2.py 3.bak
+./_quarantine/bak_files/logger 2.py 4.bak
+./_quarantine/bak_files/environment_guardian.py 4.bak
+./_quarantine/bak_files/misc.py 3.bak
+./_quarantine/bak_files/guardian_import_auditor.py 5.bak
+./_quarantine/bak_files/_util.py 4.bak
+./_quarantine/bak_files/fetch_crypto.py 5.bak
+./_quarantine/bak_files/regime_agent.py 3.bak
+./_quarantine/bak_files/system_core.py 6.bak
+./_quarantine/bak_files/test_sample.py 3.bak
+./_quarantine/bak_files/opportunity_panels.py 4.bak
+./_quarantine/bak_files/common.py 11.bak
+./_quarantine/bak_files/forecast_engine.py 5.bak
+./_quarantine/bak_files/ensemble_engine.py 3.bak
+./_quarantine/bak_files/test_feather.py 2.bak
+./_quarantine/bak_files/tab_dashboard_broken_20251212_2349 2.py 6.bak
+./_quarantine/bak_files/momentum_agent.py 6.bak
+./_quarantine/bak_files/df_cleaner 2.py 4.bak
+./_quarantine/bak_files/dashboard_core.py 5.bak
+./_quarantine/bak_files/theme_loader.py 8.bak
+./_quarantine/bak_files/test_constructors.py 5.bak
+./_quarantine/bak_files/test_append.py 3.bak
+./_quarantine/bak_files/guardian_v6 2.py 6.bak
+./_quarantine/bak_files/test_drop.py 3.bak
+./_quarantine/bak_files/data_orchestrator.py 4.bak
+./_quarantine/bak_files/helpers 2.py 4.bak
+./_quarantine/bak_files/test_api.py 4.bak
+./_quarantine/bak_files/ui_integrity_lock.py 4.bak
+./_quarantine/bak_files/tools.py 3.bak
+./_quarantine/bak_files/dashboard_data_backup.py 4.bak
+./_quarantine/bak_files/test_asof.py 2.bak
+./_quarantine/bak_files/dashboard_data.py 9.bak
+./_quarantine/bak_files/fetch_etf 2.py 4.bak
+./_quarantine/bak_files/test_array.py 3.bak
+./_quarantine/bak_files/test_categorical.py 3.bak
+./_quarantine/bak_files/learning_store.py 4.bak
+./_quarantine/bak_files/scan_manager.py 4.bak
+./_quarantine/bak_files/_constants.py 5.bak
+./_quarantine/bak_files/api_client 2.py 3.bak
+./_quarantine/bak_files/planetary_tensor_builder.py 5.bak
+./_quarantine/bak_files/state_initializer.py 3.bak
+./_quarantine/bak_files/_constants.py 4.bak
+./_quarantine/bak_files/planetary_tensor_builder.py 4.bak
+./_quarantine/bak_files/scan_manager.py 5.bak
+./_quarantine/bak_files/learning_store.py 5.bak
+./_quarantine/bak_files/__init__ 2.py 7.bak
+./_quarantine/bak_files/constants.py 4.bak
+./_quarantine/bak_files/dashboard_data.py 8.bak
+./_quarantine/bak_files/tab_performance.py 5.bak
+./_quarantine/bak_files/ui_integrity_lock.py 5.bak
+./_quarantine/bak_files/_config.py 4.bak
+./_quarantine/bak_files/data_orchestrator.py 5.bak
+./_quarantine/bak_files/test_api.py 5.bak
+./_quarantine/bak_files/deferred_imports.py 3.bak
+./_quarantine/bak_files/test_drop.py 2.bak
+./_quarantine/bak_files/test_datetimes.py 2.bak
+./_quarantine/bak_files/hardware_accel.py 5.bak
+./_quarantine/bak_files/score_bars.py 3.bak
+./_quarantine/bak_files/theme_loader.py 9.bak
+./_quarantine/bak_files/dtype.py 2.bak
+./_quarantine/bak_files/guardian_sentinel 2.py 4.bak
+./_quarantine/bak_files/momentum_agent.py 7.bak
+./_quarantine/bak_files/ticker_badges.py 4.bak
+./_quarantine/bak_files/common.py 10.bak
+./_quarantine/bak_files/forecast_engine.py 4.bak
+./_quarantine/bak_files/test_fillna.py 4.bak
+./_quarantine/bak_files/auto_repair.py 4.bak
+./_quarantine/bak_files/guardian_import_auditor.py 4.bak
+./_quarantine/bak_files/_font.py 3.bak
+./_quarantine/bak_files/test_astype.py 5.bak
+./_quarantine/bak_files/guardian_autoswap.py 5.bak
+./_quarantine/bak_files/fetch_unified.py 11.bak
+./_quarantine/bak_files/test_diff.py 3.bak
+./_quarantine/bak_files/neural_agent.py 5.bak
+./_quarantine/bak_files/guardian_import_auditor.py 6.bak
+./_quarantine/bak_files/fetch_crypto.py 6.bak
+./_quarantine/bak_files/test_dropna.py 2.bak
+./_quarantine/bak_files/system_core.py 5.bak
+./_quarantine/bak_files/test_contains.py 3.bak
+./_quarantine/bak_files/test_value_counts.py 4.bak
+./_quarantine/bak_files/_lighting.py 2.bak
+./_quarantine/bak_files/environment_guardian 2.py 3.bak
+./_quarantine/bak_files/fetch_unified.py 8.bak
+./_quarantine/bak_files/common.py 12.bak
+./_quarantine/bak_files/tab_dashboard_broken_20251212_2349 2.py 5.bak
+./_quarantine/bak_files/momentum_agent.py 5.bak
+./_quarantine/bak_files/safe_api_wrapper.py 3.bak
+./_quarantine/bak_files/test_constructors.py 6.bak
+./_quarantine/bak_files/test_datetime.py 2.bak
+./_quarantine/bak_files/risk_agent.py 4.bak
+./_quarantine/bak_files/guardian_v6 2.py 5.bak
+./_quarantine/bak_files/momentum_scanner.py 4.bak
+./_quarantine/bak_files/test_utils.py 5.bak
+./_quarantine/bak_files/test_setitem.py 2.bak
+./_quarantine/bak_files/ranking_engine.py 3.bak
+./_quarantine/bak_files/tab_guardian.py 3.bak
+./_quarantine/bak_files/pipeline_sanitizer.py 3.bak
+./_quarantine/bak_files/base.py 2.bak
+./_quarantine/bak_files/scan_manager.py 7.bak
+./_quarantine/bak_files/scan_manager.py 6.bak
+./_quarantine/bak_files/base.py 3.bak
+./_quarantine/bak_files/memory_engine.py 3.bak
+./_quarantine/bak_files/volume_agent.py 8.bak
+./_quarantine/bak_files/learning_store.py 6.bak
+./_quarantine/bak_files/astra_backend.py 3.bak
+./_quarantine/bak_files/test_setitem.py 3.bak
+./_quarantine/bak_files/strategy_engine.py 3.bak
+./_quarantine/bak_files/scheduler.py 3.bak
+./_quarantine/bak_files/_types.py 2.bak
+./_quarantine/bak_files/auth.py 3.bak
+./_quarantine/bak_files/ui_integrity_lock.py 6.bak
+./_quarantine/bak_files/lazy_imports.py 3.bak
+./_quarantine/bak_files/tab_performance.py 6.bak
+./_quarantine/bak_files/_windows.py 2.bak
+./_quarantine/bak_files/test_utils.py 4.bak
+./_quarantine/bak_files/data_orchestrator.py 6.bak
+./_quarantine/bak_files/hardware_accel.py 6.bak
+./_quarantine/bak_files/guardian_v6 2.py 4.bak
+./_quarantine/bak_files/main.py 8.bak
+./_quarantine/bak_files/momentum_agent.py 4.bak
+./_quarantine/bak_files/fetch_unified.py 9.bak
+./_quarantine/bak_files/guardian_sync.py.bak
+./_quarantine/bak_files/fetch_crypto.py 7.bak
+./_quarantine/bak_files/fetch_unified.py 10.bak
+./_quarantine/bak_files/guardian_autoswap.py 4.bak
+./_quarantine/bak_files/guardian_scanner.py 4.bak
+./_quarantine/bak_files/test_astype.py 4.bak
+./_quarantine/bak_files/logger.py 8.bak
+./_quarantine/bak_files/tab_learning.py 3.bak
+./_quarantine/bak_files/random.py 5.bak
+./_quarantine/bak_files/stats.py 3.bak
+./_quarantine/bak_files/test_config.py 4.bak
+./_quarantine/bak_files/test_arithmetic.py 8.bak
+./_quarantine/bak_files/paper_trader.py 5.bak
+./_quarantine/bak_files/__init__ 2.py 22.bak
+./_quarantine/bak_files/tab_dashboard.py 7.bak
+./_quarantine/bak_files/client.py 3.bak
+./_quarantine/bak_files/_utils.py 3.bak
+./_quarantine/bak_files/cache_manager.py 5.bak
+./_quarantine/bak_files/dashboard_cards.py 8.bak
+./_quarantine/bak_files/guardian_prelaunch_check.py 6.bak
+./_quarantine/bak_files/psychology_agent.py 5.bak
+./_quarantine/bak_files/astra_api_eodhd.py 5.bak
+./_quarantine/bak_files/test_map.py 2.bak
+./_quarantine/bak_files/literal.py 2.bak
+./_quarantine/bak_files/test_period.py 4.bak
+./_quarantine/bak_files/pool.py 2.bak
+./_quarantine/bak_files/cache_orchestrator.py 6.bak
+./_quarantine/bak_files/prediction_fusion.py 8.bak
+./_quarantine/bak_files/tab_dashboard_prettyfix_20251212_2350 2.py 5.bak
+./_quarantine/bak_files/test_sorting.py 4.bak
+./_quarantine/bak_files/symbolic.py 2.bak
+./_quarantine/bak_files/schema_contracts.py 4.bak
+./_quarantine/bak_files/config_handler.py 5.bak
+./_quarantine/bak_files/test_timedelta.py 3.bak
+./_quarantine/bak_files/test_get_dummies.py 2.bak
+./_quarantine/bak_files/async_router 2.py 2.bak
+./_quarantine/bak_files/state_bundle_builder 2.py 3.bak
+./_quarantine/bak_files/tab_predictions.py 5.bak
+./_quarantine/bak_files/planetary_tensor_builder 2.py 2.bak
+./_quarantine/bak_files/data_manager.py 6.bak
+./_quarantine/bak_files/tab_performance 2.py 3.bak
+./_quarantine/bak_files/fusion_calibrator.py 6.bak
+./_quarantine/bak_files/astra_api_eodhd.py 4.bak
+./_quarantine/bak_files/dashboard_cards.py 9.bak
+./_quarantine/bak_files/cli.py 3.bak
+./_quarantine/bak_files/_violin.py 2.bak
+./_quarantine/bak_files/test_errors.py 2.bak
+./_quarantine/bak_files/fetch_core.py 3.bak
+./_quarantine/bak_files/api_router.py 3.bak
+./_quarantine/bak_files/test_index.py 2.bak
+./_quarantine/bak_files/ui_integrity_lock 2.py 3.bak
+./_quarantine/bak_files/advanced_chart.py 6.bak
+./_quarantine/bak_files/dashboard_assistant.py 5.bak
+./_quarantine/bak_files/test_reductions.py 3.bak
+./_quarantine/bak_files/tab_dashboard_patch.py 3.bak
+./_quarantine/bak_files/util.py 5.bak
+./_quarantine/bak_files/client.py 2.bak
+./_quarantine/bak_files/tab_dashboard.py 6.bak
+./_quarantine/bak_files/paper_trader.py 4.bak
+./_quarantine/bak_files/test_transpose.py 2.bak
+./_quarantine/bak_files/stats.py 2.bak
+./_quarantine/bak_files/random.py 4.bak
+./_quarantine/bak_files/universe_builder.py 3.bak
+./_quarantine/bak_files/ticker_card.py 4.bak
+./_quarantine/bak_files/test_basic.py 4.bak
+./_quarantine/bak_files/_error_y.py 3.bak
+./_quarantine/bak_files/paper_trader.py 6.bak
+./_quarantine/bak_files/base_agent.py 3.bak
+./_quarantine/bak_files/astra_api_fmp.py 7.bak
+./_quarantine/bak_files/util.py 7.bak
+./_quarantine/bak_files/utils.py 3.bak
+./_quarantine/bak_files/advanced_chart.py 4.bak
+./_quarantine/bak_files/guardian_lazy.backup.py 5.bak
+./_quarantine/bak_files/_table.py 2.bak
+./_quarantine/bak_files/files.py 2.bak
+./_quarantine/bak_files/cache_manager.py 6.bak
+./_quarantine/bak_files/caching.py 3.bak
+./_quarantine/bak_files/guardian_import_auditor 2.py 3.bak
+./_quarantine/bak_files/test_numeric.py 3.bak
+./_quarantine/bak_files/common.py 8.bak
+./_quarantine/bak_files/guardian_prelaunch_check.py 5.bak
+./_quarantine/bak_files/psychology_agent.py 6.bak
+./_quarantine/bak_files/_funcs.py 2.bak
+./_quarantine/bak_files/async_router.py 3.bak
+./_quarantine/bak_files/test_subclass.py 4.bak
+./_quarantine/bak_files/fusion_calibrator.py 4.bak
+./_quarantine/bak_files/guardian_autofix.py 3.bak
+./_quarantine/bak_files/startup_hook 2.py 3.bak
+./_quarantine/bak_files/test_style.py 3.bak
+./_quarantine/bak_files/legacy_imports.py 3.bak
+./_quarantine/bak_files/typing.py 3.bak
+./_quarantine/bak_files/test_pickle.py 3.bak
+./_quarantine/bak_files/polynomials.py 2.bak
+./_quarantine/bak_files/cache_orchestrator.py 5.bak
+./_quarantine/bak_files/pipeline_sanitizer 2.py 3.bak
+./_quarantine/bak_files/tab_dashboard_prettyfix_20251212_2350 2.py 6.bak
+./_quarantine/bak_files/plotly_theme.py 3.bak
+./_quarantine/bak_files/config_handler.py 6.bak
+./_quarantine/bak_files/_base.py 2.bak
+./_quarantine/bak_files/_stream.py 2.bak
+./_quarantine/bak_files/safe_df 2.py 2.bak
+./_quarantine/bak_files/test_generic.py 2.bak
+./_quarantine/bak_files/version.py 2.bak
+./_quarantine/bak_files/format.py 2.bak
+./_quarantine/bak_files/performance_tracker.py 3.bak
+./_quarantine/bak_files/tab_predictions.py 6.bak
+./_quarantine/bak_files/data_manager.py 5.bak
+./_quarantine/bak_files/test_shift.py 2.bak
+./_quarantine/bak_files/fusion_calibrator.py 5.bak
+./_quarantine/bak_files/decorator.py 3.bak
+./_quarantine/bak_files/test_internals.py 2.bak
+./_quarantine/bak_files/performance_monitor.py 3.bak
+./_quarantine/bak_files/psychology_agent.py 7.bak
+./_quarantine/bak_files/astra_memory 2.py 5.bak
+./_quarantine/bak_files/common.py 9.bak
+./_quarantine/bak_files/test_numeric.py 2.bak
+./_quarantine/bak_files/hardware_accel 2.py 3.bak
+./_quarantine/bak_files/cache_manager.py 7.bak
+./_quarantine/bak_files/dashboard_sidebar.py 3.bak
+./_quarantine/bak_files/guardian_lazy.backup.py 4.bak
+./_quarantine/bak_files/fetch_stock.py 11.bak
+./_quarantine/bak_files/_core.py 3.bak
+./_quarantine/bak_files/message.py 2.bak
+./_quarantine/bak_files/test_common.py 2.bak
+./_quarantine/bak_files/dashboard_assistant.py 6.bak
+./_quarantine/bak_files/continual_trainer 2.py 2.bak
+./_quarantine/bak_files/main_agent.py 8.bak
+./_quarantine/bak_files/util.py 6.bak
+./_quarantine/bak_files/__init__ 2.py 20.bak
+./_quarantine/bak_files/_error_y.py 2.bak
+./_quarantine/bak_files/guardian_v7.py 7.bak
+./_quarantine/bak_files/guardian_autoswap 2.py 3.bak
+./_quarantine/bak_files/test_repr.py 4.bak
+./_quarantine/bak_files/watchlist_tools.py 3.bak
+./_quarantine/bak_files/test_config.py 2.bak
+./_quarantine/bak_files/paper_trader.py 3.bak
+./_quarantine/bak_files/guardian_v6.py 3.bak
+./_quarantine/bak_files/ticker_card.py 3.bak
+./_quarantine/bak_files/universe_builder.py 4.bak
+./_quarantine/bak_files/test_reductions.py 4.bak
+./_quarantine/bak_files/utils.py 6.bak
+./_quarantine/bak_files/_utils.py 5.bak
+./_quarantine/bak_files/tab_dashboard_patch.py 4.bak
+./_quarantine/bak_files/test_app.py 6.bak
+./_quarantine/bak_files/test_orc.py 2.bak
+./_quarantine/bak_files/test_indexing.py 6.bak
+./_quarantine/bak_files/fetch_core.py 4.bak
+./_quarantine/bak_files/test_filters.py 2.bak
+./_quarantine/bak_files/ranking_engine 2.py 3.bak
+./_quarantine/bak_files/api_router.py 4.bak
+./_quarantine/bak_files/test_tz_localize.py 2.bak
+./_quarantine/bak_files/tab_dashboard_broken_20251212_2349.py 6.bak
+./_quarantine/bak_files/background_loop 2.py 3.bak
+./_quarantine/bak_files/test_exceptions.py 3.bak
+./_quarantine/bak_files/einsumfunc.py 2.bak
+./_quarantine/bak_files/tab_performance 2.py 4.bak
+./_quarantine/bak_files/version.py 6.bak
+./_quarantine/bak_files/state_bundle_builder 2.py 4.bak
+./_quarantine/bak_files/test_rename.py 2.bak
+./_quarantine/bak_files/helpers.py 7.bak
+./_quarantine/bak_files/tab_dashboard_timingclean_20251213_0007 2.py 5.bak
+./_quarantine/bak_files/test_sorting.py 3.bak
+./_quarantine/bak_files/guardian_ratewatch.py 3.bak
+./_quarantine/bak_files/schema_validator.py 3.bak
+./_quarantine/bak_files/schema_contracts.py 3.bak
+./_quarantine/bak_files/helpers.py 6.bak
+./_quarantine/bak_files/state_bundle_builder 2.py 5.bak
+./_quarantine/bak_files/version.py 7.bak
+./_quarantine/bak_files/test_period.py 3.bak
+./_quarantine/bak_files/test_to_timestamp.py 2.bak
+./_quarantine/bak_files/tab_dashboard_timingclean_20251213_0007.py 5.bak
+./_quarantine/bak_files/test_values.py 2.bak
+./_quarantine/bak_files/__main__ 2.py 3.bak
+./_quarantine/bak_files/series.py 2.bak
+./_quarantine/bak_files/test_tz_localize.py 3.bak
+./_quarantine/bak_files/test_asfreq.py 3.bak
+./_quarantine/bak_files/test_tools.py 2.bak
+./_quarantine/bak_files/api_router.py 5.bak
+./_quarantine/bak_files/neural_agent 2.py 2.bak
+./_quarantine/bak_files/tab_dashboard_timingfix_20251213_0005 2.py 6.bak
+./_quarantine/bak_files/personal_brain.py 2.bak
+./_quarantine/bak_files/test_types.py 2.bak
+./_quarantine/bak_files/test_indexing.py 7.bak
+./_quarantine/bak_files/util.py 3.bak
+./_quarantine/bak_files/test_app.py 7.bak
+./_quarantine/bak_files/prediction_fusion 2.py 2.bak
+./_quarantine/bak_files/_utils.py 4.bak
+./_quarantine/bak_files/utils.py 7.bak
+./_quarantine/bak_files/tab_learning.py 4.bak
+./_quarantine/bak_files/__init__ 2.py 19.bak
+./_quarantine/bak_files/test_config.py 3.bak
+./_quarantine/bak_files/guardian_autoswap 2.py 4.bak
+./_quarantine/bak_files/test_repr.py 3.bak
+./_quarantine/bak_files/watchlist_tools.py 4.bak
+./_quarantine/bak_files/test_app.py 5.bak
+./_quarantine/bak_files/utils.py 5.bak
+./_quarantine/bak_files/test_mask.py 2.bak
+./_quarantine/bak_files/test_common.py 5.bak
+./_quarantine/bak_files/_utils.py 6.bak
+./_quarantine/bak_files/test_groupby.py 3.bak
+./_quarantine/bak_files/test_indexing.py 5.bak
+./_quarantine/bak_files/retry.py 2.bak
+./_quarantine/bak_files/test_nlargest.py 2.bak
+./_quarantine/bak_files/test_tz_convert.py 2.bak
+./_quarantine/bak_files/exceptions.py 8.bak
+./_quarantine/bak_files/hover_summary.py 4.bak
+./_quarantine/bak_files/guardian_lazy.backup.py 3.bak
+./_quarantine/bak_files/technical_agent.py 6.bak
+./_quarantine/bak_files/hardware_accel 2.py 4.bak
+./_quarantine/bak_files/tab_dashboard_broken_20251212_2349.py 5.bak
+./_quarantine/bak_files/report.py 3.bak
+./_quarantine/bak_files/schema.py 2.bak
+./_quarantine/bak_files/async_router.py 5.bak
+./_quarantine/bak_files/performance_monitor.py 4.bak
+./_quarantine/bak_files/text.py 3.bak
+./_quarantine/bak_files/version.py 5.bak
+./_quarantine/bak_files/fetcher 2.py 2.bak
+./_quarantine/bak_files/helpers.py 4.bak
+./_quarantine/bak_files/performance_tracker.py 4.bak
+./_quarantine/bak_files/_stream.py 4.bak
+./_quarantine/bak_files/test_numba.py 3.bak
+./_quarantine/bak_files/test_numba.py 2.bak
+./_quarantine/bak_files/plotly_theme.py 4.bak
+./_quarantine/bak_files/_stream.py 5.bak
+./_quarantine/bak_files/test_pickle.py 4.bak
+./_quarantine/bak_files/test_compare.py 2.bak
+./_quarantine/bak_files/helpers.py 5.bak
+./_quarantine/bak_files/version.py 4.bak
+./_quarantine/bak_files/validators.py 2.bak
+./_quarantine/bak_files/test_dtypes.py 3.bak
+./_quarantine/bak_files/text.py 2.bak
+./_quarantine/bak_files/legacy_imports.py 4.bak
+./_quarantine/bak_files/performance_monitor.py 5.bak
+./_quarantine/bak_files/async_router.py 4.bak
+./_quarantine/bak_files/tab_dashboard_timingclean_20251213_0007.py 6.bak
+./_quarantine/bak_files/test_subclass.py 3.bak
+./_quarantine/bak_files/fusion_calibrator.py 3.bak
+./_quarantine/bak_files/guardian_autofix.py 4.bak
+./_quarantine/bak_files/report.py 2.bak
+./_quarantine/bak_files/startup_hook 2.py 4.bak
+./_quarantine/bak_files/astra_memory 2.py 3.bak
+./_quarantine/bak_files/advanced_chart.py 3.bak
+./_quarantine/bak_files/technical_agent.py 7.bak
+./_quarantine/bak_files/tab_dashboard_timingfix_20251213_0005 2.py 5.bak
+./_quarantine/bak_files/_bounds.py 2.bak
+./_quarantine/bak_files/base_agent.py 4.bak
+./_quarantine/bak_files/startup_hook.py 8.bak
+./_quarantine/bak_files/test_indexing.py 4.bak
+./_quarantine/bak_files/test_common.py 4.bak
+./_quarantine/bak_files/test_basic.py 3.bak
+./_quarantine/bak_files/test_head_tail.py 2.bak
+./_quarantine/bak_files/state_bundle_builder.py 6.bak
+./_quarantine/bak_files/settings.py 3.bak
+./_quarantine/bak_files/__init__ 2.py 17.bak
+./_quarantine/bak_files/numeric 2.py 2.bak
+./_quarantine/bak_files/harmony_score_calculator.py 6.bak
+./_quarantine/bak_files/utils.py 9.bak
+./_quarantine/bak_files/startup_hook.py 5.bak
+./_quarantine/bak_files/state_initializer 2.py 3.bak
+./_quarantine/bak_files/json.py 3.bak
+./_quarantine/bak_files/exceptions.py 4.bak
+./_quarantine/bak_files/dashboard_sidebar.py 8.bak
+./_quarantine/bak_files/_hoverlabel.py 2.bak
+./_quarantine/bak_files/data_orchestrator 2.py 3.bak
+./_quarantine/bak_files/astra_prime.py 3.bak
+./_quarantine/bak_files/test_drop_duplicates.py 2.bak
+./_quarantine/bak_files/test_format.py 2.bak
+./_quarantine/bak_files/guardian_sentinel.py 6.bak
+./_quarantine/bak_files/preload_thread 2.py 3.bak
+./_quarantine/bak_files/main_agent 2.py 2.bak
+./_quarantine/bak_files/llm_agent.py 3.bak
+./_quarantine/bak_files/background_loop.py 3.bak
+./_quarantine/bak_files/_colorbar.py 4.bak
+./_quarantine/bak_files/tab_debugger.py 4.bak
+./_quarantine/bak_files/models.py 2.bak
+./_quarantine/bak_files/spawn.py 2.bak
+./_quarantine/bak_files/helpers.py 8.bak
+./_quarantine/bak_files/meta_memory.py 4.bak
+./_quarantine/bak_files/test_compat.py 3.bak
+./_quarantine/bak_files/test_to_numpy.py 2.bak
+./_quarantine/bak_files/test_describe.py 4.bak
+./_quarantine/bak_files/meta_memory.py 5.bak
+./_quarantine/bak_files/helpers.py 9.bak
+./_quarantine/bak_files/models.py 3.bak
+./_quarantine/bak_files/safe_api_wrapper 2.py 2.bak
+./_quarantine/bak_files/learning_engine.py 3.bak
+./_quarantine/bak_files/test_cython.py 2.bak
+./_quarantine/bak_files/test_insert.py 2.bak
+./_quarantine/bak_files/performance_monitor 2.py 2.bak
+./_quarantine/bak_files/alert_manager.py 3.bak
+./_quarantine/bak_files/test_coercion.py 2.bak
+./_quarantine/bak_files/system_core 2.py 3.bak
+./_quarantine/bak_files/safe_df.py 3.bak
+./_quarantine/bak_files/guardian_sentinel.py 7.bak
+./_quarantine/bak_files/test_rank.py 3.bak
+./_quarantine/bak_files/launch.py 2.bak
+./_quarantine/bak_files/guardian_fusion_optimizer.py 4.bak
+./_quarantine/bak_files/data_orchestrator 2.py 2.bak
+./_quarantine/bak_files/exceptions.py 5.bak
+./_quarantine/bak_files/test_is_monotonic.py 2.bak
+./_quarantine/bak_files/test_indexing.py 8.bak
+./_quarantine/bak_files/utils.py 8.bak
+./_quarantine/bak_files/__init__ 2.py 16.bak
+./_quarantine/bak_files/test_logical_ops.py 2.bak
+./_quarantine/bak_files/guardian_lazy.backup 2.py 4.bak
+./_quarantine/bak_files/state_bundle_builder.py 7.bak
+./_quarantine/bak_files/state_bundle_builder.py 5.bak
+./_quarantine/bak_files/harmony_score_calculator.py 5.bak
+./_quarantine/bak_files/__init__ 2.py 14.bak
+./_quarantine/bak_files/dashboard_data_safe_patch.py 4.bak
+./_quarantine/bak_files/technical_scanner.py 3.bak
+./_quarantine/bak_files/guardian_v7 2.py 5.bak
+./_quarantine/bak_files/test_count.py 2.bak
+./_quarantine/bak_files/_structures.py 3.bak
+./_quarantine/bak_files/startup_hook.py 6.bak
+./_quarantine/bak_files/exceptions.py 7.bak
+./_quarantine/bak_files/performance_profiler.py 5.bak
+./_quarantine/bak_files/technical_agent.py 9.bak
+./_quarantine/bak_files/setup.py 2.bak
+./_quarantine/bak_files/dashboard_chart 2.py 6.bak
+./_quarantine/bak_files/dashboard_data 3.py 3.bak
+./_quarantine/bak_files/test_duplicated.py 2.bak
+./_quarantine/bak_files/guardian_lazy.py 4.bak
+./_quarantine/bak_files/_domain.py 2.bak
+./_quarantine/bak_files/python.py 3.bak
+./_quarantine/bak_files/messages.py 2.bak
+./_quarantine/bak_files/guardian_sentinel.py 5.bak
+./_quarantine/bak_files/test_util.py 5.bak
+./_quarantine/bak_files/test_to_csv.py 4.bak
+./_quarantine/bak_files/test_where.py 2.bak
+./_quarantine/bak_files/technical_scanner 2.py 3.bak
+./_quarantine/bak_files/orchestrator.py 3.bak
+./_quarantine/bak_files/guardian_sync 2.py 3.bak
+./_quarantine/bak_files/hashing.py 2.bak
+./_quarantine/bak_files/meta_memory.py 6.bak
+./_quarantine/bak_files/_lightposition.py 2.bak
+./_quarantine/bak_files/shared.py 2.bak
+./_quarantine/bak_files/continual_trainer.py 10.bak
+./_quarantine/bak_files/test_size.py 3.bak
+./_quarantine/bak_files/schema_validator 2.py 3.bak
+./_quarantine/bak_files/test_equals.py 4.bak
+./_quarantine/bak_files/test_util.py 4.bak
+./_quarantine/bak_files/guardian_sentinel.py 4.bak
+./_quarantine/bak_files/async_router_cache.py 3.bak
+./_quarantine/bak_files/test_pipe.py 3.bak
+./_quarantine/bak_files/guardian_lazy.py 5.bak
+./_quarantine/bak_files/performance_profiler 2.py 4.bak
+./_quarantine/bak_files/guardian_engine.py 3.bak
+./_quarantine/bak_files/deferred_imports 2.py 4.bak
+./_quarantine/bak_files/hooks.py 2.bak
+./_quarantine/bak_files/technical_agent.py 8.bak
+./_quarantine/bak_files/performance_profiler.py 4.bak
+./_quarantine/bak_files/exceptions.py 6.bak
+./_quarantine/bak_files/config.py 4.bak
+./_quarantine/bak_files/_legendgrouptitle.py 4.bak
+./_quarantine/bak_files/startup_hook.py 7.bak
+./_quarantine/bak_files/_structures.py 2.bak
+./_quarantine/bak_files/guardian_v7 2.py 4.bak
+./_quarantine/bak_files/__init__ 2.py 15.bak
+./_quarantine/bak_files/telemetry_hub.py 3.bak
+./_quarantine/bak_files/state_bundle_builder.py 4.bak
+./_quarantine/bak_files/__init__ 2.py 11.bak
+./_quarantine/bak_files/test_normalize.py 2.bak
+./_quarantine/bak_files/test_sort_values.py 2.bak
+./_quarantine/bak_files/test_arithmetic.py 7.bak
+./_quarantine/bak_files/guardian_lazy.backup 2.py 3.bak
+./_quarantine/bak_files/tab_dashboard.py 8.bak
+./_quarantine/bak_files/main_agent.py 5.bak
+./_quarantine/bak_files/guardian_fusion_optimizer.py 3.bak
+./_quarantine/bak_files/tab_dashboard_forcehotfix_cleanup_20251213_0011 2.py 5.bak
+./_quarantine/bak_files/memory.py 2.bak
+./_quarantine/bak_files/overrides.py 2.bak
+./_quarantine/bak_files/dashboard_chart 2.py 3.bak
+./_quarantine/bak_files/common.py 4.bak
+./_quarantine/bak_files/system_core 2.py 4.bak
+./_quarantine/bak_files/safe_df.py 4.bak
+./_quarantine/bak_files/_colorbar.py 2.bak
+./_quarantine/bak_files/dashboard.py 6.bak
+./_quarantine/bak_files/alert_manager.py 4.bak
+./_quarantine/bak_files/_selected.py 2.bak
+./_quarantine/bak_files/models.py 4.bak
+./_quarantine/bak_files/learning_engine.py 4.bak
+./_quarantine/bak_files/api_health_monitor 2.py 3.bak
+./_quarantine/bak_files/fusion_weight_optimizer.py 5.bak
+./_quarantine/bak_files/prediction_fusion.py 7.bak
+./_quarantine/bak_files/test_describe.py 3.bak
+./_quarantine/bak_files/dtypes.py 2.bak
+./_quarantine/bak_files/logging.py 3.bak
+./_quarantine/bak_files/debug.py 2.bak
+./_quarantine/bak_files/meta_memory.py 3.bak
+./_quarantine/bak_files/fusion_weight_optimizer.py 4.bak
+./_quarantine/bak_files/prediction_fusion.py 6.bak
+./_quarantine/bak_files/learning_engine.py 5.bak
+./_quarantine/bak_files/llm_agent.py 4.bak
+./_quarantine/bak_files/__config__.py 2.bak
+./_quarantine/bak_files/safe_df.py 5.bak
+./_quarantine/bak_files/common.py 5.bak
+./_quarantine/bak_files/overrides.py 3.bak
+./_quarantine/bak_files/dashboard_snapshot.py 6.bak
+./_quarantine/bak_files/api_keys 2.py 3.bak
+./_quarantine/bak_files/guardian_lazy 2.py 2.bak
+./_quarantine/bak_files/main_agent.py 4.bak
+./_quarantine/bak_files/json.py 4.bak
+./_quarantine/bak_files/volume_scanner.py 3.bak
+./_quarantine/bak_files/test_sort_values.py 3.bak
+./_quarantine/bak_files/__init__ 2.py 10.bak
+./_quarantine/bak_files/guardian_v7.py 9.bak
+./_quarantine/bak_files/async_loader 2.py 2.bak
+./_quarantine/bak_files/telemetry_hub.py 4.bak
+./_quarantine/bak_files/__init__ 2.py 12.bak
+./_quarantine/bak_files/state_bundle_builder.py 3.bak
+./_quarantine/bak_files/main_agent.py 6.bak
+./_quarantine/bak_files/errors.py 4.bak
+./_quarantine/bak_files/util.py 8.bak
+./_quarantine/bak_files/arrayprint.py 2.bak
+./_quarantine/bak_files/guardian_v7 2.py 3.bak
+./_quarantine/bak_files/decorators.py 2.bak
+./_quarantine/bak_files/deferred_imports 2.py 3.bak
+./_quarantine/bak_files/test_random.py 2.bak
+./_quarantine/bak_files/fetch_etf.py 4.bak
+./_quarantine/bak_files/_version.py 5.bak
+./_quarantine/bak_files/performance_profiler.py 3.bak
+./_quarantine/bak_files/api.py 2.bak
+./_quarantine/bak_files/common.py 7.bak
+./_quarantine/bak_files/guardian_engine.py 4.bak
+./_quarantine/bak_files/performance_profiler 2.py 3.bak
+./_quarantine/bak_files/guardian_sentinel.py 3.bak
+./_quarantine/bak_files/psychology_agent.py 9.bak
+./_quarantine/bak_files/test_replace.py 3.bak
+./_quarantine/bak_files/safe_df.py 7.bak
+./_quarantine/bak_files/async_router_cache.py 4.bak
+./_quarantine/bak_files/test_interpolate.py 3.bak
+./_quarantine/bak_files/guardian_v6 copy 4.py 3.bak
+./_quarantine/bak_files/test_warnings.py 2.bak
+./_quarantine/bak_files/dashboard.py 5.bak
+./_quarantine/bak_files/test_util.py 3.bak
+./_quarantine/bak_files/test_apply.py 2.bak
+./_quarantine/bak_files/test_timezones.py 3.bak
+./_quarantine/bak_files/test_series.py 2.bak
+./_quarantine/bak_files/decoder.py 2.bak
+./_quarantine/bak_files/prediction_fusion.py 4.bak
+./_quarantine/bak_files/prediction_fusion.py 5.bak
+./_quarantine/bak_files/holistic_model_core.py 3.bak
+./_quarantine/bak_files/test_array_api.py 2.bak
+./_quarantine/bak_files/test_series.py 3.bak
+./_quarantine/bak_files/guardian_sync 2.py 4.bak
+./_quarantine/bak_files/learning_engine.py 6.bak
+./_quarantine/bak_files/test_to_csv.py 3.bak
+./_quarantine/bak_files/test_interpolate.py 2.bak
+./_quarantine/bak_files/safe_df.py 6.bak
+./_quarantine/bak_files/async_router_cache.py 5.bak
+./_quarantine/bak_files/psychology_agent.py 8.bak
+./_quarantine/bak_files/api.py 3.bak
+./_quarantine/bak_files/common.py 6.bak
+./_quarantine/bak_files/_parser.py 2.bak
+./_quarantine/bak_files/dashboard_snapshot.py 5.bak
+./_quarantine/bak_files/dashboard_data 3.py 4.bak
+./_quarantine/bak_files/guardian_lazy.py 3.bak
+./_quarantine/bak_files/git.py 2.bak
+./_quarantine/bak_files/_version.py 4.bak
+./_quarantine/bak_files/fetch_etf.py 5.bak
+./_quarantine/bak_files/_legendgrouptitle.py 2.bak
+./_quarantine/bak_files/util.py 9.bak
+./_quarantine/bak_files/main_agent.py 7.bak
+./_quarantine/bak_files/test_arithmetic.py 5.bak
+./_quarantine/bak_files/__init__ 2.py 13.bak
+./_quarantine/bak_files/dashboard_data_safe_patch.py 3.bak
+./_quarantine/bak_files/guardian_v7.py 8.bak
+./_quarantine/bak_files/cache.py 3.bak
+./_quarantine/bak_files/test_round.py 3.bak
+./_quarantine/bak_files/logger.py 5.bak
+./_quarantine/bak_files/dashboard_data 4.py 6.bak
+./_quarantine/bak_files/diagnose.py 2.bak
+./_quarantine/bak_files/test_missing.py 4.bak
+./_quarantine/bak_files/summary_cards.py 3.bak
+./_quarantine/bak_files/predictive_engine.py 3.bak
+./_quarantine/bak_files/_compat.py 4.bak
+./_quarantine/bak_files/_typing.py 5.bak
+./_quarantine/bak_files/psychology_agent 2.py 3.bak
+./_quarantine/bak_files/main.py 5.bak
+./_quarantine/bak_files/dashboard_core 2.py 3.bak
+./_quarantine/bak_files/async_router_cache 2.py 2.bak
+./_quarantine/bak_files/dashboard_chart.py 10.bak
+./_quarantine/bak_files/catalyst_agent.py 6.bak
+./_quarantine/bak_files/dashboard_data.py 6.bak
+./_quarantine/bak_files/__init__ 2.py 9.bak
+./_quarantine/bak_files/chart_engine.py 4.bak
+./_quarantine/bak_files/test_getitem.py 2.bak
+./_quarantine/bak_files/volume_agent.py 5.bak
+./_quarantine/bak_files/data_manager 2.py 4.bak
+./_quarantine/bak_files/metadata.py 3.bak
+./_quarantine/bak_files/astra_api_finnhub.py 5.bak
+./_quarantine/bak_files/dashboard_summary.py 3.bak
+./_quarantine/bak_files/functools.py 2.bak
+./_quarantine/bak_files/clean_price_df.py 4.bak
+./_quarantine/bak_files/_exceptions.py 4.bak
+./_quarantine/bak_files/volume_agent.py 4.bak
+./_quarantine/bak_files/__init__ 2.py 8.bak
+./_quarantine/bak_files/preload_thread.py 3.bak
+./_quarantine/bak_files/dashboard_data.py 7.bak
+./_quarantine/bak_files/test_quantile.py 3.bak
+./_quarantine/bak_files/catalyst_agent.py 7.bak
+./_quarantine/bak_files/check_api_status.py 3.bak
+./_quarantine/bak_files/main.py 4.bak
+./_quarantine/bak_files/theme_loader 2.py 5.bak
+./_quarantine/bak_files/requirements.py 2.bak
+./_quarantine/bak_files/replay_buffer.py 4.bak
+./_quarantine/bak_files/momentum_agent.py 8.bak
+./_quarantine/bak_files/test_base.py 4.bak
+./_quarantine/bak_files/astra_api_twelvedata.py 6.bak
+./_quarantine/bak_files/astra_prime 2.py 3.bak
+./_quarantine/bak_files/_typing.py 4.bak
+./_quarantine/bak_files/test_take.py 4.bak
+./_quarantine/bak_files/test_missing.py 5.bak
+./_quarantine/bak_files/psychology_agent.py.bak
+./_quarantine/bak_files/test_dot.py 2.bak
+./_quarantine/bak_files/fromnumeric.py 2.bak
+./_quarantine/bak_files/main.py 12.bak
+./_quarantine/bak_files/test_round.py 2.bak
+./_quarantine/bak_files/cache.py 2.bak
+./_quarantine/bak_files/error_handler.py 4.bak
+./_quarantine/bak_files/logger.py 6.bak
+./_quarantine/bak_files/theme_loader.py 10.bak
+./_quarantine/bak_files/ticker_card_placeholder.py 3.bak
+./_quarantine/bak_files/sparkline.py 3.bak
+./_quarantine/bak_files/dashboard_data 4.py 5.bak
+./_quarantine/bak_files/guardian_v4.py 3.bak
+./_quarantine/bak_files/mini_chart.py 4.bak
+./_quarantine/bak_files/_candlestick.py 2.bak
+./_quarantine/bak_files/_testing.py 2.bak
+./_quarantine/bak_files/fetch_unified.py 7.bak
+./_quarantine/bak_files/guardian_v6 copy.py 3.bak
+./_quarantine/bak_files/async_loader.py 5.bak
+./_quarantine/bak_files/main.py.bak
+./_quarantine/bak_files/structures.py 2.bak
+./_quarantine/bak_files/test_datetimelike.py 3.bak
+./_quarantine/bak_files/momentum_scanner 2.py 3.bak
+./_quarantine/bak_files/wsgi.py 2.bak
+./_quarantine/bak_files/cache_manager 2.py 4.bak
+./_quarantine/bak_files/guardian_defender.py 3.bak
+./_quarantine/bak_files/_title.py 2.bak
+./_quarantine/bak_files/catalyst_agent.py 5.bak
+./_quarantine/bak_files/_internal.py 3.bak
+./_quarantine/bak_files/_marker.py 2.bak
+./_quarantine/bak_files/layout_controls.py 4.bak
+./_quarantine/bak_files/guardian_v6 copy 2.py 3.bak
+./_quarantine/bak_files/guardian_v6 copy 3.py 3.bak
+./_quarantine/bak_files/volume_agent.py 6.bak
+./_quarantine/bak_files/get_forecast.py 4.bak
+./_quarantine/bak_files/volume_scanner 2.py 3.bak
+./_quarantine/bak_files/options.py 2.bak
+./_quarantine/bak_files/volume_agent.py 7.bak
+./_quarantine/bak_files/_internal.py 2.bak
+./_quarantine/bak_files/tab_loader_trace.py 3.bak
+./_quarantine/bak_files/__main__.py 3.bak
+./_quarantine/bak_files/tab_dashboard_prettyfix_20251212_2350.py 6.bak
+./_quarantine/bak_files/test_reindex.py 3.bak
+./_quarantine/bak_files/test_cumulative.py 3.bak
+./_quarantine/bak_files/main.py 7.bak
+./_quarantine/bak_files/theme_loader 2.py 6.bak
+./_quarantine/bak_files/test_missing.py 6.bak
+./_quarantine/bak_files/fetch_unified.py 6.bak
+./_quarantine/bak_files/async_loader.py 4.bak
+./_quarantine/bak_files/_testing.py 3.bak
+./_quarantine/bak_files/test_clip.py 4.bak
+./_quarantine/bak_files/main.py 11.bak
+./_quarantine/bak_files/__main__.py 14.bak
+./_quarantine/bak_files/theme_loader.py 11.bak
+./_quarantine/bak_files/logger.py 7.bak
+./_quarantine/bak_files/tab_dashboard_backup_20251212_2345 2.py 5.bak
+./_quarantine/bak_files/__main__.py 10.bak
+./_quarantine/bak_files/dashboard_chart.py 9.bak
+./_quarantine/bak_files/_api.py 2.bak
+./_quarantine/bak_files/test_concat.py 3.bak
+./_quarantine/bak_files/error_handler.py 3.bak
+./_quarantine/bak_files/check_api_status 2.py 2.bak
+./_quarantine/bak_files/continual_trainer.py 6.bak
+./_quarantine/bak_files/astra_prime 2.py 4.bak
+./_quarantine/bak_files/fetcher.py 6.bak
+./_quarantine/bak_files/_typing.py 3.bak
+./_quarantine/bak_files/_compat.p

@@ -1,0 +1,510 @@
+./legacy_backups/freeze_20251221_144013/learning/__init__.py
+./legacy_backups/freeze_20251221_144013/learning/funnel/__init__.py
+./legacy_backups/freeze_20251221_144013/engine/__init__.py
+./legacy_backups/backups/import_fix_20251210_213214/ranking_engine.py
+./legacy_backups/backups/import_fix_20251210_213214/data_orchestrator.py
+./legacy_backups/backups/import_fix_20251210_213214/learning_engine.py
+./legacy_backups/backups/import_fix_20251210_213214/universe_builder.py
+./legacy_backups/backups/import_fix_20251210_213214/learning_store.py
+./legacy_backups/backups/import_fix_20251210_213214/guardian_fusion_optimizer.py
+./legacy_backups/backups/import_fix_20251210_213214/ui_integrity_lock.py
+./legacy_backups/backups/import_fix_20251210_213214/state_bundle_builder.py
+./legacy_backups/backups/astra_backup_20251209_182154/chart_engine.py
+./legacy_backups/backups/astra_backup_20251209_182154/guardian_sentinel.py
+./fix_guardian_imports.py
+./_quarantine/dashboard_archives/dashboard_guardian.py
+./_quarantine/dashboard_archives/dashboard_app.py
+./_quarantine/dashboard_archives/dashboard_core.py
+./_quarantine/manual/data_orchestrator 3.py
+./_quarantine/autoheal_20251218_150204/ui/dashboard/theme_loader 2.py
+./_quarantine/autoheal_20251218_150204/core/guardian/guardian_v7 2.py
+./_quarantine/autoheal_20251218_150204/core/guardian/__init__ 2.py
+./_quarantine/autoheal_20251218_150204/fetch_core/api_router 2.py
+./_quarantine/autoheal_20251218_150204/fetch_core/async_router_cache 2.py
+./_quarantine/autoheal_20251218_150204/fetch_core/async_router 2.py
+./_quarantine/autoheal_20251218_150204/learning/funnel/astra_funnel_backup.py
+./_quarantine/autoheal_20251218_150204/learning/learning_store_BACKUP.py
+./_quarantine/autoheal_20251218_150204/astra_modules/forecast/holistic_model_core 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/forecast/forecast_engine 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/ui/tab_performance 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/ui/dashboard/__init__ 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/ui/dashboard/theme_loader 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/ui/dashboard_v2/data_hooks_backup.py
+./_quarantine/autoheal_20251218_150204/astra_modules/ui/dashboard_v2/layout 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/ui/dashboard_v2/components/orchestrator_panel 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/ui/dashboard_v2/components/cards_section 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/ui/dashboard_v2/components/charts 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/ui/dashboard_v2/components/advanced_chart 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/ui/dashboard_v2/components/ticker_cards 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/ui/dashboard_v2/components/__init__ 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/ui/dashboard_v2/components/summary_cards 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/ui/dashboard_v2/data_hooks 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/ui/dashboard_v2/__init__ 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/ui/dashboard_v2/data_hooks_backup 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/ui/__init__ 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/core/api_client 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/core/system_core 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/core/feature_builder 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/core/astra_memory 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/core/cache_manager 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/core/logger 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/core/data_manager 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/core/hardware_accel 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/core/harmony_score_calculator 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/learning/replay_buffer 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/learning/__init__ 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/utils/guardian_autoswap 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/utils/guardian_lazy.backup 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/utils/guardian_lazy.backup.py
+./_quarantine/autoheal_20251218_150204/astra_modules/utils/guardian_lazy 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/state/planetary_tensor_builder 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/state/state_bundle_builder 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/chart_core/__init__ 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/guardian/pipeline_sanitizer 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/guardian/ui_integrity_lock 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/guardian/security/api_keys 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/guardian/environment_guardian 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/guardian/guardian_v6 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/guardian/guardian_v7 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/guardian/guardian_v7_backup.py
+./_quarantine/autoheal_20251218_150204/astra_modules/guardian/guardian_defender 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/guardian/guardian_import_auditor 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/guardian/state_initializer 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/guardian/guardian_sentinel 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/guardian/schema_validator 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/guardian/guardian/__init__ 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/guardian/api_health_monitor 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/guardian/guardian_ratewatch 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/guardian/startup_hook 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/guardian/guardian_sync 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/engine/data_orchestrator 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/engine/preload_thread 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/engine/ranking_engine 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/engine/background_loop 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/engine/state_bundle_builder 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/engine/orchestrator 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/engine/astra_prime 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/engine/data_orchestrator_BACKUP_20251217_2218.py
+./_quarantine/autoheal_20251218_150204/astra_modules/engine/strategy_engine 2.py
+./_quarantine/autoheal_20251218_150204/astra_modules/engine/astra_backend 2.py
+./_quarantine/autoheal_20251218_150204/engine/data_orchestrator 2.py
+./_quarantine/autoheal_20251218_150204/engine/astra_prime 2.py
+./ui/astra-dashboard/node_modules/flatted/python/flatted.py
+./ui/node_modules/flatted/python/flatted.py
+./ui/__init__.py
+./ui/dashboard/astra-dashboard/node_modules/flatted/python/flatted.py
+./ui/dashboard/astra-dashboard/node_modules/shell-quote/print.py
+./ui/dashboard/astra-dashboard/node_modules/plotly.js/.circleci/download_google_fonts.py
+./ui/dashboard/tab_dashboard_v12.py
+./ui/dashboard/tab_dashboard_v13.py
+./ui/dashboard/theme_loader.py
+./ui/dashboard/tab_dashboard_v15_ultra.py
+./ui/dashboard/__init__.py
+./ui/dashboard/tab_dashboard_v7_backup.py
+./ui/dashboard/tab_dashboard_v10.py
+./ui/dashboard/astra_bridge.py
+./ui/dashboard/tab_dashboard_v14.py
+./ui/dashboard/tab_dashboard_v7_patch.py
+./ui/dashboard/tab_dashboard_v11.py
+./ui/tab_predictions.py
+./sentinel_local_scan.py
+./sentinel_cleanup_backups.py
+./astra_core/__init__.py
+./tools/guardian_repair_map.py
+./sentinel_auto_repair.py
+./core/__init__.py
+./core/feature_builder.py
+./core/sentinel/sentinel_v1.py
+./core/sentinel/sentinel_v4_2.py
+./core/sentinel/sentinel_v4.py
+./core/sentinel/sentinel_hook.py
+./core/sentinel/__init__.py
+./core/sentinel/sentinel_integration_v2.py
+./core/sentinel/sentinel_v3.py
+./core/sentinel/sentinel_v2.py
+./core/sentinel/sentinel_v4_1.py
+./core/integrations/learning_pipeline_v1.py
+./core/integrations/learning_daemon_v1.py
+./core/audit/auditlock_v1.py
+./core/audit/patchguard_v1.py
+./core/audit/recovery_daemon_v1.py
+./core/astra_memory.py
+./core/astra_prime.py
+./core/guardian/guardian_secure_api.py
+./core/guardian/guardian_link.py
+./core/guardian/guardian_v7.py
+./core/guardian/__init__.py
+./core/guardian/guardian_link_v3.py
+./core/guardian/__init__ 2.py
+./core/guardian/guardian_stream.py
+./core/funnel/funnel_config.py
+./archive/pre_migration_backup_20251215_115234/forecast/holistic_model_core.py
+./archive/pre_migration_backup_20251215_115234/ui/tab_performance.py
+./archive/pre_migration_backup_20251215_115234/ui/tab_performance 2.py
+./archive/pre_migration_backup_20251215_115234/ui/dashboard/theme_loader.py
+./archive/pre_migration_backup_20251215_115234/ui/dashboard/__init__ 2.py
+./archive/pre_migration_backup_20251215_115234/ui/dashboard/theme_loader 2.py
+./archive/pre_migration_backup_20251215_115234/ui/__init__ 2.py
+./archive/pre_migration_backup_20251215_115234/core/cache_manager.py
+./archive/pre_migration_backup_20251215_115234/core/hardware_accel.py
+./archive/pre_migration_backup_20251215_115234/core/harmony_score_calculator.py
+./archive/pre_migration_backup_20251215_115234/core/logger.py
+./archive/pre_migration_backup_20251215_115234/core/feature_builder.py
+./archive/pre_migration_backup_20251215_115234/core/cache_orchestrator.py
+./archive/pre_migration_backup_20251215_115234/core/astra_memory.py
+./archive/pre_migration_backup_20251215_115234/core/astra_prime.py
+./archive/pre_migration_backup_20251215_115234/core/data_manager.py
+./archive/pre_migration_backup_20251215_115234/core/guardian/guardian_v7.py
+./archive/pre_migration_backup_20251215_115234/core/guardian/__init__ 2.py
+./archive/pre_migration_backup_20251215_115234/core/system_core.py
+./archive/pre_migration_backup_20251215_115234/core/api_client.py
+./archive/pre_migration_backup_20251215_115234/core/config_handler.py
+./archive/pre_migration_backup_20251215_115234/fetch_core/fetch_crypto.py
+./archive/pre_migration_backup_20251215_115234/fetch_core/fetch_unified.py
+./archive/pre_migration_backup_20251215_115234/fetch_core/fetch_stock.py
+./archive/pre_migration_backup_20251215_115234/fetch_core/fetch_etf.py
+./archive/pre_migration_backup_20251215_115234/fetch_core/fetcher.py
+./archive/pre_migration_backup_20251215_115234/learning/__init__ 2.py
+./archive/pre_migration_backup_20251215_115234/utils/guardian_autoswap 2.py
+./archive/pre_migration_backup_20251215_115234/utils/guardian_lazy.backup 2.py
+./archive/pre_migration_backup_20251215_115234/utils/guardian_lazy.backup.py
+./archive/pre_migration_backup_20251215_115234/utils/guardian_lazy 2.py
+./archive/pre_migration_backup_20251215_115234/state/planetary_tensor_builder 2.py
+./archive/pre_migration_backup_20251215_115234/chart_core/__init__ 2.py
+./archive/pre_migration_backup_20251215_115234/guardian/guardian_v6.py
+./archive/pre_migration_backup_20251215_115234/guardian/environment_guardian.py
+./archive/pre_migration_backup_20251215_115234/guardian/startup_hook.py
+./archive/pre_migration_backup_20251215_115234/guardian/schema_validator.py
+./archive/pre_migration_backup_20251215_115234/guardian/pipeline_sanitizer.py
+./archive/pre_migration_backup_20251215_115234/guardian/guardian_sync.py
+./archive/pre_migration_backup_20251215_115234/guardian/security/api_keys 2.py
+./archive/pre_migration_backup_20251215_115234/guardian/guardian_import_auditor.py
+./archive/pre_migration_backup_20251215_115234/guardian/guardian_sentinel.py
+./archive/pre_migration_backup_20251215_115234/guardian/state_initializer.py
+./archive/pre_migration_backup_20251215_115234/guardian/backup_archive/guardian_v6 copy.py
+./archive/pre_migration_backup_20251215_115234/guardian/backup_archive/guardian_v6 copy 3.py
+./archive/pre_migration_backup_20251215_115234/guardian/backup_archive/guardian_v6 copy 2.py
+./archive/pre_migration_backup_20251215_115234/guardian/backup_archive/guardian_v6 copy 4.py
+./archive/pre_migration_backup_20251215_115234/guardian/guardian_defender.py
+./archive/pre_migration_backup_20251215_115234/guardian/ui_integrity_lock.py
+./archive/pre_migration_backup_20251215_115234/engine/ranking_engine.py
+./archive/pre_migration_backup_20251215_115234/engine/data_orchestrator.py
+./archive/pre_migration_backup_20251215_115234/engine/astra_backend.py
+./archive/pre_migration_backup_20251215_115234/engine/strategy_engine.py
+./archive/pre_migration_backup_20251215_115234/engine/orchestrator.py
+./archive/pre_migration_backup_20251215_115234/engine/astra_prime.py
+./archive/pre_migration_backup_20251215_115234/engine/scan_manager.py
+./archive/pre_migration_backup_20251215_115234/engine/background_loop.py
+./archive/pre_migration_backup_20251215_115234/engine/preload_thread.py
+./archive/pre_migration_backup_20251215_115234/engine/state_bundle_builder.py
+./archive/astra_core_archived_20251215/forecast/predictive_engine.py
+./archive/astra_core_archived_20251215/fetch_core_before_unindent.py
+./archive/astra_core_archived_20251215/ui/dashboard/theme_loader.py
+./archive/astra_core_archived_20251215/ui/dashboard/tab_learning.py
+./archive/astra_core_archived_20251215/ui/dashboard/tab_predictions.py
+./archive/astra_core_archived_20251215/ui/dashboard/test_app.py
+./archive/astra_core_archived_20251215/compat/legacy_imports.py
+./archive/astra_core_archived_20251215/config/api_config.py
+./archive/astra_core_archived_20251215/fetch_core_backup_before_indentfix.py
+./archive/astra_core_archived_20251215/fetch_core_backup_no_yf.py
+./archive/astra_core_archived_20251215/guardian/guardian_v6.py
+./archive/astra_core_archived_20251215/guardian/schema_validator.py
+./archive/astra_core_archived_20251215/guardian/guardian_sentinel.py
+./archive/astra_core_archived_20251215/fetch_core_backup_indentfix.py
+./archive/astra_core_archived_20251215/fetch_core_before_finalfix.py
+./archive/astra_core_archived_20251215/fetch_core.py
+./archive/broken_py/learning_manager_BACKUP.py
+./archive/astra_modules_legacy_archived_20251215/forecast/ensemble_engine.py
+./archive/astra_modules_legacy_archived_20251215/forecast/forecast_engine.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/tab_debugger.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/guardian_v6.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/auto_repair.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/environment_guardian.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/startup_hook.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/guardian_scanner.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/schema_validator.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/pipeline_sanitizer.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/guardian_sync.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/guardian_engine.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/guardian_v7.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/guardian_import_auditor.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/alert_manager.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/guardian_sentinel.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/guardian_prelaunch_check.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/tab_loader_trace.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/state_initializer.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/schema_contracts.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/telemetry_hub.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/guardian_autofix.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/scheduler.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/__main__.py
+./archive/astra_modules_legacy_archived_20251215/guardian_old_1554/ui_integrity_lock.py
+./archive/astra_modules_legacy_archived_20251215/core/feature_builder.py
+./archive/astra_modules_legacy_archived_20251215/core/astra_prime.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/tab_guardian.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/dashboard/tab_predictions 2.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/dashboard/theme_loader.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/dashboard/tab_learning.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/dashboard/summary_cards.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/dashboard/tab_learning 2.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/dashboard/tab_predictions.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/dashboard/test_app.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/components/hover_summary.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/components/ticker_card 2.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/components/ticker_card_placeholder.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/components/ticker_badges.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/components/opportunity_panels 2.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/components/mini_chart.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/components/advanced_chart.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/components/score_bars.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/components/layout_controls.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/components/opportunity_panels.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/components/sparkline.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/components/ticker_card.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/components/mini_chart 2.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/components/__init__ 2.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/tab_system.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/tab_guardian 2.py
+./archive/astra_modules_legacy_archived_20251215/ui_old/__init__ 2.py
+./archive/astra_modules_legacy_archived_20251215/fetch_core/fetch_etf 2.py
+./archive/astra_modules_legacy_archived_20251215/fetch_core/fetch_crypto.py
+./archive/astra_modules_legacy_archived_20251215/fetch_core/fetcher 2.py
+./archive/astra_modules_legacy_archived_20251215/fetch_core/__init__ 2.py
+./archive/astra_modules_legacy_archived_20251215/fetch_core/fetch_unified.py
+./archive/astra_modules_legacy_archived_20251215/fetch_core/fetch_stock.py
+./archive/astra_modules_legacy_archived_20251215/fetch_core/fetch_etf.py
+./archive/astra_modules_legacy_archived_20251215/fetch_core/fetch_stock 2.py
+./archive/astra_modules_legacy_archived_20251215/fetch_core/fetcher.py
+./archive/astra_modules_legacy_archived_20251215/learning/learning_store 2.py
+./archive/astra_modules_legacy_archived_20251215/learning/fusion_weight_optimizer.py
+./archive/astra_modules_legacy_archived_20251215/learning/continual_trainer 2.py
+./archive/astra_modules_legacy_archived_20251215/learning/learning_engine.py
+./archive/astra_modules_legacy_archived_20251215/learning/paper_trader.py
+./archive/astra_modules_legacy_archived_20251215/learning/scheduler 2.py
+./archive/astra_modules_legacy_archived_20251215/learning/fusion_calibrator 2.py
+./archive/astra_modules_legacy_archived_20251215/learning/learning_store.py
+./archive/astra_modules_legacy_archived_20251215/learning/guardian_fusion_optimizer.py
+./archive/astra_modules_legacy_archived_20251215/learning/continual_trainer.py
+./archive/astra_modules_legacy_archived_20251215/learning/replay_buffer.py
+./archive/astra_modules_legacy_archived_20251215/learning/__init__ 2.py
+./archive/astra_modules_legacy_archived_20251215/learning/scheduler.py
+./archive/astra_modules_legacy_archived_20251215/learning/performance_tracker.py
+./archive/astra_modules_legacy_archived_20251215/learning/meta_memory 2.py
+./archive/astra_modules_legacy_archived_20251215/learning/meta_memory.py
+./archive/astra_modules_legacy_archived_20251215/learning/paper_trader 2.py
+./archive/astra_modules_legacy_archived_20251215/learning/fusion_calibrator.py
+./archive/astra_modules_legacy_archived_20251215/utils/memory_engine.py
+./archive/astra_modules_legacy_archived_20251215/guardian_backup/guardian_defender.py
+./archive/astra_modules_legacy_archived_20251215/chart_core/chart_engine 2.py
+./archive/astra_modules_legacy_archived_20251215/chart_core/chart_container 2.py
+./archive/astra_modules_legacy_archived_20251215/chart_core/chart_engine.py
+./archive/astra_modules_legacy_archived_20251215/chart_core/plotly_theme 2.py
+./archive/astra_modules_legacy_archived_20251215/chart_core/plotly_theme.py
+./archive/astra_modules_legacy_archived_20251215/chart_core/__init__ 2.py
+./archive/astra_modules_legacy_archived_20251215/chart_core/chart_container.py
+./archive/astra_modules_legacy_archived_20251215/universe/universe_builder.py
+./archive/astra_modules_legacy_archived_20251215/universe/universe_builder 2.py
+./archive/astra_modules_legacy_archived_20251215/engine/data_orchestrator 2.py
+./archive/astra_modules_legacy_archived_20251215/engine/ranking_engine.py
+./archive/astra_modules_legacy_archived_20251215/engine/data_orchestrator.py
+./archive/astra_modules_legacy_archived_20251215/engine/state_bundle_builder 2.py
+./archive/astra_modules_legacy_archived_20251215/engine/scan_manager.py
+./archive/astra_modules_legacy_archived_20251215/engine/state_bundle_builder.py
+./archive/guardian_old_archived_20251215/guardian_v6.py
+./archive/guardian_old_archived_20251215/guardian_core 2.py
+./archive/guardian_old_archived_20251215/guardian_core.py
+./archive/guardian_old_archived_20251215/alignment_bridge.py
+./archive/guardian_old_archived_20251215/guardian_v6 2.py
+./archive/guardian_old_archived_20251215/guardian_log.py
+./archive/guardian_old_archived_20251215/guardian_log 2.py
+./archive/guardian_old_archived_20251215/alignment_bridge 2.py
+./astra_backup_cache/guardian_sentinel.py
+./astra_backup_cache/guardian_v4.py
+./fetch_core/async_router.py
+./fetch_core/api_router.py
+./fetch_core/fetch_crypto.py
+./fetch_core/fetch_unified.py
+./fetch_core/fetch_stock.py
+./fetch_core/fetch_etf.py
+./fetch_core/fetcher.py
+./fetch_core/async_router_cache.py
+./quick_patch_astra.py
+./learning/fusion_weight_optimizer.py
+./learning/learning_engine.py
+./learning/seed_replay_buffer.py
+./learning/learning_log.py
+./learning/__init__.py
+./learning/model_manager.py
+./learning/paper_trader.py
+./learning/learning_store.py
+./learning/_corr_fix_tmp.py
+./learning/learning_loop.py
+./learning/guardian_fusion_optimizer.py
+./learning/continual_trainer.py
+./learning/replay_buffer.py
+./learning/scheduler.py
+./learning/performance_tracker.py
+./learning/funnel/astra_funnel.py
+./learning/funnel/__init__.py
+./learning/meta_memory.py
+./learning/learning_manager.py
+./learning/fusion_calibrator.py
+./guardian_safe_merge.py
+./sentinel_smart_backup_retention.py
+./utils/guardian_autoswap.py
+./utils/guardian_lazy.py
+./_snapshots_guardian_20251214_1633/fetch_core/fetch_crypto.py
+./_snapshots_guardian_20251214_1633/fetch_core/fetch_unified.py
+./_snapshots_guardian_20251214_1633/fetch_core/fetch_stock.py
+./_snapshots_guardian_20251214_1633/fetch_core/fetch_etf.py
+./_snapshots_guardian_20251214_1633/fetch_core/fetcher.py
+./guardian_prelaunch_check.py
+./state/planetary_tensor_builder.py
+./astra_modules/forecast/holistic_model_core.py
+./astra_modules/forecast/forecast_engine.py
+./astra_modules/ui/tab_performance.py
+./astra_modules/ui/__init__.py
+./astra_modules/ui/dashboard/theme_loader.py
+./astra_modules/ui/dashboard/__init__.py
+./astra_modules/ui/dashboard_v2/data_hooks.py
+./astra_modules/ui/dashboard_v2/__init__.py
+./astra_modules/ui/dashboard_v2/components/cards_section.py
+./astra_modules/ui/dashboard_v2/components/ticker_cards.py
+./astra_modules/ui/dashboard_v2/components/charts.py
+./astra_modules/ui/dashboard_v2/components/advanced_chart.py
+./astra_modules/ui/dashboard_v2/components/__init__.py
+./astra_modules/ui/dashboard_v2/components/orchestrator_panel.py
+./astra_modules/ui/dashboard_v2/components/summary_cards.py
+./astra_modules/core/cache_manager.py
+./astra_modules/core/hardware_accel.py
+./astra_modules/core/__init__.py
+./astra_modules/core/harmony_score_calculator.py
+./astra_modules/core/logger.py
+./astra_modules/core/feature_builder.py
+./astra_modules/core/cache_orchestrator.py
+./astra_modules/core/astra_memory.py
+./astra_modules/core/astra_prime.py
+./astra_modules/core/trade_mode.py
+./astra_modules/core/data_manager.py
+./astra_modules/core/system_core.py
+./astra_modules/core/api_client.py
+./astra_modules/core/config_handler.py
+./astra_modules/learning/__init__.py
+./astra_modules/learning/replay_buffer.py
+./astra_modules/utils/guardian_autoswap.py
+./astra_modules/utils/guardian_lazy.py
+./astra_modules/state/planetary_tensor_builder.py
+./astra_modules/state/state_bundle_builder.py
+./astra_modules/chart_core/__init__.py
+./astra_modules/guardian/guardian_v6.py
+./astra_modules/guardian/environment_guardian.py
+./astra_modules/guardian/startup_hook.py
+./astra_modules/guardian/schema_validator.py
+./astra_modules/guardian/pipeline_sanitizer.py
+./astra_modules/guardian/guardian_sync.py
+./astra_modules/guardian/guardian_ratewatch.py
+./astra_modules/guardian/guardian_v7.py
+./astra_modules/guardian/guardian_import_auditor.py
+./astra_modules/guardian/__init__.py
+./astra_modules/guardian/guardian_sentinel.py
+./astra_modules/guardian/state_initializer.py
+./astra_modules/guardian/backup_archive/guardian_v6 copy.py
+./astra_modules/guardian/backup_archive/guardian_v6 copy 3.py
+./astra_modules/guardian/backup_archive/guardian_v6 copy 2.py
+./astra_modules/guardian/backup_archive/guardian_v6 copy 4.py
+./astra_modules/guardian/api_health_monitor.py
+./astra_modules/guardian/guardian_defender.py
+./astra_modules/guardian/guardian/__init__.py
+./astra_modules/guardian/ui_integrity_lock.py
+./astra_modules/engine/data_funnel.py
+./astra_modules/engine/ranking_engine.py
+./astra_modules/engine/data_hydra.py
+./astra_modules/engine/__init__.py
+./astra_modules/engine/astra_backend.py
+./astra_modules/engine/strategy_engine.py
+./astra_modules/engine/orchestrator.py
+./astra_modules/engine/astra_prime.py
+./astra_modules/engine/scan_manager.py
+./astra_modules/engine/background_loop.py
+./astra_modules/engine/personal_brain.py
+./astra_modules/engine/preload_thread.py
+./astra_modules/engine/rate_safe_fetcher.py
+./astra_modules/engine/state_bundle_builder.py
+./fetch_core_DISABLED.py
+./test_guardian_v4.py
+./.mypy_cache/3.12/astra_core/guardian/__init__.py
+./.mypy_cache/3.12/numpy/core/__init__.py
+./.mypy_cache/3.12/astra_modules/core/__init__.py
+./.mypy_cache/3.12/astra_modules/guardian/__init__.py
+./fix_guardian_logs.py
+./learning_EMPTY_20251216_2207/__init__.py
+./chart_core/__init__.py
+./app.py
+./scanners/cache_rebuilder.py
+./astra-intelligence/ui/__init__.py
+./astra-intelligence/ui/dashboard/tab_insight_board.py
+./astra-intelligence/ui/dashboard/__init__.py
+./astra-intelligence/astra_modules/engine/personal_brain.py
+./backups_learning/fusion_weight_optimizer.py
+./backups_learning/learning_engine.py
+./backups_learning/__init__.py
+./backups_learning/paper_trader.py
+./backups_learning/learning_store.py
+./backups_learning/guardian_fusion_optimizer.py
+./backups_learning/continual_trainer.py
+./backups_learning/replay_buffer.py
+./backups_learning/scheduler.py
+./backups_learning/performance_tracker.py
+./backups_learning/meta_memory.py
+./backups_learning/fusion_calibrator.py
+./guardian/auto_repair.py
+./guardian/environment_guardian.py
+./guardian/startup_hook.py
+./guardian/schema_validator.py
+./guardian/pipeline_sanitizer.py
+./guardian/guardian_sync.py
+./guardian/guardian_ratewatch.py
+./guardian/guardian_v7.py
+./guardian/guardian_import_auditor.py
+./guardian/__init__.py
+./guardian/guardian_sentinel.py
+./guardian/state_initializer.py
+./guardian/backup_archive/guardian_v6 copy.py
+./guardian/backup_archive/guardian_v6 copy 3.py
+./guardian/backup_archive/guardian_v6 copy 2.py
+./guardian/backup_archive/guardian_v6 copy 4.py
+./guardian/api_health_monitor.py
+./guardian/diagnostician_v2.py
+./guardian/guardian_defender.py
+./guardian/ui_integrity_lock.py
+./performance/accuracy_engine.py
+./universe/universe_builder.py
+./engine/data_funnel.py
+./engine/ranking_engine.py
+./engine/data_orchestrator.py
+./engine/data_hydra.py
+./engine/__init__.py
+./engine/data_orchestrator_backup.py
+./engine/astra_backend.py
+./engine/strategy_engine.py
+./engine/orchestrator.py
+./engine/scan_manager.py
+./engine/background_loop.py
+./engine/personal_brain.py
+./engine/preload_thread.py
+./engine/state_bundle_builder.py
+./engine/learning_manager.py
+./sentinel_cleanup_duplicates.py
+./backups/fetch_core_before_twelvedata_patch.py
+./backups/phase7_pre_integration/ranking_engine.py
+./backups/guardian_v6.backup.1765664990.py
+./backups/guardian_v6.before_guardian_fix.1765665298.py
+./backups/guardian_lazy.backup.1765664990.py
+./backups/guardian_v7_pre_fix_2025-12-14_2227.py
+./backups/fetch_core_before_v78.py
+./backups/guardian_v7_backup_2025-12-14_2226 2.py
+./backups/fetch_core_before_liveapi.py
+./backups/guardian_v7_backup_2025-12-14_2226.py
+./backups/guardian_v7_pre_fix_2025-12-14_2227 2.py
+./guardian_scan_summary.py
+./test_guardian_path.py

@@ -1,0 +1,103 @@
+/* 🔒 Astra Dashboard Layout (Professional Revision) */
+
+.dashboard-root {
+  background: radial-gradient(circle at top center, #1a2b4d 0%, #0c1424 100%);
+  color: #0a0a0a;
+  font-family: "Inter", system-ui, sans-serif;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Header + Market Strip */
+header {
+  text-align: center;
+  margin-top: 16px;
+}
+
+header h1 {
+  font-size: 2rem;
+  font-weight: 600;
+  color: #ffffff;
+  margin-bottom: 6px;
+}
+
+.market-strip {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 32px;
+  height: 40px;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+}
+
+.market-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.market-item.up { color: #22c55e; }
+.market-item.down { color: #ef4444; }
+
+/* Layout Grid */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 2.2fr 3.8fr;
+  gap: 20px;
+  padding: 0 32px;
+  flex: 1;
+  align-items: start;
+}
+
+/* Cards Area */
+.cards-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.cards-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: repeat(6, 1fr);
+  gap: 12px;
+}
+
+/* Cards */
+.asset-card {
+  background-color: #ffffff;
+  color: #1e293b;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  height: 110px;
+}
+
+.asset-card:hover {
+  border-color: #2563eb;
+  box-shadow: 0 0 8px rgba(37, 99, 235, 0.2);
+}
+
+/* Chart */
+.chart {
+  background-color: #101827;
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  padding: 8px;
+  height: 100%;
+}
+
+/* Footer */
+footer {
+  text-align: center;
+  font-size: 0.8rem;
+  opacity: 0.6;
+  color: #ffffff;
+  border-top: 1px solid #1e293b;
+  padding: 10px 0;
+}

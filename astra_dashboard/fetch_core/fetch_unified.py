@@ -1,0 +1,214 @@
+from astra_dashboard.guardian.guardian_v6 import Guardian
+
+g = Guardian()
+
+# -*- coding: utf-8 -*-
+"""
+Astra Intelligence — Unified Fetch Core (API Native v7)
+--------------------------------------------------------
+Centralized data layer for fetching market, crypto, and symbol data.
+Replaces all Yahoo Finance requests with custom Astra API calls.
+
+✅ Uses only official Astra APIs
+✅ Integrated with guardian_log for error resilience
+✅ Provides market overview, symbol data, and crypto endpoints
+✅ Includes intelligent caching and fallback handling
+"""
+
+import json
+import os
+import time
+
+import pandas as pd
+import requests
+
+from astra_dashboard.core.guardian.guardian_v6 import guardian_log
+
+guardian = guardian_log()
+
+# ============================================================
+# 🌐 CONFIG
+# ============================================================
+
+# Replace these with your actual API endpoints
+ASTRA_API_BASE = os.getenv("ASTRA_API_BASE", "https://api.astra-intelligence.io/v1")
+API_KEY = os.getenv("ASTRA_API_KEY", "YOUR_API_KEY_HERE")
+
+HEADERS = {"Authorization": f"Bearer {API_KEY}", "Accept": "application/json"}
+
+CACHE_DIR = os.path.expanduser("~/astra_guardian_runtime/cache")
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+
+# ============================================================
+# 🧩 API WRAPPER FUNCTIONS
+# ============================================================
+
+
+def api_get(endpoint: str, params: dict = None, cache_key: str = None, ttl: int = 60):
+    """
+    Generic GET wrapper with optional caching.
+    Returns JSON or raises descriptive error.
+    """
+    if cache_key:
+        cache_file = os.path.join(CACHE_DIR, f"{cache_key}.json")
+        if os.path.exists(cache_file):
+            age = time.time() - os.path.getmtime(cache_file)
+            if age < ttl:
+                try:
+                    with open(cache_file, "r") as f:
+                        return json.load(f)
+                except Exception:
+                    guardian.log(f"[Fetch] ⚠️ Cache read failed for {cache_key}")
+
+    try:
+        url = f"{ASTRA_API_BASE}/{endpoint.lstrip('/')}"
+        resp = requests.get(url, headers=HEADERS, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+
+        if cache_key:
+            with open(cache_file, "w") as f:
+                json.dump(data, f)
+        guardian.log(f"[Fetch] ✅ GET {endpoint} succeeded")
+        return data
+    except Exception as e:
+        guardian.log(f"[Fetch] 🚨 API request failed ({endpoint}): {e}")
+        return {}
+
+
+# ============================================================
+# 📈 Market Overview
+# ============================================================
+
+
+def get_market_overview(symbols=None):
+    """
+    Fetch a market overview dataset from Astra APIs.
+    """
+    guardian.log("[Fetch] 🧠 Loading market overview via Astra API...")
+    symbols = symbols or ["SPX", "NDX", "DJI"]
+
+    try:
+        data = api_get(
+            "markets/overview",
+            params={"symbols": ",".join(symbols)},
+            cache_key="market_overview",
+            ttl=120,
+        )
+        if not data:
+            raise ValueError("Empty response from Astra API")
+
+        df = pd.DataFrame(data.get("markets", []))
+        guardian.log(f"[Fetch] ✅ Market overview fetched for {len(df)} symbols.")
+        return df
+    except Exception as e:
+        guardian.log(f"[Fetch] ⚠️ Market overview fallback triggered: {e}")
+        # Return minimal placeholder data
+        return pd.DataFrame(
+            [
+                {"symbol": "SPX", "price": 4500, "change": 0.1, "percentChange": 0.25},
+                {
+                    "symbol": "NDX",
+                    "price": 15500,
+                    "change": -0.05,
+                    "percentChange": -0.32,
+                },
+                {
+                    "symbol": "DJI",
+                    "price": 35000,
+                    "change": 0.15,
+                    "percentChange": 0.45,
+                },
+            ]
+        )
+
+
+# ============================================================
+# 💹 Symbol-Level Data
+# ============================================================
+
+
+def get_symbol_data(symbol: str):
+    """
+    Fetch time-series price data for a specific symbol.
+    Returns a DataFrame ready for chart rendering.
+    """
+    guardian.log(f"[Fetch] 📊 Fetching data for symbol: {symbol}")
+
+    try:
+        data = api_get(
+            f"markets/symbols/{symbol}/history", cache_key=f"symbol_{symbol}", ttl=60
+        )
+        candles = data.get("candles") or []
+
+        if not candles:
+            raise ValueError(f"No candles returned for {symbol}")
+
+        df = pd.DataFrame(candles)
+        if "date" not in df.columns:
+            df["date"] = pd.to_datetime(df["timestamp"], unit="s")
+
+        df = df.rename(
+            columns={"o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"}
+        )
+
+        df = df[["date", "open", "high", "low", "close", "volume"]]
+        guardian.log(f"[Fetch] ✅ Symbol {symbol} data loaded successfully.")
+        return df
+    except Exception as e:
+        guardian.log(f"[Fetch] ⚠️ Symbol fetch failed for {symbol}: {e}")
+        return pd.DataFrame()
+
+
+# ============================================================
+# 🪙 Crypto Overview
+# ============================================================
+
+
+def get_crypto_overview():
+    """
+    Fetch top crypto market stats from Astra's API.
+    """
+    guardian.log("[Fetch] 🪙 Loading crypto overview...")
+    try:
+        data = api_get("crypto/overview", cache_key="crypto_overview", ttl=120)
+        df = pd.DataFrame(data.get("assets", []))
+        guardian.log(f"[Fetch] ✅ Loaded {len(df)} crypto assets.")
+        return df
+    except Exception as e:
+        guardian.log(f"[Fetch] ⚠️ Failed to load crypto overview: {e}")
+        return pd.DataFrame(
+            [
+                {"symbol": "BTC/USD", "price": 42000, "change": 0.15},
+                {"symbol": "ETH/USD", "price": 2300, "change": -0.05},
+                {"symbol": "XRP/USD", "price": 0.52, "change": 0.08},
+            ]
+        )
+
+
+# ============================================================
+# 🧠 Unified Data Loader (used by dashboard)
+# ============================================================
+
+
+def load_dashboard_data(symbol="SPX"):
+    """
+    Unified dashboard data entry point.
+    Fetches symbol data for charts + metrics for summary cards.
+    """
+    df = get_symbol_data(symbol)
+    if df.empty:
+        guardian.log(f"[Fetch] ⚠️ Dashboard data unavailable for {symbol}")
+    return df
+
+
+# ============================================================
+# 🚀 Test Run
+# ============================================================
+
+if __name__ == "__main__":
+    guardian.log("🧩 Running fetch_unified standalone test...")
+    print(get_market_overview())
+    print(get_symbol_data("SPX").head())
+    print(get_crypto_overview())
