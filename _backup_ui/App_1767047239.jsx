@@ -1,3 +1,8 @@
+// 🚫 FROZEN DASHBOARD SECTION — DO NOT MODIFY
+// This version is confirmed working with correct cards, layout, and chart.
+// Any dashboard changes must first be tested in a duplicate file (App.dev.jsx).
+
+
 import React, { useState, useEffect } from "react";
 import "./App.css";
 import Dashboard from "./dashboard/pages/Dashboard";

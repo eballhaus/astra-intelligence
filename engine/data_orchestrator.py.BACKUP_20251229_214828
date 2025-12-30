@@ -1,4 +1,5 @@
 # >>> ASTRA INTELLIGENCE — LIVE DATA ORCHESTRATOR (ACTIVE VERSION) <<<
+from astra_dashboard.core.guardian.guardian_v7 import GuardianV7
 from engine.ranking_engine import RankingEngine
 from agents.personas.momentum_agent import MomentumAgent
 from agents.personas.technical_agent import TechnicalAgent
@@ -6,26 +7,10 @@ from agents.personas.volume_agent import VolumeAgent
 from agents.personas.risk_agent import RiskAgent
 from agents.personas.psychology_agent import PsychologyAgent
 
-
-# =====================================================================
-# CANONICAL LIVE FETCH LOGIC
-# =====================================================================
-
-GuardianV7 = None
-
-
-def get_guardian():
-    global GuardianV7
-    if GuardianV7 is None:
-        from astra_dashboard.core.guardian.guardian_v7 import GuardianV7 as _G
-        GuardianV7 = _G
-    return GuardianV7
-
-
-def fetch_live_data(symbols=["AAPL", "TSLA", "AMZN", "MSFT", "GOOG", "NVDA"]):
+def fetch_live_data(symbols=["AAPL","TSLA","AMZN","MSFT","GOOG","NVDA"]):
     """Collect live Astra data with true agent intelligence for prediction and summary."""
     try:
-        guardian = get_guardian()()
+        guardian = GuardianV7()
         raw_data = guardian.fetch_live_data(symbols=symbols)
     except Exception as e:
         print(f"[Guardian Warning] fallback mode: {e}")
@@ -43,7 +28,6 @@ def fetch_live_data(symbols=["AAPL", "TSLA", "AMZN", "MSFT", "GOOG", "NVDA"]):
     ranking = RankingEngine()
 
     enriched = []
-
     for item in raw_data:
         sym = item["symbol"]
         price = item.get("price", 0)
@@ -81,8 +65,7 @@ def fetch_live_data(symbols=["AAPL", "TSLA", "AMZN", "MSFT", "GOOG", "NVDA"]):
             "grade_percent": grade_percent,
             "confidence": confidence,
             "summary": summary,
-            "timestamp": item.get("timestamp"),
+            "timestamp": item.get("timestamp")
         })
 
     return enriched
-# >>> END OF FILE — ASTRA LIVE DATA ORCHESTRATOR <<<

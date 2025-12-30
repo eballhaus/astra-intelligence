@@ -18,7 +18,7 @@ useEffect(() => {
   let isMounted = true;
   async function fetchLiveData() {
     try {
-      const res = await fetch("http://127.0.0.1:8025/dashboard/live");
+      const res = await fetch("http://127.0.0.1:8025/live");
       const json = await res.json();
       if (json?.success && isMounted) {
         setLiveData(json.data);
@@ -35,7 +35,7 @@ useEffect(() => {
   useEffect(() => {
     async function fetchData() {
       try {
-        const res = await fetch(`http://127.0.0.1:8025/dashboard/live`);
+        const res = await fetch(`${API_BASE_URL}/live`);
         if (!res.ok) throw new Error("Network error");
         const json = await res.json();
         setLiveData(json.data || json);

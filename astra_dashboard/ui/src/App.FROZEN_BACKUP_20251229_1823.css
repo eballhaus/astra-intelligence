@@ -1,0 +1,234 @@
+body {
+  background-color: #0a1a5c; /* Royal Blue background */
+  color: #fff;
+  font-family: "Inter", sans-serif;
+  margin: 0;
+  padding: 0;
+}
+
+/* Container */
+.dashboard-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 100vh;
+  padding: 1rem 2rem;
+  box-sizing: border-box;
+}
+
+/* Header */
+.dashboard-header h1 {
+  text-align: center;
+  margin: 1rem 0 2rem 0;
+  color: #ffffff;
+  font-size: 2rem;
+  letter-spacing: 0.05em;
+}
+
+/* Market overview strip */
+.market-overview {
+  display: flex;
+  justify-content: space-around;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 1rem;
+  margin-bottom: 2rem;
+  backdrop-filter: blur(4px);
+}
+
+.market-overview div h2 {
+  margin: 0;
+  font-size: 1rem;
+  color: #cbd3ff;
+}
+
+.market-overview div p {
+  margin: 0.3rem 0 0 0;
+  font-weight: bold;
+  color: #ffffff;
+}
+
+/* Tabs */
+.tab-bar {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.tab-bar button {
+  padding: 0.5rem 1.5rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  background: #fff;
+  color: #0a1a5c;
+  font-weight: bold;
+  transition: all 0.2s ease-in-out;
+}
+
+.tab-bar button.active,
+.tab-bar button:hover {
+  background: #ffd700;
+  color: #0a1a5c;
+}
+
+/* Grid layout */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 2fr;
+  gap: 2rem;
+  width: 100%;
+  flex-grow: 1;
+}
+
+/* Cards */
+.asset-card {
+  background: #ffffff;
+  color: #0a1a5c;
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.asset-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.asset-card h3 {
+  margin: 0;
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.asset-card .type {
+  color: #555;
+  font-size: 0.9rem;
+}
+
+.asset-card .confidence {
+  font-size: 1rem;
+  color: #333;
+}
+
+.asset-card .price {
+  font-size: 1.6rem;
+  font-weight: bold;
+  color: #0a1a5c;
+}
+
+.asset-card .change.up {
+  color: #00c853;
+  font-weight: 600;
+}
+
+.asset-card .change.down {
+  color: #e53935;
+  font-weight: 600;
+}
+
+.asset-card .prediction {
+  color: #0a1a5c;
+  font-weight: bold;
+  margin-top: 0.5rem;
+}
+
+.asset-card .grade {
+  color: #111;
+  font-weight: bold;
+}
+
+.asset-card .reason {
+  font-size: 0.85rem;
+  color: #333;
+  margin-top: 0.5rem;
+  line-height: 1.3;
+}
+
+/* Chart column */
+.chart-column {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 0.5rem;
+  height: 100%;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+.chart-column h2 {
+  color: #0a1a5c;
+  text-align: center;
+  margin-bottom: 0.5rem;
+}
+
+/* Learning Tab Styling */
+.learning-panel {
+  background: rgba(255, 255, 255, 0.9);
+  color: #0a1a5c;
+  padding: 2rem;
+  border-radius: 12px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+.learning-panel h2 {
+  text-align: center;
+  color: #0a1a5c;
+  font-size: 1.6rem;
+  margin-bottom: 1rem;
+}
+.learning-view { padding: 1rem; background: #1b1e22; color: #e0e0e0; border-radius: 12px; box-shadow: 0 0 12px rgba(0,255,200,0.15); }
+
+/* === Dashboard Visual Enhancements === */
+.dashboard-container {
+  background: #0e1117;
+  color: #e0e0e0;
+  padding: 1.5rem;
+  border-radius: 12px;
+}
+
+.dashboard-header h1 {
+  color: #00ffc8;
+  font-weight: 600;
+  text-shadow: 0 0 6px rgba(0, 255, 200, 0.6);
+}
+
+.market-overview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.asset-card {
+  flex: 1 1 calc(25% - 1rem);
+  background: linear-gradient(145deg, #1b1e22, #121417);
+  border: 1px solid rgba(0, 255, 200, 0.15);
+  border-radius: 16px;
+  padding: 1rem;
+  text-align: center;
+  box-shadow: 0 0 12px rgba(0, 255, 200, 0.1);
+  transition: transform 0.3s ease;
+}
+
+.asset-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 0 16px rgba(0, 255, 200, 0.2);
+}
+
+.asset-card .change.up {
+  color: #00ffc8;
+}
+
+.asset-card .change.down {
+  color: #ff4d4d;
+}
+
+.chart-column {
+  margin-top: 2rem;
+  background: #161a1e;
+  border-radius: 12px;
+  padding: 1rem;
+  box-shadow: 0 0 12px rgba(0, 255, 200, 0.08);
+}
