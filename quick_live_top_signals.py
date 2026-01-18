@@ -1,0 +1,221 @@
+from dotenv import load_dotenv; load_dotenv()
+"""
+ASTRA INTELLIGENCE — LIVE DATA AGENT ENDPOINT
+----------------------------------------------
+Connects RankingEngine with Polygon + TwelveData for real market scoring.
+"""
+
+from fastapi import FastAPI
+import uvicorn, requests, os, time
+import numpy as np
+from engine.ranking_engine import RankingEngine
+
+app = FastAPI()
+engine = RankingEngine()
+
+POLYGON = os.getenv("POLYGON_API_KEY", "")
+TWELVE = os.getenv("TWELVEDATA_API_KEY", "")
+TTL = 240
+
+# --------------------------- Helper Functions ---------------------------
+
+def fetch_polygon_price(symbol):
+    """Fetch latest close from Polygon."""
+    try:
+        url = f"https://api.polygon.io/v2/aggs/ticker/{symbol.upper()}/prev?apiKey={POLYGON}"
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        if "results" in data and len(data["results"]) > 0:
+            return data["results"][0]["c"]
+    except Exception:
+        return None
+
+def fetch_twelvedata_price(symbol):
+    """Fetch latest price and change from TwelveData."""
+    try:
+        url = f"https://api.twelvedata.com/price?symbol={symbol}&apikey={TWELVE}"
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        return float(data.get("price")) if "price" in data else None
+    except Exception:
+        return None
+
+def normalize_score(pct_change):
+    """Convert percent change into Astra grade score (approximation)."""
+    pct = np.clip(pct_change, -5, 5)
+    base = 70 + (pct * 4)
+    return float(np.clip(base, 50, 95))
+
+# --------------------------- Endpoint Logic ---------------------------
+
+@app.get("/api/top_signals")
+def top_signals():
+    """Phase 2.2 — Canonical Astra Endpoint
+    Returns top 6 stocks and 6 crypto signals from universe evaluation."""
+    try:
+        from astra_dashboard.universe.universe_builder import build_universe
+
+        # 1. Get universe
+        symbols = build_universe()
+        if not symbols or not isinstance(symbols, list):
+            return {"status": "error", "message": "Universe unavailable", "signals": {}}
+
+        # 2. Evaluate each symbol
+        evaluated = []
+        crypto_symbols = {"BTC", "ETH", "SOL", "BNB", "XRP", "ADA"}
+
+        for sym in symbols:
+            try:
+                res = engine.evaluate_symbol(sym)
+                if not isinstance(res, dict):
+                    continue
+
+                # Ensure symbol field
+                res["symbol"] = sym
+
+                # Ensure asset_type (fallback if missing)
+                if "asset_type" not in res:
+                    res["asset_type"] = "crypto" if sym.upper() in crypto_symbols else "stock"
+
+                evaluated.append(res)
+
+            except Exception as e:
+                if sym in ["BTC", "AAPL", "NVDA", "ETH"]:
+                    print(f"⚠️ Evaluation failed for {sym}: {e}")
+                continue
+
+        if not evaluated:
+            return {"status": "error", "message": "No evaluation results", "signals": {}}
+
+        # 3. Separate and sort
+        stocks = [r for r in evaluated if r.get("asset_type") == "stock"]
+        cryptos = [r for r in evaluated if r.get("asset_type") == "crypto"]
+
+        # Sort by confidence
+        stocks = sorted(stocks, key=lambda x: x.get("confidence", 0), reverse=True)
+        cryptos = sorted(cryptos, key=lambda x: x.get("confidence", 0), reverse=True)
+
+        # 4. Take top 6 of each (or fewer if not enough)
+        top_stocks = stocks[:6]
+        top_cryptos = cryptos[:6]
+
+        # 5. Validate required fields
+        required_fields = [
+            "symbol", "asset_type", "price", "prediction_price",
+            "prediction_pct", "stop_price", "stop_pct",
+            "confidence", "grade", "summary"
+        ]
+
+        signals = {}
+        valid_count = 0
+
+        for asset in top_stocks + top_cryptos:
+            missing = [f for f in required_fields if f not in asset]
+            if missing:
+                print(f"⚠️ Skipping {asset.get('symbol')}: missing fields {missing}")
+                continue
+
+            signals[asset["symbol"]] = {k: asset[k] for k in required_fields}
+            valid_count += 1
+
+        total_requested = len(top_stocks) + len(top_cryptos)
+        if valid_count == 0:
+            return {"status": "error", "message": "No valid signals after validation", "signals": {}}
+        elif valid_count < total_requested:
+            print(f"⚠️ Partial results: {valid_count}/{total_requested} signals validated")
+
+        return {
+            "status": "ok",
+            "message": f"Astra live intelligence ({len(signals)} signals)",
+            "signals": signals
+        }
+
+    except Exception as e:
+        print(f"❌ top_signals error: {e}")
+        return {
+            "status": "error", 
+            "message": f"Endpoint error: {e}",
+            "signals": {}
+        }
+
+
+    """Phase 2.2 — Canonical Astra Endpoint
+    Uses live ranked output from RankingEngine.
+    Returns exactly 6 stock and 6 crypto signals."""
+    try:
+        ranked = engine.get_ranked_signals()  # existing Astra ranking output
+
+        if not ranked or not isinstance(ranked, list):
+            return {"status": "error", "message": "No ranked output available"}
+
+        stocks = [r for r in ranked if r.get("asset_type") == "stock"]
+        cryptos = [r for r in ranked if r.get("asset_type") == "crypto"]
+
+        stocks = sorted(stocks, key=lambda x: x.get("confidence", 0), reverse=True)[:6]
+        cryptos = sorted(cryptos, key=lambda x: x.get("confidence", 0), reverse=True)[:6]
+
+        if len(stocks) < 6 or len(cryptos) < 6:
+            return {
+                "status": "error",
+                "message": "Insufficient ranked assets available for display"
+            }
+
+        signals = {}
+        for asset in (stocks + cryptos):
+            required = [
+                "symbol", "asset_type", "price", "prediction_price",
+                "prediction_pct", "stop_price", "stop_pct",
+                "confidence", "grade", "summary"
+            ]
+            if not all(k in asset for k in required):
+                continue
+            signals[asset["symbol"]] = {k: asset[k] for k in required}
+
+        return {
+            "status": "ok",
+            "message": "Astra live intelligence mode active",
+            "signals": signals
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+    symbols = ["AAPL", "TSLA", "NVDA", "BTCUSD", "ETHUSD", "SPY"]
+    results = {}
+
+    for sym in symbols:
+        price = fetch_twelvedata_price(sym) or fetch_polygon_price(sym)
+        if not price:
+            continue
+
+        # Simulate short-term change via small random component for now
+        pct_change = np.random.uniform(-3, 3)
+        score = normalize_score(pct_change)
+
+        for grade, threshold in sorted(engine.grade_thresholds.items(), key=lambda x: -x[1]):
+            if score >= threshold:
+                grade_letter = grade
+                break
+
+        signal = "BUY" if score >= 70 else "HOLD" if score >= 55 else "SELL"
+
+        results[sym] = {
+            "symbol": sym,
+            "price": round(price, 2),
+            "change_pct": round(pct_change, 2),
+            "score": round(score, 2),
+            "grade": grade_letter,
+            "signal": signal,
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+
+    return {
+        "status": "ok",
+        "message": "Astra live data agent active",
+        "signals": results
+    }
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)

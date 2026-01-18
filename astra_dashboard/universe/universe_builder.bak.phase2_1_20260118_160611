@@ -72,7 +72,7 @@ def build_universe(source: str = None):
 
     _write_log("Building universe...")
 
-    default_universe = ["AAPL", "MSFT", "GOOG", "NVDA", "AMZN", "BTC", "ETH", "SOL", "BNB", "XRP", "ADA"]  # Phase 2.1: Added crypto
+    default_universe = ["AAPL", "MSFT", "GOOG", "NVDA", "AMZN"]
     # Phase 2.1: Add crypto symbols to universe
     crypto_universe = ["BTC", "ETH", "SOL", "BNB", "XRP", "ADA"]
     default_universe = default_universe + crypto_universe  # Combine stocks + crypto

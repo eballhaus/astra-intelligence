@@ -1,0 +1,80 @@
+import React, { useEffect, useState } from "react";
+
+export default function Dashboard() {
+  const [liveData, setLiveData] = useState(null);
+  const [error, setError] = useState(null);
+
+  async function fetchData() {
+    try {
+      const response = await fetch("http://127.0.0.1:5000/api/top_signals");
+      if (!response.ok) {
+        throw new Error(`HTTP error! Status: ${response.status}`);
+      }
+      const data = await response.json();
+      setLiveData(data);
+      setError(null);
+    } catch (err) {
+      console.error("Fetch error:", err);
+      setError("Unable to load live data.");
+    }
+  }
+
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(fetchData, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const signalList = Object.values(liveData?.signals || {});
+
+  return (
+    <div className="dashboard-container">
+      <div className="market-overview">
+        <h1 className="dashboard-title">Astra Intelligence — Live Signals</h1>
+        {error && <div className="error-message">{error}</div>}
+      </div>
+
+      <div className="dashboard-content">
+        <div className="dashboard-grid">
+          <div className="stock-column">
+            <h2>Top Stocks</h2>
+            <div className="card-grid">
+              {signalList.length > 0 ? (
+                signalList.slice(0, 6).map((item) => (
+                  <div key={item.symbol} className="card stock-card">
+                    <div className="symbol">{item.symbol}</div>
+                    <div className="price">${item.price.toFixed(2)}</div>
+                    <div className="change">
+                      {item.change_pct > 0 ? "+" : ""}
+                      {item.change_pct.toFixed(2)}%
+                    </div>
+                    <div className="grade">{item.grade}</div>
+                    <div className={`signal ${item.signal.toLowerCase()}`}>
+                      {item.signal}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="placeholder">Loading live signals…</div>
+              )}
+            </div>
+          </div>
+
+          <div className="crypto-column">
+            <h2>Crypto (Placeholder)</h2>
+            <div className="card-grid">
+              <div className="placeholder">Coming soon…</div>
+            </div>
+          </div>
+
+          <div className="chart-column">
+            <h2>Market Overview</h2>
+            <div className="chart-placeholder">
+              <div className="placeholder">Chart placeholder</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

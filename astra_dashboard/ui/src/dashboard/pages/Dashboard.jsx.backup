@@ -1,0 +1,117 @@
+import React, { useEffect, useState } from "react";
+import { API_BASE_URL } from "../../config";
+import {
+  CartesianGrid,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+} from "recharts";
+
+export default function Dashboard() {
+  const [liveData, setLiveData] = useState(null);
+  const [error, setError] = useState(null);
+
+useEffect(() => {
+  let isMounted = true;
+  async function fetchLiveData() {
+    try {
+      const res = await fetch("http://127.0.0.1:8025/dashboard/live");
+      const json = await res.json();
+      if (json?.success && isMounted) {
+        setLiveData(json.data);
+        console.log("Astra Live Data", json);
+      }
+    } catch (err) {
+      console.warn("Astra Live Fetch Error:", err);
+    }
+  }
+  fetchLiveData();
+  const interval = setInterval(fetchLiveData, 15000);
+  return () => { isMounted = false; clearInterval(interval); };
+}, []);
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const res = await fetch(`http://127.0.0.1:8025/dashboard/live`);
+        if (!res.ok) throw new Error("Network error");
+        const json = await res.json();
+        setLiveData(json.data || json);
+        console.log("✅ Live dashboard data:", json);
+      } catch (err) {
+        console.warn("⚠️ Live API failed, using fallback data.");
+        setError("Live data unavailable — showing simulated dataset.");
+        setLiveData([
+          { symbol: "AAPL", price: 189.2, change: +1.1, confidence: 91 },
+          { symbol: "TSLA", price: 238.4, change: -0.6, confidence: 88 },
+          { symbol: "NVDA", price: 478.9, change: +2.3, confidence: 94 },
+          { symbol: "BTC", price: 43210, change: +0.9, confidence: 86 },
+          { symbol: "ETH", price: 2220, change: +1.3, confidence: 89 },
+        ]);
+      }
+    }
+    fetchData();
+  }, []);
+
+  if (!liveData) {
+    return (
+      <div className="dashboard-container">
+        <h2>Dashboard</h2>
+        <p>Loading live data...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="dashboard-container">
+      <header className="dashboard-header">
+        <h1>Astra Intelligence</h1>
+        <p style={{ color: "#00ffc8" }}>
+          {error ? error : "Connected to live backend"}
+        </p>
+      </header>
+
+      <section className="market-overview">
+        {liveData.map((item, index) => (
+          <div key={index} className="asset-card">
+            <h3>{item.symbol}</h3>
+            <p className="price">${item.price}</p>
+            <p className={item.change >= 0 ? "change up" : "change down"}>
+              {item.change >= 0 ? "+" : ""}
+              {item.change}%
+            </p>
+            <p className="confidence">Confidence: {item.confidence}%</p>
+            <p className="prediction">
+              Prediction:{" "}
+              {item.change >= 0 ? (
+                <span style={{ color: "#00ffc8" }}>BUY</span>
+              ) : (
+                <span style={{ color: "#ff4d4d" }}>SELL</span>
+              )}
+            </p>
+          </div>
+        ))}
+      </section>
+
+      <div className="chart-column">
+        <h3>Market Trend Overview</h3>
+        <LineChart width={700} height={300} data={liveData}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+          <XAxis dataKey="symbol" stroke="#aaa" />
+          <YAxis stroke="#aaa" />
+          <Tooltip />
+          <Legend />
+          <Line
+            type="monotone"
+            dataKey="price"
+            stroke="#00ffc8"
+            strokeWidth={2}
+            dot={{ r: 5, fill: "#00ffc8" }}
+          />
+        </LineChart>
+      </div>
+    </div>
+  );
+}

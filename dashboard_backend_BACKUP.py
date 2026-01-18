@@ -1,6 +1,5 @@
 import sys, os, importlib
 from flask import Flask, jsonify, request
-from flask_cors import CORS
 
 # --- Allow imports from project root ---
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -19,26 +18,21 @@ from core.guardian.guardian_v7 import GuardianV7
 from chart_core.chart_utils import get_chart_data
 
 app = Flask(__name__)
-CORS(app)
 
 guardian = GuardianV7()
-# scanner = SmartScan()  # temporarily disabled to prevent NameError
+scanner = SmartScan()
 
 @app.route("/api/market_overview")
-
-@app.route("/api/top_signals")
-def top_signals():
-    from flask import jsonify
+def market_overview():
     try:
-        sample = {
-            'AAPL': {'symbol':'AAPL','price':259.37,'grade':'B+','signal':'BUY'},
-            'TSLA': {'symbol':'TSLA','price':445.01,'grade':'B+','signal':'BUY'},
-            'NVDA': {'symbol':'NVDA','price':184.86,'grade':'A','signal':'BUY'},
-            'SPY': {'symbol':'SPY','price':694.07,'grade':'B','signal':'HOLD'}
-        }
-        return jsonify({'status':'ok','message':'Astra live data agent active','signals':sample})
+        data = guardian.get_market_overview()
+        overview = [
+            {"name": k, "value": v.get("price"), "change": v.get("change_percent", 0)}
+            for k, v in data.items()
+        ]
+        return jsonify(overview)
     except Exception as e:
-        return jsonify({'error':str(e)}),500
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/recommendations")
 def recommendations():

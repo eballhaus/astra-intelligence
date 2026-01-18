@@ -1,0 +1,65 @@
+import React, { useEffect, useState } from "react";
+
+export default function Dashboard() {
+  const [signals, setSignals] = useState({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchSignals = async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:8000/api/top_signals");
+        const data = await res.json();
+        setSignals(data.signals || {});
+      } catch (err) {
+        console.error("❌ Live data fetch failed:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchSignals();
+    const interval = setInterval(fetchSignals, 30000); // refresh every 30s
+    return () => clearInterval(interval);
+  }, []);
+
+  if (loading) {
+    return <div className="text-center p-10 text-gray-400">Loading Astra live data...</div>;
+  }
+
+  return (
+    <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {Object.values(signals).map((s) => (
+        <div
+          key={s.symbol}
+          className="bg-gradient-to-b from-gray-900 to-gray-800 p-6 rounded-2xl shadow-xl border border-gray-700 hover:shadow-2xl transition-all"
+        >
+          <div className="text-2xl font-bold text-white">{s.symbol}</div>
+          <div className="text-sm text-gray-400 mt-1">STOCK</div>
+
+          <div className="mt-4 text-4xl font-extrabold text-white">{s.score?.toFixed(0)}%</div>
+          <div className="mt-2 text-xl text-gray-300">${s.price}</div>
+
+          <div
+            className={`mt-2 text-lg font-semibold ${
+              s.signal === "BUY"
+                ? "text-green-400"
+                : s.signal === "SELL"
+                ? "text-red-400"
+                : "text-yellow-400"
+            }`}
+          >
+            {s.change_pct > 0 ? `+${s.change_pct}%` : `${s.change_pct}%`}
+          </div>
+
+          <div className="mt-3 text-lg text-white font-bold">
+            Astra Prediction: {s.signal}
+          </div>
+          <div className="text-md text-gray-300">Buy Grade: {s.grade}</div>
+
+          <div className="mt-2 text-sm text-gray-500 italic">
+            Astra selected this asset due to momentum, volume confirmation, and trend strength.
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}

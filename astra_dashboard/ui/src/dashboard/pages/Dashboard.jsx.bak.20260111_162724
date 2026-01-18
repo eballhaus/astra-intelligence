@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from "react";
-import MarketSummary from "../components/MarketSummary";
 
 export default function Dashboard() {
   const [liveData, setLiveData] = useState(null);
@@ -59,13 +58,7 @@ export default function Dashboard() {
   return (
     <div className="dashboard-container">
       <div className="market-overview">
-        <h1 className="dashboard-title" style={{ textAlign: "center", fontSize: "2.4rem", fontWeight: "700", marginBottom: "0.5rem" }}>Astra</h1>
-        <MarketSummary />
-        <div className='tab-bar' style={{ marginTop: '1rem', display: 'flex', justifyContent: 'center', gap: '2.5rem', fontWeight: '600', fontSize: '1.1rem' }}>
-          <div>Dashboard</div>
-          <div>Learning</div>
-        </div>
-        <MarketSummary />
+        <h1 className="dashboard-title">Astra Intelligence — Live Signals</h1>
         {error && <div className="error-message">{error}</div>}
       </div>
 
