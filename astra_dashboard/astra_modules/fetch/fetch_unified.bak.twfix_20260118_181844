@@ -1,5 +1,4 @@
 import json
-TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
 import os
 import time
 
@@ -8,9 +7,6 @@ import requests
 
 import astra_modules.guardian.guardian_v7 as guardian
 from astra_modules.guardian.guardian_v7 import guardian_log
-TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
-TWELVE_DATA_API_KEY = TWELVEDATA_API_KEY  # alias for legacy references
-
 
 g = guardian.Guardian()
 

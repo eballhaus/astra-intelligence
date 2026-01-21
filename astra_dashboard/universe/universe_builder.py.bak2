@@ -14,7 +14,7 @@ Integrated with guardian_v7 for self-healing and logging.
 import os
 import pandas as pd
 import json
-from astra_dashboard.astra_modules.core.cache_manager import CacheManager
+from astra_modules.core.cache_manager import CacheManager
 
 # Import guardian safely
 try:
@@ -113,7 +113,7 @@ if __name__ == "__main__":
 # ============================================================
 
 import time
-from astra_dashboard.astra_modules.core.trade_mode import get_trade_mode
+from astra_modules.core.trade_mode import get_trade_mode
 
 CACHE_PATH = os.path.join(os.path.dirname(__file__), "universe_cache.json")
 

@@ -1,13 +1,8 @@
-import os
-TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
 import pandas as pd
 
 import astra_modules.utils.safe_df as safe_df
 from astra_modules.guardian.guardian_v7 import Guardian
 from astra_modules.utils.safe_api_wrapper import safe_api_call
-TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
-TWELVE_DATA_API_KEY = TWELVEDATA_API_KEY  # alias for legacy references
-
 
 g = Guardian()
 

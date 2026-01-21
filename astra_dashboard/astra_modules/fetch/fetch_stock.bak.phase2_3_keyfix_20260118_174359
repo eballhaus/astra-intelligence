@@ -1,17 +1,10 @@
-import os
-from astra_dashboard.astra_modules.utils.safe_df import safe_df
 import pandas as pd
 
-from astra_dashboard.astra_modules.fetch.api_router import get_best
-from astra_dashboard.astra_modules.guardian.guardian_v7 import Guardian
-from astra_dashboard.astra_modules.utils.safe_api_wrapper import safe_api_call
+import astra_modules.utils.safe_df as safe_df
+from astra_modules.fetch.api_router import get_best
+from astra_modules.guardian.guardian_v7 import Guardian
+from astra_modules.utils.safe_api_wrapper import safe_api_call
 from core import cache_manager
-TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
-# Phase 2.4 override — restrict to TwelveData only
-ALLOWED_STOCK_PROVIDERS = ["TwelveData"]
-
-TWELVE_DATA_API_KEY = TWELVEDATA_API_KEY  # alias for legacy references
-
 
 g = Guardian()
 
@@ -29,15 +22,14 @@ Priority:
 # Alpha Vantage
 # ---------------------------------------------------------
 def fetch_alpha(symbol):
-    url = None  # PHASE 2.3 SAFETY GUARD: always define url
-    url = None  # SAFETY GUARD: always define url before use
     url = (
-        f"https://api.twelvedata.com/time_series?"
-        f"symbol={symbol}&interval=1day&outputsize=5000&apikey={TWELVEDATA_API_KEY}"
+        f"https://www.alphavantage.co/query?"
+        f"function=TIME_SERIES_DAILY_ADJUSTED&symbol={symbol}"
+        f"&apikey={ALPHAVANTAGE_API_KEY}"
     )
 
-    data = safe_api_call(url) if url is not None else None
-    if data is None or not isinstance(data, dict) or "Time Series (Daily)" not in data:
+    data = safe_api_call(url)
+    if not data or "Time Series (Daily)" not in data:
         return None
 
     df = pd.DataFrame.from_dict(data["Time Series (Daily)"], orient="index")
@@ -53,6 +45,7 @@ def fetch_alpha(symbol):
             "6. volume": "volume",
         }
     )
+
     return safe_df(df)
 
 
@@ -60,10 +53,9 @@ def fetch_alpha(symbol):
 # Financial Modeling Prep
 # ---------------------------------------------------------
 def fetch_fmp(symbol):
-    url = None  # PHASE 2.3 SAFETY GUARD: always define url
 
-    data = safe_api_call(url) if url is not None else None
-    if data is None or not isinstance(data, dict) or "historical" not in data:
+    data = safe_api_call(url)
+    if not data or "historical" not in data:
         return None
 
     df = pd.DataFrame(data["historical"])
@@ -77,14 +69,13 @@ def fetch_fmp(symbol):
 # TwelveData
 # ---------------------------------------------------------
 def fetch_twelve(symbol):
-    url = None  # PHASE 2.3 SAFETY GUARD: always define url
     url = (
         f"https://api.twelvedata.com/time_series?"
-        f"symbol={symbol}&interval=1day&outputsize=5000&apikey={TWELVEDATA_API_KEY}"
+        f"symbol={symbol}&interval=1day&outputsize=5000&apikey={TWELVE_DATA_API_KEY}"
     )
 
-    data = safe_api_call(url) if url is not None else None
-    if data is None or not isinstance(data, dict) or "values" not in data:
+    data = safe_api_call(url)
+    if not data or "values" not in data:
         return None
 
     df = pd.DataFrame(data["values"])
@@ -98,20 +89,22 @@ def fetch_twelve(symbol):
 # Unified Stock Fetch
 # ---------------------------------------------------------
 def fetch_stock(symbol, interval="1h"):
-    url = None  # PHASE 2.3 SAFETY GUARD: always define url
-    url = None  # SAFETY GUARD: always define url before use
-    api_choice = get_best(api_subset=ALLOWED_STOCK_PROVIDERS) 
+    api_choice = get_best(
+        [
+            "ALPHAVANTAGE",
+            "TWELVEDATA",
+            "FINNHUB",
+            "EODHD",
+            "POLYGON",
+            "DATAJOCKEY",
+            "SIMFIN",
+        ]
+    )
     print(f"[API ROUTER] Using {api_choice} for stock fetch")
-    df = fetch_twelve(symbol)
-    if df is not None and not df.empty:
-        cache_manager.set(symbol, df)
-        return df
+    for provider in [fetch_alpha, fetch_fmp, fetch_twelve]:
         df = provider(symbol)
         if df is not None and not df.empty:
             cache_manager.set(symbol, df)
             return df
 
     return pd.DataFrame()
-    if not os.getenv("ALPHAVANTAGE_API_KEY"):
-        print("⚠️ Missing ALPHAVANTAGE_API_KEY — skipping fetch.")
-        return pd.DataFrame()

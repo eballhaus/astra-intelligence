@@ -1,5 +1,4 @@
 import json
-TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
 import os
 import time
 
@@ -8,9 +7,6 @@ import requests
 
 import astra_modules.guardian.guardian_v7 as guardian
 from astra_modules.guardian.guardian_v7 import guardian_log
-TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
-TWELVE_DATA_API_KEY = TWELVEDATA_API_KEY  # alias for legacy references
-
 
 g = guardian.Guardian()
 
@@ -55,7 +51,7 @@ def api_get(endpoint: str, params: dict = None, cache_key: str = None, ttl: int 
     Generic GET wrapper with optional caching.
     Returns JSON or raises descriptive error.
     """
-    if cache_key is not None and not (hasattr(cache_key, 'empty') and cache_key.empty):
+    if cache_key:
         cache_file = os.path.join(CACHE_DIR, f"{cache_key}.json")
         if os.path.exists(cache_file):
             age = time.time() - os.path.getmtime(cache_file)
@@ -73,7 +69,7 @@ def api_get(endpoint: str, params: dict = None, cache_key: str = None, ttl: int 
         resp.raise_for_status()
         data = resp.json()
 
-        if cache_key is not None and not (hasattr(cache_key, 'empty') and cache_key.empty):
+        if cache_key:
             with open(cache_file, "w") as f:
                 json.dump(data, f)
         guardian.log(f"[Fetch] ✅ GET {endpoint} succeeded")
@@ -102,7 +98,7 @@ def get_market_overview(symbols=None):
             cache_key="market_overview",
             ttl=120,
         )
-        if data is None or (data is not None and hasattr(data, 'empty') and data.empty):
+        if not data:
             raise ValueError("Empty response from Astra API")
 
         df = pd.DataFrame(data.get("markets", []))
@@ -150,7 +146,7 @@ def get_symbol_data(symbol: str):
         )
         candles = data.get("candles") or []
 
-        if candles is None or (candles is not None and hasattr(candles, 'empty') and candles.empty):
+        if not candles:
             raise ValueError(f"No candles returned for {symbol}")
 
         df = pd.DataFrame(candles)

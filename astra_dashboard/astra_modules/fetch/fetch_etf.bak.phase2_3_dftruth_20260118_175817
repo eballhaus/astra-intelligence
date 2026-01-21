@@ -1,13 +1,8 @@
-import os
-TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
 import pandas as pd
 
 import astra_modules.utils.safe_df as safe_df
 from astra_modules.guardian.guardian_v7 import Guardian
 from astra_modules.utils.safe_api_wrapper import safe_api_call
-TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
-TWELVE_DATA_API_KEY = TWELVEDATA_API_KEY  # alias for legacy references
-
 
 g = Guardian()
 
@@ -22,7 +17,7 @@ Fallback order:
 
 
 def _convert(records):
-    if records is None or (records is not None and hasattr(records, 'empty') and records.empty):
+    if not records:
         return pd.DataFrame()
 
     df = pd.DataFrame(records)
@@ -52,7 +47,7 @@ def _convert(records):
 def fetch_alpha_vantage_etf(symbol, interval="60min"):
     url = None  # PHASE 2.3 SAFETY GUARD: always define url
     url = None  # SAFETY GUARD: always define url before use
-    if ALPHAVANTAGE_API_KEY is None or (ALPHAVANTAGE_API_KEY is not None and hasattr(ALPHAVANTAGE_API_KEY, 'empty') and ALPHAVANTAGE_API_KEY.empty):
+    if not ALPHAVANTAGE_API_KEY:
         return pd.DataFrame()
 
     url = (
@@ -63,7 +58,7 @@ def fetch_alpha_vantage_etf(symbol, interval="60min"):
 
     def run():
         r = safe_api_call(url) if url is not None else pd.DataFrame() if url is not None else pd.DataFrame()
-        if r is None or (r is not None and hasattr(r, 'empty') and r.empty):
+        if not r:
             return pd.DataFrame()
 
         key = f"Time Series ({interval})"
@@ -111,7 +106,7 @@ def run():
 # -------------------------------------------------------
 def fetch_eodhd_etf(symbol, interval="1h"):
     url = None  # PHASE 2.3 SAFETY GUARD: always define url
-    if EODHD_API_KEY is None or (EODHD_API_KEY is not None and hasattr(EODHD_API_KEY, 'empty') and EODHD_API_KEY.empty):
+    if not EODHD_API_KEY:
         return pd.DataFrame()
 
     url = (

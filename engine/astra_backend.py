@@ -48,83 +48,79 @@ def health_check():
 
 @app.get("/signals")
 def get_signals():
-    """Return Astra's top-performing stock and crypto signals."""
-    sample = {
-        "stocks": [
-            {"symbol": "NVDA", "type": "stock", "grade": "A+", "confidence": 97.4, "signal": "Strong Buy", "price": 514.78, "change": 0.32},
-            {"symbol": "AAPL", "type": "stock", "grade": "A", "confidence": 94.2, "signal": "Buy", "price": 199.24, "change": 0.18},
-            {"symbol": "TSLA", "type": "stock", "grade": "A", "confidence": 91.6, "signal": "Momentum", "price": 271.38, "change": 0.51},
-            {"symbol": "MSFT", "type": "stock", "grade": "B+", "confidence": 89.7, "signal": "Buy", "price": 370.14, "change": -0.09},
-            {"symbol": "AMZN", "type": "stock", "grade": "B+", "confidence": 87.3, "signal": "Hold", "price": 149.23, "change": -0.13},
-            {"symbol": "GOOGL", "type": "stock", "grade": "A", "confidence": 92.8, "signal": "Strong Buy", "price": 140.56, "change": 0.45},
-        ],
-        "cryptos": [
-            {"symbol": "BTC", "type": "crypto", "grade": "A+", "confidence": 95.1, "signal": "Long Momentum", "price": 51325.41, "change": 0.72},
-            {"symbol": "ETH", "type": "crypto", "grade": "A", "confidence": 93.3, "signal": "Buy", "price": 2471.65, "change": 0.39},
-            {"symbol": "SOL", "type": "crypto", "grade": "B+", "confidence": 89.1, "signal": "Strong Buy", "price": 78.31, "change": 1.23},
-            {"symbol": "ADA", "type": "crypto", "grade": "B", "confidence": 86.4, "signal": "Buy", "price": 0.62, "change": 0.17},
-            {"symbol": "XRP", "type": "crypto", "grade": "B", "confidence": 83.9, "signal": "Hold", "price": 0.54, "change": -0.08},
-            {"symbol": "AVAX", "type": "crypto", "grade": "A-", "confidence": 91.2, "signal": "Strong Buy", "price": 42.18, "change": 1.11},
-        ],
-    }
-    return sample
-
-
-@app.get("/chart")
-def get_chart():
-    """Return synthetic chart data for NVDA."""
-    now = datetime.now(timezone.utc)
-    candles = []
-    for i in range(50):
-        base = 100 + random.uniform(-5, 5)
-        candles.append(
-            {
-                "time": (now).isoformat(),
-                "open": base - 1,
-                "high": base + 1,
-                "low": base - 2,
-                "close": base,
-                "volume": random.randint(1000, 5000),
-            }
-        )
-    return candles
-
-@app.get("/health")
-def get_health():
-    """Basic system health check."""
-    return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
-
-
-@app.get("/signals")
-def get_signals():
+    sample_signals = {"BTC": "HOLD", "NVDA": "BUY", "TSLA": "SELL"}
     """Return synthetic signals for testing."""
     sample_signals = {
         "BTC": random.choice(["BUY", "SELL", "HOLD"]),
         "NVDA": random.choice(["BUY", "SELL", "HOLD"]),
         "TSLA": random.choice(["BUY", "SELL", "HOLD"]),
     }
+    try:
+        enhanced_signals = []
+        for sym, sig in sample_signals.items():
+            grade = 0.0 if sig == "HOLD" else (0.75 if sig == "BUY" else -0.75)
+            components = {"Momentum": grade, "Technical": grade, "Volume": grade}
+            enhanced_signals.append(generate_signal_v25(sym, grade, components))
+        sample_signals = enhanced_signals
+    except Exception as e:
+        print(f"[Phase2.5] Enhancement inside get_signals() skipped due to: {e}")
     return sample_signals
-
-
-@app.get("/chart")
-def get_chart():
-    """Return synthetic chart data for NVDA."""
-    now = datetime.now(timezone.utc)
-    candles = []
-    for i in range(50):
-        base = 100 + random.uniform(-5, 5)
-        candles.append(
-            {
-                "time": (now).isoformat(),
-                "open": base - 1,
-                "high": base + 1,
-                "low": base - 2,
-                "close": base,
-                "volume": random.randint(1000, 5000),
-            }
-        )
-    return candles
-
 @app.get("/ping")
 def ping():
     return {"msg": "pong"}
+
+# ============================================================
+# ============================================================
+from datetime import datetime
+
+def generate_signal_v25(symbol, grade, components):
+    """
+    Adds confidence tiers, tiered SELL logic, and explainability.
+    Purely logic-level; no backend or provider modifications.
+    """
+    # --- Base signal ---------------------------------------
+    if grade >= 0.60:
+        signal = "BUY"
+    elif grade <= -0.60:
+        signal = "SELL"
+    else:
+        signal = "HOLD"
+
+    # --- Confidence tiers -----------------------------------
+    scores = list(components.values())
+    spread = max(scores) - min(scores) if scores else 0
+    if spread < 0.15:
+        confidence = "High"
+    elif spread < 0.30:
+        confidence = "Medium"
+    else:
+        confidence = "Low"
+
+    # --- SELL tiering ---------------------------------------
+    sell_tier = None
+    if signal == "SELL":
+        if grade <= -0.6 and grade > -0.8:
+            sell_tier = "Profit Protection"
+        elif grade <= -0.8 and grade > -0.9:
+            sell_tier = "Exit Recommended"
+        elif grade <= -0.9:
+            sell_tier = "Strong Exit"
+
+    # --- Explainability -------------------------------------
+    top_factor = max(components, key=lambda k: abs(components[k])) if components else "N/A"
+    reason = f"{top_factor} influence strongest ({components.get(top_factor, 0):.2f})"
+    change_summary = "Condition shift detected"
+
+    return {
+        "symbol": symbol,
+        "signal": signal,
+        "confidence": confidence,
+        "sell_tier": sell_tier,
+        "reason": reason,
+        "change": change_summary,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+# ============================================================
+# ============================================================
+

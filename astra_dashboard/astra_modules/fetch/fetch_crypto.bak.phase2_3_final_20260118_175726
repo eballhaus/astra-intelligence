@@ -1,9 +1,9 @@
 import pandas as pd
 import requests
 
-import astra_dashboard.astra_modules.utils.safe_df as safe_df
+import astra_modules.utils.safe_df as safe_df
 from api_keys import MORALIS_API_KEY
-from astra_dashboard.astra_modules.guardian.guardian_v7 import Guardian
+from astra_modules.guardian.guardian_v7 import Guardian
 
 g = Guardian()
 
@@ -20,7 +20,7 @@ Notes:
 
 
 def _to_df_ohlcv(records):
-    if records is None or (records is not None and hasattr(records, 'empty') and records.empty):
+    if not records:
         return pd.DataFrame()
 
     df = pd.DataFrame(records)
@@ -53,14 +53,13 @@ def _to_df_ohlcv(records):
 # Moralis v2.2
 # -------------------------------------------------------
 def fetch_moralis(symbol, interval="1h"):
-    url = None  # PHASE 2.3 SAFETY GUARD: always define url
     url = None  # SAFETY GUARD: always define url before use
     """
     Fetch OHLCV data from Moralis v2.2
     Example:
         https://deep-index.moralis.io/api/v2.2/eth/market-data/ohlcv
     """
-    if MORALIS_API_KEY is None or (MORALIS_API_KEY is not None and hasattr(MORALIS_API_KEY, 'empty') and MORALIS_API_KEY.empty):
+    if not MORALIS_API_KEY:
         return pd.DataFrame()
 
     g = Guardian()
@@ -103,7 +102,6 @@ def fetch_moralis(symbol, interval="1h"):
 # Unified
 # -------------------------------------------------------
 def fetch_crypto(symbol, interval="1h"):
-    url = None  # PHASE 2.3 SAFETY GUARD: always define url
     """
     Unified crypto fetcher (Moralis only).
     Returns a safe DataFrame with OHLCV data.

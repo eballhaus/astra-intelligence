@@ -3,11 +3,13 @@ TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
 import random
 
 import requests
-TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
-TWELVE_DATA_API_KEY = TWELVEDATA_API_KEY  # alias for legacy references
-
 
 API_POOL = {
+    "ALPHAVANTAGE": {"base": "https://www.alphavantage.co/query", "weight": 1.0},
+    "TWELVEDATA": {"base": "https://api.twelvedata.com/time_series", "weight": 1.0},
+    "FINNHUB": {"base": "https://finnhub.io/api/v1/quote", "weight": 1.0},
+    "EODHD": {"base": "https://eodhd.com/api/real-time", "weight": 1.0},
+    "POLYGON": {"base": "https://api.polygon.io/v3/reference/tickers", "weight": 1.0},
     "NASDAQ": {
         "base": "https://data.nasdaq.com/api/v3/datatables/NASDAQOMX/data",
         "weight": 0.8,
@@ -30,7 +32,13 @@ API_POOL = {
 # ==========================================================
 # === PHASE 2.3 PROVIDER LOCK (CANONICAL) ==================
 # ==========================================================
-ALLOWED_STOCK_PROVIDERS = ["EODHD"]  # Phase 2.4 live data test
+ALLOWED_STOCK_PROVIDERS = [
+    "ALPHAVANTAGE",
+    "TWELVEDATA",
+    "FINNHUB",
+    "EODHD",
+    "POLYGON",
+]
 
 ALLOWED_CRYPTO_PROVIDERS = [
     "MORALIS",
@@ -39,24 +47,8 @@ ALLOWED_CRYPTO_PROVIDERS = [
 def _filter_allowed(providers, allowed):
     return [p for p in providers if p in allowed]
 
-    pass  # Phase 2.3 placeholder body
-    # --- Phase 2.3 Canonical Guard ---
-    # Force provider allow-list at runtime (prevents SIMFIN/DATAJOCKEY/NASDAQ forever)
-    try:
-        candidates = list(candidates) if candidates is not None else []
-    except Exception:
-        candidates = []
-    candidates = [c for c in candidates if isinstance(c, str)]
-    candidates = [c for c in candidates if c not in DISALLOWED_PROVIDERS]
-    # If MORALIS is in the candidate set, treat as crypto routing; otherwise stock.
-    if any(c == 'MORALIS' for c in candidates):
-        candidates = [c for c in candidates if c in ALLOWED_CRYPTO_PROVIDERS]
-    else:
-        candidates = [c for c in candidates if c in ALLOWED_STOCK_PROVIDERS]
-    # If nothing left, fall back to stock allow-list (no disallowed providers)
-    if not candidates:
-        candidates = list(ALLOWED_STOCK_PROVIDERS)
-
+def get_best
+(api_subset=None):
     """Return a random API endpoint from the pool, weighted by reliability."""
     subset = api_subset or list(API_POOL.keys())
     weights = [API_POOL[name]["weight"] for name in subset]
@@ -72,11 +64,3 @@ def test_api(name, key, params=None):
         return r.status_code, round(r.elapsed.total_seconds(), 2)
     except Exception as e:
         return str(e), None
-
-
-def get_best(api_subset=None):
-    # Phase 2.4: restrict all stock fetches to TwelveData only
-    return ['TwelveData']
-    # Phase 2.3-FinalB minimal implementation
-    #     return ['MORALIS']  # canonical provider stub
-    # Phase 2.3-FinalA placeholder implementation

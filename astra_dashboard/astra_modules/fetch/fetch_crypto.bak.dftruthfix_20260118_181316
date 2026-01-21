@@ -1,9 +1,9 @@
 import pandas as pd
 import requests
 
-import astra_dashboard.astra_modules.utils.safe_df as safe_df
+import astra_modules.utils.safe_df as safe_df
 from api_keys import MORALIS_API_KEY
-from astra_dashboard.astra_modules.guardian.guardian_v7 import Guardian
+from astra_modules.guardian.guardian_v7 import Guardian
 
 g = Guardian()
 

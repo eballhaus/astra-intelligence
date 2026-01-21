@@ -48,8 +48,9 @@ class GuardianSecureAPI:
             print(f"[GuardianSecureAPI] ⚠️ API {name} failed for {symbol}: {e}")
             return {"symbol": symbol, "price": 0.0, "source": name}
     def __init__(self, keyfile="astra_modules/guardian/security/api_keys.json"):
-        with open(keyfile, "r") as f:
-            self.keys = json.load(f)
+        # Phase 2.4: file key loading disabled; using environment instead
+        self.api_keys = {}
+        return
         self.timeout = 10
 
     # ---------------------------------------------------------

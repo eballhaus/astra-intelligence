@@ -31,8 +31,7 @@ def rebuild_cache():
             if score is None:
                 continue
 
-            from core.ranking_engine import safe_get_grade
-            grade = safe_get_grade(engine, sym, df)
+            grade = engine.get_grade(score)
 
             ranked_results.append({
                 "symbol": sym,
@@ -57,18 +56,6 @@ def rebuild_cache():
 
     with open("state/cache_store.json", "w", encoding="utf-8") as f_out:
         json.dump(cache, f_out, indent=2)
-
-    # --- Phase 2.6: Paper Trading Hook (Read-Only, Non-Blocking) ---
-    try:
-        from state.paper_trader import record_signals
-        if isinstance(cache, dict) and 'data' in cache:
-            record_signals(cache['data'])
-        elif 'ranked_results' in cache:
-            record_signals(cache['ranked_results'])
-            record_signals(cache)
-    except Exception as e:
-        print(f"[Phase2.6] Paper trading hook skipped due to: {e}")
-    # ---------------------------------------------------------------
 
     print(f"[Astra CacheBuilder] ✅ Cached {len(ranked_results)} real engine results")
 

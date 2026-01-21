@@ -1,0 +1,18 @@
+# Astra Canonical Backend Manifest — Frozen 2026-01-19
+# Only these files are authoritative for Phase 2.3 runtime.
+
+astra_dashboard/astra_modules/engine/ranking_engine.py
+astra_dashboard/astra_modules/fetch/api_router.py
+astra_dashboard/astra_modules/fetch/fetch_stock.py
+astra_dashboard/astra_modules/fetch/fetch_crypto.py
+astra_dashboard/astra_modules/utils/safe_df.py
+astra_dashboard/universe/universe_builder.py
+scanners/cache_rebuilder.py
+quick_live_top_signals.py
+
+# Archived duplicate import tree:
+_ARCHIVE_astra_modules_20260119
+Phase 2.3-Final Freeze — Mon Jan 19 21:07:26 EST 2026
+Backend verified: imports deterministic, logic stable, data stubbed (MORALIS)
+Phase 2.3-FinalC: Cache verification PASSED — Mon Jan 19 21:08:56 EST 2026
+SHA1: 6f534a95839c71a3751e80af5df7f2feffe246d1
