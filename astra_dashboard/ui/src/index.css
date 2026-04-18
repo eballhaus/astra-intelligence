@@ -1,68 +1,392 @@
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  --bg-0: #060d1b;
+  --bg-1: #0b1a33;
+  --bg-2: #102445;
+  --panel-0: #0f203b;
+  --panel-1: #132947;
+  --panel-2: #17365d;
+  --line-soft: #2b4266;
+  --line-strong: #3b5784;
+  --text-main: #e8f0ff;
+  --text-muted: #9fb1cf;
+  --accent: #4ea3ff;
+  --accent-soft: #6bb5ff;
+  --good: #33c57a;
+  --warn: #f2b355;
+  --bad: #f06b73;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
+* {
+  box-sizing: border-box;
 }
-a:hover {
-  color: #535bf2;
+
+html,
+body,
+#root {
+  width: 100%;
+  min-height: 100%;
 }
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
+  font-family: "Segoe UI", "SF Pro Text", "Trebuchet MS", "Helvetica Neue", Arial, sans-serif;
+  color: var(--text-main);
+  background:
+    radial-gradient(1000px 560px at 78% -8%, rgba(88, 148, 255, 0.26), transparent 58%),
+    radial-gradient(860px 520px at 15% -20%, rgba(49, 104, 198, 0.18), transparent 60%),
+    linear-gradient(180deg, #102447 0%, #0b1b35 45%, #081225 100%);
+}
+
+a {
+  color: var(--accent-soft);
+}
+
+.astra-app-shell {
+  width: 100%;
   min-height: 100vh;
+  padding: 16px 18px 20px;
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+.astra-tabbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
 }
 
-button {
+.astra-tab-btn {
+  padding: 9px 18px;
+  background: linear-gradient(180deg, #1a355a 0%, #152a47 100%);
+  color: var(--text-muted);
+  border: 1px solid var(--line-soft);
   border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
   cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+  font-size: 0.88rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  transition: all 140ms ease;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
+.astra-tab-btn:hover {
+  color: var(--text-main);
+  border-color: var(--line-strong);
+  transform: translateY(-1px);
+}
+
+.astra-tab-btn.active {
+  color: #f5fbff;
+  border-color: #5ea7ff;
+  background: linear-gradient(180deg, #2b66b6 0%, #1d4f94 100%);
+  box-shadow: 0 0 0 1px rgba(99, 165, 255, 0.22) inset;
+}
+
+.dashboard-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.market-overview,
+.dashboard-content {
+  background: linear-gradient(180deg, rgba(19, 42, 73, 0.9) 0%, rgba(14, 32, 57, 0.9) 100%);
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.dashboard-title {
+  color: var(--text-main);
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.28);
+}
+
+.market-summary-bar .market-item {
+  background: rgba(14, 35, 62, 0.65);
+  border: 1px solid #2f466b;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+table {
+  border-color: var(--line-soft);
+}
+
+th {
+  color: #b8c9e6;
+  font-weight: 700;
+}
+
+td {
+  color: var(--text-main);
+}
+
+pre {
+  scrollbar-width: thin;
+  scrollbar-color: #365987 #0b162a;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #365987;
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0b162a;
+}
+
+.astra-status-strip {
+  margin-top: 0.45rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.8rem;
+  font-size: 0.76rem;
+  color: #9fb3d2;
+}
+
+.astra-panel {
+  background: linear-gradient(180deg, rgba(17, 39, 67, 0.93) 0%, rgba(12, 29, 52, 0.92) 100%);
+  border: 1px solid #335381;
+  border-radius: 11px;
+  padding: 0.7rem 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.astra-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.45rem;
+}
+
+.astra-panel-header h3 {
+  margin: 0;
+  font-size: 0.93rem;
+  color: #dbe8ff;
+}
+
+.soft-buy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.soft-list-title {
+  color: #bed0ec;
+  font-size: 0.77rem;
+  margin-bottom: 0.3rem;
+}
+
+.soft-list-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.42rem;
+  border: 1px solid #2f4a73;
+  border-radius: 8px;
+  background: rgba(10, 25, 45, 0.48);
+  font-size: 0.76rem;
+  color: #dde9ff;
+}
+
+.soft-list-empty {
+  color: #8ea1c3;
+  font-size: 0.76rem;
+  padding: 0.2rem 0.1rem;
+}
+
+.soft-muted {
+  color: #97aacf;
+  font-size: 0.72rem;
+}
+
+.position-row {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.35rem 0.4rem;
+  border: 1px solid #2f4a73;
+  border-radius: 8px;
+  background: rgba(10, 24, 43, 0.45);
+  color: #dce7ff;
+}
+
+.pos-alert-hot {
+  color: #ffb4b4;
+}
+
+.pos-alert-normal {
+  color: #9fb2d3;
+}
+
+.prefs-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.pref-field {
+  display: grid;
+  gap: 0.25rem;
+  color: #a7bbdb;
+  font-size: 0.76rem;
+}
+
+.pref-field select {
+  border-radius: 7px;
+  border: 1px solid #35527b;
+  background: #10223f;
+  color: #eaf2ff;
+  padding: 0.3rem 0.35rem;
+  font-size: 0.76rem;
+}
+
+@media (max-width: 720px) {
+  .astra-app-shell {
+    padding: 12px 10px 14px;
   }
-  a:hover {
-    color: #747bff;
+
+  .astra-tab-btn {
+    flex: 1 1 auto;
+    min-width: 110px;
+    text-align: center;
   }
-  button {
-    background-color: #f9f9f9;
+
+  .astra-status-strip {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .soft-buy-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .prefs-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .position-row {
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+  }
+
+  .astra-remote-row-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+
+.astra-remote-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.astra-remote-title {
+  margin: 0 0 4px;
+  text-align: left;
+  font-size: clamp(1.6rem, 4vw, 2.2rem);
+}
+
+.astra-remote-subtitle {
+  color: #9eb2d1;
+  font-size: 0.86rem;
+  max-width: 620px;
+}
+
+.astra-remote-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.astra-remote-meta span,
+.astra-compact-toolbar span {
+  background: rgba(10, 24, 43, 0.56);
+  border: 1px solid #2f4a73;
+  border-radius: 999px;
+  color: #dbe8ff;
+  padding: 6px 10px;
+  font-size: 0.74rem;
+}
+
+.astra-compact-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.astra-remote-dashboard .dashboard-content {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.astra-mobile-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.astra-remote-row-card {
+  background: linear-gradient(180deg, rgba(16, 34, 58, 0.94) 0%, rgba(10, 23, 41, 0.98) 100%);
+  border: 1px solid #2c4b74;
+  border-radius: 14px;
+  padding: 12px;
+  box-shadow: 0 14px 28px rgba(2, 9, 21, 0.24);
+}
+
+.astra-remote-row-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: #eff5ff;
+  font-size: 0.96rem;
+}
+
+.astra-remote-row-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+  font-size: 0.82rem;
+  color: #d6e4fb;
+}
+
+.astra-remote-row-grid > div:nth-child(odd) {
+  color: #8ea6c8;
+}
+
+.astra-urgency-pill {
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.astra-urgency-high {
+  background: rgba(240, 107, 115, 0.18);
+  color: #ffbcc2;
+}
+
+.astra-urgency-medium {
+  background: rgba(241, 179, 86, 0.18);
+  color: #f8cd80;
+}
+
+.astra-urgency-review {
+  background: rgba(78, 163, 255, 0.18);
+  color: #9fd0ff;
 }
