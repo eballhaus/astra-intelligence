@@ -2,48 +2,84 @@
 __pycache__/
 *.pyc
 *.pyo
-*.log
-*.bak
-*.tmp
-*.json
 
-# ===== Virtual environments =====
+# ===== Runtime / local state =====
+state/*.db
+state/*.db-wal
+state/*.db-shm
+state/*_state.json
+state/*last_good*.json
+state/*.pid
+state/*heartbeat*
+state/*.log
+
+# ===== Local environments =====
 venv/
+.venv/
 .env/
 *.env
 
-# ===== State & backup files =====
-state/
-learning/learning_state.json
-learning/learning_metrics.json
-*.sentinel.bak
-
-# ===== Node / UI build files =====
+# ===== Frontend / build / cache =====
 node_modules/
+**/node_modules/
 dist/
+.vite/
+.cache/
+coverage/
 build/
-package-lock.json
 
-# ===== IDE / System =====
+# ===== Logs / transient output =====
+*.log
+nohup.out
+
+# ===== Archives / backups / snapshots =====
+_archive/
+_ARCHIVE_astra_modules/
+archive/
+_snapshots/
+backups/
+backups_learning/
+legacy_backups/
+astra_backup_cache/
+gpt_state/
+
+# ===== Backup / frozen artifacts =====
+*.bak*
+*.backup*
+*.FROZEN*
+
+# ===== IDE / system =====
 .DS_Store
 .vscode/
 .idea/
 _quarantine/
 
-# ===== Backups & Logs =====
-backups/
-legacy_backups/
-astra_logs/
-*.zip
-*.tar.gz
+# Astra runtime state / local learning artifacts
+state/*.json
+state/*.jsonl
+state/*.db
+state/*.db-*
+state/*.sqlite
+state/*.sqlite3
+state/*.pid
+state/*heartbeat*
+state/*.log
 
-legacy_backups/
-astra_logs/
-backups/
+# Keep placeholders/docs only
+!state/.gitkeep
+!state/README.md
+
+# Local environments and caches
 venv/
-./backups/astra_full_backup_20251218_1656.tar.gz
-./backups/astra_full_backup_20251218_1656.tar.gz
-./backups/astra_full_backup_20251218_1656.tar.gz
-./backups/astra_full_backup_20251218_1656.tar.gz
-./backups/astra_full_backup_20251218_1656.tar.gz
-./backups/astra_full_backup_20251218_1656.tar.gz
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Runtime logs / temp artifacts
+logs/
+*.log
+*.pid
+*.zip
+*.tar
+*.tar.gz
