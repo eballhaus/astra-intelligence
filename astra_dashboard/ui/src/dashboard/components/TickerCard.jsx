@@ -37,6 +37,21 @@ const progressTrackStyle = {
   overflow: "hidden",
 };
 
+const intelligenceBoxStyle = {
+  color: "#294364",
+  background: "#f1f7ff",
+  border: "1px solid #cfe0f5",
+  borderRadius: "9px",
+  padding: "0.34rem 0.45rem",
+};
+
+const intelligenceScrollStyle = {
+  overflowY: "auto",
+  paddingRight: "2px",
+  whiteSpace: "normal",
+  wordBreak: "break-word",
+};
+
 function formatPrice(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return "$0.00";
@@ -48,6 +63,22 @@ function formatPercent(value) {
   if (!Number.isFinite(num)) return "0.00%";
   const sign = num > 0 ? "+" : "";
   return `${sign}${num.toFixed(2)}%`;
+}
+
+function scoreOrNull(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatConviction(value) {
+  const n = scoreOrNull(value);
+  return n == null ? "n/a" : n.toFixed(1);
+}
+
+function formatPredictionUsd(value) {
+  const n = scoreOrNull(value);
+  if (n == null) return "$n/a";
+  return `${n >= 0 ? "+" : "-"}$${Math.abs(n).toFixed(2)}`;
 }
 
 function symbolBadge(symbol) {
@@ -91,12 +122,12 @@ export default function TickerCard({
     : (isPosition ? (item?.status ?? item?.position_status ?? "Open") : (item?.action ?? item?.prediction ?? "N/A"));
 
   const price = formatPrice(item?.price);
-  const change = formatPercent(item?.change_percent);
   const actionLabel = item?.grade ?? "N/A";
   const astraGrade = item?.astra_grade ?? item?.grade ?? item?.buy_grade ?? item?.qualification ?? item?.buy_eligibility ?? "N/A";
   const stopLoss = item?.stop_loss == null ? "n/a" : formatPrice(item.stop_loss);
   const timestamp = item?.timestamp ?? "n/a";
   const qualification = item?.buy_eligibility || "QUALIFIED";
+  const fallbackCandidate = Boolean(item?.dashboard_fallback_candidate);
   const rationale = String(item?.why_this_is_a_buy || item?.why_made_list || "").trim();
   const nearThresholdBlocker = String(item?.primary_promotion_blocker || "").trim();
   const deploymentStatus = String(item?.hero_card_deployment_label || item?.hero_deployment_status || "paper-ready").toLowerCase();
@@ -110,12 +141,25 @@ export default function TickerCard({
   const qualityScore = Number(item?.buy_quality_score ?? item?.trade_quality_score ?? item?.final_action_score ?? item?.grade_percent ?? 0);
   const qualityText = Number.isFinite(qualityScore) ? `${qualityScore.toFixed(1)}` : "n/a";
   const releaseStatus = canonicalActionLabel || String(item?.hero_deployment_status || item?.hero_card_deployment_label || "watchlist").replaceAll("_", " ");
+  const releaseStatusLower = String(releaseStatus || "").toLowerCase();
+  const predictionPctRaw = scoreOrNull(item?.profit_prediction_pct ?? item?.expected_move_pct ?? item?.expected_move_percent ?? item?.predicted_return_pct);
+  const predictionUsdRaw = scoreOrNull(item?.profit_prediction_usd ?? item?.expected_move_dollars ?? item?.expected_move_usd ?? item?.predicted_profit_dollars);
+  const predictionText = `${formatPredictionUsd(predictionUsdRaw)} / ${predictionPctRaw == null ? "n/a" : formatPercent(predictionPctRaw)}`;
+  const conviction10 = scoreOrNull(item?.rolling_conviction_10r ?? item?.conviction_display_score);
+  const conviction5 = scoreOrNull(item?.rolling_conviction_5r);
+  const conviction20 = scoreOrNull(item?.rolling_conviction_20r);
+  const isPaperReady = releaseStatusLower.includes("paper ready") || releaseStatusLower.includes("released buy");
+  const isWatchOrMonitor = releaseStatusLower.includes("watchlist") || releaseStatusLower.includes("monitor");
+  const statusToneBg = isPaperReady ? "#e7f7ee" : isWatchOrMonitor ? "#fef4e4" : "#e8effa";
+  const statusToneColor = isPaperReady ? "#1f8b53" : isWatchOrMonitor ? "#a67418" : "#22497d";
 
   const summaryText = rationale || rankedActionExplanation || whyNotLiveReady || whatWouldUpgrade || nearThresholdBlocker || "Remote monitor card";
   const intelligenceText = String(
-    item?.astra_intelligence_note
-      || item?.ollama_buy_explanation
+    item?.ollama_buy_explanation
+      || item?.ollama_explanation
+      || item?.astra_intelligence_note
       || item?.user_buy_summary
+      || item?.ollama_expected_move_summary
       || item?.why_this_is_a_buy
       || item?.buy_reason
       || summaryText
@@ -215,8 +259,8 @@ export default function TickerCard({
           </>
         ) : (
           <>
-            <div style={rowStyle}><span style={labelStyle}>Price</span><span style={valueStyle}>{price}</span></div>
-            <div style={rowStyle}><span style={labelStyle}>Change</span><span style={{ ...valueStyle, color: Number(item?.change_percent) >= 0 ? "#24995f" : "#b14450" }}>{change}</span></div>
+            <div style={rowStyle}><span style={labelStyle}>Status</span><span style={{ ...valueStyle, color: statusToneColor }}>{releaseStatus}</span></div>
+            <div style={rowStyle}><span style={labelStyle}>Grade</span><span style={{ ...valueStyle, fontWeight: 800 }}>{astraGrade}</span></div>
             <div
               style={{
                 gridColumn: "1 / -1",
@@ -229,13 +273,13 @@ export default function TickerCard({
                 alignItems: "center",
               }}
             >
-              <span style={{ ...labelStyle, fontSize: "0.66rem", color: "#3a567e", fontWeight: 700 }}>Astra Grade</span>
-              <span style={{ ...valueStyle, fontSize: "0.82rem", fontWeight: 800, color: "#16365f" }}>{astraGrade}</span>
+              <span style={{ ...labelStyle, fontSize: "0.66rem", color: "#3a567e", fontWeight: 700 }}>10R Conviction</span>
+              <span style={{ ...valueStyle, fontSize: "0.82rem", fontWeight: 800, color: "#16365f" }}>{formatConviction(conviction10)}</span>
             </div>
-            <div style={rowStyle}><span style={labelStyle}>Action Label</span><span style={valueStyle}>{actionLabel}</span></div>
             <div style={rowStyle}><span style={labelStyle}>Quality</span><span style={{ ...valueStyle, color: qualityColor(qualityScore) }}>{qualityText}</span></div>
+            <div style={rowStyle}><span style={labelStyle}>Action</span><span style={valueStyle}>{action}</span></div>
+            <div style={rowStyle}><span style={labelStyle}>Profit Prediction</span><span style={valueStyle}>{predictionText}</span></div>
             <div style={rowStyle}><span style={labelStyle}>Stop</span><span style={valueStyle}>{stopLoss}</span></div>
-            <div style={rowStyle}><span style={labelStyle}>Status</span><span style={valueStyle}>{releaseStatus}</span></div>
           </>
         )}
       </div>
@@ -257,28 +301,44 @@ export default function TickerCard({
       {isTopBuy ? (
         <div style={{ display: "grid", gap: "4px", marginTop: "1px" }}>
           <div style={{ ...labelStyle, color: "#3f5f8b" }}>Qualification: {qualification}</div>
+          {item?.conviction_window_status ? (
+            <div style={{ ...labelStyle, color: "#3f5f8b" }}>
+              Conviction status: {String(item.conviction_window_status).replaceAll("_", " ")}
+            </div>
+          ) : null}
+          {fallbackCandidate ? (
+            <div style={{ ...labelStyle, color: "#6d5a2b" }}>
+              Display mode: candidate fallback (not released-final)
+            </div>
+          ) : null}
           {canonicalState ? <div style={{ ...labelStyle, color: "#3f5f8b" }}>Canonical state: {canonicalState.replaceAll("_", " ")}</div> : null}
           <div style={{ fontSize: "0.7rem", lineHeight: 1.35, color: "#3a5375" }}>
             <strong style={{ color: "#27456d" }}>Rationale:</strong> {summaryText.slice(0, 110)}
           </div>
+          <details style={{ border: "1px solid #d8e2f0", borderRadius: "8px", padding: "0.25rem 0.4rem", background: "#f8fbff" }}>
+            <summary style={{ cursor: "pointer", fontSize: "0.66rem", color: "#315078", fontWeight: 700 }}>Expanded Details</summary>
+            <div style={{ display: "grid", gap: "3px", marginTop: "4px", fontSize: "0.64rem", color: "#4a6388" }}>
+              <div>5R Conviction: {formatConviction(conviction5)}</div>
+              <div>20R Conviction: {formatConviction(conviction20)}</div>
+              <div>Appearance 5R/10R/20R: {item?.appearance_count_5r ?? "n/a"} / {item?.appearance_count_10r ?? "n/a"} / {item?.appearance_count_20r ?? "n/a"}</div>
+              <div>Avg Rank 10R: {item?.avg_rank_10r ?? "n/a"}</div>
+              <div>Paper-ready Rate 10R: {item?.paper_ready_rate_10r == null ? "n/a" : `${Number(item.paper_ready_rate_10r).toFixed(2)}%`}</div>
+              <div>Rank Stability 10R: {item?.rank_stability_10r ?? "n/a"}</div>
+              <div>Window Status: {item?.conviction_window_status ?? "n/a"}</div>
+            </div>
+          </details>
           {intelligenceText ? (
             <div
               style={{
+                ...intelligenceBoxStyle,
                 fontSize: "0.7rem",
                 lineHeight: 1.32,
-                color: "#294364",
-                background: "#f1f7ff",
-                border: "1px solid #cfe0f5",
-                borderRadius: "9px",
-                padding: "0.34rem 0.45rem",
-                overflow: "hidden",
-                display: "-webkit-box",
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: "vertical",
               }}
             >
-              <strong style={{ color: "#1f3d67" }}>Astra Intelligence:</strong>{" "}
-              {intelligenceText.slice(0, 150)}
+              <strong style={{ color: "#1f3d67", display: "block", marginBottom: "2px" }}>Astra Intelligence:</strong>
+              <div style={{ ...intelligenceScrollStyle, maxHeight: "56px" }}>
+                {intelligenceText}
+              </div>
             </div>
           ) : null}
           {deploymentStatus !== "live-ready" && whyNotLiveReady ? (
@@ -323,21 +383,15 @@ export default function TickerCard({
           <div style={{ display: "grid", gap: "6px" }}>
             <div
               style={{
+                ...intelligenceBoxStyle,
                 fontSize: "0.74rem",
                 lineHeight: 1.32,
-                color: "#294364",
-                background: "#f1f7ff",
-                border: "1px solid #cfe0f5",
-                borderRadius: "9px",
-                padding: "0.34rem 0.45rem",
-                overflow: "hidden",
-                display: "-webkit-box",
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: "vertical",
               }}
             >
-              <strong style={{ color: "#1f3d67" }}>Astra Intelligence:</strong>{" "}
-              {(positionNote || summaryText).slice(0, 160)}
+              <strong style={{ color: "#1f3d67", display: "block", marginBottom: "2px" }}>Astra Intelligence:</strong>
+              <div style={{ ...intelligenceScrollStyle, maxHeight: "62px" }}>
+                {positionNote || summaryText}
+              </div>
             </div>
             {typeof onRemovePosition === "function" ? (
               <div style={{ display: "flex", justifyContent: "flex-end" }}>

@@ -16,6 +16,10 @@ log_info() {
   echo "[stop_astra_persistent] $*"
 }
 
+log_info_err() {
+  echo "[stop_astra_persistent] $*" >&2
+}
+
 safe_kill_pid() {
   local pid="${1:-}"
   if [[ -z "${pid}" ]]; then
@@ -33,7 +37,7 @@ safe_kill_pid() {
 read_pid() {
   local path="${1:-}"
   [[ -f "${path}" ]] || {
-    log_info "pid file missing: ${path}"
+    log_info_err "pid file missing: ${path}"
     return 0
   }
 
@@ -42,7 +46,7 @@ read_pid() {
   trimmed="$(echo "${raw}" | tr -d '[:space:]')"
 
   if [[ -z "${trimmed}" ]]; then
-    log_info "pid file empty: ${path}"
+    log_info_err "pid file empty: ${path}"
     return 0
   fi
 
@@ -60,29 +64,29 @@ except Exception:
 PY
 )"
     if [[ -n "${pid}" ]]; then
-      log_info "pid parsed (json): ${path} -> ${pid}"
+      log_info_err "pid parsed (json): ${path} -> ${pid}"
       echo "${pid}"
       return 0
     fi
-    log_info "pid json parse failed: ${path}"
+    log_info_err "pid json parse failed: ${path}"
   fi
 
   # Plaintext fallback: first line if numeric, otherwise first numeric token.
   first="$(echo "${raw}" | head -n 1 | tr -d '[:space:]')"
   if [[ "${first}" =~ ^[0-9]+$ ]]; then
-    log_info "pid parsed (plain): ${path} -> ${first}"
+    log_info_err "pid parsed (plain): ${path} -> ${first}"
     echo "${first}"
     return 0
   fi
 
   pid="$(echo "${raw}" | grep -Eo '[0-9]+' | head -n 1 || true)"
   if [[ -n "${pid}" ]]; then
-    log_info "pid parsed (fallback token): ${path} -> ${pid}"
+    log_info_err "pid parsed (fallback token): ${path} -> ${pid}"
     echo "${pid}"
     return 0
   fi
 
-  log_info "pid parse failed: ${path}"
+  log_info_err "pid parse failed: ${path}"
 }
 
 if command -v tmux >/dev/null 2>&1; then
@@ -108,6 +112,13 @@ safe_kill_pid "$(read_pid "${PAPER_WORKER_PID_FILE}")"
 pkill -f "uvicorn server:app --host .* --port 8000" >/dev/null 2>&1 || true
 pkill -f "engine.paper_worker" >/dev/null 2>&1 || true
 pkill -f "npm run dev -- --host .* --port 5173" >/dev/null 2>&1 || true
+if command -v lsof >/dev/null 2>&1; then
+  for port in 5173 5174 5175 8000; do
+    for pid in $(lsof -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true); do
+      kill "${pid}" >/dev/null 2>&1 || true
+    done
+  done
+fi
 log_info "fallback pkill patterns applied (non-fatal)"
 
 rm -f "${WATCHDOG_PID_FILE}" "${UVICORN_PID_FILE}" "${PAPER_WORKER_PID_FILE}" "${WATCHDOG_HEARTBEAT_FILE}"

@@ -24,6 +24,73 @@ log_info() {
   echo "[start_astra_persistent] $*"
 }
 
+is_port_listening() {
+  local port="$1"
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 1
+  fi
+  lsof -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+wait_for_port() {
+  local port="$1"
+  local attempts="${2:-20}"
+  local delay="${3:-0.5}"
+  local i
+  for ((i=1; i<=attempts; i++)); do
+    if is_port_listening "${port}"; then
+      return 0
+    fi
+    sleep "${delay}"
+  done
+  return 1
+}
+
+wait_for_http_200() {
+  local url="$1"
+  local attempts="${2:-20}"
+  local delay="${3:-0.5}"
+  local i code
+  for ((i=1; i<=attempts; i++)); do
+    code="$(curl -m 3 -sS -o /dev/null -w '%{http_code}' "${url}" 2>/dev/null || echo "000")"
+    if [[ "${code}" == "200" ]]; then
+      return 0
+    fi
+    sleep "${delay}"
+  done
+  return 1
+}
+
+wait_for_frontend_html() {
+  local url="$1"
+  local attempts="${2:-20}"
+  local delay="${3:-0.5}"
+  local i
+  for ((i=1; i<=attempts; i++)); do
+    if curl -m 4 -sS "${url}" 2>/dev/null | head -n 1 | grep -qi "<!doctype html"; then
+      return 0
+    fi
+    sleep "${delay}"
+  done
+  return 1
+}
+
+kill_port_listeners() {
+  local port="$1"
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 0
+  fi
+  local pids
+  pids="$(lsof -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true)"
+  if [[ -n "${pids}" ]]; then
+    while IFS= read -r pid; do
+      [[ -n "${pid}" ]] || continue
+      kill "${pid}" >/dev/null 2>&1 || true
+      log_info "killed stale listener pid=${pid} on port ${port}"
+    done <<< "${pids}"
+  fi
+}
+
 if ! command -v tmux >/dev/null 2>&1; then
   log_info "tmux is required but not installed."
   exit 1
@@ -32,10 +99,28 @@ fi
 # Keep lifecycle consistent and avoid duplicate owners.
 bash "${ROOT_DIR}/stop_astra_persistent.sh" >/dev/null 2>&1 || true
 log_info "pre-start cleanup invoked via stop_astra_persistent.sh"
+kill_port_listeners "${BACKEND_PORT}"
+kill_port_listeners 5173
+kill_port_listeners 5174
+kill_port_listeners 5175
 
 tmux new-session -d -s "${BACKEND_SESSION}" \
   "cd '${ROOT_DIR}' && ASTRA_BACKEND_HOST='${BACKEND_HOST}' ASTRA_BACKEND_PORT='${BACKEND_PORT}' ASTRA_REMOTE_MODE='${ASTRA_REMOTE_MODE:-0}' bash '${ROOT_DIR}/start_astra_backend.sh'"
 log_info "backend session launched: ${BACKEND_SESSION} (${BACKEND_HOST}:${BACKEND_PORT})"
+if wait_for_port "${BACKEND_PORT}" 24 0.5; then
+  log_info "backend port ${BACKEND_PORT} is listening"
+else
+  log_info "backend failed to bind port ${BACKEND_PORT}; recent backend log:"
+  tail -n 80 "${STATE_DIR}/backend.log" 2>/dev/null || true
+  exit 1
+fi
+if wait_for_http_200 "http://127.0.0.1:${BACKEND_PORT}/api/health" 24 0.5; then
+  log_info "backend /api/health responded with 200"
+else
+  log_info "backend /api/health did not reach 200 after startup; recent backend log:"
+  tail -n 80 "${STATE_DIR}/backend.log" 2>/dev/null || true
+  exit 1
+fi
 
 API_BASE_URL="${ASTRA_UI_API_BASE_URL:-http://127.0.0.1:${BACKEND_PORT}}"
 if [[ "${ASTRA_REMOTE_MODE:-0}" == "1" ]]; then
@@ -51,27 +136,29 @@ if [[ -n "${ASTRA_REMOTE_ACCESS_TOKEN:-}" ]]; then
 fi
 FRONTEND_CMD+="npm run dev -- --host '${FRONTEND_HOST}' --port '${FRONTEND_PORT}'"
 
-frontend_port_in_use=0
-if command -v lsof >/dev/null 2>&1; then
-  if lsof -nP -iTCP:"${FRONTEND_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
-    frontend_port_in_use=1
-  fi
-fi
-
-if [[ "${frontend_port_in_use}" == "1" ]]; then
-  log_info "frontend port ${FRONTEND_PORT} already in use; skipping duplicate frontend launch"
-  log_info "frontend session not started: ${FRONTEND_SESSION}"
+tmux new-session -d -s "${FRONTEND_SESSION}" "${FRONTEND_CMD}"
+log_info "frontend session launched: ${FRONTEND_SESSION} (${FRONTEND_HOST}:${FRONTEND_PORT})"
+if wait_for_port "${FRONTEND_PORT}" 24 0.5; then
+  log_info "frontend port ${FRONTEND_PORT} is listening"
 else
-  tmux new-session -d -s "${FRONTEND_SESSION}" "${FRONTEND_CMD}"
-  log_info "frontend session launched: ${FRONTEND_SESSION} (${FRONTEND_HOST}:${FRONTEND_PORT})"
+  log_info "frontend failed to bind port ${FRONTEND_PORT}"
+  if tmux has-session -t "${FRONTEND_SESSION}" 2>/dev/null; then
+    tmux capture-pane -t "${FRONTEND_SESSION}" -p | tail -n 80 || true
+  fi
+  exit 1
+fi
+if wait_for_frontend_html "http://127.0.0.1:${FRONTEND_PORT}" 24 0.5; then
+  log_info "frontend returned HTML"
+else
+  log_info "frontend did not return HTML after startup"
+  if tmux has-session -t "${FRONTEND_SESSION}" 2>/dev/null; then
+    tmux capture-pane -t "${FRONTEND_SESSION}" -p | tail -n 80 || true
+  fi
+  exit 1
 fi
 
 log_info "started tmux sessions summary:"
 log_info "  - ${BACKEND_SESSION}"
-if [[ "${frontend_port_in_use}" == "1" ]]; then
-  log_info "  - ${FRONTEND_SESSION} (skipped: port in use)"
-else
-  log_info "  - ${FRONTEND_SESSION}"
-fi
+log_info "  - ${FRONTEND_SESSION}"
 log_info "backend expected: http://127.0.0.1:${BACKEND_PORT}"
 log_info "frontend expected: http://127.0.0.1:${FRONTEND_PORT}"

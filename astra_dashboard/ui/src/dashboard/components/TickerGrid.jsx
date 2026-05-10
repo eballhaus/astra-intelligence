@@ -58,7 +58,42 @@ export default function TickerGrid({
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  const safeStocks = Array.isArray(stocks) ? stocks.slice(0, 6) : [];
+  const actionRank = (row) => {
+    const status = String(
+      row?.hero_card_deployment_label
+      || row?.hero_deployment_status
+      || row?.canonical_release_state
+      || row?.canonical_final_state
+      || ""
+    ).toLowerCase();
+    if (status.includes("paper-ready") || status.includes("paper_ready") || status.includes("released_buy")) return 0;
+    if (status.includes("watchlist") || status.includes("monitor-only") || status.includes("monitor_only")) return 1;
+    return 2;
+  };
+  const scoreValue = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const sortedStocks = Array.isArray(stocks)
+    ? [...stocks].sort((a, b) => {
+        const ar = actionRank(a);
+        const br = actionRank(b);
+        if (ar !== br) return ar - br;
+        const ac = scoreValue(a?.rolling_conviction_10r ?? a?.conviction_display_score);
+        const bc = scoreValue(b?.rolling_conviction_10r ?? b?.conviction_display_score);
+        if (bc !== ac) return bc - ac;
+        const ap = scoreValue(a?.profit_prediction_pct ?? a?.expected_move_pct ?? a?.expected_move_percent ?? a?.predicted_return_pct);
+        const bp = scoreValue(b?.profit_prediction_pct ?? b?.expected_move_pct ?? b?.expected_move_percent ?? b?.predicted_return_pct);
+        if (bp !== ap) return bp - ap;
+        const aq = scoreValue(a?.buy_quality_score ?? a?.trade_quality_score ?? a?.grade_percent);
+        const bq = scoreValue(b?.buy_quality_score ?? b?.trade_quality_score ?? b?.grade_percent);
+        if (bq !== aq) return bq - aq;
+        const aconf = scoreValue(a?.confidence);
+        const bconf = scoreValue(b?.confidence);
+        return bconf - aconf;
+      })
+    : [];
+  const safeStocks = sortedStocks.slice(0, 6);
   const safeCryptos = Array.isArray(cryptos) ? cryptos.slice(0, 6) : [];
 
   return (

@@ -76,10 +76,32 @@ function normalizeTopBuys(raw) {
   const stockReleased = Array.isArray(raw?.top_action_views?.canonical_release_views?.stocks_released_hero_buys)
     ? raw.top_action_views.canonical_release_views.stocks_released_hero_buys
     : [];
+  const stockCandidates = Array.isArray(raw?.top_action_views?.canonical_decision_views?.stocks_buy_candidates)
+    ? raw.top_action_views.canonical_decision_views.stocks_buy_candidates
+    : [];
   const cryptoReleased = Array.isArray(raw?.top_action_views?.canonical_release_views?.crypto_released_hero_buys)
     ? raw.top_action_views.canonical_release_views.crypto_released_hero_buys
     : [];
-  const stocks = stockFinal.length > 0 ? stockFinal : stockReleased;
+  const stocksPrimary = stockFinal.length > 0 ? stockFinal : stockReleased;
+  const stocks = [...stocksPrimary];
+  const stockSeen = new Set(
+    stocks
+      .map((row) => String(row?.symbol || row?.ticker || "").trim().toUpperCase())
+      .filter(Boolean),
+  );
+  if (stocks.length < 6) {
+    for (const row of stockCandidates) {
+      if (!row || typeof row !== "object") continue;
+      const symbol = String(row?.symbol || row?.ticker || "").trim().toUpperCase();
+      if (!symbol || stockSeen.has(symbol)) continue;
+      stockSeen.add(symbol);
+      stocks.push({
+        ...row,
+        dashboard_fallback_candidate: true,
+      });
+      if (stocks.length >= 6) break;
+    }
+  }
   const cryptos = cryptoFinal.length > 0 ? cryptoFinal : cryptoReleased;
   const mapRow = (row, kind) => {
     if (!row || typeof row !== "object") return null;
@@ -95,6 +117,7 @@ function normalizeTopBuys(raw) {
       stop_loss: row.stop_loss ?? row.stop_price ?? row.stop ?? null,
       timestamp: row.timestamp || row.updated_at || row.last_quote_utc || "",
       why_this_is_a_buy: row.why_this_is_a_buy || row.rationale || row.summary || row.buy_reason || "",
+      dashboard_fallback_candidate: Boolean(row.dashboard_fallback_candidate),
     };
   };
   return {

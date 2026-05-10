@@ -53,3 +53,33 @@ gpt_state/
 .vscode/
 .idea/
 _quarantine/
+
+# Astra runtime state / local learning artifacts
+state/*.json
+state/*.jsonl
+state/*.db
+state/*.db-*
+state/*.sqlite
+state/*.sqlite3
+state/*.pid
+state/*heartbeat*
+state/*.log
+
+# Keep placeholders/docs only
+!state/.gitkeep
+!state/README.md
+
+# Local environments and caches
+venv/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Runtime logs / temp artifacts
+logs/
+*.log
+*.pid
+*.zip
+*.tar
+*.tar.gz

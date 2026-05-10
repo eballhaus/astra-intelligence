@@ -8,6 +8,7 @@ VENV_PY="${ROOT_DIR}/venv/bin/python"
 WATCHDOG_PID_FILE="${STATE_DIR}/backend_watchdog.pid"
 WATCHDOG_HEARTBEAT_FILE="${STATE_DIR}/backend_watchdog_heartbeat"
 WATCHDOG_LOG_FILE="${STATE_DIR}/watchdog.log"
+RUNTIME_HEALTH_LOG_FILE="${STATE_DIR}/runtime_health.log"
 UVICORN_PID_FILE="${STATE_DIR}/uvicorn.pid"
 PAPER_WORKER_PID_FILE="${STATE_DIR}/paper_worker.pid"
 BACKEND_LOG_FILE="${STATE_DIR}/backend.log"
@@ -41,9 +42,31 @@ log_watchdog() {
   echo "[${now}] $*" >> "${WATCHDOG_LOG_FILE}"
 }
 
+log_runtime_health() {
+  local now backend_pid backend_alive worker_pid worker_alive frontend_alive
+  now="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  backend_pid="$(read_pid_file "${UVICORN_PID_FILE}")"
+  worker_pid="$(read_pid_file "${PAPER_WORKER_PID_FILE}")"
+  if is_pid_alive "${backend_pid}"; then backend_alive="up"; else backend_alive="down"; fi
+  if is_pid_alive "${worker_pid}"; then worker_alive="up"; else worker_alive="down"; fi
+  if lsof -nP -iTCP:5173 -sTCP:LISTEN >/dev/null 2>&1; then frontend_alive="up"; else frontend_alive="down"; fi
+  echo "${now} backend=${backend_alive} backend_pid=${backend_pid:-none} frontend=${frontend_alive} worker=${worker_alive} worker_pid=${worker_pid:-none}" >> "${RUNTIME_HEALTH_LOG_FILE}"
+}
+
 is_pid_alive() {
   local pid="${1:-}"
   [[ -n "${pid}" ]] && [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" >/dev/null 2>&1
+}
+
+backend_listener_pid() {
+  local pid=""
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 0
+  fi
+  pid="$(lsof -tiTCP:"${BACKEND_PORT}" -sTCP:LISTEN 2>/dev/null | head -n 1 || true)"
+  if [[ -n "${pid}" ]] && [[ "${pid}" =~ ^[0-9]+$ ]]; then
+    echo "${pid}"
+  fi
 }
 
 read_pid_file() {
@@ -86,6 +109,7 @@ PY
     echo "${pid}"
     return 0
   fi
+  return 0
 }
 
 start_uvicorn() {
@@ -141,6 +165,14 @@ while true; do
 
   uvicorn_pid="$(read_pid_file "${UVICORN_PID_FILE}")"
   if ! is_pid_alive "${uvicorn_pid}"; then
+    listener_pid="$(backend_listener_pid)"
+    if is_pid_alive "${listener_pid}"; then
+      echo "${listener_pid}" > "${UVICORN_PID_FILE}"
+      log_watchdog "uvicorn pid file stale (${uvicorn_pid:-none}); listener pid=${listener_pid} adopted"
+      uvicorn_pid="${listener_pid}"
+    fi
+  fi
+  if ! is_pid_alive "${uvicorn_pid}"; then
     if [[ -n "${uvicorn_pid}" ]]; then
       log_watchdog "uvicorn pid=${uvicorn_pid} not alive; restarting"
     else
@@ -151,5 +183,6 @@ while true; do
   fi
 
   start_paper_worker_if_available
+  log_runtime_health
   sleep "${WATCHDOG_SLEEP_SECONDS}"
 done
