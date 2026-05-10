@@ -79,6 +79,110 @@ def _normalize_key(raw: Any, unknown: str = "unknown") -> str:
     return txt
 
 
+def _decision_bucket(row: dict[str, Any]) -> str:
+    eligibility = str(row.get("buy_eligibility") or "").strip().lower()
+    tier = str(row.get("buy_quality_tier") or "").strip().lower()
+    merged = f"{eligibility} {tier}"
+    if any(x in merged for x in ("block", "reject", "avoid", "non_trade")):
+        return "blocked"
+    if any(x in merged for x in ("watch", "monitor", "observe")):
+        return "watchlist"
+    if any(x in merged for x in ("qualified", "soft_buy", "released", "paper_ready", "strong_buy", "buy")):
+        return "promoted"
+    return "unclassified"
+
+
+def _to_percent(value: Any) -> float:
+    raw = _to_float(value, 0.0)
+    if raw <= 1.0:
+        raw *= 100.0
+    return max(0.0, min(100.0, raw))
+
+
+def _decision_process_score(row: dict[str, Any]) -> tuple[float, list[str]]:
+    setup_type = str(row.get("setup_type") or "").strip().lower()
+    buy_eligibility = str(row.get("buy_eligibility") or "").strip().lower()
+    buy_quality_tier = str(row.get("buy_quality_tier") or "").strip().lower()
+
+    predicted_prob = _to_percent(row.get("entry_predicted_probability"))
+    confidence = _to_percent(row.get("entry_confidence"))
+    persona_consensus = _to_percent(
+        row.get("final_consensus_persona_score")
+        if row.get("final_consensus_persona_score") not in (None, "")
+        else row.get("entry_persona_grade")
+    )
+    quality_score = _to_percent(row.get("buy_quality_score"))
+    label_valid = bool(_is_valid_label(row))
+
+    setup_penalty = 0.0
+    reasons: list[str] = []
+    if setup_type in {"", "unknown", "fallback_unclear", "unclassified_setup"}:
+        setup_penalty = 12.0
+        reasons.append("setup_clarity_weak")
+    if predicted_prob < 55.0:
+        reasons.append("entry_confirmation_weak")
+    if persona_consensus < 52.0:
+        reasons.append("persona_consensus_weak")
+    if quality_score < 52.0:
+        reasons.append("quality_signal_weak")
+
+    eligibility_bonus = 0.0
+    if any(x in buy_eligibility for x in ("qualified", "soft_buy", "buy")):
+        eligibility_bonus = 4.0
+    elif any(x in buy_eligibility for x in ("watch", "monitor")):
+        eligibility_bonus = -2.0
+    elif any(x in buy_eligibility for x in ("block", "reject", "avoid")):
+        eligibility_bonus = -8.0
+
+    tier_bonus = 0.0
+    if any(x in buy_quality_tier for x in ("elite", "strong")):
+        tier_bonus = 5.0
+    elif any(x in buy_quality_tier for x in ("weak", "low", "poor")):
+        tier_bonus = -5.0
+
+    label_penalty = 0.0 if label_valid else 8.0
+    if not label_valid:
+        reasons.append("label_confidence_weak")
+
+    score = max(
+        0.0,
+        min(
+            100.0,
+            (predicted_prob * 0.30)
+            + (persona_consensus * 0.23)
+            + (quality_score * 0.27)
+            + (confidence * 0.14)
+            + 8.0
+            + eligibility_bonus
+            + tier_bonus
+            - setup_penalty
+            - label_penalty,
+        ),
+    )
+    return round(score, 2), list(dict.fromkeys(reasons))
+
+
+def _decision_quality_label(row: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    process_score, reasons = _decision_process_score(row)
+    good_decision = bool(process_score >= 58.0)
+    ret = _to_float(row.get("return_percent"), 0.0)
+    good_outcome = bool(ret > 0.0)
+    if good_decision and good_outcome:
+        label = "good_decision_good_outcome"
+    elif good_decision and (not good_outcome):
+        label = "good_decision_bad_outcome"
+    elif (not good_decision) and good_outcome:
+        label = "bad_decision_good_outcome"
+    else:
+        label = "bad_decision_bad_outcome"
+    return label, {
+        "decision_process_score": float(process_score),
+        "good_decision": bool(good_decision),
+        "good_outcome": bool(good_outcome),
+        "decision_quality_reasons": reasons,
+    }
+
+
 class TradeIntelligenceEngine:
     def __init__(self, db_path: str | None = None):
         state_dir = os.path.join(os.getcwd(), "state")
@@ -121,8 +225,21 @@ class TradeIntelligenceEngine:
                     buy_quality_score REAL,
                     entry_confidence REAL,
                     setup_type TEXT,
+                    detected_setup_type TEXT,
+                    setup_candidate_realness TEXT,
+                    setup_detection_score REAL,
+                    setup_detection_band TEXT,
+                    setup_detection_confidence REAL,
+                    setup_detection_evidence_label TEXT,
                     entry_reason TEXT,
                     signal_tags TEXT,
+                    conviction_tier TEXT,
+                    entry_quality_score REAL,
+                    entry_quality_band TEXT,
+                    entry_quality_candidate_class TEXT,
+                    entry_quality_primary_driver TEXT,
+                    entry_quality_primary_penalty TEXT,
+                    entry_quality_evidence_label TEXT,
                     exit_timestamp TEXT,
                     exit_price REAL,
                     exit_reason TEXT,
@@ -154,6 +271,51 @@ class TradeIntelligenceEngine:
                 )
                 """
             )
+            # Backward-safe schema migration for older local DBs.
+            try:
+                cols = {
+                    str(r[1] if isinstance(r, tuple) else r["name"]): True
+                    for r in (conn.execute("PRAGMA table_info(trade_journal)").fetchall() or [])
+                }
+            except Exception:
+                cols = {}
+            needed = {
+                "entry_persona_fit_summary": "TEXT",
+                "created_at": "TEXT",
+                "last_updated_at": "TEXT",
+                "detected_setup_type": "TEXT",
+                "setup_candidate_realness": "TEXT",
+                "setup_detection_score": "REAL",
+                "setup_detection_band": "TEXT",
+                "setup_detection_confidence": "REAL",
+                "setup_detection_evidence_label": "TEXT",
+                "conviction_tier": "TEXT",
+                "entry_quality_score": "REAL",
+                "entry_quality_band": "TEXT",
+                "entry_quality_candidate_class": "TEXT",
+                "entry_quality_primary_driver": "TEXT",
+                "entry_quality_primary_penalty": "TEXT",
+                "entry_quality_evidence_label": "TEXT",
+            }
+            for col, ddl in needed.items():
+                if col in cols:
+                    continue
+                try:
+                    conn.execute(f"ALTER TABLE trade_journal ADD COLUMN {col} {ddl}")
+                except Exception:
+                    pass
+            # Compatibility bridge for older historical rows.
+            if "entry_persona_fit_summary" in needed:
+                try:
+                    conn.execute(
+                        """
+                        UPDATE trade_journal
+                        SET entry_persona_fit_summary = COALESCE(NULLIF(entry_persona_fit_summary, ''), persona_fit_summary, entry_persona_best_fit, '')
+                        WHERE COALESCE(entry_persona_fit_summary, '') = ''
+                        """
+                    )
+                except Exception:
+                    pass
             conn.execute("CREATE INDEX IF NOT EXISTS idx_trade_journal_exit_ts ON trade_journal(exit_timestamp)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_trade_journal_origin_exit ON trade_journal(trade_origin, exit_timestamp)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_trade_journal_symbol ON trade_journal(symbol)")
@@ -199,8 +361,68 @@ class TradeIntelligenceEngine:
             "buy_quality_score": _to_float(row.get("buy_quality_score"), 0.0),
             "entry_confidence": _to_float(row.get("entry_confidence"), 0.0),
             "setup_type": setup_type,
+            "detected_setup_type": str(
+                row.get("detected_setup_type")
+                or row.get("entry_detected_setup_type")
+                or row.get("setup_type")
+                or setup_type
+                or "unknown"
+            ),
+            "setup_candidate_realness": str(
+                row.get("setup_candidate_realness")
+                or row.get("entry_setup_candidate_realness")
+                or "unknown"
+            ),
+            "setup_detection_score": _to_float(
+                row.get("setup_detection_score"),
+                _to_float(row.get("entry_setup_detection_score"), 0.0),
+            ),
+            "setup_detection_band": str(
+                row.get("setup_detection_band")
+                or row.get("entry_setup_detection_band")
+                or "unknown"
+            ),
+            "setup_detection_confidence": _to_float(
+                row.get("setup_detection_confidence"),
+                _to_float(row.get("entry_setup_detection_confidence"), 0.0),
+            ),
+            "setup_detection_evidence_label": str(
+                row.get("setup_detection_evidence_label")
+                or row.get("entry_setup_detection_evidence_label")
+                or "unknown"
+            ),
             "entry_reason": str(row.get("entry_reason") or ""),
             "signal_tags": _json_dump(signal_tags),
+            "conviction_tier": str(row.get("conviction_tier") or row.get("entry_conviction_tier") or ""),
+            "entry_quality_score": _to_float(
+                row.get("entry_quality_score"),
+                _to_float(row.get("entry_entry_quality_score"), 0.0),
+            ),
+            "entry_quality_band": str(
+                row.get("entry_quality_band")
+                or row.get("entry_entry_quality_band")
+                or "unknown"
+            ),
+            "entry_quality_candidate_class": str(
+                row.get("entry_quality_candidate_class")
+                or row.get("entry_entry_quality_candidate_class")
+                or "unknown"
+            ),
+            "entry_quality_primary_driver": str(
+                row.get("entry_quality_primary_driver")
+                or row.get("entry_entry_quality_primary_driver")
+                or "unknown"
+            ),
+            "entry_quality_primary_penalty": str(
+                row.get("entry_quality_primary_penalty")
+                or row.get("entry_entry_quality_primary_penalty")
+                or "unknown"
+            ),
+            "entry_quality_evidence_label": str(
+                row.get("entry_quality_evidence_label")
+                or row.get("entry_entry_quality_evidence_label")
+                or "unknown"
+            ),
             "exit_timestamp": row.get("exit_timestamp"),
             "exit_price": _to_float(row.get("exit_price"), 0.0),
             "exit_reason": str(row.get("exit_reason") or ""),
@@ -369,6 +591,112 @@ class TradeIntelligenceEngine:
             "winsorized_avg_return": round(_winsorized_avg(rets), 4),
         }
 
+    def _counterfactual_panel(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        buckets: dict[str, list[dict[str, Any]]] = {
+            "promoted": [],
+            "blocked": [],
+            "watchlist": [],
+            "unclassified": [],
+        }
+        for row in rows:
+            buckets.setdefault(_decision_bucket(row), []).append(row)
+
+        promoted_stats = self._cohort_stats(buckets.get("promoted") or [])
+        blocked_stats = self._cohort_stats(buckets.get("blocked") or [])
+        watchlist_stats = self._cohort_stats(buckets.get("watchlist") or [])
+        unclassified_stats = self._cohort_stats(buckets.get("unclassified") or [])
+        promoted_n = int(promoted_stats.get("trade_count", 0))
+        blocked_n = int(blocked_stats.get("trade_count", 0))
+        watchlist_n = int(watchlist_stats.get("trade_count", 0))
+        confidence = min(
+            100.0,
+            ((promoted_n + blocked_n + watchlist_n) / 220.0) * 100.0,
+        )
+        return {
+            "promoted": promoted_stats,
+            "blocked": blocked_stats,
+            "watchlist": watchlist_stats,
+            "unclassified": unclassified_stats,
+            "promoted_vs_blocked_gap": {
+                "win_rate_gap": round(
+                    _to_float(promoted_stats.get("win_rate"), 0.0) - _to_float(blocked_stats.get("win_rate"), 0.0),
+                    2,
+                ),
+                "avg_return_gap": round(
+                    _to_float(promoted_stats.get("avg_return"), 0.0) - _to_float(blocked_stats.get("avg_return"), 0.0),
+                    4,
+                ),
+                "winsorized_avg_return_gap": round(
+                    _to_float(promoted_stats.get("winsorized_avg_return"), 0.0)
+                    - _to_float(blocked_stats.get("winsorized_avg_return"), 0.0),
+                    4,
+                ),
+            },
+            "evidence_confidence_percent": round(confidence, 2),
+            "sample_sizes": {
+                "promoted": promoted_n,
+                "blocked": blocked_n,
+                "watchlist": watchlist_n,
+                "unclassified": int(unclassified_stats.get("trade_count", 0)),
+            },
+        }
+
+    def _decision_quality_panel(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        counts = {
+            "good_decision_good_outcome": 0,
+            "good_decision_bad_outcome": 0,
+            "bad_decision_good_outcome": 0,
+            "bad_decision_bad_outcome": 0,
+        }
+        score_values: list[float] = []
+        by_label_returns: dict[str, list[float]] = {k: [] for k in counts.keys()}
+        weak_reasons: dict[str, int] = {}
+        for row in rows:
+            label, meta = _decision_quality_label(row)
+            if label not in counts:
+                continue
+            counts[label] = int(counts.get(label, 0)) + 1
+            score_values.append(_to_float(meta.get("decision_process_score"), 0.0))
+            by_label_returns[label].append(_to_float(row.get("return_percent"), 0.0))
+            if not bool(meta.get("good_decision", False)):
+                for rsn in list(meta.get("decision_quality_reasons") or []):
+                    key = str(rsn or "unknown").strip().lower() or "unknown"
+                    weak_reasons[key] = int(weak_reasons.get(key, 0)) + 1
+
+        n = max(1, sum(counts.values()))
+        avg_score = round(sum(score_values) / max(1, len(score_values)), 2) if score_values else 0.0
+        outcome_blindness = round((float(counts["bad_decision_good_outcome"]) / float(n)) * 100.0, 2)
+        process_miss_rate = round((float(counts["good_decision_bad_outcome"]) / float(n)) * 100.0, 2)
+
+        label_stats = {}
+        for key, vals in by_label_returns.items():
+            label_stats[key] = {
+                "count": int(len(vals)),
+                "avg_return": round(sum(vals) / max(1, len(vals)), 4) if vals else 0.0,
+                "win_rate": round((len([x for x in vals if x > 0]) / max(1, len(vals))) * 100.0, 2) if vals else 0.0,
+            }
+
+        weak_reason_rows = [
+            {"reason": k, "count": int(v)}
+            for k, v in sorted(weak_reasons.items(), key=lambda kv: kv[1], reverse=True)
+        ][:8]
+
+        return {
+            "enabled": True,
+            "counts": counts,
+            "rates_percent": {
+                k: round((float(v) / float(n)) * 100.0, 2)
+                for k, v in counts.items()
+            },
+            "average_decision_process_score": avg_score,
+            "outcome_blindness_rate_percent": outcome_blindness,
+            "process_miss_rate_percent": process_miss_rate,
+            "label_performance": label_stats,
+            "top_weak_decision_reasons": weak_reason_rows,
+            "sample_size": int(sum(counts.values())),
+            "evidence_confidence_percent": round(min(100.0, (float(sum(counts.values())) / 260.0) * 100.0), 2),
+        }
+
     def compute_paper_cohort_trends(
         self,
         cohort_size: int = 75,
@@ -423,6 +751,8 @@ class TradeIntelligenceEngine:
         soft_rows = [r for r in rows if str(r.get("buy_eligibility") or "").upper() != "QUALIFIED"]
         hard_perf = self._cohort_stats(hard_rows)
         soft_perf = self._cohort_stats(soft_rows)
+        counterfactual = self._counterfactual_panel(rows)
+        decision_quality = self._decision_quality_panel(rows)
 
         with self._connect() as conn:
             open_row = conn.execute(
@@ -448,6 +778,13 @@ class TradeIntelligenceEngine:
             "open_positions": {
                 "open_trade_count": int(open_count),
             },
+            "context_population": {
+                "setup_type_population_rate_percent": _pop_rate("setup_type"),
+                "regime_population_rate_percent": _pop_rate("market_regime"),
+                "persona_population_rate_percent": _pop_rate("entry_persona_fit_summary"),
+                "signal_tags_population_rate_percent": _pop_rate("signal_tags"),
+                "buy_eligibility_population_rate_percent": _pop_rate("buy_eligibility"),
+            },
         }
 
         return {
@@ -471,6 +808,8 @@ class TradeIntelligenceEngine:
                 }
             },
             "paper_cohort_trends": cohort,
+            "counterfactual_learning": counterfactual,
+            "decision_quality_v1": decision_quality,
             "trade_path_quality": trade_path_quality,
             "last_updated_utc": _utc_now_iso(),
         }

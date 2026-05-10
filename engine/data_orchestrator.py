@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import os
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Iterable
@@ -12,6 +13,13 @@ from engine.ranking_engine import RankingEngine
 
 _router = ProviderRouter()
 _ranker = RankingEngine()
+_TEMP_STRATEGY_ENABLED = str(os.getenv("ASTRA_TEMP_PROVIDER_STRATEGY_V1", "1")).strip().lower() in {"1", "true", "yes", "on"}
+_TEMP_FMP_REST_DISABLED = str(os.getenv("ASTRA_TEMP_FMP_REST_DISABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+_TEMP_FMP_WS_MONITOR_ONLY = str(os.getenv("ASTRA_TEMP_FMP_WEBSOCKET_MONITOR_ONLY", "1")).strip().lower() in {"1", "true", "yes", "on"}
+try:
+    _TEMP_DISCOVERY_CACHE_AGE = max(10.0, float(os.getenv("ASTRA_TEMP_DISCOVERY_CACHE_MAX_AGE_SECONDS", "45")))
+except Exception:
+    _TEMP_DISCOVERY_CACHE_AGE = 45.0
 _RANKING_META = {
     "skip_reasons_counts": {},
     "provider_attempt_count_by_provider": {},
@@ -23,6 +31,17 @@ _RANKING_META = {
     "crypto_live_buy_valid_quote_count": 0,
     "final_ranked_count": 0,
     "last_updated_utc": None,
+    "provider_role_policy": {},
+    "provider_success_count_by_provider": {},
+    "provider_success_rate_by_provider": {},
+    "provider_attempt_count": 0,
+    "provider_success_count": 0,
+    "fmp_operating_mode": "conserve_rest",
+    "fmp_conserve_mode_active": True,
+    "fmp_rest_hard_limit_enabled": True,
+    "fmp_websocket_allowed": True,
+    "fmp_websocket_shortlist_only": True,
+    "broad_discovery_reduced_in_conserve_mode": True,
 }
 
 
@@ -88,6 +107,7 @@ def fetch_live_data(symbols=None):
     provider_attempts = defaultdict(int)
     tier1_attempts = defaultdict(int)
     provider_activity = defaultdict(int)
+    provider_success = defaultdict(int)
     rate_limited = set()
     stock_universe = 0
     stock_valid_quotes = 0
@@ -104,6 +124,7 @@ def fetch_live_data(symbols=None):
             asset_type=asset_type,
             batch_id=cycle_id,
             use_selective_backups=True,
+            cache_max_age_seconds=_TEMP_DISCOVERY_CACHE_AGE if _TEMP_STRATEGY_ENABLED else None,
         )
         attempted = [str(p or "").upper() for p in (quote.get("attempted_providers") or []) if str(p or "").strip()]
         for provider in attempted:
@@ -127,6 +148,8 @@ def fetch_live_data(symbols=None):
         if not valid_quote:
             skip_reasons[reason or "invalid_quote"] += 1
             continue
+        if provider_used and provider_used != "NONE":
+            provider_success[provider_used] += 1
         if asset_type == "stock":
             stock_valid_quotes += 1
         else:
@@ -147,11 +170,30 @@ def fetch_live_data(symbols=None):
                 "asset_type": asset_type,
                 "price": price,
                 "prev_close": prev_close,
+                "previous_close": _safe_float(quote.get("previous_close"), prev_close),
+                "open": _safe_float(quote.get("open"), 0.0),
+                "high": _safe_float(quote.get("high"), 0.0),
+                "low": _safe_float(quote.get("low"), 0.0),
+                "volume": _safe_float(quote.get("volume"), 0.0),
+                "change": _safe_float(quote.get("change"), 0.0),
+                "change_percent": _safe_float(quote.get("change_percent"), 0.0),
                 "change_pct": round(((price / prev_close) - 1.0) * 100.0, 4) if prev_close > 0 else 0.0,
                 "provider_used": provider_used.lower() if provider_used and provider_used != "NONE" else "none",
                 "provider_agreement": round(_safe_float(quote.get("provider_agreement"), 0.0), 4),
+                "provider_name": str(quote.get("provider_name") or provider_used),
+                "provider_confidence": _safe_float(quote.get("provider_confidence"), 0.0),
+                "data_quality_score": _safe_float(quote.get("data_quality_score"), 0.0),
                 "quote_quality": str(quote.get("quote_quality") or ("live" if not quote.get("cache_hit") else "cached")),
                 "quote_age_seconds": round(_safe_float(quote.get("quote_age_seconds"), 0.0), 2),
+                "freshness_seconds": round(_safe_float(quote.get("freshness_seconds"), _safe_float(quote.get("quote_age_seconds"), 0.0)), 2),
+                "quote_timestamp": quote.get("quote_timestamp"),
+                "quote_enriched": bool(quote.get("quote_enriched", False)),
+                "quote_enrichment_sources": list(quote.get("quote_enrichment_sources") or []),
+                "enriched_previous_close_source": str(quote.get("enriched_previous_close_source") or ""),
+                "enriched_volume_source": str(quote.get("enriched_volume_source") or ""),
+                "enriched_history_source": str(quote.get("enriched_history_source") or ""),
+                "enriched_signal_ready": bool(quote.get("enriched_signal_ready", False)),
+                "enriched_signal_limitations": list(quote.get("enriched_signal_limitations") or []),
                 "valid_quote": True,
                 "trusted_quote_for_buys": True,
                 "live_buy_universe": bool(asset_type == "stock"),
@@ -165,16 +207,35 @@ def fetch_live_data(symbols=None):
         )
         rows.append(row)
 
+    provider_success_rate = {}
+    for provider_name, attempts in provider_attempts.items():
+        provider_success_rate[provider_name] = round(
+            (int(provider_success.get(provider_name, 0)) / max(1, int(attempts))) * 100.0,
+            4,
+        )
+    diag = _router.diagnostics() if hasattr(_router, "diagnostics") else {}
+    role_policy = dict(diag.get("provider_role_matrix") or {})
     _RANKING_META.update(
         {
             "skip_reasons_counts": dict(skip_reasons),
             "provider_attempt_count_by_provider": dict(provider_attempts),
             "tier1_provider_attempt_count_by_provider": dict(tier1_attempts),
+            "provider_success_count_by_provider": dict(provider_success),
+            "provider_success_rate_by_provider": dict(provider_success_rate),
+            "provider_attempt_count": int(sum(provider_attempts.values())),
+            "provider_success_count": int(sum(provider_success.values())),
             "fmp_provider_activity": {
                 "attempt_count": int(provider_attempts.get("FMP", 0)),
                 "used_count": int(provider_activity.get("FMP", 0)),
                 "rate_limited": bool("FMP" in rate_limited),
             },
+            "provider_role_policy": role_policy,
+            "fmp_operating_mode": "temporary_conserve_rest" if (_TEMP_STRATEGY_ENABLED and _TEMP_FMP_REST_DISABLED) else "normal",
+            "fmp_conserve_mode_active": bool(_TEMP_STRATEGY_ENABLED and _TEMP_FMP_REST_DISABLED),
+            "fmp_rest_hard_limit_enabled": bool(_TEMP_STRATEGY_ENABLED and _TEMP_FMP_REST_DISABLED),
+            "fmp_websocket_allowed": bool(_TEMP_STRATEGY_ENABLED and _TEMP_FMP_WS_MONITOR_ONLY),
+            "fmp_websocket_shortlist_only": bool(_TEMP_STRATEGY_ENABLED and _TEMP_FMP_WS_MONITOR_ONLY),
+            "broad_discovery_reduced_in_conserve_mode": bool(_TEMP_STRATEGY_ENABLED),
             "rate_limited_providers": sorted(rate_limited),
             "live_buy_universe_size": int(stock_universe),
             "live_buy_valid_quote_count": int(stock_valid_quotes),
