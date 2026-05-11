@@ -446,6 +446,11 @@ LEARNING_INSIGHTS_ASYNC_KICK_COOLDOWN_SECONDS = 6.0
 LEARNING_INSIGHTS_ASYNC_STALE_RESET_SECONDS = 90.0
 LEARNING_INSIGHTS_LAST_GOOD_PATH = os.path.join(STATE, "learning_insights_last_good.json")
 _LEARNING_INSIGHTS_LAST_GOOD_CACHE = {"payload": None, "ts": 0.0, "file_mtime": 0.0}
+LEARNING_INSIGHTS_ENDPOINT_CACHE_TTL_SECONDS = max(
+    1.0,
+    min(8.0, _env_float("ASTRA_LEARNING_INSIGHTS_ENDPOINT_CACHE_TTL_SECONDS", 3.0)),
+)
+_LEARNING_INSIGHTS_ENDPOINT_CACHE = {"payload": None, "ts": 0.0}
 _LEARNING_DATA_PRESENCE_CACHE = {"ts": 0.0, "snapshot": None}
 LEARNING_DATA_PRESENCE_TTL_SECONDS = 12
 POST_CHANGE_COHORT_START_UTC = str(
@@ -582,6 +587,26 @@ _OUTCOME_LABELING_STATE = {"last_run_utc": "", "last_weight_update_utc": "", "la
 _SAFE_LEARNING_WEIGHTS_CACHE = {"payload": None, "ts": 0.0, "file_mtime": 0.0}
 SAFE_LEARNING_WEIGHTS_TTL_SECONDS = 120
 _DAY_LEARNING_WEIGHTS_CACHE = {"payload": None, "ts": 0.0, "file_mtime": 0.0}
+LEARNING_LOOP_SUMMARY_TTL_SECONDS = max(
+    2.0,
+    min(30.0, _env_float("ASTRA_LEARNING_LOOP_SUMMARY_TTL_SECONDS", 6.0)),
+)
+LEARNING_LOOP_SUMMARY_LEDGER_MAX_ROWS = max(
+    500,
+    min(4000, int(_env_float("ASTRA_LEARNING_LOOP_LEDGER_MAX_ROWS", 2500))),
+)
+LEARNING_LOOP_SUMMARY_OUTCOME_MAX_ROWS = max(
+    1000,
+    min(6000, int(_env_float("ASTRA_LEARNING_LOOP_OUTCOME_MAX_ROWS", 3500))),
+)
+_LEARNING_LOOP_SUMMARY_CACHE = {
+    "payload": None,
+    "ts": 0.0,
+    "ledger_mtime": 0.0,
+    "outcome_mtime": 0.0,
+    "safe_weights_mtime": 0.0,
+    "day_weights_mtime": 0.0,
+}
 DAY_LEARNING_WEIGHTS_TTL_SECONDS = 120
 _ROLLING_CONVICTION_CACHE = {"rows": [], "ts": 0.0}
 _OUTCOME_LABELING_RUN_LOCK = threading.Lock()
@@ -33045,9 +33070,45 @@ def _rebuild_day_learning_weights_v1(max_rows=12000):
 
 
 def _learning_loop_summary_fast():
+    now_ts = time.time()
+    try:
+        ledger_mtime = float(os.path.getmtime(CANDIDATE_DECISION_LEDGER_PATH)) if os.path.exists(CANDIDATE_DECISION_LEDGER_PATH) else 0.0
+    except Exception:
+        ledger_mtime = 0.0
+    try:
+        outcome_mtime = float(os.path.getmtime(OUTCOME_LABELS_PATH)) if os.path.exists(OUTCOME_LABELS_PATH) else 0.0
+    except Exception:
+        outcome_mtime = 0.0
+    try:
+        safe_weights_mtime = float(os.path.getmtime(SAFE_LEARNING_WEIGHTS_PATH)) if os.path.exists(SAFE_LEARNING_WEIGHTS_PATH) else 0.0
+    except Exception:
+        safe_weights_mtime = 0.0
+    try:
+        day_weights_mtime = float(os.path.getmtime(DAY_LEARNING_WEIGHTS_PATH)) if os.path.exists(DAY_LEARNING_WEIGHTS_PATH) else 0.0
+    except Exception:
+        day_weights_mtime = 0.0
+
+    cached = dict(_LEARNING_LOOP_SUMMARY_CACHE or {})
+    cached_payload = cached.get("payload")
+    if (
+        isinstance(cached_payload, dict)
+        and (now_ts - _to_float(cached.get("ts"), 0.0)) <= LEARNING_LOOP_SUMMARY_TTL_SECONDS
+        and _to_float(cached.get("ledger_mtime"), 0.0) == ledger_mtime
+        and _to_float(cached.get("outcome_mtime"), 0.0) == outcome_mtime
+        and _to_float(cached.get("safe_weights_mtime"), 0.0) == safe_weights_mtime
+        and _to_float(cached.get("day_weights_mtime"), 0.0) == day_weights_mtime
+    ):
+        return dict(cached_payload)
+
     _get_knowledge_promotion_summary(force=False)
-    ledger_rows = _tail_jsonl_rows(CANDIDATE_DECISION_LEDGER_PATH, max_rows=4000)
-    outcome_rows = _tail_jsonl_rows(OUTCOME_LABELS_PATH, max_rows=6000)
+    ledger_rows = _tail_jsonl_rows(
+        CANDIDATE_DECISION_LEDGER_PATH,
+        max_rows=LEARNING_LOOP_SUMMARY_LEDGER_MAX_ROWS,
+    )
+    outcome_rows = _tail_jsonl_rows(
+        OUTCOME_LABELS_PATH,
+        max_rows=LEARNING_LOOP_SUMMARY_OUTCOME_MAX_ROWS,
+    )
     weights = _load_safe_learning_weights_v1()
     day_weights = _load_day_learning_weights_v1()
     dist = {}
@@ -33131,48 +33192,55 @@ def _learning_loop_summary_fast():
         insufficient_reason = "no_fresh_outcome_labels_last_1h"
     elif int(sum(v for k, v in dist.items() if k != "insufficient_data")) < 25:
         insufficient_reason = "usable_label_count_below_minimum_25"
-    return {
-        "candidate_ledger_available": bool(os.path.exists(CANDIDATE_DECISION_LEDGER_PATH)),
-        "candidate_ledger_rows": int(len(ledger_rows)),
-        "outcome_labels_available": bool(os.path.exists(OUTCOME_LABELS_PATH)),
-        "outcome_labels_count": int(len(outcome_rows)),
-        "outcome_label_distribution": dict(dist),
-        "safe_learning_weights_available": bool(os.path.exists(SAFE_LEARNING_WEIGHTS_PATH) and bool(weights)),
-        "safe_learning_weight_confidence": str(weights.get("learning_confidence") or "insufficient"),
-        "recent_good_entry_count": int(dist.get("good_entry", 0)),
-        "recent_bad_entry_count": int(dist.get("bad_entry", 0)),
-        "recent_missed_opportunity_count": int(dist.get("missed_opportunity", 0)),
-        "learning_loop_active": bool(len(ledger_rows) > 0),
-        "usable_label_count": int(sum(v for k, v in dist.items() if k != "insufficient_data")),
-        "top_positive_setup_weights": top_positive,
-        "top_negative_setup_weights": top_negative,
-        "day_learning_mode_active": bool(DAY_LEARNING_MODE_ENABLED and DAY_LEARNING_MODE_PAPER_ONLY),
-        "day_ledger_candidates": int(day_ledger_candidates),
-        "day_learning_labels_count": int(sum(day_dist.values())),
-        "day_learning_usable_labels": int(day_usable),
-        "day_learning_confidence": str(day_weights.get("day_learning_confidence") or "insufficient"),
-        "day_label_distribution": day_dist,
-        "day_good_entry_count": int(day_dist.get("day_good_entry", 0)),
-        "day_bad_entry_count": int(day_dist.get("day_bad_entry", 0)),
-        "day_missed_opportunity_count": int(day_dist.get("day_missed_opportunity", 0)),
-        "day_fast_failure_count": int(day_dist.get("day_fast_failure", 0)),
-        "day_confirmation_success_count": int(day_dist.get("day_confirmation_success", 0)),
-        "day_confirmation_failed_count": int(day_dist.get("day_confirmation_failed", 0)),
-        "day_pullback_success_count": int(day_dist.get("day_pullback_success", 0)),
-        "day_chase_failed_count": int(day_dist.get("day_chase_failed", 0)),
-        "day_learning_best_setups": day_best,
-        "day_learning_worst_setups": day_worst,
-        "day_learning_weights_available": bool(os.path.exists(DAY_LEARNING_WEIGHTS_PATH) and bool(day_weights)),
-        "fresh_candidate_rows_1h": int(cand_1h),
-        "fresh_candidate_rows_6h": int(cand_6h),
-        "fresh_candidate_rows_24h": int(cand_24h),
-        "fresh_outcome_labels_1h": int(out_1h),
-        "fresh_outcome_labels_6h": int(out_6h),
-        "fresh_outcome_labels_24h": int(out_24h),
-        "learning_snapshot_insufficient_reason": str(insufficient_reason),
-        "learning_snapshot_evidence_ready": bool(cand_1h > 0 and out_1h > 0),
-        "knowledge_promotion_v1": _knowledge_promotion_public_block(),
-    }
+    payload = {
+            "candidate_ledger_available": bool(os.path.exists(CANDIDATE_DECISION_LEDGER_PATH)),
+            "candidate_ledger_rows": int(len(ledger_rows)),
+            "outcome_labels_available": bool(os.path.exists(OUTCOME_LABELS_PATH)),
+            "outcome_labels_count": int(len(outcome_rows)),
+            "outcome_label_distribution": dict(dist),
+            "safe_learning_weights_available": bool(os.path.exists(SAFE_LEARNING_WEIGHTS_PATH) and bool(weights)),
+            "safe_learning_weight_confidence": str(weights.get("learning_confidence") or "insufficient"),
+            "recent_good_entry_count": int(dist.get("good_entry", 0)),
+            "recent_bad_entry_count": int(dist.get("bad_entry", 0)),
+            "recent_missed_opportunity_count": int(dist.get("missed_opportunity", 0)),
+            "learning_loop_active": bool(len(ledger_rows) > 0),
+            "usable_label_count": int(sum(v for k, v in dist.items() if k != "insufficient_data")),
+            "top_positive_setup_weights": top_positive,
+            "top_negative_setup_weights": top_negative,
+            "day_learning_mode_active": bool(DAY_LEARNING_MODE_ENABLED and DAY_LEARNING_MODE_PAPER_ONLY),
+            "day_ledger_candidates": int(day_ledger_candidates),
+            "day_learning_labels_count": int(sum(day_dist.values())),
+            "day_learning_usable_labels": int(day_usable),
+            "day_learning_confidence": str(day_weights.get("day_learning_confidence") or "insufficient"),
+            "day_label_distribution": day_dist,
+            "day_good_entry_count": int(day_dist.get("day_good_entry", 0)),
+            "day_bad_entry_count": int(day_dist.get("day_bad_entry", 0)),
+            "day_missed_opportunity_count": int(day_dist.get("day_missed_opportunity", 0)),
+            "day_fast_failure_count": int(day_dist.get("day_fast_failure", 0)),
+            "day_confirmation_success_count": int(day_dist.get("day_confirmation_success", 0)),
+            "day_confirmation_failed_count": int(day_dist.get("day_confirmation_failed", 0)),
+            "day_pullback_success_count": int(day_dist.get("day_pullback_success", 0)),
+            "day_chase_failed_count": int(day_dist.get("day_chase_failed", 0)),
+            "day_learning_best_setups": day_best,
+            "day_learning_worst_setups": day_worst,
+            "day_learning_weights_available": bool(os.path.exists(DAY_LEARNING_WEIGHTS_PATH) and bool(day_weights)),
+            "fresh_candidate_rows_1h": int(cand_1h),
+            "fresh_candidate_rows_6h": int(cand_6h),
+            "fresh_candidate_rows_24h": int(cand_24h),
+            "fresh_outcome_labels_1h": int(out_1h),
+            "fresh_outcome_labels_6h": int(out_6h),
+            "fresh_outcome_labels_24h": int(out_24h),
+            "learning_snapshot_insufficient_reason": str(insufficient_reason),
+            "learning_snapshot_evidence_ready": bool(cand_1h > 0 and out_1h > 0),
+            "knowledge_promotion_v1": _knowledge_promotion_public_block(),
+        }
+    _LEARNING_LOOP_SUMMARY_CACHE["payload"] = dict(payload)
+    _LEARNING_LOOP_SUMMARY_CACHE["ts"] = now_ts
+    _LEARNING_LOOP_SUMMARY_CACHE["ledger_mtime"] = ledger_mtime
+    _LEARNING_LOOP_SUMMARY_CACHE["outcome_mtime"] = outcome_mtime
+    _LEARNING_LOOP_SUMMARY_CACHE["safe_weights_mtime"] = safe_weights_mtime
+    _LEARNING_LOOP_SUMMARY_CACHE["day_weights_mtime"] = day_weights_mtime
+    return payload
 
 
 def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seconds=None, timeout_guard=False, cache_hit=False, trace_included=False, safe_mode=False, stage="final", snapshot_served=False, snapshot_age_seconds=None, background_refresh_triggered=False):
@@ -42116,6 +42184,31 @@ def _premium_learning_status_payload():
 @router.get("/api/learning_insights")
 def learning_insights():
     li_t0 = time.perf_counter()
+    now_ts = time.time()
+    endpoint_cached = dict(_LEARNING_INSIGHTS_ENDPOINT_CACHE or {})
+    endpoint_cached_payload = endpoint_cached.get("payload")
+    endpoint_cache_age = max(0.0, now_ts - _to_float(endpoint_cached.get("ts"), 0.0))
+    if (
+        isinstance(endpoint_cached_payload, dict)
+        and endpoint_cache_age <= LEARNING_INSIGHTS_ENDPOINT_CACHE_TTL_SECONDS
+        and (
+            bool(_TOP_BUYS_BUILD_LOCK.locked())
+            or bool(_LEARNING_INSIGHTS_ASYNC_STATE.get("in_progress", False))
+        )
+    ):
+        out = dict(endpoint_cached_payload)
+        out["learning_insights_endpoint_cache_hit"] = True
+        out["learning_insights_endpoint_cache_age_seconds"] = round(endpoint_cache_age, 3)
+        out["learning_insights_endpoint_cache_reason"] = "contention_fast_return"
+        return out
+
+    def _finalize_learning_insights_response(resp_payload):
+        out = dict(resp_payload or {})
+        _LEARNING_INSIGHTS_ENDPOINT_CACHE["payload"] = dict(out)
+        _LEARNING_INSIGHTS_ENDPOINT_CACHE["ts"] = time.time()
+        out["learning_insights_endpoint_cache_hit"] = False
+        return out
+
     def _learning_budget_exceeded(limit_seconds=8.0):
         return (time.perf_counter() - li_t0) >= float(limit_seconds)
     def _attach_learning_loop_fields(target_payload):
@@ -42262,7 +42355,11 @@ def learning_insights():
                 false_empty_prevented=False,
             )
     payload = _ensure_learning_payload_handoff(payload, reason_hint="learning_insights_endpoint_pre_eval")
-    if _learning_payload_is_stale_fallback(payload) and not _learning_budget_exceeded(3.5):
+    if (
+        _learning_payload_is_stale_fallback(payload)
+        and not _learning_budget_exceeded(3.5)
+        and not bool(_TOP_BUYS_BUILD_LOCK.locked())
+    ):
         forced_refresh_error = ""
         forced_refresh_applied = False
         for attempt in range(2):
@@ -42861,7 +42958,7 @@ def learning_insights():
         payload["learning_insights_fast_path"] = True
         payload["learning_insights_fast_path_reason"] = "light_mode_enabled"
         payload["last_updated_utc"] = _now_utc_iso()
-        return _attach_learning_loop_fields(payload)
+        return _finalize_learning_insights_response(_attach_learning_loop_fields(payload))
     if _learning_budget_exceeded(4.0):
         eval_payload = _attach_current_engine_eval_fields(payload)
         payload = _attach_current_cohort_submetrics_fast(payload, eval_payload)
@@ -42869,7 +42966,7 @@ def learning_insights():
         payload["learning_insights_fast_path"] = True
         payload["learning_insights_fast_path_reason"] = "budget_guard_pre_eval"
         payload["last_updated_utc"] = _now_utc_iso()
-        return _attach_learning_loop_fields(payload)
+        return _finalize_learning_insights_response(_attach_learning_loop_fields(payload))
     eval_payload = _attach_current_engine_eval_fields(payload)
     try:
         high_conf_wr_eval = _to_float(payload.get("released_high_confidence_win_rate"), None)
@@ -43007,7 +43104,7 @@ def learning_insights():
             payload["lifecycle_auto_tracking"] = _lifecycle_tracking_summary_v1(limit=300)
         payload = _attach_historical_policy_review_availability(payload)
         payload["last_updated_utc"] = _now_utc_iso()
-        return _attach_learning_loop_fields(payload)
+        return _finalize_learning_insights_response(_attach_learning_loop_fields(payload))
     payload.update(_build_hold_measure_status(payload, eval_payload))
     payload = _apply_learning_tab_consistency(payload, eval_payload)
     auto_premium_step = str(os.getenv("ASTRA_PREMIUM_AUTO_STEP_ON_LEARNING", "0")).strip().lower() in {"1", "true", "yes", "on"}
@@ -43036,7 +43133,7 @@ def learning_insights():
         payload["lifecycle_auto_tracking"] = _lifecycle_tracking_summary_v1(limit=300)
     payload = _attach_historical_policy_review_availability(payload)
     payload["last_updated_utc"] = _now_utc_iso()
-    return _attach_learning_loop_fields(payload)
+    return _finalize_learning_insights_response(_attach_learning_loop_fields(payload))
 
 
 @router.get("/api/learning_weights")

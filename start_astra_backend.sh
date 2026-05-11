@@ -69,6 +69,21 @@ backend_listener_pid() {
   fi
 }
 
+wait_for_backend_listener_pid() {
+  local attempts="${1:-20}"
+  local delay="${2:-0.15}"
+  local i pid
+  for ((i=1; i<=attempts; i++)); do
+    pid="$(backend_listener_pid)"
+    if [[ -n "${pid}" ]] && [[ "${pid}" =~ ^[0-9]+$ ]]; then
+      echo "${pid}"
+      return 0
+    fi
+    sleep "${delay}"
+  done
+  return 1
+}
+
 read_pid_file() {
   local path="${1:-}"
   [[ -f "${path}" ]] || return 0
@@ -123,9 +138,20 @@ start_uvicorn() {
     cd "${ROOT_DIR}"
     "${cmd[@]}" >> "${BACKEND_LOG_FILE}" 2>&1
   ) &
-  local uvicorn_pid="$!"
-  echo "${uvicorn_pid}" > "${UVICORN_PID_FILE}"
-  log_watchdog "uvicorn started pid=${uvicorn_pid} cmd='${cmd[*]}'"
+  local launcher_pid="$!"
+  echo "${launcher_pid}" > "${UVICORN_PID_FILE}"
+
+  local listener_pid=""
+  if command -v lsof >/dev/null 2>&1; then
+    listener_pid="$(wait_for_backend_listener_pid 20 0.15 || true)"
+  fi
+
+  if [[ -n "${listener_pid}" ]] && [[ "${listener_pid}" =~ ^[0-9]+$ ]]; then
+    echo "${listener_pid}" > "${UVICORN_PID_FILE}"
+    log_watchdog "uvicorn started launcher_pid=${launcher_pid} listener_pid=${listener_pid} cmd='${cmd[*]}'"
+  else
+    log_watchdog "uvicorn started launcher_pid=${launcher_pid} listener_pid=unresolved cmd='${cmd[*]}'"
+  fi
 }
 
 start_paper_worker_if_available() {
