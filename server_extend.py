@@ -43136,6 +43136,103 @@ def learning_insights():
     return _finalize_learning_insights_response(_attach_learning_loop_fields(payload))
 
 
+def _learning_snapshot_fast_from_payload(payload):
+    src = dict(payload or {})
+    eval_payload = dict(src.get("current_engine_outcome_evaluation") or {})
+    runtime_hardening = dict(src.get("runtime_hardening") or {})
+    learning_quality = dict(src.get("learning_quality") or {})
+    execution_readiness = dict(src.get("execution_readiness_controls") or {})
+    best_worst = dict(src.get("best_worst") or {})
+
+    biggest_weakness = str(best_worst.get("worst_setup_type") or best_worst.get("worst_sector") or "insufficient_data")
+    strongest_area = str(best_worst.get("best_setup_type") or best_worst.get("best_sector") or "insufficient_data")
+    operating_posture = str(
+        execution_readiness.get("readiness_tier")
+        or src.get("operating_posture")
+        or src.get("system_posture")
+        or "guarded"
+    )
+    runtime_learning_stability = _to_float(
+        runtime_hardening.get("resilience_score"),
+        _to_float(learning_quality.get("quality_score"), 0.0),
+    )
+    trend = str(
+        ((src.get("high_level_summary") or {}).get("overall_trend"))
+        or learning_quality.get("trend")
+        or "stable"
+    )
+    degraded_reason = str(
+        src.get("learning_payload_degraded_reason")
+        or src.get("degraded_reason")
+        or ""
+    )
+    return {
+        "updated_at": str(src.get("last_updated_utc") or src.get("generated_at") or _now_utc_iso()),
+        "current_engine_released_wr": _to_float(
+            eval_payload.get("released_hero_win_rate"),
+            src.get("released_hero_win_rate"),
+        ),
+        "released_vs_blocked_wr_gap": _to_float(
+            eval_payload.get("released_vs_blocked_win_rate_delta"),
+            src.get("released_vs_blocked_win_rate_delta"),
+        ),
+        "entry_quality": _to_float(
+            src.get("entry_quality"),
+            src.get("entry_quality_score"),
+        ),
+        "follow_through_quality": _to_float(
+            src.get("follow_through_quality_score"),
+            src.get("followthrough_quality_score"),
+        ),
+        "buy_list_purity": _to_float(src.get("buy_list_purity_score"), 0.0),
+        "exit_quality": _to_float(
+            src.get("current_engine_exit_timing_score"),
+            _to_float(eval_payload.get("current_engine_exit_timing_score"), 0.0),
+        ),
+        "runtime_learning_stability": runtime_learning_stability,
+        "current_trend": trend,
+        "degraded_reason": degraded_reason,
+        "biggest_weakness": biggest_weakness,
+        "strongest_area": strongest_area,
+        "operating_posture": operating_posture,
+    }
+
+
+@router.get("/api/learning_snapshot_fast_v1")
+def learning_snapshot_fast_v1():
+    try:
+        payload = {}
+        cached_payload = _get_learning_insights_top_buys_fast()
+        if isinstance(cached_payload, dict) and cached_payload:
+            payload = dict(cached_payload)
+        else:
+            last_good = _load_learning_insights_last_good()
+            if isinstance(last_good, dict) and last_good:
+                payload = dict(last_good)
+        snap = _learning_snapshot_fast_from_payload(payload)
+        snap["ok"] = True
+        snap["source"] = str((payload or {}).get("learning_payload_source") or ("learning_insights_last_good" if payload else "empty_fallback"))
+        return snap
+    except Exception as e:
+        return {
+            "ok": False,
+            "source": "fallback",
+            "updated_at": _now_utc_iso(),
+            "current_engine_released_wr": 0.0,
+            "released_vs_blocked_wr_gap": 0.0,
+            "entry_quality": 0.0,
+            "follow_through_quality": 0.0,
+            "buy_list_purity": 0.0,
+            "exit_quality": 0.0,
+            "runtime_learning_stability": 0.0,
+            "current_trend": "unknown",
+            "degraded_reason": str(e)[:160],
+            "biggest_weakness": "insufficient_data",
+            "strongest_area": "insufficient_data",
+            "operating_posture": "guarded",
+        }
+
+
 @router.get("/api/learning_weights")
 def learning_weights():
     try:
