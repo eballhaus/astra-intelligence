@@ -33258,6 +33258,10 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
         out = _apply_rolling_conviction_v1(out)
     except Exception:
         pass
+    try:
+        out = _apply_entry_quality_v2_shadow(out)
+    except Exception:
+        pass
     if not bool(trace_included):
         out.pop("candidate_pipeline_trace_v1", None)
     _top_buys_mark_real_payload(out)
@@ -33319,6 +33323,195 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
         _fmp_usage_governor_snapshot(update=True)
     except Exception:
         pass
+    return out
+
+
+def _entry_quality_v2_band(score):
+    s = max(0.0, min(100.0, _to_float(score, 0.0)))
+    if s >= 80.0:
+        return "elite"
+    if s >= 68.0:
+        return "strong"
+    if s >= 54.0:
+        return "moderate"
+    if s >= 40.0:
+        return "weak"
+    return "poor"
+
+
+def _entry_quality_v2_decision(score, *, chase_risk=0.0, confirmation_strength=0.0):
+    s = max(0.0, min(100.0, _to_float(score, 0.0)))
+    chase = max(0.0, min(100.0, _to_float(chase_risk, 0.0)))
+    confirm = max(0.0, min(100.0, _to_float(confirmation_strength, 0.0)))
+    if chase >= 82.0 and confirm < 58.0:
+        return "suppress"
+    if s >= 70.0 and confirm >= 58.0 and chase < 75.0:
+        return "allow"
+    if s >= 56.0:
+        return "confirm"
+    if s >= 44.0:
+        return "monitor"
+    return "suppress"
+
+
+def _entry_quality_v2_eval_row(row, policy_hints=None):
+    r = dict(row or {})
+    hints = dict(policy_hints or {})
+    reasons = []
+    penalties = []
+
+    setup_type = str(r.get("setup_type") or "").strip().lower()
+    regime = str(r.get("market_regime") or r.get("regime_context") or "").strip().lower()
+    setup_mult = _to_float((hints.get("setup_entry_multipliers") or {}).get(setup_type), 1.0)
+    regime_mult = _to_float((hints.get("regime_entry_multipliers") or {}).get(regime), 1.0)
+
+    chase_risk = _to_float(r.get("entry_precision_v2_chase_risk"), _to_float(r.get("entry_timing_chase_risk"), 0.0))
+    confirm_strength = _to_float(
+        r.get("confirmation_strength_score"),
+        _to_float(r.get("confirmation_entry_quality_score"), _to_float(r.get("agreement_score"), 50.0)),
+    )
+    pullback_quality = _to_float(
+        r.get("pullback_score"),
+        100.0 - _to_float(r.get("overextension_score"), _to_float(r.get("extension_risk_score"), 50.0)),
+    )
+    volume_support = _to_float(r.get("volume_score"), _to_float(r.get("volume_confirmation_score"), 50.0))
+    volatility_risk = _to_float(r.get("volatility_risk"), 100.0 - _to_float(r.get("volatility_score"), 50.0))
+    archetype_perf = _to_float(r.get("historical_training_score"), _to_float(r.get("setup_success_score"), 50.0))
+
+    replay_alignment = str(r.get("replay_alignment") or "insufficient").strip().lower()
+    replay_boost = 0.0
+    if replay_alignment == "supportive":
+        replay_boost = 5.0
+        reasons.append("replay_supportive")
+    elif replay_alignment == "negative":
+        replay_boost = -7.0
+        penalties.append("replay_negative")
+
+    lifecycle_label = str(r.get("lifecycle_outcome_label") or r.get("outcome_label") or "").strip().lower()
+    lifecycle_boost = 0.0
+    if lifecycle_label in {"winner", "positive", "win"}:
+        lifecycle_boost = 4.0
+        reasons.append("lifecycle_positive")
+    elif lifecycle_label in {"loser", "negative", "loss"}:
+        lifecycle_boost = -6.0
+        penalties.append("lifecycle_negative")
+
+    score = (
+        18.0
+        + (confirm_strength * 0.24)
+        + (pullback_quality * 0.18)
+        + (volume_support * 0.12)
+        + ((100.0 - volatility_risk) * 0.14)
+        + (archetype_perf * 0.14)
+        + (_to_float(r.get("entry_quality_score"), 50.0) * 0.10)
+        - (chase_risk * 0.20)
+        + replay_boost
+        + lifecycle_boost
+        + ((setup_mult - 1.0) * 18.0)
+        + ((regime_mult - 1.0) * 16.0)
+    )
+    score = max(0.0, min(100.0, score))
+    band = _entry_quality_v2_band(score)
+    decision = _entry_quality_v2_decision(score, chase_risk=chase_risk, confirmation_strength=confirm_strength)
+
+    if chase_risk >= 75.0:
+        penalties.append("chase_overextension_risk")
+    else:
+        reasons.append("chase_risk_contained")
+    if confirm_strength >= 60.0:
+        reasons.append("confirmation_strength_supportive")
+    else:
+        penalties.append("confirmation_strength_weak")
+    if pullback_quality >= 56.0:
+        reasons.append("pullback_quality_supportive")
+    else:
+        penalties.append("pullback_quality_weak")
+    if volume_support >= 52.0:
+        reasons.append("volume_support_present")
+    else:
+        penalties.append("volume_support_thin")
+    if volatility_risk >= 64.0:
+        penalties.append("volatility_risk_elevated")
+    else:
+        reasons.append("volatility_risk_acceptable")
+    if setup_mult > 1.02 or regime_mult > 1.02:
+        reasons.append("historical_setup_regime_support")
+    elif setup_mult < 0.98 or regime_mult < 0.98:
+        penalties.append("historical_setup_regime_drag")
+
+    return {
+        "entry_quality_v2_score": round(score, 2),
+        "entry_quality_v2_band": str(band),
+        "entry_quality_v2_decision": str(decision),
+        "entry_quality_v2_reasons": list(dict.fromkeys(reasons))[:12],
+        "entry_quality_v2_penalties": list(dict.fromkeys(penalties))[:12],
+        "entry_quality_v2_mode": "shadow",
+    }
+
+
+def _apply_entry_quality_v2_shadow(payload):
+    out = dict(payload or {})
+    li = dict(_get_learning_insights_top_buys_fast() or {})
+    entry_hints = dict(li.get("entry_quality_hints") or {})
+    targets = []
+    for bucket in ("stocks", "crypto"):
+        sec = out.get(bucket)
+        if not isinstance(sec, dict):
+            continue
+        for key in ("final", "qualified", "watchlist", "blocked", "all"):
+            rows = sec.get(key)
+            if isinstance(rows, list):
+                targets.append(rows)
+
+    decision_counts = {}
+    score_total = 0.0
+    score_count = 0
+    shadow_suppress = 0
+    shadow_confirm = 0
+    seen_row_ids = set()
+    for rows in targets:
+        for i, row in enumerate(rows):
+            if not isinstance(row, dict):
+                continue
+            row_obj_id = id(row)
+            if row_obj_id in seen_row_ids:
+                continue
+            seen_row_ids.add(row_obj_id)
+            enriched = dict(row)
+            try:
+                v2 = _entry_quality_v2_eval_row(enriched, policy_hints=entry_hints)
+            except Exception:
+                v2 = {
+                    "entry_quality_v2_score": _to_float(enriched.get("entry_quality_score"), 0.0),
+                    "entry_quality_v2_band": str(enriched.get("entry_quality_band") or "unknown"),
+                    "entry_quality_v2_decision": "monitor",
+                    "entry_quality_v2_reasons": ["fallback_safe_mode"],
+                    "entry_quality_v2_penalties": [],
+                    "entry_quality_v2_mode": "shadow",
+                }
+            enriched.update(v2)
+            rows[i] = enriched
+            d = str(v2.get("entry_quality_v2_decision") or "").strip().lower()
+            if d:
+                decision_counts[d] = int(decision_counts.get(d, 0)) + 1
+            score_total += _to_float(v2.get("entry_quality_v2_score"), 0.0)
+            score_count += 1
+            if d == "suppress":
+                shadow_suppress += 1
+            elif d == "confirm":
+                shadow_confirm += 1
+
+    summary = {
+        "entry_quality_v2_mode": "shadow",
+        "entry_quality_v2_avg_score": round(score_total / max(1.0, float(score_count)), 2),
+        "entry_quality_v2_decision_distribution": dict(decision_counts),
+        "entry_quality_v2_shadow_suppress_count": int(shadow_suppress),
+        "entry_quality_v2_shadow_confirm_count": int(shadow_confirm),
+    }
+    out["entry_quality_v2_summary"] = summary
+    cps = dict(out.get("candidate_promotion_summary") or {})
+    cps.update(summary)
+    out["candidate_promotion_summary"] = cps
     return out
 
 
@@ -42609,6 +42802,11 @@ def learning_insights():
             entry_filter_v2_monitor_count = 0
             entry_filter_v2_allow_count = 0
             entry_filter_v2_penalty_counts = {}
+            entry_quality_v2_score_total = 0.0
+            entry_quality_v2_score_count = 0
+            entry_quality_v2_decision_counts = {}
+            entry_quality_v2_shadow_suppress_count = 0
+            entry_quality_v2_shadow_confirm_count = 0
             profit_quality_band_counts = {}
             profit_quality_score_total = 0.0
             profit_quality_score_count = 0
@@ -42773,6 +42971,18 @@ def learning_insights():
                 for _ef_penalty in list(rr.get("entry_filter_v2_penalties") or []):
                     _efk = str(_ef_penalty or "").strip().lower() or "unknown"
                     entry_filter_v2_penalty_counts[_efk] = int(entry_filter_v2_penalty_counts.get(_efk, 0)) + 1
+                _eqv2_decision = str(rr.get("entry_quality_v2_decision") or "").strip().lower()
+                if _eqv2_decision:
+                    entry_quality_v2_decision_counts[_eqv2_decision] = int(
+                        entry_quality_v2_decision_counts.get(_eqv2_decision, 0)
+                    ) + 1
+                if rr.get("entry_quality_v2_score") is not None:
+                    entry_quality_v2_score_total += _to_float(rr.get("entry_quality_v2_score"), 0.0)
+                    entry_quality_v2_score_count += 1
+                if _eqv2_decision == "suppress":
+                    entry_quality_v2_shadow_suppress_count += 1
+                elif _eqv2_decision == "confirm":
+                    entry_quality_v2_shadow_confirm_count += 1
                 _pq_band = str(rr.get("profit_quality_band") or "").strip().lower()
                 if _pq_band:
                     profit_quality_band_counts[_pq_band] = int(profit_quality_band_counts.get(_pq_band, 0)) + 1
@@ -42893,6 +43103,13 @@ def learning_insights():
                 for k, v in sorted(entry_filter_v2_penalty_counts.items(), key=lambda kv: int(kv[1]), reverse=True)[:8]
                 if int(v) > 0
             ]
+            out_local["entry_quality_v2_avg_score"] = round(
+                entry_quality_v2_score_total / max(1.0, float(entry_quality_v2_score_count)),
+                2,
+            )
+            out_local["entry_quality_v2_decision_distribution"] = dict(entry_quality_v2_decision_counts)
+            out_local["entry_quality_v2_shadow_suppress_count"] = int(entry_quality_v2_shadow_suppress_count)
+            out_local["entry_quality_v2_shadow_confirm_count"] = int(entry_quality_v2_shadow_confirm_count)
             out_local["profit_quality_avg_score"] = round(
                 profit_quality_score_total / max(1.0, float(profit_quality_score_count)),
                 2,
