@@ -56,7 +56,15 @@ class RankingEngine:
     # -------------------------------------------------------------
     # Evaluation Routine (used by data_orchestrator)
     # -------------------------------------------------------------
-    def evaluate_symbol(self, symbol: str, price: float = None):
+    def evaluate_symbol(
+        self,
+        symbol: str,
+        price: float = None,
+        provider_agreement: float | None = None,
+        volatility_factor: float | None = None,
+        momentum_weight: float | None = None,
+        **_unused_kwargs,
+    ):
         """Evaluate symbol and return Astra-style structured intelligence."""
         try:
             score = random.uniform(60, 100)

@@ -19,13 +19,15 @@ from typing import Any
 
 import requests
 
-from api_keys import API_POOLS, ALPACA_SECRET_KEY
+from api_keys import API_POOLS
 from engine.api_call_manager import (
     get_call_permission,
     record_call,
     record_error,
     record_rate_limit,
 )
+
+ALPACA_SECRET_KEY = str(os.getenv("ALPACA_SECRET_KEY", "") or "")
 
 
 def _now_iso() -> str:

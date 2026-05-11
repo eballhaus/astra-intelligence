@@ -15,6 +15,17 @@ try:
 except Exception:  # pragma: no cover - keep runtime-compatible fallback
     PositionTracker = None  # type: ignore[assignment]
 
+try:
+    from engine.trade_lifecycle_tracker import (
+        close_lifecycle_record,
+        create_lifecycle_record,
+        update_lifecycle_progress,
+    )
+except Exception:  # pragma: no cover - tracker is additive and optional
+    close_lifecycle_record = None  # type: ignore[assignment]
+    create_lifecycle_record = None  # type: ignore[assignment]
+    update_lifecycle_progress = None  # type: ignore[assignment]
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -466,6 +477,30 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 pass
+        if callable(create_lifecycle_record):
+            try:
+                create_lifecycle_record(
+                    {
+                        "lifecycle_id": pid,
+                        "symbol": symbol,
+                        "asset_type": asset_type,
+                        "signal_timestamp": str(row.get("timestamp") or now_iso),
+                        "release_status": str(row.get("paper_ready_status") or row.get("release_status") or "paper"),
+                        "entry_timestamp": now_iso,
+                        "entry_price": entry_price,
+                        "current_price": entry_price,
+                        "confidence": _to_float(row.get("confidence"), _to_float(row.get("predicted_win_probability"), 0.0)),
+                        "grade": _to_float(row.get("grade_percent"), _to_float(row.get("persona_weighted_grade"), 0.0)),
+                        "entry_quality_score": _to_float(row.get("entry_quality_score"), 0.0),
+                        "entry_quality_band": str(row.get("entry_quality_band") or "unknown"),
+                        "trade_archetype": str(row.get("setup_type") or "unknown"),
+                        "catalyst_context": str(row.get("regime_context") or row.get("market_regime") or ""),
+                        "source_endpoint": "paper_autopilot",
+                        "lifecycle_stage": "entry",
+                    }
+                )
+            except Exception:
+                pass
 
         return {"ok": True, "position_id": pid, "symbol": symbol, "entry_price": entry_price, "asset_type": asset_type}
 
@@ -537,6 +572,26 @@ class PaperAutopilotEngine:
         if self._position_tracker is not None:
             try:
                 self._position_tracker.close_position(identifier=symbol, exit_price=exit_price, exit_timestamp=now_iso, exit_reason_manual=exit_reason)
+            except Exception:
+                pass
+        if callable(close_lifecycle_record):
+            try:
+                close_lifecycle_record(
+                    pid,
+                    {
+                        "symbol": symbol,
+                        "asset_type": asset_type,
+                        "exit_timestamp": now_iso,
+                        "exit_price": exit_price,
+                        "current_price": exit_price,
+                        "pnl_pct": ret,
+                        "max_favorable_excursion_pct": _to_float(notes.get("max_favorable_excursion"), max(ret, 0.0)),
+                        "max_adverse_excursion_pct": _to_float(notes.get("max_adverse_excursion"), min(ret, 0.0)),
+                        "exit_reason": str(exit_reason or ""),
+                        "outcome_label": "winner" if ret > 0 else ("loser" if ret < 0 else "flat"),
+                        "source_endpoint": "paper_autopilot",
+                    },
+                )
             except Exception:
                 pass
 
@@ -763,6 +818,24 @@ class PaperAutopilotEngine:
                     hold_posture=hold_posture,
                     continuation_flag=continuation_flag,
                     deterioration_flag=deterioration_flag,
+                )
+            except Exception:
+                pass
+        if callable(update_lifecycle_progress):
+            try:
+                update_lifecycle_progress(
+                    pid,
+                    {
+                        "symbol": str(open_row.get("symbol") or ""),
+                        "asset_type": _norm_asset(open_row.get("asset_type") or "stock"),
+                        "current_price": current,
+                        "pnl_pct": ret,
+                        "max_favorable_excursion_pct": mfe,
+                        "max_adverse_excursion_pct": mae,
+                        "exit_reason": str(open_row.get("exit_reason") or ""),
+                        "source_endpoint": "paper_autopilot",
+                        "lifecycle_stage": "monitoring",
+                    },
                 )
             except Exception:
                 pass
