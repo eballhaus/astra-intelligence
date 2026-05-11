@@ -1,4 +1,5 @@
 import json
+import os
 import requests
 
 
@@ -48,10 +49,16 @@ class GuardianSecureAPI:
             print(f"[GuardianSecureAPI] ⚠️ API {name} failed for {symbol}: {e}")
             return {"symbol": symbol, "price": 0.0, "source": name}
     def __init__(self, keyfile="astra_modules/guardian/security/api_keys.json"):
-        # Phase 2.4: file key loading disabled; using environment instead
+        # Phase 2.4: file key loading disabled; using environment instead.
+        # Always initialize runtime attributes so quote fetches degrade safely.
         self.api_keys = {}
-        return
         self.timeout = 10
+        self.keys = {
+            "TWELVEDATA_API_KEY": os.getenv("TWELVEDATA_API_KEY", ""),
+            "FINNHUB_API_KEY": os.getenv("FINNHUB_API_KEY", ""),
+            "POLYGON_API_KEY": os.getenv("POLYGON_API_KEY", ""),
+            "EODHD_API_KEY": os.getenv("EODHD_API_KEY", ""),
+        }
 
     # ---------------------------------------------------------
     # Unified stock/ETF data (rotates between Alpha, Twelve, Finnhub)
