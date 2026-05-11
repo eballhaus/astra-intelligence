@@ -37,6 +37,12 @@ from engine.quote_validator import get_invalid_quote_report, get_validation_samp
 from engine.paper_replay_trainer import PaperReplayTrainer
 from engine.persona_funnel import PersonaFunnel
 from engine.learning_ledger import ConditionalLearningLedger
+from engine.trade_lifecycle_tracker import (
+    close_lifecycle_record,
+    create_lifecycle_record,
+    load_recent_lifecycle_records,
+    summarize_lifecycle_metrics,
+)
 from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
 from core.guardian.guardian_secure_api import GuardianSecureAPI
 from engine.api_call_manager import (
@@ -27875,6 +27881,30 @@ def open_position(payload: dict = Body(...)):
         mode=data.get("mode") or "intraday",
     )
     out = dict(result)
+    if out.get("ok"):
+        try:
+            create_lifecycle_record(
+                {
+                    "lifecycle_id": str((out.get("position") or {}).get("position_id") or out.get("position_id") or ""),
+                    "symbol": symbol,
+                    "asset_type": asset_type,
+                    "signal_timestamp": str((row or {}).get("timestamp") or datetime.now(UTC).isoformat().replace("+00:00", "Z")),
+                    "release_status": str((row or {}).get("release_status") or (row or {}).get("paper_ready_status") or "manual"),
+                    "entry_timestamp": str((out.get("position") or {}).get("entry_timestamp") or datetime.now(UTC).isoformat().replace("+00:00", "Z")),
+                    "entry_price": entry_price,
+                    "current_price": _to_float((row or {}).get("price"), entry_price),
+                    "confidence": _to_float((row or {}).get("confidence"), _to_float((row or {}).get("predicted_win_probability"), 0.0)),
+                    "grade": _to_float((row or {}).get("grade_percent"), _to_float((row or {}).get("persona_weighted_grade"), 0.0)),
+                    "entry_quality_score": _to_float((row or {}).get("entry_quality_score"), 0.0),
+                    "entry_quality_band": str((row or {}).get("entry_quality_band") or "unknown"),
+                    "trade_archetype": str((row or {}).get("setup_type") or "unknown"),
+                    "catalyst_context": str((row or {}).get("regime_context") or (row or {}).get("market_regime") or ""),
+                    "source_endpoint": "/api/positions/open",
+                    "lifecycle_stage": "entry",
+                }
+            )
+        except Exception:
+            pass
     out["symbol"] = symbol
     out["asset_type"] = asset_type
     out["entry_price"] = round(entry_price, 4)
@@ -27916,6 +27946,39 @@ def close_position(payload: dict = Body(...)):
     )
     if not closed.get("ok"):
         return closed
+    try:
+        closed_row = closed.get("closed") if isinstance(closed.get("closed"), dict) else {}
+        entry_px = _to_float(closed_row.get("entry_price"), _to_float(close_probe.get("entry_price"), 0.0))
+        pnl_pct = 0.0
+        if entry_px > 0.0:
+            pnl_pct = ((_to_float(exit_price, 0.0) - entry_px) / entry_px) * 100.0
+        close_lifecycle_record(
+            str(closed_row.get("position_id") or close_probe.get("position_id") or identifier),
+            {
+                "symbol": str(closed_row.get("symbol") or close_probe.get("symbol") or ""),
+                "asset_type": str(closed_row.get("asset_type") or close_probe.get("asset_type") or "stock"),
+                "signal_timestamp": str(closed_row.get("entry_timestamp") or close_probe.get("entry_timestamp") or ""),
+                "entry_timestamp": str(closed_row.get("entry_timestamp") or close_probe.get("entry_timestamp") or ""),
+                "entry_price": entry_px,
+                "current_price": _to_float(exit_price, 0.0),
+                "exit_timestamp": str(closed_row.get("exit_timestamp") or data.get("exit_timestamp") or datetime.now(UTC).isoformat().replace("+00:00", "Z")),
+                "exit_price": _to_float(exit_price, 0.0),
+                "pnl_pct": pnl_pct,
+                "max_favorable_excursion_pct": _to_float(closed_row.get("peak_unrealized_pnl_percent"), max(pnl_pct, 0.0)),
+                "max_adverse_excursion_pct": _to_float(closed_row.get("drawdown_after_peak_percent"), min(pnl_pct, 0.0)),
+                "confidence": _to_float(closed_row.get("entry_predicted_win_probability"), 0.0),
+                "grade": _to_float(closed_row.get("entry_persona_weighted_grade"), 0.0),
+                "entry_quality_score": _to_float(closed_row.get("entry_entry_quality_score"), _to_float(closed_row.get("entry_quality_score"), 0.0)),
+                "entry_quality_band": str(closed_row.get("entry_entry_quality_band") or closed_row.get("entry_quality_band") or "unknown"),
+                "trade_archetype": str(closed_row.get("entry_setup_type") or closed_row.get("detected_setup_type") or "unknown"),
+                "catalyst_context": str(closed_row.get("entry_regime_context") or closed_row.get("market_regime") or ""),
+                "exit_reason": str(data.get("exit_reason_manual") or "manual_close"),
+                "outcome_label": "winner" if pnl_pct > 0 else ("loser" if pnl_pct < 0 else "flat"),
+                "source_endpoint": "/api/positions/close",
+            },
+        )
+    except Exception:
+        pass
 
     warning = None
     try:
@@ -27998,6 +28061,23 @@ def close_position(payload: dict = Body(...)):
         payload_out["warning"] = warning
     payload_out["last_updated_utc"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     return payload_out
+
+
+@router.get("/api/trade_lifecycle_summary_v1")
+def trade_lifecycle_summary_v1(limit: int = Query(200, ge=1, le=2000)):
+    try:
+        summary = summarize_lifecycle_metrics(limit=limit)
+        summary["recent_records"] = load_recent_lifecycle_records(limit=min(limit, 50))
+        summary["api_safe"] = True
+        summary["trade_lifecycle_summary_v1"] = True
+        return summary
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "trade_lifecycle_summary_v1": True,
+            "error": f"lifecycle_summary_unavailable: {exc}",
+            "recent_records": [],
+        }
 
 
 @router.get("/api/positions")
