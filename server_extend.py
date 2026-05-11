@@ -21747,10 +21747,18 @@ def top_buys(
                     pass
         _runtime_phase_start("lock_acquire")
         wait_t0 = time.perf_counter()
+        base_lock_wait_timeout = _to_float(TOP_BUYS_LOCK_WAIT_TIMEOUT_SECONDS, 1.5)
+        cold_start_lock_wait_cap_seconds = max(
+            base_lock_wait_timeout,
+            _to_float(os.getenv("ASTRA_TOP_BUYS_COLD_START_LOCK_WAIT_CAP_SECONDS", "6.0"), 6.0),
+        )
         lock_wait_timeout = (
-            max(_to_float(TOP_BUYS_LOCK_WAIT_TIMEOUT_SECONDS, 1.5), _to_float(cold_start_budget_seconds, 0.0))
+            min(
+                max(base_lock_wait_timeout, _to_float(cold_start_budget_seconds, 0.0)),
+                cold_start_lock_wait_cap_seconds,
+            )
             if no_stale_cache_available
-            else _to_float(TOP_BUYS_LOCK_WAIT_TIMEOUT_SECONDS, 1.5)
+            else base_lock_wait_timeout
         )
         have_lock = _TOP_BUYS_BUILD_LOCK.acquire(timeout=lock_wait_timeout)
         runtime_trace["lock_wait_ms"] = round(
