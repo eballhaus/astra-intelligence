@@ -139,6 +139,7 @@ export default function LearningTab({ compact = false }) {
   const [endpointStatus, setEndpointStatus] = useState({});
   const [timeline, setTimeline] = useState([]);
   const [data, setData] = useState({
+    learningSnapshotFast: {},
     learningInsights: {},
     paper: {},
     paperStatus: {},
@@ -209,7 +210,7 @@ export default function LearningTab({ compact = false }) {
       const secondaryResults = [];
       try {
         const primaryBatch = await Promise.all([
-          fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 12000 }),
+          fetchJson("learning_snapshot_fast_v1", "/api/learning_snapshot_fast_v1", {}, { timeoutMs: 6000 }),
           fetchJson("paper_performance", "/api/paper_performance", {}, { timeoutMs: 12000 }),
           fetchJson("paper_status", "/api/paper_status", {}, { timeoutMs: 10000 }),
         ]);
@@ -220,6 +221,7 @@ export default function LearningTab({ compact = false }) {
           fetchJson("model_status", "/api/model_status", {}, { timeoutMs: 10000 }),
           fetchJson("paper_worker_status", "/api/paper_worker_status", {}, { timeoutMs: 10000 }),
           fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, { timeoutMs: 15000 }),
+          fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
         ]);
         secondaryResults.push(...secondaryBatch);
       } finally {
@@ -270,6 +272,7 @@ export default function LearningTab({ compact = false }) {
         const model = selectPayload("model_status", prevSafe.model);
         const topBuys = selectPayload("top_buys", prevSafe.topBuys);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
+        const learningSnapshotFast = selectPayload("learning_snapshot_fast_v1", prevSafe.learningSnapshotFast);
         const learningCandidate = selectPayload("learning_insights", prevSafe.learningInsights);
         const prevLearning = (prevSafe.learningInsights && typeof prevSafe.learningInsights === "object")
           ? prevSafe.learningInsights
@@ -304,6 +307,73 @@ export default function LearningTab({ compact = false }) {
             ui_false_empty_guard_ts: new Date().toISOString(),
           };
         }
+        const fastSnapshotAsInsights =
+          learningSnapshotFast && typeof learningSnapshotFast === "object"
+            ? {
+              current_engine_outcome_evaluation: {
+                released_hero_win_rate: safeNumber(learningSnapshotFast.current_engine_released_wr),
+                released_vs_blocked_win_rate_delta: safeNumber(learningSnapshotFast.released_vs_blocked_wr_gap),
+              },
+              entry_quality_score: safeNumber(learningSnapshotFast.entry_quality),
+              follow_through_quality_score: safeNumber(learningSnapshotFast.follow_through_quality),
+              buy_list_purity_score: safeNumber(learningSnapshotFast.buy_list_purity),
+              current_engine_exit_timing_score: safeNumber(learningSnapshotFast.exit_quality),
+              learning_quality: {
+                quality_score: safeNumber(learningSnapshotFast.runtime_learning_stability),
+                trend: String(learningSnapshotFast.current_trend || "stable"),
+              },
+              runtime_hardening: {
+                resilience_score: safeNumber(learningSnapshotFast.runtime_learning_stability),
+              },
+              learning_payload_degraded_reason: String(learningSnapshotFast.degraded_reason || ""),
+              best_worst: {
+                best_setup_type: String(learningSnapshotFast.strongest_area || "insufficient_data"),
+                worst_setup_type: String(learningSnapshotFast.biggest_weakness || "insufficient_data"),
+              },
+              execution_readiness_controls: {
+                readiness_tier: String(learningSnapshotFast.operating_posture || "guarded"),
+              },
+              generated_at: String(learningSnapshotFast.updated_at || ""),
+              last_updated_utc: String(learningSnapshotFast.updated_at || ""),
+            }
+            : {};
+        if (
+          (!learningInsights || Object.keys(learningInsights).length === 0)
+          && fastSnapshotAsInsights
+          && Object.keys(fastSnapshotAsInsights).length > 0
+        ) {
+          learningInsights = fastSnapshotAsInsights;
+        } else if (
+          learningInsights
+          && typeof learningInsights === "object"
+          && fastSnapshotAsInsights
+          && Object.keys(fastSnapshotAsInsights).length > 0
+        ) {
+          learningInsights = {
+            ...fastSnapshotAsInsights,
+            ...learningInsights,
+            current_engine_outcome_evaluation: {
+              ...(fastSnapshotAsInsights.current_engine_outcome_evaluation || {}),
+              ...((learningInsights || {}).current_engine_outcome_evaluation || {}),
+            },
+            learning_quality: {
+              ...(fastSnapshotAsInsights.learning_quality || {}),
+              ...((learningInsights || {}).learning_quality || {}),
+            },
+            runtime_hardening: {
+              ...(fastSnapshotAsInsights.runtime_hardening || {}),
+              ...((learningInsights || {}).runtime_hardening || {}),
+            },
+            best_worst: {
+              ...(fastSnapshotAsInsights.best_worst || {}),
+              ...((learningInsights || {}).best_worst || {}),
+            },
+            execution_readiness_controls: {
+              ...(fastSnapshotAsInsights.execution_readiness_controls || {}),
+              ...((learningInsights || {}).execution_readiness_controls || {}),
+            },
+          };
+        }
         const promotionSummary = topBuys?.candidate_promotion_summary || {};
         const buyConversionEngine = promotionSummary?.buy_conversion_engine || {};
         const buyToPosition = promotionSummary?.buy_to_position_feedback_suite || {};
@@ -321,7 +391,16 @@ export default function LearningTab({ compact = false }) {
           return [...prevTimeline, point].slice(-36);
         });
 
-        return { learningInsights, paper, paperStatus, workerStatus, model, topBuys, systemStatus };
+        return {
+          learningSnapshotFast,
+          learningInsights,
+          paper,
+          paperStatus,
+          workerStatus,
+          model,
+          topBuys,
+          systemStatus,
+        };
       });
     };
 
