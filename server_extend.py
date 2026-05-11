@@ -17,21 +17,150 @@ from fastapi import APIRouter, Query, Body
 
 from engine.adaptive_learning import AdaptiveLearningEngine
 from engine.data_orchestrator import fetch_live_data, get_ranking_snapshot_meta
-from engine.live_signal_log import LiveSignalLog
-from engine.persona_performance_tracker import PersonaPerformanceTracker
-from engine.portfolio_intelligence import PortfolioIntelligence
-from engine.strategy_layer import StrategyLayer
-from engine.trade_intelligence import TradeIntelligenceEngine
+try:
+    from engine.live_signal_log import LiveSignalLog
+except Exception:
+    class LiveSignalLog:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            self.file_path = str(kwargs.get("file_path") or os.path.join("state", "live_signal_log.json"))
+
+        def process_rankings(self, output):
+            return {"ok": False, "fallback": True, "processed": 0}
+
+        def live_performance(self):
+            return {"open_trades": [], "closed_trades": [], "stats": {}, "fallback": True}
+
+        def get_open_trades(self):
+            return []
+
+try:
+    from engine.persona_performance_tracker import PersonaPerformanceTracker
+except Exception:
+    class PersonaPerformanceTracker:  # type: ignore[override]
+        def summary(self):
+            return {"enabled": False, "fallback": True, "personas": {}, "updated_at": ""}
+
+try:
+    from engine.portfolio_intelligence import PortfolioIntelligence
+except Exception:
+    class PortfolioIntelligence:  # type: ignore[override]
+        def apply(self, ranked, asset_type="stocks"):
+            return ranked
+
+        def summary(self, asset_type="stocks"):
+            return {
+                "portfolio_correlation_score": 0.0,
+                "portfolio_volatility_score": 0.0,
+                "portfolio_concentration_index": 0.0,
+                "suggested_total_risk_exposure": 0.0,
+                "enabled": False,
+                "fallback": True,
+                "asset_type": str(asset_type or "stocks"),
+            }
+
+try:
+    from engine.strategy_layer import StrategyLayer
+except Exception:
+    class StrategyLayer:  # type: ignore[override]
+        pass
+
+try:
+    from engine.trade_intelligence import TradeIntelligenceEngine
+except Exception:
+    from contextlib import contextmanager
+
+    class TradeIntelligenceEngine:  # type: ignore[override]
+        def __init__(self, db_path: str = os.path.join("state", "ai_trading_memory.db"), *args, **kwargs):
+            self.db_path = str(db_path or os.path.join("state", "ai_trading_memory.db"))
+
+        @contextmanager
+        def _connect(self):
+            conn = sqlite3.connect(self.db_path, timeout=5.0)
+            conn.row_factory = sqlite3.Row
+            try:
+                yield conn
+            finally:
+                conn.close()
+
+        def compute_decision_feedback(self, *args, **kwargs):
+            return {}
+
+        def compute_decision_feedback_segments(self, *args, **kwargs):
+            return {}
+
+        def compute_paper_cohort_trends(self, *args, **kwargs):
+            return {}
+
+        def diagnostics(self):
+            return {"enabled": False, "fallback": True, "db_path": self.db_path}
+
+        def record_trade(self, *args, **kwargs):
+            return {"ok": False, "fallback": True}
+
 from engine.exit_intelligence import ExitIntelligenceEngine
 from engine.intraday_engine import IntradaySignalEngine
 from engine.position_tracker import PositionTracker
 from engine.paper_autopilot import PaperAutopilotEngine
-from engine.execution_analyzer import ExecutionAnalyzer
-from engine.strategy_optimizer import StrategyOptimizer
+try:
+    from engine.execution_analyzer import ExecutionAnalyzer
+except Exception:
+    class ExecutionAnalyzer:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def analyze(self):
+            return {"enabled": False, "fallback": True}
+
+try:
+    from engine.strategy_optimizer import StrategyOptimizer
+except Exception:
+    class StrategyOptimizer:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def recommend(self):
+            return {"enabled": False, "fallback": True}
+
 from engine.exit_learning import ExitLearningEngine
-from engine.portfolio_risk_engine import PortfolioRiskEngine
-from engine.predictive_model import PredictiveModel
-from engine.regime_engine import RegimeEngine
+try:
+    from engine.portfolio_risk_engine import PortfolioRiskEngine
+except Exception:
+    class PortfolioRiskEngine:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def enrich(self, rows, *args, **kwargs):
+            return rows
+
+        def snapshot(self):
+            return {"enabled": False, "fallback": True}
+
+try:
+    from engine.predictive_model import PredictiveModel
+except Exception:
+    class PredictiveModel:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def annotate_rows(self, rows, *args, **kwargs):
+            return rows
+
+        def status(self):
+            return {"enabled": False, "fallback": True}
+
+try:
+    from engine.regime_engine import RegimeEngine
+except Exception:
+    class RegimeEngine:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def annotate_rows(self, rows, *args, **kwargs):
+            return rows
+
+        def market_regime_snapshot(self):
+            return {"enabled": False, "fallback": True, "regime": "unknown"}
+
 from engine.quote_freshness_manager import QuoteFreshnessManager
 from engine.quote_validator import get_invalid_quote_report, get_validation_samples
 from engine.paper_replay_trainer import PaperReplayTrainer
@@ -43,7 +172,26 @@ from engine.trade_lifecycle_tracker import (
     load_recent_lifecycle_records,
     summarize_lifecycle_metrics,
 )
-from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
+try:
+    from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
+except Exception:
+    class _AlpacaWSMonitorFallback:
+        def configure_symbols(self, *args, **kwargs):
+            return {"ok": False, "fallback": True}
+
+        def get_quote(self, *args, **kwargs):
+            return None
+
+        def status(self):
+            return {"enabled": False, "fallback": True, "connected": False, "symbols": []}
+
+        def contention_diagnostics(self):
+            return {"enabled": False, "fallback": True}
+
+        def reset_for_diagnostics(self, *args, **kwargs):
+            return {"ok": True, "fallback": True}
+
+    ALPACA_WS_MONITOR = _AlpacaWSMonitorFallback()
 from core.guardian.guardian_secure_api import GuardianSecureAPI
 from engine.api_call_manager import (
     get_call_permission,
@@ -55,7 +203,9 @@ from engine.api_call_manager import (
 )
 import engine.api_call_manager as API_CALL_MANAGER
 from engine.api_caches import get_cache, set_cache, cache_metrics
-from api_keys import API_POOLS, ALPACA_SECRET_KEY
+from api_keys import API_POOLS
+
+ALPACA_SECRET_KEY = str(os.getenv("ALPACA_SECRET_KEY", "") or "")
 
 router = APIRouter()
 STATE = "state"
