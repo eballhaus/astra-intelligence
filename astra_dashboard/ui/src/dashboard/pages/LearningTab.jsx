@@ -205,20 +205,29 @@ export default function LearningTab({ compact = false }) {
       setFetchError("");
       const hadUsableTopBuys =
         Array.isArray(data?.topBuys?.stocks?.final) && data.topBuys.stocks.final.length > 0;
-      const results = [];
+      const fastResults = [];
+      const secondaryResults = [];
       try {
-        results.push(await fetchJson("system_status", "/api/system_status", {}, { timeoutMs: 15000 }));
-        results.push(await fetchJson("model_status", "/api/model_status", {}, { timeoutMs: 15000 }));
-        results.push(await fetchJson("paper_worker_status", "/api/paper_worker_status", {}, { timeoutMs: 15000 }));
-        results.push(await fetchJson("paper_status", "/api/paper_status", {}, { timeoutMs: 15000 }));
-        results.push(await fetchJson("paper_performance", "/api/paper_performance", {}, { timeoutMs: 20000 }));
-        results.push(await fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, { timeoutMs: 45000 }));
-        results.push(await fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 30000 }));
+        const primaryBatch = await Promise.all([
+          fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 12000 }),
+          fetchJson("paper_performance", "/api/paper_performance", {}, { timeoutMs: 12000 }),
+          fetchJson("paper_status", "/api/paper_status", {}, { timeoutMs: 10000 }),
+        ]);
+        fastResults.push(...primaryBatch);
+
+        const secondaryBatch = await Promise.all([
+          fetchJson("system_status", "/api/system_status", {}, { timeoutMs: 10000 }),
+          fetchJson("model_status", "/api/model_status", {}, { timeoutMs: 10000 }),
+          fetchJson("paper_worker_status", "/api/paper_worker_status", {}, { timeoutMs: 10000 }),
+          fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, { timeoutMs: 15000 }),
+        ]);
+        secondaryResults.push(...secondaryBatch);
       } finally {
         refreshInFlightRef.current = false;
       }
       if (!mounted) return;
 
+      const results = [...fastResults, ...secondaryResults];
       const statuses = {};
       const errors = [];
       results.forEach((r) => {
