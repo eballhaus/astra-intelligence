@@ -68,6 +68,10 @@ class GuardianSecureAPI:
     # ---------------------------------------------------------
     def fetch_stock(self, symbol="SPY"):
         try:
+            if not hasattr(self, "keys") or not isinstance(getattr(self, "keys"), dict):
+                self.keys = {}
+            if not hasattr(self, "timeout"):
+                self.timeout = 10
             td_key = self.keys.get("TWELVEDATA_API_KEY")
             finnhub_key = self.keys.get("FINNHUB_API_KEY")
             poly_key = self.keys.get("POLYGON_API_KEY")
@@ -111,6 +115,10 @@ class GuardianSecureAPI:
 
     def fetch_crypto(self, symbol="BTC-USD"):
         try:
+            if not hasattr(self, "keys") or not isinstance(getattr(self, "keys"), dict):
+                self.keys = {}
+            if not hasattr(self, "timeout"):
+                self.timeout = 10
             td_key = self.keys.get("TWELVEDATA_API_KEY")
             poly_key = self.keys.get("POLYGON_API_KEY")
             coin, currency = symbol.split("-")
