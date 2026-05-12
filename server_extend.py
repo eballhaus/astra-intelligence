@@ -17805,11 +17805,16 @@ def rankings():
         last_rows = LAST_RANKINGS.get("stocks", []) or []
         if last_rows:
             return [dict(r) for r in last_rows if isinstance(r, dict)]
-        waited = _wait_for_rank_rows("stocks", timeout_seconds=3.0, poll_seconds=0.15)
+        # Cold-cache contention path: allow the in-flight builder extra time to seed rows.
+        waited = _wait_for_rank_rows("stocks", timeout_seconds=8.0, poll_seconds=0.2)
         if waited:
             return waited
-        have_lock = build_lock.acquire(timeout=2.0)
+        have_lock = build_lock.acquire(timeout=10.0)
         if not have_lock:
+            # Last chance: return any stale in-memory rows if present.
+            last_rows = LAST_RANKINGS.get("stocks", []) or []
+            if last_rows:
+                return [dict(r) for r in last_rows if isinstance(r, dict)]
             return []
     # Double-check cache once lock is acquired.
     cached = RANKINGS_ENDPOINT_CACHE.get("stocks", {})
@@ -17872,8 +17877,10 @@ def rankings():
 
         _update_signal_performance(output)
         LIVE_SIGNAL_LOG.process_rankings(output)
-        _update_last_rankings("stocks", output)
-        RANKINGS_ENDPOINT_CACHE["stocks"] = {"ts": time.time(), "payload": list(output)}
+        # Avoid empty-result cache poisoning: keep prior non-empty rankings snapshot.
+        if output:
+            _update_last_rankings("stocks", output)
+            RANKINGS_ENDPOINT_CACHE["stocks"] = {"ts": time.time(), "payload": list(output)}
         _PERF_COUNTERS["rankings_build_count"] = int(_PERF_COUNTERS.get("rankings_build_count", 0)) + 1
         _FUNNEL_RUNTIME.update(
             {
@@ -17916,11 +17923,14 @@ def crypto_rankings():
         last_rows = LAST_RANKINGS.get("crypto", []) or []
         if last_rows:
             return [dict(r) for r in last_rows if isinstance(r, dict)]
-        waited = _wait_for_rank_rows("crypto", timeout_seconds=3.0, poll_seconds=0.15)
+        waited = _wait_for_rank_rows("crypto", timeout_seconds=8.0, poll_seconds=0.2)
         if waited:
             return waited
-        have_lock = build_lock.acquire(timeout=2.0)
+        have_lock = build_lock.acquire(timeout=10.0)
         if not have_lock:
+            last_rows = LAST_RANKINGS.get("crypto", []) or []
+            if last_rows:
+                return [dict(r) for r in last_rows if isinstance(r, dict)]
             return []
     cached = RANKINGS_ENDPOINT_CACHE.get("crypto", {})
     if cached.get("payload") and (time.time() - float(cached.get("ts", 0.0))) <= RANKINGS_ENDPOINT_TTL_SECONDS:
@@ -17953,8 +17963,9 @@ def crypto_rankings():
         output = REGIME_ENGINE.annotate_rows(output)
 
         _update_signal_performance(output)
-        _update_last_rankings("crypto", output)
-        RANKINGS_ENDPOINT_CACHE["crypto"] = {"ts": time.time(), "payload": list(output)}
+        if output:
+            _update_last_rankings("crypto", output)
+            RANKINGS_ENDPOINT_CACHE["crypto"] = {"ts": time.time(), "payload": list(output)}
         _PERF_COUNTERS["rankings_build_count"] = int(_PERF_COUNTERS.get("rankings_build_count", 0)) + 1
         return output
     finally:
