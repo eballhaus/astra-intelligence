@@ -21435,10 +21435,38 @@ def top_buys(
         source = "circuit_breaker_fallback"
         cache_hit = isinstance(fallback_payload, dict) and bool(fallback_payload)
         if not cache_hit:
-            fallback_payload = _empty_top_buys_fallback_payload("no_cached_payload_available")
-            source = "empty_fallback"
-            fallback_age = None
-            fallback_key = None
+            # If cache is empty but rankings rows exist, build a fast non-locking recovery payload
+            # from already-available rankings rows instead of returning an empty top_buys response.
+            stock_rows_fb = _rows_for_top_buys("stocks")
+            crypto_rows_fb = _rows_for_top_buys("crypto")
+            if stock_rows_fb or crypto_rows_fb:
+                try:
+                    fallback_payload = _top_buys_minimal_recovery_payload(
+                        stock_rows=stock_rows_fb,
+                        crypto_rows=crypto_rows_fb,
+                        buy_mode=mode_cfg["buy_mode"],
+                        include_trace=False,
+                        runtime_trace=None,
+                        runtime_trace_push=None,
+                        started_at_perf=time.perf_counter(),
+                        max_build_seconds=0.0,
+                    )
+                    fallback_payload["last_updated_utc"] = _now_utc_iso()
+                    fallback_payload["stale_cache"] = False
+                    fallback_payload["top_buys_payload_source"] = "rankings_rows_fallback"
+                    source = "rankings_rows_fallback"
+                    fallback_age = None
+                    fallback_key = None
+                except Exception:
+                    fallback_payload = _empty_top_buys_fallback_payload("no_cached_payload_available")
+                    source = "empty_fallback"
+                    fallback_age = None
+                    fallback_key = None
+            else:
+                fallback_payload = _empty_top_buys_fallback_payload("no_cached_payload_available")
+                source = "empty_fallback"
+                fallback_age = None
+                fallback_key = None
         _runtime_phase_start("serialization")
         out = _decorate_top_buys_payload(
             fallback_payload,
