@@ -172,6 +172,7 @@ from engine.trade_lifecycle_tracker import (
     load_recent_lifecycle_records,
     summarize_lifecycle_metrics,
 )
+from engine.policy_backtest_engine import PolicyBacktestEngine
 try:
     from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
 except Exception:
@@ -252,6 +253,7 @@ WATCHDOG_PID_PATH = os.path.join(STATE, "backend_watchdog.pid")
 WATCHDOG_HEARTBEAT_PATH = os.path.join(STATE, "backend_watchdog_heartbeat")
 WATCHDOG_LOG_PATH = os.path.join(STATE, "watchdog.log")
 PAPER_REPLAY_TRAINER = None
+POLICY_BACKTEST_ENGINE = PolicyBacktestEngine(state_dir=STATE)
 FMP_USAGE_STATE_PATH = os.path.join(STATE, "fmp_usage_state.json")
 FMP_CACHE_INDEX_PATH = os.path.join(STATE, "fmp_cache_index.json")
 API_USAGE_GOVERNOR_PATH = os.path.join(STATE, "api_usage_governor.json")
@@ -28299,6 +28301,38 @@ def trade_lifecycle_summary_v1(limit: int = Query(200, ge=1, le=2000)):
             "trade_lifecycle_summary_v1": True,
             "error": f"lifecycle_summary_unavailable: {exc}",
             "recent_records": [],
+        }
+
+
+@router.get("/api/policy_compare_status_v1")
+def policy_compare_status_v1():
+    try:
+        status = POLICY_BACKTEST_ENGINE.status()
+        status["policy_compare_status_v1"] = True
+        return status
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "policy_compare_status_v1": True,
+            "error": f"policy_compare_status_unavailable: {exc}",
+            "mode": "shadow_analysis",
+        }
+
+
+@router.get("/api/policy_compare_v1")
+def policy_compare_v1(force_refresh: bool = Query(False)):
+    try:
+        payload = POLICY_BACKTEST_ENGINE.compare_policies(force_refresh=force_refresh)
+        payload["policy_compare_v1"] = True
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "policy_compare_v1": True,
+            "mode": "shadow_analysis",
+            "recommendation": "insufficient_data",
+            "reason_summary": f"policy_compare_unavailable: {exc}",
+            "metrics_by_policy": {},
         }
 
 
