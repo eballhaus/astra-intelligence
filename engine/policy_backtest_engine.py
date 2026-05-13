@@ -7,6 +7,7 @@ import os
 import statistics
 import threading
 import time
+from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
@@ -100,10 +101,9 @@ class PolicyBacktestEngine:
                 if not os.path.exists(path):
                     source_counts[path] = 0
                     continue
+                tail_rows: deque[dict[str, Any]] = deque(maxlen=max_per_file)
                 with open(path, "r", encoding="utf-8") as f:
                     for raw in f:
-                        if loaded >= max_per_file:
-                            break
                         s = str(raw or "").strip()
                         if not s:
                             continue
@@ -116,8 +116,9 @@ class PolicyBacktestEngine:
                         row = self._normalize_row(obj)
                         if row is None:
                             continue
-                        rows.append(row)
-                        loaded += 1
+                        tail_rows.append(row)
+                loaded = len(tail_rows)
+                rows.extend(list(tail_rows))
                 source_counts[path] = loaded
             except Exception:
                 source_counts[path] = loaded
@@ -156,6 +157,8 @@ class PolicyBacktestEngine:
             "event_time": str(
                 raw.get("entry_timestamp")
                 or raw.get("signal_timestamp")
+                or raw.get("timestamp_utc")
+                or raw.get("evaluated_at_utc")
                 or raw.get("timestamp")
                 or raw.get("created_at")
                 or ""
@@ -169,8 +172,9 @@ class PolicyBacktestEngine:
         conf = _to_float(row.get("confidence"), 0.0)
         grade = _to_float(row.get("grade_percent"), 0.0)
         released = bool(row.get("released"))
+        has_outcome = str(row.get("outcome_label") or "").strip().lower() not in {"", "insufficient_data"}
         if policy == "current_policy":
-            return released or (entry_q >= 55.0 and conf >= 45.0)
+            return released or (entry_q >= 55.0 and conf >= 45.0) or has_outcome
         if policy == "entry_quality_v2_shadow_policy":
             return entry_q >= 62.0 and conf >= 50.0
         if policy == "conservative_confirmation_policy":
@@ -282,4 +286,3 @@ class PolicyBacktestEngine:
             "bandwidth_used": 0,
             "local_only": True,
         }
-

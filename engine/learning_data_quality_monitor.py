@@ -6,6 +6,7 @@ import json
 import os
 import threading
 import time
+from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
@@ -104,9 +105,9 @@ class LearningDataQualityMonitor:
         return payload
 
     def _read_jsonl_capped(self, path: str) -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
+        rows_deque: deque[dict[str, Any]] = deque(maxlen=max(1, int(self.max_rows_per_file)))
         if not os.path.exists(path):
-            return rows
+            return []
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 for raw in fh:
@@ -118,12 +119,10 @@ class LearningDataQualityMonitor:
                     except Exception:
                         continue
                     if isinstance(obj, dict):
-                        rows.append(obj)
+                        rows_deque.append(obj)
         except Exception:
             return []
-        if len(rows) > self.max_rows_per_file:
-            rows = rows[-self.max_rows_per_file :]
-        return rows
+        return list(rows_deque)
 
     def _count_recent(self, rows: list[dict[str, Any]], ts_keys: tuple[str, ...], hours: int) -> int:
         if not rows:
@@ -164,17 +163,35 @@ class LearningDataQualityMonitor:
         candidate_rows = self._read_jsonl_capped(self.candidate_path)
         outcome_rows = self._read_jsonl_capped(self.outcome_path)
 
-        lifecycle_1h = self._count_recent(lifecycle_rows, ("updated_at", "entry_timestamp", "signal_timestamp"), 1)
-        lifecycle_6h = self._count_recent(lifecycle_rows, ("updated_at", "entry_timestamp", "signal_timestamp"), 6)
-        lifecycle_24h = self._count_recent(lifecycle_rows, ("updated_at", "entry_timestamp", "signal_timestamp"), 24)
+        lifecycle_1h = self._count_recent(
+            lifecycle_rows, ("updated_at", "entry_timestamp", "signal_timestamp", "timestamp_utc"), 1
+        )
+        lifecycle_6h = self._count_recent(
+            lifecycle_rows, ("updated_at", "entry_timestamp", "signal_timestamp", "timestamp_utc"), 6
+        )
+        lifecycle_24h = self._count_recent(
+            lifecycle_rows, ("updated_at", "entry_timestamp", "signal_timestamp", "timestamp_utc"), 24
+        )
 
-        candidate_1h = self._count_recent(candidate_rows, ("timestamp", "created_at", "entry_timestamp"), 1)
-        candidate_6h = self._count_recent(candidate_rows, ("timestamp", "created_at", "entry_timestamp"), 6)
-        candidate_24h = self._count_recent(candidate_rows, ("timestamp", "created_at", "entry_timestamp"), 24)
+        candidate_1h = self._count_recent(
+            candidate_rows, ("timestamp_utc", "timestamp", "created_at", "entry_timestamp"), 1
+        )
+        candidate_6h = self._count_recent(
+            candidate_rows, ("timestamp_utc", "timestamp", "created_at", "entry_timestamp"), 6
+        )
+        candidate_24h = self._count_recent(
+            candidate_rows, ("timestamp_utc", "timestamp", "created_at", "entry_timestamp"), 24
+        )
 
-        outcome_1h = self._count_recent(outcome_rows, ("timestamp", "updated_at", "entry_timestamp"), 1)
-        outcome_6h = self._count_recent(outcome_rows, ("timestamp", "updated_at", "entry_timestamp"), 6)
-        outcome_24h = self._count_recent(outcome_rows, ("timestamp", "updated_at", "entry_timestamp"), 24)
+        outcome_1h = self._count_recent(
+            outcome_rows, ("evaluated_at_utc", "timestamp_utc", "timestamp", "updated_at", "entry_timestamp"), 1
+        )
+        outcome_6h = self._count_recent(
+            outcome_rows, ("evaluated_at_utc", "timestamp_utc", "timestamp", "updated_at", "entry_timestamp"), 6
+        )
+        outcome_24h = self._count_recent(
+            outcome_rows, ("evaluated_at_utc", "timestamp_utc", "timestamp", "updated_at", "entry_timestamp"), 24
+        )
 
         closed_trade_count_24h = 0
         open_trade_count = 0
