@@ -174,6 +174,7 @@ from engine.trade_lifecycle_tracker import (
 )
 from engine.policy_backtest_engine import PolicyBacktestEngine
 from engine.learning_data_quality_monitor import LearningDataQualityMonitor
+from engine.self_correction_controller import SelfCorrectionController
 try:
     from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
 except Exception:
@@ -256,6 +257,7 @@ WATCHDOG_LOG_PATH = os.path.join(STATE, "watchdog.log")
 PAPER_REPLAY_TRAINER = None
 POLICY_BACKTEST_ENGINE = PolicyBacktestEngine(state_dir=STATE)
 LEARNING_DATA_QUALITY_MONITOR = LearningDataQualityMonitor(state_dir=STATE)
+SELF_CORRECTION_CONTROLLER = SelfCorrectionController(state_dir=STATE)
 FMP_USAGE_STATE_PATH = os.path.join(STATE, "fmp_usage_state.json")
 FMP_CACHE_INDEX_PATH = os.path.join(STATE, "fmp_cache_index.json")
 API_USAGE_GOVERNOR_PATH = os.path.join(STATE, "api_usage_governor.json")
@@ -26745,6 +26747,11 @@ def _evaluate_outcome_label_v1(ledger_row, horizon_minutes=60):
         "volatility_state": str(r.get("volatility_state") or ""),
         "trend_state": str(r.get("trend_state") or ""),
         "signal_quality_decision": str(r.get("signal_quality_decision") or ""),
+        "canonical_state": str(r.get("canonical_state") or ""),
+        "was_released": bool(r.get("was_released", False)),
+        "was_watchlist": bool(r.get("was_watchlist", False)),
+        "was_paper_ready": bool(r.get("was_paper_ready", False)),
+        "was_blocked": bool(r.get("was_blocked", False)),
         "entry_precision_v2_decision": str(r.get("entry_precision_v2_decision") or ""),
         "entry_quality_score": _to_float(r.get("entry_quality_score"), 0.0),
         "entry_quality_band": str(r.get("entry_quality_band") or ""),
@@ -28378,6 +28385,58 @@ def learning_data_quality_v1(force_refresh: bool = Query(False)):
             "recommendation": "insufficient_runtime",
             "blockers": ["learning_data_quality_engine_error"],
             "error": f"learning_data_quality_unavailable: {exc}",
+        }
+
+
+@router.get("/api/self_correction_status_v1")
+def self_correction_status_v1():
+    try:
+        payload = SELF_CORRECTION_CONTROLLER.status()
+        payload["self_correction_status_v1"] = True
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "self_correction_status_v1": True,
+            "mode": "shadow_recommendation",
+            "local_only": True,
+            "api_calls_used": 0,
+            "error": f"self_correction_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/self_correction_recommendations_v1")
+def self_correction_recommendations_v1(force_refresh: bool = Query(False)):
+    try:
+        try:
+            policy_payload = POLICY_BACKTEST_ENGINE.compare_policies(force_refresh=False)
+        except Exception:
+            policy_payload = {}
+        try:
+            quality_payload = LEARNING_DATA_QUALITY_MONITOR.report(
+                policy_compare_payload=policy_payload,
+                force_refresh=False,
+            )
+        except Exception:
+            quality_payload = {}
+        payload = SELF_CORRECTION_CONTROLLER.recommendations(
+            policy_compare_payload=policy_payload,
+            learning_quality_payload=quality_payload,
+            force_refresh=force_refresh,
+        )
+        payload["self_correction_recommendations_v1"] = True
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "self_correction_recommendations_v1": True,
+            "mode": "shadow_recommendation",
+            "local_only": True,
+            "api_calls_used": 0,
+            "recommendation": "insufficient_data",
+            "severity": "info",
+            "blockers": ["self_correction_engine_error"],
+            "error": f"self_correction_unavailable: {exc}",
         }
 
 
