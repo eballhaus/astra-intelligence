@@ -132,6 +132,7 @@ function toneColors(tone) {
 export default function LearningTab({ compact = false }) {
   const [resolvedApiBase, setResolvedApiBase] = useState(getInitialApiBase());
   const [loading, setLoading] = useState(false);
+  const [secondaryLoading, setSecondaryLoading] = useState(false);
   const [lastFetchAt, setLastFetchAt] = useState("");
   const [fetchError, setFetchError] = useState("");
   const [showDebug, setShowDebug] = useState(false);
@@ -203,36 +204,116 @@ export default function LearningTab({ compact = false }) {
       if (refreshInFlightRef.current) return;
       refreshInFlightRef.current = true;
       setLoading(true);
+      setSecondaryLoading(false);
       setFetchError("");
       const hadUsableTopBuys =
         Array.isArray(data?.topBuys?.stocks?.final) && data.topBuys.stocks.final.length > 0;
-      const fastResults = [];
-      const secondaryResults = [];
       try {
-        const primaryBatch = await Promise.all([
-          fetchJson("learning_snapshot_fast_v1", "/api/learning_snapshot_fast_v1", {}, { timeoutMs: 6000 }),
-          fetchJson("paper_performance", "/api/paper_performance", {}, { timeoutMs: 12000 }),
-          fetchJson("paper_status", "/api/paper_status", {}, { timeoutMs: 10000 }),
-        ]);
-        fastResults.push(...primaryBatch);
+        const fastSnapshot = await fetchJson(
+          "learning_snapshot_fast_v1",
+          "/api/learning_snapshot_fast_v1",
+          {},
+          { timeoutMs: 4500 },
+        );
+        if (mounted) {
+          setEndpointStatus((prev) => ({
+            ...(prev || {}),
+            learning_snapshot_fast_v1: {
+              url: fastSnapshot.url,
+              httpStatus: fastSnapshot.httpStatus ?? null,
+              error: fastSnapshot.ok ? "" : String(fastSnapshot.error || ""),
+            },
+          }));
+          if (fastSnapshot.ok && fastSnapshot.parsed && typeof fastSnapshot.parsed === "object") {
+            setData((prev) => {
+              const prevSafe = prev || {};
+              const learningSnapshotFast = fastSnapshot.parsed || {};
+              const fastSnapshotAsInsights = {
+                current_engine_outcome_evaluation: {
+                  released_hero_win_rate: safeNumber(learningSnapshotFast.current_engine_released_wr),
+                  released_vs_blocked_win_rate_delta: safeNumber(learningSnapshotFast.released_vs_blocked_wr_gap),
+                },
+                entry_quality_score: safeNumber(learningSnapshotFast.entry_quality),
+                follow_through_quality_score: safeNumber(learningSnapshotFast.follow_through_quality),
+                buy_list_purity_score: safeNumber(learningSnapshotFast.buy_list_purity),
+                current_engine_exit_timing_score: safeNumber(learningSnapshotFast.exit_quality),
+                learning_quality: {
+                  quality_score: safeNumber(learningSnapshotFast.runtime_learning_stability),
+                  trend: String(learningSnapshotFast.current_trend || "stable"),
+                },
+                runtime_hardening: {
+                  resilience_score: safeNumber(learningSnapshotFast.runtime_learning_stability),
+                },
+                learning_payload_degraded_reason: String(learningSnapshotFast.degraded_reason || ""),
+                best_worst: {
+                  best_setup_type: String(learningSnapshotFast.strongest_area || "insufficient_data"),
+                  worst_setup_type: String(learningSnapshotFast.biggest_weakness || "insufficient_data"),
+                },
+                execution_readiness_controls: {
+                  readiness_tier: String(learningSnapshotFast.operating_posture || "guarded"),
+                },
+                generated_at: String(learningSnapshotFast.updated_at || ""),
+                last_updated_utc: String(learningSnapshotFast.updated_at || ""),
+                learning_payload_source: "learning_snapshot_fast_v1",
+                learning_payload_stale: false,
+              };
+              const existingInsights = prevSafe.learningInsights && typeof prevSafe.learningInsights === "object"
+                ? prevSafe.learningInsights
+                : {};
+              return {
+                ...prevSafe,
+                learningSnapshotFast,
+                learningInsights: {
+                  ...fastSnapshotAsInsights,
+                  ...existingInsights,
+                  current_engine_outcome_evaluation: {
+                    ...(fastSnapshotAsInsights.current_engine_outcome_evaluation || {}),
+                    ...(existingInsights.current_engine_outcome_evaluation || {}),
+                  },
+                  learning_quality: {
+                    ...(fastSnapshotAsInsights.learning_quality || {}),
+                    ...(existingInsights.learning_quality || {}),
+                  },
+                  runtime_hardening: {
+                    ...(fastSnapshotAsInsights.runtime_hardening || {}),
+                    ...(existingInsights.runtime_hardening || {}),
+                  },
+                  best_worst: {
+                    ...(fastSnapshotAsInsights.best_worst || {}),
+                    ...(existingInsights.best_worst || {}),
+                  },
+                  execution_readiness_controls: {
+                    ...(fastSnapshotAsInsights.execution_readiness_controls || {}),
+                    ...(existingInsights.execution_readiness_controls || {}),
+                  },
+                },
+              };
+            });
+          }
+          setLoading(false);
+          setLastFetchAt(new Date().toISOString());
+          setSecondaryLoading(true);
+        }
+        if (!mounted) return;
 
         const secondaryBatch = await Promise.all([
-          fetchJson("system_status", "/api/system_status", {}, { timeoutMs: 10000 }),
-          fetchJson("model_status", "/api/model_status", {}, { timeoutMs: 10000 }),
-          fetchJson("paper_worker_status", "/api/paper_worker_status", {}, { timeoutMs: 10000 }),
-          fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, { timeoutMs: 15000 }),
-          fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
+          fetchJson("paper_performance", "/api/paper_performance", {}, { timeoutMs: 9000 }),
+          fetchJson("paper_status", "/api/paper_status", {}, { timeoutMs: 8000 }),
+          fetchJson("system_status", "/api/system_status", {}, { timeoutMs: 8000 }),
+          fetchJson("model_status", "/api/model_status", {}, { timeoutMs: 8000 }),
+          fetchJson("paper_worker_status", "/api/paper_worker_status", {}, { timeoutMs: 8000 }),
+          fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, { timeoutMs: 12000 }),
+          fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 15000 }),
+          fetchJson("policy_compare_v1", "/api/policy_compare_v1", {}, { timeoutMs: 7000 }),
+          fetchJson("learning_data_quality_v1", "/api/learning_data_quality_v1", {}, { timeoutMs: 7000 }),
+          fetchJson("self_correction_recommendations_v1", "/api/self_correction_recommendations_v1", {}, { timeoutMs: 7000 }),
         ]);
-        secondaryResults.push(...secondaryBatch);
-      } finally {
-        refreshInFlightRef.current = false;
-      }
-      if (!mounted) return;
+        if (!mounted) return;
 
-      const results = [...fastResults, ...secondaryResults];
-      const statuses = {};
-      const errors = [];
-      results.forEach((r) => {
+        const results = [...secondaryBatch];
+        const statuses = {};
+        const errors = [];
+        results.forEach((r) => {
         const isTransientTopBuysTimeout =
           r.key === "top_buys"
           && !r.ok
@@ -248,14 +329,15 @@ export default function LearningTab({ compact = false }) {
           };
         }
         if (!r.ok && !isTransientTopBuysTimeout) errors.push(`${r.key}: ${effectiveError}`);
-      });
-      setEndpointStatus(statuses);
-      setLoading(false);
-      setLastFetchAt(new Date().toISOString());
-      if (errors.length > 0) setFetchError(errors.join(" | "));
+        });
+        setEndpointStatus((prev) => ({ ...(prev || {}), ...statuses }));
+        setLoading(false);
+        setSecondaryLoading(false);
+        setLastFetchAt(new Date().toISOString());
+        if (errors.length > 0) setFetchError(errors.join(" | "));
 
-      const byKey = Object.fromEntries(results.map((r) => [r.key, r]));
-      const isNonEmptyObject = (v) =>
+        const byKey = Object.fromEntries(results.map((r) => [r.key, r]));
+        const isNonEmptyObject = (v) =>
         Boolean(v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length > 0);
       const selectPayload = (key, previousValue = {}) => {
         const r = byKey[key] || {};
@@ -264,7 +346,7 @@ export default function LearningTab({ compact = false }) {
         return previousValue || {};
       };
 
-      setData((prev) => {
+        setData((prev) => {
         const prevSafe = prev || {};
         const paper = selectPayload("paper_performance", prevSafe.paper);
         const paperStatus = selectPayload("paper_status", prevSafe.paperStatus);
@@ -272,7 +354,7 @@ export default function LearningTab({ compact = false }) {
         const model = selectPayload("model_status", prevSafe.model);
         const topBuys = selectPayload("top_buys", prevSafe.topBuys);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
-        const learningSnapshotFast = selectPayload("learning_snapshot_fast_v1", prevSafe.learningSnapshotFast);
+        const learningSnapshotFast = prevSafe.learningSnapshotFast || {};
         const learningCandidate = selectPayload("learning_insights", prevSafe.learningInsights);
         const prevLearning = (prevSafe.learningInsights && typeof prevSafe.learningInsights === "object")
           ? prevSafe.learningInsights
@@ -401,7 +483,10 @@ export default function LearningTab({ compact = false }) {
           topBuys,
           systemStatus,
         };
-      });
+        });
+      } finally {
+        refreshInFlightRef.current = false;
+      }
     };
 
     refresh();
@@ -1514,6 +1599,14 @@ export default function LearningTab({ compact = false }) {
       {fetchError ? (
         <div style={{ ...panelStyle, borderColor: "#7f3f4a", color: "#ffd8dd", fontSize: 12 }}>
           Some learning endpoints failed: {fetchError}
+        </div>
+      ) : null}
+      {secondaryLoading ? (
+        <div style={{ ...panelStyle, fontSize: 12, color: "#c9d9f3", padding: "10px 12px" }}>
+          <div>Loading advanced diagnostics…</div>
+          <div style={{ marginTop: 4, color: "#9fb1cc" }}>
+            Loading policy comparison… | Loading self-correction recommendations…
+          </div>
         </div>
       ) : null}
 
