@@ -173,6 +173,7 @@ from engine.trade_lifecycle_tracker import (
     summarize_lifecycle_metrics,
 )
 from engine.policy_backtest_engine import PolicyBacktestEngine
+from engine.learning_data_quality_monitor import LearningDataQualityMonitor
 try:
     from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
 except Exception:
@@ -254,6 +255,7 @@ WATCHDOG_HEARTBEAT_PATH = os.path.join(STATE, "backend_watchdog_heartbeat")
 WATCHDOG_LOG_PATH = os.path.join(STATE, "watchdog.log")
 PAPER_REPLAY_TRAINER = None
 POLICY_BACKTEST_ENGINE = PolicyBacktestEngine(state_dir=STATE)
+LEARNING_DATA_QUALITY_MONITOR = LearningDataQualityMonitor(state_dir=STATE)
 FMP_USAGE_STATE_PATH = os.path.join(STATE, "fmp_usage_state.json")
 FMP_CACHE_INDEX_PATH = os.path.join(STATE, "fmp_cache_index.json")
 API_USAGE_GOVERNOR_PATH = os.path.join(STATE, "api_usage_governor.json")
@@ -28333,6 +28335,49 @@ def policy_compare_v1(force_refresh: bool = Query(False)):
             "recommendation": "insufficient_data",
             "reason_summary": f"policy_compare_unavailable: {exc}",
             "metrics_by_policy": {},
+        }
+
+
+@router.get("/api/learning_data_quality_status_v1")
+def learning_data_quality_status_v1():
+    try:
+        payload = LEARNING_DATA_QUALITY_MONITOR.status()
+        payload["learning_data_quality_status_v1"] = True
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "learning_data_quality_status_v1": True,
+            "mode": "diagnostic",
+            "local_only": True,
+            "api_calls_used": 0,
+            "error": f"learning_data_quality_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/learning_data_quality_v1")
+def learning_data_quality_v1(force_refresh: bool = Query(False)):
+    try:
+        policy_payload = POLICY_BACKTEST_ENGINE.compare_policies(force_refresh=False)
+    except Exception:
+        policy_payload = {}
+    try:
+        payload = LEARNING_DATA_QUALITY_MONITOR.report(
+            policy_compare_payload=policy_payload,
+            force_refresh=force_refresh,
+        )
+        payload["learning_data_quality_v1"] = True
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "learning_data_quality_v1": True,
+            "mode": "diagnostic",
+            "local_only": True,
+            "api_calls_used": 0,
+            "recommendation": "insufficient_runtime",
+            "blockers": ["learning_data_quality_engine_error"],
+            "error": f"learning_data_quality_unavailable: {exc}",
         }
 
 
