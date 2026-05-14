@@ -193,6 +193,49 @@ except Exception:
 from engine.policy_backtest_engine import PolicyBacktestEngine
 from engine.learning_data_quality_monitor import LearningDataQualityMonitor
 try:
+    from engine.fmp_utilization_optimizer import FmpUtilizationOptimizer
+except Exception:
+    class FmpUtilizationOptimizer:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "mode": "recommendation_plan_only",
+                "fmp_utilization_status_v1": True,
+                "fallback": True,
+            }
+
+        def plan(self, *args, **kwargs):
+            out = self.status()
+            out["fmp_utilization_plan_v1"] = True
+            out["planned_actions"] = []
+            out["would_increase_calls_now"] = False
+            return out
+
+try:
+    from engine.jsonl_maintenance_suite import JsonlMaintenanceSuite
+except Exception:
+    class JsonlMaintenanceSuite:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "mode": "dry_run_only",
+                "jsonl_maintenance_status_v1": True,
+                "fallback": True,
+            }
+
+        def dry_run(self, *args, **kwargs):
+            out = self.status()
+            out["jsonl_maintenance_dry_run_v1"] = True
+            out["would_write_files"] = False
+            out["files"] = []
+            return out
+try:
     from engine.entry_quality_v2 import EntryQualityV2Engine, score_entry_quality_v2
 except Exception:
     class EntryQualityV2Engine:  # type: ignore[override]
@@ -301,6 +344,8 @@ PAPER_REPLAY_TRAINER = None
 TRADE_LIFECYCLE_INTELLIGENCE = TradeLifecycleIntelligence(state_dir=STATE)
 POLICY_BACKTEST_ENGINE = PolicyBacktestEngine(state_dir=STATE)
 LEARNING_DATA_QUALITY_MONITOR = LearningDataQualityMonitor(state_dir=STATE)
+FMP_UTILIZATION_OPTIMIZER = FmpUtilizationOptimizer(state_dir=STATE)
+JSONL_MAINTENANCE_SUITE = JsonlMaintenanceSuite(state_dir=STATE)
 ENTRY_QUALITY_V2_ENGINE = EntryQualityV2Engine()
 MULTI_BRAIN_CONSENSUS_ENGINE = MultiBrainConsensusEngine()
 SELF_CORRECTION_CONTROLLER = SelfCorrectionController(state_dir=STATE)
@@ -28559,6 +28604,89 @@ def learning_data_quality_status_v1():
             "local_only": True,
             "api_calls_used": 0,
             "error": f"learning_data_quality_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/fmp_utilization_status_v1")
+def fmp_utilization_status_v1(force_refresh: bool = Query(False)):
+    try:
+        payload = FMP_UTILIZATION_OPTIMIZER.status(force_refresh=force_refresh)
+        payload["fmp_utilization_status_v1"] = True
+        payload["institutional_intelligence_bundle_3"] = True
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "fmp_utilization_status_v1": True,
+            "institutional_intelligence_bundle_3": True,
+            "mode": "recommendation_plan_only",
+            "local_only": True,
+            "api_calls_used": 0,
+            "would_increase_calls_now": False,
+            "error": f"fmp_utilization_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/fmp_utilization_plan_v1")
+def fmp_utilization_plan_v1():
+    try:
+        payload = FMP_UTILIZATION_OPTIMIZER.plan()
+        payload["fmp_utilization_plan_v1"] = True
+        payload["institutional_intelligence_bundle_3"] = True
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "fmp_utilization_plan_v1": True,
+            "institutional_intelligence_bundle_3": True,
+            "mode": "recommendation_plan_only",
+            "local_only": True,
+            "api_calls_used": 0,
+            "would_increase_calls_now": False,
+            "planned_actions": [],
+            "error": f"fmp_utilization_plan_unavailable: {exc}",
+        }
+
+
+@router.get("/api/jsonl_maintenance_status_v1")
+def jsonl_maintenance_status_v1():
+    try:
+        payload = JSONL_MAINTENANCE_SUITE.status()
+        payload["jsonl_maintenance_status_v1"] = True
+        payload["institutional_intelligence_bundle_3"] = True
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "jsonl_maintenance_status_v1": True,
+            "institutional_intelligence_bundle_3": True,
+            "mode": "dry_run_only",
+            "local_only": True,
+            "api_calls_used": 0,
+            "would_write_files": False,
+            "error": f"jsonl_maintenance_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/jsonl_maintenance_dry_run_v1")
+def jsonl_maintenance_dry_run_v1(force_refresh: bool = Query(False)):
+    try:
+        payload = JSONL_MAINTENANCE_SUITE.dry_run(force_refresh=force_refresh)
+        payload["jsonl_maintenance_dry_run_v1"] = True
+        payload["institutional_intelligence_bundle_3"] = True
+        payload["would_write_files"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "jsonl_maintenance_dry_run_v1": True,
+            "institutional_intelligence_bundle_3": True,
+            "mode": "dry_run_only",
+            "local_only": True,
+            "api_calls_used": 0,
+            "would_write_files": False,
+            "files": [],
+            "error": f"jsonl_maintenance_dry_run_unavailable: {exc}",
         }
 
 
