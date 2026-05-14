@@ -129,6 +129,27 @@ function toneColors(tone) {
   return { badgeBg: "rgba(102,44,55,0.45)", badgeBorder: "#df6a85", badgeText: "#ffd0dc" };
 }
 
+function metricValue(...values) {
+  const n = firstFiniteOrNull(...values);
+  return n === null ? "n/a" : n.toFixed(1);
+}
+
+function InstitutionalMetricCard({ title, value, detail, tone = "mixed" }) {
+  const colors = toneColors(tone);
+  return (
+    <div style={{ background: "rgba(8,20,38,0.48)", border: "1px solid #2f4a72", borderRadius: 12, padding: "10px 11px", display: "grid", gap: 5 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ fontSize: 12, color: "#d8e7ff", fontWeight: 700 }}>{title}</div>
+        <div style={{ background: colors.badgeBg, border: `1px solid ${colors.badgeBorder}`, color: colors.badgeText, borderRadius: 999, padding: "2px 7px", fontSize: 10 }}>
+          {tone}
+        </div>
+      </div>
+      <div style={{ fontSize: 20, fontWeight: 850, color: "#f4f8ff", lineHeight: 1.05 }}>{value}</div>
+      <div style={{ fontSize: 11, color: "#9fb1cc" }}>{detail}</div>
+    </div>
+  );
+}
+
 export default function LearningTab({ compact = false }) {
   const [resolvedApiBase, setResolvedApiBase] = useState(getInitialApiBase());
   const [loading, setLoading] = useState(false);
@@ -148,6 +169,7 @@ export default function LearningTab({ compact = false }) {
     model: {},
     topBuys: {},
     systemStatus: {},
+    institutional: {},
   });
   const refreshInFlightRef = useRef(false);
 
@@ -304,9 +326,15 @@ export default function LearningTab({ compact = false }) {
           fetchJson("paper_worker_status", "/api/paper_worker_status", {}, { timeoutMs: 8000 }),
           fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, { timeoutMs: 12000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 15000 }),
+          fetchJson("entry_quality_status_v2", "/api/entry_quality_status_v2", {}, { timeoutMs: 7000 }),
+          fetchJson("multi_brain_consensus_status_v1", "/api/multi_brain_consensus_status_v1", {}, { timeoutMs: 7000 }),
           fetchJson("policy_compare_v1", "/api/policy_compare_v1", {}, { timeoutMs: 7000 }),
           fetchJson("learning_data_quality_v1", "/api/learning_data_quality_v1", {}, { timeoutMs: 7000 }),
+          fetchJson("trade_lifecycle_status_v1", "/api/trade_lifecycle_status_v1", {}, { timeoutMs: 7000 }),
           fetchJson("self_correction_recommendations_v1", "/api/self_correction_recommendations_v1", {}, { timeoutMs: 7000 }),
+          fetchJson("fmp_utilization_status_v1", "/api/fmp_utilization_status_v1", {}, { timeoutMs: 7000 }),
+          fetchJson("jsonl_maintenance_status_v1", "/api/jsonl_maintenance_status_v1", {}, { timeoutMs: 7000 }),
+          fetchJson("replay_counterfactual_status_v1", "/api/replay_counterfactual_status_v1", {}, { timeoutMs: 7000 }),
         ]);
         if (!mounted) return;
 
@@ -354,6 +382,17 @@ export default function LearningTab({ compact = false }) {
         const model = selectPayload("model_status", prevSafe.model);
         const topBuys = selectPayload("top_buys", prevSafe.topBuys);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
+        const institutional = {
+          entryQuality: selectPayload("entry_quality_status_v2", prevSafe.institutional?.entryQuality),
+          consensus: selectPayload("multi_brain_consensus_status_v1", prevSafe.institutional?.consensus),
+          policyCompare: selectPayload("policy_compare_v1", prevSafe.institutional?.policyCompare),
+          learningDataQuality: selectPayload("learning_data_quality_v1", prevSafe.institutional?.learningDataQuality),
+          tradeLifecycle: selectPayload("trade_lifecycle_status_v1", prevSafe.institutional?.tradeLifecycle),
+          selfCorrection: selectPayload("self_correction_recommendations_v1", prevSafe.institutional?.selfCorrection),
+          fmpUtilization: selectPayload("fmp_utilization_status_v1", prevSafe.institutional?.fmpUtilization),
+          jsonlMaintenance: selectPayload("jsonl_maintenance_status_v1", prevSafe.institutional?.jsonlMaintenance),
+          replayCounterfactual: selectPayload("replay_counterfactual_status_v1", prevSafe.institutional?.replayCounterfactual),
+        };
         const learningSnapshotFast = prevSafe.learningSnapshotFast || {};
         const learningCandidate = selectPayload("learning_insights", prevSafe.learningInsights);
         const prevLearning = (prevSafe.learningInsights && typeof prevSafe.learningInsights === "object")
@@ -469,6 +508,10 @@ export default function LearningTab({ compact = false }) {
             buyConversion: safeNumber(buyConversionEngine?.buy_conversion_score),
             overblocking: safeNumber(buyConversionEngine?.overblocking_score),
             sellAccuracy: safeNumber(buyToPosition?.sell_signal_accuracy_score),
+            entryQualityV2: safeNumber(institutional?.entryQuality?.sample_report?.avg_entry_quality_score_v2),
+            consensusV1: safeNumber(institutional?.consensus?.sample_report?.avg_multi_brain_score),
+            releasedWinRate: safeNumber(institutional?.tradeLifecycle?.metrics?.win_rate, learningSnapshotFast?.current_engine_released_wr),
+            buyListPurity: safeNumber(learningSnapshotFast?.buy_list_purity, learningInsights?.buy_list_purity_score),
           };
           return [...prevTimeline, point].slice(-36);
         });
@@ -482,6 +525,7 @@ export default function LearningTab({ compact = false }) {
           model,
           topBuys,
           systemStatus,
+          institutional,
         };
         });
       } finally {
@@ -507,6 +551,16 @@ export default function LearningTab({ compact = false }) {
   const model = data.model || {};
   const topBuys = data.topBuys || {};
   const systemStatus = data.systemStatus || {};
+  const institutional = data.institutional || {};
+  const entryQualityV2 = institutional.entryQuality || {};
+  const multiBrainConsensus = institutional.consensus || {};
+  const policyCompareV2 = institutional.policyCompare || {};
+  const learningDataQualityV2 = institutional.learningDataQuality || {};
+  const tradeLifecycleIntel = institutional.tradeLifecycle || {};
+  const selfCorrectionV2 = institutional.selfCorrection || {};
+  const fmpUtilization = institutional.fmpUtilization || {};
+  const jsonlMaintenance = institutional.jsonlMaintenance || {};
+  const replayCounterfactual = institutional.replayCounterfactual || {};
 
   const paperOutcome = paper?.paper_outcome_summary?.combined || {};
   const paperCohort = paper?.paper_cohort_trends || {};
@@ -1532,6 +1586,71 @@ export default function LearningTab({ compact = false }) {
     { name: "Premature Exit", value: safeNumber(buyToPositionFeedbackSuite?.premature_exit_score) },
   ];
 
+  const institutionalCards = [
+    {
+      title: "Entry Quality V2",
+      value: metricValue(entryQualityV2?.sample_report?.avg_entry_quality_score_v2),
+      detail: `${safeNumber(entryQualityV2?.sample_report?.rows_scored).toFixed(0)} rows scored in shadow mode`,
+      tone: metricTone(entryQualityV2?.sample_report?.avg_entry_quality_score_v2, 75, 62),
+    },
+    {
+      title: "Multi-Brain Consensus",
+      value: metricValue(multiBrainConsensus?.sample_report?.avg_multi_brain_score),
+      detail: `${safeNumber(multiBrainConsensus?.sample_report?.rows_scored).toFixed(0)} rows scored across brain ensemble`,
+      tone: metricTone(multiBrainConsensus?.sample_report?.avg_multi_brain_score, 70, 58),
+    },
+    {
+      title: "Learning Data Quality V2",
+      value: metricValue(learningDataQualityV2?.learning_pipeline_health_score, learningDataQualityV2?.learning_data_freshness_score),
+      detail: `${String(learningDataQualityV2?.recommendation || "diagnostic").replaceAll("_", " ")} | blockers ${(learningDataQualityV2?.blockers || []).length}`,
+      tone: metricTone(learningDataQualityV2?.learning_pipeline_health_score, 70, 55),
+    },
+    {
+      title: "Trade Lifecycle Intelligence",
+      value: fmtPct(tradeLifecycleIntel?.metrics?.win_rate),
+      detail: `${safeNumber(tradeLifecycleIntel?.metrics?.closed_trade_count).toFixed(0)} closed trades | PF ${safeNumber(tradeLifecycleIntel?.metrics?.profit_factor).toFixed(2)}`,
+      tone: metricTone(tradeLifecycleIntel?.metrics?.win_rate, 55, 48),
+    },
+    {
+      title: "Policy Backtest V2",
+      value: String(policyCompareV2?.recommendation || "n/a").replaceAll("_", " "),
+      detail: `winner ${String(policyCompareV2?.winner || "none").replaceAll("_", " ")} | rows ${safeNumber(policyCompareV2?.source_row_count).toFixed(0)}`,
+      tone: policyCompareV2?.recommendation === "keep_current" ? "strong" : "mixed",
+    },
+    {
+      title: "Self-Correction V2",
+      value: String(selfCorrectionV2?.recommendation || "n/a").replaceAll("_", " "),
+      detail: `confidence ${safeNumber(selfCorrectionV2?.confidence).toFixed(2)} | blockers ${(selfCorrectionV2?.blockers || []).length}`,
+      tone: (selfCorrectionV2?.blockers || []).length ? "caution" : "mixed",
+    },
+    {
+      title: "FMP Utilization",
+      value: `${safeNumber(fmpUtilization?.current_usage_pct_estimated).toFixed(1)}%`,
+      detail: `target ${safeNumber(fmpUtilization?.target_usage_pct, 60).toFixed(0)}% / reserve ${safeNumber(fmpUtilization?.safety_reserve_pct, 40).toFixed(0)}%`,
+      tone: safeNumber(fmpUtilization?.current_usage_pct_estimated) >= 60 ? "caution" : "strong",
+    },
+    {
+      title: "JSONL Maintenance",
+      value: String(jsonlMaintenance?.mode || "dry_run_only").replaceAll("_", " "),
+      detail: `target files ${(jsonlMaintenance?.target_files || []).length} | destructive repairs disabled`,
+      tone: "strong",
+    },
+    {
+      title: "Replay Counterfactual Analysis",
+      value: safeNumber(replayCounterfactual?.counterfactual_row_count).toFixed(0),
+      detail: `${safeNumber(replayCounterfactual?.base_trade_count).toFixed(0)} trades | best ${String(replayCounterfactual?.best_counterfactual_policy || "n/a").replaceAll("_", " ")}`,
+      tone: safeNumber(replayCounterfactual?.counterfactual_row_count) > 0 ? "strong" : "mixed",
+    },
+  ];
+
+  const counterfactualPolicyRows = (replayCounterfactual?.scenario_summary || [])
+    .slice(0, 6)
+    .map((row) => ({
+      scenario: String(row?.scenario || "unknown").replaceAll("_", " "),
+      delta: safeNumber(row?.average_delta_vs_actual_pct),
+      positiveRate: safeNumber(row?.positive_delta_rate),
+    }));
+
   if (compact) {
     return (
       <div style={{ display: "grid", gap: 12 }}>
@@ -1787,30 +1906,10 @@ export default function LearningTab({ compact = false }) {
             <div key={r.label}>{r.label}: {r.value}</div>
           ))}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, minHeight: 200 }}>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={timeline}>
-              <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
-              <XAxis dataKey="ts" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-              <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-              <Tooltip />
-              <Line type="monotone" dataKey="winRate" stroke="#38bdf8" strokeWidth={2} dot={false} name="Win Rate" />
-            </LineChart>
-          </ResponsiveContainer>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={timeline}>
-              <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
-              <XAxis dataKey="ts" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-              <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-              <Tooltip />
-              <Line type="monotone" dataKey="winsorized" stroke="#f59e0b" strokeWidth={2} dot={false} name="Average Return" />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
       </div>
 
       <div style={{ ...panelStyle }}>
-        <h3 style={{ marginTop: 0 }}>Promotion / Buy Quality</h3>
+        <h3 style={{ marginTop: 0 }}>Entry / Exit Quality Signals</h3>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "8px", fontSize: 12, marginBottom: 10 }}>
           <div>Good entries: {safeNumber(decisionFeedback?.good_entries)}</div>
           <div>Bad entries: {safeNumber(decisionFeedback?.bad_entries)}</div>
@@ -1832,31 +1931,6 @@ export default function LearningTab({ compact = false }) {
           <div>Elite confirmation: {safeNumber(entryQualityRecoveryEngine?.elite_entry_confirmation_score).toFixed(1)}</div>
           <div>Follow-through recovery: {safeNumber(entryQualityRecoveryEngine?.followthrough_entry_recovery_score).toFixed(1)}</div>
           <div>Breakout separation: {safeNumber(confirmationFollowthroughRepairEngine?.breakout_separation_score, entryQualityRecoveryEngine?.true_breakout_validation_score).toFixed(1)}</div>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, minHeight: 200 }}>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={[entryExitBars[0]]}>
-              <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
-              <XAxis dataKey="name" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-              <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="good" fill="#22c55e" name="Good Entries" />
-              <Bar dataKey="bad" fill="#ef4444" name="Bad Entries" />
-            </BarChart>
-          </ResponsiveContainer>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={[entryExitBars[1]]}>
-              <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
-              <XAxis dataKey="name" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-              <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="early" fill="#38bdf8" name="Early Exits" />
-              <Bar dataKey="late" fill="#f59e0b" name="Late Exits" />
-              <Bar dataKey="missed" fill="#f43f5e" name="Missed Profit" />
-            </BarChart>
-          </ResponsiveContainer>
         </div>
       </div>
 
@@ -2057,7 +2131,7 @@ export default function LearningTab({ compact = false }) {
 
       <div style={{ ...panelStyle, padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px" }}>
         <div style={{ fontSize: 12, color: "#9fb1cc" }}>
-          Advanced learning diagnostics are available below when needed.
+          Advanced Institutional Metrics are collapsed by default so the snapshot stays clean.
         </div>
         <button
           type="button"
@@ -2072,12 +2146,92 @@ export default function LearningTab({ compact = false }) {
             cursor: "pointer",
           }}
         >
-          {showAdvancedSections ? "Hide Advanced Details" : "Show Advanced Details"}
+          {showAdvancedSections ? "Hide Advanced Institutional Metrics" : "Show Advanced Institutional Metrics"}
         </button>
       </div>
 
       {showAdvancedSections ? (
       <>
+      <div style={{ ...panelStyle, borderColor: "#3a638f", background: "linear-gradient(180deg, rgba(14,38,63,0.94) 0%, rgba(9,26,47,0.94) 100%)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+          <div>
+            <h3 style={{ margin: 0 }}>Advanced Institutional Metrics</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 4 }}>
+              Bundle 1-4 diagnostics are local/shadow unless explicitly marked otherwise. These do not alter live rankings or top buys.
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: "#9fb1cc" }}>
+            Endpoint health: {[
+              endpointStatus?.entry_quality_status_v2?.httpStatus,
+              endpointStatus?.multi_brain_consensus_status_v1?.httpStatus,
+              endpointStatus?.trade_lifecycle_status_v1?.httpStatus,
+              endpointStatus?.replay_counterfactual_status_v1?.httpStatus,
+            ].filter(Boolean).join(" / ") || "loading"}
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 10, marginBottom: 14 }}>
+          {institutionalCards.map((card) => (
+            <InstitutionalMetricCard key={card.title} {...card} />
+          ))}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
+          <div style={{ background: "rgba(12,24,42,0.35)", border: "1px solid #2f4a72", borderRadius: 10, padding: 8 }}>
+            <div style={{ fontSize: 12, color: "#cfe1ff", marginBottom: 4 }}>Entry Quality V2 Trend</div>
+            <ResponsiveContainer width="100%" height={190}>
+              <LineChart data={timeline}>
+                <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
+                <XAxis dataKey="ts" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
+                <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} domain={[0, 100]} />
+                <Tooltip />
+                <Line type="monotone" dataKey="entryQualityV2" stroke="#60a5fa" strokeWidth={2} dot={false} name="Entry Quality V2" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div style={{ background: "rgba(12,24,42,0.35)", border: "1px solid #2f4a72", borderRadius: 10, padding: 8 }}>
+            <div style={{ fontSize: 12, color: "#cfe1ff", marginBottom: 4 }}>Consensus Trend</div>
+            <ResponsiveContainer width="100%" height={190}>
+              <LineChart data={timeline}>
+                <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
+                <XAxis dataKey="ts" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
+                <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} domain={[0, 100]} />
+                <Tooltip />
+                <Line type="monotone" dataKey="consensusV1" stroke="#22c55e" strokeWidth={2} dot={false} name="Multi-Brain Consensus" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div style={{ background: "rgba(12,24,42,0.35)", border: "1px solid #2f4a72", borderRadius: 10, padding: 8 }}>
+            <div style={{ fontSize: 12, color: "#cfe1ff", marginBottom: 4 }}>Released Win Rate / Buy List Purity</div>
+            <ResponsiveContainer width="100%" height={190}>
+              <LineChart data={timeline}>
+                <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
+                <XAxis dataKey="ts" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
+                <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} domain={[0, 100]} />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="releasedWinRate" stroke="#38bdf8" strokeWidth={2} dot={false} name="Released Win Rate" />
+                <Line type="monotone" dataKey="buyListPurity" stroke="#f59e0b" strokeWidth={2} dot={false} name="Buy List Purity" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div style={{ background: "rgba(12,24,42,0.35)", border: "1px solid #2f4a72", borderRadius: 10, padding: 8 }}>
+            <div style={{ fontSize: 12, color: "#cfe1ff", marginBottom: 4 }}>Counterfactual Policy Comparison</div>
+            <ResponsiveContainer width="100%" height={190}>
+              <BarChart layout="vertical" data={counterfactualPolicyRows}>
+                <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
+                <XAxis type="number" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
+                <YAxis type="category" dataKey="scenario" tick={{ fill: "#8ea1c3", fontSize: 10 }} width={130} />
+                <Tooltip />
+                <Legend />
+                <Bar dataKey="delta" fill="#22c55e" name="Avg Delta vs Actual" />
+                <Bar dataKey="positiveRate" fill="#94a3b8" name="Positive Delta Rate" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "12px" }}>
         <div style={{ ...panelStyle }}>
           <h3 style={{ marginTop: 0 }}>Hard vs Soft Buy Performance</h3>
