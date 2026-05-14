@@ -50,6 +50,13 @@ class TradeLifecycleIntelligence:
         self.lifecycle_path = os.path.join(self.state_dir, "trade_lifecycle_v1.jsonl")
         self.candidate_path = os.path.join(self.state_dir, "candidate_decision_ledger_v1.jsonl")
         self.outcome_path = os.path.join(self.state_dir, "outcome_labels_v1.jsonl")
+        self.replay_counterfactual_engine = None
+        try:
+            from engine.replay_counterfactual_engine import ReplayCounterfactualEngine
+
+            self.replay_counterfactual_engine = ReplayCounterfactualEngine(state_dir=self.state_dir)
+        except Exception:
+            self.replay_counterfactual_engine = None
         self._lock = threading.Lock()
         self._cache_payload: dict[str, Any] | None = None
         self._cache_ts = 0.0
@@ -265,6 +272,7 @@ class TradeLifecycleIntelligence:
             "mode": "shadow_lifecycle_intelligence",
             "trade_lifecycle_status_v1": True,
             "institutional_intelligence_bundle_2": True,
+            "replay_counterfactual_expansion_v1": True,
             "version": "v1",
             "local_only": True,
             "api_calls_used": 0,
@@ -280,6 +288,15 @@ class TradeLifecycleIntelligence:
             "metrics": metrics,
             "source_mix": by_source,
             "exit_reason_counts": dict(sorted(exit_reasons.items(), key=lambda item: item[1], reverse=True)[:12]),
+            "counterfactual_learning_summary": self._counterfactual_summary(),
             "recommendations": self._recommendations(metrics, rows),
             "sample": rows[-20:],
         }
+
+    def _counterfactual_summary(self) -> dict[str, Any]:
+        if self.replay_counterfactual_engine is None:
+            return {"enabled": False, "reason": "counterfactual_engine_unavailable"}
+        try:
+            return dict(self.replay_counterfactual_engine.summary(force_refresh=False))
+        except Exception as exc:
+            return {"enabled": False, "reason": f"counterfactual_summary_unavailable: {exc}"}

@@ -57,6 +57,13 @@ class PolicyBacktestEngine:
             os.path.join(self.state_dir, "candidate_decision_ledger_v1.jsonl"),
             os.path.join(self.state_dir, "outcome_labels_v1.jsonl"),
         ]
+        self.replay_counterfactual_engine = None
+        try:
+            from engine.replay_counterfactual_engine import ReplayCounterfactualEngine
+
+            self.replay_counterfactual_engine = ReplayCounterfactualEngine(state_dir=self.state_dir)
+        except Exception:
+            self.replay_counterfactual_engine = None
 
     def status(self) -> dict[str, Any]:
         with self._cache_lock:
@@ -66,6 +73,7 @@ class PolicyBacktestEngine:
             "enabled": True,
             "mode": "shadow_analysis",
             "policy_backtest_engine_version": "v2",
+            "replay_counterfactual_expansion_v1": True,
             "institutional_intelligence_bundle_2": True,
             "cache_ttl_seconds": int(self._cache_ttl_seconds),
             "cache_ready": cache_ready,
@@ -276,6 +284,7 @@ class PolicyBacktestEngine:
             "enabled": True,
             "mode": "shadow_analysis",
             "policy_backtest_engine_version": "v2",
+            "replay_counterfactual_expansion_v1": True,
             "institutional_intelligence_bundle_2": True,
             "generated_at": _now_iso(),
             "policies_compared": policies,
@@ -291,6 +300,7 @@ class PolicyBacktestEngine:
                 enough_data=enough_data,
                 winner=winner,
             ),
+            "counterfactual_policy_training_summary": self._counterfactual_summary(),
             "api_calls_used": 0,
             "bandwidth_used": 0,
             "local_only": True,
@@ -340,3 +350,11 @@ class PolicyBacktestEngine:
                 "safe_action": "continue_monitoring",
             }
         ]
+
+    def _counterfactual_summary(self) -> dict[str, Any]:
+        if self.replay_counterfactual_engine is None:
+            return {"enabled": False, "reason": "counterfactual_engine_unavailable"}
+        try:
+            return dict(self.replay_counterfactual_engine.summary(force_refresh=False))
+        except Exception as exc:
+            return {"enabled": False, "reason": f"counterfactual_summary_unavailable: {exc}"}

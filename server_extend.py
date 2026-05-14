@@ -191,6 +191,22 @@ except Exception:
         def report(self, *args, **kwargs):
             return self.status()
 from engine.policy_backtest_engine import PolicyBacktestEngine
+try:
+    from engine.replay_counterfactual_engine import ReplayCounterfactualEngine
+except Exception:
+    class ReplayCounterfactualEngine:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "mode": "shadow_counterfactual_analysis",
+                "replay_counterfactual_status_v1": True,
+                "fallback": True,
+                "api_calls_used": 0,
+                "writes_files": False,
+            }
 from engine.learning_data_quality_monitor import LearningDataQualityMonitor
 try:
     from engine.fmp_utilization_optimizer import FmpUtilizationOptimizer
@@ -343,6 +359,7 @@ WATCHDOG_LOG_PATH = os.path.join(STATE, "watchdog.log")
 PAPER_REPLAY_TRAINER = None
 TRADE_LIFECYCLE_INTELLIGENCE = TradeLifecycleIntelligence(state_dir=STATE)
 POLICY_BACKTEST_ENGINE = PolicyBacktestEngine(state_dir=STATE)
+REPLAY_COUNTERFACTUAL_ENGINE = ReplayCounterfactualEngine(state_dir=STATE)
 LEARNING_DATA_QUALITY_MONITOR = LearningDataQualityMonitor(state_dir=STATE)
 FMP_UTILIZATION_OPTIMIZER = FmpUtilizationOptimizer(state_dir=STATE)
 JSONL_MAINTENANCE_SUITE = JsonlMaintenanceSuite(state_dir=STATE)
@@ -28687,6 +28704,29 @@ def jsonl_maintenance_dry_run_v1(force_refresh: bool = Query(False)):
             "would_write_files": False,
             "files": [],
             "error": f"jsonl_maintenance_dry_run_unavailable: {exc}",
+        }
+
+
+@router.get("/api/replay_counterfactual_status_v1")
+def replay_counterfactual_status_v1(force_refresh: bool = Query(False)):
+    try:
+        payload = REPLAY_COUNTERFACTUAL_ENGINE.status(force_refresh=force_refresh)
+        payload["replay_counterfactual_status_v1"] = True
+        payload["local_only"] = True
+        payload["api_calls_used"] = 0
+        payload["writes_files"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "replay_counterfactual_status_v1": True,
+            "mode": "shadow_counterfactual_analysis",
+            "local_only": True,
+            "api_calls_used": 0,
+            "writes_files": False,
+            "changes_live_rankings": False,
+            "changes_live_top_buys": False,
+            "error": f"replay_counterfactual_unavailable: {exc}",
         }
 
 
