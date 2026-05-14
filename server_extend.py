@@ -175,6 +175,31 @@ from engine.trade_lifecycle_tracker import (
 )
 from engine.policy_backtest_engine import PolicyBacktestEngine
 from engine.learning_data_quality_monitor import LearningDataQualityMonitor
+try:
+    from engine.entry_quality_v2 import EntryQualityV2Engine, score_entry_quality_v2
+except Exception:
+    class EntryQualityV2Engine:  # type: ignore[override]
+        def status(self):
+            return {"enabled": False, "fallback": True, "mode": "shadow_scoring"}
+
+        def score_rows(self, rows, limit=200):
+            return {"rows_scored": 0, "avg_entry_quality_score_v2": 0.0, "band_distribution": {}, "sample": []}
+
+    def score_entry_quality_v2(row):  # type: ignore[override]
+        return {"entry_quality_score_v2": 0.0, "entry_quality_band_v2": "unavailable", "entry_quality_confidence_v2": 0.0}
+
+try:
+    from engine.multi_brain_consensus import MultiBrainConsensusEngine, score_multi_brain
+except Exception:
+    class MultiBrainConsensusEngine:  # type: ignore[override]
+        def status(self):
+            return {"enabled": False, "fallback": True, "mode": "shadow_consensus"}
+
+        def score_rows(self, rows, limit=200):
+            return {"rows_scored": 0, "avg_multi_brain_score": 0.0, "band_distribution": {}, "sample": []}
+
+    def score_multi_brain(row):  # type: ignore[override]
+        return {"multi_brain_score": 0.0, "multi_brain_confidence": 0.0, "consensus_band": "unavailable"}
 from engine.self_correction_controller import SelfCorrectionController
 try:
     from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
@@ -258,6 +283,8 @@ WATCHDOG_LOG_PATH = os.path.join(STATE, "watchdog.log")
 PAPER_REPLAY_TRAINER = None
 POLICY_BACKTEST_ENGINE = PolicyBacktestEngine(state_dir=STATE)
 LEARNING_DATA_QUALITY_MONITOR = LearningDataQualityMonitor(state_dir=STATE)
+ENTRY_QUALITY_V2_ENGINE = EntryQualityV2Engine()
+MULTI_BRAIN_CONSENSUS_ENGINE = MultiBrainConsensusEngine()
 SELF_CORRECTION_CONTROLLER = SelfCorrectionController(state_dir=STATE)
 FMP_USAGE_STATE_PATH = os.path.join(STATE, "fmp_usage_state.json")
 FMP_CACHE_INDEX_PATH = os.path.join(STATE, "fmp_cache_index.json")
@@ -17878,21 +17905,21 @@ def rankings():
     cached = RANKINGS_ENDPOINT_CACHE.get("stocks", {})
     if cached.get("payload") and (time.time() - float(cached.get("ts", 0.0))) <= RANKINGS_ENDPOINT_TTL_SECONDS:
         _PERF_COUNTERS["rankings_cache_hit_count"] = int(_PERF_COUNTERS.get("rankings_cache_hit_count", 0)) + 1
-        return list(cached.get("payload", []))
+        return _apply_institutional_bundle1_to_rows(list(cached.get("payload", [])))
     if cached.get("payload") and (time.time() - float(cached.get("ts", 0.0))) <= _RANKINGS_STALE_TTL_SECONDS:
         _PERF_COUNTERS["rankings_cache_hit_count"] = int(_PERF_COUNTERS.get("rankings_cache_hit_count", 0)) + 1
-        return list(cached.get("payload", []))
+        return _apply_institutional_bundle1_to_rows(list(cached.get("payload", [])))
     last_rows = LAST_RANKINGS.get("stocks", []) or []
     if last_rows:
-        return [dict(r) for r in last_rows if isinstance(r, dict)]
+        return _apply_institutional_bundle1_to_rows([dict(r) for r in last_rows if isinstance(r, dict)])
     shared_rows = _shared_runtime_stock_rows(max_age_seconds=900.0)
     if shared_rows:
         _update_last_rankings("stocks", shared_rows)
         RANKINGS_ENDPOINT_CACHE["stocks"] = {"ts": time.time(), "payload": list(shared_rows)}
-        return shared_rows
+        return _apply_institutional_bundle1_to_rows(shared_rows)
     seed_rows = _seed_shared_runtime_from_fetch_live_data(timeout_seconds=12.0)
     if seed_rows:
-        return [dict(r) for r in seed_rows if isinstance(r, dict)]
+        return _apply_institutional_bundle1_to_rows([dict(r) for r in seed_rows if isinstance(r, dict)])
     # If still empty, keep endpoint fast; do not block on lock contention.
     build_lock = _RANKINGS_BUILD_LOCK["stocks"]
     have_lock = build_lock.acquire(blocking=False)
@@ -17902,7 +17929,7 @@ def rankings():
     if cached.get("payload") and (time.time() - float(cached.get("ts", 0.0))) <= RANKINGS_ENDPOINT_TTL_SECONDS:
         build_lock.release()
         _PERF_COUNTERS["rankings_cache_hit_count"] = int(_PERF_COUNTERS.get("rankings_cache_hit_count", 0)) + 1
-        return list(cached.get("payload", []))
+        return _apply_institutional_bundle1_to_rows(list(cached.get("payload", [])))
     try:
         learning_snapshot = _get_enriched_learning_insights_cached()
         universe_symbols = _load_universe_symbols()
@@ -17941,6 +17968,7 @@ def rankings():
         )
         output = PREDICTIVE_MODEL.annotate_rows(output)
         output = REGIME_ENGINE.annotate_rows(output)
+        output = _apply_institutional_bundle1_to_rows(output)
         cap_map = dict(_UNIVERSE_RUNTIME.get("cap_map") or {})
         for idx, row in enumerate(output):
             sym = str(row.get("symbol", "")).upper()
@@ -21512,15 +21540,10 @@ def top_buys(
             crypto_rows_fb = _rows_for_top_buys("crypto")
             if stock_rows_fb or crypto_rows_fb:
                 try:
-                    fallback_payload = _top_buys_minimal_recovery_payload(
+                    fallback_payload = _top_buys_fast_read_payload_from_rows(
                         stock_rows=stock_rows_fb,
                         crypto_rows=crypto_rows_fb,
                         buy_mode=mode_cfg["buy_mode"],
-                        include_trace=False,
-                        runtime_trace=None,
-                        runtime_trace_push=None,
-                        started_at_perf=time.perf_counter(),
-                        max_build_seconds=0.0,
                     )
                     fallback_payload["last_updated_utc"] = _now_utc_iso()
                     fallback_payload["stale_cache"] = False
@@ -21539,17 +21562,28 @@ def top_buys(
                 fallback_age = None
                 fallback_key = None
         _runtime_phase_start("serialization")
-        out = _decorate_top_buys_payload(
-            fallback_payload,
-            source=source,
-            build_ms=elapsed_ms,
-            cache_age_seconds=fallback_age,
-            timeout_guard=True,
-            cache_hit=bool(cache_hit),
-            trace_included=bool(include_trace and "trace::1" in str(fallback_key or "")),
-            safe_mode=bool(safe_mode),
-            stage=f"circuit_breaker::{stage_s}",
-        )
+        if source == "rankings_rows_fallback":
+            out = _decorate_top_buys_fast_read_payload(
+                fallback_payload,
+                source=source,
+                build_ms=elapsed_ms,
+                cache_age_seconds=fallback_age,
+                cache_hit=bool(cache_hit),
+                safe_mode=bool(safe_mode),
+                stage=f"circuit_breaker::{stage_s}",
+            )
+        else:
+            out = _decorate_top_buys_payload(
+                fallback_payload,
+                source=source,
+                build_ms=elapsed_ms,
+                cache_age_seconds=fallback_age,
+                timeout_guard=True,
+                cache_hit=bool(cache_hit),
+                trace_included=bool(include_trace and "trace::1" in str(fallback_key or "")),
+                safe_mode=bool(safe_mode),
+                stage=f"circuit_breaker::{stage_s}",
+            )
         _runtime_phase_end("serialization")
         out["top_buys_circuit_breaker_triggered"] = True
         out["top_buys_elapsed_ms"] = round(_to_float(elapsed_ms, 0.0), 2)
@@ -21815,25 +21849,18 @@ def top_buys(
     stock_rows_fast = _shared_runtime_stock_rows(max_age_seconds=900.0)
     crypto_rows_fast = _rows_for_top_buys("crypto")
     if stock_rows_fast or crypto_rows_fast:
-        payload_fast = _top_buys_minimal_recovery_payload(
+        payload_fast = _top_buys_fast_read_payload_from_rows(
             stock_rows=stock_rows_fast,
             crypto_rows=crypto_rows_fast,
             buy_mode=mode_cfg["buy_mode"],
-            include_trace=bool(include_trace),
-            runtime_trace=runtime_trace,
-            runtime_trace_push=_runtime_trace_push_active,
-            started_at_perf=top_t0,
-            max_build_seconds=1.5,
         )
         _record_hot_path_timing("top_buys_total_ms", (time.perf_counter() - top_t0) * 1000.0)
-        out_fast = _decorate_top_buys_payload(
+        out_fast = _decorate_top_buys_fast_read_payload(
             payload_fast,
             source="runtime_rows_fast_path",
             build_ms=(time.perf_counter() - top_t0) * 1000.0,
             cache_age_seconds=0.0,
-            timeout_guard=False,
             cache_hit=False,
-            trace_included=bool(include_trace),
             safe_mode=bool(safe_mode),
             stage="minimal_recovery_from_rankings_lock_bypass",
         )
@@ -21850,25 +21877,18 @@ def top_buys(
         return out_fast
     seeded_rows_fast = _seed_shared_runtime_from_fetch_live_data(timeout_seconds=12.0)
     if seeded_rows_fast:
-        payload_seed = _top_buys_minimal_recovery_payload(
+        payload_seed = _top_buys_fast_read_payload_from_rows(
             stock_rows=seeded_rows_fast,
             crypto_rows=_rows_for_top_buys("crypto"),
             buy_mode=mode_cfg["buy_mode"],
-            include_trace=bool(include_trace),
-            runtime_trace=runtime_trace,
-            runtime_trace_push=_runtime_trace_push_active,
-            started_at_perf=top_t0,
-            max_build_seconds=1.5,
         )
         _record_hot_path_timing("top_buys_total_ms", (time.perf_counter() - top_t0) * 1000.0)
-        out_seed = _decorate_top_buys_payload(
+        out_seed = _decorate_top_buys_fast_read_payload(
             payload_seed,
             source="runtime_seed_fast_path",
             build_ms=(time.perf_counter() - top_t0) * 1000.0,
             cache_age_seconds=0.0,
-            timeout_guard=False,
             cache_hit=False,
-            trace_included=bool(include_trace),
             safe_mode=bool(safe_mode),
             stage="minimal_recovery_from_rankings_lock_bypass",
         )
@@ -28501,6 +28521,48 @@ def learning_data_quality_status_v1():
         }
 
 
+@router.get("/api/entry_quality_status_v2")
+def entry_quality_status_v2():
+    try:
+        rows = _rows_for_top_buys("stocks")
+        payload = dict(ENTRY_QUALITY_V2_ENGINE.status())
+        payload["entry_quality_status_v2"] = True
+        payload["institutional_intelligence_bundle_1"] = True
+        payload["sample_report"] = ENTRY_QUALITY_V2_ENGINE.score_rows(rows, limit=60)
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "entry_quality_status_v2": True,
+            "institutional_intelligence_bundle_1": True,
+            "mode": "shadow_scoring",
+            "local_only": True,
+            "api_calls_used": 0,
+            "error": f"entry_quality_v2_unavailable: {exc}",
+        }
+
+
+@router.get("/api/multi_brain_consensus_status_v1")
+def multi_brain_consensus_status_v1():
+    try:
+        rows = _apply_institutional_bundle1_to_rows(_rows_for_top_buys("stocks"))
+        payload = dict(MULTI_BRAIN_CONSENSUS_ENGINE.status())
+        payload["multi_brain_consensus_status_v1"] = True
+        payload["institutional_intelligence_bundle_1"] = True
+        payload["sample_report"] = MULTI_BRAIN_CONSENSUS_ENGINE.score_rows(rows, limit=60)
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "multi_brain_consensus_status_v1": True,
+            "institutional_intelligence_bundle_1": True,
+            "mode": "shadow_consensus",
+            "local_only": True,
+            "api_calls_used": 0,
+            "error": f"multi_brain_consensus_unavailable: {exc}",
+        }
+
+
 @router.get("/api/learning_data_quality_v1")
 def learning_data_quality_v1(force_refresh: bool = Query(False)):
     try:
@@ -33586,6 +33648,10 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
         out = _apply_entry_quality_v2_shadow(out)
     except Exception:
         pass
+    try:
+        out = _apply_institutional_bundle1_payload(out)
+    except Exception:
+        pass
     if not bool(trace_included):
         out.pop("candidate_pipeline_trace_v1", None)
     _top_buys_mark_real_payload(out)
@@ -33836,6 +33902,140 @@ def _apply_entry_quality_v2_shadow(payload):
     cps = dict(out.get("candidate_promotion_summary") or {})
     cps.update(summary)
     out["candidate_promotion_summary"] = cps
+    return out
+
+
+def _apply_institutional_bundle1_to_rows(rows):
+    enriched_rows = []
+    for row in list(rows or []):
+        if not isinstance(row, dict):
+            continue
+        enriched = dict(row)
+        try:
+            entry_v2 = score_entry_quality_v2(enriched)
+            if isinstance(entry_v2, dict):
+                enriched.update(entry_v2)
+        except Exception:
+            enriched.setdefault("entry_quality_v2_error", "entry_quality_v2_unavailable")
+        try:
+            consensus = score_multi_brain(enriched)
+            if isinstance(consensus, dict):
+                for key, value in consensus.items():
+                    if key in {"brain_disagreement_score"} and key in enriched:
+                        enriched[f"multi_brain_{key}"] = value
+                    else:
+                        enriched.setdefault(key, value)
+        except Exception:
+            enriched.setdefault("multi_brain_consensus_error", "multi_brain_consensus_unavailable")
+        enriched_rows.append(enriched)
+    return enriched_rows
+
+
+def _apply_institutional_bundle1_payload(payload):
+    out = dict(payload or {})
+    bundle_summary = {
+        "institutional_intelligence_bundle_1": True,
+        "mode": "shadow",
+        "entry_quality_v2_rows": 0,
+        "multi_brain_consensus_rows": 0,
+    }
+    try:
+        for section_name in ("stocks", "crypto"):
+            section = out.get(section_name)
+            if not isinstance(section, dict):
+                continue
+            for row_key in ("final", "qualified", "fill", "watchlist", "blocked", "all"):
+                row_list = section.get(row_key)
+                if not isinstance(row_list, list):
+                    continue
+                enriched = _apply_institutional_bundle1_to_rows(row_list)
+                section[row_key] = enriched
+                bundle_summary["entry_quality_v2_rows"] += sum(1 for r in enriched if "entry_quality_score_v2" in r)
+                bundle_summary["multi_brain_consensus_rows"] += sum(1 for r in enriched if "multi_brain_score" in r)
+    except Exception as exc:
+        bundle_summary["error"] = _safe_text(str(exc), 160)
+    out["institutional_intelligence_bundle_1"] = bundle_summary
+    cps = dict(out.get("candidate_promotion_summary") or {})
+    cps.update(bundle_summary)
+    out["candidate_promotion_summary"] = cps
+    return out
+
+
+def _top_buys_fast_read_payload_from_rows(stock_rows, crypto_rows, buy_mode):
+    """Serve already-ranked real rows without entering the heavy top_buys builder."""
+    mode = str(buy_mode or "balanced").strip().lower() or "balanced"
+
+    def _section(rows):
+        clean = [_ensure_persona_fields(dict(r)) for r in list(rows or []) if isinstance(r, dict) and str(r.get("symbol") or "").strip()]
+        clean = sorted(clean, key=_fill_sort_key)
+        final = clean[:6]
+        return {
+            "qualified": list(final),
+            "fill": [],
+            "watchlist": list(clean[6:18]),
+            "final": list(final),
+            "reason_counts": {"fast_read_runtime_rows": int(len(clean))},
+        }
+
+    stocks = _section(stock_rows)
+    crypto = _section(crypto_rows)
+    return {
+        "stocks": stocks,
+        "crypto": crypto,
+        "stocks_final_count": int(len(stocks.get("final") or [])),
+        "crypto_final_count": int(len(crypto.get("final") or [])),
+        "stocks_qualified_count": int(len(stocks.get("qualified") or [])),
+        "crypto_qualified_count": int(len(crypto.get("qualified") or [])),
+        "buy_mode": mode,
+        "last_updated_utc": _now_utc_iso(),
+        "stale_cache": False,
+        "top_buys_fast_read_payload": True,
+    }
+
+
+def _decorate_top_buys_fast_read_payload(
+    payload,
+    *,
+    source,
+    build_ms=0.0,
+    cache_age_seconds=0.0,
+    cache_hit=False,
+    safe_mode=False,
+    stage="fast_read_runtime_rows",
+):
+    out = dict(payload or {})
+    try:
+        out = _apply_institutional_bundle1_payload(out)
+    except Exception:
+        pass
+    _top_buys_mark_real_payload(out)
+    with _TOP_BUYS_REAL_STATE_LOCK:
+        last_real_rows_count = int(_to_float(_TOP_BUYS_REAL_STATE.get("last_real_rows_count"), 0.0))
+    out["top_buys_payload_source"] = str(source or "runtime_rows_fast_path")
+    out["top_buys_build_ms"] = round(_to_float(build_ms, 0.0), 2)
+    out["top_buys_cache_age_seconds"] = round(max(0.0, _to_float(cache_age_seconds, 0.0)), 2)
+    out["top_buys_timeout_guard_applied"] = False
+    out["top_buys_cache_hit"] = bool(cache_hit)
+    out["top_buys_trace_included"] = False
+    out["top_buys_safe_mode"] = bool(safe_mode)
+    out["top_buys_stage"] = str(stage or "fast_read_runtime_rows")
+    out["top_buys_last_real_rows_count"] = int(last_real_rows_count)
+    out["top_buys_cache_populated"] = bool(_top_buys_row_count(out) > 0 or last_real_rows_count > 0)
+    out["top_buys_snapshot_served"] = False
+    out["top_buys_snapshot_available"] = True
+    out["top_buys_snapshot_age_seconds"] = 0.0
+    out["top_buys_snapshot_is_partial"] = False
+    out["top_buys_background_refresh_status"] = "idle"
+    out["top_buys_background_refresh_triggered"] = False
+    out["top_buys_snapshot_last_error"] = ""
+    _top_buys_runtime_snapshot_set(
+        out,
+        source=str(source or "runtime_rows_fast_path"),
+        build_ms=_to_float(build_ms, 0.0),
+        is_partial=False,
+        refresh_status="idle",
+        last_error="",
+    )
     return out
 
 

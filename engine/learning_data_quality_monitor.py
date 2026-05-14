@@ -73,6 +73,8 @@ class LearningDataQualityMonitor:
         return {
             "enabled": True,
             "mode": "diagnostic",
+            "learning_data_quality_version": "v2",
+            "institutional_intelligence_bundle_1": True,
             "local_only": True,
             "api_calls_used": 0,
             "cache_ttl_seconds": int(self.cache_ttl_seconds),
@@ -267,6 +269,8 @@ class LearningDataQualityMonitor:
         return {
             "enabled": True,
             "mode": "diagnostic",
+            "learning_data_quality_version": "v2",
+            "institutional_intelligence_bundle_1": True,
             "local_only": True,
             "api_calls_used": 0,
             "generated_at": _now_iso(),
