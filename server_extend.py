@@ -1,6 +1,7 @@
 import json
 import hashlib
 import os
+import sys
 import time
 import math
 import sqlite3
@@ -294,6 +295,12 @@ LAST_RANKINGS = {
     "stocks": [],
     "crypto": [],
     "updated_at": 0.0,
+}
+_SHARED_RUNTIME_ROWS_LOCK = threading.Lock()
+_SHARED_RUNTIME_ROWS = {
+    "stocks": [],
+    "updated_at": 0.0,
+    "source": "",
 }
 RANKINGS_ENDPOINT_CACHE = {
     "stocks": {"ts": 0.0, "payload": []},
@@ -4946,6 +4953,10 @@ def _rows_for_top_buys(kind):
     # Allow stale ranking cache reuse for top_buys path to avoid expensive recompute spikes.
     if payload and (time.time() - float(cache.get("ts", 0.0))) <= max(600, RANKINGS_ENDPOINT_TTL_SECONDS * 20):
         return [dict(r) for r in payload if isinstance(r, dict)]
+    if key == "stocks":
+        shared_rows = _shared_runtime_stock_rows(max_age_seconds=900.0)
+        if shared_rows:
+            return [dict(r) for r in shared_rows if isinstance(r, dict)]
     return []
 
 
@@ -4959,6 +4970,73 @@ def _wait_for_rank_rows(kind, timeout_seconds=6.0, poll_seconds=0.2):
             return rows
         time.sleep(max(0.05, float(poll_seconds or 0.2)))
     return []
+
+
+def _shared_runtime_stock_rows(max_age_seconds=900.0):
+    now = time.time()
+    with _SHARED_RUNTIME_ROWS_LOCK:
+        rows_local = list(_SHARED_RUNTIME_ROWS.get("stocks") or [])
+        age_local = now - float(_SHARED_RUNTIME_ROWS.get("updated_at", 0.0))
+    if rows_local and age_local <= max(30.0, float(max_age_seconds or 900.0)):
+        return [dict(r) for r in rows_local if isinstance(r, dict)]
+    snap = _latest_top_buys_runtime_snapshot()
+    if isinstance(snap, dict) and snap:
+        stocks_final = list(((snap.get("stocks") or {}).get("final")) or [])
+        rows_from_snap = [dict(r) for r in stocks_final if isinstance(r, dict) and str(r.get("symbol") or "").strip()]
+        if rows_from_snap:
+            with _SHARED_RUNTIME_ROWS_LOCK:
+                _SHARED_RUNTIME_ROWS["stocks"] = list(rows_from_snap)
+                _SHARED_RUNTIME_ROWS["updated_at"] = now
+                _SHARED_RUNTIME_ROWS["source"] = "top_buys_runtime_snapshot"
+            return rows_from_snap
+    return []
+
+
+def _seed_shared_runtime_from_fetch_live_data(timeout_seconds=12.0):
+    symbols = ["AAPL", "NVDA", "MSFT", "AMZN", "TSLA", "META"]
+    cmd = [
+        sys.executable,
+        "-c",
+        (
+            "import json;"
+            "from engine.data_orchestrator import fetch_live_data;"
+            f"print(json.dumps(fetch_live_data(symbols={symbols!r}) or []))"
+        ),
+    ]
+    rows = []
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=os.getcwd(),
+            capture_output=True,
+            text=True,
+            timeout=max(3.0, float(timeout_seconds or 12.0)),
+            check=False,
+        )
+        if proc.returncode == 0 and str(proc.stdout or "").strip():
+            out_txt = str(proc.stdout or "")
+            first_json = out_txt.find("[{")
+            if first_json < 0:
+                first_json = out_txt.find("[")
+            payload_txt = out_txt[first_json:] if first_json >= 0 else out_txt
+            data = json.loads(payload_txt)
+            rows = [
+                _ensure_persona_fields(dict(r))
+                for r in (data or [])
+                if isinstance(r, dict)
+                and str(r.get("symbol") or "").strip()
+                and str(r.get("symbol") or "").upper() not in {"BTC", "ETH", "SOL", "XRP", "DOGE", "BNB"}
+            ]
+    except Exception:
+        rows = []
+    if rows:
+        with _SHARED_RUNTIME_ROWS_LOCK:
+            _SHARED_RUNTIME_ROWS["stocks"] = list(rows)
+            _SHARED_RUNTIME_ROWS["updated_at"] = time.time()
+            _SHARED_RUNTIME_ROWS["source"] = "fetch_live_data_seed"
+        _update_last_rankings("stocks", rows)
+        RANKINGS_ENDPOINT_CACHE["stocks"] = {"ts": time.time(), "payload": list(rows)}
+    return rows
 
 
 def _top_buys_minimal_recovery_payload(
@@ -17796,47 +17874,35 @@ def top_signals():
 
 @router.get("/api/rankings")
 def rankings():
-    global _PROVIDER_HEALTH_PRIME_TS
+    # Fast-read endpoint: always serve available rows first and avoid long lock waits.
     cached = RANKINGS_ENDPOINT_CACHE.get("stocks", {})
     if cached.get("payload") and (time.time() - float(cached.get("ts", 0.0))) <= RANKINGS_ENDPOINT_TTL_SECONDS:
         _PERF_COUNTERS["rankings_cache_hit_count"] = int(_PERF_COUNTERS.get("rankings_cache_hit_count", 0)) + 1
         return list(cached.get("payload", []))
+    if cached.get("payload") and (time.time() - float(cached.get("ts", 0.0))) <= _RANKINGS_STALE_TTL_SECONDS:
+        _PERF_COUNTERS["rankings_cache_hit_count"] = int(_PERF_COUNTERS.get("rankings_cache_hit_count", 0)) + 1
+        return list(cached.get("payload", []))
+    last_rows = LAST_RANKINGS.get("stocks", []) or []
+    if last_rows:
+        return [dict(r) for r in last_rows if isinstance(r, dict)]
+    shared_rows = _shared_runtime_stock_rows(max_age_seconds=900.0)
+    if shared_rows:
+        _update_last_rankings("stocks", shared_rows)
+        RANKINGS_ENDPOINT_CACHE["stocks"] = {"ts": time.time(), "payload": list(shared_rows)}
+        return shared_rows
+    seed_rows = _seed_shared_runtime_from_fetch_live_data(timeout_seconds=12.0)
+    if seed_rows:
+        return [dict(r) for r in seed_rows if isinstance(r, dict)]
+    # If still empty, keep endpoint fast; do not block on lock contention.
     build_lock = _RANKINGS_BUILD_LOCK["stocks"]
     have_lock = build_lock.acquire(blocking=False)
     if not have_lock:
-        # If a build is already in-flight, return stale ranking payload instead of timing out.
-        if cached.get("payload") and (time.time() - float(cached.get("ts", 0.0))) <= _RANKINGS_STALE_TTL_SECONDS:
-            _PERF_COUNTERS["rankings_cache_hit_count"] = int(_PERF_COUNTERS.get("rankings_cache_hit_count", 0)) + 1
-            return list(cached.get("payload", []))
-        last_rows = LAST_RANKINGS.get("stocks", []) or []
-        if last_rows:
-            return [dict(r) for r in last_rows if isinstance(r, dict)]
-        # Cold-cache contention path: allow the in-flight builder extra time to seed rows.
-        waited = _wait_for_rank_rows("stocks", timeout_seconds=8.0, poll_seconds=0.2)
-        if waited:
-            return waited
-        have_lock = build_lock.acquire(timeout=10.0)
-        if not have_lock:
-            # Last chance: return any stale in-memory rows if present.
-            last_rows = LAST_RANKINGS.get("stocks", []) or []
-            if last_rows:
-                return [dict(r) for r in last_rows if isinstance(r, dict)]
-            return []
-    # Double-check cache once lock is acquired.
+        return []
     cached = RANKINGS_ENDPOINT_CACHE.get("stocks", {})
     if cached.get("payload") and (time.time() - float(cached.get("ts", 0.0))) <= RANKINGS_ENDPOINT_TTL_SECONDS:
-        if have_lock:
-            build_lock.release()
+        build_lock.release()
         _PERF_COUNTERS["rankings_cache_hit_count"] = int(_PERF_COUNTERS.get("rankings_cache_hit_count", 0)) + 1
         return list(cached.get("payload", []))
-    # Prime provider health snapshot with cooldown to avoid repeating expensive calls each cycle.
-    now = time.time()
-    if (now - float(_PROVIDER_HEALTH_PRIME_TS)) >= _PROVIDER_HEALTH_PRIME_COOLDOWN_SECONDS:
-        try:
-            GUARDIAN_API.provider_status(symbol="AAPL")
-            _PROVIDER_HEALTH_PRIME_TS = now
-        except Exception:
-            pass
     try:
         learning_snapshot = _get_enriched_learning_insights_cached()
         universe_symbols = _load_universe_symbols()
@@ -17910,8 +17976,7 @@ def rankings():
         )
         return output
     finally:
-        if have_lock:
-            build_lock.release()
+        build_lock.release()
 
 
 @router.get("/api/crypto_rankings")
@@ -21744,6 +21809,80 @@ def top_buys(
             if debug_trace:
                 out["top_buys_runtime_trace_v1"] = trace_obj
             return out
+
+    # Fast-read fallback chain before lock waits:
+    # runtime snapshot rows -> rankings rows -> bounded seed -> minimal recovery.
+    stock_rows_fast = _shared_runtime_stock_rows(max_age_seconds=900.0)
+    crypto_rows_fast = _rows_for_top_buys("crypto")
+    if stock_rows_fast or crypto_rows_fast:
+        payload_fast = _top_buys_minimal_recovery_payload(
+            stock_rows=stock_rows_fast,
+            crypto_rows=crypto_rows_fast,
+            buy_mode=mode_cfg["buy_mode"],
+            include_trace=bool(include_trace),
+            runtime_trace=runtime_trace,
+            runtime_trace_push=_runtime_trace_push_active,
+            started_at_perf=top_t0,
+            max_build_seconds=1.5,
+        )
+        _record_hot_path_timing("top_buys_total_ms", (time.perf_counter() - top_t0) * 1000.0)
+        out_fast = _decorate_top_buys_payload(
+            payload_fast,
+            source="runtime_rows_fast_path",
+            build_ms=(time.perf_counter() - top_t0) * 1000.0,
+            cache_age_seconds=0.0,
+            timeout_guard=False,
+            cache_hit=False,
+            trace_included=bool(include_trace),
+            safe_mode=bool(safe_mode),
+            stage="minimal_recovery_from_rankings_lock_bypass",
+        )
+        out_fast = _attach_cold_start_metadata(out_fast)
+        trace_obj = _runtime_finalize(
+            "runtime_rows_fast_path",
+            cache_hit=False,
+            hint="lock_bypass_preferred_rows_available",
+            trace_included=bool(include_trace),
+            payload=out_fast,
+        )
+        if debug_trace:
+            out_fast["top_buys_runtime_trace_v1"] = trace_obj
+        return out_fast
+    seeded_rows_fast = _seed_shared_runtime_from_fetch_live_data(timeout_seconds=12.0)
+    if seeded_rows_fast:
+        payload_seed = _top_buys_minimal_recovery_payload(
+            stock_rows=seeded_rows_fast,
+            crypto_rows=_rows_for_top_buys("crypto"),
+            buy_mode=mode_cfg["buy_mode"],
+            include_trace=bool(include_trace),
+            runtime_trace=runtime_trace,
+            runtime_trace_push=_runtime_trace_push_active,
+            started_at_perf=top_t0,
+            max_build_seconds=1.5,
+        )
+        _record_hot_path_timing("top_buys_total_ms", (time.perf_counter() - top_t0) * 1000.0)
+        out_seed = _decorate_top_buys_payload(
+            payload_seed,
+            source="runtime_seed_fast_path",
+            build_ms=(time.perf_counter() - top_t0) * 1000.0,
+            cache_age_seconds=0.0,
+            timeout_guard=False,
+            cache_hit=False,
+            trace_included=bool(include_trace),
+            safe_mode=bool(safe_mode),
+            stage="minimal_recovery_from_rankings_lock_bypass",
+        )
+        out_seed = _attach_cold_start_metadata(out_seed)
+        trace_obj = _runtime_finalize(
+            "runtime_seed_fast_path",
+            cache_hit=False,
+            hint="seeded_rows_before_lock",
+            trace_included=bool(include_trace),
+            payload=out_seed,
+        )
+        if debug_trace:
+            out_seed["top_buys_runtime_trace_v1"] = trace_obj
+        return out_seed
 
     # Prevent concurrent top_buys rebuild storms under load.
     _runtime_phase_start("lock_acquire")
