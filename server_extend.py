@@ -173,6 +173,23 @@ from engine.trade_lifecycle_tracker import (
     load_recent_lifecycle_records,
     summarize_lifecycle_metrics,
 )
+try:
+    from engine.trade_lifecycle_intelligence import TradeLifecycleIntelligence
+except Exception:
+    class TradeLifecycleIntelligence:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "mode": "shadow_lifecycle_intelligence",
+                "trade_lifecycle_status_v1": True,
+                "fallback": True,
+            }
+
+        def report(self, *args, **kwargs):
+            return self.status()
 from engine.policy_backtest_engine import PolicyBacktestEngine
 from engine.learning_data_quality_monitor import LearningDataQualityMonitor
 try:
@@ -281,6 +298,7 @@ WATCHDOG_PID_PATH = os.path.join(STATE, "backend_watchdog.pid")
 WATCHDOG_HEARTBEAT_PATH = os.path.join(STATE, "backend_watchdog_heartbeat")
 WATCHDOG_LOG_PATH = os.path.join(STATE, "watchdog.log")
 PAPER_REPLAY_TRAINER = None
+TRADE_LIFECYCLE_INTELLIGENCE = TradeLifecycleIntelligence(state_dir=STATE)
 POLICY_BACKTEST_ENGINE = PolicyBacktestEngine(state_dir=STATE)
 LEARNING_DATA_QUALITY_MONITOR = LearningDataQualityMonitor(state_dir=STATE)
 ENTRY_QUALITY_V2_ENGINE = EntryQualityV2Engine()
@@ -28472,11 +28490,33 @@ def trade_lifecycle_summary_v1(limit: int = Query(200, ge=1, le=2000)):
         }
 
 
+@router.get("/api/trade_lifecycle_status_v1")
+def trade_lifecycle_status_v1(force_refresh: bool = Query(False)):
+    try:
+        payload = TRADE_LIFECYCLE_INTELLIGENCE.report(force_refresh=force_refresh)
+        payload["trade_lifecycle_status_v1"] = True
+        payload["institutional_intelligence_bundle_2"] = True
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "trade_lifecycle_status_v1": True,
+            "institutional_intelligence_bundle_2": True,
+            "mode": "shadow_lifecycle_intelligence",
+            "local_only": True,
+            "api_calls_used": 0,
+            "error": f"trade_lifecycle_intelligence_unavailable: {exc}",
+            "metrics": {},
+            "recommendations": [],
+        }
+
+
 @router.get("/api/policy_compare_status_v1")
 def policy_compare_status_v1():
     try:
         status = POLICY_BACKTEST_ENGINE.status()
         status["policy_compare_status_v1"] = True
+        status["institutional_intelligence_bundle_2"] = True
         return status
     except Exception as exc:
         return {
@@ -28492,6 +28532,7 @@ def policy_compare_v1(force_refresh: bool = Query(False)):
     try:
         payload = POLICY_BACKTEST_ENGINE.compare_policies(force_refresh=force_refresh)
         payload["policy_compare_v1"] = True
+        payload["institutional_intelligence_bundle_2"] = True
         return payload
     except Exception as exc:
         return {
@@ -28594,6 +28635,7 @@ def self_correction_status_v1():
     try:
         payload = SELF_CORRECTION_CONTROLLER.status()
         payload["self_correction_status_v1"] = True
+        payload["institutional_intelligence_bundle_2"] = True
         return payload
     except Exception as exc:
         return {
@@ -28626,6 +28668,7 @@ def self_correction_recommendations_v1(force_refresh: bool = Query(False)):
             force_refresh=force_refresh,
         )
         payload["self_correction_recommendations_v1"] = True
+        payload["institutional_intelligence_bundle_2"] = True
         return payload
     except Exception as exc:
         return {

@@ -1,4 +1,4 @@
-"""Shadow-only policy backtest and A/B comparison engine (V1)."""
+"""Shadow-only policy backtest and A/B comparison engine (V2)."""
 
 from __future__ import annotations
 
@@ -65,6 +65,8 @@ class PolicyBacktestEngine:
         return {
             "enabled": True,
             "mode": "shadow_analysis",
+            "policy_backtest_engine_version": "v2",
+            "institutional_intelligence_bundle_2": True,
             "cache_ttl_seconds": int(self._cache_ttl_seconds),
             "cache_ready": cache_ready,
             "cache_age_seconds": round(cache_age, 3) if cache_age is not None else None,
@@ -273,6 +275,8 @@ class PolicyBacktestEngine:
         return {
             "enabled": True,
             "mode": "shadow_analysis",
+            "policy_backtest_engine_version": "v2",
+            "institutional_intelligence_bundle_2": True,
             "generated_at": _now_iso(),
             "policies_compared": policies,
             "winner": winner,
@@ -282,7 +286,57 @@ class PolicyBacktestEngine:
             "source_row_count": int(len(rows)),
             "source_counts": dict(source_counts),
             "metrics_by_policy": metrics_by_policy,
+            "policy_adjustment_recommendations": self._policy_adjustment_recommendations(
+                metrics_by_policy=metrics_by_policy,
+                enough_data=enough_data,
+                winner=winner,
+            ),
             "api_calls_used": 0,
             "bandwidth_used": 0,
             "local_only": True,
         }
+
+    def _policy_adjustment_recommendations(
+        self,
+        *,
+        metrics_by_policy: dict[str, dict[str, Any]],
+        enough_data: bool,
+        winner: str | None,
+    ) -> list[dict[str, Any]]:
+        if not enough_data:
+            return [
+                {
+                    "recommendation": "continue_collecting_policy_outcomes",
+                    "severity": "info",
+                    "confidence": 0.45,
+                    "reason": "policy_backtest_sample_below_v2_threshold",
+                    "safe_action": "shadow_only_no_live_policy_change",
+                }
+            ]
+        current = dict(metrics_by_policy.get("current_policy") or {})
+        winning = dict(metrics_by_policy.get(str(winner or "")) or {})
+        current_wr = _to_float(current.get("win_rate"), 0.0)
+        winning_wr = _to_float(winning.get("win_rate"), 0.0)
+        current_pf = _to_float(current.get("profit_factor"), 0.0)
+        winning_pf = _to_float(winning.get("profit_factor"), 0.0)
+        if winner and winner != "current_policy" and (winning_wr - current_wr) >= 3.0 and winning_pf >= current_pf:
+            return [
+                {
+                    "recommendation": "promote_policy_candidate_to_shadow_gate",
+                    "policy": str(winner),
+                    "severity": "caution",
+                    "confidence": 0.68,
+                    "reason": "candidate_policy_outperformed_current_on_local_outcomes",
+                    "safe_action": "review_before_any_live_threshold_change",
+                }
+            ]
+        return [
+            {
+                "recommendation": "keep_current_policy",
+                "policy": "current_policy",
+                "severity": "info",
+                "confidence": 0.72,
+                "reason": "no_candidate_policy_has_sufficient_v2_edge",
+                "safe_action": "continue_monitoring",
+            }
+        ]

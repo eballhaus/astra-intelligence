@@ -1,4 +1,4 @@
-"""Adaptive Self-Correction Controller V1 (shadow recommendation mode, local-only)."""
+"""Adaptive Self-Correction Controller V2 (shadow recommendation mode, local-only)."""
 
 from __future__ import annotations
 
@@ -71,6 +71,8 @@ class SelfCorrectionController:
         return {
             "enabled": True,
             "mode": "shadow_recommendation",
+            "self_correction_controller_version": "v2",
+            "institutional_intelligence_bundle_2": True,
             "local_only": True,
             "api_calls_used": 0,
             "last_updated_utc": str(payload.get("generated_at") or _now_iso()),
@@ -423,6 +425,8 @@ class SelfCorrectionController:
         return {
             "enabled": True,
             "mode": "shadow_recommendation",
+            "self_correction_controller_version": "v2",
+            "institutional_intelligence_bundle_2": True,
             "local_only": True,
             "api_calls_used": 0,
             "generated_at": _now_iso(),
@@ -441,6 +445,11 @@ class SelfCorrectionController:
             "rollback_guidance": dict(final_reco.get("rollback_guidance") or {}),
             "evidence_summary": evidence_summary,
             "metrics_used": sorted(list(evidence_summary.keys())),
+            "adaptive_policy_adjustment_plan_v2": self._adaptive_policy_adjustment_plan_v2(
+                final_reco=final_reco,
+                evidence_summary=evidence_summary,
+                blockers=blockers,
+            ),
             "recommendation_priority": persisted_rec,
             "recommendation_history_summary": history_summary,
             "stability_guardrails_active": bool(len(blockers) > 0),
@@ -453,6 +462,57 @@ class SelfCorrectionController:
             "persistence_requirement": {
                 "cycles": self.persistence_cycles,
                 "hours": self.persistence_hours,
+            },
+        }
+
+    def _adaptive_policy_adjustment_plan_v2(
+        self,
+        *,
+        final_reco: dict[str, Any],
+        evidence_summary: dict[str, Any],
+        blockers: list[str],
+    ) -> dict[str, Any]:
+        recommendation = str(final_reco.get("recommendation") or "insufficient_data")
+        blocked = bool(blockers)
+        confidence = _to_float(final_reco.get("confidence"), 0.0)
+        if blocked or recommendation in {"continue_collecting", "insufficient_data"}:
+            action = "observe_only"
+            max_adjustment = 0.0
+        elif recommendation == "tighten_entry_confirmation":
+            action = "propose_tighten_confirmation"
+            max_adjustment = 4.0
+        elif recommendation == "loosen_entry_confirmation":
+            action = "propose_loosen_confirmation_for_validated_setups"
+            max_adjustment = 3.0
+        elif recommendation == "lower_confidence_scores":
+            action = "propose_confidence_haircut"
+            max_adjustment = 5.0
+        else:
+            action = "keep_current"
+            max_adjustment = 0.0
+        return {
+            "enabled": True,
+            "mode": "shadow_plan",
+            "proposed_action": action,
+            "max_threshold_adjustment_points": round(max_adjustment, 2),
+            "requires_human_approval": True,
+            "auto_apply": False,
+            "confidence": round(confidence, 4),
+            "blockers": list(blockers or []),
+            "rollback_window_hours": 24,
+            "monitor_metrics": [
+                "current_engine_released_wr",
+                "confidence_truthfulness",
+                "false_positive_rate",
+                "false_negative_rate",
+                "buy_list_purity",
+            ],
+            "evidence_snapshot": {
+                "released_wr": evidence_summary.get("current_engine_released_wr"),
+                "confidence_truthfulness": evidence_summary.get("confidence_truthfulness"),
+                "false_positive_rate": evidence_summary.get("false_positive_rate"),
+                "false_negative_rate": evidence_summary.get("false_negative_rate"),
+                "labeled_trade_count": evidence_summary.get("labeled_trade_count"),
             },
         }
 
