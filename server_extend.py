@@ -231,6 +231,43 @@ except Exception:
             return out
 
 try:
+    from engine.market_data_orchestration import MarketDataOrchestrationEngine
+except Exception:
+    class MarketDataOrchestrationEngine:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "market_data_orchestration_status_v1": True,
+                "mode": "planning_governance_only",
+                "local_only": True,
+                "api_calls_used": 0,
+                "broad_collection_enabled": False,
+                "collection_allowed_now": False,
+                "fallback": True,
+            }
+
+        def plan(self, *args, **kwargs):
+            out = self.status()
+            out["market_data_orchestration_plan_v1"] = True
+            out["what_data_astra_wants_next"] = []
+            return out
+
+        def active_trade_plan(self, *args, **kwargs):
+            out = self.status()
+            out["active_trade_data_plan_v1"] = True
+            return out
+
+        def fmp_market_collection_plan(self, *args, **kwargs):
+            out = self.status()
+            out["fmp_market_collection_plan_v1"] = True
+            out["execution_allowed_now"] = False
+            return out
+
+try:
     from engine.jsonl_maintenance_suite import JsonlMaintenanceSuite
 except Exception:
     class JsonlMaintenanceSuite:  # type: ignore[override]
@@ -362,6 +399,10 @@ POLICY_BACKTEST_ENGINE = PolicyBacktestEngine(state_dir=STATE)
 REPLAY_COUNTERFACTUAL_ENGINE = ReplayCounterfactualEngine(state_dir=STATE)
 LEARNING_DATA_QUALITY_MONITOR = LearningDataQualityMonitor(state_dir=STATE)
 FMP_UTILIZATION_OPTIMIZER = FmpUtilizationOptimizer(state_dir=STATE)
+MARKET_DATA_ORCHESTRATION_ENGINE = MarketDataOrchestrationEngine(
+    state_dir=STATE,
+    fmp_optimizer=FMP_UTILIZATION_OPTIMIZER,
+)
 JSONL_MAINTENANCE_SUITE = JsonlMaintenanceSuite(state_dir=STATE)
 ENTRY_QUALITY_V2_ENGINE = EntryQualityV2Engine()
 MULTI_BRAIN_CONSENSUS_ENGINE = MultiBrainConsensusEngine()
@@ -28662,6 +28703,114 @@ def fmp_utilization_plan_v1():
             "would_increase_calls_now": False,
             "planned_actions": [],
             "error": f"fmp_utilization_plan_unavailable: {exc}",
+        }
+
+
+@router.get("/api/market_data_orchestration_status_v1")
+def market_data_orchestration_status_v1():
+    try:
+        stock_rows = _rows_for_top_buys("stocks")
+        rankings_rows = LAST_RANKINGS.get("stocks") if isinstance(LAST_RANKINGS, dict) else []
+        payload = MARKET_DATA_ORCHESTRATION_ENGINE.status(
+            top_buy_count=len(stock_rows or []),
+            rankings_count=len(rankings_rows or []),
+        )
+        payload["market_data_orchestration_status_v1"] = True
+        payload["broad_collection_enabled"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "market_data_orchestration_status_v1": True,
+            "mode": "planning_governance_only",
+            "local_only": True,
+            "api_calls_used": 0,
+            "broad_collection_enabled": False,
+            "collection_allowed_now": False,
+            "error": f"market_data_orchestration_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/market_data_orchestration_plan_v1")
+def market_data_orchestration_plan_v1():
+    try:
+        stock_rows = _rows_for_top_buys("stocks")
+        rankings_rows = LAST_RANKINGS.get("stocks") if isinstance(LAST_RANKINGS, dict) else []
+        payload = MARKET_DATA_ORCHESTRATION_ENGINE.plan(
+            top_buy_count=len(stock_rows or []),
+            rankings_count=len(rankings_rows or []),
+        )
+        payload["market_data_orchestration_plan_v1"] = True
+        payload["broad_collection_enabled"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "market_data_orchestration_plan_v1": True,
+            "mode": "planning_governance_only",
+            "local_only": True,
+            "api_calls_used": 0,
+            "broad_collection_enabled": False,
+            "what_data_astra_wants_next": [],
+            "error": f"market_data_orchestration_plan_unavailable: {exc}",
+        }
+
+
+@router.get("/api/active_trade_data_plan_v1")
+def active_trade_data_plan_v1():
+    try:
+        stock_rows = _rows_for_top_buys("stocks")
+        open_trade_count = 0
+        try:
+            recent = load_recent_lifecycle_records(limit=200)
+            open_trade_count = len([r for r in recent if str((r or {}).get("status") or "").lower() in {"open", "entered", "active"}])
+        except Exception:
+            open_trade_count = 0
+        payload = MARKET_DATA_ORCHESTRATION_ENGINE.active_trade_plan(
+            open_trade_count=open_trade_count,
+            watchlist_count=len(stock_rows or []),
+        )
+        payload["active_trade_data_plan_v1"] = True
+        payload["broad_collection_enabled"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "active_trade_data_plan_v1": True,
+            "mode": "planning_governance_only",
+            "local_only": True,
+            "api_calls_used": 0,
+            "broad_collection_enabled": False,
+            "execution_allowed_now": False,
+            "error": f"active_trade_data_plan_unavailable: {exc}",
+        }
+
+
+@router.get("/api/fmp_market_collection_plan_v1")
+def fmp_market_collection_plan_v1():
+    try:
+        stock_rows = _rows_for_top_buys("stocks")
+        payload = MARKET_DATA_ORCHESTRATION_ENGINE.fmp_market_collection_plan(
+            symbol_count=len(stock_rows or []),
+        )
+        payload["fmp_market_collection_plan_v1"] = True
+        payload["broad_collection_enabled"] = False
+        payload["execution_allowed_now"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "fmp_market_collection_plan_v1": True,
+            "mode": "planning_governance_only",
+            "local_only": True,
+            "api_calls_used": 0,
+            "broad_collection_enabled": False,
+            "execution_allowed_now": False,
+            "error": f"fmp_market_collection_plan_unavailable: {exc}",
         }
 
 
