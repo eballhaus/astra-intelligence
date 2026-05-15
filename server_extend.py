@@ -268,6 +268,81 @@ except Exception:
             return out
 
 try:
+    from engine.broad_fmp_collection import BroadFmpCollectionPlanner
+except Exception:
+    class BroadFmpCollectionPlanner:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "planning_only",
+                "local_only": True,
+                "writes_files": False,
+                "collection_enabled": False,
+                "api_calls_used": 0,
+                "planned_calls": 0,
+                "estimated_bandwidth": 0,
+                "blocked_reason": "broad_fmp_collection_unavailable",
+                "next_recommended_action": "keep_collection_disabled",
+                "broad_fmp_collection_status_v1": True,
+            }
+
+        def plan(self, *args, **kwargs):
+            out = self.status()
+            out["broad_fmp_collection_plan_v1"] = True
+            out["planned_batches"] = []
+            return out
+
+try:
+    from engine.market_data_warehouse import MarketDataWarehouse
+except Exception:
+    class MarketDataWarehouse:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "metadata_catalog_only",
+                "local_only": True,
+                "writes_files": False,
+                "collection_enabled": False,
+                "api_calls_used": 0,
+                "planned_calls": 0,
+                "estimated_bandwidth": 0,
+                "blocked_reason": "market_data_warehouse_unavailable",
+                "next_recommended_action": "keep_metadata_only",
+                "market_data_warehouse_status_v1": True,
+            }
+
+try:
+    from engine.feature_store import FeatureStore
+except Exception:
+    class FeatureStore:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "metadata_catalog_only",
+                "local_only": True,
+                "writes_files": False,
+                "collection_enabled": False,
+                "api_calls_used": 0,
+                "planned_calls": 0,
+                "estimated_bandwidth": 0,
+                "blocked_reason": "feature_store_unavailable",
+                "next_recommended_action": "keep_metadata_only",
+                "feature_store_status_v1": True,
+            }
+
+try:
     from engine.jsonl_maintenance_suite import JsonlMaintenanceSuite
 except Exception:
     class JsonlMaintenanceSuite:  # type: ignore[override]
@@ -403,6 +478,13 @@ MARKET_DATA_ORCHESTRATION_ENGINE = MarketDataOrchestrationEngine(
     state_dir=STATE,
     fmp_optimizer=FMP_UTILIZATION_OPTIMIZER,
 )
+MARKET_DATA_WAREHOUSE = MarketDataWarehouse(state_dir=STATE)
+BROAD_FMP_COLLECTION_PLANNER = BroadFmpCollectionPlanner(
+    state_dir=STATE,
+    fmp_optimizer=FMP_UTILIZATION_OPTIMIZER,
+    orchestration_engine=MARKET_DATA_ORCHESTRATION_ENGINE,
+)
+FEATURE_STORE = FeatureStore(state_dir=STATE, warehouse=MARKET_DATA_WAREHOUSE)
 JSONL_MAINTENANCE_SUITE = JsonlMaintenanceSuite(state_dir=STATE)
 ENTRY_QUALITY_V2_ENGINE = EntryQualityV2Engine()
 MULTI_BRAIN_CONSENSUS_ENGINE = MultiBrainConsensusEngine()
@@ -28811,6 +28893,107 @@ def fmp_market_collection_plan_v1():
             "broad_collection_enabled": False,
             "execution_allowed_now": False,
             "error": f"fmp_market_collection_plan_unavailable: {exc}",
+        }
+
+
+@router.get("/api/broad_fmp_collection_status_v1")
+def broad_fmp_collection_status_v1():
+    try:
+        payload = BROAD_FMP_COLLECTION_PLANNER.status()
+        payload["broad_fmp_collection_status_v1"] = True
+        payload["collection_enabled"] = False
+        payload["writes_files"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "planning_only",
+            "local_only": True,
+            "writes_files": False,
+            "collection_enabled": False,
+            "api_calls_used": 0,
+            "planned_calls": 0,
+            "estimated_bandwidth": 0,
+            "blocked_reason": f"broad_fmp_collection_status_unavailable: {exc}",
+            "next_recommended_action": "keep_collection_disabled",
+            "broad_fmp_collection_status_v1": True,
+        }
+
+
+@router.get("/api/broad_fmp_collection_plan_v1")
+def broad_fmp_collection_plan_v1():
+    try:
+        payload = BROAD_FMP_COLLECTION_PLANNER.plan()
+        payload["broad_fmp_collection_plan_v1"] = True
+        payload["collection_enabled"] = False
+        payload["writes_files"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "planning_only",
+            "local_only": True,
+            "writes_files": False,
+            "collection_enabled": False,
+            "api_calls_used": 0,
+            "planned_calls": 0,
+            "estimated_bandwidth": 0,
+            "blocked_reason": f"broad_fmp_collection_plan_unavailable: {exc}",
+            "next_recommended_action": "keep_collection_disabled",
+            "broad_fmp_collection_plan_v1": True,
+            "planned_batches": [],
+        }
+
+
+@router.get("/api/market_data_warehouse_status_v1")
+def market_data_warehouse_status_v1():
+    try:
+        payload = MARKET_DATA_WAREHOUSE.status()
+        payload["market_data_warehouse_status_v1"] = True
+        payload["collection_enabled"] = False
+        payload["writes_files"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "metadata_catalog_only",
+            "local_only": True,
+            "writes_files": False,
+            "collection_enabled": False,
+            "api_calls_used": 0,
+            "planned_calls": 0,
+            "estimated_bandwidth": 0,
+            "blocked_reason": f"market_data_warehouse_status_unavailable: {exc}",
+            "next_recommended_action": "keep_metadata_only",
+            "market_data_warehouse_status_v1": True,
+        }
+
+
+@router.get("/api/feature_store_status_v1")
+def feature_store_status_v1():
+    try:
+        payload = FEATURE_STORE.status()
+        payload["feature_store_status_v1"] = True
+        payload["collection_enabled"] = False
+        payload["writes_files"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "metadata_catalog_only",
+            "local_only": True,
+            "writes_files": False,
+            "collection_enabled": False,
+            "api_calls_used": 0,
+            "planned_calls": 0,
+            "estimated_bandwidth": 0,
+            "blocked_reason": f"feature_store_status_unavailable: {exc}",
+            "next_recommended_action": "keep_metadata_only",
+            "feature_store_status_v1": True,
         }
 
 
