@@ -96,6 +96,18 @@ class MarketDataOrchestrationEngine:
             "company_profiles": 604800,
             "replay_inputs": 86400,
         }
+        self.allowed_fmp_non_overlap_roles = [
+            "historical_ohlcv",
+            "fundamentals",
+            "financial_statements",
+            "financial_ratios",
+            "earnings_calendar_and_history",
+            "sector_industry_classification",
+            "company_profile",
+            "replay_counterfactual_enrichment",
+            "market_wide_batch_enrichment",
+            "validation_when_explicitly_marked_validation_needed",
+        ]
 
     def _read_json(self, path: str) -> dict[str, Any]:
         try:
@@ -187,6 +199,34 @@ class MarketDataOrchestrationEngine:
             "fmp_optimizer_recommendation": str(fmp.get("recommendation") or "unknown"),
         }
 
+    def _overlap_policy(self) -> dict[str, Any]:
+        return {
+            "overlap_prevention_enabled": True,
+            "fmp_duplicate_live_quote_blocked": True,
+            "alpaca_iex_live_quote_ownership": True,
+            "alpaca_iex_ownership_scope": [
+                "iex_covered_active_trades",
+                "iex_covered_watchlist_symbols",
+                "iex_covered_top_candidates",
+            ],
+            "allowed_fmp_non_overlap_roles": list(self.allowed_fmp_non_overlap_roles),
+            "fmp_validation_rule": "allow_only_when_validation_needed_true",
+            "blocked_overlap_examples": [
+                {
+                    "example": "fmp_live_quote_for_active_trade_symbol",
+                    "reason": "alpaca_iex_owns_live_quote_tracking_for_iex_covered_priority_symbols",
+                },
+                {
+                    "example": "fmp_live_quote_for_top_buy_symbol_without_validation_needed",
+                    "reason": "duplicate_basic_live_quote_collection_blocked",
+                },
+                {
+                    "example": "fmp_intraday_quote_poll_for_watchlist_symbol_already_on_alpaca_iex",
+                    "reason": "quote_overlap_prevention_policy",
+                },
+            ],
+        }
+
     def _task_rows(self, top_buy_count: int = 0, rankings_count: int = 0) -> list[dict[str, Any]]:
         tasks = [
             {
@@ -212,6 +252,7 @@ class MarketDataOrchestrationEngine:
                 "cache_key": "runtime_snapshot",
                 "execution_allowed_now": True,
                 "execution_mode": "cache_first_small_batch_only",
+                "validation_needed": False,
             },
             {
                 "id": "current_rankings_candidates",
@@ -224,6 +265,7 @@ class MarketDataOrchestrationEngine:
                 "cache_key": "runtime_snapshot",
                 "execution_allowed_now": True,
                 "execution_mode": "cache_first_targeted_refresh",
+                "validation_needed": False,
             },
             {
                 "id": "high_confidence_watchlist",
@@ -272,6 +314,7 @@ class MarketDataOrchestrationEngine:
                 "cache_key": "fmp_enrichment",
                 "execution_allowed_now": False,
                 "execution_mode": "cache_first_planning_only",
+                "validation_needed": False,
             },
             {
                 "id": "low_priority_background_refresh",
@@ -328,6 +371,7 @@ class MarketDataOrchestrationEngine:
         tasks = self._task_rows(top_buy_count=top_buy_count, rankings_count=rankings_count)
         call_budget, bandwidth_budget = self._budget_summary(tasks)
         quota = self._quota_state()
+        overlap_policy = self._overlap_policy()
         blocked = [t for t in tasks if not bool(t.get("execution_allowed_now"))]
         allowed = [t for t in tasks if bool(t.get("execution_allowed_now"))]
         fmp_status = quota.get("fmp", {}) if isinstance(quota.get("fmp"), dict) else {}
@@ -348,6 +392,12 @@ class MarketDataOrchestrationEngine:
             "active_trade_monitoring_mode": "websocket_preferred_gradual_polling_fallback",
             "broad_collection_enabled": False,
             "collection_allowed_now": bool(allowed) and not bool(quota.get("fmp_hard_stop_active")),
+            "overlap_prevention_enabled": bool(overlap_policy.get("overlap_prevention_enabled", False)),
+            "fmp_duplicate_live_quote_blocked": bool(overlap_policy.get("fmp_duplicate_live_quote_blocked", False)),
+            "alpaca_iex_live_quote_ownership": bool(overlap_policy.get("alpaca_iex_live_quote_ownership", False)),
+            "allowed_fmp_non_overlap_roles": list(overlap_policy.get("allowed_fmp_non_overlap_roles") or []),
+            "blocked_overlap_examples": list(overlap_policy.get("blocked_overlap_examples") or []),
+            "overlap_policy": overlap_policy,
             "highest_priority_tasks": tasks[:4],
             "blocked_tasks": blocked,
             "reserve_levels": {
@@ -370,6 +420,7 @@ class MarketDataOrchestrationEngine:
     def plan(self, top_buy_count: int = 0, rankings_count: int = 0) -> dict[str, Any]:
         tasks = self._task_rows(top_buy_count=top_buy_count, rankings_count=rankings_count)
         call_budget, bandwidth_budget = self._budget_summary(tasks)
+        overlap_policy = self._overlap_policy()
         return {
             "enabled": True,
             "version": VERSION,
@@ -384,6 +435,12 @@ class MarketDataOrchestrationEngine:
             "execution_allowed_now": [t for t in tasks if bool(t.get("execution_allowed_now"))],
             "execution_blocked_now": [t for t in tasks if not bool(t.get("execution_allowed_now"))],
             "broad_collection_enabled": False,
+            "overlap_prevention_enabled": bool(overlap_policy.get("overlap_prevention_enabled", False)),
+            "fmp_duplicate_live_quote_blocked": bool(overlap_policy.get("fmp_duplicate_live_quote_blocked", False)),
+            "alpaca_iex_live_quote_ownership": bool(overlap_policy.get("alpaca_iex_live_quote_ownership", False)),
+            "allowed_fmp_non_overlap_roles": list(overlap_policy.get("allowed_fmp_non_overlap_roles") or []),
+            "blocked_overlap_examples": list(overlap_policy.get("blocked_overlap_examples") or []),
+            "overlap_policy": overlap_policy,
         }
 
     def active_trade_plan(self, open_trade_count: int = 0, watchlist_count: int = 0) -> dict[str, Any]:
@@ -414,6 +471,7 @@ class MarketDataOrchestrationEngine:
     def fmp_market_collection_plan(self, symbol_count: int = 0) -> dict[str, Any]:
         quota = self._quota_state()
         fmp_status = quota.get("fmp", {}) if isinstance(quota.get("fmp"), dict) else {}
+        overlap_policy = self._overlap_policy()
         hard_stop = bool(quota.get("fmp_hard_stop_active"))
         soft = bool(quota.get("fmp_soft_throttle_active"))
         collection_allowed = False
@@ -428,7 +486,14 @@ class MarketDataOrchestrationEngine:
             {"phase": "daily_ohlcv_history", "provider": "financial_modeling_prep", "estimated_calls": max(1, min(20, int(symbol_count) or 6)), "estimated_bandwidth_kb": 2048, "batch_preferred": True},
             {"phase": "fundamentals_ratios_profiles", "provider": "financial_modeling_prep", "estimated_calls": max(1, min(20, int(symbol_count) or 6)), "estimated_bandwidth_kb": 1536, "batch_preferred": True},
             {"phase": "earnings_catalysts", "provider": "financial_modeling_prep", "estimated_calls": 2, "estimated_bandwidth_kb": 512, "batch_preferred": True},
-            {"phase": "backup_validation", "provider": "finnhub_twelve_data_polygon_eodhd_as_needed", "estimated_calls": 0, "estimated_bandwidth_kb": 0, "batch_preferred": False},
+            {
+                "phase": "backup_validation",
+                "provider": "finnhub_twelve_data_polygon_eodhd_as_needed",
+                "estimated_calls": 0,
+                "estimated_bandwidth_kb": 0,
+                "batch_preferred": False,
+                "validation_needed": True,
+            },
         ]
         return {
             "enabled": True,
@@ -445,6 +510,12 @@ class MarketDataOrchestrationEngine:
             "execution_allowed_now": bool(collection_allowed),
             "blocked_reason": reason,
             "never_bypass_optimizer_denial": True,
+            "overlap_prevention_enabled": bool(overlap_policy.get("overlap_prevention_enabled", False)),
+            "fmp_duplicate_live_quote_blocked": bool(overlap_policy.get("fmp_duplicate_live_quote_blocked", False)),
+            "alpaca_iex_live_quote_ownership": bool(overlap_policy.get("alpaca_iex_live_quote_ownership", False)),
+            "allowed_fmp_non_overlap_roles": list(overlap_policy.get("allowed_fmp_non_overlap_roles") or []),
+            "blocked_overlap_examples": list(overlap_policy.get("blocked_overlap_examples") or []),
+            "overlap_policy": overlap_policy,
             "planned_phases": phases,
             "estimated_calls": int(sum(_to_int(p.get("estimated_calls"), 0) for p in phases)),
             "estimated_bandwidth_kb": round(sum(_to_float(p.get("estimated_bandwidth_kb"), 0.0) for p in phases), 3),
