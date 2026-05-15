@@ -406,6 +406,67 @@ except Exception:
             }
 
 try:
+    from engine.adaptive_policy_manager import AdaptivePolicyManager
+except Exception:
+    class AdaptivePolicyManager:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "adaptive_policy_status_v1": True,
+                "mode": "shadow_only",
+                "shadow_mode": True,
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "error": "adaptive_policy_manager_unavailable",
+            }
+
+        def recommendations(self, *args, **kwargs):
+            out = self.status()
+            out["adaptive_policy_recommendations_v1"] = True
+            out["recommended_threshold_adjustments"] = []
+            return out
+
+try:
+    from engine.remote_copilot import RemoteCopilot
+except Exception:
+    class RemoteCopilot:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "remote_copilot_status_v1": True,
+                "mode": "read_only_mobile_monitoring",
+                "read_only": True,
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "error": "remote_copilot_unavailable",
+            }
+
+        def mobile_dashboard(self, *args, **kwargs):
+            out = self.status()
+            out["mobile_dashboard_v1"] = True
+            out["top_6_picks"] = []
+            out["open_positions"] = []
+            out["learning_snapshot"] = {}
+            return out
+
+        def answer(self, question="", mobile_payload=None, *args, **kwargs):
+            out = self.status()
+            out["ask_astra_v1"] = True
+            out["question"] = str(question or "")
+            out["answer"] = "Astra remote copilot is unavailable, but read-only mode remains safe."
+            return out
+
+try:
     from engine.jsonl_maintenance_suite import JsonlMaintenanceSuite
 except Exception:
     class JsonlMaintenanceSuite:  # type: ignore[override]
@@ -551,6 +612,8 @@ FEATURE_STORE = FeatureStore(state_dir=STATE, warehouse=MARKET_DATA_WAREHOUSE)
 BACKGROUND_WORKER_QUEUE = BackgroundWorkerQueue(state_dir=STATE)
 CACHE_REFRESH_SCHEDULER = CacheRefreshScheduler(state_dir=STATE)
 ENDPOINT_PROTECTION_PLANNER = EndpointProtectionPlanner(state_dir=STATE)
+ADAPTIVE_POLICY_MANAGER = AdaptivePolicyManager(state_dir=STATE)
+REMOTE_COPILOT = RemoteCopilot(state_dir=STATE)
 JSONL_MAINTENANCE_SUITE = JsonlMaintenanceSuite(state_dir=STATE)
 ENTRY_QUALITY_V2_ENGINE = EntryQualityV2Engine()
 MULTI_BRAIN_CONSENSUS_ENGINE = MultiBrainConsensusEngine()
@@ -29132,6 +29195,215 @@ def endpoint_protection_status_v1():
             "next_recommended_action": "keep_endpoint_protection_advisory_only",
             "endpoint_protection_status_v1": True,
             "error": f"endpoint_protection_status_unavailable: {exc}",
+        }
+
+
+def _remote_copilot_fast_context():
+    top_payload = {}
+    try:
+        top_payload = _latest_top_buys_runtime_snapshot()
+    except Exception:
+        top_payload = {}
+    if not isinstance(top_payload, dict) or not top_payload:
+        try:
+            cached, _age, _key = _top_buys_cached_payload_for_mode("balanced", max_age_seconds=3600)
+            top_payload = cached if isinstance(cached, dict) else {}
+        except Exception:
+            top_payload = {}
+    if not isinstance(top_payload, dict) or not top_payload:
+        try:
+            top_payload = {
+                "stocks": {"final": list(_rows_for_top_buys("stocks") or [])},
+                "crypto": {"final": list(_rows_for_top_buys("crypto") or [])},
+                "top_buys_stage": "remote_copilot_fast_rows",
+            }
+        except Exception:
+            top_payload = {"stocks": {"final": []}, "crypto": {"final": []}}
+    try:
+        stock_final = list(((top_payload.get("stocks") or {}).get("final") or []))
+        if len(stock_final) < 6:
+            seen = {str((row or {}).get("symbol") or (row or {}).get("ticker") or "").strip().upper() for row in stock_final if isinstance(row, dict)}
+            for row in list((LAST_RANKINGS or {}).get("stocks") or []):
+                if not isinstance(row, dict):
+                    continue
+                symbol = str(row.get("symbol") or row.get("ticker") or "").strip().upper()
+                if not symbol or symbol in seen:
+                    continue
+                stock_final.append(dict(row))
+                seen.add(symbol)
+                if len(stock_final) >= 6:
+                    break
+            top_payload = {
+                **top_payload,
+                "stocks": {
+                    **(top_payload.get("stocks") or {}),
+                    "final": stock_final[:6],
+                },
+                "remote_copilot_rankings_fill_count": max(0, min(6, len(stock_final)) - len(((top_payload.get("stocks") or {}).get("final") or []))),
+            }
+    except Exception:
+        pass
+    try:
+        positions_rows = list(POSITION_TRACKER.get_open_positions() or [])
+    except Exception:
+        positions_rows = []
+    try:
+        learning_snapshot = learning_snapshot_fast_v1()
+    except Exception:
+        learning_snapshot = {}
+    return {
+        "top_buys": top_payload if isinstance(top_payload, dict) else {},
+        "positions": positions_rows,
+        "learning_snapshot": learning_snapshot if isinstance(learning_snapshot, dict) else {},
+    }
+
+
+@router.get("/api/adaptive_policy_status_v1")
+def adaptive_policy_status_v1():
+    try:
+        ctx = _remote_copilot_fast_context()
+        provider_status = {}
+        try:
+            provider_status = get_provider_status_summary()
+        except Exception:
+            provider_status = {}
+        payload = ADAPTIVE_POLICY_MANAGER.status(
+            learning_snapshot=ctx.get("learning_snapshot") or {},
+            provider_status=provider_status if isinstance(provider_status, dict) else {},
+        )
+        payload["adaptive_policy_status_v1"] = True
+        payload["shadow_mode"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "adaptive_policy_status_v1": True,
+            "mode": "shadow_only",
+            "shadow_mode": True,
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "error": f"adaptive_policy_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/adaptive_policy_recommendations_v1")
+def adaptive_policy_recommendations_v1():
+    try:
+        ctx = _remote_copilot_fast_context()
+        provider_status = {}
+        try:
+            provider_status = get_provider_status_summary()
+        except Exception:
+            provider_status = {}
+        payload = ADAPTIVE_POLICY_MANAGER.recommendations(
+            learning_snapshot=ctx.get("learning_snapshot") or {},
+            provider_status=provider_status if isinstance(provider_status, dict) else {},
+        )
+        payload["adaptive_policy_recommendations_v1"] = True
+        payload["shadow_mode"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "adaptive_policy_recommendations_v1": True,
+            "mode": "shadow_only",
+            "shadow_mode": True,
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "recommended_threshold_adjustments": [],
+            "error": f"adaptive_policy_recommendations_unavailable: {exc}",
+        }
+
+
+@router.get("/api/remote_copilot_status_v1")
+def remote_copilot_status_v1():
+    try:
+        payload = REMOTE_COPILOT.status()
+        payload["remote_copilot_status_v1"] = True
+        payload["read_only"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "remote_copilot_status_v1": True,
+            "mode": "read_only_mobile_monitoring",
+            "read_only": True,
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "error": f"remote_copilot_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/mobile_dashboard_v1")
+def mobile_dashboard_v1():
+    try:
+        ctx = _remote_copilot_fast_context()
+        payload = REMOTE_COPILOT.mobile_dashboard(
+            top_buys=ctx.get("top_buys") or {},
+            positions=ctx.get("positions") or [],
+            learning_snapshot=ctx.get("learning_snapshot") or {},
+        )
+        payload["mobile_dashboard_v1"] = True
+        payload["read_only"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mobile_dashboard_v1": True,
+            "mode": "read_only_mobile_monitoring",
+            "read_only": True,
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "top_6_picks": [],
+            "open_positions": [],
+            "learning_snapshot": {},
+            "error": f"mobile_dashboard_unavailable: {exc}",
+        }
+
+
+@router.get("/api/ask_astra_v1")
+def ask_astra_v1(q: str = Query("")):
+    try:
+        ctx = _remote_copilot_fast_context()
+        mobile_payload = REMOTE_COPILOT.mobile_dashboard(
+            top_buys=ctx.get("top_buys") or {},
+            positions=ctx.get("positions") or [],
+            learning_snapshot=ctx.get("learning_snapshot") or {},
+        )
+        payload = REMOTE_COPILOT.answer(question=q, mobile_payload=mobile_payload)
+        payload["ask_astra_v1"] = True
+        payload["read_only"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "ask_astra_v1": True,
+            "read_only": True,
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "question": str(q or ""),
+            "answer": "Astra is reachable, but Ask-Astra could not build a local answer from the current snapshot.",
+            "error": f"ask_astra_unavailable: {exc}",
         }
 
 

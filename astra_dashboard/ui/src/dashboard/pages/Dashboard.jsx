@@ -196,6 +196,10 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
   const [topBuys, setTopBuys] = useState({});
   const [systemStatus, setSystemStatus] = useState({});
   const [positions, setPositions] = useState([]);
+  const [mobileDashboard, setMobileDashboard] = useState({});
+  const [askQuestion, setAskQuestion] = useState("How is Astra performing today?");
+  const [askAnswer, setAskAnswer] = useState("");
+  const [askLoading, setAskLoading] = useState(false);
   const [positionActionState, setPositionActionState] = useState({});
   const [positionRemoveState, setPositionRemoveState] = useState({});
 
@@ -228,11 +232,15 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
       if (busy) return;
       busy = true;
       setLoading(true);
-      const outcomes = await Promise.all([
-        fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, 45000),
-        fetchJson("system_status", "/api/system_status", {}, 15000),
-        fetchJson("positions", "/api/positions", {}, 15000),
-      ]);
+      const outcomes = remoteMode
+        ? await Promise.all([
+          fetchJson("mobile_dashboard", "/api/mobile_dashboard_v1", {}, 10000),
+        ])
+        : await Promise.all([
+          fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, 45000),
+          fetchJson("system_status", "/api/system_status", {}, 15000),
+          fetchJson("positions", "/api/positions", {}, 15000),
+        ]);
       if (!mounted) return;
       const byKey = Object.fromEntries(outcomes.map((o) => [o.key, o]));
       const statusMap = {};
@@ -243,6 +251,17 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
       });
       setEndpointStatus(statusMap);
       setError(errors.join(" | "));
+      if (byKey.mobile_dashboard?.ok && byKey.mobile_dashboard?.parsed) {
+        const mobile = byKey.mobile_dashboard.parsed || {};
+        setMobileDashboard(mobile);
+        setTopBuys({ stocks: { final: Array.isArray(mobile.top_6_picks) ? mobile.top_6_picks : [] }, crypto: { final: [] } });
+        setPositions(normalizePositions({ open_positions: mobile.open_positions || [] }));
+        setSystemStatus({
+          runtime_integrity_ok: true,
+          last_updated_utc: mobile.generated_at,
+          final_ranked_count: Array.isArray(mobile.top_6_picks) ? mobile.top_6_picks.length : 0,
+        });
+      }
       if (byKey.top_buys?.ok && byKey.top_buys?.parsed) setTopBuys(byKey.top_buys.parsed || {});
       if (byKey.system_status?.ok && byKey.system_status?.parsed) setSystemStatus(byKey.system_status.parsed || {});
       if (byKey.positions?.ok && byKey.positions?.parsed) setPositions(normalizePositions(byKey.positions.parsed || {}));
@@ -256,7 +275,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
       mounted = false;
       clearInterval(timer);
     };
-  }, [resolvedApiBase]);
+  }, [resolvedApiBase, remoteMode]);
 
   const { stocks } = useMemo(() => normalizeTopBuys(topBuys), [topBuys]);
   const openPositionSymbols = useMemo(
@@ -276,6 +295,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     ?? systemStatus?.runtime_integrity_status?.runtime_integrity_ok
   );
   const backendStatus = endpointStatus?.system_status?.ok
+    || endpointStatus?.mobile_dashboard?.ok
     ? "online"
     : "degraded";
   const validQuotes = safeNumber(systemStatus?.live_buy_valid_quote_count, 0);
@@ -293,6 +313,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     : "dashboard";
 
   const refreshPositions = async () => {
+    if (remoteMode) return false;
     const result = await fetchJsonWithFallback("/api/positions", {
       preferredBase: resolvedApiBase || API_BASE,
       fallbackValue: {},
@@ -306,6 +327,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
   };
 
   const handleAddPosition = async (item) => {
+    if (remoteMode) return;
     const symbol = String(item?.symbol || item?.ticker || "").toUpperCase().trim();
     if (!symbol) return;
     if (openPositionSymbols.has(symbol)) {
@@ -340,6 +362,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
   };
 
   const handleRemovePosition = async (item) => {
+    if (remoteMode) return;
     const positionId = String(item?.position_id || "").trim();
     const symbol = String(item?.symbol || item?.ticker || "").toUpperCase().trim();
     const identifierRaw = positionId || symbol;
@@ -366,6 +389,19 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     } else {
       setPositionRemoveState((prev) => ({ ...(prev || {}), [identifier]: "failed" }));
     }
+  };
+
+  const handleAskAstra = async () => {
+    const question = String(askQuestion || "").trim();
+    if (!question) return;
+    setAskLoading(true);
+    const result = await fetchJsonWithFallback(`/api/ask_astra_v1?q=${encodeURIComponent(question)}`, {
+      preferredBase: resolvedApiBase || API_BASE,
+      fallbackValue: { answer: "Ask-Astra is not loaded yet." },
+      timeoutMs: 10000,
+    });
+    setAskAnswer(String(result?.parsed?.answer || "Ask-Astra is not loaded yet."));
+    setAskLoading(false);
   };
 
   return (
@@ -412,7 +448,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               showCryptoColumn={false}
               emptyText={loading ? "Loading stock opportunities…" : "No stock signals found"}
               cardContext="top-buy"
-              onAddPosition={handleAddPosition}
+              onAddPosition={remoteMode ? undefined : handleAddPosition}
               positionActionState={effectivePositionActionState}
             />
           </section>
@@ -431,7 +467,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                   key={`${row.position_id || row.symbol || "POS"}-${idx}`}
                   item={row}
                   context="position"
-                  onRemovePosition={handleRemovePosition}
+                  onRemovePosition={remoteMode ? undefined : handleRemovePosition}
                   removeState={
                     positionRemoveState[
                       String(row?.position_id || row?.symbol || "").trim().toUpperCase()
@@ -441,6 +477,50 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               ))}
             </div>
           )}
+        </section>
+      )}
+
+      {remoteMode && (
+        <section style={panelStyle}>
+          <div style={{ ...panelTitleStyle, marginBottom: "8px" }}>Learning Snapshot</div>
+          <div style={stripGridStyle}>
+            {[
+              ["Released WR", mobileDashboard?.learning_snapshot?.released_wr],
+              ["Entry Quality", mobileDashboard?.learning_snapshot?.entry_quality],
+              ["Buy List Purity", mobileDashboard?.learning_snapshot?.buy_list_purity],
+              ["Runtime Stability", mobileDashboard?.learning_snapshot?.runtime_stability],
+            ].map(([label, value]) => (
+              <div key={label} style={statusPillStyle}>
+                <span style={{ color: "#5f738f", fontSize: "0.72rem" }}>{label}</span>
+                <strong style={{ color: "#1a2d45", fontSize: "0.86rem" }}>{safeNumber(value, 0).toFixed(1)}</strong>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {remoteMode && (
+        <section style={panelStyle}>
+          <div style={{ ...panelTitleStyle, marginBottom: "8px" }}>Ask-Astra</div>
+          <div style={{ display: "grid", gap: 8 }}>
+            <input
+              value={askQuestion}
+              onChange={(e) => setAskQuestion(e.target.value)}
+              placeholder="Ask how Astra is performing..."
+              style={{ borderRadius: 9, border: "1px solid #7599cc", padding: "9px 10px", fontSize: "0.9rem" }}
+            />
+            <button
+              type="button"
+              onClick={handleAskAstra}
+              disabled={askLoading}
+              style={{ borderRadius: 9, border: "1px solid #80a9e8", background: "#dcecff", color: "#153052", padding: "8px 10px", fontWeight: 800 }}
+            >
+              {askLoading ? "Asking..." : "Ask"}
+            </button>
+            <div style={{ color: "#dbe8ff", fontSize: "0.84rem", lineHeight: 1.45 }}>
+              {askAnswer || "Read-only mobile copilot. Try: How is Astra performing today?"}
+            </div>
+          </div>
         </section>
       )}
 

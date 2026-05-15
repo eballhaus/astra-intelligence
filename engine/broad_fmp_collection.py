@@ -44,6 +44,7 @@ class BroadFmpCollectionPlanner:
         self.warehouse_manifest_path = os.path.join(self.state_dir, "market_data_warehouse_manifest_v1.json")
         self.fmp_cache_path = os.path.join(self.state_dir, "fmp_enrichment_cache_v1.json")
         self.collection_enabled = False
+        self.small_batch_limit = 8
         self.allowed_fmp_roles = [
             "historical_ohlcv",
             "fundamentals",
@@ -53,6 +54,32 @@ class BroadFmpCollectionPlanner:
             "company_profile",
             "replay_counterfactual_enrichment",
         ]
+
+    def _collection_progress(self) -> dict[str, Any]:
+        manifest = self._read_json(self.warehouse_manifest_path)
+        symbols = manifest.get("symbols") if isinstance(manifest.get("symbols"), dict) else {}
+        rows = list(symbols.values()) if isinstance(symbols, dict) else []
+        history = 0
+        fundamentals = 0
+        earnings = 0
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            data_types = row.get("data_types_available") or row.get("data_types") or []
+            if isinstance(data_types, str):
+                data_types = [data_types]
+            data_type_text = " ".join(str(v).lower() for v in data_types)
+            history += 1 if "history" in data_type_text or "ohlcv" in data_type_text else 0
+            fundamentals += 1 if "fundamental" in data_type_text or "ratio" in data_type_text else 0
+            earnings += 1 if "earning" in data_type_text else 0
+        return {
+            "symbols_processed": len(rows),
+            "history_collected": history,
+            "fundamentals_collected": fundamentals,
+            "earnings_collected": earnings,
+            "bandwidth_used": 0,
+            "calls_used": 0,
+        }
 
     def _read_json(self, path: str) -> dict[str, Any]:
         try:
@@ -98,6 +125,24 @@ class BroadFmpCollectionPlanner:
         if not self.collection_enabled:
             return False, "broad_collection_disabled_by_default", status
         return True, "", status
+
+    def _controlled_enablement_state(self, optimizer: dict[str, Any]) -> dict[str, Any]:
+        usage = _to_float(optimizer.get("current_usage_pct_estimated"), 0.0)
+        hard_stop = bool(optimizer.get("hard_stop_active")) or bool(optimizer.get("emergency_cutoff_active")) or usage >= 80.0
+        soft_throttle = bool(optimizer.get("soft_throttle_active")) or usage >= 70.0
+        optimizer_allows = not hard_stop and not soft_throttle
+        return {
+            "controlled_enablement_available": bool(optimizer_allows),
+            "controlled_enablement_active": False,
+            "enablement_requires_explicit_operator_action": True,
+            "small_batch_limit": int(self.small_batch_limit),
+            "quota_governed_by": "FmpUtilizationOptimizer",
+            "target_utilization_pct": 70.0,
+            "soft_throttle_above_pct": 70.0,
+            "hard_stop_above_pct": 80.0,
+            "minimum_reserve_pct": 20.0,
+            "optimizer_allows_controlled_collection": bool(optimizer_allows),
+        }
 
     def _symbol_candidates(self) -> list[dict[str, Any]]:
         universe = self._read_json(self.universe_path)
@@ -193,6 +238,8 @@ class BroadFmpCollectionPlanner:
     def status(self) -> dict[str, Any]:
         allowed, blocked_reason, optimizer = self._quota_gate()
         batches, planned_calls, bandwidth = self._summary()
+        progress = self._collection_progress()
+        enablement = self._controlled_enablement_state(optimizer)
         return {
             "enabled": True,
             "version": VERSION,
@@ -211,6 +258,8 @@ class BroadFmpCollectionPlanner:
             "alpaca_iex_live_quote_ownership": True,
             "optimizer_snapshot": optimizer,
             "planned_batch_count": len(batches),
+            **progress,
+            **enablement,
         }
 
     def plan(self) -> dict[str, Any]:

@@ -142,6 +142,14 @@ const ADVANCED_INSTITUTIONAL_ENDPOINTS = [
   { key: "marketDataOrchestration", label: "Market Data Orchestration", path: "/api/market_data_orchestration_status_v1" },
 ];
 
+const LEARNING_TREND_WINDOWS = [
+  { key: "1D", label: "1 Day", points: 36 },
+  { key: "1W", label: "1 Week", points: 84 },
+  { key: "1M", label: "1 Month", points: 120 },
+  { key: "3M", label: "3 Months", points: 180 },
+  { key: "1Y", label: "1 Year", points: 240 },
+];
+
 function metricValue(...values) {
   const n = firstFiniteOrNull(...values);
   return n === null ? "Not loaded yet" : n.toFixed(1);
@@ -175,6 +183,7 @@ export default function LearningTab({ compact = false }) {
   const [fetchError, setFetchError] = useState("");
   const [showDebug, setShowDebug] = useState(false);
   const [showAdvancedSections, setShowAdvancedSections] = useState(false);
+  const [learningTrendWindow, setLearningTrendWindow] = useState("1D");
   const [advancedLoading, setAdvancedLoading] = useState(false);
   const [advancedLoadedOnce, setAdvancedLoadedOnce] = useState(false);
   const [advancedInstitutional, setAdvancedInstitutional] = useState({});
@@ -507,6 +516,10 @@ export default function LearningTab({ compact = false }) {
             medianReturn: safeNumber((paper?.paper_cohort_trends?.recent || {}).median_return, paper?.avg_return),
             winsorized: safeNumber((paper?.paper_cohort_trends?.recent || {}).winsorized_avg_return, paper?.avg_return),
             buyConversion: safeNumber(buyConversionEngine?.buy_conversion_score),
+            entryQuality: safeNumber(learningInsights?.entry_quality_score, learningSnapshotFast?.entry_quality),
+            buyListPurity: safeNumber(learningInsights?.buy_list_purity_score, learningSnapshotFast?.buy_list_purity),
+            followThroughQuality: safeNumber(learningInsights?.follow_through_quality_score, learningSnapshotFast?.follow_through_quality),
+            confidenceTruthfulness: safeNumber(learningInsights?.confidence_truthfulness_score, buyConversionEngine?.confidence_truthfulness_score),
             overblocking: safeNumber(buyConversionEngine?.overblocking_score),
             sellAccuracy: safeNumber(buyToPosition?.sell_signal_accuracy_score),
           };
@@ -1472,23 +1485,23 @@ export default function LearningTab({ compact = false }) {
   const currentTrendTone = /improv|strong|up/i.test(currentTrendLabel)
     ? "strong"
     : (/wors|down|weak/i.test(currentTrendLabel) ? "weak" : "mixed");
+  const learningConfidenceScore = firstFinite(
+    learningInsights?.confidence_truthfulness_score,
+    compactConfidenceTruthfulnessEngine?.confidence_truthfulness_score,
+    (currentEngineWinRate + entryQualityScore + buyPurityScore + followThroughScore) / 4.0
+  );
+  const selectedTrendWindow = LEARNING_TREND_WINDOWS.find((w) => w.key === learningTrendWindow) || LEARNING_TREND_WINDOWS[0];
+  const visibleLearningTrend = timeline.slice(-selectedTrendWindow.points);
   const snapshotDegradedLabel = snapshotInsufficientEvidence
     ? (learningPayloadFalseEmptyPrevented ? "last known good (degraded)" : "insufficient current evidence")
     : null;
   const primarySnapshotMetrics = [
     {
       key: "released_wr",
-      title: "Current-Engine Released WR",
+      title: "Released WR",
       subtitle: "How often current released picks are winning.",
       value: snapshotInsufficientEvidence ? "Insufficient evidence" : fmtPct((learningInsights?.current_engine_outcome_evaluation || {}).released_hero_win_rate),
       tone: snapshotInsufficientEvidence ? "caution" : metricTone(currentEngineWinRate, 58, 47),
-    },
-    {
-      key: "released_gap",
-      title: "Released vs Blocked WR Gap",
-      subtitle: "Positive means released picks are outperforming blocked/watchlist.",
-      value: snapshotInsufficientEvidence ? "Insufficient evidence" : `${releasedVsBlockedWinRateGap >= 0 ? "+" : ""}${releasedVsBlockedWinRateGap.toFixed(2)} pts`,
-      tone: snapshotInsufficientEvidence ? "caution" : (releasedVsBlockedWinRateGap >= 2 ? "strong" : (releasedVsBlockedWinRateGap >= 0 ? "mixed" : "weak")),
     },
     {
       key: "entry_quality",
@@ -1520,10 +1533,17 @@ export default function LearningTab({ compact = false }) {
     },
     {
       key: "runtime",
-      title: "Runtime & Learning Stability",
+      title: "Runtime Stability",
       subtitle: "Operational health of runtime + learning refresh cycle.",
       value: snapshotInsufficientEvidence ? (learningPayloadStale ? "Stale snapshot" : "Rebuild pending") : `${runtimeLearningStabilityScore.toFixed(1)}`,
       tone: snapshotInsufficientEvidence ? "caution" : metricTone(runtimeLearningStabilityScore, 70, 55),
+    },
+    {
+      key: "learning_confidence",
+      title: "Learning Confidence",
+      subtitle: "Truthfulness and consistency of current learning signals.",
+      value: snapshotInsufficientEvidence ? "Insufficient evidence" : `${learningConfidenceScore.toFixed(1)}`,
+      tone: snapshotInsufficientEvidence ? "caution" : metricTone(learningConfidenceScore, 70, 55),
     },
     {
       key: "trend",
@@ -1864,76 +1884,50 @@ export default function LearningTab({ compact = false }) {
       </div>
 
       <div style={{ ...panelStyle }}>
-        <h3 style={{ marginTop: 0 }}>Snapshot Graphs</h3>
-        <div style={{ fontSize: 12, color: "#9fb1cc", marginBottom: 10 }}>
-          Quick visuals for trend, entry quality, follow-through pressure, and buy conversion.
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+          <div>
+            <h3 style={{ margin: 0 }}>Unified Learning Quality Trend</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 4 }}>
+              One clean trend view for the current-engine quality signals.
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {LEARNING_TREND_WINDOWS.map((windowOption) => (
+              <button
+                key={windowOption.key}
+                type="button"
+                onClick={() => setLearningTrendWindow(windowOption.key)}
+                style={{
+                  border: "1px solid #42628f",
+                  borderRadius: 999,
+                  background: learningTrendWindow === windowOption.key ? "#dcecff" : "rgba(12,24,42,0.35)",
+                  color: learningTrendWindow === windowOption.key ? "#123052" : "#cfe1ff",
+                  padding: "5px 9px",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                {windowOption.label}
+              </button>
+            ))}
+          </div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 12 }}>
-          <div style={{ background: "rgba(12,24,42,0.35)", border: "1px solid #2f4a72", borderRadius: 10, padding: 8 }}>
-            <div style={{ fontSize: 12, color: "#cfe1ff", marginBottom: 4 }}>Released WR Trend</div>
-            <ResponsiveContainer width="100%" height={180}>
-              <LineChart data={timeline}>
-                <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
-                <XAxis dataKey="ts" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-                <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-                <Tooltip />
-                <Line type="monotone" dataKey="winRate" stroke="#38bdf8" strokeWidth={2} dot={false} name="Win Rate" />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-          <div style={{ background: "rgba(12,24,42,0.35)", border: "1px solid #2f4a72", borderRadius: 10, padding: 8 }}>
-            <div style={{ fontSize: 12, color: "#cfe1ff", marginBottom: 4 }}>Good vs Bad Entries</div>
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={[entryExitBars[0]]}>
-                <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
-                <XAxis dataKey="name" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-                <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="good" fill="#22c55e" name="Good Entries" />
-                <Bar dataKey="bad" fill="#ef4444" name="Bad Entries" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <div style={{ background: "rgba(12,24,42,0.35)", border: "1px solid #2f4a72", borderRadius: 10, padding: 8 }}>
-            <div style={{ fontSize: 12, color: "#cfe1ff", marginBottom: 4 }}>Exit Timing Pressure</div>
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={[entryExitBars[1]]}>
-                <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
-                <XAxis dataKey="name" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-                <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="early" fill="#38bdf8" name="Early Exits" />
-                <Bar dataKey="late" fill="#f59e0b" name="Late Exits" />
-                <Bar dataKey="missed" fill="#f43f5e" name="Missed Profit" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <div style={{ background: "rgba(12,24,42,0.35)", border: "1px solid #2f4a72", borderRadius: 10, padding: 8 }}>
-            <div style={{ fontSize: 12, color: "#cfe1ff", marginBottom: 4 }}>Follow-Through & Failure Pressure</div>
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={topSnapshotFollowthroughBars}>
-                <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
-                <XAxis dataKey="name" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-                <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-                <Tooltip />
-                <Bar dataKey="value" fill="#a78bfa" name="Score / Rate" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <div style={{ background: "rgba(12,24,42,0.35)", border: "1px solid #2f4a72", borderRadius: 10, padding: 8 }}>
-            <div style={{ fontSize: 12, color: "#cfe1ff", marginBottom: 4 }}>Buy Conversion Trend</div>
-            <ResponsiveContainer width="100%" height={180}>
-              <LineChart data={timeline}>
-                <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
-                <XAxis dataKey="ts" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-                <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-                <Tooltip />
-                <Line type="monotone" dataKey="buyConversion" stroke="#22c55e" strokeWidth={2} dot={false} name="Buy Conversion" />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+        <div style={{ background: "rgba(12,24,42,0.35)", border: "1px solid #2f4a72", borderRadius: 10, padding: 8 }}>
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={visibleLearningTrend}>
+              <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
+              <XAxis dataKey="ts" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
+              <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} domain={[0, 100]} />
+              <Tooltip />
+              <Legend />
+              <Line type="monotone" dataKey="winRate" stroke="#38bdf8" strokeWidth={2} dot={false} name="Released WR" />
+              <Line type="monotone" dataKey="entryQuality" stroke="#22c55e" strokeWidth={2} dot={false} name="Entry Quality" />
+              <Line type="monotone" dataKey="buyListPurity" stroke="#f59e0b" strokeWidth={2} dot={false} name="Buy List Purity" />
+              <Line type="monotone" dataKey="followThroughQuality" stroke="#a78bfa" strokeWidth={2} dot={false} name="Follow-Through" />
+              <Line type="monotone" dataKey="confidenceTruthfulness" stroke="#f472b6" strokeWidth={2} dot={false} name="Confidence Truthfulness" />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
       </div>
 
@@ -1980,25 +1974,8 @@ export default function LearningTab({ compact = false }) {
             <div key={r.label}>{r.label}: {r.value}</div>
           ))}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, minHeight: 200 }}>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={timeline}>
-              <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
-              <XAxis dataKey="ts" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-              <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-              <Tooltip />
-              <Line type="monotone" dataKey="winRate" stroke="#38bdf8" strokeWidth={2} dot={false} name="Win Rate" />
-            </LineChart>
-          </ResponsiveContainer>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={timeline}>
-              <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
-              <XAxis dataKey="ts" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-              <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-              <Tooltip />
-              <Line type="monotone" dataKey="winsorized" stroke="#f59e0b" strokeWidth={2} dot={false} name="Average Return" />
-            </LineChart>
-          </ResponsiveContainer>
+        <div style={{ background: "rgba(12,24,42,0.35)", border: "1px solid #2f4a72", borderRadius: 10, padding: "9px 10px", fontSize: 12, color: "#cfe1ff" }}>
+          Detailed trade-quality inputs are summarized here; the unified trend chart above owns the repeated win-rate and quality trend visualization.
         </div>
       </div>
 

@@ -9,6 +9,7 @@ function App() {
 
   const isDashboard = activeTab === "dashboard";
   const isLearning = activeTab === "learning";
+  const isRemote = activeTab === "remote";
 
   const shellStyle = {
     width: "100%",
@@ -58,10 +59,17 @@ function App() {
         >
           Learning
         </button>
+        <button
+          onClick={() => setActiveTab("remote")}
+          style={tabButtonStyle(isRemote)}
+        >
+          Remote
+        </button>
       </div>
 
       {isDashboard && <Dashboard />}
       {isLearning && <LearningTab />}
+      {isRemote && <Dashboard remoteMode />}
     </div>
   );
 }
