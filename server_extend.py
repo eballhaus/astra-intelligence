@@ -343,6 +343,69 @@ except Exception:
             }
 
 try:
+    from engine.background_worker_queue import BackgroundWorkerQueue
+except Exception:
+    class BackgroundWorkerQueue:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "planning_only",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "planned_jobs": [],
+                "estimated_runtime_seconds": 0,
+                "next_recommended_action": "keep_workers_disabled",
+                "background_worker_queue_status_v1": True,
+            }
+
+try:
+    from engine.cache_refresh_scheduler import CacheRefreshScheduler
+except Exception:
+    class CacheRefreshScheduler:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "advisory_only",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "planned_jobs": [],
+                "estimated_runtime_seconds": 0,
+                "next_recommended_action": "keep_scheduler_advisory_only",
+                "cache_refresh_scheduler_status_v1": True,
+            }
+
+try:
+    from engine.endpoint_protection import EndpointProtectionPlanner
+except Exception:
+    class EndpointProtectionPlanner:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "planning_only",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "planned_jobs": [],
+                "estimated_runtime_seconds": 0,
+                "next_recommended_action": "keep_endpoint_protection_advisory_only",
+                "endpoint_protection_status_v1": True,
+            }
+
+try:
     from engine.jsonl_maintenance_suite import JsonlMaintenanceSuite
 except Exception:
     class JsonlMaintenanceSuite:  # type: ignore[override]
@@ -485,6 +548,9 @@ BROAD_FMP_COLLECTION_PLANNER = BroadFmpCollectionPlanner(
     orchestration_engine=MARKET_DATA_ORCHESTRATION_ENGINE,
 )
 FEATURE_STORE = FeatureStore(state_dir=STATE, warehouse=MARKET_DATA_WAREHOUSE)
+BACKGROUND_WORKER_QUEUE = BackgroundWorkerQueue(state_dir=STATE)
+CACHE_REFRESH_SCHEDULER = CacheRefreshScheduler(state_dir=STATE)
+ENDPOINT_PROTECTION_PLANNER = EndpointProtectionPlanner(state_dir=STATE)
 JSONL_MAINTENANCE_SUITE = JsonlMaintenanceSuite(state_dir=STATE)
 ENTRY_QUALITY_V2_ENGINE = EntryQualityV2Engine()
 MULTI_BRAIN_CONSENSUS_ENGINE = MultiBrainConsensusEngine()
@@ -28994,6 +29060,78 @@ def feature_store_status_v1():
             "blocked_reason": f"feature_store_status_unavailable: {exc}",
             "next_recommended_action": "keep_metadata_only",
             "feature_store_status_v1": True,
+        }
+
+
+@router.get("/api/background_worker_queue_status_v1")
+def background_worker_queue_status_v1():
+    try:
+        payload = BACKGROUND_WORKER_QUEUE.status()
+        payload["background_worker_queue_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "planning_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "planned_jobs": [],
+            "estimated_runtime_seconds": 0,
+            "next_recommended_action": "keep_workers_disabled",
+            "background_worker_queue_status_v1": True,
+            "error": f"background_worker_queue_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/cache_refresh_scheduler_status_v1")
+def cache_refresh_scheduler_status_v1():
+    try:
+        payload = CACHE_REFRESH_SCHEDULER.status()
+        payload["cache_refresh_scheduler_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "advisory_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "planned_jobs": [],
+            "estimated_runtime_seconds": 0,
+            "next_recommended_action": "keep_scheduler_advisory_only",
+            "cache_refresh_scheduler_status_v1": True,
+            "error": f"cache_refresh_scheduler_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/endpoint_protection_status_v1")
+def endpoint_protection_status_v1():
+    try:
+        payload = ENDPOINT_PROTECTION_PLANNER.status()
+        payload["endpoint_protection_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "planning_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "planned_jobs": [],
+            "estimated_runtime_seconds": 0,
+            "next_recommended_action": "keep_endpoint_protection_advisory_only",
+            "endpoint_protection_status_v1": True,
+            "error": f"endpoint_protection_status_unavailable: {exc}",
         }
 
 
