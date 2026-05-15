@@ -129,6 +129,44 @@ function toneColors(tone) {
   return { badgeBg: "rgba(102,44,55,0.45)", badgeBorder: "#df6a85", badgeText: "#ffd0dc" };
 }
 
+const ADVANCED_INSTITUTIONAL_ENDPOINTS = [
+  { key: "entryQuality", label: "Entry Quality V2", path: "/api/entry_quality_status_v2" },
+  { key: "consensus", label: "Multi-Brain Consensus", path: "/api/multi_brain_consensus_status_v1" },
+  { key: "learningDataQuality", label: "Learning Data Quality V2", path: "/api/learning_data_quality_v1" },
+  { key: "tradeLifecycle", label: "Trade Lifecycle Intelligence", path: "/api/trade_lifecycle_status_v1" },
+  { key: "policyCompare", label: "Policy Backtest V2", path: "/api/policy_compare_v1" },
+  { key: "selfCorrection", label: "Self-Correction V2", path: "/api/self_correction_recommendations_v1" },
+  { key: "fmpUtilization", label: "FMP Utilization", path: "/api/fmp_utilization_status_v1" },
+  { key: "jsonlMaintenance", label: "JSONL Maintenance", path: "/api/jsonl_maintenance_status_v1" },
+  { key: "replayCounterfactual", label: "Replay Counterfactual Analysis", path: "/api/replay_counterfactual_status_v1" },
+  { key: "marketDataOrchestration", label: "Market Data Orchestration", path: "/api/market_data_orchestration_status_v1" },
+];
+
+function metricValue(...values) {
+  const n = firstFiniteOrNull(...values);
+  return n === null ? "Not loaded yet" : n.toFixed(1);
+}
+
+function statusText(value, fallback = "Not loaded yet") {
+  if (value === undefined || value === null || value === "") return fallback;
+  return String(value).replaceAll("_", " ");
+}
+
+function InstitutionalMetricCard({ title, value, detail, status }) {
+  return (
+    <div style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 8, padding: "10px 11px", display: "grid", gap: 5 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+        <div style={{ fontSize: 12, color: "#d5e6ff", fontWeight: 700 }}>{title}</div>
+        <div style={{ color: status === "loaded" ? "#a9f8d1" : "#ffd2b4", fontSize: 10, textTransform: "uppercase" }}>
+          {status === "loaded" ? "Loaded" : "Not loaded yet"}
+        </div>
+      </div>
+      <div style={{ fontSize: 18, lineHeight: 1.1, fontWeight: 800, color: "#f2f7ff" }}>{value}</div>
+      <div style={{ fontSize: 11, color: "#97afcf" }}>{detail}</div>
+    </div>
+  );
+}
+
 export default function LearningTab({ compact = false }) {
   const [resolvedApiBase, setResolvedApiBase] = useState(getInitialApiBase());
   const [loading, setLoading] = useState(false);
@@ -137,6 +175,11 @@ export default function LearningTab({ compact = false }) {
   const [fetchError, setFetchError] = useState("");
   const [showDebug, setShowDebug] = useState(false);
   const [showAdvancedSections, setShowAdvancedSections] = useState(false);
+  const [advancedLoading, setAdvancedLoading] = useState(false);
+  const [advancedLoadedOnce, setAdvancedLoadedOnce] = useState(false);
+  const [advancedInstitutional, setAdvancedInstitutional] = useState({});
+  const [advancedEndpointStatus, setAdvancedEndpointStatus] = useState({});
+  const [institutionalTrend, setInstitutionalTrend] = useState([]);
   const [endpointStatus, setEndpointStatus] = useState({});
   const [timeline, setTimeline] = useState([]);
   const [data, setData] = useState({
@@ -304,9 +347,6 @@ export default function LearningTab({ compact = false }) {
           fetchJson("paper_worker_status", "/api/paper_worker_status", {}, { timeoutMs: 8000 }),
           fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, { timeoutMs: 12000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 15000 }),
-          fetchJson("policy_compare_v1", "/api/policy_compare_v1", {}, { timeoutMs: 7000 }),
-          fetchJson("learning_data_quality_v1", "/api/learning_data_quality_v1", {}, { timeoutMs: 7000 }),
-          fetchJson("self_correction_recommendations_v1", "/api/self_correction_recommendations_v1", {}, { timeoutMs: 7000 }),
         ]);
         if (!mounted) return;
 
@@ -497,6 +537,77 @@ export default function LearningTab({ compact = false }) {
     };
   }, [resolvedApiBase]);
 
+  useEffect(() => {
+    if (!showAdvancedSections || advancedLoadedOnce || advancedLoading) return undefined;
+    let cancelled = false;
+
+    const loadAdvancedInstitutional = async () => {
+      setAdvancedLoading(true);
+      const payloads = {};
+      const statuses = {};
+      for (const endpoint of ADVANCED_INSTITUTIONAL_ENDPOINTS) {
+        if (cancelled) break;
+        try {
+          const result = await fetchJsonWithFallback(endpoint.path, {
+            preferredBase: resolvedApiBase || API_BASE,
+            fallbackValue: null,
+            timeoutMs: 4500,
+          });
+          const parsed = result.ok && result.parsed && typeof result.parsed === "object"
+            ? result.parsed
+            : null;
+          if (parsed) payloads[endpoint.key] = parsed;
+          statuses[endpoint.key] = {
+            label: endpoint.label,
+            url: result.url,
+            httpStatus: result.httpStatus ?? null,
+            loaded: Boolean(parsed),
+            error: parsed ? "" : String(result.error || "not_loaded_yet"),
+          };
+          if (result.ok && result.baseUsed && result.baseUsed !== resolvedApiBase) {
+            setResolvedApiBase(result.baseUsed);
+          }
+        } catch (err) {
+          statuses[endpoint.key] = {
+            label: endpoint.label,
+            url: endpoint.path,
+            httpStatus: null,
+            loaded: false,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+        if (!cancelled) {
+          setAdvancedInstitutional((prev) => ({ ...(prev || {}), ...payloads }));
+          setAdvancedEndpointStatus((prev) => ({ ...(prev || {}), ...statuses }));
+        }
+      }
+      if (!cancelled) {
+        setAdvancedLoadedOnce(true);
+        setAdvancedLoading(false);
+        setInstitutionalTrend((prev) => {
+          const entryQuality = payloads.entryQuality || {};
+          const consensus = payloads.consensus || {};
+          const lifecycle = payloads.tradeLifecycle || {};
+          const fastSnapshot = data.learningSnapshotFast || {};
+          const learning = data.learningInsights || {};
+          const point = {
+            ts: new Date().toLocaleTimeString(),
+            entryQuality: safeNumber(entryQuality?.sample_report?.avg_entry_quality_score_v2),
+            consensus: safeNumber(consensus?.sample_report?.avg_multi_brain_score),
+            releasedWinRate: safeNumber(lifecycle?.metrics?.win_rate, fastSnapshot?.current_engine_released_wr),
+            buyListPurity: safeNumber(fastSnapshot?.buy_list_purity, learning?.buy_list_purity_score),
+          };
+          return [...prev, point].slice(-24);
+        });
+      }
+    };
+
+    loadAdvancedInstitutional();
+    return () => {
+      cancelled = true;
+    };
+  }, [showAdvancedSections, advancedLoadedOnce, advancedLoading, resolvedApiBase, data.learningSnapshotFast, data.learningInsights]);
+
   const paper = data.paper || {};
   const paperStatus = data.paperStatus || {};
   const workerStatus = {
@@ -507,6 +618,16 @@ export default function LearningTab({ compact = false }) {
   const model = data.model || {};
   const topBuys = data.topBuys || {};
   const systemStatus = data.systemStatus || {};
+  const entryQualityV2 = advancedInstitutional.entryQuality || {};
+  const multiBrainConsensus = advancedInstitutional.consensus || {};
+  const learningDataQualityV2 = advancedInstitutional.learningDataQuality || {};
+  const tradeLifecycleIntel = advancedInstitutional.tradeLifecycle || {};
+  const policyCompareV2 = advancedInstitutional.policyCompare || {};
+  const selfCorrectionV2 = advancedInstitutional.selfCorrection || {};
+  const fmpUtilization = advancedInstitutional.fmpUtilization || {};
+  const jsonlMaintenance = advancedInstitutional.jsonlMaintenance || {};
+  const replayCounterfactual = advancedInstitutional.replayCounterfactual || {};
+  const marketDataOrchestration = advancedInstitutional.marketDataOrchestration || {};
 
   const paperOutcome = paper?.paper_outcome_summary?.combined || {};
   const paperCohort = paper?.paper_cohort_trends || {};
@@ -1532,6 +1653,78 @@ export default function LearningTab({ compact = false }) {
     { name: "Premature Exit", value: safeNumber(buyToPositionFeedbackSuite?.premature_exit_score) },
   ];
 
+  const advancedStatusFor = (key) => advancedEndpointStatus[key] || {};
+  const advancedCardStatus = (key) => advancedStatusFor(key).loaded ? "loaded" : "pending";
+  const institutionalCards = [
+    {
+      key: "entryQuality",
+      title: "Entry Quality V2",
+      value: metricValue(entryQualityV2?.sample_report?.avg_entry_quality_score_v2),
+      detail: `${safeNumber(entryQualityV2?.sample_report?.rows_scored).toFixed(0)} rows scored`,
+    },
+    {
+      key: "consensus",
+      title: "Multi-Brain Consensus",
+      value: metricValue(multiBrainConsensus?.sample_report?.avg_multi_brain_score),
+      detail: `${safeNumber(multiBrainConsensus?.sample_report?.rows_scored).toFixed(0)} rows scored`,
+    },
+    {
+      key: "learningDataQuality",
+      title: "Learning Data Quality V2",
+      value: metricValue(learningDataQualityV2?.learning_pipeline_health_score, learningDataQualityV2?.learning_data_freshness_score),
+      detail: statusText(learningDataQualityV2?.recommendation),
+    },
+    {
+      key: "tradeLifecycle",
+      title: "Trade Lifecycle Intelligence",
+      value: fmtPct(tradeLifecycleIntel?.metrics?.win_rate),
+      detail: `${safeNumber(tradeLifecycleIntel?.metrics?.closed_trade_count).toFixed(0)} closed trades`,
+    },
+    {
+      key: "policyCompare",
+      title: "Policy Backtest V2",
+      value: statusText(policyCompareV2?.recommendation),
+      detail: `winner ${statusText(policyCompareV2?.winner, "none")}`,
+    },
+    {
+      key: "selfCorrection",
+      title: "Self-Correction V2",
+      value: statusText(selfCorrectionV2?.recommendation),
+      detail: `confidence ${safeNumber(selfCorrectionV2?.confidence).toFixed(2)}`,
+    },
+    {
+      key: "fmpUtilization",
+      title: "FMP Utilization",
+      value: `${safeNumber(fmpUtilization?.current_usage_pct_estimated).toFixed(1)}%`,
+      detail: `target ${safeNumber(fmpUtilization?.target_usage_pct, 70).toFixed(0)}%`,
+    },
+    {
+      key: "jsonlMaintenance",
+      title: "JSONL Maintenance",
+      value: statusText(jsonlMaintenance?.mode, "dry run only"),
+      detail: `${safeNumber((jsonlMaintenance?.target_files || []).length).toFixed(0)} target files`,
+    },
+    {
+      key: "replayCounterfactual",
+      title: "Replay Counterfactual Analysis",
+      value: safeNumber(replayCounterfactual?.counterfactual_row_count).toFixed(0),
+      detail: `${safeNumber(replayCounterfactual?.base_trade_count).toFixed(0)} base trades`,
+    },
+    {
+      key: "marketDataOrchestration",
+      title: "Market Data Orchestration",
+      value: marketDataOrchestration?.overlap_prevention_enabled ? "Overlap guarded" : "Not loaded yet",
+      detail: `broad collection ${marketDataOrchestration?.broad_collection_enabled ? "enabled" : "disabled"}`,
+    },
+  ];
+  const combinedInstitutionalTrend = institutionalTrend.length > 0
+    ? institutionalTrend
+    : timeline.map((point) => ({
+      ts: point.ts,
+      releasedWinRate: safeNumber(point.winRate),
+      buyListPurity: safeNumber(point.buyConversion),
+    }));
+
   if (compact) {
     return (
       <div style={{ display: "grid", gap: 12 }}>
@@ -1833,31 +2026,6 @@ export default function LearningTab({ compact = false }) {
           <div>Follow-through recovery: {safeNumber(entryQualityRecoveryEngine?.followthrough_entry_recovery_score).toFixed(1)}</div>
           <div>Breakout separation: {safeNumber(confirmationFollowthroughRepairEngine?.breakout_separation_score, entryQualityRecoveryEngine?.true_breakout_validation_score).toFixed(1)}</div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, minHeight: 200 }}>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={[entryExitBars[0]]}>
-              <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
-              <XAxis dataKey="name" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-              <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="good" fill="#22c55e" name="Good Entries" />
-              <Bar dataKey="bad" fill="#ef4444" name="Bad Entries" />
-            </BarChart>
-          </ResponsiveContainer>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={[entryExitBars[1]]}>
-              <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
-              <XAxis dataKey="name" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-              <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="early" fill="#38bdf8" name="Early Exits" />
-              <Bar dataKey="late" fill="#f59e0b" name="Late Exits" />
-              <Bar dataKey="missed" fill="#f43f5e" name="Missed Profit" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
       </div>
 
       <div style={{ ...panelStyle }}>
@@ -2057,7 +2225,7 @@ export default function LearningTab({ compact = false }) {
 
       <div style={{ ...panelStyle, padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px" }}>
         <div style={{ fontSize: 12, color: "#9fb1cc" }}>
-          Advanced learning diagnostics are available below when needed.
+          Advanced Institutional Metrics load only when expanded.
         </div>
         <button
           type="button"
@@ -2072,12 +2240,57 @@ export default function LearningTab({ compact = false }) {
             cursor: "pointer",
           }}
         >
-          {showAdvancedSections ? "Hide Advanced Details" : "Show Advanced Details"}
+          {showAdvancedSections ? "Hide Advanced Institutional Metrics" : "Show Advanced Institutional Metrics"}
         </button>
       </div>
 
       {showAdvancedSections ? (
       <>
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+          <div>
+            <h3 style={{ margin: 0 }}>Advanced Institutional Metrics</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 4 }}>
+              Lazy-loaded diagnostics; unavailable endpoints stay local to their card.
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: advancedLoading ? "#ffd2b4" : "#a9f8d1" }}>
+            {advancedLoading ? "Loading metrics..." : (advancedLoadedOnce ? "Metrics loaded" : "Not loaded yet")}
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10, marginBottom: 12 }}>
+          {institutionalCards.map((card) => {
+            const status = advancedCardStatus(card.key);
+            const endpoint = advancedStatusFor(card.key);
+            return (
+              <InstitutionalMetricCard
+                key={card.key}
+                title={card.title}
+                value={status === "loaded" ? card.value : "Not loaded yet"}
+                detail={status === "loaded" ? card.detail : statusText(endpoint.error)}
+                status={status}
+              />
+            );
+          })}
+        </div>
+        <div style={{ background: "rgba(12,24,42,0.35)", border: "1px solid #2f4a72", borderRadius: 8, padding: 8 }}>
+          <div style={{ fontSize: 12, color: "#cfe1ff", marginBottom: 4 }}>Institutional Quality Trend</div>
+          <ResponsiveContainer width="100%" height={230}>
+            <LineChart data={combinedInstitutionalTrend}>
+              <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
+              <XAxis dataKey="ts" tick={{ fill: "#8ea1c3", fontSize: 11 }} />
+              <YAxis tick={{ fill: "#8ea1c3", fontSize: 11 }} domain={[0, 100]} />
+              <Tooltip />
+              <Legend />
+              <Line type="monotone" dataKey="entryQuality" stroke="#22c55e" strokeWidth={2} dot={false} name="Entry Quality V2" connectNulls />
+              <Line type="monotone" dataKey="consensus" stroke="#38bdf8" strokeWidth={2} dot={false} name="Consensus" connectNulls />
+              <Line type="monotone" dataKey="releasedWinRate" stroke="#f59e0b" strokeWidth={2} dot={false} name="Released Win Rate" connectNulls />
+              <Line type="monotone" dataKey="buyListPurity" stroke="#a78bfa" strokeWidth={2} dot={false} name="Buy List Purity" connectNulls />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "12px" }}>
         <div style={{ ...panelStyle }}>
           <h3 style={{ marginTop: 0 }}>Hard vs Soft Buy Performance</h3>
