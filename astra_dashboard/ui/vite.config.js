@@ -6,6 +6,12 @@ export default defineConfig({
   root: '.',
   resolve: { alias: { '@': '/src' } },
   server: {
+    host: '0.0.0.0',
+    allowedHosts: [
+      'erics-mac-mini.tailb8a048.ts.net',
+      'localhost',
+      '127.0.0.1'
+    ],
     port: 5173,
     open: true,
     strictPort: true,
