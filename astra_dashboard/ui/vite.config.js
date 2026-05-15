@@ -16,6 +16,12 @@ export default defineConfig({
     open: true,
     strictPort: true,
     cors: true,
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true
+      }
+    },
     watch: { usePolling: true }
   }
 })

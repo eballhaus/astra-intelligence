@@ -13,7 +13,7 @@ function defaultApiBaseFromWindow() {
     const proto = String(window.location.protocol || "http:");
     const host = String(window.location.hostname || "127.0.0.1");
     if (!host || host === "localhost" || host === "127.0.0.1") return DEFAULT_API_BASE;
-    return `${proto}//${host}:8000`;
+    return `${proto}//${window.location.host}`;
   } catch (_e) {
     return DEFAULT_API_BASE;
   }
@@ -59,6 +59,9 @@ function currentWindowHostIsRemote() {
 
 export function resolveApiBase() {
   const envBase = normalizeApiBase(import.meta.env.VITE_API_BASE_URL || "");
+  if (currentWindowHostIsRemote() && isLoopbackBase(envBase)) {
+    return defaultApiBaseFromWindow();
+  }
   return envBase || defaultApiBaseFromWindow();
 }
 
@@ -67,6 +70,9 @@ export function getInitialApiBase() {
   if (resolved) return resolved;
   try {
     const stored = normalizeApiBase(window.localStorage.getItem(API_BASE_STORAGE_KEY) || "");
+    if (currentWindowHostIsRemote() && isLoopbackBase(stored)) {
+      return defaultApiBaseFromWindow();
+    }
     if (stored) return stored;
   } catch (_e) {}
   return DEFAULT_API_BASE;
