@@ -258,6 +258,24 @@ except Exception:
                 "recommended_action": "inspect_advanced_metrics_snapshot_import",
             }
 try:
+    from engine.advanced_metrics_precompute import AdvancedMetricsPrecomputeStore
+except Exception:
+    class AdvancedMetricsPrecomputeStore:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def snapshot(self, card_specs, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "precompute_unavailable", "local_only": True, "writes_files": False, "api_calls_used": 0, "cards": [], "total_cards": 0, "cards_loaded": 0, "cards_failed": 0}
+
+        def load_snapshot(self, card_specs, *args, **kwargs):
+            return self.snapshot(card_specs)
+
+        def start_warmup(self, *args, **kwargs):
+            return False
+
+        def freshness_status(self, card_specs, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "precompute_unavailable", "local_only": True, "writes_files": False, "api_calls_used": 0, "diagnostics_freshness_status_v1": True, "cards": [], "total_cards": 0}
+try:
     from engine.snapshot_cache import SnapshotCacheRegistry
 except Exception:
     class SnapshotCacheRegistry:  # type: ignore[override]
@@ -868,6 +886,7 @@ PARALLEL_REPLAY_ORCHESTRATOR = ParallelReplayOrchestrator(
     consensus_replay=MULTI_BRAIN_CONSENSUS_REPLAY_ENGINE,
 )
 ADVANCED_METRICS_SNAPSHOT = AdvancedMetricsSnapshot(max_workers=16)
+ADVANCED_METRICS_PRECOMPUTE = AdvancedMetricsPrecomputeStore(state_dir=STATE)
 SNAPSHOT_CACHE_REGISTRY = SnapshotCacheRegistry(state_dir=STATE)
 STORAGE_OPTIMIZER = StorageOptimizer(state_dir=STATE)
 SQLITE_QUERY_INDEX = SQLiteQueryIndex(state_dir=STATE)
@@ -29231,6 +29250,10 @@ def performance_optimization_status_v1():
             payload["advanced_metrics_cards_total"] = int(snapshot.get("total_cards") or len(cards))
             payload["advanced_metrics_cards_loaded"] = int(snapshot.get("cards_loaded") or 0)
             payload["advanced_metrics_cards_failed"] = int(snapshot.get("cards_failed") or 0)
+            payload["advanced_metrics_fresh_cards"] = int(snapshot.get("fresh_cards") or 0)
+            payload["advanced_metrics_stale_cards"] = int(snapshot.get("stale_cards_count") or len(snapshot.get("stale_cards") or []))
+            payload["advanced_metrics_computing_cards"] = int(snapshot.get("computing_cards") or 0)
+            payload["advanced_metrics_unavailable_cards"] = int(snapshot.get("unavailable_cards_count") or len(snapshot.get("unavailable_cards") or []))
             payload["timeout_cards"] = list(snapshot.get("timeout_cards") or [])
             payload["slowest_card"] = max(
                 [
@@ -29244,6 +29267,19 @@ def performance_optimization_status_v1():
                 key=lambda row: row.get("elapsed_seconds", 0.0),
                 default=None,
             )
+        try:
+            diag = ADVANCED_METRICS_PRECOMPUTE.freshness_status(_advanced_metric_card_specs())
+            payload["advanced_diagnostics_freshness"] = {
+                "total_cards": diag.get("total_cards"),
+                "fresh_cards": diag.get("fresh_cards"),
+                "stale_cards": diag.get("stale_cards_count"),
+                "computing_cards": diag.get("computing_cards"),
+                "unavailable_cards": diag.get("unavailable_cards_count"),
+                "snapshot_load_time_seconds": diag.get("snapshot_load_time_seconds"),
+                "slowest_card": diag.get("slowest_card"),
+            }
+        except Exception:
+            payload["advanced_diagnostics_freshness"] = {"status": "unavailable"}
         payload["snapshot_first_performance_layer"] = True
         payload["snapshot_count"] = snapshot_status.get("snapshot_count")
         payload["fresh_snapshot_count"] = snapshot_status.get("fresh_snapshot_count")
@@ -29661,7 +29697,7 @@ def _advanced_metric_card_specs():
             "error_reason": error_reason,
         }
 
-    return [
+    specs = [
         {
             "key": "entryQuality",
             "title": "Entry Quality V2",
@@ -29839,25 +29875,71 @@ def _advanced_metric_card_specs():
             ),
         },
     ]
+    light = {"entryQuality", "consensus", "fmpUtilization", "jsonlMaintenance", "marketKnowledge", "performanceOptimization"}
+    medium = {"learningDataQuality", "tradeLifecycle", "marketDataOrchestration", "walkForward"}
+    for spec in specs:
+        key = str(spec.get("key") or "")
+        if key in light:
+            spec["diagnostic_weight"] = "lightweight"
+            spec["ttl_seconds"] = 90
+            spec["refresh_interval_seconds"] = 60
+        elif key in medium:
+            spec["diagnostic_weight"] = "medium"
+            spec["ttl_seconds"] = 600
+            spec["refresh_interval_seconds"] = 300
+        else:
+            spec["diagnostic_weight"] = "heavy"
+            spec["ttl_seconds"] = 3600
+            spec["refresh_interval_seconds"] = 900
+        spec["version_marker"] = "advanced_metrics_bundle_v1"
+        spec["fingerprint_sources"] = [
+            os.path.join(STATE, "learning_insights_last_good.json"),
+            os.path.join(STATE, "runtime_top_buys_snapshot.json"),
+            os.path.join(STATE, "fmp_utilization_state_v1.json"),
+            os.path.join(STATE, "market_data_warehouse_manifest_v1.json"),
+        ]
+    return specs
 
 
 @router.get("/api/advanced_metrics_snapshot_v1")
 def advanced_metrics_snapshot_v1(force_refresh: bool = Query(False)):
     try:
-        payload = ADVANCED_METRICS_SNAPSHOT.snapshot(
-            _advanced_metric_card_specs(),
-            force_refresh=force_refresh,
-        )
+        specs = _advanced_metric_card_specs()
+        if force_refresh:
+            payload = ADVANCED_METRICS_PRECOMPUTE.snapshot(
+                specs,
+                force_refresh=True,
+                time_budget_seconds=7.5,
+            )
+        else:
+            payload = ADVANCED_METRICS_PRECOMPUTE.load_snapshot(specs)
+            if not payload.get("cards_loaded"):
+                payload = ADVANCED_METRICS_PRECOMPUTE.snapshot(
+                    specs,
+                    force_refresh=False,
+                    time_budget_seconds=7.5,
+                )
+            ADVANCED_METRICS_PRECOMPUTE.start_warmup(
+                specs,
+                force=False,
+                time_budget_seconds=24.0,
+            )
+        # Keep the legacy in-memory aggregate warm as a secondary fallback.
+        try:
+            ADVANCED_METRICS_SNAPSHOT._snapshot = dict(payload)
+            ADVANCED_METRICS_SNAPSHOT._snapshot_ts = time.time()
+        except Exception:
+            pass
         payload["snapshot_cache_registry"] = {
             "snapshot_name": "advanced_metrics",
             "registered": True,
-            "writes_files": False,
-            "registry_mode": "snapshot_first_registry_planning",
+            "writes_files": True,
+            "registry_mode": "freshness_aware_card_snapshot_store",
         }
         payload["snapshot_first_enabled"] = True
         payload["freshness_status"] = payload.get("freshness_status") or ("fresh" if _to_float(payload.get("snapshot_age_seconds"), 0) <= 45 else "stale")
         payload["advanced_metrics_snapshot_v1"] = True
-        payload["writes_files"] = False
+        payload["writes_files"] = True
         payload["api_calls_used"] = 0
         return payload
     except Exception as exc:
@@ -29880,6 +29962,32 @@ def advanced_metrics_snapshot_v1(force_refresh: bool = Query(False)):
             "load_strategy": "fallback_error",
             "recommended_action": "show_advanced_metrics_unavailable",
             "error": f"advanced_metrics_snapshot_unavailable: {exc}",
+        }
+
+
+@router.get("/api/diagnostics_freshness_status_v1")
+def diagnostics_freshness_status_v1():
+    try:
+        payload = ADVANCED_METRICS_PRECOMPUTE.freshness_status(_advanced_metric_card_specs())
+        payload["diagnostics_freshness_status_v1"] = True
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "freshness_status_unavailable",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "diagnostics_freshness_status_v1": True,
+            "total_cards": 0,
+            "fresh_cards": 0,
+            "stale_cards_count": 0,
+            "computing_cards": 0,
+            "unavailable_cards_count": 0,
+            "recommended_action": "inspect_diagnostics_freshness_error",
+            "error": f"diagnostics_freshness_status_unavailable: {exc}",
         }
 
 
@@ -30587,6 +30695,114 @@ def mobile_dashboard_v1():
             "learning_snapshot": {},
             "error": f"mobile_dashboard_unavailable: {exc}",
         }
+
+
+def _paper_performance_fast_summary():
+    try:
+        cached = ((_CACHE.get("paper_performance") or {}).get("data") or {})
+        if isinstance(cached, dict) and cached:
+            return {
+                "source": "paper_performance_cache",
+                "open_positions_count": cached.get("open_positions_count", 0),
+                "valid_closed_trades": cached.get("valid_closed_trades", cached.get("valid_closed", 0)),
+                "win_rate": cached.get("win_rate", 0),
+                "avg_return": cached.get("avg_return", 0),
+                "last_updated_utc": cached.get("last_updated_utc") or cached.get("generated_at") or _now_utc_iso(),
+            }
+    except Exception:
+        pass
+    return {
+        "source": "empty_fast_fallback",
+        "open_positions_count": 0,
+        "valid_closed_trades": 0,
+        "win_rate": 0,
+        "avg_return": 0,
+        "last_updated_utc": _now_utc_iso(),
+    }
+
+
+def _dashboard_fast_snapshot_payload():
+    stale_sections = []
+    unavailable_sections = []
+    ctx = _remote_copilot_fast_context()
+    top_payload = ctx.get("top_buys") if isinstance(ctx.get("top_buys"), dict) else {}
+    if not top_payload:
+        unavailable_sections.append("top_buys")
+        top_payload = {"stocks": {"final": []}, "crypto": {"final": []}, "top_buys_stage": "dashboard_fast_empty_fallback"}
+    system_payload = {}
+    try:
+        system_payload = system_status()
+    except Exception:
+        unavailable_sections.append("system_status")
+        system_payload = {
+            "runtime_integrity_ok": False,
+            "live_buy_valid_quote_count": 0,
+            "live_buy_universe_size": 0,
+            "last_updated_utc": _now_utc_iso(),
+            "dashboard_fast_fallback": True,
+        }
+    positions_rows = ctx.get("positions") if isinstance(ctx.get("positions"), list) else []
+    learning_payload = ctx.get("learning_snapshot") if isinstance(ctx.get("learning_snapshot"), dict) else {}
+    if not learning_payload:
+        stale_sections.append("learning_summary")
+        learning_payload = {"ok": False, "updated_at": _now_utc_iso(), "degraded_reason": "learning_snapshot_unavailable"}
+    paper_summary = _paper_performance_fast_summary()
+    if paper_summary.get("source") == "empty_fast_fallback":
+        stale_sections.append("paper_performance_summary")
+    return {
+        "enabled": True,
+        "version": "1.0.0",
+        "mode": "snapshot_first_dashboard_fast_read",
+        "local_only": True,
+        "writes_files": False,
+        "api_calls_used": 0,
+        "dashboard_fast_snapshot_v1": True,
+        "mobile_runtime_snapshot_v1": True,
+        "top_buys": top_payload,
+        "system_status": system_payload,
+        "positions": {"positions": positions_rows, "total_open_positions": len(positions_rows)},
+        "learning_summary": learning_payload,
+        "paper_performance_summary": paper_summary,
+        "snapshot_generated_at": _now_utc_iso(),
+        "freshness_status": "fresh" if not stale_sections and not unavailable_sections else "stale_valid",
+        "stale_sections": stale_sections,
+        "unavailable_sections": unavailable_sections,
+        "recommended_action": "serve_compact_snapshot_first_then_hydrate_details_lazily",
+    }
+
+
+@router.get("/api/dashboard_fast_snapshot_v1")
+def dashboard_fast_snapshot_v1():
+    try:
+        return _dashboard_fast_snapshot_payload()
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "snapshot_first_dashboard_fast_read",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "dashboard_fast_snapshot_v1": True,
+            "top_buys": {"stocks": {"final": []}, "crypto": {"final": []}},
+            "system_status": {},
+            "positions": {"positions": [], "total_open_positions": 0},
+            "learning_summary": {},
+            "paper_performance_summary": {},
+            "snapshot_generated_at": _now_utc_iso(),
+            "freshness_status": "unavailable",
+            "stale_sections": [],
+            "unavailable_sections": ["dashboard_fast_snapshot"],
+            "error": f"dashboard_fast_snapshot_unavailable: {exc}",
+        }
+
+
+@router.get("/api/mobile_runtime_snapshot_v1")
+def mobile_runtime_snapshot_v1():
+    payload = dashboard_fast_snapshot_v1()
+    if isinstance(payload, dict):
+        payload["mobile_runtime_snapshot_v1"] = True
+    return payload
 
 
 @router.get("/api/ask_astra_v1")

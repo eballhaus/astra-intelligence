@@ -4,6 +4,7 @@ export const API_TOKEN_STORAGE_KEY = "astra_remote_access_token";
 export const API_BASE_CHANGED_EVENT = "astra:api-base-changed";
 export const DEFAULT_FETCH_TIMEOUT_MS = 9000;
 export const DEFAULT_STALE_PAYLOAD_TTL_MS = 180000;
+export const SAME_ORIGIN_API_BASE = "__same_origin__";
 
 const LAST_GOOD_RESPONSE_CACHE = new Map();
 
@@ -22,6 +23,7 @@ function defaultApiBaseFromWindow() {
 function normalizeApiBase(raw) {
   const v = String(raw || "").trim();
   if (!v) return "";
+  if (v === SAME_ORIGIN_API_BASE) return SAME_ORIGIN_API_BASE;
   try {
     const u = new URL(v);
     // Normalize localhost and 127.0.0.1 to a single canonical local host.
@@ -87,6 +89,7 @@ export function persistApiBase(base) {
 }
 
 export function buildApiUrl(base, path) {
+  if (base === SAME_ORIGIN_API_BASE) return path;
   const b = normalizeApiBase(base) || defaultApiBaseFromWindow();
   return `${b}${path}`;
 }
@@ -107,6 +110,9 @@ export function getApiBaseCandidates(preferredBase = "") {
     if (!candidates.includes(n)) candidates.push(n);
   };
 
+  if (typeof window !== "undefined" && String(preferredBase || "") !== SAME_ORIGIN_API_BASE) {
+    candidates.push(SAME_ORIGIN_API_BASE);
+  }
   push(preferredBase);
   push(getInitialApiBase());
   push(resolveApiBase());
@@ -194,7 +200,7 @@ export async function fetchJsonWithFallback(path, options = {}) {
         baseUsed: base,
         url,
       });
-      persistApiBase(base);
+      if (base !== SAME_ORIGIN_API_BASE) persistApiBase(base);
       return { ok: true, baseUsed: base, url, httpStatus: res.status, parsed, attempts };
     } catch (err) {
       const timeoutLike = err && (String(err.name || "").toLowerCase() === "aborterror" || String(err.message || "").toLowerCase().includes("aborted"));

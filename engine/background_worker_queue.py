@@ -25,6 +25,7 @@ class BackgroundWorkerQueue:
             ("rankings_refresh", 8.0, "precompute rankings cache from existing snapshot/fetch path"),
             ("top_buys_refresh", 6.0, "precompute top_buys runtime snapshot"),
             ("learning_refresh", 12.0, "refresh learning snapshot and last-good summary"),
+            ("advanced_metrics_precompute", 20.0, "change-aware precompute of Learning Tab advanced diagnostic cards"),
             ("feature_refresh", 10.0, "update feature-store metadata after governed collection"),
             ("warehouse_refresh", 9.0, "refresh local market warehouse metadata"),
             ("replay_refresh", 18.0, "refresh replay/counterfactual metadata"),
@@ -36,7 +37,7 @@ class BackgroundWorkerQueue:
     def status(self) -> dict[str, Any]:
         jobs = []
         for job_id, runtime, purpose in self.job_specs:
-            enabled = job_id in {"rankings_refresh", "top_buys_refresh", "learning_refresh"}
+            enabled = job_id in {"rankings_refresh", "top_buys_refresh", "learning_refresh", "advanced_metrics_precompute"}
             blocked_reason = "" if enabled else "requires_explicit_background_enable"
             if job_id in {"feature_refresh", "warehouse_refresh"} and not self._path_exists("market_data_warehouse_manifest_v1.json"):
                 blocked_reason = "warehouse_manifest_not_populated"

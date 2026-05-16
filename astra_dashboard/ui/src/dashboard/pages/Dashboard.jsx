@@ -188,6 +188,20 @@ function normalizeMarketSummary(systemStatus = {}) {
   return hasReal ? rows : [];
 }
 
+function normalizeDashboardSnapshot(raw = {}) {
+  const payload = raw && typeof raw === "object" ? raw : {};
+  return {
+    topBuys: payload.top_buys || {},
+    systemStatus: payload.system_status || {},
+    positions: normalizePositions(payload.positions || {}),
+    learningSummary: payload.learning_summary || {},
+    paperPerformanceSummary: payload.paper_performance_summary || {},
+    freshnessStatus: payload.freshness_status || "unknown",
+    staleSections: Array.isArray(payload.stale_sections) ? payload.stale_sections : [],
+    unavailableSections: Array.isArray(payload.unavailable_sections) ? payload.unavailable_sections : [],
+  };
+}
+
 export default function Dashboard() {
   const [resolvedApiBase, setResolvedApiBase] = useState(getInitialApiBase());
   const [loading, setLoading] = useState(false);
@@ -231,26 +245,47 @@ export default function Dashboard() {
       if (busy) return;
       busy = true;
       setLoading(true);
-      const outcomes = await Promise.all([
-        fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, 45000),
-        fetchJson("system_status", "/api/system_status", {}, 15000),
-        fetchJson("positions", "/api/positions", {}, 15000),
-      ]);
-      if (!mounted) return;
-      const byKey = Object.fromEntries(outcomes.map((o) => [o.key, o]));
-      const statusMap = {};
-      const errors = [];
-      outcomes.forEach((o) => {
-        statusMap[o.key] = { ok: o.ok, status: o.status, error: o.error };
-        if (!o.ok) errors.push(`${o.key}: ${o.error || "fetch_failed"}`);
-      });
-      setEndpointStatus(statusMap);
-      setError(errors.join(" | "));
-      if (byKey.top_buys?.ok && byKey.top_buys?.parsed) setTopBuys(byKey.top_buys.parsed || {});
-      if (byKey.system_status?.ok && byKey.system_status?.parsed) setSystemStatus(byKey.system_status.parsed || {});
-      if (byKey.positions?.ok && byKey.positions?.parsed) setPositions(normalizePositions(byKey.positions.parsed || {}));
-      setLoading(false);
-      busy = false;
+      try {
+        const fast = await fetchJson("dashboard_fast_snapshot", "/api/dashboard_fast_snapshot_v1", {}, 5000);
+        const statusMap = {};
+        if (fast.ok && fast.parsed) {
+          const snap = normalizeDashboardSnapshot(fast.parsed);
+          setTopBuys(snap.topBuys);
+          setSystemStatus(snap.systemStatus);
+          setPositions(snap.positions);
+          statusMap.dashboard_fast_snapshot = { ok: true, status: fast.status, error: "" };
+          statusMap.top_buys = { ok: true, status: fast.status, error: snap.staleSections.includes("top_buys") ? "stale_snapshot" : "" };
+          statusMap.system_status = { ok: true, status: fast.status, error: snap.staleSections.includes("system_status") ? "stale_snapshot" : "" };
+          statusMap.positions = { ok: true, status: fast.status, error: snap.staleSections.includes("positions") ? "stale_snapshot" : "" };
+          setEndpointStatus(statusMap);
+          setError("");
+        } else {
+          statusMap.dashboard_fast_snapshot = { ok: false, status: fast.status, error: fast.error || "snapshot_unavailable" };
+        }
+
+        const outcomes = await Promise.all([
+          fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", topBuys || {}, 5000),
+          fetchJson("system_status", "/api/system_status", systemStatus || {}, 5000),
+          fetchJson("positions", "/api/positions", { positions }, 5000),
+        ]);
+        if (!mounted) return;
+        const byKey = Object.fromEntries(outcomes.map((o) => [o.key, o]));
+        outcomes.forEach((o) => {
+          statusMap[o.key] = {
+            ok: Boolean(o.ok || (o.parsed && Object.keys(o.parsed || {}).length > 0)),
+            status: o.status,
+            error: o.ok ? "" : "using stale snapshot if available",
+          };
+        });
+        setEndpointStatus({ ...statusMap });
+        setError("");
+        if (byKey.top_buys?.parsed && Object.keys(byKey.top_buys.parsed || {}).length > 0) setTopBuys(byKey.top_buys.parsed || {});
+        if (byKey.system_status?.parsed && Object.keys(byKey.system_status.parsed || {}).length > 0) setSystemStatus(byKey.system_status.parsed || {});
+        if (byKey.positions?.parsed && Object.keys(byKey.positions.parsed || {}).length > 0) setPositions(normalizePositions(byKey.positions.parsed || {}));
+      } finally {
+        if (mounted) setLoading(false);
+        busy = false;
+      }
     };
 
     refresh();
@@ -295,7 +330,7 @@ export default function Dashboard() {
     const result = await fetchJsonWithFallback("/api/positions", {
       preferredBase: resolvedApiBase || API_BASE,
       fallbackValue: {},
-      timeoutMs: 15000,
+      timeoutMs: 5000,
     });
     if (result.ok && result.parsed) {
       setPositions(normalizePositions(result.parsed || {}));
@@ -322,7 +357,7 @@ export default function Dashboard() {
     const res = await fetchJsonWithFallback("/api/positions/open", {
       preferredBase: resolvedApiBase || API_BASE,
       fallbackValue: { ok: false },
-      timeoutMs: 15000,
+      timeoutMs: 5000,
       init: {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -351,7 +386,7 @@ export default function Dashboard() {
     const res = await fetchJsonWithFallback("/api/positions/close", {
       preferredBase: resolvedApiBase || API_BASE,
       fallbackValue: { ok: false },
-      timeoutMs: 15000,
+      timeoutMs: 5000,
       init: {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -374,7 +409,7 @@ export default function Dashboard() {
     const result = await fetchJsonWithFallback(`/api/ask_astra_v1?q=${encodeURIComponent(question)}`, {
       preferredBase: resolvedApiBase || API_BASE,
       fallbackValue: { answer: "Ask-Astra is not loaded yet." },
-      timeoutMs: 10000,
+      timeoutMs: 5000,
     });
     setAskAnswer(String(result?.parsed?.answer || "Ask-Astra is not loaded yet."));
     setAskLoading(false);

@@ -200,7 +200,8 @@ function normalizeAdvancedSnapshotCards(rawCards, fallbackReason = "Snapshot did
       : []);
   return asArray.map((card, idx) => {
     const fallbackCard = ADVANCED_METRIC_FALLBACK_CARDS.find((item) => item.key === card?.key) || ADVANCED_METRIC_FALLBACK_CARDS[idx] || {};
-    const status = String(card?.status || "unavailable").toLowerCase();
+    const rawStatus = String(card?.status || "unavailable").toLowerCase();
+    const status = rawStatus === "fresh" ? "loaded" : rawStatus;
     return {
       key: card?.key || fallbackCard.key || `advancedCard${idx}`,
       title: card?.title || fallbackCard.title || "Advanced Metric",
@@ -307,7 +308,7 @@ export default function LearningTab({ compact = false }) {
           "learning_snapshot_fast_v1",
           "/api/learning_snapshot_fast_v1",
           {},
-          { timeoutMs: 4500 },
+          { timeoutMs: 8000 },
         );
         if (mounted) {
           setEndpointStatus((prev) => ({
@@ -391,13 +392,13 @@ export default function LearningTab({ compact = false }) {
         if (!mounted) return;
 
         const secondaryBatch = await Promise.all([
-          fetchJson("paper_performance", "/api/paper_performance", {}, { timeoutMs: 9000 }),
+          fetchJson("paper_performance", "/api/paper_performance", {}, { timeoutMs: 8000 }),
           fetchJson("paper_status", "/api/paper_status", {}, { timeoutMs: 8000 }),
-          fetchJson("system_status", "/api/system_status", {}, { timeoutMs: 8000 }),
-          fetchJson("model_status", "/api/model_status", {}, { timeoutMs: 8000 }),
-          fetchJson("paper_worker_status", "/api/paper_worker_status", {}, { timeoutMs: 8000 }),
-          fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, { timeoutMs: 12000 }),
-          fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 15000 }),
+          fetchJson("system_status", "/api/system_status", {}, { timeoutMs: 5000 }),
+          fetchJson("model_status", "/api/model_status", {}, { timeoutMs: 5000 }),
+          fetchJson("paper_worker_status", "/api/paper_worker_status", {}, { timeoutMs: 5000 }),
+          fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, { timeoutMs: 5000 }),
+          fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 8000 }),
         ]);
         if (!mounted) return;
 
@@ -666,7 +667,7 @@ export default function LearningTab({ compact = false }) {
           setAdvancedEndpointStatus(statuses);
           setAdvancedInstitutional({});
           setAdvancedSnapshotMessage(
-            `${snapshot.cards_loaded || 0}/${snapshot.total_cards || cards.length} advanced cards loaded${snapshot.cards_failed ? `, ${snapshot.cards_failed} unavailable` : ""}`
+            `${snapshot.cards_loaded || 0}/${snapshot.total_cards || cards.length} advanced cards loaded`
           );
           setInstitutionalTrend((prev) => {
             const cardByKey = Object.fromEntries(cards.map((card) => [card.key, card]));
@@ -2291,6 +2292,16 @@ export default function LearningTab({ compact = false }) {
         {advancedLoadedOnce && advancedSnapshot?.cards_failed > 0 ? (
           <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 8, border: "1px solid #6b5630", background: "rgba(88, 62, 22, 0.24)", color: "#ffe2a1", fontSize: 12 }}>
             Advanced metrics unavailable or still computing for {advancedSnapshot.cards_failed} card{advancedSnapshot.cards_failed === 1 ? "" : "s"}. Loaded and stale cards remain visible.
+          </div>
+        ) : null}
+        {advancedLoadedOnce ? (
+          <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap", fontSize: 11, color: "#bfd3ef" }}>
+            <span>Fresh: {safeNumber(advancedSnapshot?.fresh_cards)}</span>
+            <span>Stale: {safeNumber(advancedSnapshot?.stale_cards_count, Array.isArray(advancedSnapshot?.stale_cards) ? advancedSnapshot.stale_cards.length : 0)}</span>
+            <span>Computing: {safeNumber(advancedSnapshot?.computing_cards)}</span>
+            <span>Unavailable: {safeNumber(advancedSnapshot?.unavailable_cards_count, Array.isArray(advancedSnapshot?.unavailable_cards) ? advancedSnapshot.unavailable_cards.length : 0)}</span>
+            <span>Last update: {statusText(advancedSnapshot?.snapshot_generated_at, "not available")}</span>
+            <span>Refresh: {statusText(advancedSnapshot?.freshness_status, "unknown")}</span>
           </div>
         ) : null}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10, marginBottom: 12 }}>

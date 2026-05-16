@@ -38,6 +38,7 @@ class CacheRefreshScheduler:
             "rankings": ("runtime_top_buys_snapshot.json", 120),
             "top_buys": ("runtime_top_buys_snapshot.json", 90),
             "learning_snapshot": ("learning_insights_last_good.json", 300),
+            "advanced_metrics": (os.path.join("snapshots", "advanced_metrics_cards"), 300),
             "feature_store": ("feature_store_manifest_v1.json", 1800),
             "market_warehouse": ("market_data_warehouse_manifest_v1.json", 3600),
         }

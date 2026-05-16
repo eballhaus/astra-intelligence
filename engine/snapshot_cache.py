@@ -163,6 +163,21 @@ class SnapshotCacheRegistry:
 
     def status(self) -> dict[str, Any]:
         entries = [self._entry_status(entry) for entry in self.snapshots]
+        advanced_card_dir = os.path.join(self.snapshot_dir, "advanced_metrics_cards")
+        advanced_card_snapshots = []
+        if os.path.isdir(advanced_card_dir):
+            for name in sorted(os.listdir(advanced_card_dir)):
+                if not name.endswith(".json"):
+                    continue
+                path = os.path.join(advanced_card_dir, name)
+                advanced_card_snapshots.append({
+                    "snapshot_name": name[:-5],
+                    "path": path,
+                    "size_bytes": os.path.getsize(path) if os.path.exists(path) else 0,
+                    "snapshot_age_seconds": round(_age_seconds(path) or 0.0, 3),
+                    "status": "available",
+                    "source_endpoint": "/api/advanced_metrics_snapshot_v1",
+                })
         stale = [e for e in entries if e.get("status") == "stale"]
         missing = [e for e in entries if e.get("status") == "missing"]
         fresh = [e for e in entries if e.get("status") == "fresh"]
@@ -175,6 +190,8 @@ class SnapshotCacheRegistry:
             "api_calls_used": 0,
             "snapshot_cache_status_v1": True,
             "snapshot_count": len(entries),
+            "advanced_card_snapshot_count": len(advanced_card_snapshots),
+            "advanced_card_snapshots": advanced_card_snapshots,
             "fresh_snapshot_count": len(fresh),
             "stale_snapshot_count": len(stale),
             "missing_snapshot_count": len(missing),
