@@ -129,17 +129,23 @@ function toneColors(tone) {
   return { badgeBg: "rgba(102,44,55,0.45)", badgeBorder: "#df6a85", badgeText: "#ffd0dc" };
 }
 
-const ADVANCED_INSTITUTIONAL_ENDPOINTS = [
-  { key: "entryQuality", label: "Entry Quality V2", path: "/api/entry_quality_status_v2" },
-  { key: "consensus", label: "Multi-Brain Consensus", path: "/api/multi_brain_consensus_status_v1" },
-  { key: "learningDataQuality", label: "Learning Data Quality V2", path: "/api/learning_data_quality_v1" },
-  { key: "tradeLifecycle", label: "Trade Lifecycle Intelligence", path: "/api/trade_lifecycle_status_v1" },
-  { key: "policyCompare", label: "Policy Backtest V2", path: "/api/policy_compare_v1" },
-  { key: "selfCorrection", label: "Self-Correction V2", path: "/api/self_correction_recommendations_v1" },
-  { key: "fmpUtilization", label: "FMP Utilization", path: "/api/fmp_utilization_status_v1" },
-  { key: "jsonlMaintenance", label: "JSONL Maintenance", path: "/api/jsonl_maintenance_status_v1" },
-  { key: "replayCounterfactual", label: "Replay Counterfactual Analysis", path: "/api/replay_counterfactual_status_v1" },
-  { key: "marketDataOrchestration", label: "Market Data Orchestration", path: "/api/market_data_orchestration_status_v1" },
+const ADVANCED_METRIC_FALLBACK_CARDS = [
+  { key: "entryQuality", title: "Entry Quality V2", source_endpoint: "/api/entry_quality_status_v2" },
+  { key: "consensus", title: "Multi-Brain Consensus", source_endpoint: "/api/multi_brain_consensus_status_v1" },
+  { key: "learningDataQuality", title: "Learning Data Quality V2", source_endpoint: "/api/learning_data_quality_v1" },
+  { key: "tradeLifecycle", title: "Trade Lifecycle Intelligence", source_endpoint: "/api/trade_lifecycle_status_v1" },
+  { key: "policyCompare", title: "Policy Backtest V2", source_endpoint: "/api/policy_compare_v1" },
+  { key: "selfCorrection", title: "Self-Correction V2", source_endpoint: "/api/self_correction_recommendations_v1" },
+  { key: "fmpUtilization", title: "FMP Utilization", source_endpoint: "/api/fmp_utilization_status_v1" },
+  { key: "jsonlMaintenance", title: "JSONL Maintenance", source_endpoint: "/api/jsonl_maintenance_status_v1" },
+  { key: "replayCounterfactual", title: "Replay Counterfactual Analysis", source_endpoint: "/api/replay_counterfactual_status_v1" },
+  { key: "marketDataOrchestration", title: "Market Data Orchestration", source_endpoint: "/api/market_data_orchestration_status_v1" },
+  { key: "acceleratedLearning", title: "Accelerated Learning", source_endpoint: "/api/accelerated_learning_status_v1" },
+  { key: "consensusReplay", title: "Consensus Replay", source_endpoint: "/api/multi_brain_consensus_replay_status_v1" },
+  { key: "parallelReplay", title: "Parallel Replay Orchestrator", source_endpoint: "/api/parallel_replay_orchestrator_status_v1" },
+  { key: "marketKnowledge", title: "Market Knowledge", source_endpoint: "/api/market_knowledge_status_v1" },
+  { key: "walkForward", title: "Walk-Forward Validation", source_endpoint: "/api/walk_forward_validation_status_v1" },
+  { key: "performanceOptimization", title: "Performance Optimization", source_endpoint: "/api/performance_optimization_status_v1" },
 ];
 
 const LEARNING_TREND_WINDOWS = [
@@ -161,12 +167,23 @@ function statusText(value, fallback = "Not loaded yet") {
 }
 
 function InstitutionalMetricCard({ title, value, detail, status }) {
+  const normalizedStatus = String(status || "unavailable").toLowerCase();
+  const statusLabel = normalizedStatus === "loaded"
+    ? "Loaded"
+    : normalizedStatus === "stale"
+      ? "Stale"
+      : normalizedStatus === "still_computing"
+        ? "Still computing"
+        : normalizedStatus === "error"
+          ? "Error"
+          : "Unavailable";
+  const statusColor = normalizedStatus === "loaded" ? "#a9f8d1" : normalizedStatus === "stale" ? "#ffe2a1" : "#ffd2b4";
   return (
     <div style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 8, padding: "10px 11px", display: "grid", gap: 5 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
         <div style={{ fontSize: 12, color: "#d5e6ff", fontWeight: 700 }}>{title}</div>
-        <div style={{ color: status === "loaded" ? "#a9f8d1" : "#ffd2b4", fontSize: 10, textTransform: "uppercase" }}>
-          {status === "loaded" ? "Loaded" : "Not loaded yet"}
+        <div style={{ color: statusColor, fontSize: 10, textTransform: "uppercase" }}>
+          {statusLabel}
         </div>
       </div>
       <div style={{ fontSize: 18, lineHeight: 1.1, fontWeight: 800, color: "#f2f7ff" }}>{value}</div>
@@ -188,6 +205,8 @@ export default function LearningTab({ compact = false }) {
   const [advancedLoadedOnce, setAdvancedLoadedOnce] = useState(false);
   const [advancedInstitutional, setAdvancedInstitutional] = useState({});
   const [advancedEndpointStatus, setAdvancedEndpointStatus] = useState({});
+  const [advancedSnapshot, setAdvancedSnapshot] = useState(null);
+  const [advancedSnapshotMessage, setAdvancedSnapshotMessage] = useState("");
   const [institutionalTrend, setInstitutionalTrend] = useState([]);
   const [endpointStatus, setEndpointStatus] = useState({});
   const [timeline, setTimeline] = useState([]);
@@ -554,64 +573,104 @@ export default function LearningTab({ compact = false }) {
     if (!showAdvancedSections || advancedLoadedOnce || advancedLoading) return undefined;
     let cancelled = false;
 
+    const fallbackSnapshot = (reason) => ({
+      enabled: false,
+      mode: "frontend_timeout_fallback",
+      snapshot_generated_at: new Date().toISOString(),
+      snapshot_age_seconds: 0,
+      cards: ADVANCED_METRIC_FALLBACK_CARDS.map((card) => ({
+        key: card.key,
+        title: card.title,
+        status: "unavailable",
+        primary_value: "Unavailable",
+        secondary_value: "Advanced metrics unavailable or still computing",
+        detail_value: reason || "Snapshot did not load within the UI timeout.",
+        updated_at: new Date().toISOString(),
+        source_endpoint: card.source_endpoint,
+        error_reason: reason || "frontend_snapshot_timeout",
+      })),
+      unavailable_cards: ADVANCED_METRIC_FALLBACK_CARDS.map((card) => card.key),
+      stale_cards: [],
+      total_cards: ADVANCED_METRIC_FALLBACK_CARDS.length,
+      cards_loaded: 0,
+      cards_failed: ADVANCED_METRIC_FALLBACK_CARDS.length,
+      load_strategy: "frontend_timeout_fallback",
+      recommended_action: "Advanced metrics unavailable or still computing",
+    });
+
     const loadAdvancedInstitutional = async () => {
       setAdvancedLoading(true);
-      const payloads = {};
-      const statuses = {};
-      for (const endpoint of ADVANCED_INSTITUTIONAL_ENDPOINTS) {
-        if (cancelled) break;
-        try {
-          const result = await fetchJsonWithFallback(endpoint.path, {
-            preferredBase: resolvedApiBase || API_BASE,
-            fallbackValue: null,
-            timeoutMs: 4500,
-          });
-          const parsed = result.ok && result.parsed && typeof result.parsed === "object"
-            ? result.parsed
-            : null;
-          if (parsed) payloads[endpoint.key] = parsed;
-          statuses[endpoint.key] = {
-            label: endpoint.label,
-            url: result.url,
+      setAdvancedSnapshotMessage("Loading fast advanced metrics snapshot...");
+      try {
+        const result = await fetchJsonWithFallback("/api/advanced_metrics_snapshot_v1", {
+          preferredBase: resolvedApiBase || API_BASE,
+          fallbackValue: null,
+          timeoutMs: 8000,
+          staleTtlMs: 300000,
+        });
+        const parsed = result.ok && result.parsed && typeof result.parsed === "object" ? result.parsed : null;
+        const snapshot = parsed || fallbackSnapshot(String(result.error || "advanced_metrics_snapshot_unavailable"));
+        const cards = Array.isArray(snapshot.cards) ? snapshot.cards : [];
+        const statuses = {};
+        cards.forEach((card) => {
+          statuses[card.key] = {
+            label: card.title,
+            url: card.source_endpoint,
             httpStatus: result.httpStatus ?? null,
-            loaded: Boolean(parsed),
-            error: parsed ? "" : String(result.error || "not_loaded_yet"),
+            loaded: ["loaded", "stale"].includes(String(card.status || "").toLowerCase()),
+            status: card.status || "unavailable",
+            error: card.error_reason || "",
           };
+        });
+        if (!cancelled) {
+          setAdvancedSnapshot(snapshot);
+          setAdvancedEndpointStatus(statuses);
+          setAdvancedInstitutional({});
+          setAdvancedSnapshotMessage(
+            parsed
+              ? `${snapshot.cards_loaded || 0}/${snapshot.total_cards || cards.length} advanced cards loaded${snapshot.cards_failed ? `, ${snapshot.cards_failed} unavailable` : ""}`
+              : "Advanced metrics unavailable or still computing"
+          );
           if (result.ok && result.baseUsed && result.baseUsed !== resolvedApiBase) {
             setResolvedApiBase(result.baseUsed);
           }
-        } catch (err) {
-          statuses[endpoint.key] = {
-            label: endpoint.label,
-            url: endpoint.path,
+          setInstitutionalTrend((prev) => {
+            const cardByKey = Object.fromEntries(cards.map((card) => [card.key, card]));
+            const fastSnapshot = data.learningSnapshotFast || {};
+            const learning = data.learningInsights || {};
+            const numeric = (value) => {
+              const match = String(value || "").match(/-?\d+(\.\d+)?/);
+              return match ? Number(match[0]) : 0;
+            };
+            const point = {
+              ts: new Date().toLocaleTimeString(),
+              entryQuality: numeric(cardByKey.entryQuality?.primary_value),
+              consensus: numeric(cardByKey.consensus?.primary_value),
+              releasedWinRate: safeNumber(fastSnapshot?.current_engine_released_wr, numeric(cardByKey.tradeLifecycle?.primary_value)),
+              buyListPurity: safeNumber(fastSnapshot?.buy_list_purity, learning?.buy_list_purity_score),
+            };
+            return [...prev, point].slice(-24);
+          });
+        }
+      } catch (err) {
+        if (!cancelled) {
+          const snapshot = fallbackSnapshot(err instanceof Error ? err.message : String(err));
+          setAdvancedSnapshot(snapshot);
+          setAdvancedEndpointStatus(Object.fromEntries(snapshot.cards.map((card) => [card.key, {
+            label: card.title,
+            url: card.source_endpoint,
             httpStatus: null,
             loaded: false,
-            error: err instanceof Error ? err.message : String(err),
-          };
+            status: card.status,
+            error: card.error_reason,
+          }])));
+          setAdvancedSnapshotMessage("Advanced metrics unavailable or still computing");
         }
+      } finally {
         if (!cancelled) {
-          setAdvancedInstitutional((prev) => ({ ...(prev || {}), ...payloads }));
-          setAdvancedEndpointStatus((prev) => ({ ...(prev || {}), ...statuses }));
+          setAdvancedLoadedOnce(true);
+          setAdvancedLoading(false);
         }
-      }
-      if (!cancelled) {
-        setAdvancedLoadedOnce(true);
-        setAdvancedLoading(false);
-        setInstitutionalTrend((prev) => {
-          const entryQuality = payloads.entryQuality || {};
-          const consensus = payloads.consensus || {};
-          const lifecycle = payloads.tradeLifecycle || {};
-          const fastSnapshot = data.learningSnapshotFast || {};
-          const learning = data.learningInsights || {};
-          const point = {
-            ts: new Date().toLocaleTimeString(),
-            entryQuality: safeNumber(entryQuality?.sample_report?.avg_entry_quality_score_v2),
-            consensus: safeNumber(consensus?.sample_report?.avg_multi_brain_score),
-            releasedWinRate: safeNumber(lifecycle?.metrics?.win_rate, fastSnapshot?.current_engine_released_wr),
-            buyListPurity: safeNumber(fastSnapshot?.buy_list_purity, learning?.buy_list_purity_score),
-          };
-          return [...prev, point].slice(-24);
-        });
       }
     };
 
@@ -619,7 +678,7 @@ export default function LearningTab({ compact = false }) {
     return () => {
       cancelled = true;
     };
-  }, [showAdvancedSections, advancedLoadedOnce, advancedLoading, resolvedApiBase, data.learningSnapshotFast, data.learningInsights]);
+  }, [showAdvancedSections, advancedLoadedOnce, resolvedApiBase, data.learningSnapshotFast, data.learningInsights]);
 
   const paper = data.paper || {};
   const paperStatus = data.paperStatus || {};
@@ -1674,69 +1733,24 @@ export default function LearningTab({ compact = false }) {
   ];
 
   const advancedStatusFor = (key) => advancedEndpointStatus[key] || {};
-  const advancedCardStatus = (key) => advancedStatusFor(key).loaded ? "loaded" : "pending";
-  const institutionalCards = [
-    {
-      key: "entryQuality",
-      title: "Entry Quality V2",
-      value: metricValue(entryQualityV2?.sample_report?.avg_entry_quality_score_v2),
-      detail: `${safeNumber(entryQualityV2?.sample_report?.rows_scored).toFixed(0)} rows scored`,
-    },
-    {
-      key: "consensus",
-      title: "Multi-Brain Consensus",
-      value: metricValue(multiBrainConsensus?.sample_report?.avg_multi_brain_score),
-      detail: `${safeNumber(multiBrainConsensus?.sample_report?.rows_scored).toFixed(0)} rows scored`,
-    },
-    {
-      key: "learningDataQuality",
-      title: "Learning Data Quality V2",
-      value: metricValue(learningDataQualityV2?.learning_pipeline_health_score, learningDataQualityV2?.learning_data_freshness_score),
-      detail: statusText(learningDataQualityV2?.recommendation),
-    },
-    {
-      key: "tradeLifecycle",
-      title: "Trade Lifecycle Intelligence",
-      value: fmtPct(tradeLifecycleIntel?.metrics?.win_rate),
-      detail: `${safeNumber(tradeLifecycleIntel?.metrics?.closed_trade_count).toFixed(0)} closed trades`,
-    },
-    {
-      key: "policyCompare",
-      title: "Policy Backtest V2",
-      value: statusText(policyCompareV2?.recommendation),
-      detail: `winner ${statusText(policyCompareV2?.winner, "none")}`,
-    },
-    {
-      key: "selfCorrection",
-      title: "Self-Correction V2",
-      value: statusText(selfCorrectionV2?.recommendation),
-      detail: `confidence ${safeNumber(selfCorrectionV2?.confidence).toFixed(2)}`,
-    },
-    {
-      key: "fmpUtilization",
-      title: "FMP Utilization",
-      value: `${safeNumber(fmpUtilization?.current_usage_pct_estimated).toFixed(1)}%`,
-      detail: `target ${safeNumber(fmpUtilization?.target_usage_pct, 70).toFixed(0)}%`,
-    },
-    {
-      key: "jsonlMaintenance",
-      title: "JSONL Maintenance",
-      value: statusText(jsonlMaintenance?.mode, "dry run only"),
-      detail: `${safeNumber((jsonlMaintenance?.target_files || []).length).toFixed(0)} target files`,
-    },
-    {
-      key: "replayCounterfactual",
-      title: "Replay Counterfactual Analysis",
-      value: safeNumber(replayCounterfactual?.counterfactual_row_count).toFixed(0),
-      detail: `${safeNumber(replayCounterfactual?.base_trade_count).toFixed(0)} base trades`,
-    },
-    {
-      key: "marketDataOrchestration",
-      title: "Market Data Orchestration",
-      value: marketDataOrchestration?.overlap_prevention_enabled ? "Overlap guarded" : "Not loaded yet",
-      detail: `broad collection ${marketDataOrchestration?.broad_collection_enabled ? "enabled" : "disabled"}`,
-    },
-  ];
+  const snapshotCards = Array.isArray(advancedSnapshot?.cards) ? advancedSnapshot.cards : [];
+  const institutionalCards = snapshotCards.length > 0
+    ? snapshotCards.map((card) => ({
+      key: card.key,
+      title: card.title,
+      value: card.primary_value || "Unavailable",
+      detail: card.detail_value || card.secondary_value || card.error_reason || "Advanced metrics unavailable or still computing",
+      status: String(card.status || "unavailable").toLowerCase(),
+      secondary: card.secondary_value || "",
+    }))
+    : ADVANCED_METRIC_FALLBACK_CARDS.map((card) => ({
+      key: card.key,
+      title: card.title,
+      value: advancedLoading ? "Loading" : "Unavailable",
+      detail: advancedLoading ? "Fast snapshot request in progress" : "Advanced metrics unavailable or still computing",
+      status: advancedLoading ? "still_computing" : "unavailable",
+      secondary: "",
+    }));
   const combinedInstitutionalTrend = institutionalTrend.length > 0
     ? institutionalTrend
     : timeline.map((point) => ({
@@ -2202,7 +2216,7 @@ export default function LearningTab({ compact = false }) {
 
       <div style={{ ...panelStyle, padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px" }}>
         <div style={{ fontSize: 12, color: "#9fb1cc" }}>
-          Advanced Institutional Metrics load only when expanded.
+          Advanced Institutional Metrics load from a fast snapshot only when expanded.
         </div>
         <button
           type="button"
@@ -2228,24 +2242,29 @@ export default function LearningTab({ compact = false }) {
           <div>
             <h3 style={{ margin: 0 }}>Advanced Institutional Metrics</h3>
             <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 4 }}>
-              Lazy-loaded diagnostics; unavailable endpoints stay local to their card.
+              Snapshot-first diagnostics; slow cards show stale, unavailable, or still-computing status without blocking the tab.
             </div>
           </div>
           <div style={{ fontSize: 11, color: advancedLoading ? "#ffd2b4" : "#a9f8d1" }}>
-            {advancedLoading ? "Loading metrics..." : (advancedLoadedOnce ? "Metrics loaded" : "Not loaded yet")}
+            {advancedLoading ? "Loading fast snapshot..." : (advancedLoadedOnce ? (advancedSnapshotMessage || "Metrics snapshot loaded") : "Snapshot not requested")}
           </div>
         </div>
+        {advancedLoadedOnce && advancedSnapshot?.cards_failed > 0 ? (
+          <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 8, border: "1px solid #6b5630", background: "rgba(88, 62, 22, 0.24)", color: "#ffe2a1", fontSize: 12 }}>
+            Advanced metrics unavailable or still computing for {advancedSnapshot.cards_failed} card{advancedSnapshot.cards_failed === 1 ? "" : "s"}. Loaded and stale cards remain visible.
+          </div>
+        ) : null}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10, marginBottom: 12 }}>
           {institutionalCards.map((card) => {
-            const status = advancedCardStatus(card.key);
+            const status = card.status || "unavailable";
             const endpoint = advancedStatusFor(card.key);
             return (
               <InstitutionalMetricCard
                 key={card.key}
                 title={card.title}
-                value={status === "loaded" ? card.value : "Not loaded yet"}
-                detail={status === "loaded" ? card.detail : statusText(endpoint.error)}
-                status={status}
+                value={card.value}
+                detail={card.detail || statusText(endpoint.error, "Advanced metrics unavailable or still computing")}
+                status={card.status || status}
               />
             );
           })}

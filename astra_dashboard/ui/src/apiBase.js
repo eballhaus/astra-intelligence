@@ -13,7 +13,7 @@ function defaultApiBaseFromWindow() {
     const proto = String(window.location.protocol || "http:");
     const host = String(window.location.hostname || "127.0.0.1");
     if (!host || host === "localhost" || host === "127.0.0.1") return DEFAULT_API_BASE;
-    return `${proto}//${window.location.host}`;
+    return `${proto}//${host}:8000`;
   } catch (_e) {
     return DEFAULT_API_BASE;
   }

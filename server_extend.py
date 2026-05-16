@@ -232,6 +232,31 @@ except Exception:
     KnowledgeAssimilationPlanner = _AcceleratedLearningFallback  # type: ignore
     MultiBrainConsensusReplayEngine = _AcceleratedLearningFallback  # type: ignore
     ParallelReplayOrchestrator = _AcceleratedLearningFallback  # type: ignore
+try:
+    from engine.advanced_metrics_snapshot import AdvancedMetricsSnapshot
+except Exception:
+    class AdvancedMetricsSnapshot:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def snapshot(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "fast_snapshot_read_only",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "advanced_metrics_snapshot_v1": True,
+                "cards": [],
+                "unavailable_cards": [],
+                "stale_cards": [],
+                "total_cards": 0,
+                "cards_loaded": 0,
+                "cards_failed": 0,
+                "load_strategy": "fallback",
+                "recommended_action": "inspect_advanced_metrics_snapshot_import",
+            }
 from engine.intraday_engine import IntradaySignalEngine
 from engine.position_tracker import PositionTracker
 from engine.paper_autopilot import PaperAutopilotEngine
@@ -803,6 +828,7 @@ PARALLEL_REPLAY_ORCHESTRATOR = ParallelReplayOrchestrator(
     replay_farm=HISTORICAL_REPLAY_FARM,
     consensus_replay=MULTI_BRAIN_CONSENSUS_REPLAY_ENGINE,
 )
+ADVANCED_METRICS_SNAPSHOT = AdvancedMetricsSnapshot(max_workers=16)
 POLICY_BACKTEST_ENGINE = PolicyBacktestEngine(state_dir=STATE)
 REPLAY_COUNTERFACTUAL_ENGINE = ReplayCounterfactualEngine(state_dir=STATE)
 LEARNING_DATA_QUALITY_MONITOR = LearningDataQualityMonitor(state_dir=STATE)
@@ -29148,6 +29174,25 @@ def walk_forward_validation_status_v1():
 def performance_optimization_status_v1():
     try:
         payload = PERFORMANCE_OPTIMIZATION_PLANNER.status()
+        snapshot = getattr(ADVANCED_METRICS_SNAPSHOT, "_snapshot", None)
+        if isinstance(snapshot, dict):
+            cards = list(snapshot.get("cards") or [])
+            payload["advanced_metrics_cards_total"] = int(snapshot.get("total_cards") or len(cards))
+            payload["advanced_metrics_cards_loaded"] = int(snapshot.get("cards_loaded") or 0)
+            payload["advanced_metrics_cards_failed"] = int(snapshot.get("cards_failed") or 0)
+            payload["timeout_cards"] = list(snapshot.get("timeout_cards") or [])
+            payload["slowest_card"] = max(
+                [
+                    {
+                        "key": str((card or {}).get("key") or ""),
+                        "elapsed_seconds": _to_float((card or {}).get("elapsed_seconds"), 0.0),
+                    }
+                    for card in cards
+                    if isinstance(card, dict)
+                ],
+                key=lambda row: row.get("elapsed_seconds", 0.0),
+                default=None,
+            )
         payload["performance_optimization_status_v1"] = True
         payload["writes_files"] = False
         payload["api_calls_used"] = 0
@@ -29399,6 +29444,243 @@ def accelerated_learning_status_v1():
             "confidence_score": 0,
             "next_recommended_action": "inspect_accelerated_learning_status_error",
             "error": f"accelerated_learning_status_unavailable: {exc}",
+        }
+
+
+def _advanced_metric_value(value, fallback="n/a"):
+    if value is None:
+        return str(fallback)
+    try:
+        n = float(value)
+        if n.is_integer():
+            return str(int(n))
+        return f"{n:.2f}"
+    except Exception:
+        text = str(value or "").strip()
+        return text.replace("_", " ") if text else str(fallback)
+
+
+def _advanced_metric_card_specs():
+    def card(primary, secondary="", detail="", status="loaded", error_reason=""):
+        return {
+            "status": status,
+            "primary_value": _advanced_metric_value(primary),
+            "secondary_value": _advanced_metric_value(secondary, ""),
+            "detail_value": _advanced_metric_value(detail, ""),
+            "error_reason": error_reason,
+        }
+
+    return [
+        {
+            "key": "entryQuality",
+            "title": "Entry Quality V2",
+            "source_endpoint": "/api/entry_quality_status_v2",
+            "provider": lambda: entry_quality_status_v2(),
+            "extractor": lambda p: card(
+                (p.get("sample_report") or {}).get("avg_entry_quality_score_v2"),
+                f"{_advanced_metric_value((p.get('sample_report') or {}).get('rows_scored'), 0)} rows scored",
+                p.get("mode", "shadow scoring"),
+            ),
+        },
+        {
+            "key": "consensus",
+            "title": "Multi-Brain Consensus",
+            "source_endpoint": "/api/multi_brain_consensus_status_v1",
+            "provider": lambda: multi_brain_consensus_status_v1(),
+            "extractor": lambda p: card(
+                (p.get("sample_report") or {}).get("avg_multi_brain_score"),
+                f"{_advanced_metric_value((p.get('sample_report') or {}).get('rows_scored'), 0)} rows scored",
+                p.get("mode", "shadow consensus"),
+            ),
+        },
+        {
+            "key": "learningDataQuality",
+            "title": "Learning Data Quality V2",
+            "source_endpoint": "/api/learning_data_quality_v1",
+            "provider": lambda: learning_data_quality_v1(force_refresh=False),
+            "extractor": lambda p: card(
+                p.get("learning_pipeline_health_score", p.get("learning_data_freshness_score")),
+                p.get("recommendation", "diagnostic"),
+                f"{_advanced_metric_value(p.get('total_rows_available'), 0)} rows available",
+            ),
+        },
+        {
+            "key": "tradeLifecycle",
+            "title": "Trade Lifecycle Intelligence",
+            "source_endpoint": "/api/trade_lifecycle_status_v1",
+            "provider": lambda: trade_lifecycle_status_v1(force_refresh=False),
+            "extractor": lambda p: card(
+                (p.get("metrics") or {}).get("win_rate", p.get("win_rate")),
+                f"{_advanced_metric_value((p.get('metrics') or {}).get('closed_trade_count', p.get('closed_trade_count')), 0)} closed trades",
+                p.get("mode", "shadow lifecycle"),
+            ),
+        },
+        {
+            "key": "policyCompare",
+            "title": "Policy Backtest V2",
+            "source_endpoint": "/api/policy_compare_v1",
+            "provider": lambda: policy_compare_v1(force_refresh=False),
+            "extractor": lambda p: card(
+                p.get("recommendation", p.get("winner", "shadow analysis")),
+                f"winner {_advanced_metric_value(p.get('winner'), 'none')}",
+                p.get("mode", "shadow analysis"),
+            ),
+        },
+        {
+            "key": "selfCorrection",
+            "title": "Self-Correction V2",
+            "source_endpoint": "/api/self_correction_recommendations_v1",
+            "provider": lambda: self_correction_recommendations_v1(force_refresh=False),
+            "extractor": lambda p: card(
+                p.get("recommendation", "shadow recommendations"),
+                f"{_advanced_metric_value(len(p.get('recommendation_priority') or []), 0)} priorities",
+                p.get("mode", "shadow recommendation"),
+            ),
+        },
+        {
+            "key": "fmpUtilization",
+            "title": "FMP Utilization",
+            "source_endpoint": "/api/fmp_utilization_status_v1",
+            "provider": lambda: fmp_utilization_status_v1(force_refresh=False),
+            "extractor": lambda p: card(
+                f"{_advanced_metric_value(p.get('current_usage_pct_estimated'), 0)}%",
+                f"target {_advanced_metric_value(p.get('target_usage_pct'), 70)}%",
+                p.get("recommendation", p.get("mode", "optimizer authority")),
+            ),
+        },
+        {
+            "key": "jsonlMaintenance",
+            "title": "JSONL Maintenance",
+            "source_endpoint": "/api/jsonl_maintenance_status_v1",
+            "provider": lambda: jsonl_maintenance_status_v1(),
+            "extractor": lambda p: card(
+                p.get("mode", "dry run only"),
+                f"{_advanced_metric_value(len(p.get('target_files') or []), 0)} target files",
+                "destructive repairs disabled",
+            ),
+        },
+        {
+            "key": "replayCounterfactual",
+            "title": "Replay Counterfactual Analysis",
+            "source_endpoint": "/api/replay_counterfactual_status_v1",
+            "provider": lambda: replay_counterfactual_status_v1(force_refresh=False),
+            "extractor": lambda p: card(
+                p.get("counterfactual_row_count", p.get("synthetic_examples_planned")),
+                f"{_advanced_metric_value(p.get('base_trade_count'), 0)} base trades",
+                p.get("recommended_learning_use", p.get("mode", "shadow analysis")),
+            ),
+        },
+        {
+            "key": "marketDataOrchestration",
+            "title": "Market Data Orchestration",
+            "source_endpoint": "/api/market_data_orchestration_status_v1",
+            "provider": lambda: market_data_orchestration_status_v1(),
+            "extractor": lambda p: card(
+                "Overlap guarded" if p.get("overlap_prevention_enabled") else "Planning",
+                f"broad collection {'enabled' if p.get('broad_collection_enabled') else 'disabled'}",
+                f"{_advanced_metric_value(p.get('broad_universe_target_count'), 0)} broad target",
+            ),
+        },
+        {
+            "key": "acceleratedLearning",
+            "title": "Accelerated Learning",
+            "source_endpoint": "/api/accelerated_learning_status_v1",
+            "provider": lambda: accelerated_learning_status_v1(),
+            "extractor": lambda p: card(
+                p.get("trade_experiences_generated"),
+                f"{_advanced_metric_value(p.get('market_years_equivalent'), 0)} market years",
+                f"{_advanced_metric_value(p.get('learning_multiplier'), 1)}x multiplier",
+            ),
+        },
+        {
+            "key": "consensusReplay",
+            "title": "Consensus Replay",
+            "source_endpoint": "/api/multi_brain_consensus_replay_status_v1",
+            "provider": lambda: multi_brain_consensus_replay_status_v1(),
+            "extractor": lambda p: card(
+                p.get("average_consensus_score"),
+                f"{_advanced_metric_value(p.get('consensus_replays_processed'), 0)} replays",
+                f"{_advanced_metric_value(len(p.get('unavailable_brains') or []), 0)} unavailable brains",
+            ),
+        },
+        {
+            "key": "parallelReplay",
+            "title": "Parallel Replay Orchestrator",
+            "source_endpoint": "/api/parallel_replay_orchestrator_status_v1",
+            "provider": lambda: parallel_replay_orchestrator_status_v1(),
+            "extractor": lambda p: card(
+                f"{_advanced_metric_value(p.get('estimated_wall_clock_speedup'), 1)}x",
+                f"{_advanced_metric_value(p.get('recommended_parallel_workers'), 1)}/{_advanced_metric_value(p.get('max_parallel_workers'), 4)} workers",
+                "hot paths protected" if p.get("blocks_hot_paths") is False else "check hot paths",
+            ),
+        },
+        {
+            "key": "marketKnowledge",
+            "title": "Market Knowledge",
+            "source_endpoint": "/api/market_knowledge_status_v1",
+            "provider": lambda: market_knowledge_status_v1(),
+            "extractor": lambda p: card(
+                f"{_advanced_metric_value(p.get('knowledge_coverage_pct'), 0)}%",
+                f"{_advanced_metric_value(p.get('concepts_available'), 0)}/{_advanced_metric_value(p.get('concepts_total'), 0)} concepts",
+                p.get("mode", "local knowledge"),
+            ),
+        },
+        {
+            "key": "walkForward",
+            "title": "Walk-Forward Validation",
+            "source_endpoint": "/api/walk_forward_validation_status_v1",
+            "provider": lambda: walk_forward_validation_status_v1(),
+            "extractor": lambda p: card(
+                p.get("walk_forward_score"),
+                f"stability {_advanced_metric_value(p.get('stability_score'), 0)}",
+                p.get("overfit_risk", p.get("mode", "shadow validation")),
+            ),
+        },
+        {
+            "key": "performanceOptimization",
+            "title": "Performance Optimization",
+            "source_endpoint": "/api/performance_optimization_status_v1",
+            "provider": lambda: performance_optimization_status_v1(),
+            "extractor": lambda p: card(
+                f"{_advanced_metric_value(p.get('cache_hit_rate_estimate'), 0)}%",
+                f"target {_advanced_metric_value(p.get('advanced_metrics_snapshot_load_target_seconds'), 5)}s snapshot",
+                "snapshot-first advanced metrics",
+            ),
+        },
+    ]
+
+
+@router.get("/api/advanced_metrics_snapshot_v1")
+def advanced_metrics_snapshot_v1(force_refresh: bool = Query(False)):
+    try:
+        payload = ADVANCED_METRICS_SNAPSHOT.snapshot(
+            _advanced_metric_card_specs(),
+            force_refresh=force_refresh,
+        )
+        payload["advanced_metrics_snapshot_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "fast_snapshot_read_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "advanced_metrics_snapshot_v1": True,
+            "snapshot_generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "snapshot_age_seconds": 0,
+            "cards": [],
+            "unavailable_cards": [],
+            "stale_cards": [],
+            "total_cards": 0,
+            "cards_loaded": 0,
+            "cards_failed": 0,
+            "load_strategy": "fallback_error",
+            "recommended_action": "show_advanced_metrics_unavailable",
+            "error": f"advanced_metrics_snapshot_unavailable: {exc}",
         }
 
 
