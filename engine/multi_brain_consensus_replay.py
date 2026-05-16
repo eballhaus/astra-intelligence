@@ -7,6 +7,10 @@ try:
     from engine.multi_brain_consensus import score_multi_brain
 except Exception:
     score_multi_brain=None
+try:
+    from engine.psychology_brain import score_psychology
+except Exception:
+    score_psychology=None
 VERSION="1.0.0"
 def _now_iso(): return datetime.now(UTC).isoformat().replace("+00:00","Z")
 def _to_float(v:Any,d:float=0.0)->float:
@@ -14,7 +18,7 @@ def _to_float(v:Any,d:float=0.0)->float:
     except Exception: return d
 class MultiBrainConsensusReplayEngine:
     requested_brains=["Momentum Brain","Volume Brain","Technical Brain","Risk Brain","Psychology Brain","Catalyst Brain","Macro Brain","Exit Brain","Position Sizing Brain"]
-    mapped_brains={"Momentum Brain":"momentum","Volume Brain":"volume","Technical Brain":"technical","Risk Brain":"risk","Catalyst Brain":"catalyst_fundamental","Macro Brain":"regime","Exit Brain":"follow_through","Position Sizing Brain":"entry_quality"}
+    mapped_brains={"Momentum Brain":"momentum","Volume Brain":"volume","Technical Brain":"technical","Risk Brain":"risk","Psychology Brain":"psychology","Catalyst Brain":"catalyst_fundamental","Macro Brain":"regime","Exit Brain":"follow_through","Position Sizing Brain":"entry_quality"}
     def __init__(self,state_dir:str="state")->None:
         self.state_dir=str(state_dir or "state"); self.paths=[os.path.join(self.state_dir,p) for p in ("candidate_decision_ledger_v1.jsonl","trade_lifecycle_v1.jsonl","outcome_labels_v1.jsonl")]
     def _rows(self,limit:int=500)->list[dict[str,Any]]:
@@ -35,6 +39,9 @@ class MultiBrainConsensusReplayEngine:
             if score_multi_brain:
                 res=score_multi_brain(row)
                 scores=dict(res.get("brain_scores") or {})
+                if score_psychology:
+                    try: scores["psychology"]=_to_float(score_psychology(row).get("psychology_score"),50.0)
+                    except Exception: scores["psychology"]=50.0
                 individual={}
                 for display,key in self.mapped_brains.items():
                     val=_to_float(scores.get(key),50.0); individual[display]=round(val,3); brain_values[display].append(val)

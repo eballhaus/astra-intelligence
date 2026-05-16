@@ -307,6 +307,32 @@ except Exception:
     ResearchNarratives = _AutonomousResearchFallback  # type: ignore
     CardExplanationEngine = _AutonomousResearchFallback  # type: ignore
 try:
+    from engine.replay_to_learning_integration import ReplayToLearningIntegration
+    from engine.entry_quality_engine_v3 import EntryQualityEngineV3
+    from engine.promotion_gate_refinement import PromotionGateRefinement
+    from engine.multi_brain_weight_learning import MultiBrainWeightLearning
+    from engine.outcome_labeling_engine import OutcomeLabelingEngine
+    from engine.psychology_brain import PsychologyBrain
+    from engine.idle_replay_worker import IdleReplayWorkerPlanner
+except Exception:
+    class _LearningActivationFallback:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "shadow_learning_activation_unavailable", "local_only": True, "writes_files": False, "api_calls_used": 0, "confidence_score": 0, "next_recommended_action": "inspect_learning_activation_import"}
+
+        def rows(self):
+            return []
+
+    ReplayToLearningIntegration = _LearningActivationFallback  # type: ignore
+    EntryQualityEngineV3 = _LearningActivationFallback  # type: ignore
+    PromotionGateRefinement = _LearningActivationFallback  # type: ignore
+    MultiBrainWeightLearning = _LearningActivationFallback  # type: ignore
+    OutcomeLabelingEngine = _LearningActivationFallback  # type: ignore
+    PsychologyBrain = _LearningActivationFallback  # type: ignore
+    IdleReplayWorkerPlanner = _LearningActivationFallback  # type: ignore
+try:
     from engine.snapshot_cache import SnapshotCacheRegistry
 except Exception:
     class SnapshotCacheRegistry:  # type: ignore[override]
@@ -926,6 +952,13 @@ INSTITUTIONAL_ALPHA_LAB = InstitutionalAlphaLab(state_dir=STATE)
 RESEARCH_PORTFOLIO_ALLOCATOR = ResearchPortfolioAllocator(state_dir=STATE)
 RESEARCH_NARRATIVES = ResearchNarratives(state_dir=STATE)
 CARD_EXPLANATION_ENGINE = CardExplanationEngine(state_dir=STATE)
+REPLAY_TO_LEARNING_INTEGRATION = ReplayToLearningIntegration(state_dir=STATE)
+ENTRY_QUALITY_ENGINE_V3 = EntryQualityEngineV3(state_dir=STATE)
+PROMOTION_GATE_REFINEMENT = PromotionGateRefinement(state_dir=STATE)
+MULTI_BRAIN_WEIGHT_LEARNING = MultiBrainWeightLearning(state_dir=STATE)
+OUTCOME_LABELING_ENGINE = OutcomeLabelingEngine(state_dir=STATE)
+PSYCHOLOGY_BRAIN = PsychologyBrain(state_dir=STATE)
+IDLE_REPLAY_WORKER_PLANNER = IdleReplayWorkerPlanner(state_dir=STATE)
 SNAPSHOT_CACHE_REGISTRY = SnapshotCacheRegistry(state_dir=STATE)
 STORAGE_OPTIMIZER = StorageOptimizer(state_dir=STATE)
 SQLITE_QUERY_INDEX = SQLiteQueryIndex(state_dir=STATE)
@@ -29336,6 +29369,20 @@ def performance_optimization_status_v1():
         payload["parquet_duckdb_status"] = analytics_status.get("duckdb_status")
         payload["estimated_dashboard_load_improvement"] = storage_status.get("estimated_dashboard_load_improvement")
         payload["estimated_learning_tab_load_improvement"] = storage_status.get("estimated_learning_tab_load_improvement")
+        try:
+            learning_activation = learning_activation_status_v1()
+            payload["learning_activation_health"] = {
+                "enabled": learning_activation.get("enabled"),
+                "mode": learning_activation.get("mode"),
+                "entry_quality_v3_score": learning_activation.get("entry_quality_v3_score"),
+                "replay_rows_available": (learning_activation.get("replay_to_learning_status") or {}).get("replay_rows_available"),
+                "labels_created_shadow": (learning_activation.get("outcome_labeling_status") or {}).get("labels_created_shadow"),
+                "psychology_brain_available": (learning_activation.get("psychology_brain_status") or {}).get("available"),
+                "api_calls_used": learning_activation.get("api_calls_used", 0),
+                "blocks_hot_paths": learning_activation.get("blocks_hot_paths", False),
+            }
+        except Exception:
+            payload["learning_activation_health"] = {"status": "unavailable"}
         payload["performance_optimization_status_v1"] = True
         payload["writes_files"] = False
         payload["api_calls_used"] = 0
@@ -29726,6 +29773,32 @@ def _advanced_metric_value(value, fallback="n/a"):
         return text.replace("_", " ") if text else str(fallback)
 
 
+def _learning_activation_candidate_rows(limit=250):
+    rows = []
+    try:
+        rows.extend([dict(r) for r in (_rows_for_top_buys("stocks") or []) if isinstance(r, dict)])
+        rows.extend([dict(r) for r in (_rows_for_top_buys("crypto") or []) if isinstance(r, dict)])
+    except Exception:
+        pass
+    try:
+        rows.extend([dict(r) for r in REPLAY_TO_LEARNING_INTEGRATION.rows() if isinstance(r, dict)])
+    except Exception:
+        pass
+    deduped = []
+    seen = set()
+    for row in rows:
+        key = (
+            str(row.get("symbol") or row.get("ticker") or "").upper(),
+            str(row.get("timestamp") or row.get("generated_at") or row.get("entry_time") or ""),
+            str(row.get("outcome_label") or row.get("label") or row.get("prediction") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped[-max(1, int(_to_float(limit, 250))):]
+
+
 def _advanced_metric_card_specs():
     def card(primary, secondary="", detail="", status="loaded", error_reason=""):
         return {
@@ -29749,6 +29822,17 @@ def _advanced_metric_card_specs():
             ),
         },
         {
+            "key": "entryQualityV3",
+            "title": "Entry Quality V3",
+            "source_endpoint": "/api/learning_activation_status_v1",
+            "provider": lambda: ENTRY_QUALITY_ENGINE_V3.status(rows=_learning_activation_candidate_rows()),
+            "extractor": lambda p: card(
+                p.get("entry_quality_v3_score"),
+                f"{_advanced_metric_value(p.get('rows_scored_shadow'), 0)} rows scored",
+                p.get("mode", "shadow entry quality v3"),
+            ),
+        },
+        {
             "key": "consensus",
             "title": "Multi-Brain Consensus",
             "source_endpoint": "/api/multi_brain_consensus_status_v1",
@@ -29757,6 +29841,17 @@ def _advanced_metric_card_specs():
                 (p.get("sample_report") or {}).get("avg_multi_brain_score"),
                 f"{_advanced_metric_value((p.get('sample_report') or {}).get('rows_scored'), 0)} rows scored",
                 p.get("mode", "shadow consensus"),
+            ),
+        },
+        {
+            "key": "psychologyBrain",
+            "title": "Psychology Brain",
+            "source_endpoint": "/api/learning_activation_status_v1",
+            "provider": lambda: PSYCHOLOGY_BRAIN.status(rows=_learning_activation_candidate_rows()),
+            "extractor": lambda p: card(
+                p.get("psychology_score"),
+                f"chase risk {_advanced_metric_value(p.get('chase_risk'), 0)}",
+                "available" if p.get("available") else "unavailable",
             ),
         },
         {
@@ -29914,7 +30009,7 @@ def _advanced_metric_card_specs():
             ),
         },
     ]
-    light = {"entryQuality", "consensus", "fmpUtilization", "jsonlMaintenance", "marketKnowledge", "performanceOptimization"}
+    light = {"entryQuality", "entryQualityV3", "consensus", "psychologyBrain", "fmpUtilization", "jsonlMaintenance", "marketKnowledge", "performanceOptimization"}
     medium = {"learningDataQuality", "tradeLifecycle", "marketDataOrchestration", "walkForward"}
     for spec in specs:
         key = str(spec.get("key") or "")
@@ -30950,6 +31045,10 @@ def autonomous_research_status_v1():
         allocator = RESEARCH_PORTFOLIO_ALLOCATOR.status(alpha_lab=alpha)
         narratives = RESEARCH_NARRATIVES.status(alpha_lab=alpha)
         explanations = CARD_EXPLANATION_ENGINE.status()
+        try:
+            learning_activation = learning_activation_status_v1()
+        except Exception:
+            learning_activation = {"enabled": False, "api_calls_used": 0}
         return {
             "enabled": True,
             "version": "1.0.0",
@@ -30985,6 +31084,13 @@ def autonomous_research_status_v1():
                 "allocator": allocator,
                 "narratives": narratives,
                 "card_explanations": explanations,
+                "learning_activation": learning_activation,
+            },
+            "learning_activation_reference": {
+                "enabled": learning_activation.get("enabled"),
+                "mode": learning_activation.get("mode"),
+                "entry_quality_v3_score": learning_activation.get("entry_quality_v3_score"),
+                "api_calls_used": learning_activation.get("api_calls_used", 0),
             },
             "safety": {
                 "shadow_only": True,
@@ -31006,6 +31112,78 @@ def autonomous_research_status_v1():
             "api_calls_used": 0,
             "autonomous_research_status_v1": True,
             "error": f"autonomous_research_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/learning_activation_status_v1")
+def learning_activation_status_v1():
+    try:
+        rows = _learning_activation_candidate_rows()
+        replay_status = REPLAY_TO_LEARNING_INTEGRATION.status()
+        entry_v3 = ENTRY_QUALITY_ENGINE_V3.status(rows=rows)
+        promotion_gate = PROMOTION_GATE_REFINEMENT.status(entry_quality=entry_v3, replay=replay_status)
+        consensus_replay = multi_brain_consensus_replay_status_v1()
+        brain_weights = MULTI_BRAIN_WEIGHT_LEARNING.status(consensus_replay=consensus_replay)
+        labels = OUTCOME_LABELING_ENGINE.status(rows=rows)
+        psychology = PSYCHOLOGY_BRAIN.status(rows=rows)
+        idle_worker = IDLE_REPLAY_WORKER_PLANNER.status()
+        return {
+            "enabled": True,
+            "version": "1.0.0",
+            "mode": "learning_activation_shadow_planning_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "learning_activation_status_v1": True,
+            "replay_to_learning_status": replay_status,
+            "entry_quality_v3_score": entry_v3.get("entry_quality_v3_score", 0),
+            "entry_quality_v3_status": entry_v3,
+            "promotion_gate_status": promotion_gate,
+            "brain_weight_learning_status": brain_weights,
+            "outcome_labeling_status": labels,
+            "psychology_brain_status": psychology,
+            "idle_replay_worker_status": idle_worker,
+            "candidate_rows_scanned_shadow": len(rows),
+            "api_calls_used_by_components": {
+                "replay_to_learning": replay_status.get("api_calls_used", 0),
+                "entry_quality_v3": entry_v3.get("api_calls_used", 0),
+                "promotion_gate": promotion_gate.get("api_calls_used", 0),
+                "brain_weight_learning": brain_weights.get("api_calls_used", 0),
+                "outcome_labeling": labels.get("api_calls_used", 0),
+                "psychology_brain": psychology.get("api_calls_used", 0),
+                "idle_replay_worker": idle_worker.get("api_calls_used", 0),
+            },
+            "live_trading_changed": False,
+            "rankings_top_buys_strategy_changed": False,
+            "adaptive_policy_mode": "shadow_only",
+            "blocks_hot_paths": False,
+            "confidence_score": round(
+                (
+                    _to_float(replay_status.get("integration_confidence"), 0)
+                    + _to_float(entry_v3.get("confidence_score"), 0)
+                    + _to_float(promotion_gate.get("confidence_score"), 0)
+                    + _to_float(brain_weights.get("weighting_confidence"), 0)
+                    + _to_float(labels.get("label_confidence"), 0)
+                    + _to_float(psychology.get("confidence_score"), 0)
+                )
+                / 6.0,
+                3,
+            ),
+            "next_recommended_action": "review_shadow_learning_activation_outputs_before_any_operator_approved_policy_change",
+        }
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "learning_activation_shadow_planning_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "learning_activation_status_v1": True,
+            "live_trading_changed": False,
+            "adaptive_policy_mode": "shadow_only",
+            "next_recommended_action": "inspect_learning_activation_status_error",
+            "error": f"learning_activation_status_unavailable: {exc}",
         }
 
 
