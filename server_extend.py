@@ -207,6 +207,31 @@ except Exception:
 
         def status(self, *args, **kwargs):
             return {"enabled": False, "version": "1.0.0", "mode": "local_knowledge_aware_explanation_reporting_only", "local_only": True, "writes_files": False, "api_calls_used": 0, "knowledge_explainer_status_v1": True, "confidence_score": 0, "next_recommended_action": "inspect_knowledge_explainer_import"}
+try:
+    from engine.historical_replay_farm import HistoricalReplayFarm
+    from engine.massive_scenario_generator import MassiveScenarioGenerator
+    from engine.regime_stress_testing import RegimeStressTestingEngine
+    from engine.monte_carlo_simulator import MonteCarloOutcomeSimulator
+    from engine.learning_prioritization_engine import LearningPrioritizationEngine
+    from engine.knowledge_assimilation_planner import KnowledgeAssimilationPlanner
+    from engine.multi_brain_consensus_replay import MultiBrainConsensusReplayEngine
+    from engine.parallel_replay_orchestrator import ParallelReplayOrchestrator
+except Exception:
+    class _AcceleratedLearningFallback:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "shadow_planning_only", "local_only": True, "writes_files": False, "api_calls_used": 0, "confidence_score": 0, "next_recommended_action": "inspect_accelerated_learning_import"}
+
+    HistoricalReplayFarm = _AcceleratedLearningFallback  # type: ignore
+    MassiveScenarioGenerator = _AcceleratedLearningFallback  # type: ignore
+    RegimeStressTestingEngine = _AcceleratedLearningFallback  # type: ignore
+    MonteCarloOutcomeSimulator = _AcceleratedLearningFallback  # type: ignore
+    LearningPrioritizationEngine = _AcceleratedLearningFallback  # type: ignore
+    KnowledgeAssimilationPlanner = _AcceleratedLearningFallback  # type: ignore
+    MultiBrainConsensusReplayEngine = _AcceleratedLearningFallback  # type: ignore
+    ParallelReplayOrchestrator = _AcceleratedLearningFallback  # type: ignore
 from engine.intraday_engine import IntradaySignalEngine
 from engine.position_tracker import PositionTracker
 from engine.paper_autopilot import PaperAutopilotEngine
@@ -759,6 +784,24 @@ KNOWLEDGE_EXPLAINER = KnowledgeAwareExplanationEngine(
     state_dir=STATE,
     knowledge_base=MARKET_KNOWLEDGE_BASE,
     scenario_library=HISTORICAL_SCENARIO_LIBRARY,
+)
+HISTORICAL_REPLAY_FARM = HistoricalReplayFarm(state_dir=STATE)
+MASSIVE_SCENARIO_GENERATOR = MassiveScenarioGenerator(state_dir=STATE)
+REGIME_STRESS_TESTING_ENGINE = RegimeStressTestingEngine(state_dir=STATE)
+MONTE_CARLO_SIMULATOR = MonteCarloOutcomeSimulator(state_dir=STATE)
+LEARNING_PRIORITIZATION_ENGINE = LearningPrioritizationEngine(state_dir=STATE)
+MULTI_BRAIN_CONSENSUS_REPLAY_ENGINE = MultiBrainConsensusReplayEngine(state_dir=STATE)
+KNOWLEDGE_ASSIMILATION_PLANNER = KnowledgeAssimilationPlanner(
+    state_dir=STATE,
+    knowledge_base=MARKET_KNOWLEDGE_BASE,
+    scenario_library=HISTORICAL_SCENARIO_LIBRARY,
+    replay_farm=HISTORICAL_REPLAY_FARM,
+    consensus_replay=MULTI_BRAIN_CONSENSUS_REPLAY_ENGINE,
+)
+PARALLEL_REPLAY_ORCHESTRATOR = ParallelReplayOrchestrator(
+    state_dir=STATE,
+    replay_farm=HISTORICAL_REPLAY_FARM,
+    consensus_replay=MULTI_BRAIN_CONSENSUS_REPLAY_ENGINE,
 )
 POLICY_BACKTEST_ENGINE = PolicyBacktestEngine(state_dir=STATE)
 REPLAY_COUNTERFACTUAL_ENGINE = ReplayCounterfactualEngine(state_dir=STATE)
@@ -29236,6 +29279,126 @@ def knowledge_explainer_status_v1():
             "knowledge_explainer_status_v1": True,
             "next_recommended_action": "inspect_knowledge_explainer_error",
             "error": f"knowledge_explainer_status_unavailable: {exc}",
+        }
+
+
+def _safe_status(engine, flag: str, unavailable: str):
+    try:
+        payload = engine.status()
+        payload[flag] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_planning_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "confidence_score": 0,
+            flag: True,
+            "next_recommended_action": f"inspect_{unavailable}_error",
+            "error": f"{unavailable}_unavailable: {exc}",
+        }
+
+
+@router.get("/api/historical_replay_farm_status_v1")
+def historical_replay_farm_status_v1():
+    return _safe_status(HISTORICAL_REPLAY_FARM, "historical_replay_farm_status_v1", "historical_replay_farm")
+
+
+@router.get("/api/massive_scenario_generator_status_v1")
+def massive_scenario_generator_status_v1():
+    return _safe_status(MASSIVE_SCENARIO_GENERATOR, "massive_scenario_generator_status_v1", "massive_scenario_generator")
+
+
+@router.get("/api/regime_stress_testing_status_v1")
+def regime_stress_testing_status_v1():
+    return _safe_status(REGIME_STRESS_TESTING_ENGINE, "regime_stress_testing_status_v1", "regime_stress_testing")
+
+
+@router.get("/api/monte_carlo_simulator_status_v1")
+def monte_carlo_simulator_status_v1():
+    return _safe_status(MONTE_CARLO_SIMULATOR, "monte_carlo_simulator_status_v1", "monte_carlo_simulator")
+
+
+@router.get("/api/learning_prioritization_status_v1")
+def learning_prioritization_status_v1():
+    return _safe_status(LEARNING_PRIORITIZATION_ENGINE, "learning_prioritization_status_v1", "learning_prioritization")
+
+
+@router.get("/api/knowledge_assimilation_status_v1")
+def knowledge_assimilation_status_v1():
+    return _safe_status(KNOWLEDGE_ASSIMILATION_PLANNER, "knowledge_assimilation_status_v1", "knowledge_assimilation")
+
+
+@router.get("/api/multi_brain_consensus_replay_status_v1")
+def multi_brain_consensus_replay_status_v1():
+    return _safe_status(MULTI_BRAIN_CONSENSUS_REPLAY_ENGINE, "multi_brain_consensus_replay_status_v1", "multi_brain_consensus_replay")
+
+
+@router.get("/api/parallel_replay_orchestrator_status_v1")
+def parallel_replay_orchestrator_status_v1():
+    return _safe_status(PARALLEL_REPLAY_ORCHESTRATOR, "parallel_replay_orchestrator_status_v1", "parallel_replay_orchestrator")
+
+
+@router.get("/api/accelerated_learning_status_v1")
+def accelerated_learning_status_v1():
+    try:
+        farm = HISTORICAL_REPLAY_FARM.status()
+        scenarios = MASSIVE_SCENARIO_GENERATOR.status()
+        stress = REGIME_STRESS_TESTING_ENGINE.status()
+        monte = MONTE_CARLO_SIMULATOR.status()
+        priorities = LEARNING_PRIORITIZATION_ENGINE.status()
+        assimilation = KNOWLEDGE_ASSIMILATION_PLANNER.status()
+        consensus = MULTI_BRAIN_CONSENSUS_REPLAY_ENGINE.status()
+        orchestrator = PARALLEL_REPLAY_ORCHESTRATOR.status()
+        return {
+            "enabled": True,
+            "version": "1.0.0",
+            "mode": "accelerated_learning_dashboard_reporting_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "accelerated_learning_status_v1": True,
+            "trade_experiences_generated": farm.get("estimated_trade_experiences_generated", 0),
+            "replay_scenarios_planned": farm.get("replay_scenarios_planned", 0),
+            "market_years_equivalent": assimilation.get("estimated_market_years_equivalent", 0),
+            "learning_multiplier": assimilation.get("effective_learning_multiplier", 1),
+            "parallel_speedup_estimate": orchestrator.get("estimated_wall_clock_speedup", 1),
+            "top_weaknesses": priorities.get("top_learning_priorities", [])[:5],
+            "best_performing_brains": [consensus.get("best_brain_accuracy", {})],
+            "weakest_performing_brains": [consensus.get("weakest_brain_accuracy", {})],
+            "scenario_categories": scenarios.get("scenario_categories", []),
+            "weakest_regimes": stress.get("weakest_regimes", []),
+            "risk_of_ruin": monte.get("risk_of_ruin", 0),
+            "parallel_replay_safety": {
+                "blocks_hot_paths": orchestrator.get("blocks_hot_paths", False),
+                "recommended_parallel_workers": orchestrator.get("recommended_parallel_workers", 1),
+                "max_parallel_workers": orchestrator.get("max_parallel_workers", 4),
+                "cpu_safety_limit_pct": orchestrator.get("cpu_safety_limit_pct", 70),
+                "memory_safety_limit_pct": orchestrator.get("memory_safety_limit_pct", 70),
+                "falls_back_to_sequential": orchestrator.get("falls_back_to_sequential", True),
+            },
+            "adaptive_policy_mode": "shadow_only",
+            "live_order_execution_enabled": False,
+            "confidence_score": min(95.0, float(assimilation.get("confidence_score", 50) or 50)),
+            "next_recommended_action": "review_accelerated_learning_plan_then_run_only_operator_approved_shadow_batches",
+        }
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "accelerated_learning_dashboard_reporting_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "accelerated_learning_status_v1": True,
+            "confidence_score": 0,
+            "next_recommended_action": "inspect_accelerated_learning_status_error",
+            "error": f"accelerated_learning_status_unavailable: {exc}",
         }
 
 
