@@ -158,6 +158,55 @@ except Exception:
 
         def status(self, *args, **kwargs):
             return {"enabled": False, "version": "1.0.0", "mode": "performance_optimization_planning_only", "local_only": True, "writes_files": False, "api_calls_used": 0, "performance_optimization_status_v1": True, "confidence_score": 0, "next_recommended_action": "inspect_performance_optimization_import"}
+try:
+    from engine.market_knowledge_base import MarketKnowledgeBase
+except Exception:
+    class MarketKnowledgeBase:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            self.concepts = {}
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "local_market_knowledge_reporting_only", "local_only": True, "writes_files": False, "api_calls_used": 0, "market_knowledge_status_v1": True, "confidence_score": 0, "next_recommended_action": "inspect_market_knowledge_import"}
+
+try:
+    from engine.historical_scenario_library import HistoricalScenarioLibrary
+except Exception:
+    class HistoricalScenarioLibrary:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            self.scenarios = []
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "local_historical_scenario_reporting_only", "local_only": True, "writes_files": False, "api_calls_used": 0, "historical_scenario_status_v1": True, "confidence_score": 0, "next_recommended_action": "inspect_historical_scenario_import"}
+
+try:
+    from engine.regime_event_tagger import RegimeEventTagger
+except Exception:
+    class RegimeEventTagger:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "local_regime_event_tagging_reporting_only", "local_only": True, "writes_files": False, "api_calls_used": 0, "regime_event_tagging_status_v1": True, "confidence_score": 0, "next_recommended_action": "inspect_regime_event_tagger_import"}
+
+try:
+    from engine.contextual_learning_memory import ContextualLearningMemory
+except Exception:
+    class ContextualLearningMemory:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "local_contextual_learning_memory_reporting_only", "local_only": True, "writes_files": False, "api_calls_used": 0, "contextual_learning_memory_status_v1": True, "confidence_score": 0, "next_recommended_action": "inspect_contextual_learning_memory_import"}
+
+try:
+    from engine.knowledge_explainer import KnowledgeAwareExplanationEngine
+except Exception:
+    class KnowledgeAwareExplanationEngine:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "local_knowledge_aware_explanation_reporting_only", "local_only": True, "writes_files": False, "api_calls_used": 0, "knowledge_explainer_status_v1": True, "confidence_score": 0, "next_recommended_action": "inspect_knowledge_explainer_import"}
 from engine.intraday_engine import IntradaySignalEngine
 from engine.position_tracker import PositionTracker
 from engine.paper_autopilot import PaperAutopilotEngine
@@ -702,6 +751,15 @@ POSITION_SIZING_RISK_ENGINE = PositionSizingRiskEngine(state_dir=STATE)
 MACRO_CONTEXT_ENGINE = MacroCrossAssetContextEngine(state_dir=STATE)
 WALK_FORWARD_VALIDATION_ENGINE = WalkForwardValidationEngine(state_dir=STATE)
 PERFORMANCE_OPTIMIZATION_PLANNER = PerformanceOptimizationPlanner(state_dir=STATE)
+MARKET_KNOWLEDGE_BASE = MarketKnowledgeBase(state_dir=STATE)
+HISTORICAL_SCENARIO_LIBRARY = HistoricalScenarioLibrary(state_dir=STATE)
+REGIME_EVENT_TAGGER = RegimeEventTagger(state_dir=STATE)
+CONTEXTUAL_LEARNING_MEMORY = ContextualLearningMemory(state_dir=STATE)
+KNOWLEDGE_EXPLAINER = KnowledgeAwareExplanationEngine(
+    state_dir=STATE,
+    knowledge_base=MARKET_KNOWLEDGE_BASE,
+    scenario_library=HISTORICAL_SCENARIO_LIBRARY,
+)
 POLICY_BACKTEST_ENGINE = PolicyBacktestEngine(state_dir=STATE)
 REPLAY_COUNTERFACTUAL_ENGINE = ReplayCounterfactualEngine(state_dir=STATE)
 LEARNING_DATA_QUALITY_MONITOR = LearningDataQualityMonitor(state_dir=STATE)
@@ -29063,6 +29121,121 @@ def performance_optimization_status_v1():
             "performance_optimization_status_v1": True,
             "next_recommended_action": "inspect_performance_optimization_error",
             "error": f"performance_optimization_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/market_knowledge_status_v1")
+def market_knowledge_status_v1():
+    try:
+        payload = MARKET_KNOWLEDGE_BASE.status()
+        payload["market_knowledge_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "local_market_knowledge_reporting_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "confidence_score": 0,
+            "market_knowledge_status_v1": True,
+            "next_recommended_action": "inspect_market_knowledge_error",
+            "error": f"market_knowledge_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/historical_scenario_status_v1")
+def historical_scenario_status_v1():
+    try:
+        payload = HISTORICAL_SCENARIO_LIBRARY.status()
+        payload["historical_scenario_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "local_historical_scenario_reporting_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "confidence_score": 0,
+            "historical_scenario_status_v1": True,
+            "next_recommended_action": "inspect_historical_scenario_error",
+            "error": f"historical_scenario_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/regime_event_tagging_status_v1")
+def regime_event_tagging_status_v1():
+    try:
+        payload = REGIME_EVENT_TAGGER.status()
+        payload["regime_event_tagging_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "local_regime_event_tagging_reporting_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "confidence_score": 0,
+            "regime_event_tagging_status_v1": True,
+            "next_recommended_action": "inspect_regime_event_tagging_error",
+            "error": f"regime_event_tagging_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/contextual_learning_memory_status_v1")
+def contextual_learning_memory_status_v1():
+    try:
+        payload = CONTEXTUAL_LEARNING_MEMORY.status()
+        payload["contextual_learning_memory_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "local_contextual_learning_memory_reporting_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "confidence_score": 0,
+            "contextual_learning_memory_status_v1": True,
+            "next_recommended_action": "inspect_contextual_learning_memory_error",
+            "error": f"contextual_learning_memory_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/knowledge_explainer_status_v1")
+def knowledge_explainer_status_v1():
+    try:
+        payload = KNOWLEDGE_EXPLAINER.status()
+        payload["knowledge_explainer_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "local_knowledge_aware_explanation_reporting_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "confidence_score": 0,
+            "knowledge_explainer_status_v1": True,
+            "next_recommended_action": "inspect_knowledge_explainer_error",
+            "error": f"knowledge_explainer_status_unavailable: {exc}",
         }
 
 
