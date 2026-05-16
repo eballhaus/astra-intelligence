@@ -36,6 +36,16 @@ class PerformanceOptimizationPlanner:
         caches = {name: self._file_info(name) for name in self.cache_paths}
         existing = len([v for v in caches.values() if v.get("exists")])
         hit_estimate = round((existing / max(1, len(caches))) * 100.0, 3)
+        snapshot_paths = [
+            os.path.join(self.state_dir, "snapshots", "top_buys_snapshot.json"),
+            os.path.join(self.state_dir, "snapshots", "rankings_snapshot.json"),
+            os.path.join(self.state_dir, "snapshots", "learning_snapshot.json"),
+            os.path.join(self.state_dir, "snapshots", "advanced_metrics_snapshot.json"),
+            os.path.join(self.state_dir, "snapshots", "accelerated_learning_snapshot.json"),
+            os.path.join(self.state_dir, "snapshots", "performance_snapshot.json"),
+        ]
+        snapshot_count = len(snapshot_paths)
+        materialized_snapshots = len([p for p in snapshot_paths if os.path.exists(p)])
         return {
             "enabled": True,
             "version": VERSION,
@@ -60,6 +70,16 @@ class PerformanceOptimizationPlanner:
             "advanced_metrics_cards_total": 16,
             "advanced_metrics_cards_loaded": None,
             "advanced_metrics_cards_failed": None,
+            "snapshot_first_performance_layer": True,
+            "snapshot_count": snapshot_count,
+            "materialized_snapshot_count": materialized_snapshots,
+            "stale_snapshot_count": None,
+            "storage_snapshot_metrics_available": True,
+            "jsonl_rotation_needed": None,
+            "sqlite_status": "planning_only",
+            "parquet_duckdb_status": "planning_only",
+            "estimated_dashboard_load_improvement": "20-40% after UI-critical snapshots are materialized",
+            "estimated_learning_tab_load_improvement": "40-70% with advanced metrics served from snapshot cache",
             "slowest_card": None,
             "timeout_cards": [],
             "recommended_precompute_jobs": [

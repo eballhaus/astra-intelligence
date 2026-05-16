@@ -257,6 +257,45 @@ except Exception:
                 "load_strategy": "fallback",
                 "recommended_action": "inspect_advanced_metrics_snapshot_import",
             }
+try:
+    from engine.snapshot_cache import SnapshotCacheRegistry
+except Exception:
+    class SnapshotCacheRegistry:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "snapshot_first_registry_planning", "local_only": True, "writes_files": False, "api_calls_used": 0, "snapshot_cache_status_v1": True, "snapshot_count": 0, "confidence_score": 0, "next_recommended_action": "inspect_snapshot_cache_import"}
+
+        def read_snapshot(self, *args, **kwargs):
+            return None
+try:
+    from engine.storage_optimizer import StorageOptimizer
+except Exception:
+    class StorageOptimizer:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "storage_optimization_planning_only", "local_only": True, "writes_files": False, "api_calls_used": 0, "storage_optimizer_status_v1": True, "storage_performance_status_v1": True, "confidence_score": 0, "next_recommended_action": "inspect_storage_optimizer_import"}
+try:
+    from engine.query_index import SQLiteQueryIndex
+except Exception:
+    class SQLiteQueryIndex:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "sqlite_query_index_planning_only", "local_only": True, "writes_files": False, "api_calls_used": 0, "query_index_status_v1": True, "sqlite_enabled": False, "confidence_score": 0, "next_recommended_action": "inspect_query_index_import"}
+try:
+    from engine.analytics_storage_planner import AnalyticsStoragePlanner
+except Exception:
+    class AnalyticsStoragePlanner:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "parquet_duckdb_analytics_planning_only", "local_only": True, "writes_files": False, "api_calls_used": 0, "analytics_storage_plan_v1": True, "duckdb_available": False, "confidence_score": 0, "next_recommended_action": "inspect_analytics_storage_planner_import"}
 from engine.intraday_engine import IntradaySignalEngine
 from engine.position_tracker import PositionTracker
 from engine.paper_autopilot import PaperAutopilotEngine
@@ -829,6 +868,10 @@ PARALLEL_REPLAY_ORCHESTRATOR = ParallelReplayOrchestrator(
     consensus_replay=MULTI_BRAIN_CONSENSUS_REPLAY_ENGINE,
 )
 ADVANCED_METRICS_SNAPSHOT = AdvancedMetricsSnapshot(max_workers=16)
+SNAPSHOT_CACHE_REGISTRY = SnapshotCacheRegistry(state_dir=STATE)
+STORAGE_OPTIMIZER = StorageOptimizer(state_dir=STATE)
+SQLITE_QUERY_INDEX = SQLiteQueryIndex(state_dir=STATE)
+ANALYTICS_STORAGE_PLANNER = AnalyticsStoragePlanner(state_dir=STATE)
 POLICY_BACKTEST_ENGINE = PolicyBacktestEngine(state_dir=STATE)
 REPLAY_COUNTERFACTUAL_ENGINE = ReplayCounterfactualEngine(state_dir=STATE)
 LEARNING_DATA_QUALITY_MONITOR = LearningDataQualityMonitor(state_dir=STATE)
@@ -29174,6 +29217,14 @@ def walk_forward_validation_status_v1():
 def performance_optimization_status_v1():
     try:
         payload = PERFORMANCE_OPTIMIZATION_PLANNER.status()
+        snapshot_status = SNAPSHOT_CACHE_REGISTRY.status()
+        query_status = SQLITE_QUERY_INDEX.status()
+        analytics_status = ANALYTICS_STORAGE_PLANNER.status()
+        storage_status = STORAGE_OPTIMIZER.status(
+            snapshot_status=snapshot_status,
+            query_status=query_status,
+            analytics_status=analytics_status,
+        )
         snapshot = getattr(ADVANCED_METRICS_SNAPSHOT, "_snapshot", None)
         if isinstance(snapshot, dict):
             cards = list(snapshot.get("cards") or [])
@@ -29193,6 +29244,23 @@ def performance_optimization_status_v1():
                 key=lambda row: row.get("elapsed_seconds", 0.0),
                 default=None,
             )
+        payload["snapshot_first_performance_layer"] = True
+        payload["snapshot_count"] = snapshot_status.get("snapshot_count")
+        payload["fresh_snapshot_count"] = snapshot_status.get("fresh_snapshot_count")
+        payload["stale_snapshot_count"] = snapshot_status.get("stale_snapshot_count")
+        payload["missing_snapshot_count"] = snapshot_status.get("missing_snapshot_count")
+        payload["storage_snapshot_metrics"] = {
+            "snapshot_count": snapshot_status.get("snapshot_count"),
+            "stale_snapshot_count": snapshot_status.get("stale_snapshot_count"),
+            "jsonl_rotation_needed": storage_status.get("jsonl_rotation_needed"),
+            "sqlite_status": query_status.get("sqlite_status"),
+            "duckdb_status": analytics_status.get("duckdb_status"),
+        }
+        payload["jsonl_rotation_needed"] = storage_status.get("jsonl_rotation_needed")
+        payload["sqlite_status"] = query_status.get("sqlite_status")
+        payload["parquet_duckdb_status"] = analytics_status.get("duckdb_status")
+        payload["estimated_dashboard_load_improvement"] = storage_status.get("estimated_dashboard_load_improvement")
+        payload["estimated_learning_tab_load_improvement"] = storage_status.get("estimated_learning_tab_load_improvement")
         payload["performance_optimization_status_v1"] = True
         payload["writes_files"] = False
         payload["api_calls_used"] = 0
@@ -29209,6 +29277,129 @@ def performance_optimization_status_v1():
             "performance_optimization_status_v1": True,
             "next_recommended_action": "inspect_performance_optimization_error",
             "error": f"performance_optimization_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/snapshot_cache_status_v1")
+def snapshot_cache_status_v1():
+    try:
+        payload = SNAPSHOT_CACHE_REGISTRY.status()
+        payload["snapshot_cache_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "snapshot_first_registry_planning",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "confidence_score": 0,
+            "snapshot_cache_status_v1": True,
+            "next_recommended_action": "inspect_snapshot_cache_status_error",
+            "error": f"snapshot_cache_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/query_index_status_v1")
+def query_index_status_v1():
+    try:
+        payload = SQLITE_QUERY_INDEX.status()
+        payload["query_index_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "sqlite_query_index_planning_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "confidence_score": 0,
+            "query_index_status_v1": True,
+            "next_recommended_action": "inspect_query_index_status_error",
+            "error": f"query_index_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/analytics_storage_plan_v1")
+def analytics_storage_plan_v1():
+    try:
+        payload = ANALYTICS_STORAGE_PLANNER.status()
+        payload["analytics_storage_plan_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "parquet_duckdb_analytics_planning_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "confidence_score": 0,
+            "analytics_storage_plan_v1": True,
+            "next_recommended_action": "inspect_analytics_storage_plan_error",
+            "error": f"analytics_storage_plan_unavailable: {exc}",
+        }
+
+
+@router.get("/api/storage_optimizer_status_v1")
+def storage_optimizer_status_v1():
+    try:
+        payload = STORAGE_OPTIMIZER.status(
+            snapshot_status=SNAPSHOT_CACHE_REGISTRY.status(),
+            query_status=SQLITE_QUERY_INDEX.status(),
+            analytics_status=ANALYTICS_STORAGE_PLANNER.status(),
+        )
+        payload["storage_optimizer_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "storage_optimization_planning_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "confidence_score": 0,
+            "storage_optimizer_status_v1": True,
+            "next_recommended_action": "inspect_storage_optimizer_status_error",
+            "error": f"storage_optimizer_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/storage_performance_status_v1")
+def storage_performance_status_v1():
+    try:
+        payload = STORAGE_OPTIMIZER.status(
+            snapshot_status=SNAPSHOT_CACHE_REGISTRY.status(),
+            query_status=SQLITE_QUERY_INDEX.status(),
+            analytics_status=ANALYTICS_STORAGE_PLANNER.status(),
+        )
+        payload["storage_performance_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "storage_performance_planning_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "confidence_score": 0,
+            "storage_performance_status_v1": True,
+            "next_recommended_action": "inspect_storage_performance_status_error",
+            "error": f"storage_performance_status_unavailable: {exc}",
         }
 
 
@@ -29657,6 +29848,14 @@ def advanced_metrics_snapshot_v1(force_refresh: bool = Query(False)):
             _advanced_metric_card_specs(),
             force_refresh=force_refresh,
         )
+        payload["snapshot_cache_registry"] = {
+            "snapshot_name": "advanced_metrics",
+            "registered": True,
+            "writes_files": False,
+            "registry_mode": "snapshot_first_registry_planning",
+        }
+        payload["snapshot_first_enabled"] = True
+        payload["freshness_status"] = payload.get("freshness_status") or ("fresh" if _to_float(payload.get("snapshot_age_seconds"), 0) <= 45 else "stale")
         payload["advanced_metrics_snapshot_v1"] = True
         payload["writes_files"] = False
         payload["api_calls_used"] = 0

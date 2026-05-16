@@ -95,6 +95,9 @@ class AdvancedMetricsSnapshot:
         if self._snapshot and not force_refresh and age is not None and age <= self.fresh_ttl_seconds:
             out = dict(self._snapshot)
             out["snapshot_age_seconds"] = round(age, 3)
+            out["freshness_status"] = "fresh"
+            out["snapshot_first_enabled"] = True
+            out["snapshot_category"] = "advanced_metrics"
             out["load_strategy"] = "fresh_in_memory_snapshot"
             return out
 
@@ -151,8 +154,11 @@ class AdvancedMetricsSnapshot:
             "writes_files": False,
             "api_calls_used": 0,
             "advanced_metrics_snapshot_v1": True,
+            "snapshot_first_enabled": True,
+            "snapshot_category": "advanced_metrics",
             "snapshot_generated_at": _now_iso(),
             "snapshot_age_seconds": 0.0,
+            "freshness_status": "fresh" if not unavailable else "partial",
             "snapshot_elapsed_seconds": round(elapsed, 3),
             "cards": cards,
             "unavailable_cards": [c.get("key") for c in unavailable],
