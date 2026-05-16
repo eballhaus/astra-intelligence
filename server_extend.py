@@ -276,6 +276,37 @@ except Exception:
         def freshness_status(self, card_specs, *args, **kwargs):
             return {"enabled": False, "version": "1.0.0", "mode": "precompute_unavailable", "local_only": True, "writes_files": False, "api_calls_used": 0, "diagnostics_freshness_status_v1": True, "cards": [], "total_cards": 0}
 try:
+    from engine.self_evolving_research_team import SelfEvolvingResearchTeam
+    from engine.autonomous_strategy_discovery import AutonomousStrategyDiscovery
+    from engine.market_memory_engine import MarketMemoryEngine
+    from engine.strategy_genome_library import StrategyGenomeLibrary
+    from engine.institutional_alpha_lab import InstitutionalAlphaLab
+    from engine.research_portfolio_allocator import ResearchPortfolioAllocator
+    from engine.research_narratives import ResearchNarratives
+    from engine.card_explanation_engine import CardExplanationEngine
+except Exception:
+    class _AutonomousResearchFallback:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "shadow_research_unavailable", "local_only": True, "writes_files": False, "api_calls_used": 0, "confidence_score": 0, "next_recommended_action": "inspect_autonomous_research_import"}
+
+        def hypotheses(self):
+            return []
+
+        def enrich_rows(self, rows):
+            return list(rows or [])
+
+    SelfEvolvingResearchTeam = _AutonomousResearchFallback  # type: ignore
+    AutonomousStrategyDiscovery = _AutonomousResearchFallback  # type: ignore
+    MarketMemoryEngine = _AutonomousResearchFallback  # type: ignore
+    StrategyGenomeLibrary = _AutonomousResearchFallback  # type: ignore
+    InstitutionalAlphaLab = _AutonomousResearchFallback  # type: ignore
+    ResearchPortfolioAllocator = _AutonomousResearchFallback  # type: ignore
+    ResearchNarratives = _AutonomousResearchFallback  # type: ignore
+    CardExplanationEngine = _AutonomousResearchFallback  # type: ignore
+try:
     from engine.snapshot_cache import SnapshotCacheRegistry
 except Exception:
     class SnapshotCacheRegistry:  # type: ignore[override]
@@ -887,6 +918,14 @@ PARALLEL_REPLAY_ORCHESTRATOR = ParallelReplayOrchestrator(
 )
 ADVANCED_METRICS_SNAPSHOT = AdvancedMetricsSnapshot(max_workers=16)
 ADVANCED_METRICS_PRECOMPUTE = AdvancedMetricsPrecomputeStore(state_dir=STATE)
+SELF_EVOLVING_RESEARCH_TEAM = SelfEvolvingResearchTeam(state_dir=STATE)
+AUTONOMOUS_STRATEGY_DISCOVERY = AutonomousStrategyDiscovery(state_dir=STATE)
+MARKET_MEMORY_ENGINE_V2 = MarketMemoryEngine(state_dir=STATE)
+STRATEGY_GENOME_LIBRARY = StrategyGenomeLibrary(state_dir=STATE)
+INSTITUTIONAL_ALPHA_LAB = InstitutionalAlphaLab(state_dir=STATE)
+RESEARCH_PORTFOLIO_ALLOCATOR = ResearchPortfolioAllocator(state_dir=STATE)
+RESEARCH_NARRATIVES = ResearchNarratives(state_dir=STATE)
+CARD_EXPLANATION_ENGINE = CardExplanationEngine(state_dir=STATE)
 SNAPSHOT_CACHE_REGISTRY = SnapshotCacheRegistry(state_dir=STATE)
 STORAGE_OPTIMIZER = StorageOptimizer(state_dir=STATE)
 SQLITE_QUERY_INDEX = SQLiteQueryIndex(state_dir=STATE)
@@ -30721,6 +30760,30 @@ def _paper_performance_fast_summary():
     }
 
 
+def _apply_card_explanations_to_top_payload(top_payload):
+    if not isinstance(top_payload, dict):
+        return top_payload
+    try:
+        out = dict(top_payload)
+        stocks = dict(out.get("stocks") or {})
+        stock_final = list(stocks.get("final") or [])
+        if stock_final:
+            stocks["final"] = CARD_EXPLANATION_ENGINE.enrich_rows(stock_final)
+            out["stocks"] = stocks
+        crypto = dict(out.get("crypto") or {})
+        crypto_final = list(crypto.get("final") or [])
+        if crypto_final:
+            crypto["final"] = CARD_EXPLANATION_ENGINE.enrich_rows(crypto_final)
+            out["crypto"] = crypto
+        out["card_explanations_v2_applied"] = True
+        return out
+    except Exception as exc:
+        out = dict(top_payload)
+        out["card_explanations_v2_applied"] = False
+        out["card_explanations_v2_error"] = str(exc)[:160]
+        return out
+
+
 def _dashboard_fast_snapshot_payload():
     stale_sections = []
     unavailable_sections = []
@@ -30729,6 +30792,7 @@ def _dashboard_fast_snapshot_payload():
     if not top_payload:
         unavailable_sections.append("top_buys")
         top_payload = {"stocks": {"final": []}, "crypto": {"final": []}, "top_buys_stage": "dashboard_fast_empty_fallback"}
+    top_payload = _apply_card_explanations_to_top_payload(top_payload)
     system_payload = {}
     try:
         system_payload = system_status()
@@ -30803,6 +30867,146 @@ def mobile_runtime_snapshot_v1():
     if isinstance(payload, dict):
         payload["mobile_runtime_snapshot_v1"] = True
     return payload
+
+
+@router.get("/api/research_team_status_v1")
+def research_team_status_v1():
+    payload = SELF_EVOLVING_RESEARCH_TEAM.status()
+    payload["research_team_status_v1"] = True
+    payload["api_calls_used"] = 0
+    return payload
+
+
+@router.get("/api/autonomous_strategy_status_v1")
+def autonomous_strategy_status_v1():
+    team = SELF_EVOLVING_RESEARCH_TEAM.status()
+    payload = AUTONOMOUS_STRATEGY_DISCOVERY.status(hypotheses=team.get("research_agents") or [])
+    payload["autonomous_strategy_status_v1"] = True
+    payload["api_calls_used"] = 0
+    return payload
+
+
+@router.get("/api/market_memory_status_v1")
+def market_memory_status_v1():
+    payload = MARKET_MEMORY_ENGINE_V2.status()
+    payload["market_memory_status_v1"] = True
+    payload["api_calls_used"] = 0
+    return payload
+
+
+@router.get("/api/strategy_genome_status_v1")
+def strategy_genome_status_v1():
+    discovery = AUTONOMOUS_STRATEGY_DISCOVERY.status(hypotheses=SELF_EVOLVING_RESEARCH_TEAM.hypotheses())
+    payload = STRATEGY_GENOME_LIBRARY.status(discovery=discovery)
+    payload["strategy_genome_status_v1"] = True
+    payload["api_calls_used"] = 0
+    return payload
+
+
+@router.get("/api/institutional_alpha_lab_status_v1")
+def institutional_alpha_lab_status_v1():
+    discovery = AUTONOMOUS_STRATEGY_DISCOVERY.status(hypotheses=SELF_EVOLVING_RESEARCH_TEAM.hypotheses())
+    genomes = STRATEGY_GENOME_LIBRARY.status(discovery=discovery)
+    payload = INSTITUTIONAL_ALPHA_LAB.status(discovery=discovery, genomes=genomes)
+    payload["institutional_alpha_lab_status_v1"] = True
+    payload["api_calls_used"] = 0
+    return payload
+
+
+@router.get("/api/research_allocator_status_v1")
+def research_allocator_status_v1():
+    alpha = institutional_alpha_lab_status_v1()
+    payload = RESEARCH_PORTFOLIO_ALLOCATOR.status(alpha_lab=alpha)
+    payload["research_allocator_status_v1"] = True
+    payload["api_calls_used"] = 0
+    return payload
+
+
+@router.get("/api/research_narratives_status_v1")
+def research_narratives_status_v1():
+    alpha = institutional_alpha_lab_status_v1()
+    payload = RESEARCH_NARRATIVES.status(alpha_lab=alpha)
+    payload["research_narratives_status_v1"] = True
+    payload["api_calls_used"] = 0
+    return payload
+
+
+@router.get("/api/card_explanation_status_v1")
+def card_explanation_status_v1():
+    payload = CARD_EXPLANATION_ENGINE.status()
+    payload["card_explanation_status_v1"] = True
+    payload["api_calls_used"] = 0
+    return payload
+
+
+@router.get("/api/autonomous_research_status_v1")
+def autonomous_research_status_v1():
+    try:
+        team = research_team_status_v1()
+        discovery = autonomous_strategy_status_v1()
+        memory = market_memory_status_v1()
+        genomes = strategy_genome_status_v1()
+        alpha = institutional_alpha_lab_status_v1()
+        allocator = RESEARCH_PORTFOLIO_ALLOCATOR.status(alpha_lab=alpha)
+        narratives = RESEARCH_NARRATIVES.status(alpha_lab=alpha)
+        explanations = CARD_EXPLANATION_ENGINE.status()
+        return {
+            "enabled": True,
+            "version": "1.0.0",
+            "mode": "autonomous_research_shadow_planning_only",
+            "local_only": True,
+            "writes_files": bool(explanations.get("writes_files", False)),
+            "api_calls_used": 0,
+            "autonomous_research_status_v1": True,
+            "strategies_generated": discovery.get("strategies_generated", 0),
+            "strategies_tested": discovery.get("strategies_tested", 0),
+            "strategies_promoted": discovery.get("strategies_promoted", 0),
+            "strategies_rejected": discovery.get("strategies_rejected", 0),
+            "genome_count": genomes.get("genome_count", 0),
+            "historical_analog_matches": memory.get("historical_analog_matches", 0),
+            "research_confidence": round(
+                (
+                    _to_float(team.get("confidence_score"), 0)
+                    + _to_float(discovery.get("confidence_score"), 0)
+                    + _to_float(alpha.get("confidence_score"), 0)
+                    + _to_float(memory.get("confidence_score"), 0)
+                ) / 4.0,
+                3,
+            ),
+            "resource_allocation_efficiency": allocator.get("resource_allocation_efficiency", 0),
+            "card_explanation_cache_hit_rate": explanations.get("cache_hit_rate", 0),
+            "explanation_generation_time": explanations.get("average_generation_time_seconds", 0),
+            "components": {
+                "research_team": team,
+                "strategy_discovery": discovery,
+                "market_memory": memory,
+                "strategy_genomes": genomes,
+                "alpha_lab": alpha,
+                "allocator": allocator,
+                "narratives": narratives,
+                "card_explanations": explanations,
+            },
+            "safety": {
+                "shadow_only": True,
+                "live_order_execution_enabled": False,
+                "changes_rankings": False,
+                "changes_top_buys_strategy": False,
+                "adaptive_policy_mode": "shadow_only",
+                "external_api_calls": 0,
+            },
+            "next_recommended_action": "review promoted shadow strategies and explanations; do not activate without explicit operator approval",
+        }
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "autonomous_research_shadow_planning_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "autonomous_research_status_v1": True,
+            "error": f"autonomous_research_status_unavailable: {exc}",
+        }
 
 
 @router.get("/api/ask_astra_v1")
@@ -36091,6 +36295,10 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
     except Exception:
         pass
     try:
+        out = _apply_card_explanations_to_top_payload(out)
+    except Exception:
+        pass
+    try:
         _fmp_usage_governor_snapshot(update=True)
     except Exception:
         pass
@@ -36417,6 +36625,10 @@ def _decorate_top_buys_fast_read_payload(
         refresh_status="idle",
         last_error="",
     )
+    try:
+        out = _apply_card_explanations_to_top_payload(out)
+    except Exception:
+        pass
     return out
 
 

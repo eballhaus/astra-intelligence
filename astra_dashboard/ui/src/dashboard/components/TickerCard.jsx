@@ -155,7 +155,9 @@ export default function TickerCard({
 
   const summaryText = rationale || rankedActionExplanation || whyNotLiveReady || whatWouldUpgrade || nearThresholdBlocker || "Remote monitor card";
   const intelligenceText = String(
-    item?.ollama_buy_explanation
+    item?.ai_card_explanation_v2
+      || item?.card_explanation_v2
+      || item?.ollama_buy_explanation
       || item?.ollama_explanation
       || item?.astra_intelligence_note
       || item?.user_buy_summary
@@ -336,6 +338,11 @@ export default function TickerCard({
               }}
             >
               <strong style={{ color: "#1f3d67", display: "block", marginBottom: "2px" }}>Astra Intelligence:</strong>
+              {item?.ai_card_explanation_v2 ? (
+                <span style={{ color: "#517199", fontSize: "0.62rem", display: "block", marginBottom: "2px" }}>
+                  Plain-English AI explanation
+                </span>
+              ) : null}
               <div style={{ ...intelligenceScrollStyle, maxHeight: "56px" }}>
                 {intelligenceText}
               </div>

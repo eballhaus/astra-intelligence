@@ -116,6 +116,17 @@ function normalizeTopBuys(raw) {
       grade: row.grade ?? row.buy_grade ?? row.qualification ?? row.buy_eligibility ?? "N/A",
       stop_loss: row.stop_loss ?? row.stop_price ?? row.stop ?? null,
       timestamp: row.timestamp || row.updated_at || row.last_quote_utc || "",
+      ai_card_explanation_v2:
+        row.ai_card_explanation_v2
+        || row.card_explanation_v2
+        || row.ollama_buy_explanation
+        || row.ollama_explanation
+        || row.why_this_is_a_buy
+        || row.rationale
+        || row.summary
+        || row.buy_reason
+        || "",
+      ai_card_explanation_source: row.ai_card_explanation_source || row.explanation_layer_source || "",
       why_this_is_a_buy: row.why_this_is_a_buy || row.rationale || row.summary || row.buy_reason || "",
       dashboard_fallback_candidate: Boolean(row.dashboard_fallback_candidate),
     };
