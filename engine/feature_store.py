@@ -143,5 +143,11 @@ class FeatureStore:
             "next_feature_priorities": priorities,
             "missing_feature_priorities": priorities,
             "missing_feature_families": missing,
+            "api_efficiency_metadata": {
+                "feature_refresh_uses_delta_inputs": True,
+                "feature_refresh_respects_smart_ttl": True,
+                "synthetic_replay_features_shadow_only": True,
+                "api_calls_used": 0,
+            },
             "generated_at": _now_iso(),
         }

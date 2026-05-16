@@ -130,6 +130,12 @@ class MarketDataWarehouse:
                 "etfs": {"target_symbols": 1000, "metadata_fields_required": ["symbol", "asset_type", "sector_or_theme"]},
                 "crypto_where_supported": {"target_symbols": 500, "metadata_fields_required": ["symbol", "asset_type"]},
             },
+            "api_efficiency_metadata": {
+                "delta_only_refresh_supported": True,
+                "deduplication_hashing_supported": True,
+                "destructive_rewrites_enabled": False,
+                "request_key_fields": ["provider", "symbol", "data_type", "start_date", "end_date", "interval"],
+            },
             "manifest_path": self.manifest_path,
             "manifest_exists": os.path.exists(self.manifest_path),
             "storage_sources": {

@@ -343,6 +343,49 @@ except Exception:
             }
 
 try:
+    from engine.api_efficiency_suite import ApiEfficiencySuite
+except Exception:
+    class ApiEfficiencySuite:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "planning_reporting_only",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "estimated_calls_saved": 0,
+                "estimated_bandwidth_saved": 0,
+                "synthetic_examples_planned": 0,
+                "duplicate_requests_blocked": 0,
+                "next_recommended_action": "inspect_api_efficiency_suite_import",
+                "api_efficiency_status_v1": True,
+            }
+
+        def plan(self, *args, **kwargs):
+            out = self.status()
+            out["api_efficiency_plan_v1"] = True
+            return out
+
+        def synthetic_replay_status(self, *args, **kwargs):
+            out = self.status()
+            out["synthetic_replay_expansion_status_v1"] = True
+            return out
+
+        def symbol_priority_status(self, *args, **kwargs):
+            out = self.status()
+            out["symbol_priority_status_v1"] = True
+            return out
+
+        def data_deduplication_status(self, *args, **kwargs):
+            out = self.status()
+            out["data_deduplication_status_v1"] = True
+            return out
+
+try:
     from engine.background_worker_queue import BackgroundWorkerQueue
 except Exception:
     class BackgroundWorkerQueue:  # type: ignore[override]
@@ -609,6 +652,10 @@ BROAD_FMP_COLLECTION_PLANNER = BroadFmpCollectionPlanner(
     orchestration_engine=MARKET_DATA_ORCHESTRATION_ENGINE,
 )
 FEATURE_STORE = FeatureStore(state_dir=STATE, warehouse=MARKET_DATA_WAREHOUSE)
+API_EFFICIENCY_SUITE = ApiEfficiencySuite(
+    state_dir=STATE,
+    fmp_optimizer=FMP_UTILIZATION_OPTIMIZER,
+)
 BACKGROUND_WORKER_QUEUE = BackgroundWorkerQueue(state_dir=STATE)
 CACHE_REFRESH_SCHEDULER = CacheRefreshScheduler(state_dir=STATE)
 ENDPOINT_PROTECTION_PLANNER = EndpointProtectionPlanner(state_dir=STATE)
@@ -29147,6 +29194,136 @@ def broad_universe_funnel_status_v1():
             "selection_reasons": [],
             "rejected_reason_counts": {},
             "next_recommended_action": "inspect_broad_universe_funnel_error",
+        }
+
+
+@router.get("/api/api_efficiency_status_v1")
+def api_efficiency_status_v1():
+    try:
+        payload = API_EFFICIENCY_SUITE.status()
+        payload["api_efficiency_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "planning_reporting_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "estimated_calls_saved": 0,
+            "estimated_bandwidth_saved": 0,
+            "synthetic_examples_planned": 0,
+            "duplicate_requests_blocked": 0,
+            "next_recommended_action": "inspect_api_efficiency_status_error",
+            "api_efficiency_status_v1": True,
+            "error": f"api_efficiency_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/api_efficiency_plan_v1")
+def api_efficiency_plan_v1():
+    try:
+        payload = API_EFFICIENCY_SUITE.plan()
+        payload["api_efficiency_plan_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "planning_reporting_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "estimated_calls_saved": 0,
+            "estimated_bandwidth_saved": 0,
+            "synthetic_examples_planned": 0,
+            "duplicate_requests_blocked": 0,
+            "next_recommended_action": "inspect_api_efficiency_plan_error",
+            "api_efficiency_plan_v1": True,
+            "error": f"api_efficiency_plan_unavailable: {exc}",
+        }
+
+
+@router.get("/api/synthetic_replay_expansion_status_v1")
+def synthetic_replay_expansion_status_v1():
+    try:
+        payload = API_EFFICIENCY_SUITE.synthetic_replay_status()
+        payload["synthetic_replay_expansion_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "local_synthetic_replay_planning_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "estimated_calls_saved": 0,
+            "estimated_bandwidth_saved": 0,
+            "synthetic_examples_planned": 0,
+            "duplicate_requests_blocked": 0,
+            "next_recommended_action": "inspect_synthetic_replay_expansion_error",
+            "synthetic_replay_expansion_status_v1": True,
+            "error": f"synthetic_replay_expansion_unavailable: {exc}",
+        }
+
+
+@router.get("/api/symbol_priority_status_v1")
+def symbol_priority_status_v1():
+    try:
+        payload = API_EFFICIENCY_SUITE.symbol_priority_status()
+        payload["symbol_priority_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "priority_scoring_planning_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "estimated_calls_saved": 0,
+            "estimated_bandwidth_saved": 0,
+            "synthetic_examples_planned": 0,
+            "duplicate_requests_blocked": 0,
+            "next_recommended_action": "inspect_symbol_priority_error",
+            "symbol_priority_status_v1": True,
+            "error": f"symbol_priority_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/data_deduplication_status_v1")
+def data_deduplication_status_v1():
+    try:
+        payload = API_EFFICIENCY_SUITE.data_deduplication_status()
+        payload["data_deduplication_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "deterministic_request_key_planning_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "estimated_calls_saved": 0,
+            "estimated_bandwidth_saved": 0,
+            "synthetic_examples_planned": 0,
+            "duplicate_requests_blocked": 0,
+            "next_recommended_action": "inspect_data_deduplication_error",
+            "data_deduplication_status_v1": True,
+            "error": f"data_deduplication_status_unavailable: {exc}",
         }
 
 

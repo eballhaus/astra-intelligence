@@ -361,8 +361,10 @@ class MarketDataOrchestrationEngine:
             {
                 "estimated_planned_calls_all_tasks": int(planned_calls),
                 "estimated_calls_allowed_now": int(allowed_calls),
-            "heavy_collection_calls_enabled": int(allowed_calls),
+                "heavy_collection_calls_enabled": int(allowed_calls),
                 "duplicate_call_avoidance": "cache_key_and_provider_role_checked_before_request",
+                "delta_only_refresh_required": True,
+                "batch_endpoint_preferred": True,
             },
             {
                 "estimated_planned_bandwidth_kb_all_tasks": round(planned_kb, 3),
@@ -420,6 +422,13 @@ class MarketDataOrchestrationEngine:
                 "broad_collection_reserve_protected": True,
             },
             "cache_hit_expectation": self._cache_summary(),
+            "api_efficiency_policy": {
+                "delta_only_refresh_planning_enabled": True,
+                "batch_endpoint_optimizer_enabled": True,
+                "smart_ttl_policy_enabled": True,
+                "data_deduplication_hashing_enabled": True,
+                "synthetic_replay_expansion_uses_local_data_only": True,
+            },
             "expected_learning_benefits": [
                 "entry_quality",
                 "released_win_rate",

@@ -249,6 +249,13 @@ class ReplayCounterfactualEngine:
             },
             "base_trade_count": int(len(trades)),
             "counterfactual_row_count": int(len(cf_rows)),
+            "synthetic_examples_planned": int(len(cf_rows)),
+            "synthetic_replay_expansion_status_v1": True,
+            "source_data_policy": "existing_stored_data_only",
+            "provider_calls_required": False,
+            "learning_value_estimate": (
+                "high" if len(cf_rows) >= 1000 else "moderate" if len(cf_rows) >= 100 else "needs_more_real_outcomes"
+            ),
             "scenario_count": int(len(scenario_summary)),
             "scenario_summary": scenario_summary[:12],
             "best_counterfactual_policy": best_policy,

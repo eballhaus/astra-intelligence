@@ -397,6 +397,13 @@ class BroadFmpCollectionPlanner:
             "no_uncontrolled_worker_loop": True,
             "no_immediate_bulk_collection": True,
             "fmp_live_quote_overlap_blocked": True,
+            "api_efficiency_controls": {
+                "delta_only_refresh_required": True,
+                "batch_endpoint_preferred": True,
+                "smart_ttl_policy_required": True,
+                "deduplication_request_keys_required": True,
+                "synthetic_replay_uses_existing_stored_data_only": True,
+            },
             "target_architecture": "4000_to_10000_broad_symbols_to_200_active_universe_to_ranked_candidates_to_top_6",
             **self._coverage_fields(progress.get("symbols_processed", 0), len(self._symbol_candidates())),
             **progress,
