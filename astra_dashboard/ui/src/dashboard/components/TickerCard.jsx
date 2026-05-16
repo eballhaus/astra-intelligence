@@ -54,13 +54,13 @@ const intelligenceScrollStyle = {
 
 function formatPrice(value) {
   const num = Number(value);
-  if (!Number.isFinite(num)) return "$0.00";
+  if (!Number.isFinite(num)) return "n/a";
   return `$${num.toFixed(2)}`;
 }
 
 function formatPercent(value) {
   const num = Number(value);
-  if (!Number.isFinite(num)) return "0.00%";
+  if (!Number.isFinite(num)) return "n/a";
   const sign = num > 0 ? "+" : "";
   return `${sign}${num.toFixed(2)}%`;
 }
@@ -77,7 +77,7 @@ function formatConviction(value) {
 
 function formatPredictionUsd(value) {
   const n = scoreOrNull(value);
-  if (n == null) return "$n/a";
+  if (n == null) return "n/a";
   return `${n >= 0 ? "+" : "-"}$${Math.abs(n).toFixed(2)}`;
 }
 
@@ -92,6 +92,15 @@ function qualityColor(score) {
   if (n >= 70) return "#2f6fc9";
   if (n >= 55) return "#ad7b2c";
   return "#b14450";
+}
+
+function scoreLabel(score) {
+  const n = Number(score);
+  if (!Number.isFinite(n)) return "Calculating";
+  if (n >= 75) return "Strong";
+  if (n >= 60) return "Good";
+  if (n >= 45) return "Watch";
+  return "Weak";
 }
 
 export default function TickerCard({
@@ -122,13 +131,14 @@ export default function TickerCard({
     : (isPosition ? (item?.status ?? item?.position_status ?? "Open") : (item?.action ?? item?.prediction ?? "N/A"));
 
   const price = formatPrice(item?.price);
+  const companyName = String(item?.company_name || item?.name || item?.security_name || symbol).trim();
   const actionLabel = item?.grade ?? "N/A";
   const astraGrade = item?.astra_grade ?? item?.grade ?? item?.buy_grade ?? item?.qualification ?? item?.buy_eligibility ?? "N/A";
   const stopLoss = item?.stop_loss == null ? "n/a" : formatPrice(item.stop_loss);
   const timestamp = item?.timestamp ?? "n/a";
   const qualification = item?.buy_eligibility || "QUALIFIED";
   const fallbackCandidate = Boolean(item?.dashboard_fallback_candidate);
-  const stableState = String(item?.stable_display_state || "").replaceAll("_", " ").trim();
+  const stableState = String(item?.stable_layer_state || item?.stable_display_state || "").replaceAll("_", " ").trim();
   const rationale = String(item?.why_this_is_a_buy || item?.why_made_list || "").trim();
   const nearThresholdBlocker = String(item?.primary_promotion_blocker || "").trim();
   const deploymentStatus = String(item?.hero_card_deployment_label || item?.hero_deployment_status || "paper-ready").toLowerCase();
@@ -139,12 +149,12 @@ export default function TickerCard({
   const confidenceRaw = Number(item?.confidence);
   const confidence = Number.isFinite(confidenceRaw) ? Math.max(0, Math.min(100, confidenceRaw)) : 0;
   const confidenceColor = confidence >= 80 ? "#24995f" : confidence >= 60 ? "#ad7b2c" : "#b14450";
-  const qualityScore = Number(item?.buy_quality_score ?? item?.trade_quality_score ?? item?.final_action_score ?? item?.grade_percent ?? 0);
-  const qualityText = Number.isFinite(qualityScore) ? `${qualityScore.toFixed(1)}` : "n/a";
+  const qualityScore = scoreOrNull(item?.buy_quality_score ?? item?.trade_quality_score ?? item?.final_action_score ?? item?.grade_percent);
+  const qualityText = qualityScore == null ? "calculating" : `${qualityScore.toFixed(1)}`;
   const releaseStatus = canonicalActionLabel || String(item?.hero_deployment_status || item?.hero_card_deployment_label || "watchlist").replaceAll("_", " ");
   const releaseStatusLower = String(releaseStatus || "").toLowerCase();
-  const predictionPctRaw = scoreOrNull(item?.profit_prediction_pct ?? item?.expected_move_pct ?? item?.expected_move_percent ?? item?.predicted_return_pct);
-  const predictionUsdRaw = scoreOrNull(item?.profit_prediction_usd ?? item?.expected_move_dollars ?? item?.expected_move_usd ?? item?.predicted_profit_dollars);
+  const predictionPctRaw = scoreOrNull(item?.expected_move_percent ?? item?.profit_prediction_pct ?? item?.expected_move_pct ?? item?.expected_move_percent ?? item?.predicted_return_pct);
+  const predictionUsdRaw = scoreOrNull(item?.expected_move ?? item?.profit_prediction_usd ?? item?.expected_move_dollars ?? item?.expected_move_usd ?? item?.predicted_profit_dollars);
   const predictionText = `${formatPredictionUsd(predictionUsdRaw)} / ${predictionPctRaw == null ? "n/a" : formatPercent(predictionPctRaw)}`;
   const conviction10 = scoreOrNull(item?.rolling_conviction_10r ?? item?.conviction_display_score);
   const conviction5 = scoreOrNull(item?.rolling_conviction_5r);
@@ -170,7 +180,10 @@ export default function TickerCard({
   ).trim();
 
   const entryPriceText = formatPrice(item?.entry_price ?? item?.avg_entry_price ?? item?.average_entry_price);
-  const currentPriceText = formatPrice(item?.current_price ?? item?.price ?? item?.mark_price);
+  const currentPriceText = formatPrice(item?.current_price ?? item?.price ?? item?.live_price ?? item?.last_price ?? item?.close ?? item?.mark_price);
+  const astraScore = scoreOrNull(item?.astra_composite_score ?? item?.stability_score ?? item?.stable_composite_score);
+  const astraScoreText = astraScore == null ? "calculating" : `${Math.max(0, Math.min(100, astraScore)).toFixed(0)}/100`;
+  const rankStableText = stableState || (scoreOrNull(item?.stable_age_seconds) ? "stable" : "new");
   const pnlPctRaw = Number(item?.pnl_percent ?? item?.unrealized_pnl_percent ?? item?.pnl_pct ?? 0);
   const pnlPctText = Number.isFinite(pnlPctRaw) ? `${pnlPctRaw >= 0 ? "+" : ""}${pnlPctRaw.toFixed(2)}%` : "0.00%";
   const positionNote = String(item?.management_note || item?.position_note || item?.sell_note || item?.rationale || "").trim();
@@ -200,7 +213,7 @@ export default function TickerCard({
           </div>
           <div>
             <div style={{ color: "#12243a", fontSize: "0.9rem", fontWeight: 800, lineHeight: 1.1 }}>{symbol}</div>
-            <div style={{ ...labelStyle, fontSize: "0.64rem" }}>{timestamp}</div>
+            <div style={{ ...labelStyle, fontSize: "0.64rem" }}>{companyName}</div>
           </div>
         </div>
         <div style={{ display: "grid", gap: "4px", justifyItems: "end" }}>
@@ -262,8 +275,10 @@ export default function TickerCard({
           </>
         ) : (
           <>
+            <div style={rowStyle}><span style={labelStyle}>Current Price</span><span style={valueStyle}>{currentPriceText}</span></div>
             <div style={rowStyle}><span style={labelStyle}>Status</span><span style={{ ...valueStyle, color: statusToneColor }}>{releaseStatus}</span></div>
             <div style={rowStyle}><span style={labelStyle}>Grade</span><span style={{ ...valueStyle, fontWeight: 800 }}>{astraGrade}</span></div>
+            <div style={rowStyle}><span style={labelStyle}>Astra Score</span><span style={{ ...valueStyle, color: qualityColor(astraScore || 0), fontWeight: 800 }}>{astraScoreText} · {scoreLabel(astraScore)}</span></div>
             <div
               style={{
                 gridColumn: "1 / -1",
@@ -279,10 +294,11 @@ export default function TickerCard({
               <span style={{ ...labelStyle, fontSize: "0.66rem", color: "#3a567e", fontWeight: 700 }}>10R Conviction</span>
               <span style={{ ...valueStyle, fontSize: "0.82rem", fontWeight: 800, color: "#16365f" }}>{formatConviction(conviction10)}</span>
             </div>
-            <div style={rowStyle}><span style={labelStyle}>Quality</span><span style={{ ...valueStyle, color: qualityColor(qualityScore) }}>{qualityText}</span></div>
+            <div style={rowStyle}><span style={labelStyle}>Quality</span><span style={{ ...valueStyle, color: qualityColor(qualityScore || 0) }}>{qualityText}</span></div>
             <div style={rowStyle}><span style={labelStyle}>Action</span><span style={valueStyle}>{action}</span></div>
-            <div style={rowStyle}><span style={labelStyle}>Profit Prediction</span><span style={valueStyle}>{predictionText}</span></div>
+            <div style={rowStyle}><span style={labelStyle}>Expected Move</span><span style={valueStyle}>{predictionText}</span></div>
             <div style={rowStyle}><span style={labelStyle}>Stop</span><span style={valueStyle}>{stopLoss}</span></div>
+            <div style={rowStyle}><span style={labelStyle}>Rank Stability</span><span style={valueStyle}>{rankStableText}</span></div>
           </>
         )}
       </div>
@@ -320,6 +336,9 @@ export default function TickerCard({
             </div>
           ) : null}
           {canonicalState ? <div style={{ ...labelStyle, color: "#3f5f8b" }}>Canonical state: {canonicalState.replaceAll("_", " ")}</div> : null}
+          <div style={{ ...labelStyle, color: "#49698f" }}>
+            Benchmarks: 10R/Entry/Multi-Brain good 60+ · strong 75+ | Confidence good 70+ · strong 85+
+          </div>
           <div style={{ fontSize: "0.7rem", lineHeight: 1.35, color: "#3a5375" }}>
             <strong style={{ color: "#27456d" }}>Rationale:</strong> {summaryText.slice(0, 110)}
           </div>

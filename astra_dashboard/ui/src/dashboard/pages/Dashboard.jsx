@@ -110,7 +110,9 @@ function normalizeTopBuys(raw) {
       ...row,
       type: row.type || row.asset_type || kind,
       symbol: row.symbol || row.ticker || "—",
-      price: row.price ?? row.current_price ?? row.last_price ?? null,
+      company_name: row.company_name || row.name || row.security_name || row.symbol || row.ticker || "—",
+      price: row.current_price ?? row.price ?? row.live_price ?? row.last_price ?? row.close ?? row.mark_price ?? null,
+      current_price: row.current_price ?? row.price ?? row.live_price ?? row.last_price ?? row.close ?? row.mark_price ?? null,
       change_percent: row.change_percent ?? row.change_pct ?? row.percent_change ?? row.daily_change_pct ?? 0,
       confidence: row.confidence ?? row.buy_confidence ?? row.predicted_win_probability ?? 0,
       buy_quality_score: row.buy_quality_score ?? row.trade_quality_score ?? row.quality_score ?? 0,
@@ -131,8 +133,12 @@ function normalizeTopBuys(raw) {
       why_this_is_a_buy: row.why_this_is_a_buy || row.rationale || row.summary || row.buy_reason || "",
       dashboard_fallback_candidate: Boolean(row.dashboard_fallback_candidate),
       stable_display_state: row.stable_display_state || "",
+      stable_layer_state: row.stable_layer_state || row.stable_display_state || "",
       stable_composite_score: row.stable_composite_score ?? null,
+      stability_score: row.stability_score ?? row.stable_composite_score ?? null,
       stable_retained: Boolean(row.stable_retained),
+      expected_move: row.expected_move ?? row.profit_prediction_usd ?? row.expected_move_dollars ?? row.expected_move_usd ?? row.predicted_profit_dollars ?? null,
+      expected_move_percent: row.expected_move_percent ?? row.expected_move_pct ?? row.profit_prediction_pct ?? row.predicted_return_pct ?? null,
     };
   };
   return {
@@ -431,13 +437,16 @@ export default function Dashboard() {
     const question = String(askQuestion || "").trim();
     if (!question) return;
     setAskLoading(true);
-    const result = await fetchJsonWithFallback(`/api/ask_astra_v1?q=${encodeURIComponent(question)}`, {
-      preferredBase: resolvedApiBase || API_BASE,
-      fallbackValue: { answer: "Ask-Astra is not loaded yet." },
-      timeoutMs: 5000,
-    });
-    setAskAnswer(String(result?.parsed?.answer || "Ask-Astra is not loaded yet."));
-    setAskLoading(false);
+    try {
+      const result = await fetchJsonWithFallback(`/api/ask_astra_v2?q=${encodeURIComponent(question)}`, {
+        preferredBase: resolvedApiBase || API_BASE,
+        fallbackValue: { answer: "Ask-Astra could not reach the local snapshot right now." },
+        timeoutMs: 8000,
+      });
+      setAskAnswer(String(result?.parsed?.answer || "Ask-Astra could not reach the local snapshot right now."));
+    } finally {
+      setAskLoading(false);
+    }
   };
 
   return (

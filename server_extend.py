@@ -31367,6 +31367,268 @@ def ask_astra_v1(q: str = Query("")):
         }
 
 
+def _ask_astra_v2_snapshot_file(name: str, default=None):
+    try:
+        return _read_json_file(os.path.join(STATE, "snapshots", name), default=default)
+    except Exception:
+        return {} if default is None else default
+
+
+def _ask_astra_v2_safe_source(name: str, fn, default=None):
+    started = time.perf_counter()
+    try:
+        payload = fn()
+        if payload is None:
+            payload = {} if default is None else default
+        return payload, {
+            "source": name,
+            "ok": True,
+            "duration_seconds": round(time.perf_counter() - started, 4),
+        }
+    except Exception as exc:
+        return ({} if default is None else default), {
+            "source": name,
+            "ok": False,
+            "duration_seconds": round(time.perf_counter() - started, 4),
+            "error": _safe_text(str(exc), 160),
+        }
+
+
+def _ask_astra_v2_rows_from_stable(payload):
+    if not isinstance(payload, dict):
+        return []
+    rows = payload.get("stable_top_6")
+    if isinstance(rows, list):
+        return [dict(row) for row in rows if isinstance(row, dict)]
+    stocks = payload.get("stocks")
+    if isinstance(stocks, dict):
+        final = stocks.get("final")
+        if isinstance(final, list):
+            return [dict(row) for row in final if isinstance(row, dict)]
+    return []
+
+
+def _ask_astra_v2_row_score(row):
+    return _to_float(
+        row.get("astra_composite_score")
+        or row.get("stable_composite_score")
+        or row.get("stability_score")
+        or row.get("rolling_conviction_10r")
+        or row.get("grade_percent")
+        or row.get("confidence"),
+        0.0,
+    )
+
+
+def _ask_astra_v2_pick_symbol(question, rows):
+    q = str(question or "").upper()
+    for row in rows:
+        sym = str(row.get("symbol") or row.get("ticker") or "").upper().strip()
+        if sym and sym in q:
+            return row
+    return None
+
+
+def _ask_astra_v2_context():
+    sources = []
+    stable, meta = _ask_astra_v2_safe_source(
+        "stable_top_buys_snapshot",
+        lambda: _ask_astra_v2_snapshot_file("stable_top_buys_v1.json", default={}),
+        {},
+    )
+    sources.append(meta)
+
+    top_rows = _ask_astra_v2_rows_from_stable(stable)
+    advanced, meta = _ask_astra_v2_safe_source(
+        "advanced_metrics_memory_snapshot",
+        lambda: dict(getattr(ADVANCED_METRICS_SNAPSHOT, "_snapshot", None) or {}),
+        {},
+    )
+    sources.append(meta)
+    if not advanced:
+        def _read_advanced_cards():
+            cards_dir = os.path.join(STATE, "snapshots", "advanced_metrics_cards")
+            cards = []
+            try:
+                for filename in sorted(os.listdir(cards_dir)):
+                    if filename.endswith(".json"):
+                        card = _read_json_file(os.path.join(cards_dir, filename), default={})
+                        if isinstance(card, dict):
+                            cards.append(card)
+            except Exception:
+                pass
+            return {
+                "cards": cards,
+                "total_cards": len(cards),
+                "cards_loaded": len([c for c in cards if c.get("status") in ("fresh", "loaded", "stale")]),
+                "cards_failed": len([c for c in cards if c.get("status") in ("error", "unavailable")]),
+            }
+        advanced, meta = _ask_astra_v2_safe_source("advanced_metrics_card_snapshots", _read_advanced_cards, {})
+        sources.append(meta)
+
+    learning = {}
+    autonomous = {}
+    activation = {}
+    performance = {}
+    market_knowledge = {}
+    replay = {}
+    positions_payload = []
+    system_payload = {}
+    return {
+        "stable": stable,
+        "top_rows": top_rows,
+        "advanced": advanced,
+        "learning": learning,
+        "autonomous": autonomous,
+        "activation": activation,
+        "performance": performance,
+        "market_knowledge": market_knowledge,
+        "replay": replay,
+        "positions": positions_payload,
+        "system_status": system_payload,
+        "sources": sources,
+    }
+
+
+def _ask_astra_v2_answer(question, ctx):
+    q = str(question or "").strip()
+    q_lower = q.lower()
+    rows = list(ctx.get("top_rows") or [])
+    sorted_rows = sorted(rows, key=_ask_astra_v2_row_score, reverse=True)
+    strongest = sorted_rows[0] if sorted_rows else {}
+    picked = _ask_astra_v2_pick_symbol(q, rows)
+    learning = ctx.get("learning") if isinstance(ctx.get("learning"), dict) else {}
+    advanced = ctx.get("advanced") if isinstance(ctx.get("advanced"), dict) else {}
+    activation = ctx.get("activation") if isinstance(ctx.get("activation"), dict) else {}
+    positions_payload = ctx.get("positions") or []
+    open_positions_count = len(positions_payload) if isinstance(positions_payload, list) else _to_float((positions_payload or {}).get("open_positions_count"), 0)
+
+    if "10r" in q_lower or "conviction" in q_lower:
+        return (
+            "10R is Astra's longer-horizon conviction read: a compact way to compare whether a candidate has enough quality, confidence, and follow-through potential to deserve attention. "
+            "On these cards, 60+ is good and 75+ is strong; if a card shows calculating, the stable layer did not receive a trustworthy raw value yet."
+        )
+
+    if picked:
+        sym = str(picked.get("symbol") or picked.get("ticker") or "this pick").upper()
+        score = _ask_astra_v2_row_score(picked)
+        price = picked.get("current_price") or picked.get("price") or picked.get("live_price") or picked.get("last_price")
+        state = str(picked.get("stable_layer_state") or picked.get("stable_display_state") or picked.get("canonical_final_state") or "watch").replace("_", " ")
+        risk = picked.get("follow_through_state") or picked.get("primary_promotion_blocker") or picked.get("recommended_entry_mode") or "follow-through and stop discipline still matter"
+        return (
+            f"Astra has {sym} on the stable Top 6 because it is still one of the stronger available candidates in the current snapshot, with an Astra Score near {score:.0f}/100"
+            f"{f' and current price around ${_to_float(price):.2f}' if price is not None else ''}. "
+            f"Its current state is {state}. The main thing to watch is {str(risk).replace('_', ' ')}."
+        )
+
+    if "strongest" in q_lower or "best" in q_lower or "top" in q_lower:
+        if strongest:
+            sym = str(strongest.get("symbol") or strongest.get("ticker") or "the leading pick").upper()
+            return f"The strongest current stable Top 6 candidate is {sym}, with an Astra Score near {_ask_astra_v2_row_score(strongest):.0f}/100. I would compare it against the rest of the Top 6 using 10R conviction, confidence, quality, and whether the stable state says paper only, weakening, or confirmed."
+        return "I do not have a populated stable Top 6 snapshot yet, so I cannot rank the strongest card reliably."
+
+    if "paper" in q_lower or "ready" in q_lower:
+        ready = []
+        for row in rows:
+            state = " ".join(
+                str(row.get(k) or "")
+                for k in ("hero_deployment_status", "canonical_final_state", "recommended_entry_mode", "buy_eligibility", "stable_layer_state")
+            ).lower()
+            if "paper" in state or "soft_buy" in state or "qualified" in state:
+                ready.append(str(row.get("symbol") or row.get("ticker") or "").upper())
+        return f"Paper-ready or paper-watch candidates in the current stable Top 6: {', '.join([x for x in ready if x] or ['none clearly marked'])}. This is read-only guidance, not an order instruction."
+
+    if "weakness" in q_lower or "entry quality" in q_lower or "low" in q_lower:
+        cards = advanced.get("cards") if isinstance(advanced, dict) else []
+        failed = advanced.get("cards_failed") or advanced.get("unavailable_cards") or 0
+        entry_scores = [_to_float(row.get("entry_quality_v3_score") or row.get("entry_quality_score"), 0) for row in rows]
+        avg_entry = sum(entry_scores) / len(entry_scores) if entry_scores else 0
+        return (
+            f"Astra's biggest current weakness appears to be entry selectivity and confirmation quality. "
+            f"The stable Top 6 average entry-quality signal is around {avg_entry:.0f}/100, and advanced diagnostics report {failed} unavailable or failed cards out of {len(cards) if isinstance(cards, list) else advanced.get('total_cards', 'the tracked')} cards."
+        )
+
+    if "learning" in q_lower or "improving" in q_lower or "learned" in q_lower:
+        score = _to_float(activation.get("confidence_score") or activation.get("entry_quality_v3_score") or learning.get("learning_confidence"), 0)
+        rows_shadow = activation.get("replay_rows_integrated_shadow") or ((activation.get("replay_to_learning_status") or {}).get("replay_rows_integrated_shadow") if isinstance(activation.get("replay_to_learning_status"), dict) else None)
+        return (
+            f"Learning is active in shadow mode, with confidence around {score:.0f}/100"
+            f"{f' and {rows_shadow} replay rows integrated as shadow signals' if rows_shadow is not None else ''}. "
+            "Astra is using replay, multi-brain, and research outputs as learning evidence without changing live trading behavior."
+        )
+
+    if "watch" in q_lower or "today" in q_lower or "performing" in q_lower:
+        symbols = [str(row.get("symbol") or row.get("ticker") or "").upper() for row in sorted_rows[:6]]
+        symbols = [s for s in symbols if s]
+        return (
+            f"Astra is online with {len(rows)} stable Top 6 candidates and {int(open_positions_count)} open positions visible from local state. "
+            f"Today's watchlist focus is {', '.join(symbols) if symbols else 'not populated yet'}. Watch for candidates marked weakening, needs confirmation, or paper only before treating them as stronger setups."
+        )
+
+    return (
+        f"Astra is operating from local snapshots with {len(rows)} stable Top 6 candidates available. "
+        f"The current leading pick is {str(strongest.get('symbol') or strongest.get('ticker') or 'not available').upper()} if you want a single name to inspect first. "
+        "The answer used read-only local data and did not refresh or mutate the dashboard."
+    )
+
+
+@router.get("/api/ask_astra_v2")
+def ask_astra_v2(q: str = Query("")):
+    started = time.perf_counter()
+    question = str(q or "").strip()
+    if not question:
+        question = "How is Astra performing today?"
+    try:
+        ctx = _ask_astra_v2_context()
+        answer = _ask_astra_v2_answer(question, ctx)
+        ok_sources = [s.get("source") for s in ctx.get("sources", []) if s.get("ok")]
+        failed_sources = [s for s in ctx.get("sources", []) if not s.get("ok")]
+        return {
+            "enabled": True,
+            "version": "2.0.0",
+            "ask_astra_v2": True,
+            "question": question,
+            "answer": answer,
+            "sources_used": ok_sources,
+            "failed_sources": failed_sources,
+            "freshness": {
+                "stable_snapshot_age_seconds": round(max(0.0, time.time() - _to_float((ctx.get("stable") or {}).get("refresh_ts"), time.time())), 2),
+                "advanced_snapshot_age_seconds": (ctx.get("advanced") or {}).get("snapshot_age_seconds"),
+            },
+            "confidence": 0.82 if ok_sources else 0.25,
+            "generated_at": _now_utc_iso(),
+            "duration_seconds": round(time.perf_counter() - started, 4),
+            "mode": "read_only_local_data",
+            "read_only": True,
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "dashboard_refresh_triggered": False,
+            "live_trading_changed": False,
+        }
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "2.0.0",
+            "ask_astra_v2": True,
+            "question": question,
+            "answer": "Ask-Astra could not build a local read-only answer from the current snapshots. The dashboard was not refreshed or changed.",
+            "sources_used": [],
+            "freshness": {},
+            "confidence": 0.0,
+            "generated_at": _now_utc_iso(),
+            "duration_seconds": round(time.perf_counter() - started, 4),
+            "mode": "read_only_local_data",
+            "read_only": True,
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "dashboard_refresh_triggered": False,
+            "live_trading_changed": False,
+            "error": f"ask_astra_v2_unavailable: {exc}",
+        }
+
+
 @router.get("/api/jsonl_maintenance_status_v1")
 def jsonl_maintenance_status_v1():
     try:

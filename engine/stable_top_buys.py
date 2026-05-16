@@ -31,6 +31,14 @@ def _symbol(row: dict[str, Any]) -> str:
     return str((row or {}).get("symbol") or (row or {}).get("ticker") or "").upper().strip()
 
 
+def _first_present(row: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and str(value).strip() != "":
+            return value
+    return None
+
+
 class StableTopBuysSelector:
     def __init__(
         self,
@@ -98,6 +106,34 @@ class StableTopBuysSelector:
             + grade_bonus
         )
         return round(max(0.0, min(110.0, score)), 3)
+
+    def _normalize_display_fields(self, row: dict[str, Any], *, score: float, state: str, first_seen: float, age: float, retained: bool, replacement_reason: str = "") -> dict[str, Any]:
+        out = dict(row or {})
+        price = _first_present(out, ("current_price", "price", "live_price", "last_price", "close", "mark_price"))
+        if price is not None:
+            out["current_price"] = price
+            out["price"] = _first_present(out, ("price", "current_price")) or price
+        stop = _first_present(out, ("stop_loss", "stop", "stop_price", "invalidation_level"))
+        if stop is not None:
+            out["stop_loss"] = stop
+        out["rolling_conviction_5r"] = _first_present(out, ("rolling_conviction_5r", "conviction_5r", "five_r_conviction"))
+        out["rolling_conviction_10r"] = _first_present(out, ("rolling_conviction_10r", "conviction_display_score", "conviction_10r", "ten_r_conviction"))
+        out["rolling_conviction_20r"] = _first_present(out, ("rolling_conviction_20r", "conviction_20r", "twenty_r_conviction"))
+        out["expected_move"] = _first_present(out, ("expected_move", "profit_prediction_usd", "expected_move_dollars", "expected_move_usd", "predicted_profit_dollars"))
+        out["expected_move_percent"] = _first_present(out, ("expected_move_percent", "expected_move_pct", "profit_prediction_pct", "predicted_return_pct"))
+        out["stable_layer_state"] = state
+        out["stable_display_state"] = state
+        out["stable_retained"] = bool(retained)
+        out["stable_since"] = datetime.fromtimestamp(first_seen, UTC).isoformat().replace("+00:00", "Z")
+        out["stable_first_seen_ts"] = first_seen
+        out["stable_last_seen_ts"] = time.time()
+        out["stable_age_seconds"] = round(age, 2)
+        out["stability_score"] = score
+        out["stable_composite_score"] = score
+        out["astra_composite_score"] = round(max(0.0, min(100.0, score)), 3)
+        out["replacement_reason"] = replacement_reason
+        out["pending_challenger"] = False
+        return out
 
     def _hard_invalid_reason(self, row: dict[str, Any]) -> str:
         if not row:
@@ -170,13 +206,8 @@ class StableTopBuysSelector:
             age = max(0.0, now - first_seen)
             score = self._score(current)
             if score >= self.min_quality_floor or age < self.min_hold_seconds:
-                out = dict(current)
-                out["stable_first_seen_ts"] = first_seen
-                out["stable_last_seen_ts"] = now
-                out["stable_age_seconds"] = round(age, 2)
-                out["stable_composite_score"] = score
-                out["stable_display_state"] = self._display_state(out, score, age)
-                out["stable_retained"] = True
+                state_label = self._display_state(current, score, age)
+                out = self._normalize_display_fields(current, score=score, state=state_label, first_seen=first_seen, age=age, retained=True)
                 stable.append(out)
                 retained.append(sym)
             else:
@@ -201,12 +232,7 @@ class StableTopBuysSelector:
             score = self._score(challenger)
             challenger["stable_composite_score"] = score
             if len(stable) < 6:
-                out = dict(challenger)
-                out["stable_first_seen_ts"] = now
-                out["stable_last_seen_ts"] = now
-                out["stable_age_seconds"] = 0.0
-                out["stable_display_state"] = "new_fill"
-                out["stable_retained"] = False
+                out = self._normalize_display_fields(challenger, score=score, state="new_fill", first_seen=now, age=0.0, retained=False, replacement_reason="fill_open_slot")
                 stable.append(out)
                 stable_symbols.add(sym)
                 replaced_symbols.append(sym)
@@ -219,12 +245,7 @@ class StableTopBuysSelector:
             challenger_counts[sym] = count
             if margin >= self.challenger_margin_required and count >= self.consecutive_refreshes_required:
                 removed = _symbol(weakest)
-                out = dict(challenger)
-                out["stable_first_seen_ts"] = now
-                out["stable_last_seen_ts"] = now
-                out["stable_age_seconds"] = 0.0
-                out["stable_display_state"] = "challenger_promoted"
-                out["stable_retained"] = False
+                out = self._normalize_display_fields(challenger, score=score, state="challenger_promoted", first_seen=now, age=0.0, retained=False, replacement_reason=f"beat_{removed}_by_{round(margin, 3)}")
                 stable[idx] = out
                 stable_symbols.discard(removed)
                 stable_symbols.add(sym)
