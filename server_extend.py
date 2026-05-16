@@ -30945,6 +30945,57 @@ def _annotate_stable_top_candidate_rows(top_payload):
     return out
 
 
+def _align_stable_duplicate_conviction_fields(top_payload):
+    out = dict(top_payload or {})
+    stocks = dict(out.get("stocks") or {})
+    final_rows = [dict(r or {}) for r in list(stocks.get("final") or []) if isinstance(r, dict)]
+    final_by_symbol = {
+        str(row.get("symbol") or row.get("ticker") or "").upper().strip(): row
+        for row in final_rows
+        if str(row.get("symbol") or row.get("ticker") or "").strip()
+    }
+    if not final_by_symbol:
+        return out
+    preserve_fields = (
+        "conviction_5r",
+        "conviction_10r",
+        "conviction_20r",
+        "rolling_conviction_5r",
+        "rolling_conviction_10r",
+        "rolling_conviction_20r",
+        "conviction_display_score",
+        "appearance_5r",
+        "appearance_10r",
+        "appearance_20r",
+        "appearance_count_5r",
+        "appearance_count_10r",
+        "appearance_count_20r",
+        "avg_rank_10r",
+        "paper_ready_rate_10r",
+        "rank_stability_10r",
+        "conviction_window_status",
+        "window_status",
+    )
+    for row_key in ("qualified", "watchlist", "fill"):
+        rows = stocks.get(row_key)
+        if not isinstance(rows, list):
+            continue
+        aligned = []
+        for row in rows:
+            rr = dict(row or {}) if isinstance(row, dict) else {}
+            sym = str(rr.get("symbol") or rr.get("ticker") or "").upper().strip()
+            src = final_by_symbol.get(sym)
+            if src:
+                for field in preserve_fields:
+                    if src.get(field) is not None:
+                        rr[field] = src.get(field)
+            aligned.append(rr)
+        stocks[row_key] = aligned
+    out["stocks"] = stocks
+    out["stable_duplicate_conviction_fields_aligned"] = True
+    return out
+
+
 def _raw_payload_for_stable_top_buys(buy_mode="balanced"):
     try:
         ctx = _remote_copilot_fast_context()
@@ -30970,7 +31021,8 @@ def _raw_payload_for_stable_top_buys(buy_mode="balanced"):
 
 
 def _stable_top_buys_payload(raw_payload=None, *, buy_mode="balanced"):
-    raw = _annotate_stable_top_candidate_rows(raw_payload if isinstance(raw_payload, dict) else _raw_payload_for_stable_top_buys(buy_mode))
+    raw = _align_stable_duplicate_conviction_fields(raw_payload if isinstance(raw_payload, dict) else _raw_payload_for_stable_top_buys(buy_mode))
+    raw = _annotate_stable_top_candidate_rows(raw)
     raw = _apply_card_explanations_to_top_payload(raw)
     stable = STABLE_TOP_BUYS_SELECTOR.select(raw, buy_mode=buy_mode)
     stable_rows = list(stable.get("stable_top_6") or [])
@@ -35730,7 +35782,18 @@ def _rolling_conviction_score_for_row(row, recent_rows):
         rank_v = _to_float(item.get("rank"), _to_float(item.get("ranking_position"), _to_float(item.get("hybrid_rank"), 0.0)))
         if rank_v > 0:
             rank_vals.append(rank_v)
-        quality_vals.append(_to_float(item.get("entry_filter_v2_score"), _to_float(item.get("entry_quality_score"), _to_float(item.get("buy_quality_score"), 0.0))))
+        quality_vals.append(
+            _to_float(
+                item.get("entry_quality_v3_score"),
+                _to_float(
+                    item.get("entry_filter_v2_score"),
+                    _to_float(
+                        item.get("entry_quality_score"),
+                        _to_float(item.get("buy_quality_score"), _to_float(item.get("trade_quality_score"), _to_float(item.get("quality_score"), 0.0))),
+                    ),
+                ),
+            )
+        )
         conf_vals.append(_to_float(item.get("confidence"), 0.0))
         grade_vals.append(_to_float(item.get("grade_percent"), _to_float(item.get("persona_weighted_grade"), 0.0)))
         state = str(item.get("canonical_state") or item.get("canonical_final_state") or "").strip().lower()
@@ -35750,19 +35813,39 @@ def _rolling_conviction_score_for_row(row, recent_rows):
     avg_quality = _mean(quality_vals)
     avg_conf = _mean(conf_vals)
     avg_grade = _mean(grade_vals)
+    if avg_quality <= 0.0:
+        avg_quality = _to_float(
+            r.get("entry_quality_v3_score"),
+            _to_float(
+                r.get("entry_filter_v2_score"),
+                _to_float(r.get("entry_quality_score"), _to_float(r.get("buy_quality_score"), _to_float(r.get("trade_quality_score"), 50.0))),
+            ),
+        )
+    if avg_conf <= 0.0:
+        avg_conf = _to_float(r.get("confidence"), _to_float(r.get("buy_confidence"), 50.0))
+    if avg_grade <= 0.0:
+        avg_grade = _to_float(r.get("grade_percent"), _to_float(r.get("persona_weighted_grade"), _to_float(r.get("final_action_score"), 50.0)))
     paper_ready_rate = paper_ready / max(1, appearance_10r)
-    rank_stability = max(0.0, 100.0 - min(100.0, _std(rank_vals) * 6.0)) if rank_vals else 0.0
+    rank_stability = max(0.0, 100.0 - min(100.0, _std(rank_vals) * 6.0)) if rank_vals else 55.0
     prediction_pct = _to_float(r.get("predicted_profit_percent"), _to_float(r.get("expected_move_percent"), _to_float(r.get("expected_move_high"), 0.0)))
     risk_penalty = max(0.0, _to_float(r.get("stale_data_risk_score"), 0.0) + (_to_float(r.get("entry_precision_v2_chase_risk"), 0.0) * 0.35))
+    consensus_score = _to_float(r.get("multi_brain_agreement"), _to_float(r.get("multi_brain_score"), _to_float(r.get("agreement_score"), 50.0)))
+    psychology_score = _to_float(r.get("psychology_score"), 50.0)
+    follow_through_score = _to_float(r.get("entry_followthrough_quality_score"), _to_float(r.get("follow_through_quality"), 50.0))
+    confidence_truthfulness = _to_float(r.get("confidence_truthfulness_score"), 50.0)
     conviction10 = max(
         0.0,
         min(
             100.0,
             (min(1.0, appearance_10r / 4.0) * 18.0)
             + (max(0.0, 100.0 - (avg_rank * 8.0)) * 0.16)
-            + (avg_quality * 0.24)
-            + (avg_conf * 0.20)
+            + (avg_quality * 0.20)
+            + (avg_conf * 0.16)
             + (avg_grade * 0.08)
+            + (consensus_score * 0.10)
+            + (psychology_score * 0.07)
+            + (follow_through_score * 0.08)
+            + (confidence_truthfulness * 0.05)
             + (paper_ready_rate * 100.0 * 0.16)
             + (rank_stability * 0.10)
             + max(-10.0, min(15.0, prediction_pct * 2.0))
@@ -35783,15 +35866,22 @@ def _rolling_conviction_score_for_row(row, recent_rows):
         "rolling_conviction_5r": round(conviction5, 2),
         "rolling_conviction_10r": round(conviction10, 2),
         "rolling_conviction_20r": round(conviction20, 2),
+        "conviction_5r": round(conviction5, 2),
+        "conviction_10r": round(conviction10, 2),
+        "conviction_20r": round(conviction20, 2),
         "appearance_count_5r": int(appearance_5r),
         "appearance_count_10r": int(appearance_10r),
         "appearance_count_20r": int(appearance_20r),
+        "appearance_5r": int(appearance_5r),
+        "appearance_10r": int(appearance_10r),
+        "appearance_20r": int(appearance_20r),
         "avg_rank_10r": round(avg_rank, 3),
         "avg_quality_10r": round(avg_quality, 3),
         "avg_confidence_10r": round(avg_conf, 3),
         "paper_ready_rate_10r": round(paper_ready_rate, 4),
         "rank_stability_10r": round(rank_stability, 2),
         "conviction_window_status": str(window_status),
+        "window_status": str(window_status),
         "conviction_display_score": round(conviction10, 2),
         "conviction_sort_score": round(sort_score, 3),
         "open_instability_window": bool(appearance_10r < 2 or rank_stability < 35.0),
@@ -36871,15 +36961,14 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
     out["top_buys_background_refresh_status"] = str(refresh_status)
     out["top_buys_background_refresh_triggered"] = bool(background_refresh_triggered)
     out["top_buys_snapshot_last_error"] = _safe_text(refresh_last_error or str(snap.get("last_error") or ""), 160)
-    if str(source or "") != "runtime_snapshot":
-        _top_buys_runtime_snapshot_set(
-            out,
-            source=str(source or "fresh_build"),
-            build_ms=_to_float(build_ms, 0.0),
-            is_partial=bool(out.get("top_buys_partial_build", False)),
-            refresh_status=refresh_status,
-            last_error=refresh_last_error,
-        )
+    _top_buys_runtime_snapshot_set(
+        out,
+        source=str(source or "fresh_build"),
+        build_ms=_to_float(build_ms, 0.0),
+        is_partial=bool(out.get("top_buys_partial_build", False)),
+        refresh_status=refresh_status,
+        last_error=refresh_last_error,
+    )
     try:
         _log_candidate_decision_ledger_from_payload(out, decision_source=str(source or "top_buys"))
     except Exception:
@@ -37183,6 +37272,10 @@ def _decorate_top_buys_fast_read_payload(
     stage="fast_read_runtime_rows",
 ):
     out = dict(payload or {})
+    try:
+        out = _apply_rolling_conviction_v1(out)
+    except Exception:
+        pass
     try:
         out = _apply_institutional_bundle1_payload(out)
     except Exception:
