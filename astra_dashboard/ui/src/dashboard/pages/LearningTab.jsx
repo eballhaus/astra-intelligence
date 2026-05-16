@@ -192,6 +192,29 @@ function InstitutionalMetricCard({ title, value, detail, status }) {
   );
 }
 
+function normalizeAdvancedSnapshotCards(rawCards, fallbackReason = "Snapshot did not load within the UI timeout.") {
+  const asArray = Array.isArray(rawCards)
+    ? rawCards
+    : (rawCards && typeof rawCards === "object"
+      ? Object.entries(rawCards).map(([key, value]) => ({ key, ...(value || {}) }))
+      : []);
+  return asArray.map((card, idx) => {
+    const fallbackCard = ADVANCED_METRIC_FALLBACK_CARDS.find((item) => item.key === card?.key) || ADVANCED_METRIC_FALLBACK_CARDS[idx] || {};
+    const status = String(card?.status || "unavailable").toLowerCase();
+    return {
+      key: card?.key || fallbackCard.key || `advancedCard${idx}`,
+      title: card?.title || fallbackCard.title || "Advanced Metric",
+      status: ["loaded", "stale", "still_computing", "error", "unavailable"].includes(status) ? status : "unavailable",
+      primary_value: firstNonEmpty(card?.primary_value, card?.primary, card?.value, "Snapshot unavailable"),
+      secondary_value: firstNonEmpty(card?.secondary_value, card?.secondary, ""),
+      detail_value: firstNonEmpty(card?.detail_value, card?.detail, card?.error_reason, fallbackReason),
+      updated_at: card?.updated_at || new Date().toISOString(),
+      source_endpoint: card?.source_endpoint || fallbackCard.source_endpoint || "/api/advanced_metrics_snapshot_v1",
+      error_reason: firstNonEmpty(card?.error_reason, status === "loaded" || status === "stale" ? "" : fallbackReason, ""),
+    };
+  });
+}
+
 export default function LearningTab({ compact = false }) {
   const [resolvedApiBase, setResolvedApiBase] = useState(getInitialApiBase());
   const [loading, setLoading] = useState(false);
@@ -572,6 +595,8 @@ export default function LearningTab({ compact = false }) {
   useEffect(() => {
     if (!showAdvancedSections || advancedLoadedOnce || advancedLoading) return undefined;
     let cancelled = false;
+    const controller = new AbortController();
+    let timeoutId = null;
 
     const fallbackSnapshot = (reason) => ({
       enabled: false,
@@ -582,7 +607,7 @@ export default function LearningTab({ compact = false }) {
         key: card.key,
         title: card.title,
         status: "unavailable",
-        primary_value: "Unavailable",
+        primary_value: "Snapshot unavailable",
         secondary_value: "Advanced metrics unavailable or still computing",
         detail_value: reason || "Snapshot did not load within the UI timeout.",
         updated_at: new Date().toISOString(),
@@ -598,25 +623,39 @@ export default function LearningTab({ compact = false }) {
       recommended_action: "Advanced metrics unavailable or still computing",
     });
 
+    const fetchAdvancedSnapshot = async () => {
+      timeoutId = window.setTimeout(() => {
+        try { controller.abort(); } catch (_e) {}
+      }, 8000);
+      const response = await fetch("/api/advanced_metrics_snapshot_v1", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`${response.status} ${response.statusText}${body ? ` :: ${body.slice(0, 160)}` : ""}`);
+      }
+      return response.json();
+    };
+
     const loadAdvancedInstitutional = async () => {
       setAdvancedLoading(true);
       setAdvancedSnapshotMessage("Loading fast advanced metrics snapshot...");
       try {
-        const result = await fetchJsonWithFallback("/api/advanced_metrics_snapshot_v1", {
-          preferredBase: resolvedApiBase || API_BASE,
-          fallbackValue: null,
-          timeoutMs: 8000,
-          staleTtlMs: 300000,
-        });
-        const parsed = result.ok && result.parsed && typeof result.parsed === "object" ? result.parsed : null;
-        const snapshot = parsed || fallbackSnapshot(String(result.error || "advanced_metrics_snapshot_unavailable"));
-        const cards = Array.isArray(snapshot.cards) ? snapshot.cards : [];
+        const parsed = await fetchAdvancedSnapshot();
+        const snapshot = parsed && typeof parsed === "object" ? parsed : fallbackSnapshot("advanced_metrics_snapshot_unavailable");
+        const cards = normalizeAdvancedSnapshotCards(snapshot.cards, "Advanced metrics unavailable or still computing");
+        snapshot.cards = cards;
+        snapshot.total_cards = Number(snapshot.total_cards || cards.length || ADVANCED_METRIC_FALLBACK_CARDS.length);
+        snapshot.cards_loaded = Number(snapshot.cards_loaded ?? cards.filter((card) => ["loaded", "stale"].includes(String(card.status || "").toLowerCase())).length);
+        snapshot.cards_failed = Number(snapshot.cards_failed ?? cards.filter((card) => !["loaded", "stale"].includes(String(card.status || "").toLowerCase())).length);
         const statuses = {};
         cards.forEach((card) => {
           statuses[card.key] = {
             label: card.title,
             url: card.source_endpoint,
-            httpStatus: result.httpStatus ?? null,
+            httpStatus: 200,
             loaded: ["loaded", "stale"].includes(String(card.status || "").toLowerCase()),
             status: card.status || "unavailable",
             error: card.error_reason || "",
@@ -627,13 +666,8 @@ export default function LearningTab({ compact = false }) {
           setAdvancedEndpointStatus(statuses);
           setAdvancedInstitutional({});
           setAdvancedSnapshotMessage(
-            parsed
-              ? `${snapshot.cards_loaded || 0}/${snapshot.total_cards || cards.length} advanced cards loaded${snapshot.cards_failed ? `, ${snapshot.cards_failed} unavailable` : ""}`
-              : "Advanced metrics unavailable or still computing"
+            `${snapshot.cards_loaded || 0}/${snapshot.total_cards || cards.length} advanced cards loaded${snapshot.cards_failed ? `, ${snapshot.cards_failed} unavailable` : ""}`
           );
-          if (result.ok && result.baseUsed && result.baseUsed !== resolvedApiBase) {
-            setResolvedApiBase(result.baseUsed);
-          }
           setInstitutionalTrend((prev) => {
             const cardByKey = Object.fromEntries(cards.map((card) => [card.key, card]));
             const fastSnapshot = data.learningSnapshotFast || {};
@@ -654,7 +688,9 @@ export default function LearningTab({ compact = false }) {
         }
       } catch (err) {
         if (!cancelled) {
-          const snapshot = fallbackSnapshot(err instanceof Error ? err.message : String(err));
+          const reason = err?.name === "AbortError" ? "Snapshot request timed out after 8 seconds" : (err instanceof Error ? err.message : String(err));
+          const snapshot = fallbackSnapshot(reason);
+          snapshot.cards = normalizeAdvancedSnapshotCards(snapshot.cards, reason);
           setAdvancedSnapshot(snapshot);
           setAdvancedEndpointStatus(Object.fromEntries(snapshot.cards.map((card) => [card.key, {
             label: card.title,
@@ -667,6 +703,7 @@ export default function LearningTab({ compact = false }) {
           setAdvancedSnapshotMessage("Advanced metrics unavailable or still computing");
         }
       } finally {
+        if (timeoutId) window.clearTimeout(timeoutId);
         if (!cancelled) {
           setAdvancedLoadedOnce(true);
           setAdvancedLoading(false);
@@ -677,6 +714,8 @@ export default function LearningTab({ compact = false }) {
     loadAdvancedInstitutional();
     return () => {
       cancelled = true;
+      if (timeoutId) window.clearTimeout(timeoutId);
+      try { controller.abort(); } catch (_e) {}
     };
   }, [showAdvancedSections, advancedLoadedOnce, resolvedApiBase, data.learningSnapshotFast, data.learningInsights]);
 
