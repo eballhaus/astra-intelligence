@@ -165,3 +165,105 @@ def summarize_lifecycle_metrics(limit: int = 500) -> dict[str, Any]:
         "avg_closed_pnl_pct": round(avg_pnl, 4),
         "last_updated_at": _now_iso(),
     }
+
+class LifecycleAutoTrackingEngine:
+    """Local-only lifecycle quality report; no broker interaction or writes."""
+
+    version = "1.0.0"
+
+    def __init__(self, state_dir: str = "state") -> None:
+        self.state_dir = str(state_dir or "state")
+        self.path = os.path.join(self.state_dir, "trade_lifecycle_v1.jsonl")
+
+    def _parse_ts(self, value: Any):
+        raw = _to_str(value)
+        if not raw:
+            return None
+        try:
+            if raw.endswith("Z"):
+                raw = raw[:-1] + "+00:00"
+            return datetime.fromisoformat(raw)
+        except Exception:
+            return None
+
+    def _all_rows(self, limit: int = 5000) -> list[dict[str, Any]]:
+        if not os.path.exists(self.path):
+            return []
+        rows: list[dict[str, Any]] = []
+        try:
+            with open(self.path, "r", encoding="utf-8") as fh:
+                for raw in fh:
+                    try:
+                        obj = json.loads(raw)
+                    except Exception:
+                        continue
+                    if isinstance(obj, dict):
+                        rows.append(obj)
+        except Exception:
+            return []
+        return rows[-max(1, int(limit)):]
+
+    def status(self) -> dict[str, Any]:
+        rows = self._all_rows()
+        stage_counts: dict[str, int] = {"entry": 0, "add_reduce": 0, "stop_update": 0, "exit": 0, "post_trade_review": 0}
+        closed: list[dict[str, Any]] = []
+        quality_scores: list[float] = []
+        hold_minutes: list[float] = []
+        mfe_values: list[float] = []
+        mae_values: list[float] = []
+        capture_values: list[float] = []
+        drawdown_after_peak: list[float] = []
+        for row in rows:
+            stage = _to_str(row.get("lifecycle_stage") or row.get("status"), "entry").lower()
+            if "add" in stage or "reduce" in stage:
+                stage_counts["add_reduce"] += 1
+            elif "stop" in stage:
+                stage_counts["stop_update"] += 1
+            elif "exit" in stage or "closed" in stage:
+                stage_counts["exit"] += 1
+            elif "review" in stage:
+                stage_counts["post_trade_review"] += 1
+            else:
+                stage_counts["entry"] += 1
+            if _to_str(row.get("exit_timestamp")) or stage.startswith("closed") or "exit" in stage:
+                closed.append(row)
+            entry = self._parse_ts(row.get("entry_timestamp") or row.get("signal_timestamp"))
+            exit_ts = self._parse_ts(row.get("exit_timestamp") or row.get("updated_at"))
+            if entry is not None and exit_ts is not None:
+                hold_minutes.append(max(0.0, (exit_ts.timestamp() - entry.timestamp()) / 60.0))
+            mfe = _to_float(row.get("max_favorable_excursion_pct"), 0.0)
+            mae = _to_float(row.get("max_adverse_excursion_pct"), 0.0)
+            pnl = _to_float(row.get("pnl_pct"), _to_float(row.get("return_pct"), 0.0))
+            mfe_values.append(mfe)
+            mae_values.append(mae)
+            drawdown_after_peak.append(max(0.0, mfe - pnl))
+            if abs(mfe) > 0.01:
+                capture_values.append(max(0.0, min(2.0, pnl / max(0.01, mfe))))
+            quality_scores.append(_to_float(row.get("entry_quality_score"), _to_float(row.get("grade"), 0.0)))
+        def avg(values: list[float]) -> float:
+            return round(sum(values) / max(1, len(values)), 6) if values else 0.0
+        workflow_quality = min(100.0, (len(closed) / max(1, len(rows))) * 60.0 + avg(quality_scores) * 0.4) if rows else 0.0
+        confidence = min(95.0, 30.0 + min(50.0, len(closed) * 2.0))
+        return {
+            "enabled": True,
+            "version": self.version,
+            "mode": "local_lifecycle_auto_tracking_reporting_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "trade_lifecycle_status_v1": True,
+            "broker_interaction": False,
+            "live_order_execution_enabled": False,
+            "total_lifecycle_rows": len(rows),
+            "closed_trade_count": len(closed),
+            "stage_counts": stage_counts,
+            "hold_time_minutes_avg": avg(hold_minutes),
+            "max_favorable_excursion_avg": avg(mfe_values),
+            "max_adverse_excursion_avg": avg(mae_values),
+            "drawdown_after_peak_avg": avg(drawdown_after_peak),
+            "capture_ratio_avg": avg(capture_values),
+            "entry_to_exit_workflow_quality": round(workflow_quality, 3),
+            "confidence_score": round(confidence, 3),
+            "planning_only_if_data_insufficient": len(closed) < 30,
+            "next_recommended_action": "continue_tracking_full_lifecycle_events_without_broker_interaction" if len(closed) < 30 else "review_capture_ratio_and_workflow_quality_before_policy_changes",
+        }

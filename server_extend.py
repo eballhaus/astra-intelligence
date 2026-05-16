@@ -99,6 +99,65 @@ except Exception:
             return {"ok": False, "fallback": True}
 
 from engine.exit_intelligence import ExitIntelligenceEngine
+try:
+    from engine.trade_lifecycle_tracker import LifecycleAutoTrackingEngine
+except Exception:
+    class LifecycleAutoTrackingEngine:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "local_lifecycle_auto_tracking_reporting_only",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "trade_lifecycle_status_v1": True,
+                "confidence_score": 0,
+                "next_recommended_action": "inspect_lifecycle_auto_tracking_import",
+            }
+
+try:
+    from engine.position_sizing_engine import PositionSizingRiskEngine
+except Exception:
+    class PositionSizingRiskEngine:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "shadow_position_sizing_reporting_only", "local_only": True, "writes_files": False, "api_calls_used": 0, "position_sizing_status_v1": True, "confidence_score": 0, "next_recommended_action": "inspect_position_sizing_import"}
+
+try:
+    from engine.macro_context_engine import MacroCrossAssetContextEngine
+except Exception:
+    class MacroCrossAssetContextEngine:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "local_macro_cross_asset_reporting_only", "local_only": True, "writes_files": False, "api_calls_used": 0, "macro_context_status_v1": True, "confidence_score": 0, "next_recommended_action": "inspect_macro_context_import"}
+
+try:
+    from engine.walk_forward_validation import WalkForwardValidationEngine
+except Exception:
+    class WalkForwardValidationEngine:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "shadow_walk_forward_validation_reporting_only", "local_only": True, "writes_files": False, "api_calls_used": 0, "walk_forward_validation_status_v1": True, "confidence_score": 0, "next_recommended_action": "inspect_walk_forward_import"}
+
+try:
+    from engine.performance_optimization import PerformanceOptimizationPlanner
+except Exception:
+    class PerformanceOptimizationPlanner:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "performance_optimization_planning_only", "local_only": True, "writes_files": False, "api_calls_used": 0, "performance_optimization_status_v1": True, "confidence_score": 0, "next_recommended_action": "inspect_performance_optimization_import"}
 from engine.intraday_engine import IntradaySignalEngine
 from engine.position_tracker import PositionTracker
 from engine.paper_autopilot import PaperAutopilotEngine
@@ -637,6 +696,12 @@ WATCHDOG_HEARTBEAT_PATH = os.path.join(STATE, "backend_watchdog_heartbeat")
 WATCHDOG_LOG_PATH = os.path.join(STATE, "watchdog.log")
 PAPER_REPLAY_TRAINER = None
 TRADE_LIFECYCLE_INTELLIGENCE = TradeLifecycleIntelligence(state_dir=STATE)
+LIFECYCLE_AUTO_TRACKING_ENGINE = LifecycleAutoTrackingEngine(state_dir=STATE)
+EXIT_INTELLIGENCE_STATUS_ENGINE = ExitIntelligenceEngine(state_dir=STATE)
+POSITION_SIZING_RISK_ENGINE = PositionSizingRiskEngine(state_dir=STATE)
+MACRO_CONTEXT_ENGINE = MacroCrossAssetContextEngine(state_dir=STATE)
+WALK_FORWARD_VALIDATION_ENGINE = WalkForwardValidationEngine(state_dir=STATE)
+PERFORMANCE_OPTIMIZATION_PLANNER = PerformanceOptimizationPlanner(state_dir=STATE)
 POLICY_BACKTEST_ENGINE = PolicyBacktestEngine(state_dir=STATE)
 REPLAY_COUNTERFACTUAL_ENGINE = ReplayCounterfactualEngine(state_dir=STATE)
 LEARNING_DATA_QUALITY_MONITOR = LearningDataQualityMonitor(state_dir=STATE)
@@ -28855,20 +28920,149 @@ def trade_lifecycle_summary_v1(limit: int = Query(200, ge=1, le=2000)):
 def trade_lifecycle_status_v1(force_refresh: bool = Query(False)):
     try:
         payload = TRADE_LIFECYCLE_INTELLIGENCE.report(force_refresh=force_refresh)
+        auto_payload = LIFECYCLE_AUTO_TRACKING_ENGINE.status()
         payload["trade_lifecycle_status_v1"] = True
         payload["institutional_intelligence_bundle_2"] = True
+        payload["institutional_trading_intelligence_bundle_v1"] = True
+        payload["lifecycle_auto_tracking_v1"] = auto_payload
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        payload["no_broker_interaction"] = True
+        payload["live_order_execution_enabled"] = False
+        if "confidence_score" not in payload:
+            payload["confidence_score"] = auto_payload.get("confidence_score", 0)
+        payload.setdefault("next_recommended_action", auto_payload.get("next_recommended_action"))
         return payload
     except Exception as exc:
         return {
             "enabled": False,
             "trade_lifecycle_status_v1": True,
             "institutional_intelligence_bundle_2": True,
+            "institutional_trading_intelligence_bundle_v1": True,
             "mode": "shadow_lifecycle_intelligence",
             "local_only": True,
+            "writes_files": False,
             "api_calls_used": 0,
+            "confidence_score": 0,
+            "next_recommended_action": "inspect_trade_lifecycle_status_error",
             "error": f"trade_lifecycle_intelligence_unavailable: {exc}",
             "metrics": {},
             "recommendations": [],
+        }
+
+
+@router.get("/api/exit_intelligence_status_v1")
+def exit_intelligence_status_v1():
+    try:
+        payload = EXIT_INTELLIGENCE_STATUS_ENGINE.status()
+        payload["exit_intelligence_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_exit_intelligence_reporting_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "confidence_score": 0,
+            "exit_intelligence_status_v1": True,
+            "next_recommended_action": "inspect_exit_intelligence_error",
+            "error": f"exit_intelligence_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/position_sizing_status_v1")
+def position_sizing_status_v1():
+    try:
+        payload = POSITION_SIZING_RISK_ENGINE.status()
+        payload["position_sizing_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_position_sizing_reporting_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "confidence_score": 0,
+            "position_sizing_status_v1": True,
+            "next_recommended_action": "inspect_position_sizing_error",
+            "error": f"position_sizing_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/macro_context_status_v1")
+def macro_context_status_v1():
+    try:
+        payload = MACRO_CONTEXT_ENGINE.status()
+        payload["macro_context_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "local_macro_cross_asset_reporting_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "confidence_score": 0,
+            "macro_context_status_v1": True,
+            "next_recommended_action": "inspect_macro_context_error",
+            "error": f"macro_context_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/walk_forward_validation_status_v1")
+def walk_forward_validation_status_v1():
+    try:
+        payload = WALK_FORWARD_VALIDATION_ENGINE.status()
+        payload["walk_forward_validation_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_walk_forward_validation_reporting_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "confidence_score": 0,
+            "walk_forward_validation_status_v1": True,
+            "next_recommended_action": "inspect_walk_forward_validation_error",
+            "error": f"walk_forward_validation_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/performance_optimization_status_v1")
+def performance_optimization_status_v1():
+    try:
+        payload = PERFORMANCE_OPTIMIZATION_PLANNER.status()
+        payload["performance_optimization_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "performance_optimization_planning_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "confidence_score": 0,
+            "performance_optimization_status_v1": True,
+            "next_recommended_action": "inspect_performance_optimization_error",
+            "error": f"performance_optimization_status_unavailable: {exc}",
         }
 
 
