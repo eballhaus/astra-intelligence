@@ -71,7 +71,8 @@ function formatTimestamp(v) {
 }
 
 function normalizeTopBuys(raw) {
-  const stockFinal = Array.isArray(raw?.stocks?.final) ? raw.stocks.final : [];
+  const stableTop6 = Array.isArray(raw?.stable_top_6) ? raw.stable_top_6 : [];
+  const stockFinal = stableTop6.length > 0 ? stableTop6 : (Array.isArray(raw?.stocks?.final) ? raw.stocks.final : []);
   const cryptoFinal = Array.isArray(raw?.crypto?.final) ? raw.crypto.final : [];
   const stockReleased = Array.isArray(raw?.top_action_views?.canonical_release_views?.stocks_released_hero_buys)
     ? raw.top_action_views.canonical_release_views.stocks_released_hero_buys
@@ -129,6 +130,9 @@ function normalizeTopBuys(raw) {
       ai_card_explanation_source: row.ai_card_explanation_source || row.explanation_layer_source || "",
       why_this_is_a_buy: row.why_this_is_a_buy || row.rationale || row.summary || row.buy_reason || "",
       dashboard_fallback_candidate: Boolean(row.dashboard_fallback_candidate),
+      stable_display_state: row.stable_display_state || "",
+      stable_composite_score: row.stable_composite_score ?? null,
+      stable_retained: Boolean(row.stable_retained),
     };
   };
   return {
@@ -275,7 +279,7 @@ export default function Dashboard() {
         }
 
         const outcomes = await Promise.all([
-          fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", topBuys || {}, 5000),
+          fetchJson("stable_top_buys", "/api/stable_top_buys_v1?buy_mode=balanced", topBuys || {}, 5000),
           fetchJson("system_status", "/api/system_status", systemStatus || {}, 5000),
           fetchJson("positions", "/api/positions", { positions }, 5000),
         ]);
@@ -290,7 +294,17 @@ export default function Dashboard() {
         });
         setEndpointStatus({ ...statusMap });
         setError("");
-        if (byKey.top_buys?.parsed && Object.keys(byKey.top_buys.parsed || {}).length > 0) setTopBuys(byKey.top_buys.parsed || {});
+        if (byKey.stable_top_buys?.parsed && Object.keys(byKey.stable_top_buys.parsed || {}).length > 0) {
+          setTopBuys(byKey.stable_top_buys.parsed || {});
+        } else {
+          const fallbackTop = await fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", topBuys || {}, 5000);
+          if (fallbackTop?.parsed && Object.keys(fallbackTop.parsed || {}).length > 0) setTopBuys(fallbackTop.parsed || {});
+          statusMap.top_buys = {
+            ok: Boolean(fallbackTop?.ok || (fallbackTop?.parsed && Object.keys(fallbackTop.parsed || {}).length > 0)),
+            status: fallbackTop?.status,
+            error: fallbackTop?.ok ? "stable fallback" : "using stale snapshot if available",
+          };
+        }
         if (byKey.system_status?.parsed && Object.keys(byKey.system_status.parsed || {}).length > 0) setSystemStatus(byKey.system_status.parsed || {});
         if (byKey.positions?.parsed && Object.keys(byKey.positions.parsed || {}).length > 0) setPositions(normalizePositions(byKey.positions.parsed || {}));
       } finally {

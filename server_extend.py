@@ -308,11 +308,11 @@ except Exception:
     CardExplanationEngine = _AutonomousResearchFallback  # type: ignore
 try:
     from engine.replay_to_learning_integration import ReplayToLearningIntegration
-    from engine.entry_quality_engine_v3 import EntryQualityEngineV3
+    from engine.entry_quality_engine_v3 import EntryQualityEngineV3, score_entry_quality_v3
     from engine.promotion_gate_refinement import PromotionGateRefinement
     from engine.multi_brain_weight_learning import MultiBrainWeightLearning
     from engine.outcome_labeling_engine import OutcomeLabelingEngine
-    from engine.psychology_brain import PsychologyBrain
+    from engine.psychology_brain import PsychologyBrain, score_psychology
     from engine.idle_replay_worker import IdleReplayWorkerPlanner
 except Exception:
     class _LearningActivationFallback:  # type: ignore[override]
@@ -327,11 +327,44 @@ except Exception:
 
     ReplayToLearningIntegration = _LearningActivationFallback  # type: ignore
     EntryQualityEngineV3 = _LearningActivationFallback  # type: ignore
+    def score_entry_quality_v3(row):  # type: ignore[override]
+        return {"entry_quality_v3_score": 0.0, "recommended_entry_mode": "paper_only"}
     PromotionGateRefinement = _LearningActivationFallback  # type: ignore
     MultiBrainWeightLearning = _LearningActivationFallback  # type: ignore
     OutcomeLabelingEngine = _LearningActivationFallback  # type: ignore
     PsychologyBrain = _LearningActivationFallback  # type: ignore
+    def score_psychology(row):  # type: ignore[override]
+        return {"psychology_score": 50.0, "available": False}
     IdleReplayWorkerPlanner = _LearningActivationFallback  # type: ignore
+try:
+    from engine.stable_top_buys import StableTopBuysSelector
+except Exception:
+    class StableTopBuysSelector:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def select(self, raw_payload=None, *args, **kwargs):
+            raw = dict(raw_payload or {})
+            rows = list(((raw.get("stocks") or {}).get("final") or []) or [])
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "stable_top_6_unavailable",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "stable_top_buys_v1": True,
+                "stable_top_6": rows[:6],
+                "raw_candidates_count": len(rows),
+                "stable_count": len(rows[:6]),
+                "stocks_final_count": len(rows[:6]),
+                "replaced_symbols": [],
+                "retained_symbols": [],
+                "pending_challengers": [],
+                "invalidated_symbols": [],
+                "stability_mode": "fallback_raw_top_buys",
+                "next_recommended_action": "inspect_stable_top_buys_import",
+            }
 try:
     from engine.snapshot_cache import SnapshotCacheRegistry
 except Exception:
@@ -959,6 +992,7 @@ MULTI_BRAIN_WEIGHT_LEARNING = MultiBrainWeightLearning(state_dir=STATE)
 OUTCOME_LABELING_ENGINE = OutcomeLabelingEngine(state_dir=STATE)
 PSYCHOLOGY_BRAIN = PsychologyBrain(state_dir=STATE)
 IDLE_REPLAY_WORKER_PLANNER = IdleReplayWorkerPlanner(state_dir=STATE)
+STABLE_TOP_BUYS_SELECTOR = StableTopBuysSelector(state_dir=STATE)
 SNAPSHOT_CACHE_REGISTRY = SnapshotCacheRegistry(state_dir=STATE)
 STORAGE_OPTIMIZER = StorageOptimizer(state_dir=STATE)
 SQLITE_QUERY_INDEX = SQLiteQueryIndex(state_dir=STATE)
@@ -30879,6 +30913,122 @@ def _apply_card_explanations_to_top_payload(top_payload):
         return out
 
 
+def _annotate_stable_top_candidate_rows(top_payload):
+    out = dict(top_payload or {})
+    for section_name in ("stocks", "crypto"):
+        section = dict(out.get(section_name) or {})
+        for row_key in ("final", "qualified", "watchlist", "fill"):
+            rows = section.get(row_key)
+            if not isinstance(rows, list):
+                continue
+            enriched_rows = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                enriched = dict(row)
+                try:
+                    enriched.update(score_entry_quality_v3(enriched) or {})
+                except Exception:
+                    pass
+                try:
+                    psych = score_psychology(enriched) or {}
+                    if isinstance(psych, dict):
+                        enriched.setdefault("psychology_score", psych.get("psychology_score"))
+                        enriched.setdefault("psychology_chase_risk", psych.get("chase_risk"))
+                        enriched.setdefault("psychology_crowding_risk", psych.get("crowding_risk"))
+                except Exception:
+                    pass
+                enriched_rows.append(enriched)
+            section[row_key] = enriched_rows
+        out[section_name] = section
+    out["stable_top_6_learning_signals_applied"] = True
+    return out
+
+
+def _raw_payload_for_stable_top_buys(buy_mode="balanced"):
+    try:
+        ctx = _remote_copilot_fast_context()
+        top_payload = ctx.get("top_buys") if isinstance(ctx.get("top_buys"), dict) else {}
+        if isinstance(top_payload, dict) and ((top_payload.get("stocks") or {}).get("final") or []):
+            return top_payload
+    except Exception:
+        pass
+    try:
+        snap = _latest_top_buys_runtime_snapshot()
+        if isinstance(snap, dict) and ((snap.get("stocks") or {}).get("final") or []):
+            return snap
+    except Exception:
+        pass
+    try:
+        stock_rows = _rows_for_top_buys("stocks")
+        crypto_rows = _rows_for_top_buys("crypto")
+        if stock_rows or crypto_rows:
+            return _top_buys_fast_read_payload_from_rows(stock_rows, crypto_rows, buy_mode)
+    except Exception:
+        pass
+    return {"stocks": {"qualified": [], "fill": [], "watchlist": [], "final": []}, "crypto": {"final": []}, "top_buys_stage": "stable_empty_fallback"}
+
+
+def _stable_top_buys_payload(raw_payload=None, *, buy_mode="balanced"):
+    raw = _annotate_stable_top_candidate_rows(raw_payload if isinstance(raw_payload, dict) else _raw_payload_for_stable_top_buys(buy_mode))
+    raw = _apply_card_explanations_to_top_payload(raw)
+    stable = STABLE_TOP_BUYS_SELECTOR.select(raw, buy_mode=buy_mode)
+    stable_rows = list(stable.get("stable_top_6") or [])
+    out = dict(raw)
+    stocks = dict(out.get("stocks") or {})
+    stocks["final"] = stable_rows
+    if not stocks.get("qualified"):
+        stocks["qualified"] = list(stable_rows)
+    out["stocks"] = stocks
+    out["stocks_final_count"] = int(len(stable_rows))
+    out["stable_top_buys_v1"] = True
+    out["stable_top_buys"] = stable
+    out["stable_top_6"] = stable_rows
+    out["stable_count"] = int(len(stable_rows))
+    out["top_buys_stage"] = "stable_top_6_snapshot"
+    out["top_buys_payload_source"] = "stable_top_buys_v1"
+    out["stability_mode"] = stable.get("stability_mode")
+    out["api_calls_used"] = 0
+    out["live_trading_changed"] = False
+    out["rankings_top_buys_strategy_changed"] = False
+    return out
+
+
+@router.get("/api/stable_top_buys_v1")
+def stable_top_buys_v1(buy_mode: str = Query("balanced")):
+    try:
+        payload = _stable_top_buys_payload(buy_mode=buy_mode)
+        stable_meta = dict(payload.get("stable_top_buys") or {})
+        stable_meta["stocks"] = payload.get("stocks") or {}
+        stable_meta["crypto"] = payload.get("crypto") or {}
+        stable_meta["stocks_final_count"] = payload.get("stocks_final_count", len(stable_meta.get("stable_top_6") or []))
+        stable_meta["top_buys_stage"] = payload.get("top_buys_stage")
+        stable_meta["top_buys_payload_source"] = payload.get("top_buys_payload_source")
+        stable_meta["api_calls_used"] = 0
+        return stable_meta
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "stable_top_6_presentation_layer",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "stable_top_buys_v1": True,
+            "stable_top_6": [],
+            "raw_candidates_count": 0,
+            "stable_count": 0,
+            "stocks_final_count": 0,
+            "replaced_symbols": [],
+            "retained_symbols": [],
+            "pending_challengers": [],
+            "invalidated_symbols": [],
+            "stability_mode": "error_fallback",
+            "error": f"stable_top_buys_unavailable: {exc}",
+            "next_recommended_action": "fallback_to_raw_top_buys_snapshot",
+        }
+
+
 def _dashboard_fast_snapshot_payload():
     stale_sections = []
     unavailable_sections = []
@@ -30887,7 +31037,7 @@ def _dashboard_fast_snapshot_payload():
     if not top_payload:
         unavailable_sections.append("top_buys")
         top_payload = {"stocks": {"final": []}, "crypto": {"final": []}, "top_buys_stage": "dashboard_fast_empty_fallback"}
-    top_payload = _apply_card_explanations_to_top_payload(top_payload)
+    top_payload = _stable_top_buys_payload(top_payload, buy_mode="balanced")
     system_payload = {}
     try:
         system_payload = system_status()

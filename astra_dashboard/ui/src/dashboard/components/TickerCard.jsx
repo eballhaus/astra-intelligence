@@ -128,6 +128,7 @@ export default function TickerCard({
   const timestamp = item?.timestamp ?? "n/a";
   const qualification = item?.buy_eligibility || "QUALIFIED";
   const fallbackCandidate = Boolean(item?.dashboard_fallback_candidate);
+  const stableState = String(item?.stable_display_state || "").replaceAll("_", " ").trim();
   const rationale = String(item?.why_this_is_a_buy || item?.why_made_list || "").trim();
   const nearThresholdBlocker = String(item?.primary_promotion_blocker || "").trim();
   const deploymentStatus = String(item?.hero_card_deployment_label || item?.hero_deployment_status || "paper-ready").toLowerCase();
@@ -311,6 +312,11 @@ export default function TickerCard({
           {fallbackCandidate ? (
             <div style={{ ...labelStyle, color: "#6d5a2b" }}>
               Display mode: candidate fallback (not released-final)
+            </div>
+          ) : null}
+          {stableState ? (
+            <div style={{ ...labelStyle, color: "#2f6fc9", fontWeight: 700 }}>
+              Stable layer: {stableState}
             </div>
           ) : null}
           {canonicalState ? <div style={{ ...labelStyle, color: "#3f5f8b" }}>Canonical state: {canonicalState.replaceAll("_", " ")}</div> : null}
