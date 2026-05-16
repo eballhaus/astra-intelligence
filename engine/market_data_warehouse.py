@@ -12,7 +12,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
+BROAD_UNIVERSE_TARGET_COUNT = 7500
+ACTIVE_UNIVERSE_TARGET_COUNT = 200
 
 
 def _now_iso() -> str:
@@ -33,7 +35,7 @@ class MarketDataWarehouse:
         self.fmp_cache_path = os.path.join(self.state_dir, "fmp_enrichment_cache_v1.json")
         self.cache_index_path = os.path.join(self.state_dir, "fmp_cache_index.json")
         self.runtime_snapshot_path = os.path.join(self.state_dir, "runtime_top_buys_snapshot.json")
-        self.collection_enabled = False
+        self.collection_enabled = True
 
     def _read_json(self, path: str) -> dict[str, Any]:
         try:
@@ -96,20 +98,38 @@ class MarketDataWarehouse:
         symbols_with_sector = sum(1 for r in catalog if bool(r.get("sector") or r.get("industry")))
         planned_calls = 0
         bandwidth = 0.0
-        blocked_reason = "warehouse_metadata_only_collection_disabled"
+        blocked_reason = "warehouse_metadata_only_waiting_for_governed_collection_rows"
+        target = max(1, BROAD_UNIVERSE_TARGET_COUNT)
+        progress_pct = round(min(100.0, (len(catalog) / target) * 100.0), 3)
         return {
             "enabled": True,
             "version": VERSION,
-            "mode": "metadata_catalog_only",
+            "mode": "metadata_catalog_and_planned_coverage",
             "local_only": True,
             "writes_files": False,
-            "collection_enabled": False,
+            "collection_enabled": True,
             "api_calls_used": 0,
             "planned_calls": planned_calls,
             "estimated_bandwidth": bandwidth,
+            "quota_state": {
+                "authority": "FmpUtilizationOptimizer",
+                "warehouse_does_not_call_providers": True,
+            },
             "blocked_reason": blocked_reason,
-            "next_recommended_action": "populate_manifest_from_future_governed_collection",
+            "next_recommended_action": "populate_manifest_incrementally_from_controlled_broad_fmp_collection",
             "market_data_warehouse_status_v1": True,
+            "broad_universe_target_count": BROAD_UNIVERSE_TARGET_COUNT,
+            "broad_universe_collected_count": len(catalog),
+            "active_universe_target_count": ACTIVE_UNIVERSE_TARGET_COUNT,
+            "active_universe_current_count": min(ACTIVE_UNIVERSE_TARGET_COUNT, len(catalog)),
+            "collection_progress_pct": progress_pct,
+            "planned_coverage": {
+                "large_caps": {"target_symbols": 1500, "metadata_fields_required": ["symbol", "asset_type", "sector", "industry"]},
+                "mid_caps": {"target_symbols": 2000, "metadata_fields_required": ["symbol", "asset_type", "sector", "industry"]},
+                "small_caps": {"target_symbols": 2500, "metadata_fields_required": ["symbol", "asset_type", "sector", "industry"]},
+                "etfs": {"target_symbols": 1000, "metadata_fields_required": ["symbol", "asset_type", "sector_or_theme"]},
+                "crypto_where_supported": {"target_symbols": 500, "metadata_fields_required": ["symbol", "asset_type"]},
+            },
             "manifest_path": self.manifest_path,
             "manifest_exists": os.path.exists(self.manifest_path),
             "storage_sources": {
@@ -136,9 +156,9 @@ class MarketDataWarehouse:
                 "asset_type",
                 "data_types_available",
                 "latest_history_date",
-                "fundamentals_availability",
-                "earnings_availability",
-                "sector_industry",
+                "fundamentals_available",
+                "earnings_available",
+                "sector_industry_available",
                 "provider_source",
                 "freshness",
                 "cache_location",

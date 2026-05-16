@@ -14,7 +14,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
+BROAD_UNIVERSE_TARGET_COUNT = 7500
+ACTIVE_UNIVERSE_TARGET_COUNT = 200
 
 
 def _now_iso() -> str:
@@ -83,6 +85,9 @@ class MarketDataOrchestrationEngine:
             "fmp_hard_stop_above_pct": 80.0,
             "fmp_minimum_reserve_pct": 20.0,
             "heavy_collection_default_enabled": False,
+            "controlled_broad_collection_enabled": True,
+            "broad_universe_target_count": BROAD_UNIVERSE_TARGET_COUNT,
+            "active_universe_target_count": ACTIVE_UNIVERSE_TARGET_COUNT,
         }
         self.ttls_seconds = {
             "live_quotes": 30,
@@ -288,8 +293,8 @@ class MarketDataOrchestrationEngine:
                 "estimated_calls": 8,
                 "estimated_bandwidth_kb": 512,
                 "cache_key": "fmp_enrichment",
-                "execution_allowed_now": False,
-                "execution_mode": "broad_collection_disabled_planning_only",
+                "execution_allowed_now": True,
+                "execution_mode": "controlled_staged_collection_small_batch_only",
             },
             {
                 "id": "historical_replay_counterfactual_candidates",
@@ -300,8 +305,8 @@ class MarketDataOrchestrationEngine:
                 "estimated_calls": 10,
                 "estimated_bandwidth_kb": 2048,
                 "cache_key": "replay_results",
-                "execution_allowed_now": False,
-                "execution_mode": "heavy_collection_disabled_planning_only",
+                "execution_allowed_now": True,
+                "execution_mode": "controlled_staged_collection_small_batch_only",
             },
             {
                 "id": "fundamentals_catalyst_enrichment",
@@ -312,8 +317,8 @@ class MarketDataOrchestrationEngine:
                 "estimated_calls": 12,
                 "estimated_bandwidth_kb": 1536,
                 "cache_key": "fmp_enrichment",
-                "execution_allowed_now": False,
-                "execution_mode": "cache_first_planning_only",
+                "execution_allowed_now": True,
+                "execution_mode": "controlled_staged_collection_cache_first",
                 "validation_needed": False,
             },
             {
@@ -356,14 +361,14 @@ class MarketDataOrchestrationEngine:
             {
                 "estimated_planned_calls_all_tasks": int(planned_calls),
                 "estimated_calls_allowed_now": int(allowed_calls),
-                "heavy_collection_calls_enabled": 0,
+            "heavy_collection_calls_enabled": int(allowed_calls),
                 "duplicate_call_avoidance": "cache_key_and_provider_role_checked_before_request",
             },
             {
                 "estimated_planned_bandwidth_kb_all_tasks": round(planned_kb, 3),
                 "estimated_bandwidth_kb_allowed_now": round(allowed_kb, 3),
                 "bandwidth_pressure": "low" if allowed_kb < 512 else "moderate",
-                "heavy_collection_bandwidth_enabled_kb": 0,
+                "heavy_collection_bandwidth_enabled_kb": round(allowed_kb, 3),
             },
         )
 
@@ -390,8 +395,17 @@ class MarketDataOrchestrationEngine:
             "call_budget_summary": call_budget,
             "bandwidth_budget_summary": bandwidth_budget,
             "active_trade_monitoring_mode": "websocket_preferred_gradual_polling_fallback",
-            "broad_collection_enabled": False,
+            "broad_collection_enabled": True,
+            "collection_enabled": True,
             "collection_allowed_now": bool(allowed) and not bool(quota.get("fmp_hard_stop_active")),
+            "broad_universe_target_count": BROAD_UNIVERSE_TARGET_COUNT,
+            "broad_universe_collected_count": int(_to_float((self._cache_summary().get("fmp_enrichment") or {}).get("entries_estimated"), 0.0)),
+            "active_universe_target_count": ACTIVE_UNIVERSE_TARGET_COUNT,
+            "active_universe_current_count": min(ACTIVE_UNIVERSE_TARGET_COUNT, int(top_buy_count) + int(rankings_count)),
+            "collection_progress_pct": round(
+                min(100.0, (_to_float((self._cache_summary().get("fmp_enrichment") or {}).get("entries_estimated"), 0.0) / max(1, BROAD_UNIVERSE_TARGET_COUNT)) * 100.0),
+                3,
+            ),
             "overlap_prevention_enabled": bool(overlap_policy.get("overlap_prevention_enabled", False)),
             "fmp_duplicate_live_quote_blocked": bool(overlap_policy.get("fmp_duplicate_live_quote_blocked", False)),
             "alpaca_iex_live_quote_ownership": bool(overlap_policy.get("alpaca_iex_live_quote_ownership", False)),
@@ -434,7 +448,10 @@ class MarketDataOrchestrationEngine:
             "bandwidth_budget_summary": bandwidth_budget,
             "execution_allowed_now": [t for t in tasks if bool(t.get("execution_allowed_now"))],
             "execution_blocked_now": [t for t in tasks if not bool(t.get("execution_allowed_now"))],
-            "broad_collection_enabled": False,
+            "broad_collection_enabled": True,
+            "collection_enabled": True,
+            "broad_universe_target_count": BROAD_UNIVERSE_TARGET_COUNT,
+            "active_universe_target_count": ACTIVE_UNIVERSE_TARGET_COUNT,
             "overlap_prevention_enabled": bool(overlap_policy.get("overlap_prevention_enabled", False)),
             "fmp_duplicate_live_quote_blocked": bool(overlap_policy.get("fmp_duplicate_live_quote_blocked", False)),
             "alpaca_iex_live_quote_ownership": bool(overlap_policy.get("alpaca_iex_live_quote_ownership", False)),
@@ -462,7 +479,7 @@ class MarketDataOrchestrationEngine:
             "increase_frequency_when": ["rapid_movement", "earnings", "high_volatility", "exit_trigger_conditions"],
             "reduce_frequency_when": ["inactive_position", "stable_price_action", "no_exit_pressure"],
             "execution_allowed_now": True,
-            "broad_collection_enabled": False,
+            "broad_collection_enabled": True,
             "estimated_calls": max(0, min(12, int(open_trade_count) + int(watchlist_count))),
             "estimated_bandwidth_kb": 64 + (max(0, int(open_trade_count)) * 16),
             "cache_policy": "reuse quote/position state inside TTL before any polling fallback",
@@ -474,8 +491,8 @@ class MarketDataOrchestrationEngine:
         overlap_policy = self._overlap_policy()
         hard_stop = bool(quota.get("fmp_hard_stop_active"))
         soft = bool(quota.get("fmp_soft_throttle_active"))
-        collection_allowed = False
-        reason = "broad_collection_disabled_until_explicit_enable"
+        collection_allowed = not hard_stop and not soft
+        reason = ""
         if hard_stop:
             reason = "fmp_optimizer_hard_stop_or_denial"
         elif soft:
@@ -506,9 +523,18 @@ class MarketDataOrchestrationEngine:
             "authority": "FmpUtilizationOptimizer",
             "quota_targets": self.quota_targets,
             "current_quota_state": quota,
-            "broad_collection_enabled": False,
+            "broad_collection_enabled": True,
+            "collection_enabled": True,
             "execution_allowed_now": bool(collection_allowed),
             "blocked_reason": reason,
+            "broad_universe_target_count": BROAD_UNIVERSE_TARGET_COUNT,
+            "active_universe_target_count": ACTIVE_UNIVERSE_TARGET_COUNT,
+            "collection_progress_pct": round(
+                min(100.0, (_to_float((self._cache_summary().get("fmp_enrichment") or {}).get("entries_estimated"), 0.0) / max(1, BROAD_UNIVERSE_TARGET_COUNT)) * 100.0),
+                3,
+            ),
+            "controlled_staged_collection_only": True,
+            "uncontrolled_bulk_collection_enabled": False,
             "never_bypass_optimizer_denial": True,
             "overlap_prevention_enabled": bool(overlap_policy.get("overlap_prevention_enabled", False)),
             "fmp_duplicate_live_quote_blocked": bool(overlap_policy.get("fmp_duplicate_live_quote_blocked", False)),

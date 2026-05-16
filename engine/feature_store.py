@@ -12,7 +12,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
+BROAD_UNIVERSE_TARGET_COUNT = 7500
+ACTIVE_UNIVERSE_TARGET_COUNT = 200
 
 
 def _now_iso() -> str:
@@ -100,16 +102,34 @@ class FeatureStore:
         return {
             "enabled": True,
             "version": VERSION,
-            "mode": "metadata_catalog_only",
+            "mode": "metadata_catalog_and_active_universe_feature_planning",
             "local_only": True,
             "writes_files": False,
-            "collection_enabled": False,
+            "collection_enabled": True,
             "api_calls_used": 0,
             "planned_calls": 0,
             "estimated_bandwidth": 0.0,
-            "blocked_reason": "feature_store_metadata_only_collection_disabled",
-            "next_recommended_action": "fill_missing_features_after_governed_market_collection",
+            "quota_state": {
+                "authority": "FmpUtilizationOptimizer",
+                "feature_store_does_not_call_providers": True,
+            },
+            "blocked_reason": "feature_store_waiting_for_governed_broad_collection_inputs",
+            "next_recommended_action": "prioritize_history_volume_sector_and_regime_features_for_active_universe_funnel",
             "feature_store_status_v1": True,
+            "broad_universe_target_count": BROAD_UNIVERSE_TARGET_COUNT,
+            "broad_universe_collected_count": int(_to_float(warehouse_coverage.get("history_symbols"), 0.0)),
+            "active_universe_target_count": ACTIVE_UNIVERSE_TARGET_COUNT,
+            "active_universe_current_count": min(
+                ACTIVE_UNIVERSE_TARGET_COUNT,
+                int(max(
+                    _to_float(warehouse_coverage.get("history_symbols"), 0.0),
+                    _to_float(warehouse_coverage.get("sector_industry_symbols"), 0.0),
+                )),
+            ),
+            "collection_progress_pct": round(
+                min(100.0, (_to_float(warehouse_coverage.get("history_symbols"), 0.0) / max(1, BROAD_UNIVERSE_TARGET_COUNT)) * 100.0),
+                3,
+            ),
             "manifest_path": self.manifest_path,
             "manifest_exists": os.path.exists(self.manifest_path),
             "feature_availability": availability,
@@ -119,6 +139,8 @@ class FeatureStore:
                 "families_missing": len(missing),
                 "coverage_pct": round(((len(self.feature_families) - len(missing)) / max(1, len(self.feature_families))) * 100.0, 3),
             },
+            "feature_coverage_pct": round(((len(self.feature_families) - len(missing)) / max(1, len(self.feature_families))) * 100.0, 3),
+            "next_feature_priorities": priorities,
             "missing_feature_priorities": priorities,
             "missing_feature_families": missing,
             "generated_at": _now_iso(),

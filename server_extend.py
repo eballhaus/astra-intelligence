@@ -28927,7 +28927,6 @@ def market_data_orchestration_status_v1():
             rankings_count=len(rankings_rows or []),
         )
         payload["market_data_orchestration_status_v1"] = True
-        payload["broad_collection_enabled"] = False
         return payload
     except Exception as exc:
         return {
@@ -28953,7 +28952,6 @@ def market_data_orchestration_plan_v1():
             rankings_count=len(rankings_rows or []),
         )
         payload["market_data_orchestration_plan_v1"] = True
-        payload["broad_collection_enabled"] = False
         return payload
     except Exception as exc:
         return {
@@ -29008,8 +29006,6 @@ def fmp_market_collection_plan_v1():
             symbol_count=len(stock_rows or []),
         )
         payload["fmp_market_collection_plan_v1"] = True
-        payload["broad_collection_enabled"] = False
-        payload["execution_allowed_now"] = False
         return payload
     except Exception as exc:
         return {
@@ -29030,7 +29026,6 @@ def broad_fmp_collection_status_v1():
     try:
         payload = BROAD_FMP_COLLECTION_PLANNER.status()
         payload["broad_fmp_collection_status_v1"] = True
-        payload["collection_enabled"] = False
         payload["writes_files"] = False
         return payload
     except Exception as exc:
@@ -29055,7 +29050,6 @@ def broad_fmp_collection_plan_v1():
     try:
         payload = BROAD_FMP_COLLECTION_PLANNER.plan()
         payload["broad_fmp_collection_plan_v1"] = True
-        payload["collection_enabled"] = False
         payload["writes_files"] = False
         return payload
     except Exception as exc:
@@ -29081,7 +29075,6 @@ def market_data_warehouse_status_v1():
     try:
         payload = MARKET_DATA_WAREHOUSE.status()
         payload["market_data_warehouse_status_v1"] = True
-        payload["collection_enabled"] = False
         payload["writes_files"] = False
         return payload
     except Exception as exc:
@@ -29106,7 +29099,6 @@ def feature_store_status_v1():
     try:
         payload = FEATURE_STORE.status()
         payload["feature_store_status_v1"] = True
-        payload["collection_enabled"] = False
         payload["writes_files"] = False
         return payload
     except Exception as exc:
@@ -29123,6 +29115,38 @@ def feature_store_status_v1():
             "blocked_reason": f"feature_store_status_unavailable: {exc}",
             "next_recommended_action": "keep_metadata_only",
             "feature_store_status_v1": True,
+        }
+
+
+@router.get("/api/broad_universe_funnel_status_v1")
+def broad_universe_funnel_status_v1():
+    try:
+        payload = BROAD_FMP_COLLECTION_PLANNER.broad_universe_funnel()
+        payload["broad_universe_funnel_status_v1"] = True
+        payload["writes_files"] = False
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.1.0",
+            "mode": "controlled_staged_planning",
+            "collection_enabled": False,
+            "api_calls_used": 0,
+            "planned_calls": 0,
+            "estimated_bandwidth": 0,
+            "quota_state": {},
+            "blocked_reason": f"broad_universe_funnel_unavailable: {exc}",
+            "broad_universe_target_count": 7500,
+            "active_universe_target_count": 200,
+            "collection_progress_pct": 0.0,
+            "broad_universe_funnel_status_v1": True,
+            "broad_candidates_count": 0,
+            "active_universe_candidates_count": 0,
+            "selected_active_universe_count": 0,
+            "selection_reasons": [],
+            "rejected_reason_counts": {},
+            "next_recommended_action": "inspect_broad_universe_funnel_error",
         }
 
 
