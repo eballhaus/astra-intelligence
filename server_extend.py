@@ -366,6 +366,42 @@ except Exception:
                 "next_recommended_action": "inspect_stable_top_buys_import",
             }
 try:
+    from engine.adaptive_quote_refresh import AdaptiveQuoteRefreshPlanner
+except Exception:
+    class AdaptiveQuoteRefreshPlanner:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "planning_unavailable", "adaptive_refresh_status_v1": True, "api_calls_used": 0, "calls_blocked": 0}
+try:
+    from engine.api_budget_guard import ApiBudgetGuard
+except Exception:
+    class ApiBudgetGuard:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "budget_guard_unavailable", "api_budget_guard_status_v1": True, "api_calls_used": 0, "calls_blocked": 0}
+try:
+    from engine.position_monitoring import PositionMonitoringPlanner
+except Exception:
+    class PositionMonitoringPlanner:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "position_monitoring_unavailable", "position_monitoring_status_v1": True, "api_calls_used": 0}
+try:
+    from engine.cache_refresh_scheduler import LearningFreshnessPlanner
+except Exception:
+    class LearningFreshnessPlanner:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "learning_freshness_unavailable", "learning_freshness_status_v1": True, "api_calls_used": 0}
+try:
     from engine.snapshot_cache import SnapshotCacheRegistry
 except Exception:
     class SnapshotCacheRegistry:  # type: ignore[override]
@@ -993,6 +1029,10 @@ OUTCOME_LABELING_ENGINE = OutcomeLabelingEngine(state_dir=STATE)
 PSYCHOLOGY_BRAIN = PsychologyBrain(state_dir=STATE)
 IDLE_REPLAY_WORKER_PLANNER = IdleReplayWorkerPlanner(state_dir=STATE)
 STABLE_TOP_BUYS_SELECTOR = StableTopBuysSelector(state_dir=STATE)
+API_BUDGET_GUARD = ApiBudgetGuard(state_dir=STATE)
+ADAPTIVE_QUOTE_REFRESH = AdaptiveQuoteRefreshPlanner(state_dir=STATE)
+POSITION_MONITORING_PLANNER = PositionMonitoringPlanner(state_dir=STATE)
+LEARNING_FRESHNESS_PLANNER = LearningFreshnessPlanner(state_dir=STATE)
 SNAPSHOT_CACHE_REGISTRY = SnapshotCacheRegistry(state_dir=STATE)
 STORAGE_OPTIMIZER = StorageOptimizer(state_dir=STATE)
 SQLITE_QUERY_INDEX = SQLiteQueryIndex(state_dir=STATE)
@@ -31128,6 +31168,189 @@ def stable_top_buys_v1(buy_mode: str = Query("balanced")):
             "stability_mode": "error_fallback",
             "error": f"stable_top_buys_unavailable: {exc}",
             "next_recommended_action": "fallback_to_raw_top_buys_snapshot",
+        }
+
+
+def _adaptive_refresh_market_status():
+    try:
+        now_et = datetime.now(ZoneInfo("America/New_York"))
+        market_open = bool(
+            now_et.weekday() < 5
+            and (now_et.hour > 9 or (now_et.hour == 9 and now_et.minute >= 30))
+            and now_et.hour < 16
+        )
+        return "Market Open" if market_open else "Market Closed"
+    except Exception:
+        return "unknown"
+
+
+def _adaptive_refresh_context():
+    try:
+        positions_rows = list(POSITION_TRACKER.get_open_positions() or [])
+    except Exception:
+        positions_rows = []
+    try:
+        stable_payload = _stable_top_buys_payload(buy_mode="balanced")
+    except Exception:
+        stable_payload = {}
+    try:
+        ws_status = dict(ALPACA_WS_MONITOR.status() or {})
+    except Exception:
+        ws_status = {}
+    market_status = str(stable_payload.get("market_status") or _adaptive_refresh_market_status())
+    return positions_rows, stable_payload, ws_status, market_status
+
+
+@router.get("/api/api_budget_guard_status_v1")
+def api_budget_guard_status_v1():
+    positions_rows, stable_payload, ws_status, market_status = _adaptive_refresh_context()
+    try:
+        provisional = ADAPTIVE_QUOTE_REFRESH.status(
+            positions=positions_rows,
+            stable_top_buys=stable_payload,
+            websocket_status=ws_status,
+            market_status=market_status,
+            budget_status={},
+        )
+        payload = API_BUDGET_GUARD.status(
+            planned_requests=list(provisional.get("planned_refresh_requests") or []),
+            market_status=market_status,
+        )
+        payload["active_positions_count"] = len(positions_rows)
+        payload["symbols_fast_refresh"] = list(provisional.get("symbols_fast_refresh") or [])
+        payload["symbols_slow_refresh"] = list(provisional.get("symbols_slow_refresh") or [])
+        payload["websocket_symbols"] = list(provisional.get("websocket_symbols") or [])
+        payload["rest_fallback_symbols"] = list(provisional.get("rest_fallback_symbols") or [])
+        payload["next_learning_refresh"] = provisional.get("next_learning_refresh")
+        payload["next_advanced_refresh"] = provisional.get("next_advanced_refresh")
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "planning_guard_only",
+            "api_budget_guard_status_v1": True,
+            "market_status": market_status,
+            "active_positions_count": len(positions_rows),
+            "symbols_fast_refresh": [],
+            "symbols_slow_refresh": [],
+            "websocket_symbols": [],
+            "rest_fallback_symbols": [],
+            "api_calls_used": 0,
+            "calls_blocked": 0,
+            "bandwidth_estimate": 0,
+            "next_learning_refresh": None,
+            "next_advanced_refresh": None,
+            "error": f"api_budget_guard_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/adaptive_refresh_status_v1")
+def adaptive_refresh_status_v1():
+    positions_rows, stable_payload, ws_status, market_status = _adaptive_refresh_context()
+    try:
+        provisional = ADAPTIVE_QUOTE_REFRESH.status(
+            positions=positions_rows,
+            stable_top_buys=stable_payload,
+            websocket_status=ws_status,
+            market_status=market_status,
+            budget_status={},
+        )
+        budget = API_BUDGET_GUARD.status(
+            planned_requests=list(provisional.get("planned_refresh_requests") or []),
+            market_status=market_status,
+        )
+        payload = ADAPTIVE_QUOTE_REFRESH.status(
+            positions=positions_rows,
+            stable_top_buys=stable_payload,
+            websocket_status=ws_status,
+            market_status=market_status,
+            budget_status=budget,
+        )
+        payload["api_budget_guard"] = {
+            "calls_blocked": budget.get("calls_blocked"),
+            "budget_pressure": budget.get("budget_pressure"),
+            "allowed_planned_calls": budget.get("allowed_planned_calls"),
+        }
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "planning_only_no_polling_loop",
+            "adaptive_refresh_status_v1": True,
+            "market_status": market_status,
+            "active_positions_count": len(positions_rows),
+            "symbols_fast_refresh": [],
+            "symbols_slow_refresh": [],
+            "websocket_symbols": [],
+            "rest_fallback_symbols": [],
+            "api_calls_used": 0,
+            "calls_blocked": 0,
+            "bandwidth_estimate": 0,
+            "next_learning_refresh": None,
+            "next_advanced_refresh": None,
+            "error": f"adaptive_refresh_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/position_monitoring_status_v1")
+def position_monitoring_status_v1():
+    positions_rows, _stable_payload, ws_status, market_status = _adaptive_refresh_context()
+    try:
+        return POSITION_MONITORING_PLANNER.status(
+            positions=positions_rows,
+            websocket_status=ws_status,
+            market_status=market_status,
+        )
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "read_only_monitoring_plan",
+            "position_monitoring_status_v1": True,
+            "market_status": market_status,
+            "active_positions_count": len(positions_rows),
+            "symbols_fast_refresh": [],
+            "symbols_slow_refresh": [],
+            "websocket_symbols": [],
+            "rest_fallback_symbols": [],
+            "api_calls_used": 0,
+            "calls_blocked": 0,
+            "bandwidth_estimate": 0,
+            "next_learning_refresh": None,
+            "next_advanced_refresh": None,
+            "error": f"position_monitoring_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/learning_freshness_status_v1")
+def learning_freshness_status_v1():
+    positions_rows, _stable_payload, ws_status, market_status = _adaptive_refresh_context()
+    try:
+        payload = LEARNING_FRESHNESS_PLANNER.status(market_status=market_status)
+        payload["active_positions_count"] = len(positions_rows)
+        payload["websocket_symbols"] = list((ws_status.get("symbols") or []) if isinstance(ws_status.get("symbols"), list) else [])
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "change_aware_schedule_planning",
+            "learning_freshness_status_v1": True,
+            "market_status": market_status,
+            "active_positions_count": len(positions_rows),
+            "symbols_fast_refresh": [],
+            "symbols_slow_refresh": [],
+            "websocket_symbols": [],
+            "rest_fallback_symbols": [],
+            "api_calls_used": 0,
+            "calls_blocked": 0,
+            "bandwidth_estimate": 0,
+            "next_learning_refresh": None,
+            "next_advanced_refresh": None,
+            "error": f"learning_freshness_status_unavailable: {exc}",
         }
 
 

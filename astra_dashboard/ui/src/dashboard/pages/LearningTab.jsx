@@ -156,6 +156,16 @@ const LEARNING_TREND_WINDOWS = [
   { key: "1Y", label: "1 Year", points: 240 },
 ];
 
+const LEARNING_TAB_CACHE_TTL_MS = 15 * 60 * 1000;
+let LEARNING_TAB_MEMORY_CACHE = {
+  data: null,
+  endpointStatus: null,
+  timeline: null,
+  lastFetchAt: "",
+  cachedAtMs: 0,
+  freshness: null,
+};
+
 function metricValue(...values) {
   const n = firstFiniteOrNull(...values);
   return n === null ? "Not loaded yet" : n.toFixed(1);
@@ -220,11 +230,12 @@ export default function LearningTab({ compact = false }) {
   const [resolvedApiBase, setResolvedApiBase] = useState(getInitialApiBase());
   const [loading, setLoading] = useState(false);
   const [secondaryLoading, setSecondaryLoading] = useState(false);
-  const [lastFetchAt, setLastFetchAt] = useState("");
+  const [lastFetchAt, setLastFetchAt] = useState(LEARNING_TAB_MEMORY_CACHE.lastFetchAt || "");
   const [fetchError, setFetchError] = useState("");
   const [showDebug, setShowDebug] = useState(false);
   const [showAdvancedSections, setShowAdvancedSections] = useState(false);
   const [learningTrendWindow, setLearningTrendWindow] = useState("1D");
+  const [manualRefreshNonce, setManualRefreshNonce] = useState(0);
   const [advancedLoading, setAdvancedLoading] = useState(false);
   const [advancedLoadedOnce, setAdvancedLoadedOnce] = useState(false);
   const [advancedInstitutional, setAdvancedInstitutional] = useState({});
@@ -232,9 +243,10 @@ export default function LearningTab({ compact = false }) {
   const [advancedSnapshot, setAdvancedSnapshot] = useState(null);
   const [advancedSnapshotMessage, setAdvancedSnapshotMessage] = useState("");
   const [institutionalTrend, setInstitutionalTrend] = useState([]);
-  const [endpointStatus, setEndpointStatus] = useState({});
-  const [timeline, setTimeline] = useState([]);
-  const [data, setData] = useState({
+  const [endpointStatus, setEndpointStatus] = useState(LEARNING_TAB_MEMORY_CACHE.endpointStatus || {});
+  const [timeline, setTimeline] = useState(LEARNING_TAB_MEMORY_CACHE.timeline || []);
+  const [learningFreshness, setLearningFreshness] = useState(LEARNING_TAB_MEMORY_CACHE.freshness || {});
+  const [data, setData] = useState(LEARNING_TAB_MEMORY_CACHE.data || {
     learningSnapshotFast: {},
     learningInsights: {},
     paper: {},
@@ -297,6 +309,22 @@ export default function LearningTab({ compact = false }) {
 
     const refresh = async () => {
       if (refreshInFlightRef.current) return;
+      const cacheAgeMs = Date.now() - Number(LEARNING_TAB_MEMORY_CACHE.cachedAtMs || 0);
+      if (
+        LEARNING_TAB_MEMORY_CACHE.data
+        && cacheAgeMs >= 0
+        && cacheAgeMs < LEARNING_TAB_CACHE_TTL_MS
+      ) {
+        setData(LEARNING_TAB_MEMORY_CACHE.data);
+        setEndpointStatus(LEARNING_TAB_MEMORY_CACHE.endpointStatus || {});
+        setTimeline(LEARNING_TAB_MEMORY_CACHE.timeline || []);
+        setLearningFreshness(LEARNING_TAB_MEMORY_CACHE.freshness || {});
+        setLastFetchAt(LEARNING_TAB_MEMORY_CACHE.lastFetchAt || "");
+        setLoading(false);
+        setSecondaryLoading(false);
+        setFetchError("");
+        return;
+      }
       refreshInFlightRef.current = true;
       setLoading(true);
       setSecondaryLoading(false);
@@ -399,6 +427,7 @@ export default function LearningTab({ compact = false }) {
           fetchJson("paper_worker_status", "/api/paper_worker_status", {}, { timeoutMs: 5000 }),
           fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, { timeoutMs: 5000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 8000 }),
+          fetchJson("learning_freshness", "/api/learning_freshness_status_v1", {}, { timeoutMs: 5000 }),
         ]);
         if (!mounted) return;
 
@@ -429,6 +458,10 @@ export default function LearningTab({ compact = false }) {
         if (errors.length > 0) setFetchError(errors.join(" | "));
 
         const byKey = Object.fromEntries(results.map((r) => [r.key, r]));
+        const freshnessPayload = byKey.learning_freshness?.parsed && typeof byKey.learning_freshness.parsed === "object"
+          ? byKey.learning_freshness.parsed
+          : {};
+        if (Object.keys(freshnessPayload).length > 0) setLearningFreshness(freshnessPayload);
         const isNonEmptyObject = (v) =>
         Boolean(v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length > 0);
       const selectPayload = (key, previousValue = {}) => {
@@ -552,24 +585,23 @@ export default function LearningTab({ compact = false }) {
         const buyConversionEngine = promotionSummary?.buy_conversion_engine || {};
         const buyToPosition = promotionSummary?.buy_to_position_feedback_suite || {};
 
-        setTimeline((prevTimeline) => {
-          const point = {
-            ts: new Date().toLocaleTimeString(),
-            winRate: safeNumber((paper?.paper_cohort_trends?.recent || {}).win_rate, paper?.win_rate),
-            medianReturn: safeNumber((paper?.paper_cohort_trends?.recent || {}).median_return, paper?.avg_return),
-            winsorized: safeNumber((paper?.paper_cohort_trends?.recent || {}).winsorized_avg_return, paper?.avg_return),
-            buyConversion: safeNumber(buyConversionEngine?.buy_conversion_score),
-            entryQuality: safeNumber(learningInsights?.entry_quality_score, learningSnapshotFast?.entry_quality),
-            buyListPurity: safeNumber(learningInsights?.buy_list_purity_score, learningSnapshotFast?.buy_list_purity),
-            followThroughQuality: safeNumber(learningInsights?.follow_through_quality_score, learningSnapshotFast?.follow_through_quality),
-            confidenceTruthfulness: safeNumber(learningInsights?.confidence_truthfulness_score, buyConversionEngine?.confidence_truthfulness_score),
-            overblocking: safeNumber(buyConversionEngine?.overblocking_score),
-            sellAccuracy: safeNumber(buyToPosition?.sell_signal_accuracy_score),
-          };
-          return [...prevTimeline, point].slice(-36);
-        });
+        const timelinePoint = {
+          ts: new Date().toLocaleTimeString(),
+          winRate: safeNumber((paper?.paper_cohort_trends?.recent || {}).win_rate, paper?.win_rate),
+          medianReturn: safeNumber((paper?.paper_cohort_trends?.recent || {}).median_return, paper?.avg_return),
+          winsorized: safeNumber((paper?.paper_cohort_trends?.recent || {}).winsorized_avg_return, paper?.avg_return),
+          buyConversion: safeNumber(buyConversionEngine?.buy_conversion_score),
+          entryQuality: safeNumber(learningInsights?.entry_quality_score, learningSnapshotFast?.entry_quality),
+          buyListPurity: safeNumber(learningInsights?.buy_list_purity_score, learningSnapshotFast?.buy_list_purity),
+          followThroughQuality: safeNumber(learningInsights?.follow_through_quality_score, learningSnapshotFast?.follow_through_quality),
+          confidenceTruthfulness: safeNumber(learningInsights?.confidence_truthfulness_score, buyConversionEngine?.confidence_truthfulness_score),
+          overblocking: safeNumber(buyConversionEngine?.overblocking_score),
+          sellAccuracy: safeNumber(buyToPosition?.sell_signal_accuracy_score),
+        };
+        const nextTimeline = [...(Array.isArray(timeline) ? timeline : []), timelinePoint].slice(-36);
+        setTimeline(nextTimeline);
 
-        return {
+        const nextData = {
           learningSnapshotFast,
           learningInsights,
           paper,
@@ -579,6 +611,15 @@ export default function LearningTab({ compact = false }) {
           topBuys,
           systemStatus,
         };
+        LEARNING_TAB_MEMORY_CACHE = {
+          data: nextData,
+          endpointStatus: { ...statuses },
+          timeline: nextTimeline,
+          lastFetchAt: new Date().toISOString(),
+          cachedAtMs: Date.now(),
+          freshness: freshnessPayload,
+        };
+        return nextData;
         });
       } finally {
         refreshInFlightRef.current = false;
@@ -586,12 +627,12 @@ export default function LearningTab({ compact = false }) {
     };
 
     refresh();
-    const timer = setInterval(refresh, 15000);
+    const timer = setInterval(refresh, LEARNING_TAB_CACHE_TTL_MS);
     return () => {
       mounted = false;
       clearInterval(timer);
     };
-  }, [resolvedApiBase]);
+  }, [resolvedApiBase, manualRefreshNonce]);
 
   useEffect(() => {
     if (!showAdvancedSections || advancedLoadedOnce || advancedLoading) return undefined;
@@ -1798,6 +1839,11 @@ export default function LearningTab({ compact = false }) {
       releasedWinRate: safeNumber(point.winRate),
       buyListPurity: safeNumber(point.buyConversion),
     }));
+  const learningFreshnessLabel = statusText(learningFreshness?.mode, "snapshot cache active");
+  const learningFreshnessChanged = learningFreshness?.data_changed_since_last_rebuild === true ? "yes" : "no";
+  const learningLastRefresh = firstNonEmpty(learningFreshness?.last_learning_refresh, lastFetchAt, "n/a");
+  const learningNextRefresh = firstNonEmpty(learningFreshness?.next_learning_refresh, "scheduled by TTL");
+  const learningNextAdvancedRefresh = firstNonEmpty(learningFreshness?.next_advanced_refresh, "scheduled by TTL");
 
   if (compact) {
     return (
@@ -1896,6 +1942,34 @@ export default function LearningTab({ compact = false }) {
           <div style={{ fontSize: 11, color: "#9fb1cc" }}>
             Updated {lastFetchAt || "n/a"}
           </div>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 11, color: "#bfd3ef" }}>
+            <span>Freshness: {learningFreshnessLabel.replaceAll("_", " ")}</span>
+            <span>Last refreshed: {learningLastRefresh}</span>
+            <span>Next learning refresh: {learningNextRefresh}</span>
+            <span>Next advanced refresh: {learningNextAdvancedRefresh}</span>
+            <span>Data changed: {learningFreshnessChanged}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              LEARNING_TAB_MEMORY_CACHE = { ...LEARNING_TAB_MEMORY_CACHE, cachedAtMs: 0 };
+              setManualRefreshNonce((value) => value + 1);
+            }}
+            style={{
+              border: "1px solid #42628f",
+              borderRadius: 999,
+              background: "rgba(12,24,42,0.35)",
+              color: "#cfe1ff",
+              padding: "5px 9px",
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            Refresh Snapshot
+          </button>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 9 }}>
           {primarySnapshotMetrics.map((metric) => {
