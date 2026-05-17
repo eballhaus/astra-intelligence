@@ -39,6 +39,29 @@ def _first_present(row: dict[str, Any], keys: tuple[str, ...]) -> Any:
     return None
 
 
+def _norm_text(value: Any) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _grade_score(row: dict[str, Any]) -> float:
+    explicit = _f(row.get("grade_percent"), -1.0)
+    if explicit >= 0:
+        return max(0.0, min(100.0, explicit))
+    grade = str(row.get("grade") or row.get("buy_grade") or "").upper()[:1]
+    return {"A": 92.0, "B": 78.0, "C": 62.0, "D": 42.0, "F": 18.0}.get(grade, 50.0)
+
+
+def _market_cap_bucket(row: dict[str, Any]) -> str:
+    raw = _norm_text(row.get("market_cap_category") or row.get("market_cap_bucket") or row.get("cap_bucket") or row.get("market_cap_group"))
+    if "large" in raw or "mega" in raw:
+        return "large_cap"
+    if "mid" in raw:
+        return "mid_cap"
+    if "small" in raw or "micro" in raw:
+        return "small_cap"
+    return "unknown_cap"
+
+
 class StableTopBuysSelector:
     def __init__(
         self,
@@ -85,27 +108,101 @@ class StableTopBuysSelector:
             pass
 
     def _score(self, row: dict[str, Any]) -> float:
-        quality = _f(row.get("buy_quality_score"), _f(row.get("trade_quality_score"), _f(row.get("grade_percent"), 0.0)))
+        quality = _f(row.get("buy_quality_score"), _f(row.get("trade_quality_score"), _f(row.get("quality_score"), _grade_score(row))))
         confidence = _f(row.get("confidence"), _f(row.get("predicted_win_probability"), 0.0))
-        conv10 = _f(row.get("rolling_conviction_10r"), _f(row.get("conviction_display_score"), quality))
-        conv5 = _f(row.get("rolling_conviction_5r"), conv10)
-        conv20 = _f(row.get("rolling_conviction_20r"), conv10)
+        conv10 = _f(row.get("conviction_10r"), _f(row.get("rolling_conviction_10r"), _f(row.get("conviction_display_score"), quality)))
+        conv5 = _f(row.get("conviction_5r"), _f(row.get("rolling_conviction_5r"), conv10))
+        conv20 = _f(row.get("conviction_20r"), _f(row.get("rolling_conviction_20r"), conv10))
         entry_v3 = _f(row.get("entry_quality_v3_score"), _f(row.get("entry_quality_v2_score"), _f(row.get("entry_quality_score"), 50.0)))
         psychology = _f(row.get("psychology_score"), 60.0)
-        consensus = _f(row.get("multi_brain_score"), 50.0)
-        grade_bonus = {"A": 5.0, "B": 2.5, "C": 0.0, "D": -4.0, "F": -8.0}.get(str(row.get("grade") or "").upper()[:1], 0.0)
+        consensus = _f(row.get("multi_brain_agreement"), _f(row.get("multi_brain_score"), 50.0))
+        grade_pct = _grade_score(row)
+        regime = _f(row.get("market_regime_alignment"), 50.0)
+        stop_score = _f(row.get("distance_from_stop_score"), _f(row.get("reward_risk_quality"), 50.0))
+        persistence = _f(row.get("persistence_score"), 50.0)
+        readiness_bonus = self._readiness_bonus(row)
+        fallback_penalty = 8.0 if bool(row.get("fallback_watch_candidate") or row.get("dashboard_fallback_candidate")) else 0.0
         score = (
-            conv10 * 0.26
-            + conv5 * 0.10
-            + conv20 * 0.12
-            + quality * 0.18
+            grade_pct * 0.17
+            + conv10 * 0.18
+            + quality * 0.13
             + confidence * 0.12
-            + entry_v3 * 0.10
-            + psychology * 0.05
-            + consensus * 0.07
-            + grade_bonus
+            + entry_v3 * 0.11
+            + consensus * 0.08
+            + psychology * 0.06
+            + regime * 0.05
+            + stop_score * 0.04
+            + persistence * 0.06
+            + conv5 * 0.03
+            + conv20 * 0.03
+            + readiness_bonus
+            - fallback_penalty
         )
         return round(max(0.0, min(110.0, score)), 3)
+
+    def _readiness_bonus(self, row: dict[str, Any]) -> float:
+        text = " ".join(
+            _norm_text(row.get(k))
+            for k in (
+                "top_buy_action",
+                "action",
+                "prediction",
+                "canonical_final_state",
+                "canonical_release_state",
+                "hero_deployment_status",
+                "recommended_entry_mode",
+                "buy_eligibility",
+            )
+        )
+        if "strong_buy" in text:
+            return 7.0
+        if "released_buy" in text or "buy_candidate" in text or "soft_buy" in text:
+            return 5.0
+        if "paper_ready" in text or "paper_only" in text:
+            return 3.0
+        if "needs_confirmation" in text or "wait_for_confirmation" in text:
+            return 1.0
+        return 0.0
+
+    def _direction_kind(self, row: dict[str, Any]) -> str:
+        text = " ".join(
+            _norm_text(row.get(k))
+            for k in (
+                "top_buy_action",
+                "action",
+                "prediction",
+                "canonical_final_state",
+                "canonical_release_state",
+                "hero_deployment_status",
+                "hero_card_deployment_label",
+                "recommended_entry_mode",
+                "buy_eligibility",
+                "final_action",
+            )
+        )
+        if any(token in text for token in ("avoid", "blocked", "reject", "sell", "short")):
+            return "sell_or_blocked"
+        if any(token in text for token in ("buy", "long", "paper_ready", "paper_only", "soft_buy", "released_buy", "wait_for_confirmation")):
+            return "buy"
+        if "hold" in text or "watchlist" in text or "monitor" in text:
+            return "hold"
+        return "informational"
+
+    def _data_quality_reason(self, row: dict[str, Any]) -> str:
+        if not _symbol(row):
+            return "missing_symbol"
+        price = _first_present(row, ("current_price", "price", "live_price", "last_price", "close", "mark_price"))
+        if price is None or _f(price, 0.0) <= 0:
+            return "missing_or_invalid_price"
+        if row.get("valid_quote") is False or row.get("trusted_quote_for_buys") is False:
+            return "invalid_or_untrusted_quote"
+        if not str(row.get("grade") or row.get("buy_grade") or row.get("grade_percent") or "").strip():
+            return "missing_grade"
+        if _first_present(row, ("confidence", "buy_confidence", "predicted_win_probability")) is None:
+            return "missing_confidence"
+        if _first_present(row, ("conviction_10r", "rolling_conviction_10r", "conviction_display_score")) is None:
+            return "missing_10r_conviction"
+        return ""
 
     def _normalize_display_fields(self, row: dict[str, Any], *, score: float, state: str, first_seen: float, age: float, retained: bool, replacement_reason: str = "") -> dict[str, Any]:
         out = dict(row or {})
@@ -116,11 +213,25 @@ class StableTopBuysSelector:
         stop = _first_present(out, ("stop_loss", "stop", "stop_price", "invalidation_level"))
         if stop is not None:
             out["stop_loss"] = stop
-        out["rolling_conviction_5r"] = _first_present(out, ("rolling_conviction_5r", "conviction_5r", "five_r_conviction"))
-        out["rolling_conviction_10r"] = _first_present(out, ("rolling_conviction_10r", "conviction_display_score", "conviction_10r", "ten_r_conviction"))
-        out["rolling_conviction_20r"] = _first_present(out, ("rolling_conviction_20r", "conviction_20r", "twenty_r_conviction"))
+        conv5 = _first_present(out, ("conviction_5r", "rolling_conviction_5r", "five_r_conviction"))
+        conv10 = _first_present(out, ("conviction_10r", "rolling_conviction_10r", "conviction_display_score", "ten_r_conviction"))
+        conv20 = _first_present(out, ("conviction_20r", "rolling_conviction_20r", "twenty_r_conviction"))
+        out["conviction_5r"] = conv5
+        out["conviction_10r"] = conv10
+        out["conviction_20r"] = conv20
+        out["rolling_conviction_5r"] = conv5
+        out["rolling_conviction_10r"] = conv10
+        out["rolling_conviction_20r"] = conv20
+        out["conviction_display_score"] = conv10
         out["expected_move"] = _first_present(out, ("expected_move", "profit_prediction_usd", "expected_move_dollars", "expected_move_usd", "predicted_profit_dollars"))
         out["expected_move_percent"] = _first_present(out, ("expected_move_percent", "expected_move_pct", "profit_prediction_pct", "predicted_return_pct"))
+        if _f(out.get("expected_move"), 0.0) == 0.0 and _f(out.get("expected_move_percent"), 0.0) == 0.0:
+            out["expected_move"] = None
+            out["expected_move_percent"] = None
+        out["top_6_rank"] = int(out.get("top_6_rank") or 0)
+        out["readiness_label"] = self._readiness_label(out, state)
+        out["action_label"] = self._action_label(out)
+        out["fallback_watch_candidate"] = bool(out.get("fallback_watch_candidate", False))
         out["stable_layer_state"] = state
         out["stable_display_state"] = state
         out["stable_retained"] = bool(retained)
@@ -135,6 +246,28 @@ class StableTopBuysSelector:
         out["pending_challenger"] = False
         return out
 
+    def _action_label(self, row: dict[str, Any]) -> str:
+        kind = self._direction_kind(row)
+        if kind == "buy":
+            return "Buy"
+        if kind == "hold":
+            return "Hold"
+        if kind == "sell_or_blocked":
+            return "Blocked"
+        return "Informational"
+
+    def _readiness_label(self, row: dict[str, Any], state: str = "") -> str:
+        text = " ".join(_norm_text(row.get(k)) for k in ("top_buy_action", "buy_eligibility", "hero_deployment_status", "recommended_entry_mode", "canonical_final_state"))
+        if bool(row.get("fallback_watch_candidate")):
+            return "Fallback Watch Candidate"
+        if "strong_buy" in text or _grade_score(row) >= 85 and _f(row.get("conviction_10r"), _f(row.get("rolling_conviction_10r"), 0.0)) >= 75:
+            return "Strong Buy"
+        if "paper" in text or "paper" in _norm_text(state):
+            return "Paper Ready"
+        if "confirmation" in text or "confirmation" in _norm_text(state):
+            return "Needs Confirmation"
+        return "Buy"
+
     def _hard_invalid_reason(self, row: dict[str, Any]) -> str:
         if not row:
             return "missing_candidate"
@@ -144,7 +277,7 @@ class StableTopBuysSelector:
         if confidence and confidence < self.hard_confidence_floor:
             return "confidence_below_hard_floor"
         state = str(row.get("canonical_final_state") or row.get("top_buy_action") or row.get("prediction") or row.get("action") or "").lower()
-        if any(token in state for token in ("avoid", "blocked", "reject")):
+        if any(token in state for token in ("avoid", "blocked", "reject", "sell", "short")):
             return "canonical_state_blocked_or_avoid"
         price = _f(row.get("price"), _f(row.get("current_price"), 0.0))
         stop = _f(row.get("stop_loss"), _f(row.get("stop"), 0.0))
@@ -156,6 +289,8 @@ class StableTopBuysSelector:
         return ""
 
     def _display_state(self, row: dict[str, Any], score: float, age_seconds: float) -> str:
+        if bool(row.get("fallback_watch_candidate")):
+            return "fallback_watch_candidate"
         if score < self.min_quality_floor + 8:
             return "needs_confirmation"
         if age_seconds < self.min_hold_seconds and score < self.min_quality_floor + 14:
@@ -164,26 +299,129 @@ class StableTopBuysSelector:
             return "paper_only"
         return "stable"
 
+    def _build_candidates(self, raw_rows: list[dict[str, Any]], qualified: list[dict[str, Any]], watchlist: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        buy_by_symbol: dict[str, dict[str, Any]] = {}
+        hold_by_symbol: dict[str, dict[str, Any]] = {}
+        counts = {
+            "excluded_sell_count": 0,
+            "excluded_hold_count": 0,
+            "excluded_blocked_count": 0,
+            "excluded_invalid_count": 0,
+            "qualified_buy_candidates_count": 0,
+            "hold_fallback_candidates_count": 0,
+        }
+        for row in raw_rows + qualified + watchlist:
+            if not isinstance(row, dict):
+                continue
+            sym = _symbol(row)
+            enriched = dict(row)
+            quality_reason = self._data_quality_reason(enriched)
+            direction = self._direction_kind(enriched)
+            if quality_reason:
+                counts["excluded_invalid_count"] += 1
+                continue
+            if direction == "sell_or_blocked":
+                if any(token in " ".join(_norm_text(enriched.get(k)) for k in ("canonical_final_state", "top_buy_action", "action", "prediction")) for token in ("blocked", "avoid", "reject")):
+                    counts["excluded_blocked_count"] += 1
+                else:
+                    counts["excluded_sell_count"] += 1
+                continue
+            enriched["candidate_direction_kind"] = direction
+            enriched["stable_composite_score"] = self._score(enriched)
+            if direction == "buy":
+                old = buy_by_symbol.get(sym)
+                if not old or _f(enriched.get("stable_composite_score"), 0.0) > _f(old.get("stable_composite_score"), 0.0):
+                    buy_by_symbol[sym] = enriched
+            elif direction == "hold":
+                counts["excluded_hold_count"] += 1
+                hold = dict(enriched)
+                hold["fallback_watch_candidate"] = True
+                old = hold_by_symbol.get(sym)
+                if not old or _f(hold.get("stable_composite_score"), 0.0) > _f(old.get("stable_composite_score"), 0.0):
+                    hold_by_symbol[sym] = hold
+            else:
+                counts["excluded_invalid_count"] += 1
+        buys = list(buy_by_symbol.values())
+        holds = [r for sym, r in hold_by_symbol.items() if sym not in buy_by_symbol]
+        counts["qualified_buy_candidates_count"] = len(buys)
+        counts["hold_fallback_candidates_count"] = len(holds)
+        candidates = buys + (holds if len(buys) < 6 else [])
+        return candidates, counts
+
+    def _update_rank_memory(self, candidates: list[dict[str, Any]], prior_memory: dict[str, Any], now: float) -> dict[str, Any]:
+        memory = {str(k).upper(): dict(v or {}) for k, v in dict(prior_memory or {}).items() if isinstance(v, dict)}
+        prelim = sorted(candidates, key=lambda r: _f(r.get("stable_composite_score"), 0.0), reverse=True)
+        seen = set()
+        for idx, row in enumerate(prelim, start=1):
+            sym = _symbol(row)
+            if not sym:
+                continue
+            seen.add(sym)
+            rec = dict(memory.get(sym) or {})
+            last_ts = _f(rec.get("last_seen_ts"), now)
+            elapsed = max(0.0, min(300.0, now - last_ts))
+            prior_rank = int(_f(rec.get("last_rank"), idx))
+            if prior_rank == 1:
+                rec["time_at_rank_1_seconds"] = _f(rec.get("time_at_rank_1_seconds"), 0.0) + elapsed
+            if prior_rank <= 3:
+                rec["time_in_top_3_seconds"] = _f(rec.get("time_in_top_3_seconds"), 0.0) + elapsed
+            if prior_rank <= 6:
+                rec["time_in_top_6_seconds"] = _f(rec.get("time_in_top_6_seconds"), 0.0) + elapsed
+            rec["rank_samples"] = int(_f(rec.get("rank_samples"), 0.0)) + 1
+            rec["rank_sum"] = _f(rec.get("rank_sum"), 0.0) + float(idx)
+            rec["average_rank"] = round(_f(rec.get("rank_sum"), 0.0) / max(1, int(_f(rec.get("rank_samples"), 1))), 3)
+            rec["average_rank_10r"] = rec["average_rank"]
+            rec["consecutive_top_3_refreshes"] = int(_f(rec.get("consecutive_top_3_refreshes"), 0.0)) + 1 if idx <= 3 else 0
+            rec["consecutive_top_6_refreshes"] = int(_f(rec.get("consecutive_top_6_refreshes"), 0.0)) + 1 if idx <= 6 else 0
+            rec["last_rank"] = idx
+            rec["last_seen_ts"] = now
+            rec["rank_stability_score"] = round(max(0.0, min(100.0, 105.0 - (rec["average_rank"] * 11.0) + min(20.0, rec["consecutive_top_6_refreshes"] * 2.5))), 3)
+            rec["persistence_score"] = round(max(0.0, min(100.0, (rec["rank_stability_score"] * 0.65) + min(35.0, _f(rec.get("time_in_top_6_seconds"), 0.0) / 90.0))), 3)
+            memory[sym] = rec
+        for sym, rec in list(memory.items()):
+            if sym not in seen and now - _f(rec.get("last_seen_ts"), now) > 3600:
+                memory.pop(sym, None)
+        for row in candidates:
+            sym = _symbol(row)
+            rec = memory.get(sym, {})
+            row.update({
+                "average_rank": rec.get("average_rank"),
+                "average_rank_10r": rec.get("average_rank_10r"),
+                "time_at_rank_1_seconds": round(_f(rec.get("time_at_rank_1_seconds"), 0.0), 2),
+                "time_in_top_3_seconds": round(_f(rec.get("time_in_top_3_seconds"), 0.0), 2),
+                "time_in_top_6_seconds": round(_f(rec.get("time_in_top_6_seconds"), 0.0), 2),
+                "rank_stability_score": rec.get("rank_stability_score"),
+                "persistence_score": rec.get("persistence_score"),
+                "consecutive_top_3_refreshes": int(_f(rec.get("consecutive_top_3_refreshes"), 0.0)),
+                "consecutive_top_6_refreshes": int(_f(rec.get("consecutive_top_6_refreshes"), 0.0)),
+            })
+            row["stable_composite_score"] = self._score(row)
+        return memory
+
+    def _sort_candidates(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return sorted(
+            rows,
+            key=lambda r: (
+                1 if self._direction_kind(r) == "buy" else 0,
+                _f(r.get("stable_composite_score"), 0.0),
+                _grade_score(r),
+                _f(r.get("conviction_10r"), _f(r.get("rolling_conviction_10r"), 0.0)),
+                _f(r.get("persistence_score"), 0.0),
+            ),
+            reverse=True,
+        )
+
     def select(self, raw_payload: dict[str, Any] | None, *, buy_mode: str = "balanced") -> dict[str, Any]:
         now = time.time()
         payload = dict(raw_payload or {})
         raw_rows = list(((payload.get("stocks") or {}).get("final") or []) or [])
         qualified = list(((payload.get("stocks") or {}).get("qualified") or []) or [])
         watchlist = list(((payload.get("stocks") or {}).get("watchlist") or []) or [])
-        candidates_by_symbol: dict[str, dict[str, Any]] = {}
-        for row in raw_rows + qualified + watchlist:
-            if not isinstance(row, dict):
-                continue
-            sym = _symbol(row)
-            if not sym:
-                continue
-            enriched = dict(row)
-            enriched["stable_composite_score"] = self._score(enriched)
-            old = candidates_by_symbol.get(sym)
-            if not old or _f(enriched.get("stable_composite_score"), 0.0) > _f(old.get("stable_composite_score"), 0.0):
-                candidates_by_symbol[sym] = enriched
-        candidates = sorted(candidates_by_symbol.values(), key=lambda r: _f(r.get("stable_composite_score"), 0.0), reverse=True)
         state = self._load()
+        raw_candidates, filter_counts = self._build_candidates(raw_rows, qualified, watchlist)
+        rank_memory = self._update_rank_memory(raw_candidates, dict(state.get("rank_memory") or {}), now)
+        candidates = self._sort_candidates(raw_candidates)
+        candidates_by_symbol = {_symbol(r): dict(r) for r in candidates if _symbol(r)}
         prior_rows = list(state.get("stable_top_6") or [])
         prior_by_symbol = {_symbol(r): dict(r) for r in prior_rows if isinstance(r, dict) and _symbol(r)}
         challenger_counts = dict(state.get("challenger_counts") or {})
@@ -197,7 +435,10 @@ class StableTopBuysSelector:
             sym = _symbol(prior)
             if not sym:
                 continue
-            current = candidates_by_symbol.get(sym, prior)
+            current = candidates_by_symbol.get(sym)
+            if current is None:
+                invalidated.append({"symbol": sym, "reason": "not_buy_candidate_or_no_longer_qualified"})
+                continue
             reason = self._hard_invalid_reason(current)
             if reason:
                 invalidated.append({"symbol": sym, "reason": reason})
@@ -253,7 +494,21 @@ class StableTopBuysSelector:
             else:
                 pending_challengers.append({"symbol": sym, "stable_composite_score": score, "margin_vs_weakest": round(margin, 3), "consecutive_refreshes": count})
 
-        stable = sorted(stable, key=lambda r: _f(r.get("stable_composite_score"), 0.0), reverse=True)[:6]
+        stable = self._sort_candidates(stable)[:6]
+        for idx, row in enumerate(stable, start=1):
+            row["top_6_rank"] = idx
+            row["ranked_reason"] = (
+                "Ranked #1 because it has the strongest combination of grade, 10R conviction, confidence, entry quality, and rank persistence."
+                if idx == 1
+                else "Ranked by buy readiness, grade, Astra score, 10R conviction, confidence, entry quality, and persistence."
+            )
+        avg_astra = sum(_f(r.get("astra_composite_score"), _f(r.get("stable_composite_score"), 0.0)) for r in stable) / max(1, len(stable))
+        avg_10r = sum(_f(r.get("conviction_10r"), _f(r.get("rolling_conviction_10r"), 0.0)) for r in stable) / max(1, len(stable))
+        avg_conf = sum(_f(r.get("confidence"), 0.0) for r in stable) / max(1, len(stable))
+        cap_counts = {"large_cap_count": 0, "mid_cap_count": 0, "small_cap_count": 0, "unknown_cap_count": 0}
+        for row in stable:
+            bucket = _market_cap_bucket(row)
+            cap_counts[f"{bucket}_count"] = int(cap_counts.get(f"{bucket}_count", 0)) + 1
         state_out = {
             "enabled": True,
             "version": VERSION,
@@ -263,8 +518,15 @@ class StableTopBuysSelector:
             "api_calls_used": 0,
             "stable_top_buys_v1": True,
             "stable_top_6": stable,
-            "raw_candidates_count": len(candidates),
+            "raw_candidates_count": len(raw_rows) + len(qualified) + len(watchlist),
+            "ranked_candidates_count": len(candidates),
+            "qualified_buy_candidates_count": int(filter_counts.get("qualified_buy_candidates_count", 0)),
+            "excluded_sell_count": int(filter_counts.get("excluded_sell_count", 0)),
+            "excluded_hold_count": int(filter_counts.get("excluded_hold_count", 0)),
+            "excluded_blocked_count": int(filter_counts.get("excluded_blocked_count", 0)),
+            "excluded_invalid_count": int(filter_counts.get("excluded_invalid_count", 0)),
             "stable_count": len(stable),
+            "stable_top_6_count": len(stable),
             "stocks_final_count": len(stable),
             "replaced_symbols": replaced_symbols,
             "retained_symbols": retained,
@@ -281,11 +543,21 @@ class StableTopBuysSelector:
             "buy_mode": str(buy_mode or "balanced"),
             "raw_top_buys_stage": payload.get("top_buys_stage"),
             "raw_payload_source": payload.get("top_buys_payload_source"),
+            "rank_persistence_enabled": True,
+            "average_astra_score": round(avg_astra, 3),
+            "average_10r_conviction": round(avg_10r, 3),
+            "average_confidence": round(avg_conf, 3),
+            "best_opportunity_symbol": _symbol(stable[0]) if stable else "",
+            "market_cap_breakdown": dict(cap_counts),
+            "top_6_buy_only_filter_enabled": True,
+            "hold_fallback_used": bool(any(r.get("fallback_watch_candidate") for r in stable)),
+            "ranking_formula": "buy_readiness + grade + astra_score + 10r_conviction + entry_quality_v3 + confidence + quality + multi_brain + psychology + persistence",
             "adaptive_policy_mode": "shadow_only",
             "live_trading_changed": False,
             "rankings_top_buys_strategy_changed": False,
             "next_recommended_action": "display_stable_top_6_and_allow_raw_top_buys_to_continue_running_independently",
             "challenger_counts": {k: v for k, v in challenger_counts.items() if v > 0},
+            "rank_memory": rank_memory,
         }
         self._write(state_out)
         return dict(state_out)

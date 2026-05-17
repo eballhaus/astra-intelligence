@@ -6,7 +6,6 @@ import {
   resolveApiBase,
 } from "../../apiBase";
 import MarketSummary from "../components/MarketSummary";
-import TickerGrid from "../components/TickerGrid";
 import TickerCard from "../components/TickerCard";
 
 const API_BASE = resolveApiBase();
@@ -49,6 +48,13 @@ const positionsGridStyle = {
   display: "grid",
   gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
   gap: "10px",
+};
+
+const topCardsGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+  gap: "10px",
+  alignItems: "start",
 };
 
 const emptyStyle = {
@@ -114,8 +120,8 @@ function normalizeTopBuys(raw) {
       price: row.current_price ?? row.price ?? row.live_price ?? row.last_price ?? row.close ?? row.mark_price ?? null,
       current_price: row.current_price ?? row.price ?? row.live_price ?? row.last_price ?? row.close ?? row.mark_price ?? null,
       change_percent: row.change_percent ?? row.change_pct ?? row.percent_change ?? row.daily_change_pct ?? 0,
-      confidence: row.confidence ?? row.buy_confidence ?? row.predicted_win_probability ?? 0,
-      buy_quality_score: row.buy_quality_score ?? row.trade_quality_score ?? row.quality_score ?? 0,
+      confidence: row.confidence ?? row.buy_confidence ?? row.predicted_win_probability ?? null,
+      buy_quality_score: row.buy_quality_score ?? row.trade_quality_score ?? row.quality_score ?? row.grade_percent ?? null,
       grade: row.grade ?? row.buy_grade ?? row.qualification ?? row.buy_eligibility ?? "N/A",
       stop_loss: row.stop_loss ?? row.stop_price ?? row.stop ?? null,
       timestamp: row.timestamp || row.updated_at || row.last_quote_utc || "",
@@ -137,6 +143,16 @@ function normalizeTopBuys(raw) {
       stable_composite_score: row.stable_composite_score ?? null,
       stability_score: row.stability_score ?? row.stable_composite_score ?? null,
       stable_retained: Boolean(row.stable_retained),
+      top_6_rank: row.top_6_rank ?? null,
+      readiness_label: row.readiness_label || "",
+      action_label: row.action_label || "",
+      ranked_reason: row.ranked_reason || "",
+      conviction_5r: row.conviction_5r ?? row.rolling_conviction_5r ?? null,
+      conviction_10r: row.conviction_10r ?? row.rolling_conviction_10r ?? row.conviction_display_score ?? null,
+      conviction_20r: row.conviction_20r ?? row.rolling_conviction_20r ?? null,
+      rolling_conviction_5r: row.rolling_conviction_5r ?? row.conviction_5r ?? null,
+      rolling_conviction_10r: row.rolling_conviction_10r ?? row.conviction_10r ?? row.conviction_display_score ?? null,
+      rolling_conviction_20r: row.rolling_conviction_20r ?? row.conviction_20r ?? null,
       expected_move: row.expected_move ?? row.profit_prediction_usd ?? row.expected_move_dollars ?? row.expected_move_usd ?? row.predicted_profit_dollars ?? null,
       expected_move_percent: row.expected_move_percent ?? row.expected_move_pct ?? row.profit_prediction_pct ?? row.predicted_return_pct ?? null,
     };
@@ -144,6 +160,19 @@ function normalizeTopBuys(raw) {
   return {
     stocks: stocks.map((r) => mapRow(r, "stock")).filter(Boolean).slice(0, 6),
     cryptos: cryptos.map((r) => mapRow(r, "crypto")).filter(Boolean).slice(0, 6),
+    summary: {
+      marketStatus: raw?.market_status || "Unknown",
+      snapshotBadge: raw?.snapshot_status_badge || "",
+      snapshotAgeSeconds: raw?.snapshot_age_seconds ?? null,
+      averageAstraScore: raw?.average_astra_score ?? null,
+      average10rConviction: raw?.average_10r_conviction ?? null,
+      averageConfidence: raw?.average_confidence ?? null,
+      bestOpportunitySymbol: raw?.best_opportunity_symbol || "",
+      qualifiedBuyCandidatesCount: raw?.qualified_buy_candidates_count ?? null,
+      broadFunnelConnected: Boolean(raw?.broad_funnel_connected),
+      sourceUniverse: raw?.source_universe || "",
+      holdFallbackUsed: Boolean(raw?.hold_fallback_used),
+    },
   };
 }
 
@@ -327,7 +356,7 @@ export default function Dashboard() {
     };
   }, [resolvedApiBase]);
 
-  const { stocks } = useMemo(() => normalizeTopBuys(topBuys), [topBuys]);
+  const { stocks, summary: topSummary } = useMemo(() => normalizeTopBuys(topBuys), [topBuys]);
   const openPositionSymbols = useMemo(
     () => new Set((positions || []).map((p) => String(p?.symbol || "").toUpperCase()).filter(Boolean)),
     [positions]
@@ -356,6 +385,16 @@ export default function Dashboard() {
     ? (safeNumber(systemStatus?.final_ranked_count, 0) > 0 ? "ranked-ready" : "minimal-payload")
     : "degraded";
   const asOf = formatTimestamp(systemStatus?.last_updated_utc || topBuys?.last_updated_utc || "");
+  const topSummaryItems = [
+    ["Market", topSummary?.snapshotBadge || topSummary?.marketStatus || "n/a"],
+    ["Avg Astra", topSummary?.averageAstraScore == null ? "n/a" : `${Number(topSummary.averageAstraScore).toFixed(1)}`],
+    ["Avg 10R", topSummary?.average10rConviction == null ? "n/a" : `${Number(topSummary.average10rConviction).toFixed(1)}`],
+    ["Avg Confidence", topSummary?.averageConfidence == null ? "n/a" : `${Number(topSummary.averageConfidence).toFixed(1)}%`],
+    ["Best", topSummary?.bestOpportunitySymbol || "n/a"],
+    ["Buy Candidates", topSummary?.qualifiedBuyCandidatesCount == null ? "n/a" : String(topSummary.qualifiedBuyCandidatesCount)],
+    ["Broad Funnel", topSummary?.broadFunnelConnected ? "connected" : "not confirmed"],
+    ["Snapshot Age", topSummary?.snapshotAgeSeconds == null ? "n/a" : `${Math.round(Number(topSummary.snapshotAgeSeconds))}s`],
+  ];
 
   const refreshPositions = async () => {
     const result = await fetchJsonWithFallback("/api/positions", {
@@ -485,15 +524,43 @@ export default function Dashboard() {
       </section>
 
       <section style={panelStyle}>
-        <TickerGrid
-          stocks={stocks}
-          stockTitle="Top 6 Stock Opportunities"
-          showCryptoColumn={false}
-          emptyText={loading ? "Loading stock opportunities…" : "No stock signals found"}
-          cardContext="top-buy"
-          onAddPosition={handleAddPosition}
-          positionActionState={effectivePositionActionState}
-        />
+        <div style={{ display: "grid", gap: "10px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "flex-start", flexWrap: "wrap" }}>
+            <div>
+              <h3 style={{ ...panelTitleStyle, marginBottom: 4 }}>Top 6 Buy Opportunities</h3>
+              <div style={{ color: "#aecaef", fontSize: "0.76rem", lineHeight: 1.35 }}>
+                Ranked best-to-worst by buy readiness, grade, Astra Score, 10R conviction, entry quality, confidence, and rank persistence.
+              </div>
+            </div>
+            {topSummary?.holdFallbackUsed ? (
+              <span style={{ color: "#ffdf9f", fontSize: "0.72rem", fontWeight: 800 }}>Fallback watch candidates included</span>
+            ) : null}
+          </div>
+          <div style={stripGridStyle}>
+            {topSummaryItems.map(([label, value]) => (
+              <div key={label} style={statusPillStyle}>
+                <span style={{ color: "#5f738f", fontSize: "0.7rem" }}>{label}</span>
+                <strong style={{ color: "#1a2d45", fontSize: "0.84rem" }}>{value}</strong>
+              </div>
+            ))}
+          </div>
+          {stocks.length === 0 ? (
+            <div style={emptyStyle}>{loading ? "Loading stock opportunities…" : "No qualified buy opportunities found"}</div>
+          ) : (
+            <div style={topCardsGridStyle}>
+              {stocks.map((item, idx) => (
+                <TickerCard
+                  key={`${item?.symbol ?? "stock"}-${item?.top_6_rank ?? idx}`}
+                  item={{ ...item, top_6_rank: item?.top_6_rank ?? idx + 1 }}
+                  context="top-buy"
+                  compact
+                  onAddPosition={handleAddPosition}
+                  positionState={effectivePositionActionState?.[String(item?.symbol || "").toUpperCase()] || "idle"}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </section>
 
       <section style={panelStyle}>

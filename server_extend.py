@@ -31040,6 +31040,43 @@ def _stable_top_buys_payload(raw_payload=None, *, buy_mode="balanced"):
     out["top_buys_stage"] = "stable_top_6_snapshot"
     out["top_buys_payload_source"] = "stable_top_buys_v1"
     out["stability_mode"] = stable.get("stability_mode")
+    refresh_ts = _to_float(stable.get("refresh_ts"), time.time())
+    out["snapshot_age_seconds"] = round(max(0.0, time.time() - refresh_ts), 2)
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    market_open = bool(now_et.weekday() < 5 and (now_et.hour > 9 or (now_et.hour == 9 and now_et.minute >= 30)) and now_et.hour < 16)
+    out["market_status"] = "Market Open" if market_open else "Market Closed"
+    out["snapshot_status_badge"] = "Live Market Window" if market_open else "Using Last Verified Snapshot"
+    out["broad_universe_target_count"] = int(_to_float(raw.get("broad_universe_target_count"), 7500))
+    out["active_universe_target_count"] = int(_to_float(raw.get("active_universe_target_count"), 200))
+    out["active_universe_current_count"] = int(_to_float(raw.get("active_universe_current_count"), _UNIVERSE_RUNTIME.get("universe_size", 0)))
+    out["source_universe"] = str(raw.get("source_universe") or ("broad_funnel_runtime" if int(_UNIVERSE_RUNTIME.get("universe_size", 0)) > 6 else "runtime_snapshot"))
+    out["active_universe_connected"] = bool(int(_UNIVERSE_RUNTIME.get("universe_size", 0)) > 6 or out["active_universe_current_count"] > 6)
+    out["broad_funnel_connected"] = bool(out["broad_universe_target_count"] >= 4000 and out["active_universe_target_count"] >= 100)
+    out["market_cap_breakdown_active_universe"] = {
+        "large_cap_count": int(_UNIVERSE_RUNTIME.get("large_cap_count", 0)),
+        "mid_cap_count": int(_UNIVERSE_RUNTIME.get("mid_cap_count", 0)),
+        "small_cap_count": int(_UNIVERSE_RUNTIME.get("small_cap_count", 0)),
+        "unknown_cap_count": max(0, int(_UNIVERSE_RUNTIME.get("universe_size", 0)) - int(_UNIVERSE_RUNTIME.get("large_cap_count", 0)) - int(_UNIVERSE_RUNTIME.get("mid_cap_count", 0)) - int(_UNIVERSE_RUNTIME.get("small_cap_count", 0))),
+    }
+    for key in (
+        "qualified_buy_candidates_count",
+        "excluded_sell_count",
+        "excluded_hold_count",
+        "excluded_blocked_count",
+        "excluded_invalid_count",
+        "rank_persistence_enabled",
+        "average_astra_score",
+        "average_10r_conviction",
+        "average_confidence",
+        "best_opportunity_symbol",
+        "market_cap_breakdown",
+        "ranked_candidates_count",
+        "stable_top_6_count",
+        "hold_fallback_used",
+        "top_6_buy_only_filter_enabled",
+    ):
+        if key in stable:
+            out[key] = stable.get(key)
     out["api_calls_used"] = 0
     out["live_trading_changed"] = False
     out["rankings_top_buys_strategy_changed"] = False
@@ -31056,6 +31093,19 @@ def stable_top_buys_v1(buy_mode: str = Query("balanced")):
         stable_meta["stocks_final_count"] = payload.get("stocks_final_count", len(stable_meta.get("stable_top_6") or []))
         stable_meta["top_buys_stage"] = payload.get("top_buys_stage")
         stable_meta["top_buys_payload_source"] = payload.get("top_buys_payload_source")
+        for key in (
+            "broad_universe_target_count",
+            "active_universe_target_count",
+            "active_universe_current_count",
+            "source_universe",
+            "active_universe_connected",
+            "broad_funnel_connected",
+            "market_status",
+            "snapshot_status_badge",
+            "snapshot_age_seconds",
+            "market_cap_breakdown_active_universe",
+        ):
+            stable_meta[key] = payload.get(key)
         stable_meta["api_calls_used"] = 0
         return stable_meta
     except Exception as exc:
