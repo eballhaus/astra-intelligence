@@ -47591,8 +47591,24 @@ def _learning_snapshot_fast_from_payload(payload):
         or src.get("degraded_reason")
         or ""
     )
+    totals = src.get("totals") if isinstance(src.get("totals"), dict) else {}
+    combined = totals.get("combined") if isinstance(totals.get("combined"), dict) else {}
+    live_paper = totals.get("live_paper") if isinstance(totals.get("live_paper"), dict) else {}
+    replay_paper = totals.get("replay_paper") if isinstance(totals.get("replay_paper"), dict) else {}
+    valid_trades = int(_to_float(totals.get("valid_trades"), _to_float(combined.get("valid_trade_count"), _to_float(combined.get("trade_count"), 0.0))))
+    source = str(src.get("learning_payload_source") or src.get("source") or ("learning_insights_last_good" if src else "empty_fallback"))
+    empty_snapshot = bool(not src or (valid_trades <= 0 and not any(isinstance(src.get(k), dict) and src.get(k) for k in ("learning_wiring_v1", "decision_quality_v1", "lifecycle_learning_reporter_v1"))))
     return {
         "updated_at": str(src.get("last_updated_utc") or src.get("generated_at") or _now_utc_iso()),
+        "source": source,
+        "learning_payload_source": source,
+        "fallback_snapshot_used": bool(source in {"empty_fallback", "default_fallback_warmup"} or src.get("learning_payload_stale")),
+        "empty_snapshot_detected": empty_snapshot,
+        "valid_labels_count": int(_to_float(src.get("valid_labels_count"), valid_trades)),
+        "closed_trades_count": int(_to_float(totals.get("raw_closed_trades"), valid_trades)),
+        "paper_trades_count": int(_to_float(live_paper.get("trade_count"), 0.0)),
+        "replay_rows_available": int(_to_float(replay_paper.get("trade_count"), 0.0)),
+        "replay_rows_integrated": int(_to_float(replay_paper.get("valid_trade_count"), _to_float(replay_paper.get("trade_count"), 0.0))),
         "current_engine_released_wr": _to_float(
             eval_payload.get("released_hero_win_rate"),
             src.get("released_hero_win_rate"),
@@ -47620,7 +47636,227 @@ def _learning_snapshot_fast_from_payload(payload):
         "biggest_weakness": biggest_weakness,
         "strongest_area": strongest_area,
         "operating_posture": operating_posture,
+        "api_calls_used": 0,
     }
+
+
+def _json_load_safe(path, default=None):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else ({} if default is None else default)
+    except Exception:
+        return {} if default is None else default
+
+
+def _file_mtime_iso(path):
+    try:
+        return datetime.fromtimestamp(os.path.getmtime(path), UTC).isoformat().replace("+00:00", "Z")
+    except Exception:
+        return ""
+
+
+def _jsonl_count_safe(path, *, classify=False):
+    count = 0
+    closed = 0
+    opportunity = 0
+    target = 0
+    exit_quality = 0
+    if not os.path.exists(path):
+        return {"count": 0, "closed": 0, "opportunity": 0, "target": 0, "exit_quality": 0}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for raw in fh:
+                if not raw.strip():
+                    continue
+                count += 1
+                if not classify:
+                    continue
+                low = raw.lower()
+                if "exit_timestamp" in low or '"lifecycle_stage":"closed"' in low or '"lifecycle_stage": "closed"' in low:
+                    closed += 1
+                if "opportunity_score" in low or "profit_priority_score" in low:
+                    opportunity += 1
+                if "target_zone" in low or "target_hit_status" in low:
+                    target += 1
+                if "exit_quality" in low or "exit_score" in low or "premature_exit" in low or "late_exit" in low:
+                    exit_quality += 1
+    except Exception:
+        pass
+    return {"count": count, "closed": closed, "opportunity": opportunity, "target": target, "exit_quality": exit_quality}
+
+
+def _advanced_card_truth_counts():
+    card_dir = os.path.join(STATE, "snapshots", "advanced_metrics_cards")
+    fresh = stale = unavailable = 0
+    last_update = ""
+    cards = []
+    try:
+        for name in sorted(os.listdir(card_dir)):
+            if not name.endswith(".json"):
+                continue
+            path = os.path.join(card_dir, name)
+            card = _json_load_safe(path, default={})
+            status = str(card.get("status") or "").lower()
+            updated = str(card.get("generated_at") or card.get("updated_at") or card.get("last_success_at") or _file_mtime_iso(path))
+            age = max(0.0, time.time() - os.path.getmtime(path)) if os.path.exists(path) else 999999.0
+            if status in {"unavailable", "error", "still_computing"}:
+                unavailable += 1
+            elif status == "stale" or age > 12 * 3600:
+                stale += 1
+            else:
+                fresh += 1
+            if updated and updated > last_update:
+                last_update = updated
+            cards.append({"card": name[:-5], "status": status or "unknown", "updated_at": updated, "age_seconds": round(age, 2)})
+    except Exception:
+        pass
+    return {
+        "fresh_cards_count": fresh,
+        "stale_cards_count": stale,
+        "unavailable_cards_count": unavailable,
+        "advanced_metric_cards": cards[:40],
+        "last_advanced_card_update": last_update,
+    }
+
+
+def _learning_truth_status_payload():
+    ledger_path = os.path.join(STATE, "learning_ledger_state.json")
+    last_good_path = LEARNING_INSIGHTS_LAST_GOOD_PATH
+    outcome_path = os.path.join(STATE, "outcome_labels_v1.jsonl")
+    lifecycle_path = os.path.join(STATE, "trade_lifecycle_v1.jsonl")
+    stable_path = os.path.join(STATE, "snapshots", "stable_top_buys_v1.json")
+    ledger = _json_load_safe(ledger_path)
+    last_good = _load_learning_insights_last_good() or _json_load_safe(last_good_path)
+    stable = _json_load_safe(stable_path)
+    totals = ledger.get("totals") if isinstance(ledger.get("totals"), dict) else {}
+    if not totals and isinstance(last_good.get("totals"), dict):
+        totals = last_good.get("totals") or {}
+    combined = totals.get("combined") if isinstance(totals.get("combined"), dict) else {}
+    live_paper = totals.get("live_paper") if isinstance(totals.get("live_paper"), dict) else {}
+    replay_paper = totals.get("replay_paper") if isinstance(totals.get("replay_paper"), dict) else {}
+    outcome_counts = _jsonl_count_safe(outcome_path)
+    lifecycle_counts = _jsonl_count_safe(lifecycle_path, classify=True)
+    stable_rows = [r for r in list(stable.get("stable_top_6") or []) if isinstance(r, dict)]
+    opp_rows = sum(1 for r in stable_rows if r.get("opportunity_score_pct") is not None)
+    target_rows = sum(1 for r in stable_rows if r.get("target_zone_display") or r.get("target_zone_available"))
+    exit_rows = sum(1 for r in stable_rows if r.get("exit_score") is not None or r.get("exit_score_available"))
+    valid_labels = max(outcome_counts.get("count", 0), int(_to_float(totals.get("valid_trades"), _to_float(combined.get("valid_trade_count"), _to_float(combined.get("trade_count"), 0.0)))))
+    closed_trades = int(max(
+        _to_float(totals.get("raw_closed_trades"), 0.0),
+        _to_float(totals.get("valid_trades"), 0.0),
+        _to_float(combined.get("trade_count"), 0.0),
+        lifecycle_counts.get("closed", 0),
+    ))
+    replay_rows = int(max(_to_float(replay_paper.get("trade_count"), 0.0), _to_float(replay_paper.get("valid_trade_count"), 0.0)))
+    paper_rows = int(_to_float(live_paper.get("trade_count"), 0.0))
+    source_names = []
+    for name, path, present in (
+        ("learning_ledger_state", ledger_path, bool(ledger)),
+        ("learning_insights_last_good", last_good_path, bool(last_good)),
+        ("outcome_labels_v1", outcome_path, outcome_counts.get("count", 0) > 0),
+        ("trade_lifecycle_v1", lifecycle_path, lifecycle_counts.get("count", 0) > 0),
+        ("stable_top_buys_v1", stable_path, bool(stable_rows)),
+    ):
+        if present:
+            source_names.append(name)
+    adv = _advanced_card_truth_counts()
+    active_available = bool(valid_labels > 0 or closed_trades > 0 or replay_rows > 0 or lifecycle_counts.get("count", 0) > 0 or opp_rows > 0)
+    cached_payload = _get_learning_insights_top_buys_fast()
+    cached_empty = bool(cached_payload and _learning_payload_is_effectively_empty(cached_payload))
+    fallback_used = bool((cached_payload or {}).get("learning_payload_stale") or str((cached_payload or {}).get("learning_payload_source") or "").lower() in {"empty_fallback", "default_fallback_warmup"})
+    last_real = max([x for x in (
+        _file_mtime_iso(ledger_path),
+        _file_mtime_iso(last_good_path),
+        _file_mtime_iso(outcome_path),
+        _file_mtime_iso(lifecycle_path),
+        _file_mtime_iso(stable_path),
+    ) if x] or [""])
+    try:
+        freshness = LEARNING_FRESHNESS_PLANNER.status(market_status=_adaptive_refresh_market_status())
+    except Exception:
+        freshness = {}
+    return {
+        "enabled": True,
+        "version": "1.0.0",
+        "mode": "snapshot_truth_local_sources",
+        "local_only": True,
+        "writes_files": False,
+        "api_calls_used": 0,
+        "learning_truth_status_v1": True,
+        "real_sources_found": bool(source_names),
+        "source_names": source_names,
+        "active_learning_available": active_available,
+        "fallback_snapshot_used": fallback_used,
+        "empty_snapshot_detected": bool(cached_empty and active_available),
+        "last_real_learning_update": last_real,
+        "last_snapshot_build": str((cached_payload or {}).get("last_updated_utc") or (cached_payload or {}).get("generated_at") or _file_mtime_iso(last_good_path) or last_real),
+        "next_learning_refresh": freshness.get("next_learning_refresh"),
+        "next_advanced_refresh": freshness.get("next_advanced_refresh"),
+        "closed_trades_count": closed_trades,
+        "paper_trades_count": paper_rows,
+        "valid_labels_count": int(valid_labels),
+        "replay_rows_available": replay_rows,
+        "replay_rows_integrated": int(_to_float(replay_paper.get("valid_trade_count"), replay_rows)),
+        "lifecycle_events_count": int(lifecycle_counts.get("count", 0)),
+        "opportunity_learning_rows": int(max(opp_rows, lifecycle_counts.get("opportunity", 0))),
+        "target_zone_learning_rows": int(max(target_rows, lifecycle_counts.get("target", 0))),
+        "exit_quality_rows": int(max(exit_rows, lifecycle_counts.get("exit_quality", 0))),
+        "stale_cards_count": int(adv.get("stale_cards_count", 0)),
+        "fresh_cards_count": int(adv.get("fresh_cards_count", 0)),
+        "unavailable_cards_count": int(adv.get("unavailable_cards_count", 0)),
+        "advanced_metrics": adv,
+        "recommended_action": "use_real_local_learning_sources_and_label_empty_fallbacks_as_unavailable" if active_available else "waiting_for_real_learning_data",
+    }
+
+
+def _best_real_learning_payload_for_truth():
+    ledger = _json_load_safe(os.path.join(STATE, "learning_ledger_state.json"))
+    last_good = _load_learning_insights_last_good() or _json_load_safe(LEARNING_INSIGHTS_LAST_GOOD_PATH)
+    if isinstance(ledger, dict) and _learning_payload_is_nonzero(ledger):
+        payload = dict(ledger)
+        payload.setdefault("learning_payload_source", "learning_ledger_state")
+    elif isinstance(last_good, dict) and _learning_payload_is_nonzero(last_good):
+        payload = dict(last_good)
+        payload.setdefault("learning_payload_source", "learning_insights_last_good")
+    else:
+        payload = {}
+    if payload:
+        truth = _learning_truth_status_payload()
+        payload["learning_truth_status_v1"] = {
+            k: truth.get(k)
+            for k in (
+                "real_sources_found",
+                "source_names",
+                "active_learning_available",
+                "fallback_snapshot_used",
+                "empty_snapshot_detected",
+                "closed_trades_count",
+                "paper_trades_count",
+                "valid_labels_count",
+                "replay_rows_available",
+                "replay_rows_integrated",
+                "lifecycle_events_count",
+                "opportunity_learning_rows",
+                "target_zone_learning_rows",
+                "exit_quality_rows",
+            )
+        }
+        payload["valid_labels_count"] = truth.get("valid_labels_count")
+        payload["closed_trades_count"] = truth.get("closed_trades_count")
+        payload["paper_trades_count"] = truth.get("paper_trades_count")
+        payload["replay_rows_available"] = truth.get("replay_rows_available")
+        payload["replay_rows_integrated"] = truth.get("replay_rows_integrated")
+        payload["last_updated_utc"] = truth.get("last_real_learning_update") or payload.get("last_updated_utc") or _now_utc_iso()
+        payload = _decorate_learning_payload_resilience(
+            payload,
+            source=str(payload.get("learning_payload_source") or "learning_truth_local_sources"),
+            stale=False,
+            degraded_reason="",
+            false_empty_prevented=False,
+            freshness_reason="real_local_learning_sources",
+        )
+    return payload
 
 
 @router.get("/api/learning_snapshot_fast_v1")
@@ -47628,15 +47864,23 @@ def learning_snapshot_fast_v1():
     try:
         payload = {}
         cached_payload = _get_learning_insights_top_buys_fast()
-        if isinstance(cached_payload, dict) and cached_payload:
+        if isinstance(cached_payload, dict) and cached_payload and not _learning_payload_is_effectively_empty(cached_payload):
             payload = dict(cached_payload)
         else:
-            last_good = _load_learning_insights_last_good()
-            if isinstance(last_good, dict) and last_good:
-                payload = dict(last_good)
+            real_payload = _best_real_learning_payload_for_truth()
+            if isinstance(real_payload, dict) and real_payload:
+                payload = dict(real_payload)
         snap = _learning_snapshot_fast_from_payload(payload)
         snap["ok"] = True
+        truth = _learning_truth_status_payload()
         snap["source"] = str((payload or {}).get("learning_payload_source") or ("learning_insights_last_good" if payload else "empty_fallback"))
+        snap["truth"] = truth
+        if truth.get("active_learning_available") and snap.get("empty_snapshot_detected"):
+            snap["source"] = "learning_truth_local_sources"
+            snap["updated_at"] = truth.get("last_real_learning_update") or snap.get("updated_at") or _now_utc_iso()
+            snap["fallback_snapshot_used"] = False
+            snap["empty_snapshot_detected"] = False
+            snap["degraded_reason"] = "fast_snapshot_repaired_from_learning_truth_sources"
         return snap
     except Exception as e:
         return {
@@ -47655,6 +47899,65 @@ def learning_snapshot_fast_v1():
             "biggest_weakness": "insufficient_data",
             "strongest_area": "insufficient_data",
             "operating_posture": "guarded",
+        }
+
+
+@router.get("/api/learning_truth_status_v1")
+def learning_truth_status_v1():
+    try:
+        return _learning_truth_status_payload()
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "snapshot_truth_local_sources",
+            "api_calls_used": 0,
+            "learning_truth_status_v1": True,
+            "real_sources_found": False,
+            "source_names": [],
+            "active_learning_available": False,
+            "fallback_snapshot_used": True,
+            "empty_snapshot_detected": True,
+            "recommended_action": "inspect_learning_truth_endpoint_error",
+            "error": str(exc)[:180],
+        }
+
+
+@router.get("/api/rebuild_learning_snapshot_v1")
+def rebuild_learning_snapshot_v1(safe: bool = Query(True)):
+    try:
+        if not bool(safe):
+            return {"ok": False, "api_calls_used": 0, "error": "safe=true_required"}
+        payload = _best_real_learning_payload_for_truth()
+        truth = _learning_truth_status_payload()
+        if payload:
+            _LEARNING_INSIGHTS_CACHE["payload"] = dict(payload)
+            _LEARNING_INSIGHTS_CACHE["ts"] = time.time()
+            _LEARNING_INSIGHTS_CACHE["key"] = _learning_insights_cache_key()
+            _persist_learning_insights_last_good(payload)
+        return {
+            "ok": True,
+            "enabled": True,
+            "version": "1.0.0",
+            "mode": "safe_local_snapshot_rebuild",
+            "safe": True,
+            "local_only": True,
+            "writes_files": bool(payload),
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "rebuilt_from_real_sources": bool(payload),
+            "learning_truth": truth,
+            "snapshot": _learning_snapshot_fast_from_payload(payload),
+            "recommended_action": "learning_tab_can_clear_memory_cache_and_refetch_fast_snapshot",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "enabled": False,
+            "mode": "safe_local_snapshot_rebuild",
+            "safe": bool(safe),
+            "api_calls_used": 0,
+            "error": str(exc)[:180],
         }
 
 

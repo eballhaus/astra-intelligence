@@ -74,6 +74,17 @@ function learningPayloadHasEvidence(payload) {
   const cohortBlocked = Number(sampleSizes.blocked_watchlist);
   if (Number.isFinite(validTrades) && validTrades > 0) return true;
   if (Number.isFinite(combinedTradeCount) && combinedTradeCount > 0) return true;
+  for (const key of ["closed_trades_count", "valid_labels_count", "replay_rows_available", "replay_rows_integrated", "lifecycle_events_count"]) {
+    const n = Number(payload[key]);
+    if (Number.isFinite(n) && n > 0) return true;
+  }
+  const truth = payload.learning_truth_status_v1 || payload.truth || {};
+  if (truth && typeof truth === "object") {
+    for (const key of ["closed_trades_count", "valid_labels_count", "replay_rows_available", "replay_rows_integrated", "lifecycle_events_count"]) {
+      const n = Number(truth[key]);
+      if (Number.isFinite(n) && n > 0) return true;
+    }
+  }
   if (
     (Number.isFinite(cohortReleased) && cohortReleased > 0)
     || (Number.isFinite(cohortPaper) && cohortPaper > 0)
@@ -164,6 +175,7 @@ let LEARNING_TAB_MEMORY_CACHE = {
   lastFetchAt: "",
   cachedAtMs: 0,
   freshness: null,
+  truth: null,
 };
 
 function metricValue(...values) {
@@ -246,6 +258,8 @@ export default function LearningTab({ compact = false }) {
   const [endpointStatus, setEndpointStatus] = useState(LEARNING_TAB_MEMORY_CACHE.endpointStatus || {});
   const [timeline, setTimeline] = useState(LEARNING_TAB_MEMORY_CACHE.timeline || []);
   const [learningFreshness, setLearningFreshness] = useState(LEARNING_TAB_MEMORY_CACHE.freshness || {});
+  const [learningTruth, setLearningTruth] = useState(LEARNING_TAB_MEMORY_CACHE.truth || {});
+  const [manualRefreshMessage, setManualRefreshMessage] = useState("");
   const [data, setData] = useState(LEARNING_TAB_MEMORY_CACHE.data || {
     learningSnapshotFast: {},
     learningInsights: {},
@@ -319,6 +333,7 @@ export default function LearningTab({ compact = false }) {
         setEndpointStatus(LEARNING_TAB_MEMORY_CACHE.endpointStatus || {});
         setTimeline(LEARNING_TAB_MEMORY_CACHE.timeline || []);
         setLearningFreshness(LEARNING_TAB_MEMORY_CACHE.freshness || {});
+        setLearningTruth(LEARNING_TAB_MEMORY_CACHE.truth || {});
         setLastFetchAt(LEARNING_TAB_MEMORY_CACHE.lastFetchAt || "");
         setLoading(false);
         setSecondaryLoading(false);
@@ -377,9 +392,10 @@ export default function LearningTab({ compact = false }) {
                 },
                 generated_at: String(learningSnapshotFast.updated_at || ""),
                 last_updated_utc: String(learningSnapshotFast.updated_at || ""),
-                learning_payload_source: "learning_snapshot_fast_v1",
-                learning_payload_stale: false,
-              };
+                learning_payload_source: firstNonEmpty(learningSnapshotFast.learning_payload_source, learningSnapshotFast.source, "learning_snapshot_fast_v1"),
+                learning_payload_stale: Boolean(learningSnapshotFast.fallback_snapshot_used),
+                learning_truth_status_v1: learningSnapshotFast.truth || {},
+                };
               const existingInsights = prevSafe.learningInsights && typeof prevSafe.learningInsights === "object"
                 ? prevSafe.learningInsights
                 : {};
@@ -428,6 +444,7 @@ export default function LearningTab({ compact = false }) {
           fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, { timeoutMs: 5000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 8000 }),
           fetchJson("learning_freshness", "/api/learning_freshness_status_v1", {}, { timeoutMs: 5000 }),
+          fetchJson("learning_truth", "/api/learning_truth_status_v1", {}, { timeoutMs: 5000 }),
         ]);
         if (!mounted) return;
 
@@ -462,6 +479,10 @@ export default function LearningTab({ compact = false }) {
           ? byKey.learning_freshness.parsed
           : {};
         if (Object.keys(freshnessPayload).length > 0) setLearningFreshness(freshnessPayload);
+        const truthPayload = byKey.learning_truth?.parsed && typeof byKey.learning_truth.parsed === "object"
+          ? byKey.learning_truth.parsed
+          : {};
+        if (Object.keys(truthPayload).length > 0) setLearningTruth(truthPayload);
         const isNonEmptyObject = (v) =>
         Boolean(v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length > 0);
       const selectPayload = (key, previousValue = {}) => {
@@ -542,6 +563,9 @@ export default function LearningTab({ compact = false }) {
               },
               generated_at: String(learningSnapshotFast.updated_at || ""),
               last_updated_utc: String(learningSnapshotFast.updated_at || ""),
+              learning_payload_source: firstNonEmpty(learningSnapshotFast.learning_payload_source, learningSnapshotFast.source, "learning_snapshot_fast_v1"),
+              learning_payload_stale: Boolean(learningSnapshotFast.fallback_snapshot_used),
+              learning_truth_status_v1: learningSnapshotFast.truth || truthPayload || {},
             }
             : {};
         if (
@@ -618,6 +642,7 @@ export default function LearningTab({ compact = false }) {
           lastFetchAt: new Date().toISOString(),
           cachedAtMs: Date.now(),
           freshness: freshnessPayload,
+          truth: truthPayload,
         };
         return nextData;
         });
@@ -633,6 +658,28 @@ export default function LearningTab({ compact = false }) {
       clearInterval(timer);
     };
   }, [resolvedApiBase, manualRefreshNonce]);
+
+  const handleManualLearningRefresh = async () => {
+    setManualRefreshMessage("Refreshing local learning snapshot...");
+    try {
+      const result = await fetchJsonWithFallback("/api/rebuild_learning_snapshot_v1?safe=true", {
+        preferredBase: resolvedApiBase || API_BASE,
+        fallbackValue: { ok: false, error: "rebuild request failed" },
+        timeoutMs: 8000,
+      });
+      const parsed = result?.parsed || {};
+      if (parsed.ok) {
+        LEARNING_TAB_MEMORY_CACHE = { ...LEARNING_TAB_MEMORY_CACHE, cachedAtMs: 0 };
+        setLearningTruth(parsed.learning_truth || {});
+        setManualRefreshMessage("Learning snapshot refreshed from local sources.");
+        setManualRefreshNonce((value) => value + 1);
+      } else {
+        setManualRefreshMessage(`Refresh unavailable: ${parsed.error || result.error || "unknown reason"}`);
+      }
+    } catch (err) {
+      setManualRefreshMessage(`Refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
 
   useEffect(() => {
     if (!showAdvancedSections || advancedLoadedOnce || advancedLoading) return undefined;
@@ -1126,7 +1173,19 @@ export default function LearningTab({ compact = false }) {
     + Object.keys(contextualEntryTimingHints?.persona_regime || {}).length
     + Object.keys(contextualEntryTimingHints?.setup_cap_bucket || {}).length
     + Object.keys(contextualEntryTimingHints?.season_setup || {}).length;
-  const learningPayloadSource = String(learningInsights?.learning_payload_source || "unknown");
+  const truthPanel = learningTruth && Object.keys(learningTruth || {}).length > 0
+    ? learningTruth
+    : (learningInsights?.learning_truth_status_v1 || learningSnapshotFast?.truth || {});
+  const truthSourceNames = Array.isArray(truthPanel?.source_names) ? truthPanel.source_names : [];
+  const learningPayloadSource = String(
+    firstNonEmpty(
+      learningInsights?.learning_payload_source,
+      learningSnapshotFast?.learning_payload_source,
+      learningSnapshotFast?.source,
+      truthSourceNames.length > 0 ? truthSourceNames.join(", ") : "",
+      "unknown"
+    )
+  );
   const learningPayloadStale = Boolean(learningInsights?.learning_payload_stale);
   const learningPayloadFalseEmptyPrevented = Boolean(
     learningInsights?.learning_payload_false_empty_prevented || learningInsights?.ui_false_empty_guard_active
@@ -1136,11 +1195,14 @@ export default function LearningTab({ compact = false }) {
   );
   const cohortSamples = learningInsights?.cohort_sample_sizes || {};
   const cohortSampleTotal = safeNumber(cohortSamples?.released) + safeNumber(cohortSamples?.paper_ready) + safeNumber(cohortSamples?.blocked_watchlist);
-  const learningEvidenceAvailable = learningPayloadHasEvidence(learningInsights) || fullValidClosedCount > 0;
+  const learningEvidenceAvailable = Boolean(truthPanel?.active_learning_available)
+    || learningPayloadHasEvidence(learningInsights)
+    || fullValidClosedCount > 0;
   const snapshotInsufficientEvidence = !learningEvidenceAvailable || (
     cohortSampleTotal <= 0
     && !Boolean(evidenceReadinessSummary?.evidence_ready)
     && !Boolean(evidenceReadinessSummary?.confidence_ready)
+    && !Boolean(truthPanel?.active_learning_available)
   );
 
   const keyTakeaways = useMemo(() => {
@@ -1844,6 +1906,17 @@ export default function LearningTab({ compact = false }) {
   const learningLastRefresh = firstNonEmpty(learningFreshness?.last_learning_refresh, lastFetchAt, "n/a");
   const learningNextRefresh = firstNonEmpty(learningFreshness?.next_learning_refresh, "scheduled by TTL");
   const learningNextAdvancedRefresh = firstNonEmpty(learningFreshness?.next_advanced_refresh, "scheduled by TTL");
+  const truthRows = [
+    ["Active learning", truthPanel?.active_learning_available ? "yes" : "no"],
+    ["Real data source", truthPanel?.real_sources_found ? "yes" : "no"],
+    ["Last real update", firstNonEmpty(truthPanel?.last_real_learning_update, learningLastRefresh, "unavailable")],
+    ["Last snapshot build", firstNonEmpty(truthPanel?.last_snapshot_build, learningSnapshotFast?.updated_at, lastFetchAt, "unavailable")],
+    ["Next refresh", learningNextRefresh],
+    ["Replay integrated", truthPanel?.replay_rows_integrated ?? "n/a"],
+    ["Labels created", truthPanel?.valid_labels_count ?? "n/a"],
+    ["Closed trades", truthPanel?.closed_trades_count ?? "n/a"],
+    ["Fallback used", truthPanel?.fallback_snapshot_used ? "yes" : "no"],
+  ];
 
   if (compact) {
     return (
@@ -1953,10 +2026,7 @@ export default function LearningTab({ compact = false }) {
           </div>
           <button
             type="button"
-            onClick={() => {
-              LEARNING_TAB_MEMORY_CACHE = { ...LEARNING_TAB_MEMORY_CACHE, cachedAtMs: 0 };
-              setManualRefreshNonce((value) => value + 1);
-            }}
+            onClick={handleManualLearningRefresh}
             style={{
               border: "1px solid #42628f",
               borderRadius: 999,
@@ -1968,8 +2038,21 @@ export default function LearningTab({ compact = false }) {
               cursor: "pointer",
             }}
           >
-            Refresh Snapshot
+            Refresh Learning Snapshot
           </button>
+        </div>
+        {manualRefreshMessage ? (
+          <div style={{ marginBottom: 10, fontSize: 11, color: manualRefreshMessage.includes("failed") || manualRefreshMessage.includes("unavailable") ? "#ffd2b4" : "#a9f8d1" }}>
+            {manualRefreshMessage}
+          </div>
+        ) : null}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8, marginBottom: 10 }}>
+          {truthRows.map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.38)", border: "1px solid #2f4a72", borderRadius: 8, padding: "7px 9px" }}>
+              <div style={{ fontSize: 10, color: "#8ea8cc", textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
+              <div style={{ fontSize: 12, color: "#e6f0ff", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis" }}>{String(value ?? "n/a")}</div>
+            </div>
+          ))}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 9 }}>
           {primarySnapshotMetrics.map((metric) => {
