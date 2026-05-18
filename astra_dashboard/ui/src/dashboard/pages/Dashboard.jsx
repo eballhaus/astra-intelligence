@@ -155,6 +155,30 @@ function normalizeTopBuys(raw) {
       rolling_conviction_20r: row.rolling_conviction_20r ?? row.conviction_20r ?? null,
       expected_move: row.expected_move ?? row.profit_prediction_usd ?? row.expected_move_dollars ?? row.expected_move_usd ?? row.predicted_profit_dollars ?? null,
       expected_move_percent: row.expected_move_percent ?? row.expected_move_pct ?? row.profit_prediction_pct ?? row.predicted_return_pct ?? null,
+      expected_return_pct: row.expected_return_pct ?? null,
+      expected_return_low_pct: row.expected_return_low_pct ?? null,
+      expected_return_high_pct: row.expected_return_high_pct ?? null,
+      expected_target_low: row.expected_target_low ?? null,
+      expected_target_mid: row.expected_target_mid ?? null,
+      expected_target_high: row.expected_target_high ?? null,
+      target_1: row.target_1 ?? row.expected_target_low ?? null,
+      target_2: row.target_2 ?? row.expected_target_mid ?? null,
+      stretch_target: row.stretch_target ?? row.expected_target_high ?? null,
+      target_zone_display: row.target_zone_display ?? null,
+      target_unavailable_reason: row.target_unavailable_reason ?? "",
+      estimated_reward_to_risk: row.estimated_reward_to_risk ?? null,
+      opportunity_grade: row.opportunity_grade ?? null,
+      opportunity_score_pct: row.opportunity_score_pct ?? null,
+      opportunity_score_label: row.opportunity_score_label ?? "",
+      profit_priority_score: row.profit_priority_score ?? null,
+      expected_profit_rank: row.expected_profit_rank ?? null,
+      exit_score: row.exit_score ?? null,
+      averaged_exit_score: row.averaged_exit_score ?? null,
+      exit_confirmation_count: row.exit_confirmation_count ?? null,
+      pullback_vs_breakdown_label: row.pullback_vs_breakdown_label ?? "",
+      trailing_stop_price: row.trailing_stop_price ?? null,
+      recommended_sell_zone: row.recommended_sell_zone ?? "",
+      sell_reason: row.sell_reason ?? "",
     };
   };
   return {
@@ -166,6 +190,8 @@ function normalizeTopBuys(raw) {
       snapshotAgeSeconds: raw?.snapshot_age_seconds ?? null,
       averageAstraScore: raw?.average_astra_score ?? null,
       average10rConviction: raw?.average_10r_conviction ?? null,
+      averageOpportunityScore: raw?.average_opportunity_score_pct ?? null,
+      averageExpectedReturn: raw?.average_expected_return_pct ?? null,
       averageConfidence: raw?.average_confidence ?? null,
       bestOpportunitySymbol: raw?.best_opportunity_symbol || "",
       qualifiedBuyCandidatesCount: raw?.qualified_buy_candidates_count ?? null,
@@ -387,7 +413,8 @@ export default function Dashboard() {
   const asOf = formatTimestamp(systemStatus?.last_updated_utc || topBuys?.last_updated_utc || "");
   const topSummaryItems = [
     ["Market", topSummary?.snapshotBadge || topSummary?.marketStatus || "n/a"],
-    ["Avg Astra", topSummary?.averageAstraScore == null ? "n/a" : `${Number(topSummary.averageAstraScore).toFixed(1)}`],
+    ["Avg Opportunity", topSummary?.averageOpportunityScore == null ? "n/a" : `${Number(topSummary.averageOpportunityScore).toFixed(1)}%`],
+    ["Avg Exp Return", topSummary?.averageExpectedReturn == null ? "n/a" : `${Number(topSummary.averageExpectedReturn).toFixed(1)}%`],
     ["Avg 10R", topSummary?.average10rConviction == null ? "n/a" : `${Number(topSummary.average10rConviction).toFixed(1)}`],
     ["Avg Confidence", topSummary?.averageConfidence == null ? "n/a" : `${Number(topSummary.averageConfidence).toFixed(1)}%`],
     ["Best", topSummary?.bestOpportunitySymbol || "n/a"],
@@ -529,7 +556,7 @@ export default function Dashboard() {
             <div>
               <h3 style={{ ...panelTitleStyle, marginBottom: 4 }}>Top 6 Buy Opportunities</h3>
               <div style={{ color: "#aecaef", fontSize: "0.76rem", lineHeight: 1.35 }}>
-                Ranked best-to-worst by buy readiness, grade, Astra Score, 10R conviction, entry quality, confidence, and rank persistence.
+                Ranked best-to-worst by probability-adjusted expected return, 10R conviction, entry quality, confidence, and rank persistence.
               </div>
             </div>
             {topSummary?.holdFallbackUsed ? (

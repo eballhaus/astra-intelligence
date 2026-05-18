@@ -366,6 +366,42 @@ except Exception:
                 "next_recommended_action": "inspect_stable_top_buys_import",
             }
 try:
+    from engine.expected_return_engine import ExpectedReturnEngine
+except Exception:
+    class ExpectedReturnEngine:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "expected_return_unavailable", "expected_return_status_v1": True, "api_calls_used": 0}
+try:
+    from engine.opportunity_scoring_engine import OpportunityScoringEngine
+except Exception:
+    class OpportunityScoringEngine:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "opportunity_scoring_unavailable", "opportunity_scoring_status_v1": True, "api_calls_used": 0}
+try:
+    from engine.target_zone_engine import TargetZoneEngine
+except Exception:
+    class TargetZoneEngine:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "target_zone_unavailable", "target_zone_status_v1": True, "api_calls_used": 0}
+try:
+    from engine.exit_averaging_engine import ExitAveragingEngine
+except Exception:
+    class ExitAveragingEngine:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {"enabled": False, "version": "1.0.0", "mode": "exit_averaging_unavailable", "exit_averaging_status_v1": True, "api_calls_used": 0}
+try:
     from engine.adaptive_quote_refresh import AdaptiveQuoteRefreshPlanner
 except Exception:
     class AdaptiveQuoteRefreshPlanner:  # type: ignore[override]
@@ -1029,6 +1065,10 @@ OUTCOME_LABELING_ENGINE = OutcomeLabelingEngine(state_dir=STATE)
 PSYCHOLOGY_BRAIN = PsychologyBrain(state_dir=STATE)
 IDLE_REPLAY_WORKER_PLANNER = IdleReplayWorkerPlanner(state_dir=STATE)
 STABLE_TOP_BUYS_SELECTOR = StableTopBuysSelector(state_dir=STATE)
+EXPECTED_RETURN_ENGINE = ExpectedReturnEngine(state_dir=STATE)
+OPPORTUNITY_SCORING_ENGINE = OpportunityScoringEngine(state_dir=STATE)
+TARGET_ZONE_ENGINE = TargetZoneEngine(state_dir=STATE)
+EXIT_AVERAGING_ENGINE = ExitAveragingEngine(state_dir=STATE)
 API_BUDGET_GUARD = ApiBudgetGuard(state_dir=STATE)
 ADAPTIVE_QUOTE_REFRESH = AdaptiveQuoteRefreshPlanner(state_dir=STATE)
 POSITION_MONITORING_PLANNER = PositionMonitoringPlanner(state_dir=STATE)
@@ -31108,12 +31148,19 @@ def _stable_top_buys_payload(raw_payload=None, *, buy_mode="balanced"):
         "average_astra_score",
         "average_10r_conviction",
         "average_confidence",
+        "average_opportunity_score_pct",
+        "average_expected_return_pct",
         "best_opportunity_symbol",
         "market_cap_breakdown",
         "ranked_candidates_count",
         "stable_top_6_count",
         "hold_fallback_used",
         "top_6_buy_only_filter_enabled",
+        "profit_maximizing_opportunity_engine_v1",
+        "expected_return_engine_v1",
+        "target_zone_engine_v1",
+        "exit_averaging_engine_v1",
+        "ranking_formula",
     ):
         if key in stable:
             out[key] = stable.get(key)
@@ -31168,6 +31215,94 @@ def stable_top_buys_v1(buy_mode: str = Query("balanced")):
             "stability_mode": "error_fallback",
             "error": f"stable_top_buys_unavailable: {exc}",
             "next_recommended_action": "fallback_to_raw_top_buys_snapshot",
+        }
+
+
+def _stable_rows_for_profit_status():
+    try:
+        payload = _stable_top_buys_payload(buy_mode="balanced")
+        return [dict(r or {}) for r in list(payload.get("stable_top_6") or []) if isinstance(r, dict)]
+    except Exception:
+        return []
+
+
+@router.get("/api/expected_return_status_v1")
+def expected_return_status_v1():
+    rows = _stable_rows_for_profit_status()
+    try:
+        payload = EXPECTED_RETURN_ENGINE.status(rows)
+        payload["stable_top_6_count"] = len(rows)
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "snapshot_only_probability_adjusted",
+            "expected_return_status_v1": True,
+            "stable_top_6_count": len(rows),
+            "api_calls_used": 0,
+            "error": f"expected_return_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/opportunity_scoring_status_v1")
+def opportunity_scoring_status_v1():
+    rows = _stable_rows_for_profit_status()
+    try:
+        payload = OPPORTUNITY_SCORING_ENGINE.status(rows)
+        payload["stable_top_6_count"] = len(rows)
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "profit_maximizing_shadow_display_score",
+            "opportunity_scoring_status_v1": True,
+            "stable_top_6_count": len(rows),
+            "api_calls_used": 0,
+            "error": f"opportunity_scoring_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/target_zone_status_v1")
+def target_zone_status_v1():
+    rows = _stable_rows_for_profit_status()
+    try:
+        payload = TARGET_ZONE_ENGINE.status(rows)
+        payload["stable_top_6_count"] = len(rows)
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "snapshot_target_zone_estimates",
+            "target_zone_status_v1": True,
+            "stable_top_6_count": len(rows),
+            "api_calls_used": 0,
+            "error": f"target_zone_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/exit_averaging_status_v1")
+def exit_averaging_status_v1():
+    rows = _stable_rows_for_profit_status()
+    try:
+        payload = EXIT_AVERAGING_ENGINE.status(rows)
+        payload["stable_top_6_count"] = len(rows)
+        payload["api_calls_used"] = 0
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "read_only_multi_cycle_exit_confirmation",
+            "exit_averaging_status_v1": True,
+            "stable_top_6_count": len(rows),
+            "api_calls_used": 0,
+            "error": f"exit_averaging_status_unavailable: {exc}",
         }
 
 

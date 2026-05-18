@@ -7,6 +7,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+try:
+    from engine.exit_averaging_engine import ExitAveragingEngine
+except Exception:  # pragma: no cover
+    ExitAveragingEngine = None  # type: ignore[assignment]
+
 VERSION = "1.0.0"
 
 
@@ -29,6 +34,7 @@ class PositionMonitoringPlanner:
     def __init__(self, state_dir: str = "state") -> None:
         self.state_dir = str(state_dir or "state")
         self.mode = "read_only_monitoring_plan"
+        self.exit_engine = ExitAveragingEngine(state_dir=self.state_dir) if ExitAveragingEngine else None
 
     def status(self, *, positions: list[dict[str, Any]] | None = None, websocket_status: dict[str, Any] | None = None, market_status: str = "unknown") -> dict[str, Any]:
         rows = [dict(r or {}) for r in list(positions or []) if isinstance(r, dict)]
@@ -53,6 +59,12 @@ class PositionMonitoringPlanner:
             near_stop = distance_stop_pct is not None and distance_stop_pct <= 2.5
             near_target = distance_target_pct is not None and distance_target_pct <= 3.0
             is_critical = bool(near_stop or near_target or sell_risk >= 70.0)
+            exit_status = {}
+            try:
+                if self.exit_engine:
+                    exit_status = self.exit_engine.score_row(row) or {}
+            except Exception as exc:
+                exit_status = {"exit_score_available": False, "exit_unavailable_reason": str(exc)[:160]}
             (critical if is_critical else normal).append(symbol)
             details.append({
                 "symbol": symbol,
@@ -64,6 +76,15 @@ class PositionMonitoringPlanner:
                 "last_quote_source": row.get("quote_source") or row.get("provider_used") or row.get("last_quote_source") or "snapshot",
                 "websocket_preferred": symbol in ws_symbols,
                 "rest_fallback_allowed": symbol not in ws_symbols,
+                "exit_score": exit_status.get("exit_score"),
+                "averaged_exit_score": exit_status.get("averaged_exit_score"),
+                "exit_confirmation_count": exit_status.get("exit_confirmation_count"),
+                "pullback_vs_breakdown_label": exit_status.get("pullback_vs_breakdown_label"),
+                "trailing_stop_price": exit_status.get("trailing_stop_price"),
+                "profit_protection_status": exit_status.get("profit_protection_status"),
+                "recommended_sell_zone": exit_status.get("recommended_sell_zone"),
+                "sell_reason": exit_status.get("sell_reason"),
+                "target_progress_pct": exit_status.get("target_progress_pct"),
             })
         return {
             "enabled": True,

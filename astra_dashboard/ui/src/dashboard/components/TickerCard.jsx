@@ -81,6 +81,15 @@ function formatPredictionUsd(value) {
   return `${n >= 0 ? "+" : "-"}$${Math.abs(n).toFixed(2)}`;
 }
 
+function formatTargetZone(item) {
+  const explicit = String(item?.target_zone_display || "").trim();
+  if (explicit && !explicit.includes("n/a") && !explicit.includes("$0.00")) return explicit;
+  const low = scoreOrNull(item?.target_zone_low ?? item?.target_1 ?? item?.expected_target_low);
+  const high = scoreOrNull(item?.target_zone_high ?? item?.stretch_target ?? item?.expected_target_high);
+  if (low != null && high != null && low > 0 && high > 0) return `$${low.toFixed(2)}-${high.toFixed(2)}`;
+  return "n/a";
+}
+
 function qualityColor(score) {
   const n = Number(score);
   if (!Number.isFinite(n)) return "#6a7b90";
@@ -183,6 +192,16 @@ export default function TickerCard({
   const currentPriceText = formatPrice(item?.current_price ?? item?.price ?? item?.live_price ?? item?.last_price ?? item?.close ?? item?.mark_price);
   const astraScore = scoreOrNull(item?.astra_composite_score ?? item?.stability_score ?? item?.stable_composite_score);
   const astraScoreText = astraScore == null ? "calculating" : `${Math.max(0, Math.min(100, astraScore)).toFixed(0)}/100`;
+  const opportunityScore = scoreOrNull(item?.opportunity_score_pct ?? item?.profit_priority_score);
+  const opportunityGrade = String(item?.opportunity_grade || "").trim();
+  const opportunityText = opportunityScore == null
+    ? "calculating"
+    : `${opportunityGrade || scoreLabel(opportunityScore)}, ${opportunityScore.toFixed(0)}%`;
+  const opportunityColor = qualityColor(opportunityScore);
+  const targetZoneText = formatTargetZone(item);
+  const expectedReturnText = item?.expected_return_pct == null ? "n/a" : formatPercent(item.expected_return_pct);
+  const rewardRiskText = item?.estimated_reward_to_risk == null ? "n/a" : `${Number(item.estimated_reward_to_risk).toFixed(2)}R`;
+  const exitScoreText = item?.averaged_exit_score == null ? "n/a" : `${Number(item.averaged_exit_score).toFixed(1)}`;
   const rankStableText = stableState || (scoreOrNull(item?.stable_age_seconds) ? "stable" : "new");
   const confidenceText = confidence == null ? "calculating" : `${confidence.toFixed(1)}%`;
   const pnlPctRaw = Number(item?.pnl_percent ?? item?.unrealized_pnl_percent ?? item?.pnl_pct ?? 0);
@@ -278,8 +297,6 @@ export default function TickerCard({
           <>
             <div style={rowStyle}><span style={labelStyle}>Current Price</span><span style={valueStyle}>{currentPriceText}</span></div>
             <div style={rowStyle}><span style={labelStyle}>Readiness</span><span style={{ ...valueStyle, color: statusToneColor }}>{releaseStatus}</span></div>
-            <div style={rowStyle}><span style={labelStyle}>Grade</span><span style={{ ...valueStyle, fontWeight: 800 }}>{astraGrade}</span></div>
-            <div style={rowStyle}><span style={labelStyle}>Astra Score</span><span style={{ ...valueStyle, color: qualityColor(astraScore), fontWeight: 800 }}>{astraScoreText} · {scoreLabel(astraScore)}</span></div>
             <div
               style={{
                 gridColumn: "1 / -1",
@@ -292,13 +309,12 @@ export default function TickerCard({
                 alignItems: "center",
               }}
             >
-              <span style={{ ...labelStyle, fontSize: "0.66rem", color: "#3a567e", fontWeight: 700 }}>10R Conviction</span>
-              <span style={{ ...valueStyle, fontSize: "0.82rem", fontWeight: 800, color: "#16365f" }}>{formatConviction(conviction10)}</span>
+              <span style={{ ...labelStyle, fontSize: "0.66rem", color: "#3a567e", fontWeight: 700 }}>Opportunity</span>
+              <span style={{ ...valueStyle, fontSize: "0.82rem", fontWeight: 900, color: opportunityColor }}>{opportunityText}</span>
             </div>
-            <div style={rowStyle}><span style={labelStyle}>Action</span><span style={valueStyle}>{action}</span></div>
             <div style={rowStyle}><span style={labelStyle}>Confidence</span><span style={{ ...valueStyle, color: confidenceColor }}>{confidenceText}</span></div>
             <div style={rowStyle}><span style={labelStyle}>Stop</span><span style={valueStyle}>{stopLoss}</span></div>
-            <div style={rowStyle}><span style={labelStyle}>Rank Stability</span><span style={valueStyle}>{rankStableText}</span></div>
+            <div style={rowStyle}><span style={labelStyle}>Target</span><span style={{ ...valueStyle, fontWeight: 800 }}>{targetZoneText}</span></div>
           </>
         )}
       </div>
@@ -348,18 +364,30 @@ export default function TickerCard({
             <summary style={{ cursor: "pointer", fontSize: "0.66rem", color: "#315078", fontWeight: 700 }}>Expanded Details</summary>
             <div style={{ display: "grid", gap: "3px", marginTop: "4px", fontSize: "0.64rem", color: "#4a6388" }}>
               <div>Quality: {qualityText}</div>
+              <div>Astra Score: {astraScoreText} · {scoreLabel(astraScore)}</div>
+              <div>Opportunity: {opportunityText}</div>
+              <div>Expected Return: {expectedReturnText}</div>
+              <div>Target 1: {item?.target_1 == null ? "n/a" : formatPrice(item.target_1)}</div>
+              <div>Target 2: {item?.target_2 == null ? "n/a" : formatPrice(item.target_2)}</div>
+              <div>Stretch Target: {item?.stretch_target == null ? "n/a" : formatPrice(item.stretch_target)}</div>
+              <div>Reward-to-risk: {rewardRiskText}</div>
               <div>5R Conviction: {formatConviction(conviction5)}</div>
+              <div>10R Conviction: {formatConviction(conviction10)}</div>
               <div>20R Conviction: {formatConviction(conviction20)}</div>
-              <div>Expected Move: {predictionText}</div>
               <div>Entry Quality V3: {item?.entry_quality_v3_score ?? "n/a"}</div>
+              <div>Exit Score: {exitScoreText} ({String(item?.pullback_vs_breakdown_label || "n/a").replaceAll("_", " ")})</div>
+              <div>Trailing Stop: {item?.trailing_stop_price == null ? "n/a" : formatPrice(item.trailing_stop_price)}</div>
+              <div>Sell Zone: {String(item?.recommended_sell_zone || "n/a").replaceAll("_", " ")}</div>
               <div>Multi-Brain Consensus: {item?.multi_brain_agreement ?? item?.multi_brain_score ?? "n/a"}</div>
               <div>Psychology Brain: {item?.psychology_score ?? "n/a"}</div>
+              <div>Rank Stability: {rankStableText}</div>
               <div>Appearance 5R/10R/20R: {item?.appearance_count_5r ?? "n/a"} / {item?.appearance_count_10r ?? "n/a"} / {item?.appearance_count_20r ?? "n/a"}</div>
               <div>Average Rank: {item?.average_rank ?? item?.avg_rank_10r ?? "n/a"}</div>
               <div>Top 3 Persistence: {item?.time_in_top_3_seconds == null ? "n/a" : `${Math.round(Number(item.time_in_top_3_seconds) / 60)}m`}</div>
               <div>Paper-ready Rate 10R: {item?.paper_ready_rate_10r == null ? "n/a" : `${(Number(item.paper_ready_rate_10r) * 100).toFixed(0)}%`}</div>
               <div>Rank Stability 10R: {item?.rank_stability_10r ?? item?.rank_stability_score ?? "n/a"}</div>
               <div>Window Status: {item?.conviction_window_status ?? "n/a"}</div>
+              {targetZoneText === "n/a" ? <div>Target unavailable: {item?.target_unavailable_reason || "insufficient target inputs"}</div> : null}
               <div>Benchmarks: Good 60+ · Strong 75+ · Elite 85+ for 10R, Entry Quality, Multi-Brain, Buy List Purity, and Confidence.</div>
             </div>
           </details>

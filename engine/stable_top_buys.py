@@ -13,6 +13,17 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+try:
+    from engine.expected_return_engine import ExpectedReturnEngine
+    from engine.exit_averaging_engine import ExitAveragingEngine
+    from engine.opportunity_scoring_engine import OpportunityScoringEngine
+    from engine.target_zone_engine import TargetZoneEngine
+except Exception:  # pragma: no cover - fail-safe imports for runtime resilience
+    ExpectedReturnEngine = None  # type: ignore[assignment]
+    ExitAveragingEngine = None  # type: ignore[assignment]
+    OpportunityScoringEngine = None  # type: ignore[assignment]
+    TargetZoneEngine = None  # type: ignore[assignment]
+
 VERSION = "1.0.0"
 
 
@@ -81,6 +92,10 @@ class StableTopBuysSelector:
         self.min_quality_floor = float(max(0.0, min_quality_floor))
         self.hard_confidence_floor = float(max(0.0, hard_confidence_floor))
         self._state: dict[str, Any] | None = None
+        self.expected_return_engine = ExpectedReturnEngine(state_dir=self.state_dir) if ExpectedReturnEngine else None
+        self.opportunity_scoring_engine = OpportunityScoringEngine(state_dir=self.state_dir) if OpportunityScoringEngine else None
+        self.target_zone_engine = TargetZoneEngine(state_dir=self.state_dir) if TargetZoneEngine else None
+        self.exit_averaging_engine = ExitAveragingEngine(state_dir=self.state_dir) if ExitAveragingEngine else None
 
     def _load(self) -> dict[str, Any]:
         if self._state is not None:
@@ -122,7 +137,8 @@ class StableTopBuysSelector:
         persistence = _f(row.get("persistence_score"), 50.0)
         readiness_bonus = self._readiness_bonus(row)
         fallback_penalty = 8.0 if bool(row.get("fallback_watch_candidate") or row.get("dashboard_fallback_candidate")) else 0.0
-        score = (
+        opportunity = _f(row.get("profit_priority_score"), _f(row.get("opportunity_score_pct"), 0.0))
+        opportunity_component = opportunity if opportunity > 0 else (
             grade_pct * 0.17
             + conv10 * 0.18
             + quality * 0.13
@@ -135,10 +151,64 @@ class StableTopBuysSelector:
             + persistence * 0.06
             + conv5 * 0.03
             + conv20 * 0.03
+        )
+        score = (
+            opportunity_component * 0.52
+            + grade_pct * 0.08
+            + conv10 * 0.12
+            + quality * 0.06
+            + confidence * 0.06
+            + entry_v3 * 0.06
+            + persistence * 0.06
             + readiness_bonus
             - fallback_penalty
         )
         return round(max(0.0, min(110.0, score)), 3)
+
+    def _apply_profit_opportunity_fields(self, row: dict[str, Any]) -> dict[str, Any]:
+        out = dict(row or {})
+        try:
+            if self.expected_return_engine:
+                out.update(self.expected_return_engine.score_row(out) or {})
+        except Exception as exc:
+            out.setdefault("expected_return_available", False)
+            out.setdefault("expected_return_unavailable_reason", f"expected_return_error: {exc}"[:160])
+        try:
+            if self.target_zone_engine:
+                out.update(self.target_zone_engine.score_row(out) or {})
+        except Exception as exc:
+            out.setdefault("target_zone_available", False)
+            out.setdefault("target_unavailable_reason", f"target_zone_error: {exc}"[:160])
+        try:
+            if self.opportunity_scoring_engine:
+                out.update(self.opportunity_scoring_engine.score_row(out) or {})
+        except Exception as exc:
+            out.setdefault("opportunity_grade", "Watch")
+            out.setdefault("opportunity_score_pct", None)
+            out.setdefault("opportunity_error", str(exc)[:160])
+        try:
+            if self.exit_averaging_engine:
+                out.update(self.exit_averaging_engine.score_row(out) or {})
+        except Exception as exc:
+            out.setdefault("exit_score_available", False)
+            out.setdefault("exit_unavailable_reason", f"exit_averaging_error: {exc}"[:160])
+        out["paper_trade_learning_fields_shadow"] = {
+            "opportunity_score_at_entry": out.get("opportunity_score_pct"),
+            "expected_return_pct_at_entry": out.get("expected_return_pct"),
+            "target_zone_at_entry": out.get("target_zone_display"),
+            "stop_at_entry": _first_present(out, ("stop_loss", "stop", "stop_price")),
+            "exit_score_at_exit": out.get("exit_score"),
+            "target_hit_status": out.get("target_hit_status"),
+            "premature_exit_flag": False,
+            "late_exit_flag": False,
+            "missed_profit_flag": False,
+            "realized_return_pct": None,
+            "realized_R_multiple": None,
+            "target_accuracy_score": None,
+            "exit_quality_score": None,
+            "mode": "shadow_paper_learning_schema",
+        }
+        return out
 
     def _readiness_bonus(self, row: dict[str, Any]) -> float:
         text = " ".join(
@@ -205,7 +275,7 @@ class StableTopBuysSelector:
         return ""
 
     def _normalize_display_fields(self, row: dict[str, Any], *, score: float, state: str, first_seen: float, age: float, retained: bool, replacement_reason: str = "") -> dict[str, Any]:
-        out = dict(row or {})
+        out = self._apply_profit_opportunity_fields(dict(row or {}))
         price = _first_present(out, ("current_price", "price", "live_price", "last_price", "close", "mark_price"))
         if price is not None:
             out["current_price"] = price
@@ -239,9 +309,11 @@ class StableTopBuysSelector:
         out["stable_first_seen_ts"] = first_seen
         out["stable_last_seen_ts"] = time.time()
         out["stable_age_seconds"] = round(age, 2)
+        profit_score = _f(out.get("profit_priority_score"), _f(out.get("opportunity_score_pct"), score))
         out["stability_score"] = score
         out["stable_composite_score"] = score
         out["astra_composite_score"] = round(max(0.0, min(100.0, score)), 3)
+        out["profit_priority_score"] = round(max(0.0, min(100.0, profit_score)), 3)
         out["replacement_reason"] = replacement_reason
         out["pending_challenger"] = False
         return out
@@ -314,7 +386,7 @@ class StableTopBuysSelector:
             if not isinstance(row, dict):
                 continue
             sym = _symbol(row)
-            enriched = dict(row)
+            enriched = self._apply_profit_opportunity_fields(dict(row))
             quality_reason = self._data_quality_reason(enriched)
             direction = self._direction_kind(enriched)
             if quality_reason:
@@ -403,6 +475,8 @@ class StableTopBuysSelector:
             rows,
             key=lambda r: (
                 1 if self._direction_kind(r) == "buy" else 0,
+                _f(r.get("profit_priority_score"), _f(r.get("opportunity_score_pct"), 0.0)),
+                _f(r.get("expected_return_pct"), 0.0),
                 _f(r.get("stable_composite_score"), 0.0),
                 _grade_score(r),
                 _f(r.get("conviction_10r"), _f(r.get("rolling_conviction_10r"), 0.0)),
@@ -497,14 +571,17 @@ class StableTopBuysSelector:
         stable = self._sort_candidates(stable)[:6]
         for idx, row in enumerate(stable, start=1):
             row["top_6_rank"] = idx
+            row["expected_profit_rank"] = idx
             row["ranked_reason"] = (
-                "Ranked #1 because it has the strongest combination of grade, 10R conviction, confidence, entry quality, and rank persistence."
+                "Ranked #1 because it has the strongest probability-adjusted mix of expected return, 10R conviction, entry quality, confidence, and rank persistence."
                 if idx == 1
-                else "Ranked by buy readiness, grade, Astra score, 10R conviction, confidence, entry quality, and persistence."
+                else "Ranked by probability-adjusted expected return, 10R conviction, entry quality, confidence, quality, and persistence."
             )
         avg_astra = sum(_f(r.get("astra_composite_score"), _f(r.get("stable_composite_score"), 0.0)) for r in stable) / max(1, len(stable))
         avg_10r = sum(_f(r.get("conviction_10r"), _f(r.get("rolling_conviction_10r"), 0.0)) for r in stable) / max(1, len(stable))
         avg_conf = sum(_f(r.get("confidence"), 0.0) for r in stable) / max(1, len(stable))
+        avg_opp = sum(_f(r.get("opportunity_score_pct"), 0.0) for r in stable) / max(1, len(stable))
+        avg_return = sum(_f(r.get("expected_return_pct"), 0.0) for r in stable) / max(1, len(stable))
         cap_counts = {"large_cap_count": 0, "mid_cap_count": 0, "small_cap_count": 0, "unknown_cap_count": 0}
         for row in stable:
             bucket = _market_cap_bucket(row)
@@ -547,11 +624,17 @@ class StableTopBuysSelector:
             "average_astra_score": round(avg_astra, 3),
             "average_10r_conviction": round(avg_10r, 3),
             "average_confidence": round(avg_conf, 3),
+            "average_opportunity_score_pct": round(avg_opp, 3),
+            "average_expected_return_pct": round(avg_return, 3),
             "best_opportunity_symbol": _symbol(stable[0]) if stable else "",
             "market_cap_breakdown": dict(cap_counts),
             "top_6_buy_only_filter_enabled": True,
             "hold_fallback_used": bool(any(r.get("fallback_watch_candidate") for r in stable)),
-            "ranking_formula": "buy_readiness + grade + astra_score + 10r_conviction + entry_quality_v3 + confidence + quality + multi_brain + psychology + persistence",
+            "ranking_formula": "expected_return_25 + 10r_20 + entry_v3_15 + confidence_10 + grade_astra_10 + rank_persistence_10 + multi_brain_5 + psychology_5",
+            "profit_maximizing_opportunity_engine_v1": True,
+            "expected_return_engine_v1": True,
+            "target_zone_engine_v1": True,
+            "exit_averaging_engine_v1": True,
             "adaptive_policy_mode": "shadow_only",
             "live_trading_changed": False,
             "rankings_top_buys_strategy_changed": False,
