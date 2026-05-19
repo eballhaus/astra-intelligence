@@ -435,6 +435,38 @@ except Exception:
     StrategyScorecardEngine = _AdaptiveQuantFallback  # type: ignore
     WalkForwardPromotionGate = _AdaptiveQuantFallback  # type: ignore
 try:
+    from engine.meta_learning_engine import MetaLearningEngine
+    from engine.multi_horizon_prediction import MultiHorizonPredictionEngine
+    from engine.intraday_intelligence_engine import IntradayIntelligenceEngine
+    from engine.timeframe_target_zones import TimeframeTargetZones
+    from engine.horizon_shadow_validator import HorizonShadowValidator
+except Exception:
+    class _MultiHorizonMetaFallback:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "promotion_allowed": False,
+                "live_trading_changed": False,
+                "production_rankings_changed": False,
+                "production_weights_changed": False,
+                "paper_trading_changed": False,
+                "next_recommended_action": "inspect_multi_horizon_meta_import",
+            }
+
+    MetaLearningEngine = _MultiHorizonMetaFallback  # type: ignore
+    MultiHorizonPredictionEngine = _MultiHorizonMetaFallback  # type: ignore
+    IntradayIntelligenceEngine = _MultiHorizonMetaFallback  # type: ignore
+    TimeframeTargetZones = _MultiHorizonMetaFallback  # type: ignore
+    HorizonShadowValidator = _MultiHorizonMetaFallback  # type: ignore
+try:
     from engine.adaptive_quote_refresh import AdaptiveQuoteRefreshPlanner
 except Exception:
     class AdaptiveQuoteRefreshPlanner:  # type: ignore[override]
@@ -1108,6 +1140,11 @@ EXIT_OPTIMIZATION_SHADOW = ExitOptimizationShadow(state_dir=STATE)
 POSITION_SIZING_OPTIMIZER = PositionSizingOptimizer(state_dir=STATE)
 STRATEGY_SCORECARD_ENGINE = StrategyScorecardEngine(state_dir=STATE)
 WALK_FORWARD_PROMOTION_GATE = WalkForwardPromotionGate(state_dir=STATE)
+META_LEARNING_ENGINE = MetaLearningEngine(state_dir=STATE)
+MULTI_HORIZON_PREDICTION_ENGINE = MultiHorizonPredictionEngine(state_dir=STATE)
+INTRADAY_INTELLIGENCE_ENGINE = IntradayIntelligenceEngine(state_dir=STATE)
+TIMEFRAME_TARGET_ZONES = TimeframeTargetZones(state_dir=STATE)
+HORIZON_SHADOW_VALIDATOR = HorizonShadowValidator(state_dir=STATE)
 API_BUDGET_GUARD = ApiBudgetGuard(state_dir=STATE)
 ADAPTIVE_QUOTE_REFRESH = AdaptiveQuoteRefreshPlanner(state_dir=STATE)
 POSITION_MONITORING_PLANNER = PositionMonitoringPlanner(state_dir=STATE)
@@ -31595,6 +31632,204 @@ def adaptive_quant_optimization_status_v1():
             "paper_trading_changed": False,
             "promotion_allowed": False,
             "error": f"adaptive_quant_optimization_status_unavailable: {exc}",
+        }
+
+
+def _multi_horizon_rows():
+    try:
+        return _stable_rows_for_profit_status()
+    except Exception:
+        return []
+
+
+@router.get("/api/meta_learning_status_v1")
+def meta_learning_status_v1():
+    try:
+        payload = META_LEARNING_ENGINE.status(_adaptive_quant_context())
+        payload["meta_learning_status_v1"] = True
+        payload["api_calls_used"] = 0
+        payload["promotion_allowed"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "meta_learning_status_v1": True,
+            "promotion_allowed": False,
+            "live_trading_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "error": f"meta_learning_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/multi_horizon_prediction_status_v1")
+def multi_horizon_prediction_status_v1():
+    try:
+        payload = MULTI_HORIZON_PREDICTION_ENGINE.status(_multi_horizon_rows())
+        payload["multi_horizon_prediction_status_v1"] = True
+        payload["api_calls_used"] = 0
+        payload["promotion_allowed"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "multi_horizon_prediction_status_v1": True,
+            "promotion_allowed": False,
+            "live_trading_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "error": f"multi_horizon_prediction_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/intraday_intelligence_status_v1")
+def intraday_intelligence_status_v1():
+    try:
+        payload = INTRADAY_INTELLIGENCE_ENGINE.status(_multi_horizon_rows())
+        payload["intraday_intelligence_status_v1"] = True
+        payload["api_calls_used"] = 0
+        payload["promotion_allowed"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "intraday_intelligence_status_v1": True,
+            "promotion_allowed": False,
+            "live_trading_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "error": f"intraday_intelligence_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/timeframe_target_zones_status_v1")
+def timeframe_target_zones_status_v1():
+    try:
+        payload = TIMEFRAME_TARGET_ZONES.status(_multi_horizon_rows())
+        payload["timeframe_target_zones_status_v1"] = True
+        payload["api_calls_used"] = 0
+        payload["promotion_allowed"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "timeframe_target_zones_status_v1": True,
+            "promotion_allowed": False,
+            "live_trading_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "error": f"timeframe_target_zones_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/horizon_shadow_validation_status_v1")
+def horizon_shadow_validation_status_v1():
+    try:
+        rows = _multi_horizon_rows()
+        meta = META_LEARNING_ENGINE.status(_adaptive_quant_context())
+        horizon = MULTI_HORIZON_PREDICTION_ENGINE.status(rows)
+        intraday = INTRADAY_INTELLIGENCE_ENGINE.status(rows)
+        payload = HORIZON_SHADOW_VALIDATOR.status(meta=meta, horizon=horizon, intraday=intraday)
+        payload["horizon_shadow_validation_status_v1"] = True
+        payload["api_calls_used"] = 0
+        payload["promotion_allowed"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "horizon_shadow_validation_status_v1": True,
+            "promotion_allowed": False,
+            "live_trading_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "error": f"horizon_shadow_validation_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/multi_horizon_intraday_meta_suite_status_v1")
+def multi_horizon_intraday_meta_suite_status_v1():
+    try:
+        rows = _multi_horizon_rows()
+        meta = META_LEARNING_ENGINE.status(_adaptive_quant_context())
+        horizon = MULTI_HORIZON_PREDICTION_ENGINE.status(rows)
+        intraday = INTRADAY_INTELLIGENCE_ENGINE.status(rows)
+        targets = TIMEFRAME_TARGET_ZONES.status(rows)
+        validation = HORIZON_SHADOW_VALIDATOR.status(meta=meta, horizon=horizon, intraday=intraday)
+        best_horizon_summary = dict(horizon.get("best_horizon_summary") or {})
+        intraday_summary = dict(intraday.get("intraday_summary") or {})
+        target_summary = dict(targets.get("timeframe_target_summary") or {})
+        shadow_summary = dict(validation.get("shadow_validation_summary") or {})
+        return {
+            "enabled": True,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "multi_horizon_intraday_meta_suite_status_v1": True,
+            "live_trading_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "promotion_allowed": False,
+            "top_predictive_factors": list(meta.get("top_predictive_factors") or []),
+            "best_horizon_summary": best_horizon_summary,
+            "intraday_summary": intraday_summary,
+            "timeframe_target_summary": target_summary,
+            "shadow_validation_summary": shadow_summary,
+            "projected_improvement_pct": validation.get("projected_improvement_pct", 0),
+            "best_horizon_detected": best_horizon_summary.get("best_horizon_detected"),
+            "top_predictive_factor": (list(meta.get("top_predictive_factors") or [{}]) or [{}])[0].get("factor"),
+            "intraday_candidate_count": intraday_summary.get("day_trade_candidate_count", 0),
+            "confidence_score": round(_to_float(validation.get("confidence_score"), 0.0), 3),
+            "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "next_recommended_action": "keep_multi_horizon_intraday_meta_learning_shadow_only",
+        }
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "multi_horizon_intraday_meta_suite_status_v1": True,
+            "live_trading_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "promotion_allowed": False,
+            "error": f"multi_horizon_intraday_meta_suite_status_unavailable: {exc}",
         }
 
 

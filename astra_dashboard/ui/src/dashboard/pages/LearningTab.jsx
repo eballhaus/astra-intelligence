@@ -256,6 +256,8 @@ export default function LearningTab({ compact = false }) {
   const [advancedSnapshotMessage, setAdvancedSnapshotMessage] = useState("");
   const [adaptiveQuantStatus, setAdaptiveQuantStatus] = useState(null);
   const [adaptiveQuantMessage, setAdaptiveQuantMessage] = useState("Not requested");
+  const [multiHorizonStatus, setMultiHorizonStatus] = useState(null);
+  const [multiHorizonMessage, setMultiHorizonMessage] = useState("Not requested");
   const [institutionalTrend, setInstitutionalTrend] = useState([]);
   const [endpointStatus, setEndpointStatus] = useState(LEARNING_TAB_MEMORY_CACHE.endpointStatus || {});
   const [timeline, setTimeline] = useState(LEARNING_TAB_MEMORY_CACHE.timeline || []);
@@ -854,6 +856,53 @@ export default function LearningTab({ compact = false }) {
       mounted = false;
     };
   }, [showAdvancedSections, adaptiveQuantStatus, resolvedApiBase]);
+
+  useEffect(() => {
+    if (!showAdvancedSections || multiHorizonStatus) return undefined;
+    let mounted = true;
+    const loadMultiHorizon = async () => {
+      setMultiHorizonMessage("Loading multi-horizon shadow summary...");
+      try {
+        const result = await fetchJsonWithFallback("/api/multi_horizon_intraday_meta_suite_status_v1", {
+          preferredBase: resolvedApiBase || API_BASE,
+          fallbackValue: {
+            enabled: false,
+            mode: "shadow_only",
+            api_calls_used: 0,
+            promotion_allowed: false,
+            live_trading_changed: false,
+            production_rankings_changed: false,
+            production_weights_changed: false,
+            paper_trading_changed: false,
+            error: "multi-horizon summary unavailable",
+          },
+          timeoutMs: 8000,
+        });
+        if (!mounted) return;
+        const parsed = result?.parsed && typeof result.parsed === "object" ? result.parsed : {};
+        setMultiHorizonStatus(parsed);
+        setMultiHorizonMessage(parsed.enabled === false ? "Multi-horizon summary unavailable" : "Multi-horizon shadow summary loaded");
+      } catch (err) {
+        if (!mounted) return;
+        setMultiHorizonStatus({
+          enabled: false,
+          mode: "shadow_only",
+          api_calls_used: 0,
+          promotion_allowed: false,
+          live_trading_changed: false,
+          production_rankings_changed: false,
+          production_weights_changed: false,
+          paper_trading_changed: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        setMultiHorizonMessage("Multi-horizon summary unavailable");
+      }
+    };
+    loadMultiHorizon();
+    return () => {
+      mounted = false;
+    };
+  }, [showAdvancedSections, multiHorizonStatus, resolvedApiBase]);
 
   const paper = data.paper || {};
   const paperStatus = data.paperStatus || {};
@@ -1950,6 +1999,9 @@ export default function LearningTab({ compact = false }) {
   const adaptiveQuantSizing = adaptiveQuantStatus?.position_sizing_summary || {};
   const adaptiveQuantScorecard = adaptiveQuantStatus?.strategy_scorecard_summary || {};
   const adaptiveQuantWalkForward = adaptiveQuantStatus?.walk_forward_summary || {};
+  const multiHorizonBest = multiHorizonStatus?.best_horizon_summary || {};
+  const multiHorizonIntraday = multiHorizonStatus?.intraday_summary || {};
+  const multiHorizonFactors = Array.isArray(multiHorizonStatus?.top_predictive_factors) ? multiHorizonStatus.top_predictive_factors : [];
   const combinedInstitutionalTrend = institutionalTrend.length > 0
     ? institutionalTrend
     : timeline.map((point) => ({
@@ -2538,6 +2590,27 @@ export default function LearningTab({ compact = false }) {
             <div><span style={{ color: "#8ea1c3" }}>Sizing:</span> {statusText(adaptiveQuantSizing?.risk_tier, "shadow sizing")} {adaptiveQuantSizing?.suggested_position_size_pct != null ? `(${safeNumber(adaptiveQuantSizing.suggested_position_size_pct).toFixed(1)}%)` : ""}</div>
             <div><span style={{ color: "#8ea1c3" }}>Top strategy:</span> {statusText(adaptiveQuantScorecard?.top_strategy, "collect more outcomes")}</div>
             <div><span style={{ color: "#8ea1c3" }}>Walk-forward:</span> {adaptiveQuantWalkForward?.passed_walk_forward ? "passed shadow gate" : statusText(adaptiveQuantWalkForward?.promotion_recommendation, "not promoted")}</div>
+          </div>
+        </div>
+        <div style={{ marginBottom: 12, border: "1px solid #345983", borderRadius: 10, background: "rgba(9, 22, 39, 0.48)", padding: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+            <div>
+              <div style={{ fontSize: 13, color: "#e7f0ff", fontWeight: 700 }}>Multi-Horizon, Intraday & Meta-Learning</div>
+              <div style={{ fontSize: 11, color: "#9fb1cc" }}>
+                Shadow-only timeframe, intraday, and factor-predictiveness diagnostics. No production ranking or trading changes.
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: multiHorizonStatus?.enabled === false ? "#ffe2a1" : "#a9f8d1" }}>
+              {multiHorizonMessage}
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8, fontSize: 12 }}>
+            <div><span style={{ color: "#8ea1c3" }}>Mode:</span> {statusText(multiHorizonStatus?.mode, "shadow_only")}</div>
+            <div><span style={{ color: "#8ea1c3" }}>Best horizon:</span> {statusText(multiHorizonStatus?.best_horizon_detected || multiHorizonBest?.best_horizon_detected, "n/a")}</div>
+            <div><span style={{ color: "#8ea1c3" }}>Top factor:</span> {statusText(multiHorizonStatus?.top_predictive_factor || multiHorizonFactors[0]?.factor, "collecting evidence")}</div>
+            <div><span style={{ color: "#8ea1c3" }}>Intraday candidates:</span> {safeNumber(multiHorizonStatus?.intraday_candidate_count, multiHorizonIntraday?.day_trade_candidate_count).toFixed(0)}</div>
+            <div><span style={{ color: "#8ea1c3" }}>Projected improvement:</span> {safeNumber(multiHorizonStatus?.projected_improvement_pct).toFixed(2)}%</div>
+            <div><span style={{ color: "#8ea1c3" }}>Promotion allowed:</span> {multiHorizonStatus?.promotion_allowed ? "yes" : "No"}</div>
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10, marginBottom: 12 }}>
