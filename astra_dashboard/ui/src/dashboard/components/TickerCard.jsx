@@ -108,6 +108,21 @@ function scoreLabel(score) {
   return "Weak";
 }
 
+function normalizeBiasLanguage(text, action, readiness) {
+  const raw = String(text || "").trim();
+  if (!raw) return raw;
+  const combined = `${String(action || "")} ${String(readiness || "")}`.toLowerCase();
+  const isStrongBuy = combined.includes("strong buy");
+  const isPaperReadyBuy = combined.includes("paper") && combined.includes("buy");
+  const isBuy = combined.includes("buy") || combined.includes("released");
+  const isHoldFallback = combined.includes("fallback") || combined.includes("hold") || combined.includes("watch");
+  if (isStrongBuy) return raw.replace(/hold bias active/gi, "Strong buy bias active");
+  if (isPaperReadyBuy) return raw.replace(/hold bias active/gi, "Buy setup is paper-ready");
+  if (isBuy) return raw.replace(/hold bias active/gi, "Buy bias active");
+  if (isHoldFallback) return raw.replace(/hold bias active/gi, "Fallback watch candidate");
+  return raw;
+}
+
 export default function TickerCard({
   item,
   context = "default",
@@ -173,8 +188,12 @@ export default function TickerCard({
   const statusToneBg = isPaperReady ? "#e7f7ee" : isWatchOrMonitor ? "#fef4e4" : "#e8effa";
   const statusToneColor = isPaperReady ? "#1f8b53" : isWatchOrMonitor ? "#a67418" : "#22497d";
 
-  const summaryText = rationale || rankedActionExplanation || whyNotLiveReady || whatWouldUpgrade || nearThresholdBlocker || "Remote monitor card";
-  const intelligenceText = String(
+  const summaryText = normalizeBiasLanguage(
+    rationale || rankedActionExplanation || whyNotLiveReady || whatWouldUpgrade || nearThresholdBlocker || "Remote monitor card",
+    action,
+    readinessLabel
+  );
+  const intelligenceText = normalizeBiasLanguage(String(
     item?.ai_card_explanation_v2
       || item?.card_explanation_v2
       || item?.ollama_buy_explanation
@@ -186,7 +205,7 @@ export default function TickerCard({
       || item?.buy_reason
       || summaryText
       || ""
-  ).trim();
+  ).trim(), action, readinessLabel);
 
   const entryPriceText = formatPrice(item?.entry_price ?? item?.avg_entry_price ?? item?.average_entry_price);
   const currentPriceText = formatPrice(item?.current_price ?? item?.price ?? item?.live_price ?? item?.last_price ?? item?.close ?? item?.mark_price);
@@ -320,7 +339,6 @@ export default function TickerCard({
       </div>
 
       <div style={{ display: "grid", gap: "4px" }}>
-        <div style={rowStyle}><span style={labelStyle}>Confidence</span><span style={{ ...valueStyle, fontSize: "0.74rem" }}>{confidenceText}</span></div>
         <div style={progressTrackStyle}>
           <div
             style={{

@@ -402,6 +402,39 @@ except Exception:
         def status(self, *args, **kwargs):
             return {"enabled": False, "version": "1.0.0", "mode": "exit_averaging_unavailable", "exit_averaging_status_v1": True, "api_calls_used": 0}
 try:
+    from engine.adaptive_weight_optimizer import AdaptiveWeightOptimizer
+    from engine.regime_weight_optimizer import RegimeWeightOptimizer
+    from engine.exit_optimization_shadow import ExitOptimizationShadow
+    from engine.position_sizing_optimizer import PositionSizingOptimizer
+    from engine.strategy_scorecard import StrategyScorecardEngine
+    from engine.walk_forward_promotion_gate import WalkForwardPromotionGate
+except Exception:
+    class _AdaptiveQuantFallback:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "promotion_allowed": False,
+                "live_trading_changed": False,
+                "production_weights_changed": False,
+                "paper_trading_changed": False,
+                "next_recommended_action": "inspect_adaptive_quant_import",
+            }
+
+    AdaptiveWeightOptimizer = _AdaptiveQuantFallback  # type: ignore
+    RegimeWeightOptimizer = _AdaptiveQuantFallback  # type: ignore
+    ExitOptimizationShadow = _AdaptiveQuantFallback  # type: ignore
+    PositionSizingOptimizer = _AdaptiveQuantFallback  # type: ignore
+    StrategyScorecardEngine = _AdaptiveQuantFallback  # type: ignore
+    WalkForwardPromotionGate = _AdaptiveQuantFallback  # type: ignore
+try:
     from engine.adaptive_quote_refresh import AdaptiveQuoteRefreshPlanner
 except Exception:
     class AdaptiveQuoteRefreshPlanner:  # type: ignore[override]
@@ -1069,6 +1102,12 @@ EXPECTED_RETURN_ENGINE = ExpectedReturnEngine(state_dir=STATE)
 OPPORTUNITY_SCORING_ENGINE = OpportunityScoringEngine(state_dir=STATE)
 TARGET_ZONE_ENGINE = TargetZoneEngine(state_dir=STATE)
 EXIT_AVERAGING_ENGINE = ExitAveragingEngine(state_dir=STATE)
+ADAPTIVE_WEIGHT_OPTIMIZER = AdaptiveWeightOptimizer(state_dir=STATE)
+REGIME_WEIGHT_OPTIMIZER = RegimeWeightOptimizer(state_dir=STATE)
+EXIT_OPTIMIZATION_SHADOW = ExitOptimizationShadow(state_dir=STATE)
+POSITION_SIZING_OPTIMIZER = PositionSizingOptimizer(state_dir=STATE)
+STRATEGY_SCORECARD_ENGINE = StrategyScorecardEngine(state_dir=STATE)
+WALK_FORWARD_PROMOTION_GATE = WalkForwardPromotionGate(state_dir=STATE)
 API_BUDGET_GUARD = ApiBudgetGuard(state_dir=STATE)
 ADAPTIVE_QUOTE_REFRESH = AdaptiveQuoteRefreshPlanner(state_dir=STATE)
 POSITION_MONITORING_PLANNER = PositionMonitoringPlanner(state_dir=STATE)
@@ -31303,6 +31342,259 @@ def exit_averaging_status_v1():
             "stable_top_6_count": len(rows),
             "api_calls_used": 0,
             "error": f"exit_averaging_status_unavailable: {exc}",
+        }
+
+
+def _adaptive_quant_context():
+    try:
+        stable_payload = _stable_top_buys_payload(buy_mode="balanced")
+    except Exception:
+        stable_payload = {}
+    try:
+        learning_truth = _learning_truth_status_payload()
+    except Exception:
+        learning_truth = {}
+    learning_snapshot = {}
+    try:
+        learning_snapshot = _read_json_file(LEARNING_INSIGHTS_LAST_GOOD_PATH, default={})
+    except Exception:
+        learning_snapshot = {}
+    sample_size = 0
+    for source in (learning_truth, learning_snapshot):
+        if isinstance(source, dict):
+            for key in ("replay_rows_available", "valid_labels_count", "closed_trades_count", "lifecycle_events_count"):
+                sample_size += int(_to_float(source.get(key), 0.0))
+    return {
+        "stable_top_buys": stable_payload if isinstance(stable_payload, dict) else {},
+        "learning_truth": learning_truth if isinstance(learning_truth, dict) else {},
+        "learning_snapshot": learning_snapshot if isinstance(learning_snapshot, dict) else {},
+        "sample_size": sample_size,
+        "market_status": str((stable_payload or {}).get("market_status") or _adaptive_refresh_market_status()),
+    }
+
+
+@router.get("/api/adaptive_weight_optimizer_status_v1")
+def adaptive_weight_optimizer_status_v1():
+    try:
+        payload = ADAPTIVE_WEIGHT_OPTIMIZER.status(_adaptive_quant_context())
+        payload["adaptive_weight_optimizer_status_v1"] = True
+        payload["api_calls_used"] = 0
+        payload["promotion_allowed"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "adaptive_weight_optimizer_status_v1": True,
+            "promotion_allowed": False,
+            "live_trading_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "error": f"adaptive_weight_optimizer_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/regime_weight_optimizer_status_v1")
+def regime_weight_optimizer_status_v1():
+    try:
+        payload = REGIME_WEIGHT_OPTIMIZER.status(_adaptive_quant_context())
+        payload["regime_weight_optimizer_status_v1"] = True
+        payload["api_calls_used"] = 0
+        payload["promotion_allowed"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "regime_weight_optimizer_status_v1": True,
+            "promotion_allowed": False,
+            "live_trading_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "error": f"regime_weight_optimizer_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/exit_optimization_shadow_status_v1")
+def exit_optimization_shadow_status_v1():
+    try:
+        payload = EXIT_OPTIMIZATION_SHADOW.status(_adaptive_quant_context())
+        payload["exit_optimization_shadow_status_v1"] = True
+        payload["api_calls_used"] = 0
+        payload["promotion_allowed"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "exit_optimization_shadow_status_v1": True,
+            "promotion_allowed": False,
+            "live_trading_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "error": f"exit_optimization_shadow_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/position_sizing_optimizer_status_v1")
+def position_sizing_optimizer_status_v1():
+    try:
+        payload = POSITION_SIZING_OPTIMIZER.status(_adaptive_quant_context())
+        payload["position_sizing_optimizer_status_v1"] = True
+        payload["api_calls_used"] = 0
+        payload["promotion_allowed"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "position_sizing_optimizer_status_v1": True,
+            "promotion_allowed": False,
+            "live_trading_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "error": f"position_sizing_optimizer_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/strategy_scorecard_status_v1")
+def strategy_scorecard_status_v1():
+    try:
+        payload = STRATEGY_SCORECARD_ENGINE.status(_adaptive_quant_context())
+        payload["strategy_scorecard_status_v1"] = True
+        payload["api_calls_used"] = 0
+        payload["promotion_allowed"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "strategy_scorecard_status_v1": True,
+            "promotion_allowed": False,
+            "live_trading_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "error": f"strategy_scorecard_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/walk_forward_promotion_gate_status_v1")
+def walk_forward_promotion_gate_status_v1():
+    try:
+        payload = WALK_FORWARD_PROMOTION_GATE.status(_adaptive_quant_context())
+        payload["walk_forward_promotion_gate_status_v1"] = True
+        payload["api_calls_used"] = 0
+        payload["promotion_allowed"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "walk_forward_promotion_gate_status_v1": True,
+            "promotion_allowed": False,
+            "live_trading_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "error": f"walk_forward_promotion_gate_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/adaptive_quant_optimization_status_v1")
+def adaptive_quant_optimization_status_v1():
+    try:
+        ctx = _adaptive_quant_context()
+        weights = ADAPTIVE_WEIGHT_OPTIMIZER.status(ctx)
+        regime = REGIME_WEIGHT_OPTIMIZER.status({**ctx, "sample_size": weights.get("sample_size", ctx.get("sample_size", 0))})
+        exits = EXIT_OPTIMIZATION_SHADOW.status(ctx)
+        sizing = POSITION_SIZING_OPTIMIZER.status(ctx)
+        scorecard = STRATEGY_SCORECARD_ENGINE.status(ctx)
+        gate = WALK_FORWARD_PROMOTION_GATE.status(ctx)
+        return {
+            "enabled": True,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "adaptive_quant_optimization_status_v1": True,
+            "live_trading_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "baseline_weights": weights.get("baseline_weights", {}),
+            "recommended_shadow_weights": weights.get("recommended_shadow_weights", {}),
+            "projected_improvement_pct": weights.get("projected_improvement_pct", 0),
+            "best_recommended_weight_change": weights.get("best_recommended_weight_change", "baseline unchanged"),
+            "current_regime": regime.get("current_regime", "unknown"),
+            "best_regime_weights": regime.get("best_regime_weights", {}),
+            "exit_optimization_summary": {
+                "average_exit_quality": exits.get("average_exit_quality"),
+                "premature_exit_rate": exits.get("premature_exit_rate"),
+                "late_exit_rate": exits.get("late_exit_rate"),
+                "missed_profit_rate": exits.get("missed_profit_rate"),
+                "best_shadow_exit_policy": exits.get("best_shadow_exit_policy"),
+                "recommendation_reason": exits.get("recommendation_reason"),
+            },
+            "position_sizing_summary": {
+                "suggested_position_size_pct": sizing.get("suggested_position_size_pct"),
+                "risk_tier": sizing.get("risk_tier"),
+                "sizing_confidence": sizing.get("sizing_confidence"),
+                "sizing_reason": sizing.get("sizing_reason"),
+            },
+            "strategy_scorecard_summary": {
+                "top_strategy": scorecard.get("top_strategy"),
+                "best_strategies": scorecard.get("best_strategies", []),
+                "weakest_strategies": scorecard.get("weakest_strategies", []),
+                "scorecard_confidence": scorecard.get("scorecard_confidence"),
+            },
+            "walk_forward_summary": {
+                "passed_walk_forward": gate.get("passed_walk_forward"),
+                "out_of_sample_score": gate.get("out_of_sample_score"),
+                "overfit_risk": gate.get("overfit_risk"),
+                "promotion_recommendation": gate.get("promotion_recommendation"),
+            },
+            "promotion_allowed": False,
+            "confidence_score": round(_to_float(weights.get("confidence_score"), 0.0), 3),
+            "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "next_recommended_action": "review_shadow_recommendations_without_applying_production_changes",
+        }
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "adaptive_quant_optimization_status_v1": True,
+            "live_trading_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "promotion_allowed": False,
+            "error": f"adaptive_quant_optimization_status_unavailable: {exc}",
         }
 
 
