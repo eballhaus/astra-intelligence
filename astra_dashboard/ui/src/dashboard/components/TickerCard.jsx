@@ -240,6 +240,13 @@ export default function TickerCard({
   const seasonalityContextText = `${formatScore(item?.seasonality_context_score)} · ${formatContextLabel(item?.seasonality_context_label)}`;
   const themeCrowdingText = `${formatScore(item?.theme_crowding_score)} · ${formatContextLabel(item?.theme_crowding_label)}`;
   const contextSummaryText = String(item?.context_summary || "Context diagnostics unavailable.").trim();
+  const recommendedPositionSizeText = item?.recommended_position_size_pct == null ? "n/a" : `${Number(item.recommended_position_size_pct).toFixed(1)}%`;
+  const portfolioRiskScoreText = `${formatScore(item?.portfolio_risk_score)} · ${formatContextLabel(item?.portfolio_risk_label)}`;
+  const capitalAllocationText = `${formatScore(item?.capital_allocation_score)} · ${formatContextLabel(item?.capital_allocation_label)}`;
+  const correlationRiskText = `${formatScore(item?.correlation_risk_score)} · ${formatContextLabel(item?.correlation_risk_label)}`;
+  const concentrationRiskText = `${formatScore(item?.concentration_score)} · ${formatContextLabel(item?.concentration_label)}`;
+  const drawdownRiskText = `${formatScore(item?.drawdown_risk_score)} · ${formatContextLabel(item?.drawdown_risk_label)}`;
+  const portfolioRiskSummaryText = String(item?.portfolio_risk_summary || "Portfolio risk diagnostics unavailable.").trim();
   const rankStableText = stableState || (scoreOrNull(item?.stable_age_seconds) ? "stable" : "new");
   const confidenceText = confidence == null ? "calculating" : `${confidence.toFixed(1)}%`;
   const pnlPctRaw = Number(item?.pnl_percent ?? item?.unrealized_pnl_percent ?? item?.pnl_pct ?? 0);
@@ -426,6 +433,13 @@ export default function TickerCard({
               <div>Seasonality: {seasonalityContextText}</div>
               <div>Theme Crowding: {themeCrowdingText}</div>
               <div>Context Summary: {contextSummaryText}</div>
+              <div>Recommended Position Size: {recommendedPositionSizeText}</div>
+              <div>Portfolio Risk Score: {portfolioRiskScoreText}</div>
+              <div>Capital Allocation: {capitalAllocationText}</div>
+              <div>Correlation Risk: {correlationRiskText}</div>
+              <div>Concentration Risk: {concentrationRiskText}</div>
+              <div>Drawdown Risk: {drawdownRiskText}</div>
+              <div>Portfolio Risk Summary: {portfolioRiskSummaryText}</div>
               <div>Rank Stability: {rankStableText}</div>
               <div>Appearance 5R/10R/20R: {item?.appearance_count_5r ?? "n/a"} / {item?.appearance_count_10r ?? "n/a"} / {item?.appearance_count_20r ?? "n/a"}</div>
               <div>Average Rank: {item?.average_rank ?? item?.avg_rank_10r ?? "n/a"}</div>

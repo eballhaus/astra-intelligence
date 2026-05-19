@@ -565,6 +565,33 @@ except Exception:
                 "next_recommended_action": "inspect_context_search_profitability_import",
             }
 try:
+    from engine.portfolio_risk_intelligence_suite_v1 import PortfolioRiskIntelligenceSuiteV1
+except Exception:
+    class PortfolioRiskIntelligenceSuiteV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def enrich_payload(self, payload):
+            return dict(payload or {})
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "portfolio_risk_intelligence_status_v1": True,
+                "candidates_evaluated": 0,
+                "average_recommended_position_size_pct": 0,
+                "average_portfolio_risk_score": 0,
+                "average_capital_allocation_score": 0,
+                "highest_correlation_risk": 0,
+                "highest_concentration_risk": 0,
+                "next_recommended_action": "inspect_portfolio_risk_intelligence_import",
+            }
+try:
     from engine.snapshot_cache import SnapshotCacheRegistry
 except Exception:
     class SnapshotCacheRegistry:  # type: ignore[override]
@@ -1219,6 +1246,7 @@ ADAPTIVE_QUOTE_REFRESH = AdaptiveQuoteRefreshPlanner(state_dir=STATE)
 POSITION_MONITORING_PLANNER = PositionMonitoringPlanner(state_dir=STATE)
 LEARNING_FRESHNESS_PLANNER = LearningFreshnessPlanner(state_dir=STATE)
 CONTEXT_SEARCH_PROFITABILITY_SUITE = ContextSearchProfitabilitySuiteV1(state_dir=STATE)
+PORTFOLIO_RISK_INTELLIGENCE_SUITE = PortfolioRiskIntelligenceSuiteV1(state_dir=STATE)
 SNAPSHOT_CACHE_REGISTRY = SnapshotCacheRegistry(state_dir=STATE)
 STORAGE_OPTIMIZER = StorageOptimizer(state_dir=STATE)
 SQLITE_QUERY_INDEX = SQLiteQueryIndex(state_dir=STATE)
@@ -31254,8 +31282,17 @@ def _stable_top_buys_payload(raw_payload=None, *, buy_mode="balanced"):
         raw = CONTEXT_SEARCH_PROFITABILITY_SUITE.enrich_payload(raw)
     except Exception:
         pass
+    try:
+        raw = PORTFOLIO_RISK_INTELLIGENCE_SUITE.enrich_payload(raw)
+    except Exception:
+        pass
     stable = STABLE_TOP_BUYS_SELECTOR.select(raw, buy_mode=buy_mode)
     stable_rows = list(stable.get("stable_top_6") or [])
+    try:
+        stable_rows = PORTFOLIO_RISK_INTELLIGENCE_SUITE.enrich_rows(stable_rows)
+        stable["stable_top_6"] = stable_rows
+    except Exception:
+        pass
     out = dict(raw)
     stocks = dict(out.get("stocks") or {})
     stocks["final"] = stable_rows
@@ -31312,11 +31349,16 @@ def _stable_top_buys_payload(raw_payload=None, *, buy_mode="balanced"):
         "exit_averaging_engine_v1",
         "ranking_formula",
         "context_search_profitability_summary",
+        "portfolio_risk_intelligence_summary",
     ):
         if key in stable:
             out[key] = stable.get(key)
     try:
         out["context_search_profitability_summary"] = CONTEXT_SEARCH_PROFITABILITY_SUITE.status(rows=stable_rows)
+    except Exception:
+        pass
+    try:
+        out["portfolio_risk_intelligence_summary"] = PORTFOLIO_RISK_INTELLIGENCE_SUITE.status(rows=stable_rows)
     except Exception:
         pass
     out["api_calls_used"] = 0
@@ -31347,6 +31389,7 @@ def stable_top_buys_v1(buy_mode: str = Query("balanced")):
             "snapshot_age_seconds",
             "market_cap_breakdown_active_universe",
             "context_search_profitability_summary",
+            "portfolio_risk_intelligence_summary",
         ):
             stable_meta[key] = payload.get(key)
         stable_meta["api_calls_used"] = 0
@@ -32129,6 +32172,48 @@ def context_search_profitability_status_v1():
             "production_rankings_changed": False,
             "production_weights_changed": False,
             "error": f"context_search_profitability_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/portfolio_risk_intelligence_status_v1")
+def portfolio_risk_intelligence_status_v1():
+    try:
+        try:
+            payload = _stable_top_buys_payload(buy_mode="balanced")
+            rows = list(payload.get("stable_top_6") or [])
+        except Exception:
+            snap = _latest_top_buys_runtime_snapshot()
+            rows = list(((snap.get("stocks") or {}).get("final") or []) if isinstance(snap, dict) else [])
+        status = PORTFOLIO_RISK_INTELLIGENCE_SUITE.status(rows=rows)
+        status["portfolio_risk_intelligence_status_v1"] = True
+        status["api_calls_used"] = 0
+        status["promotion_allowed"] = False
+        status["live_trading_changed"] = False
+        status["broker_execution_changed"] = False
+        status["production_rankings_changed"] = False
+        status["production_weights_changed"] = False
+        return status
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "portfolio_risk_intelligence_status_v1": True,
+            "candidates_evaluated": 0,
+            "average_recommended_position_size_pct": 0,
+            "average_portfolio_risk_score": 0,
+            "average_capital_allocation_score": 0,
+            "highest_correlation_risk": 0,
+            "highest_concentration_risk": 0,
+            "promotion_allowed": False,
+            "live_trading_changed": False,
+            "broker_execution_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "error": f"portfolio_risk_intelligence_status_unavailable: {exc}",
         }
 
 
@@ -38155,6 +38240,10 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
         out = CONTEXT_SEARCH_PROFITABILITY_SUITE.enrich_payload(out)
     except Exception:
         pass
+    try:
+        out = PORTFOLIO_RISK_INTELLIGENCE_SUITE.enrich_payload(out)
+    except Exception:
+        pass
     if not bool(trace_included):
         out.pop("candidate_pipeline_trace_v1", None)
     _top_buys_mark_real_payload(out)
@@ -38520,6 +38609,10 @@ def _decorate_top_buys_fast_read_payload(
         pass
     try:
         out = CONTEXT_SEARCH_PROFITABILITY_SUITE.enrich_payload(out)
+    except Exception:
+        pass
+    try:
+        out = PORTFOLIO_RISK_INTELLIGENCE_SUITE.enrich_payload(out)
     except Exception:
         pass
     _top_buys_mark_real_payload(out)

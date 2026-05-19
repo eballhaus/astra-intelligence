@@ -262,6 +262,8 @@ export default function LearningTab({ compact = false }) {
   const [learningExecutionMessage, setLearningExecutionMessage] = useState("Not requested");
   const [contextProfitabilityStatus, setContextProfitabilityStatus] = useState(null);
   const [contextProfitabilityMessage, setContextProfitabilityMessage] = useState("Not requested");
+  const [portfolioRiskIntelStatus, setPortfolioRiskIntelStatus] = useState(null);
+  const [portfolioRiskIntelMessage, setPortfolioRiskIntelMessage] = useState("Not requested");
   const [institutionalTrend, setInstitutionalTrend] = useState([]);
   const [endpointStatus, setEndpointStatus] = useState(LEARNING_TAB_MEMORY_CACHE.endpointStatus || {});
   const [timeline, setTimeline] = useState(LEARNING_TAB_MEMORY_CACHE.timeline || []);
@@ -1001,6 +1003,53 @@ export default function LearningTab({ compact = false }) {
       mounted = false;
     };
   }, [showAdvancedSections, contextProfitabilityStatus, resolvedApiBase]);
+
+  useEffect(() => {
+    if (!showAdvancedSections || portfolioRiskIntelStatus) return undefined;
+    let mounted = true;
+    const loadPortfolioRiskIntel = async () => {
+      setPortfolioRiskIntelMessage("Loading portfolio risk intelligence...");
+      try {
+        const result = await fetchJsonWithFallback("/api/portfolio_risk_intelligence_status_v1", {
+          preferredBase: resolvedApiBase || API_BASE,
+          fallbackValue: {
+            enabled: false,
+            mode: "shadow_only",
+            api_calls_used: 0,
+            average_recommended_position_size_pct: 0,
+            average_portfolio_risk_score: 0,
+            average_capital_allocation_score: 0,
+            highest_correlation_risk: 0,
+            highest_concentration_risk: 0,
+            error: "portfolio risk intelligence unavailable",
+          },
+          timeoutMs: 8000,
+        });
+        if (!mounted) return;
+        const parsed = result?.parsed && typeof result.parsed === "object" ? result.parsed : {};
+        setPortfolioRiskIntelStatus(parsed);
+        setPortfolioRiskIntelMessage(parsed.enabled === false ? "Portfolio risk intelligence unavailable" : "Portfolio risk intelligence loaded");
+      } catch (err) {
+        if (!mounted) return;
+        setPortfolioRiskIntelStatus({
+          enabled: false,
+          mode: "shadow_only",
+          api_calls_used: 0,
+          average_recommended_position_size_pct: 0,
+          average_portfolio_risk_score: 0,
+          average_capital_allocation_score: 0,
+          highest_correlation_risk: 0,
+          highest_concentration_risk: 0,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        setPortfolioRiskIntelMessage("Portfolio risk intelligence unavailable");
+      }
+    };
+    loadPortfolioRiskIntel();
+    return () => {
+      mounted = false;
+    };
+  }, [showAdvancedSections, portfolioRiskIntelStatus, resolvedApiBase]);
 
   const paper = data.paper || {};
   const paperStatus = data.paperStatus || {};
@@ -2108,6 +2157,8 @@ export default function LearningTab({ compact = false }) {
   const learningExecutionPortfolio = learningExecutionStatus?.portfolio_risk_summary || {};
   const contextProfitabilityTailwind = statusText(contextProfitabilityStatus?.strongest_context_tailwind, "neutral or insufficient data");
   const contextProfitabilityPenalty = statusText(contextProfitabilityStatus?.strongest_context_penalty, "none detected");
+  const portfolioRiskIntelMode = statusText(portfolioRiskIntelStatus?.mode, "shadow_only");
+  const portfolioRiskIntelPromotion = portfolioRiskIntelStatus?.promotion_allowed ? "yes" : "No";
   const combinedInstitutionalTrend = institutionalTrend.length > 0
     ? institutionalTrend
     : timeline.map((point) => ({
@@ -2761,6 +2812,29 @@ export default function LearningTab({ compact = false }) {
             <div><span style={{ color: "#8ea1c3" }}>Strongest tailwind:</span> {contextProfitabilityTailwind}</div>
             <div><span style={{ color: "#8ea1c3" }}>Strongest penalty:</span> {contextProfitabilityPenalty}</div>
             <div><span style={{ color: "#8ea1c3" }}>API calls used:</span> {safeNumber(contextProfitabilityStatus?.api_calls_used).toFixed(0)}</div>
+          </div>
+        </div>
+        <div style={{ marginBottom: 12, border: "1px solid #345983", borderRadius: 10, background: "rgba(9, 22, 39, 0.48)", padding: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+            <div>
+              <div style={{ fontSize: 13, color: "#e7f0ff", fontWeight: 700 }}>Portfolio & Risk Intelligence Suite V1</div>
+              <div style={{ fontSize: 11, color: "#9fb1cc" }}>
+                Shadow-only allocation, correlation, concentration, drawdown, and portfolio heat guidance. No execution or production ranking changes.
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: portfolioRiskIntelStatus?.enabled === false ? "#ffe2a1" : "#a9f8d1" }}>
+              {portfolioRiskIntelMessage}
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8, fontSize: 12 }}>
+            <div><span style={{ color: "#8ea1c3" }}>Mode:</span> {portfolioRiskIntelMode}</div>
+            <div><span style={{ color: "#8ea1c3" }}>Avg position size:</span> {safeNumber(portfolioRiskIntelStatus?.average_recommended_position_size_pct).toFixed(1)}%</div>
+            <div><span style={{ color: "#8ea1c3" }}>Avg portfolio risk:</span> {safeNumber(portfolioRiskIntelStatus?.average_portfolio_risk_score).toFixed(1)}</div>
+            <div><span style={{ color: "#8ea1c3" }}>Avg capital allocation:</span> {safeNumber(portfolioRiskIntelStatus?.average_capital_allocation_score).toFixed(1)}</div>
+            <div><span style={{ color: "#8ea1c3" }}>Highest correlation risk:</span> {safeNumber(portfolioRiskIntelStatus?.highest_correlation_risk).toFixed(1)}</div>
+            <div><span style={{ color: "#8ea1c3" }}>Highest concentration risk:</span> {safeNumber(portfolioRiskIntelStatus?.highest_concentration_risk).toFixed(1)}</div>
+            <div><span style={{ color: "#8ea1c3" }}>API calls used:</span> {safeNumber(portfolioRiskIntelStatus?.api_calls_used).toFixed(0)}</div>
+            <div><span style={{ color: "#8ea1c3" }}>Promotion allowed:</span> {portfolioRiskIntelPromotion}</div>
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10, marginBottom: 12 }}>
