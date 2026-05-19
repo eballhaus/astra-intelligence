@@ -58,6 +58,17 @@ def _normalize_record(data: dict[str, Any]) -> dict[str, Any]:
         "outcome_label": _to_str(data.get("outcome_label")),
         "source_endpoint": _to_str(data.get("source_endpoint")),
         "lifecycle_stage": _to_str(data.get("lifecycle_stage"), "signal"),
+        "learning_acceleration_priority": _to_float(data.get("learning_acceleration_priority"), 0.0),
+        "counterfactual_review_needed": bool(data.get("counterfactual_review_needed", False)),
+        "target_accuracy_score": _to_float(data.get("target_accuracy_score"), 0.0),
+        "exit_quality_score": _to_float(data.get("exit_quality_score"), 0.0),
+        "realized_r_multiple": _to_float(data.get("realized_r_multiple"), 0.0),
+        "missed_profit_flag": bool(data.get("missed_profit_flag", False)),
+        "premature_exit_flag": bool(data.get("premature_exit_flag", False)),
+        "late_exit_flag": bool(data.get("late_exit_flag", False)),
+        "scale_in_shadow_signal": _to_str(data.get("scale_in_shadow_signal")),
+        "scale_out_shadow_signal": _to_str(data.get("scale_out_shadow_signal")),
+        "memory_segment_key": _to_str(data.get("memory_segment_key")),
         "updated_at": _to_str(data.get("updated_at"), _now_iso()),
     }
     if not record["lifecycle_id"]:

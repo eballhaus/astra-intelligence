@@ -467,6 +467,43 @@ except Exception:
     TimeframeTargetZones = _MultiHorizonMetaFallback  # type: ignore
     HorizonShadowValidator = _MultiHorizonMetaFallback  # type: ignore
 try:
+    from engine.learning_acceleration_engine import LearningAccelerationEngine
+    from engine.prioritized_experience_replay import PrioritizedExperienceReplay
+    from engine.counterfactual_training_engine import CounterfactualTrainingEngine
+    from engine.memory_retention_engine import MemoryRetentionEngine
+    from engine.execution_quality_engine import ExecutionQualityEngine
+    from engine.scale_in_out_shadow import ScaleInOutShadow
+    from engine.portfolio_risk_shadow import PortfolioRiskShadow
+except Exception:
+    class _LearningExecutionFallback:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_first",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "promotion_allowed": False,
+                "live_trading_changed": False,
+                "broker_execution_changed": False,
+                "production_rankings_changed": False,
+                "production_weights_changed": False,
+                "paper_trading_changed": False,
+                "next_recommended_action": "inspect_learning_execution_suite_import",
+            }
+
+    LearningAccelerationEngine = _LearningExecutionFallback  # type: ignore
+    PrioritizedExperienceReplay = _LearningExecutionFallback  # type: ignore
+    CounterfactualTrainingEngine = _LearningExecutionFallback  # type: ignore
+    MemoryRetentionEngine = _LearningExecutionFallback  # type: ignore
+    ExecutionQualityEngine = _LearningExecutionFallback  # type: ignore
+    ScaleInOutShadow = _LearningExecutionFallback  # type: ignore
+    PortfolioRiskShadow = _LearningExecutionFallback  # type: ignore
+try:
     from engine.adaptive_quote_refresh import AdaptiveQuoteRefreshPlanner
 except Exception:
     class AdaptiveQuoteRefreshPlanner:  # type: ignore[override]
@@ -1145,6 +1182,13 @@ MULTI_HORIZON_PREDICTION_ENGINE = MultiHorizonPredictionEngine(state_dir=STATE)
 INTRADAY_INTELLIGENCE_ENGINE = IntradayIntelligenceEngine(state_dir=STATE)
 TIMEFRAME_TARGET_ZONES = TimeframeTargetZones(state_dir=STATE)
 HORIZON_SHADOW_VALIDATOR = HorizonShadowValidator(state_dir=STATE)
+LEARNING_ACCELERATION_ENGINE = LearningAccelerationEngine(state_dir=STATE)
+PRIORITIZED_EXPERIENCE_REPLAY = PrioritizedExperienceReplay(state_dir=STATE)
+COUNTERFACTUAL_TRAINING_ENGINE = CounterfactualTrainingEngine(state_dir=STATE)
+MEMORY_RETENTION_ENGINE = MemoryRetentionEngine(state_dir=STATE)
+EXECUTION_QUALITY_ENGINE = ExecutionQualityEngine(state_dir=STATE)
+SCALE_IN_OUT_SHADOW = ScaleInOutShadow(state_dir=STATE)
+PORTFOLIO_RISK_SHADOW = PortfolioRiskShadow(state_dir=STATE)
 API_BUDGET_GUARD = ApiBudgetGuard(state_dir=STATE)
 ADAPTIVE_QUOTE_REFRESH = AdaptiveQuoteRefreshPlanner(state_dir=STATE)
 POSITION_MONITORING_PLANNER = PositionMonitoringPlanner(state_dir=STATE)
@@ -31830,6 +31874,185 @@ def multi_horizon_intraday_meta_suite_status_v1():
             "paper_trading_changed": False,
             "promotion_allowed": False,
             "error": f"multi_horizon_intraday_meta_suite_status_unavailable: {exc}",
+        }
+
+
+def _learning_execution_safe_status(engine, endpoint_key: str, context: dict | None = None):
+    try:
+        payload = engine.status(context or {})
+        if not isinstance(payload, dict):
+            payload = {}
+        payload[endpoint_key] = True
+        payload["api_calls_used"] = 0
+        payload["promotion_allowed"] = False
+        payload["live_trading_changed"] = False
+        payload["broker_execution_changed"] = False
+        payload["production_rankings_changed"] = False
+        payload["production_weights_changed"] = False
+        payload["paper_trading_changed"] = False
+        return payload
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_first",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            endpoint_key: True,
+            "promotion_allowed": False,
+            "live_trading_changed": False,
+            "broker_execution_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "error": f"{endpoint_key}_unavailable: {exc}",
+        }
+
+
+@router.get("/api/learning_acceleration_status_v1")
+def learning_acceleration_status_v1():
+    return _learning_execution_safe_status(LEARNING_ACCELERATION_ENGINE, "learning_acceleration_status_v1")
+
+
+@router.get("/api/prioritized_replay_status_v1")
+def prioritized_replay_status_v1():
+    return _learning_execution_safe_status(PRIORITIZED_EXPERIENCE_REPLAY, "prioritized_replay_status_v1")
+
+
+@router.get("/api/counterfactual_training_status_v1")
+def counterfactual_training_status_v1():
+    return _learning_execution_safe_status(COUNTERFACTUAL_TRAINING_ENGINE, "counterfactual_training_status_v1")
+
+
+@router.get("/api/memory_retention_status_v1")
+def memory_retention_status_v1():
+    return _learning_execution_safe_status(MEMORY_RETENTION_ENGINE, "memory_retention_status_v1")
+
+
+@router.get("/api/execution_quality_status_v1")
+def execution_quality_status_v1():
+    return _learning_execution_safe_status(EXECUTION_QUALITY_ENGINE, "execution_quality_status_v1")
+
+
+@router.get("/api/scale_in_out_shadow_status_v1")
+def scale_in_out_shadow_status_v1():
+    return _learning_execution_safe_status(SCALE_IN_OUT_SHADOW, "scale_in_out_shadow_status_v1")
+
+
+@router.get("/api/portfolio_risk_shadow_status_v1")
+def portfolio_risk_shadow_status_v1():
+    return _learning_execution_safe_status(PORTFOLIO_RISK_SHADOW, "portfolio_risk_shadow_status_v1")
+
+
+@router.get("/api/learning_execution_suite_status_v1")
+def learning_execution_suite_status_v1():
+    try:
+        learning = LEARNING_ACCELERATION_ENGINE.status({})
+        replay = PRIORITIZED_EXPERIENCE_REPLAY.status({})
+        counterfactual = COUNTERFACTUAL_TRAINING_ENGINE.status({})
+        memory = MEMORY_RETENTION_ENGINE.status({})
+        execution = EXECUTION_QUALITY_ENGINE.status({})
+        scale = SCALE_IN_OUT_SHADOW.status({})
+        portfolio = PORTFOLIO_RISK_SHADOW.status({})
+        speedup = _to_float(learning.get("acceleration_factor"), 1.0)
+        profitability = _to_float(counterfactual.get("projected_return_improvement_pct"), 0.0)
+        return {
+            "enabled": True,
+            "version": "1.0.0",
+            "mode": "shadow_first",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "learning_execution_suite_status_v1": True,
+            "live_trading_changed": False,
+            "broker_execution_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "promotion_allowed": False,
+            "learning_acceleration_summary": {
+                "learning_acceleration_score": learning.get("learning_acceleration_score"),
+                "prioritized_examples_count": learning.get("prioritized_examples_count"),
+                "estimated_current_learning_events_per_day": learning.get("estimated_current_learning_events_per_day"),
+                "estimated_accelerated_learning_events_per_day": learning.get("estimated_accelerated_learning_events_per_day"),
+                "acceleration_factor": learning.get("acceleration_factor"),
+                "top_learning_priorities": list(learning.get("top_learning_priorities") or [])[:5],
+            },
+            "replay_summary": {
+                "replay_candidate_count": replay.get("replay_candidate_count"),
+                "replay_batch_size": replay.get("replay_batch_size"),
+                "replay_ready": replay.get("replay_ready"),
+                "top_replay_candidates": list(replay.get("replay_candidates") or [])[:5],
+            },
+            "counterfactual_summary": {
+                "counterfactual_cases_created": counterfactual.get("counterfactual_cases_created"),
+                "best_counterfactual_policy": counterfactual.get("best_counterfactual_policy"),
+                "missed_profit_opportunities": counterfactual.get("missed_profit_opportunities"),
+                "projected_return_improvement_pct": counterfactual.get("projected_return_improvement_pct"),
+            },
+            "memory_retention_summary": {
+                "memory_quality_score": memory.get("memory_quality_score"),
+                "memory_segment_count": memory.get("memory_segment_count"),
+                "strongest_patterns": list(memory.get("strongest_patterns") or [])[:3],
+                "weakest_patterns": list(memory.get("weakest_patterns") or [])[:3],
+            },
+            "execution_quality_summary": {
+                "execution_quality_score": execution.get("execution_quality_score"),
+                "entry_quality_shadow": execution.get("entry_quality_shadow"),
+                "exit_quality_shadow": execution.get("exit_quality_shadow"),
+                "target_accuracy_score": execution.get("target_accuracy_score"),
+                "realized_r_quality": execution.get("realized_r_quality"),
+                "execution_recommendations": list(execution.get("execution_recommendations") or []),
+            },
+            "scale_in_out_summary": {
+                "scale_in_candidate_count": scale.get("scale_in_candidate_count"),
+                "scale_out_candidate_count": scale.get("scale_out_candidate_count"),
+                "suggested_scale_in_pct": scale.get("suggested_scale_in_pct"),
+                "suggested_scale_out_pct": scale.get("suggested_scale_out_pct"),
+                "risk_warning": scale.get("risk_warning"),
+            },
+            "portfolio_risk_summary": {
+                "portfolio_heat_score": portfolio.get("portfolio_heat_score"),
+                "concentration_warning": portfolio.get("concentration_warning"),
+                "suggested_risk_adjustment": portfolio.get("suggested_risk_adjustment"),
+                "risk_tier": portfolio.get("risk_tier"),
+            },
+            "projected_learning_speedup": round(speedup, 3),
+            "projected_profitability_improvement_pct": round(profitability, 3),
+            "confidence_score": round(
+                min(
+                    88.0,
+                    (
+                        _to_float(learning.get("confidence_score"), 0.0)
+                        + _to_float(replay.get("confidence_score"), 0.0)
+                        + _to_float(counterfactual.get("confidence_score"), 0.0)
+                        + _to_float(memory.get("confidence_score"), 0.0)
+                        + _to_float(execution.get("confidence_score"), 0.0)
+                    )
+                    / 5.0,
+                ),
+                3,
+            ),
+            "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "next_recommended_action": "review_shadow_learning_execution_recommendations_without_changing_live_behavior",
+        }
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_first",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "learning_execution_suite_status_v1": True,
+            "live_trading_changed": False,
+            "broker_execution_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "promotion_allowed": False,
+            "error": f"learning_execution_suite_status_unavailable: {exc}",
         }
 
 

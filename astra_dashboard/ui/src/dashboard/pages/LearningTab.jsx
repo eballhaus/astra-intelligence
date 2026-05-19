@@ -258,6 +258,8 @@ export default function LearningTab({ compact = false }) {
   const [adaptiveQuantMessage, setAdaptiveQuantMessage] = useState("Not requested");
   const [multiHorizonStatus, setMultiHorizonStatus] = useState(null);
   const [multiHorizonMessage, setMultiHorizonMessage] = useState("Not requested");
+  const [learningExecutionStatus, setLearningExecutionStatus] = useState(null);
+  const [learningExecutionMessage, setLearningExecutionMessage] = useState("Not requested");
   const [institutionalTrend, setInstitutionalTrend] = useState([]);
   const [endpointStatus, setEndpointStatus] = useState(LEARNING_TAB_MEMORY_CACHE.endpointStatus || {});
   const [timeline, setTimeline] = useState(LEARNING_TAB_MEMORY_CACHE.timeline || []);
@@ -903,6 +905,55 @@ export default function LearningTab({ compact = false }) {
       mounted = false;
     };
   }, [showAdvancedSections, multiHorizonStatus, resolvedApiBase]);
+
+  useEffect(() => {
+    if (!showAdvancedSections || learningExecutionStatus) return undefined;
+    let mounted = true;
+    const loadLearningExecution = async () => {
+      setLearningExecutionMessage("Loading learning execution summary...");
+      try {
+        const result = await fetchJsonWithFallback("/api/learning_execution_suite_status_v1", {
+          preferredBase: resolvedApiBase || API_BASE,
+          fallbackValue: {
+            enabled: false,
+            mode: "shadow_first",
+            api_calls_used: 0,
+            promotion_allowed: false,
+            live_trading_changed: false,
+            broker_execution_changed: false,
+            production_rankings_changed: false,
+            production_weights_changed: false,
+            paper_trading_changed: false,
+            error: "learning execution summary unavailable",
+          },
+          timeoutMs: 8000,
+        });
+        if (!mounted) return;
+        const parsed = result?.parsed && typeof result.parsed === "object" ? result.parsed : {};
+        setLearningExecutionStatus(parsed);
+        setLearningExecutionMessage(parsed.enabled === false ? "Learning execution summary unavailable" : "Learning execution summary loaded");
+      } catch (err) {
+        if (!mounted) return;
+        setLearningExecutionStatus({
+          enabled: false,
+          mode: "shadow_first",
+          api_calls_used: 0,
+          promotion_allowed: false,
+          live_trading_changed: false,
+          broker_execution_changed: false,
+          production_rankings_changed: false,
+          production_weights_changed: false,
+          paper_trading_changed: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        setLearningExecutionMessage("Learning execution summary unavailable");
+      }
+    };
+    loadLearningExecution();
+    return () => {
+      mounted = false;
+    };
+  }, [showAdvancedSections, learningExecutionStatus, resolvedApiBase]);
 
   const paper = data.paper || {};
   const paperStatus = data.paperStatus || {};
@@ -2002,6 +2053,12 @@ export default function LearningTab({ compact = false }) {
   const multiHorizonBest = multiHorizonStatus?.best_horizon_summary || {};
   const multiHorizonIntraday = multiHorizonStatus?.intraday_summary || {};
   const multiHorizonFactors = Array.isArray(multiHorizonStatus?.top_predictive_factors) ? multiHorizonStatus.top_predictive_factors : [];
+  const learningExecutionAcceleration = learningExecutionStatus?.learning_acceleration_summary || {};
+  const learningExecutionReplay = learningExecutionStatus?.replay_summary || {};
+  const learningExecutionCounterfactual = learningExecutionStatus?.counterfactual_summary || {};
+  const learningExecutionMemory = learningExecutionStatus?.memory_retention_summary || {};
+  const learningExecutionQuality = learningExecutionStatus?.execution_quality_summary || {};
+  const learningExecutionPortfolio = learningExecutionStatus?.portfolio_risk_summary || {};
   const combinedInstitutionalTrend = institutionalTrend.length > 0
     ? institutionalTrend
     : timeline.map((point) => ({
@@ -2611,6 +2668,30 @@ export default function LearningTab({ compact = false }) {
             <div><span style={{ color: "#8ea1c3" }}>Intraday candidates:</span> {safeNumber(multiHorizonStatus?.intraday_candidate_count, multiHorizonIntraday?.day_trade_candidate_count).toFixed(0)}</div>
             <div><span style={{ color: "#8ea1c3" }}>Projected improvement:</span> {safeNumber(multiHorizonStatus?.projected_improvement_pct).toFixed(2)}%</div>
             <div><span style={{ color: "#8ea1c3" }}>Promotion allowed:</span> {multiHorizonStatus?.promotion_allowed ? "yes" : "No"}</div>
+          </div>
+        </div>
+        <div style={{ marginBottom: 12, border: "1px solid #345983", borderRadius: 10, background: "rgba(9, 22, 39, 0.48)", padding: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+            <div>
+              <div style={{ fontSize: 13, color: "#e7f0ff", fontWeight: 700 }}>Learning Acceleration & Execution Quality</div>
+              <div style={{ fontSize: 11, color: "#9fb1cc" }}>
+                Shadow-first learning, replay, counterfactual, execution, scale, and risk diagnostics. No broker or production behavior changes.
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: learningExecutionStatus?.enabled === false ? "#ffe2a1" : "#a9f8d1" }}>
+              {learningExecutionMessage}
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8, fontSize: 12 }}>
+            <div><span style={{ color: "#8ea1c3" }}>Mode:</span> {statusText(learningExecutionStatus?.mode, "shadow_first")}</div>
+            <div><span style={{ color: "#8ea1c3" }}>Learning speedup:</span> {safeNumber(learningExecutionStatus?.projected_learning_speedup, learningExecutionAcceleration?.acceleration_factor || 1).toFixed(2)}x</div>
+            <div><span style={{ color: "#8ea1c3" }}>Replay candidates:</span> {safeNumber(learningExecutionReplay?.replay_candidate_count).toFixed(0)}</div>
+            <div><span style={{ color: "#8ea1c3" }}>Counterfactual cases:</span> {safeNumber(learningExecutionCounterfactual?.counterfactual_cases_created).toFixed(0)}</div>
+            <div><span style={{ color: "#8ea1c3" }}>Memory quality:</span> {safeNumber(learningExecutionMemory?.memory_quality_score).toFixed(1)}</div>
+            <div><span style={{ color: "#8ea1c3" }}>Execution quality:</span> {safeNumber(learningExecutionQuality?.execution_quality_score).toFixed(1)}</div>
+            <div><span style={{ color: "#8ea1c3" }}>Target accuracy:</span> {safeNumber(learningExecutionQuality?.target_accuracy_score).toFixed(1)}</div>
+            <div><span style={{ color: "#8ea1c3" }}>Portfolio heat:</span> {safeNumber(learningExecutionPortfolio?.portfolio_heat_score).toFixed(1)}</div>
+            <div><span style={{ color: "#8ea1c3" }}>Promotion allowed:</span> {learningExecutionStatus?.promotion_allowed ? "yes" : "No"}</div>
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10, marginBottom: 12 }}>
