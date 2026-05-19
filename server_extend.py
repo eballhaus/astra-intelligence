@@ -540,6 +540,31 @@ except Exception:
         def status(self, *args, **kwargs):
             return {"enabled": False, "version": "1.0.0", "mode": "learning_freshness_unavailable", "learning_freshness_status_v1": True, "api_calls_used": 0}
 try:
+    from engine.context_search_profitability_suite_v1 import ContextSearchProfitabilitySuiteV1
+except Exception:
+    class ContextSearchProfitabilitySuiteV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def enrich_payload(self, payload):
+            return dict(payload or {})
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "context_search_profitability_status_v1": True,
+                "candidates_evaluated": 0,
+                "average_context_score": 0,
+                "strongest_context_tailwind": "unavailable",
+                "strongest_context_penalty": "unavailable",
+                "next_recommended_action": "inspect_context_search_profitability_import",
+            }
+try:
     from engine.snapshot_cache import SnapshotCacheRegistry
 except Exception:
     class SnapshotCacheRegistry:  # type: ignore[override]
@@ -1193,6 +1218,7 @@ API_BUDGET_GUARD = ApiBudgetGuard(state_dir=STATE)
 ADAPTIVE_QUOTE_REFRESH = AdaptiveQuoteRefreshPlanner(state_dir=STATE)
 POSITION_MONITORING_PLANNER = PositionMonitoringPlanner(state_dir=STATE)
 LEARNING_FRESHNESS_PLANNER = LearningFreshnessPlanner(state_dir=STATE)
+CONTEXT_SEARCH_PROFITABILITY_SUITE = ContextSearchProfitabilitySuiteV1(state_dir=STATE)
 SNAPSHOT_CACHE_REGISTRY = SnapshotCacheRegistry(state_dir=STATE)
 STORAGE_OPTIMIZER = StorageOptimizer(state_dir=STATE)
 SQLITE_QUERY_INDEX = SQLiteQueryIndex(state_dir=STATE)
@@ -31224,6 +31250,10 @@ def _stable_top_buys_payload(raw_payload=None, *, buy_mode="balanced"):
     raw = _align_stable_duplicate_conviction_fields(raw_payload if isinstance(raw_payload, dict) else _raw_payload_for_stable_top_buys(buy_mode))
     raw = _annotate_stable_top_candidate_rows(raw)
     raw = _apply_card_explanations_to_top_payload(raw)
+    try:
+        raw = CONTEXT_SEARCH_PROFITABILITY_SUITE.enrich_payload(raw)
+    except Exception:
+        pass
     stable = STABLE_TOP_BUYS_SELECTOR.select(raw, buy_mode=buy_mode)
     stable_rows = list(stable.get("stable_top_6") or [])
     out = dict(raw)
@@ -31281,9 +31311,14 @@ def _stable_top_buys_payload(raw_payload=None, *, buy_mode="balanced"):
         "target_zone_engine_v1",
         "exit_averaging_engine_v1",
         "ranking_formula",
+        "context_search_profitability_summary",
     ):
         if key in stable:
             out[key] = stable.get(key)
+    try:
+        out["context_search_profitability_summary"] = CONTEXT_SEARCH_PROFITABILITY_SUITE.status(rows=stable_rows)
+    except Exception:
+        pass
     out["api_calls_used"] = 0
     out["live_trading_changed"] = False
     out["rankings_top_buys_strategy_changed"] = False
@@ -31311,6 +31346,7 @@ def stable_top_buys_v1(buy_mode: str = Query("balanced")):
             "snapshot_status_badge",
             "snapshot_age_seconds",
             "market_cap_breakdown_active_universe",
+            "context_search_profitability_summary",
         ):
             stable_meta[key] = payload.get(key)
         stable_meta["api_calls_used"] = 0
@@ -32053,6 +32089,46 @@ def learning_execution_suite_status_v1():
             "paper_trading_changed": False,
             "promotion_allowed": False,
             "error": f"learning_execution_suite_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/context_search_profitability_status_v1")
+def context_search_profitability_status_v1():
+    try:
+        try:
+            payload = _stable_top_buys_payload(buy_mode="balanced")
+            rows = list(payload.get("stable_top_6") or [])
+        except Exception:
+            snap = _latest_top_buys_runtime_snapshot()
+            rows = list(((snap.get("stocks") or {}).get("final") or []) if isinstance(snap, dict) else [])
+        status = CONTEXT_SEARCH_PROFITABILITY_SUITE.status(rows=rows)
+        status["context_search_profitability_status_v1"] = True
+        status["api_calls_used"] = 0
+        status["promotion_allowed"] = False
+        status["live_trading_changed"] = False
+        status["broker_execution_changed"] = False
+        status["production_rankings_changed"] = False
+        status["production_weights_changed"] = False
+        return status
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "context_search_profitability_status_v1": True,
+            "candidates_evaluated": 0,
+            "average_context_score": 0,
+            "strongest_context_tailwind": "unavailable",
+            "strongest_context_penalty": "unavailable",
+            "promotion_allowed": False,
+            "live_trading_changed": False,
+            "broker_execution_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "error": f"context_search_profitability_status_unavailable: {exc}",
         }
 
 
@@ -38075,6 +38151,10 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
         out = _apply_institutional_bundle1_payload(out)
     except Exception:
         pass
+    try:
+        out = CONTEXT_SEARCH_PROFITABILITY_SUITE.enrich_payload(out)
+    except Exception:
+        pass
     if not bool(trace_included):
         out.pop("candidate_pipeline_trace_v1", None)
     _top_buys_mark_real_payload(out)
@@ -38436,6 +38516,10 @@ def _decorate_top_buys_fast_read_payload(
         pass
     try:
         out = _apply_institutional_bundle1_payload(out)
+    except Exception:
+        pass
+    try:
+        out = CONTEXT_SEARCH_PROFITABILITY_SUITE.enrich_payload(out)
     except Exception:
         pass
     _top_buys_mark_real_payload(out)

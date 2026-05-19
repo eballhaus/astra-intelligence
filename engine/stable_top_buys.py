@@ -18,11 +18,13 @@ try:
     from engine.exit_averaging_engine import ExitAveragingEngine
     from engine.opportunity_scoring_engine import OpportunityScoringEngine
     from engine.target_zone_engine import TargetZoneEngine
+    from engine.context_search_profitability_suite_v1 import ContextSearchProfitabilitySuiteV1
 except Exception:  # pragma: no cover - fail-safe imports for runtime resilience
     ExpectedReturnEngine = None  # type: ignore[assignment]
     ExitAveragingEngine = None  # type: ignore[assignment]
     OpportunityScoringEngine = None  # type: ignore[assignment]
     TargetZoneEngine = None  # type: ignore[assignment]
+    ContextSearchProfitabilitySuiteV1 = None  # type: ignore[assignment]
 
 VERSION = "1.0.0"
 
@@ -96,6 +98,7 @@ class StableTopBuysSelector:
         self.opportunity_scoring_engine = OpportunityScoringEngine(state_dir=self.state_dir) if OpportunityScoringEngine else None
         self.target_zone_engine = TargetZoneEngine(state_dir=self.state_dir) if TargetZoneEngine else None
         self.exit_averaging_engine = ExitAveragingEngine(state_dir=self.state_dir) if ExitAveragingEngine else None
+        self.context_profitability_suite = ContextSearchProfitabilitySuiteV1(state_dir=self.state_dir) if ContextSearchProfitabilitySuiteV1 else None
 
     def _load(self) -> dict[str, Any]:
         if self._state is not None:
@@ -192,6 +195,12 @@ class StableTopBuysSelector:
         except Exception as exc:
             out.setdefault("exit_score_available", False)
             out.setdefault("exit_unavailable_reason", f"exit_averaging_error: {exc}"[:160])
+        try:
+            if self.context_profitability_suite:
+                out.update(self.context_profitability_suite.score_row(out) or {})
+        except Exception as exc:
+            out.setdefault("context_search_profitability_suite_v1", False)
+            out.setdefault("context_summary", f"context_profitability_unavailable: {exc}"[:160])
         out["paper_trade_learning_fields_shadow"] = {
             "opportunity_score_at_entry": out.get("opportunity_score_pct"),
             "expected_return_pct_at_entry": out.get("expected_return_pct"),

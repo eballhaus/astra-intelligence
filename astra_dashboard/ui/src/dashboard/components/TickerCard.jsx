@@ -75,6 +75,16 @@ function formatConviction(value) {
   return n == null ? "n/a" : n.toFixed(1);
 }
 
+function formatScore(value) {
+  const n = scoreOrNull(value);
+  return n == null ? "n/a" : n.toFixed(1);
+}
+
+function formatContextLabel(value) {
+  const raw = String(value || "").trim();
+  return raw ? raw.replaceAll("_", " ") : "n/a";
+}
+
 function formatPredictionUsd(value) {
   const n = scoreOrNull(value);
   if (n == null || Math.abs(n) < 0.005) return "n/a";
@@ -221,6 +231,15 @@ export default function TickerCard({
   const expectedReturnText = item?.expected_return_pct == null ? "n/a" : formatPercent(item.expected_return_pct);
   const rewardRiskText = item?.estimated_reward_to_risk == null ? "n/a" : `${Number(item.estimated_reward_to_risk).toFixed(2)}R`;
   const exitScoreText = item?.averaged_exit_score == null ? "n/a" : `${Number(item.averaged_exit_score).toFixed(1)}`;
+  const contextScoreText = formatScore(item?.context_score);
+  const profitabilityContextText = `${formatScore(item?.profitability_context_score)} · ${formatContextLabel(item?.profitability_context_label)}`;
+  const sectorContextText = `${formatScore(item?.sector_context_score)} · ${formatContextLabel(item?.sector_context_label)}`;
+  const marketCapContextText = `${formatScore(item?.market_cap_context_score)} · ${formatContextLabel(item?.market_cap_context_label)}`;
+  const smallMidMomentumText = formatScore(item?.small_mid_momentum_score);
+  const catalystContextText = `${formatScore(item?.catalyst_context_score)} · ${formatContextLabel(item?.catalyst_context_label)}`;
+  const seasonalityContextText = `${formatScore(item?.seasonality_context_score)} · ${formatContextLabel(item?.seasonality_context_label)}`;
+  const themeCrowdingText = `${formatScore(item?.theme_crowding_score)} · ${formatContextLabel(item?.theme_crowding_label)}`;
+  const contextSummaryText = String(item?.context_summary || "Context diagnostics unavailable.").trim();
   const rankStableText = stableState || (scoreOrNull(item?.stable_age_seconds) ? "stable" : "new");
   const confidenceText = confidence == null ? "calculating" : `${confidence.toFixed(1)}%`;
   const pnlPctRaw = Number(item?.pnl_percent ?? item?.unrealized_pnl_percent ?? item?.pnl_pct ?? 0);
@@ -398,6 +417,15 @@ export default function TickerCard({
               <div>Sell Zone: {String(item?.recommended_sell_zone || "n/a").replaceAll("_", " ")}</div>
               <div>Multi-Brain Consensus: {item?.multi_brain_agreement ?? item?.multi_brain_score ?? "n/a"}</div>
               <div>Psychology Brain: {item?.psychology_score ?? "n/a"}</div>
+              <div>Context Score: {contextScoreText} · {formatContextLabel(item?.context_label)}</div>
+              <div>Profitability Context: {profitabilityContextText}</div>
+              <div>Sector Context: {sectorContextText}</div>
+              <div>Market-Cap Context: {marketCapContextText}</div>
+              <div>Small/Mid Momentum: {smallMidMomentumText}</div>
+              <div>Catalyst Context: {catalystContextText}</div>
+              <div>Seasonality: {seasonalityContextText}</div>
+              <div>Theme Crowding: {themeCrowdingText}</div>
+              <div>Context Summary: {contextSummaryText}</div>
               <div>Rank Stability: {rankStableText}</div>
               <div>Appearance 5R/10R/20R: {item?.appearance_count_5r ?? "n/a"} / {item?.appearance_count_10r ?? "n/a"} / {item?.appearance_count_20r ?? "n/a"}</div>
               <div>Average Rank: {item?.average_rank ?? item?.avg_rank_10r ?? "n/a"}</div>
