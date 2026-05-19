@@ -24,6 +24,14 @@ log_info() {
   echo "[start_astra_persistent] $*"
 }
 
+log_boundary() {
+  local now
+  now="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  mkdir -p "${STATE_DIR}"
+  echo "=== start_astra_persistent ${now} ===" >> "${STATE_DIR}/backend.log"
+  echo "=== start_astra_persistent ${now} ===" >> "${STATE_DIR}/watchdog.log"
+}
+
 is_port_listening() {
   local port="$1"
   if ! command -v lsof >/dev/null 2>&1; then
@@ -103,6 +111,12 @@ kill_port_listeners "${BACKEND_PORT}"
 kill_port_listeners 5173
 kill_port_listeners 5174
 kill_port_listeners 5175
+sleep 0.4
+if is_port_listening "${BACKEND_PORT}" || is_port_listening "${FRONTEND_PORT}"; then
+  log_info "ports still busy after cleanup (backend=${BACKEND_PORT}, frontend=${FRONTEND_PORT}); aborting start"
+  exit 1
+fi
+log_boundary
 
 tmux new-session -d -s "${BACKEND_SESSION}" \
   "cd '${ROOT_DIR}' && ASTRA_BACKEND_HOST='${BACKEND_HOST}' ASTRA_BACKEND_PORT='${BACKEND_PORT}' ASTRA_REMOTE_MODE='${ASTRA_REMOTE_MODE:-0}' bash '${ROOT_DIR}/start_astra_backend.sh'"

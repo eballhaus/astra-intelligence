@@ -8,6 +8,7 @@ BACKEND_SESSION="${ASTRA_BACKEND_TMUX_SESSION:-astra_backend}"
 FRONTEND_SESSION="${ASTRA_FRONTEND_TMUX_SESSION:-astra_frontend}"
 
 WATCHDOG_PID_FILE="${STATE_DIR}/backend_watchdog.pid"
+WATCHDOG_LOCK_FILE="${STATE_DIR}/backend_watchdog.lock"
 UVICORN_PID_FILE="${STATE_DIR}/uvicorn.pid"
 PAPER_WORKER_PID_FILE="${STATE_DIR}/paper_worker.pid"
 WATCHDOG_HEARTBEAT_FILE="${STATE_DIR}/backend_watchdog_heartbeat"
@@ -31,7 +32,20 @@ safe_kill_pid() {
     return 0
   fi
   kill "${pid}" >/dev/null 2>&1 || true
-  log_info "kill attempted for pid=${pid}"
+  local i
+  for i in 1 2 3 4 5; do
+    if ! kill -0 "${pid}" >/dev/null 2>&1; then
+      log_info "pid exited after TERM pid=${pid}"
+      return 0
+    fi
+    sleep 0.2
+  done
+  kill -9 "${pid}" >/dev/null 2>&1 || true
+  if ! kill -0 "${pid}" >/dev/null 2>&1; then
+    log_info "pid exited after KILL pid=${pid}"
+  else
+    log_info "pid still alive after KILL attempt pid=${pid}"
+  fi
 }
 
 read_pid() {
@@ -110,18 +124,20 @@ safe_kill_pid "$(read_pid "${PAPER_WORKER_PID_FILE}")"
 
 # Conservative fallback: target only canonical Astra runtime patterns.
 pkill -f "uvicorn server:app --host .* --port 8000" >/dev/null 2>&1 || true
+pkill -f "python.*-m uvicorn.*server:app.*--port 8000" >/dev/null 2>&1 || true
+pkill -f "start_astra_backend.sh" >/dev/null 2>&1 || true
 pkill -f "engine.paper_worker" >/dev/null 2>&1 || true
 pkill -f "npm run dev -- --host .* --port 5173" >/dev/null 2>&1 || true
 if command -v lsof >/dev/null 2>&1; then
   for port in 5173 5174 5175 8000; do
     for pid in $(lsof -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true); do
-      kill "${pid}" >/dev/null 2>&1 || true
+      safe_kill_pid "${pid}"
     done
   done
 fi
 log_info "fallback pkill patterns applied (non-fatal)"
 
-rm -f "${WATCHDOG_PID_FILE}" "${UVICORN_PID_FILE}" "${PAPER_WORKER_PID_FILE}" "${WATCHDOG_HEARTBEAT_FILE}"
+rm -f "${WATCHDOG_PID_FILE}" "${WATCHDOG_LOCK_FILE}" "${UVICORN_PID_FILE}" "${PAPER_WORKER_PID_FILE}" "${WATCHDOG_HEARTBEAT_FILE}"
 
 log_info "removed canonical pid/heartbeat files"
 log_info "stopped canonical Astra tmux sessions/processes."

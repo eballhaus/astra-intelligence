@@ -6,6 +6,7 @@ STATE_DIR="${ROOT_DIR}/state"
 VENV_PY="${ROOT_DIR}/venv/bin/python"
 
 WATCHDOG_PID_FILE="${STATE_DIR}/backend_watchdog.pid"
+WATCHDOG_LOCK_FILE="${STATE_DIR}/backend_watchdog.lock"
 WATCHDOG_HEARTBEAT_FILE="${STATE_DIR}/backend_watchdog_heartbeat"
 WATCHDOG_LOG_FILE="${STATE_DIR}/watchdog.log"
 RUNTIME_HEALTH_LOG_FILE="${STATE_DIR}/runtime_health.log"
@@ -42,6 +43,18 @@ log_watchdog() {
   echo "[${now}] $*" >> "${WATCHDOG_LOG_FILE}"
 }
 
+acquire_watchdog_lock() {
+  exec 9>"${WATCHDOG_LOCK_FILE}"
+  if ! command -v flock >/dev/null 2>&1; then
+    # Fallback: without flock we still run, but canonical environments should have it.
+    return 0
+  fi
+  if ! flock -n 9; then
+    log_watchdog "another watchdog instance is already active; exiting"
+    exit 0
+  fi
+}
+
 log_runtime_health() {
   local now backend_pid backend_alive worker_pid worker_alive frontend_alive
   now="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
@@ -56,6 +69,17 @@ log_runtime_health() {
 is_pid_alive() {
   local pid="${1:-}"
   [[ -n "${pid}" ]] && [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" >/dev/null 2>&1
+}
+
+pid_matches_pattern() {
+  local pid="${1:-}"
+  local pattern="${2:-}"
+  [[ -n "${pid}" ]] && [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+  [[ -n "${pattern}" ]] || return 1
+  local cmdline
+  cmdline="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+  [[ -n "${cmdline}" ]] || return 1
+  [[ "${cmdline}" == *"${pattern}"* ]]
 }
 
 backend_listener_pid() {
@@ -139,7 +163,7 @@ start_uvicorn() {
     "${cmd[@]}" >> "${BACKEND_LOG_FILE}" 2>&1
   ) &
   local launcher_pid="$!"
-  echo "${launcher_pid}" > "${UVICORN_PID_FILE}"
+  printf '{"pid":%s,"role":"uvicorn","source":"launcher","ts":"%s"}\n' "${launcher_pid}" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" > "${UVICORN_PID_FILE}"
 
   local listener_pid=""
   if command -v lsof >/dev/null 2>&1; then
@@ -147,7 +171,7 @@ start_uvicorn() {
   fi
 
   if [[ -n "${listener_pid}" ]] && [[ "${listener_pid}" =~ ^[0-9]+$ ]]; then
-    echo "${listener_pid}" > "${UVICORN_PID_FILE}"
+    printf '{"pid":%s,"role":"uvicorn","source":"listener","ts":"%s"}\n' "${listener_pid}" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" > "${UVICORN_PID_FILE}"
     log_watchdog "uvicorn started launcher_pid=${launcher_pid} listener_pid=${listener_pid} cmd='${cmd[*]}'"
   else
     log_watchdog "uvicorn started launcher_pid=${launcher_pid} listener_pid=unresolved cmd='${cmd[*]}'"
@@ -161,9 +185,12 @@ start_paper_worker_if_available() {
 
   local old_pid
   old_pid="$(read_pid_file "${PAPER_WORKER_PID_FILE}")"
-  if is_pid_alive "${old_pid}"; then
+  if is_pid_alive "${old_pid}" && pid_matches_pattern "${old_pid}" "engine.paper_worker"; then
     log_watchdog "paper_worker pid file detected running pid=${old_pid}; no restart"
     return 0
+  fi
+  if is_pid_alive "${old_pid}" && ! pid_matches_pattern "${old_pid}" "engine.paper_worker"; then
+    log_watchdog "paper_worker pid file pointed to non-worker pid=${old_pid}; replacing"
   fi
 
   (
@@ -171,7 +198,7 @@ start_paper_worker_if_available() {
     "${PYTHON_BIN}" -m engine.paper_worker >> "${PAPER_WORKER_LOG_FILE}" 2>&1
   ) &
   local worker_pid="$!"
-  echo "${worker_pid}" > "${PAPER_WORKER_PID_FILE}"
+  printf '{"pid":%s,"role":"paper_worker","source":"launcher","ts":"%s"}\n' "${worker_pid}" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" > "${PAPER_WORKER_PID_FILE}"
   log_watchdog "paper_worker started launcher_pid=${worker_pid}"
 }
 
@@ -184,16 +211,21 @@ cleanup_on_exit() {
 trap cleanup_on_exit EXIT
 
 echo "$$" > "${WATCHDOG_PID_FILE}"
+acquire_watchdog_lock
 log_watchdog "backend watchdog started pid=$$"
 
 while true; do
   date -u +'%Y-%m-%dT%H:%M:%SZ' > "${WATCHDOG_HEARTBEAT_FILE}" || true
 
   uvicorn_pid="$(read_pid_file "${UVICORN_PID_FILE}")"
+  if is_pid_alive "${uvicorn_pid}" && ! pid_matches_pattern "${uvicorn_pid}" "uvicorn"; then
+    log_watchdog "uvicorn pid file pointed to non-uvicorn pid=${uvicorn_pid}; treating as stale"
+    uvicorn_pid=""
+  fi
   if ! is_pid_alive "${uvicorn_pid}"; then
     listener_pid="$(backend_listener_pid)"
-    if is_pid_alive "${listener_pid}"; then
-      echo "${listener_pid}" > "${UVICORN_PID_FILE}"
+    if is_pid_alive "${listener_pid}" && pid_matches_pattern "${listener_pid}" "uvicorn"; then
+      printf '{"pid":%s,"role":"uvicorn","source":"listener_adopt","ts":"%s"}\n' "${listener_pid}" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" > "${UVICORN_PID_FILE}"
       log_watchdog "uvicorn pid file stale (${uvicorn_pid:-none}); listener pid=${listener_pid} adopted"
       uvicorn_pid="${listener_pid}"
     fi
