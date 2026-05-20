@@ -148,6 +148,7 @@ export default function LearningTab({ compact = false }) {
     topBuys: {},
     systemStatus: {},
     portfolioRiskIntel: {},
+    observationThroughput: {},
   });
   const refreshInFlightRef = useRef(false);
 
@@ -223,6 +224,7 @@ export default function LearningTab({ compact = false }) {
           fetchJson("paper_worker_status", "/api/paper_worker_status", {}, { timeoutMs: 10000 }),
           fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, { timeoutMs: 15000 }),
           fetchJson("portfolio_risk_intel", "/api/portfolio_risk_intelligence_status_v1", {}, { timeoutMs: 8000 }),
+          fetchJson("observation_throughput", "/api/observation_learning_throughput_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
         ]);
         secondaryResults.push(...secondaryBatch);
@@ -274,6 +276,7 @@ export default function LearningTab({ compact = false }) {
         const model = selectPayload("model_status", prevSafe.model);
         const topBuys = selectPayload("top_buys", prevSafe.topBuys);
         const portfolioRiskIntel = selectPayload("portfolio_risk_intel", prevSafe.portfolioRiskIntel);
+        const observationThroughput = selectPayload("observation_throughput", prevSafe.observationThroughput);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
         const learningSnapshotFast = selectPayload("learning_snapshot_fast_v1", prevSafe.learningSnapshotFast);
         const learningCandidate = selectPayload("learning_insights", prevSafe.learningInsights);
@@ -404,6 +407,7 @@ export default function LearningTab({ compact = false }) {
           topBuys,
           systemStatus,
           portfolioRiskIntel,
+          observationThroughput,
         };
       });
     };
@@ -427,6 +431,7 @@ export default function LearningTab({ compact = false }) {
   const topBuys = data.topBuys || {};
   const systemStatus = data.systemStatus || {};
   const portfolioRiskIntel = data.portfolioRiskIntel || {};
+  const observationThroughput = data.observationThroughput || {};
 
   const paperOutcome = paper?.paper_outcome_summary?.combined || {};
   const paperCohort = paper?.paper_cohort_trends || {};
@@ -1964,6 +1969,28 @@ export default function LearningTab({ compact = false }) {
               <Bar dataKey="value" fill="#38bdf8" name="Score" />
             </BarChart>
           </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Observation & Learning Throughput</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Trades opened today: {safeNumber(observationThroughput?.trades_opened_today).toFixed(0)}</div>
+          <div>Trades closed today: {safeNumber(observationThroughput?.trades_closed_today).toFixed(0)}</div>
+          <div>Labels created today: {safeNumber(observationThroughput?.labels_created_today).toFixed(0)}</div>
+          <div>Observation completion: {safeNumber(observationThroughput?.observation_completion_score).toFixed(1)}</div>
+          <div>Learning throughput: {safeNumber(observationThroughput?.learning_throughput_score).toFixed(1)}</div>
+          <div>Completed coverage: {safeNumber(observationThroughput?.completed_trade_coverage_pct).toFixed(1)}%</div>
+          <div>
+            Average time to close: {firstFiniteOrNull(observationThroughput?.average_time_to_close_hours) === null
+              ? "n/a"
+              : `${safeNumber(observationThroughput?.average_time_to_close_hours).toFixed(2)}h`}
+          </div>
+          <div>Primary bottleneck: {String(observationThroughput?.primary_learning_bottleneck || "waiting_for_data").replaceAll("_", " ")}</div>
+          <div>API calls used: {safeNumber(observationThroughput?.api_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Recommendation: {String(observationThroughput?.throughput_recommendation_summary || "Waiting for observation throughput diagnostics.")}
+          </div>
         </div>
       </div>
 

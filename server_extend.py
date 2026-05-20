@@ -208,6 +208,34 @@ except Exception:
                 "next_recommended_action": "inspect_portfolio_risk_intelligence_import",
             }
 try:
+    from engine.observation_learning_throughput_suite_v1 import ObservationLearningThroughputSuiteV1
+except Exception:
+    class ObservationLearningThroughputSuiteV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "observation_learning_throughput_status_v1": True,
+                "trades_opened_today": 0,
+                "trades_closed_today": 0,
+                "labels_created_today": 0,
+                "observation_completion_score": 0.0,
+                "learning_throughput_score": 0.0,
+                "observation_intelligence_score": 0.0,
+                "average_time_to_close_hours": None,
+                "completed_trade_coverage_pct": 0.0,
+                "primary_learning_bottleneck": "suite_import_unavailable",
+                "throughput_recommendation_summary": "Inspect observation learning throughput suite import.",
+            }
+try:
     from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
 except Exception:
     class _AlpacaWSMonitorFallback:
@@ -291,6 +319,7 @@ POLICY_BACKTEST_ENGINE = PolicyBacktestEngine(state_dir=STATE)
 LEARNING_DATA_QUALITY_MONITOR = LearningDataQualityMonitor(state_dir=STATE)
 SELF_CORRECTION_CONTROLLER = SelfCorrectionController(state_dir=STATE)
 PORTFOLIO_RISK_INTELLIGENCE_SUITE = PortfolioRiskIntelligenceSuiteV1(state_dir=STATE)
+OBSERVATION_LEARNING_THROUGHPUT_SUITE = ObservationLearningThroughputSuiteV1(state_dir=STATE)
 FMP_USAGE_STATE_PATH = os.path.join(STATE, "fmp_usage_state.json")
 FMP_CACHE_INDEX_PATH = os.path.join(STATE, "fmp_cache_index.json")
 API_USAGE_GOVERNOR_PATH = os.path.join(STATE, "api_usage_governor.json")
@@ -28698,6 +28727,60 @@ def portfolio_risk_intelligence_status_v1():
         }
 
 
+@router.get("/api/observation_learning_throughput_status_v1")
+def observation_learning_throughput_status_v1():
+    try:
+        out = OBSERVATION_LEARNING_THROUGHPUT_SUITE.status()
+        if isinstance(out, dict):
+            out["observation_learning_throughput_status_v1"] = True
+            out["api_calls_used"] = 0
+            out["live_trading_changed"] = False
+            out["broker_execution_changed"] = False
+            out["production_rankings_changed"] = False
+            out["production_weights_changed"] = False
+            out["paper_trading_changed"] = False
+            out["forced_early_exits"] = False
+            return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_execution_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "forced_early_exits": False,
+            "observation_learning_throughput_status_v1": True,
+            "trades_opened_today": 0,
+            "trades_closed_today": 0,
+            "labels_created_today": 0,
+            "observation_completion_score": 0.0,
+            "learning_throughput_score": 0.0,
+            "observation_intelligence_score": 0.0,
+            "average_time_to_close_hours": None,
+            "completed_trade_coverage_pct": 0.0,
+            "primary_learning_bottleneck": "status_error",
+            "throughput_recommendation_summary": f"Observation throughput status unavailable: {str(exc)[:140]}",
+        }
+    return {
+        "enabled": False,
+        "version": "1.0.0",
+        "mode": "shadow_only",
+        "local_only": True,
+        "writes_files": False,
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+        "observation_learning_throughput_status_v1": True,
+        "primary_learning_bottleneck": "empty_status",
+        "throughput_recommendation_summary": "Observation throughput status returned no payload.",
+    }
+
+
 @router.get("/api/self_correction_recommendations_v1")
 def self_correction_recommendations_v1(force_refresh: bool = Query(False)):
     try:
@@ -43941,6 +44024,15 @@ def learning_snapshot_fast_v1():
             if isinstance(last_good, dict) and last_good:
                 payload = dict(last_good)
         snap = _learning_snapshot_fast_from_payload(payload)
+        try:
+            obs = OBSERVATION_LEARNING_THROUGHPUT_SUITE.status()
+        except Exception:
+            obs = {}
+        if isinstance(obs, dict):
+            snap["observation_learning_throughput"] = obs
+            snap["observation_completion_score"] = _to_float(obs.get("observation_completion_score"), 0.0)
+            snap["learning_throughput_score"] = _to_float(obs.get("learning_throughput_score"), 0.0)
+            snap["primary_learning_bottleneck"] = str(obs.get("primary_learning_bottleneck") or "")
         snap["ok"] = True
         snap["source"] = str((payload or {}).get("learning_payload_source") or ("learning_insights_last_good" if payload else "empty_fallback"))
         return snap
