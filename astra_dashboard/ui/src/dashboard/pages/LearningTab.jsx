@@ -147,6 +147,7 @@ export default function LearningTab({ compact = false }) {
     model: {},
     topBuys: {},
     systemStatus: {},
+    portfolioRiskIntel: {},
   });
   const refreshInFlightRef = useRef(false);
 
@@ -221,6 +222,7 @@ export default function LearningTab({ compact = false }) {
           fetchJson("model_status", "/api/model_status", {}, { timeoutMs: 10000 }),
           fetchJson("paper_worker_status", "/api/paper_worker_status", {}, { timeoutMs: 10000 }),
           fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, { timeoutMs: 15000 }),
+          fetchJson("portfolio_risk_intel", "/api/portfolio_risk_intelligence_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
         ]);
         secondaryResults.push(...secondaryBatch);
@@ -271,6 +273,7 @@ export default function LearningTab({ compact = false }) {
         const workerStatus = selectPayload("paper_worker_status", prevSafe.workerStatus);
         const model = selectPayload("model_status", prevSafe.model);
         const topBuys = selectPayload("top_buys", prevSafe.topBuys);
+        const portfolioRiskIntel = selectPayload("portfolio_risk_intel", prevSafe.portfolioRiskIntel);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
         const learningSnapshotFast = selectPayload("learning_snapshot_fast_v1", prevSafe.learningSnapshotFast);
         const learningCandidate = selectPayload("learning_insights", prevSafe.learningInsights);
@@ -400,6 +403,7 @@ export default function LearningTab({ compact = false }) {
           model,
           topBuys,
           systemStatus,
+          portfolioRiskIntel,
         };
       });
     };
@@ -422,6 +426,7 @@ export default function LearningTab({ compact = false }) {
   const model = data.model || {};
   const topBuys = data.topBuys || {};
   const systemStatus = data.systemStatus || {};
+  const portfolioRiskIntel = data.portfolioRiskIntel || {};
 
   const paperOutcome = paper?.paper_outcome_summary?.combined || {};
   const paperCohort = paper?.paper_cohort_trends || {};
@@ -1985,6 +1990,19 @@ export default function LearningTab({ compact = false }) {
 
       {showAdvancedSections ? (
       <>
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Portfolio & Risk Intelligence Suite V1</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Average position size: {safeNumber(portfolioRiskIntel?.average_recommended_position_size_pct).toFixed(1)}%</div>
+          <div>Average portfolio risk: {safeNumber(portfolioRiskIntel?.average_portfolio_risk_score).toFixed(1)}</div>
+          <div>Average capital allocation: {safeNumber(portfolioRiskIntel?.average_capital_allocation_score).toFixed(1)}</div>
+          <div>Highest correlation risk: {safeNumber(portfolioRiskIntel?.highest_correlation_risk).toFixed(1)}</div>
+          <div>Highest concentration risk: {safeNumber(portfolioRiskIntel?.highest_concentration_risk).toFixed(1)}</div>
+          <div>Candidates evaluated: {safeNumber(portfolioRiskIntel?.candidates_evaluated).toFixed(0)}</div>
+          <div>Mode: {String(portfolioRiskIntel?.mode || "shadow_only").replaceAll("_", " ")}</div>
+          <div>API calls used: {safeNumber(portfolioRiskIntel?.api_calls_used).toFixed(0)}</div>
+        </div>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "12px" }}>
         <div style={{ ...panelStyle }}>
           <h3 style={{ marginTop: 0 }}>Hard vs Soft Buy Performance</h3>

@@ -94,6 +94,11 @@ function qualityColor(score) {
   return "#b14450";
 }
 
+function fmtValue(value, fallback = "n/a", digits = 1) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(digits) : fallback;
+}
+
 export default function TickerCard({
   item,
   context = "default",
@@ -171,6 +176,15 @@ export default function TickerCard({
   const pnlPctRaw = Number(item?.pnl_percent ?? item?.unrealized_pnl_percent ?? item?.pnl_pct ?? 0);
   const pnlPctText = Number.isFinite(pnlPctRaw) ? `${pnlPctRaw >= 0 ? "+" : ""}${pnlPctRaw.toFixed(2)}%` : "0.00%";
   const positionNote = String(item?.management_note || item?.position_note || item?.sell_note || item?.rationale || "").trim();
+  const recommendedPositionSizeText = Number.isFinite(Number(item?.recommended_position_size_pct))
+    ? `${Number(item.recommended_position_size_pct).toFixed(1)}%`
+    : "n/a";
+  const portfolioRiskScoreText = `${fmtValue(item?.portfolio_risk_score)} (${String(item?.portfolio_risk_label || "n/a").replaceAll("_", " ")})`;
+  const capitalAllocationText = `${fmtValue(item?.capital_allocation_score)} (${String(item?.capital_allocation_label || "n/a").replaceAll("_", " ")})`;
+  const correlationRiskText = `${fmtValue(item?.correlation_risk_score)} (${String(item?.correlation_risk_label || "n/a").replaceAll("_", " ")})`;
+  const concentrationRiskText = `${fmtValue(item?.concentration_score)} (${String(item?.concentration_label || "n/a").replaceAll("_", " ")})`;
+  const drawdownRiskText = `${fmtValue(item?.drawdown_risk_score)} (${String(item?.drawdown_risk_label || "n/a").replaceAll("_", " ")})`;
+  const portfolioRiskSummaryText = String(item?.portfolio_risk_summary || "Portfolio risk diagnostics unavailable.");
 
   const actionText = positionState === "working" ? "Adding..." : positionState === "added" ? "Added" : positionState === "failed" ? "Retry Add" : "Add to Positions";
   const removeText = removeState === "working" ? "Removing..." : removeState === "failed" ? "Retry Remove" : "Remove";
@@ -325,6 +339,13 @@ export default function TickerCard({
               <div>Paper-ready Rate 10R: {item?.paper_ready_rate_10r == null ? "n/a" : `${Number(item.paper_ready_rate_10r).toFixed(2)}%`}</div>
               <div>Rank Stability 10R: {item?.rank_stability_10r ?? "n/a"}</div>
               <div>Window Status: {item?.conviction_window_status ?? "n/a"}</div>
+              <div>Recommended Position Size: {recommendedPositionSizeText}</div>
+              <div>Portfolio Risk Score: {portfolioRiskScoreText}</div>
+              <div>Capital Allocation: {capitalAllocationText}</div>
+              <div>Correlation Risk: {correlationRiskText}</div>
+              <div>Concentration Risk: {concentrationRiskText}</div>
+              <div>Drawdown Risk: {drawdownRiskText}</div>
+              <div>Portfolio Risk Summary: {portfolioRiskSummaryText}</div>
             </div>
           </details>
           {intelligenceText ? (

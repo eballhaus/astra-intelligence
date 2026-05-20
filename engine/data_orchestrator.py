@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import os
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from datetime import UTC, datetime
 from typing import Iterable
 
@@ -20,6 +21,14 @@ try:
     _TEMP_DISCOVERY_CACHE_AGE = max(10.0, float(os.getenv("ASTRA_TEMP_DISCOVERY_CACHE_MAX_AGE_SECONDS", "45")))
 except Exception:
     _TEMP_DISCOVERY_CACHE_AGE = 45.0
+try:
+    _RANKING_FETCH_WORKERS = max(1, min(8, int(float(os.getenv("ASTRA_RANKING_FETCH_WORKERS", "6")))))
+except Exception:
+    _RANKING_FETCH_WORKERS = 6
+try:
+    _RANKING_FETCH_DEADLINE_SECONDS = max(3.0, min(18.0, float(os.getenv("ASTRA_RANKING_FETCH_DEADLINE_SECONDS", "10"))))
+except Exception:
+    _RANKING_FETCH_DEADLINE_SECONDS = 10.0
 _RANKING_META = {
     "skip_reasons_counts": {},
     "provider_attempt_count_by_provider": {},
@@ -81,6 +90,77 @@ def _normalize_symbols(symbols: Iterable[str] | None) -> list[str]:
     return out
 
 
+def _quote_to_rank_row(sym: str, quote: dict, asset_type: str, now_iso: str) -> tuple[dict | None, dict]:
+    attempted = [str(p or "").upper() for p in (quote.get("attempted_providers") or []) if str(p or "").strip()]
+    provider_used = str(quote.get("provider_used") or "none").upper()
+    reason = str(quote.get("data_unavailable_reason") or "")
+    price = _safe_float(quote.get("price"), 0.0)
+    prev_close = _safe_float(quote.get("prev_close"), 0.0)
+    valid_quote = bool(quote.get("valid_quote", False) and price > 0)
+    meta = {
+        "symbol": sym,
+        "asset_type": asset_type,
+        "attempted": attempted,
+        "provider_used": provider_used,
+        "reason": reason,
+        "valid_quote": valid_quote,
+    }
+    if not valid_quote:
+        return None, meta
+
+    momentum_weight, volatility_factor = _momentum_and_volatility(price, prev_close)
+    intel = _ranker.evaluate_symbol(
+        symbol=sym,
+        price=price,
+        provider_agreement=_safe_float(quote.get("provider_agreement"), 0.0),
+        volatility_factor=volatility_factor,
+        momentum_weight=momentum_weight,
+    )
+    row = dict(intel or {})
+    row.update(
+        {
+            "symbol": sym,
+            "asset_type": asset_type,
+            "price": price,
+            "prev_close": prev_close,
+            "previous_close": _safe_float(quote.get("previous_close"), prev_close),
+            "open": _safe_float(quote.get("open"), 0.0),
+            "high": _safe_float(quote.get("high"), 0.0),
+            "low": _safe_float(quote.get("low"), 0.0),
+            "volume": _safe_float(quote.get("volume"), 0.0),
+            "change": _safe_float(quote.get("change"), 0.0),
+            "change_percent": _safe_float(quote.get("change_percent"), 0.0),
+            "change_pct": round(((price / prev_close) - 1.0) * 100.0, 4) if prev_close > 0 else 0.0,
+            "provider_used": provider_used.lower() if provider_used and provider_used != "NONE" else "none",
+            "provider_agreement": round(_safe_float(quote.get("provider_agreement"), 0.0), 4),
+            "provider_name": str(quote.get("provider_name") or provider_used),
+            "provider_confidence": _safe_float(quote.get("provider_confidence"), 0.0),
+            "data_quality_score": _safe_float(quote.get("data_quality_score"), 0.0),
+            "quote_quality": str(quote.get("quote_quality") or ("live" if not quote.get("cache_hit") else "cached")),
+            "quote_age_seconds": round(_safe_float(quote.get("quote_age_seconds"), 0.0), 2),
+            "freshness_seconds": round(_safe_float(quote.get("freshness_seconds"), _safe_float(quote.get("quote_age_seconds"), 0.0)), 2),
+            "quote_timestamp": quote.get("quote_timestamp"),
+            "quote_enriched": bool(quote.get("quote_enriched", False)),
+            "quote_enrichment_sources": list(quote.get("quote_enrichment_sources") or []),
+            "enriched_previous_close_source": str(quote.get("enriched_previous_close_source") or ""),
+            "enriched_volume_source": str(quote.get("enriched_volume_source") or ""),
+            "enriched_history_source": str(quote.get("enriched_history_source") or ""),
+            "enriched_signal_ready": bool(quote.get("enriched_signal_ready", False)),
+            "enriched_signal_limitations": list(quote.get("enriched_signal_limitations") or []),
+            "valid_quote": True,
+            "trusted_quote_for_buys": True,
+            "live_buy_universe": bool(asset_type == "stock"),
+            "data_unavailable_reason": None,
+            "provider_attempt_count": int(quote.get("provider_attempt_count", len(attempted)) or 0),
+            "provider_success_count": int(quote.get("provider_success_count", 1) or 0),
+            "attempted_providers": attempted,
+            "action": row.get("action") or row.get("prediction") or "Hold",
+            "timestamp": now_iso,
+        }
+    )
+    return row, meta
+
+
 def fetch_live_data(symbols=None):
     symbol_list = _normalize_symbols(symbols)
     if not symbol_list:
@@ -114,40 +194,42 @@ def fetch_live_data(symbols=None):
     crypto_valid_quotes = 0
     tier1 = {"FMP", "FINNHUB", "TWELVEDATA", "POLYGON"}
 
-    for sym in symbol_list:
+    def _fetch_symbol(sym: str) -> tuple[dict | None, dict]:
         asset_type = "crypto" if _is_crypto(sym) else "stock"
-        if asset_type == "stock":
-            stock_universe += 1
-
         quote = _router.get_quote(
             sym,
             asset_type=asset_type,
             batch_id=cycle_id,
-            use_selective_backups=True,
+            use_selective_backups=False,
             cache_max_age_seconds=_TEMP_DISCOVERY_CACHE_AGE if _TEMP_STRATEGY_ENABLED else None,
         )
-        attempted = [str(p or "").upper() for p in (quote.get("attempted_providers") or []) if str(p or "").strip()]
+        return _quote_to_rank_row(sym, quote, asset_type, now_iso)
+
+    def _record_result(row: dict | None, meta: dict) -> None:
+        nonlocal stock_universe, stock_valid_quotes, crypto_valid_quotes
+        asset_type = str(meta.get("asset_type") or "stock")
+        if asset_type == "stock":
+            stock_universe += 1
+        attempted = list(meta.get("attempted") or [])
+        provider_used = str(meta.get("provider_used") or "none").upper()
+        reason = str(meta.get("reason") or "")
+        valid_quote = bool(meta.get("valid_quote", False))
         for provider in attempted:
             provider_attempts[provider] += 1
             if provider in tier1:
                 tier1_attempts[provider] += 1
 
-        provider_used = str(quote.get("provider_used") or "none").upper()
         if provider_used and provider_used != "NONE":
             provider_activity[provider_used] += 1
-        reason = str(quote.get("data_unavailable_reason") or "")
         if "rate" in reason.lower() and "limit" in reason.lower():
             if provider_used and provider_used != "NONE":
                 rate_limited.add(provider_used)
             if attempted:
                 rate_limited.update([p for p in attempted if p])
 
-        price = _safe_float(quote.get("price"), 0.0)
-        prev_close = _safe_float(quote.get("prev_close"), 0.0)
-        valid_quote = bool(quote.get("valid_quote", False) and price > 0)
         if not valid_quote:
             skip_reasons[reason or "invalid_quote"] += 1
-            continue
+            return
         if provider_used and provider_used != "NONE":
             provider_success[provider_used] += 1
         if asset_type == "stock":
@@ -155,57 +237,46 @@ def fetch_live_data(symbols=None):
         else:
             crypto_valid_quotes += 1
 
-        momentum_weight, volatility_factor = _momentum_and_volatility(price, prev_close)
-        intel = _ranker.evaluate_symbol(
-            symbol=sym,
-            price=price,
-            provider_agreement=_safe_float(quote.get("provider_agreement"), 0.0),
-            volatility_factor=volatility_factor,
-            momentum_weight=momentum_weight,
-        )
-        row = dict(intel or {})
-        row.update(
-            {
-                "symbol": sym,
-                "asset_type": asset_type,
-                "price": price,
-                "prev_close": prev_close,
-                "previous_close": _safe_float(quote.get("previous_close"), prev_close),
-                "open": _safe_float(quote.get("open"), 0.0),
-                "high": _safe_float(quote.get("high"), 0.0),
-                "low": _safe_float(quote.get("low"), 0.0),
-                "volume": _safe_float(quote.get("volume"), 0.0),
-                "change": _safe_float(quote.get("change"), 0.0),
-                "change_percent": _safe_float(quote.get("change_percent"), 0.0),
-                "change_pct": round(((price / prev_close) - 1.0) * 100.0, 4) if prev_close > 0 else 0.0,
-                "provider_used": provider_used.lower() if provider_used and provider_used != "NONE" else "none",
-                "provider_agreement": round(_safe_float(quote.get("provider_agreement"), 0.0), 4),
-                "provider_name": str(quote.get("provider_name") or provider_used),
-                "provider_confidence": _safe_float(quote.get("provider_confidence"), 0.0),
-                "data_quality_score": _safe_float(quote.get("data_quality_score"), 0.0),
-                "quote_quality": str(quote.get("quote_quality") or ("live" if not quote.get("cache_hit") else "cached")),
-                "quote_age_seconds": round(_safe_float(quote.get("quote_age_seconds"), 0.0), 2),
-                "freshness_seconds": round(_safe_float(quote.get("freshness_seconds"), _safe_float(quote.get("quote_age_seconds"), 0.0)), 2),
-                "quote_timestamp": quote.get("quote_timestamp"),
-                "quote_enriched": bool(quote.get("quote_enriched", False)),
-                "quote_enrichment_sources": list(quote.get("quote_enrichment_sources") or []),
-                "enriched_previous_close_source": str(quote.get("enriched_previous_close_source") or ""),
-                "enriched_volume_source": str(quote.get("enriched_volume_source") or ""),
-                "enriched_history_source": str(quote.get("enriched_history_source") or ""),
-                "enriched_signal_ready": bool(quote.get("enriched_signal_ready", False)),
-                "enriched_signal_limitations": list(quote.get("enriched_signal_limitations") or []),
-                "valid_quote": True,
-                "trusted_quote_for_buys": True,
-                "live_buy_universe": bool(asset_type == "stock"),
-                "data_unavailable_reason": None,
-                "provider_attempt_count": int(quote.get("provider_attempt_count", len(attempted)) or 0),
-                "provider_success_count": int(quote.get("provider_success_count", 1) or 0),
-                "attempted_providers": attempted,
-                "action": row.get("action") or row.get("prediction") or "Hold",
-                "timestamp": now_iso,
-            }
-        )
-        rows.append(row)
+        if row:
+            rows.append(row)
+
+    worker_count = min(_RANKING_FETCH_WORKERS, max(1, len(symbol_list)))
+    pool = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="astra-rank-quote")
+    futures = {pool.submit(_fetch_symbol, sym): sym for sym in symbol_list}
+    try:
+        for fut in as_completed(futures, timeout=_RANKING_FETCH_DEADLINE_SECONDS):
+            try:
+                row, meta = fut.result(timeout=0.05)
+            except Exception as exc:
+                sym = futures.get(fut, "")
+                meta = {
+                    "symbol": sym,
+                    "asset_type": "crypto" if _is_crypto(sym) else "stock",
+                    "attempted": [],
+                    "provider_used": "NONE",
+                    "reason": f"quote_fetch_exception:{str(exc)[:80]}",
+                    "valid_quote": False,
+                }
+                row = None
+            _record_result(row, meta)
+    except TimeoutError:
+        for fut, sym in futures.items():
+            if fut.done():
+                continue
+            fut.cancel()
+            _record_result(
+                None,
+                {
+                    "symbol": sym,
+                    "asset_type": "crypto" if _is_crypto(sym) else "stock",
+                    "attempted": [],
+                    "provider_used": "NONE",
+                    "reason": "ranking_fetch_deadline_exceeded",
+                    "valid_quote": False,
+                },
+            )
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
     provider_success_rate = {}
     for provider_name, attempts in provider_attempts.items():

@@ -176,6 +176,38 @@ from engine.policy_backtest_engine import PolicyBacktestEngine
 from engine.learning_data_quality_monitor import LearningDataQualityMonitor
 from engine.self_correction_controller import SelfCorrectionController
 try:
+    from engine.portfolio_risk_intelligence_suite_v1 import PortfolioRiskIntelligenceSuiteV1
+except Exception:
+    class PortfolioRiskIntelligenceSuiteV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def enrich_payload(self, payload):
+            return dict(payload or {})
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "portfolio_risk_intelligence_status_v1": True,
+                "candidates_evaluated": 0,
+                "average_recommended_position_size_pct": 0.0,
+                "average_portfolio_risk_score": 0.0,
+                "average_capital_allocation_score": 0.0,
+                "highest_correlation_risk": 0.0,
+                "highest_concentration_risk": 0.0,
+                "promotion_allowed": False,
+                "live_trading_changed": False,
+                "broker_execution_changed": False,
+                "production_rankings_changed": False,
+                "production_weights_changed": False,
+                "next_recommended_action": "inspect_portfolio_risk_intelligence_import",
+            }
+try:
     from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
 except Exception:
     class _AlpacaWSMonitorFallback:
@@ -258,6 +290,7 @@ PAPER_REPLAY_TRAINER = None
 POLICY_BACKTEST_ENGINE = PolicyBacktestEngine(state_dir=STATE)
 LEARNING_DATA_QUALITY_MONITOR = LearningDataQualityMonitor(state_dir=STATE)
 SELF_CORRECTION_CONTROLLER = SelfCorrectionController(state_dir=STATE)
+PORTFOLIO_RISK_INTELLIGENCE_SUITE = PortfolioRiskIntelligenceSuiteV1(state_dir=STATE)
 FMP_USAGE_STATE_PATH = os.path.join(STATE, "fmp_usage_state.json")
 FMP_CACHE_INDEX_PATH = os.path.join(STATE, "fmp_cache_index.json")
 API_USAGE_GOVERNOR_PATH = os.path.join(STATE, "api_usage_governor.json")
@@ -367,6 +400,8 @@ MAX_TIMEFRAME_SYMBOLS = 10
 _TIMEFRAME_LAST_FETCH = {}
 _RR_CURSOR = {"stocks": 0, "crypto": 0}
 _TOP_BUYS_BUILD_LOCK = threading.Lock()
+_TOP_BUYS_BUILD_LOCK_STATE_LOCK = threading.Lock()
+_TOP_BUYS_BUILD_LOCK_STATE = {"owner_request_id": "", "acquired_at": 0.0}
 _TOP_BUYS_COLD_START_LOCK = threading.Lock()
 _TOP_BUYS_COLD_START_STATE = {
     "in_progress": False,
@@ -4982,6 +5017,110 @@ def _top_buys_minimal_recovery_payload(
     candidate_build_progress_rows = 0
     candidate_build_rows_before_abort = 0
 
+    def _fast_recovery_payload():
+        def _prep(rows, asset_type):
+            prepared = []
+            for idx, raw in enumerate(list(rows or [])[:24]):
+                if not isinstance(raw, dict):
+                    continue
+                row = dict(raw)
+                sym = str(row.get("symbol") or "").upper().strip()
+                if not sym:
+                    continue
+                action = str(row.get("action") or row.get("prediction") or "Hold").strip() or "Hold"
+                price = _to_float(row.get("current_price"), _to_float(row.get("price"), 0.0))
+                row["symbol"] = sym
+                row["asset_type"] = str(row.get("asset_type") or asset_type)
+                row["current_price"] = price
+                row["price"] = price
+                row["action"] = action
+                row["prediction"] = str(row.get("prediction") or action)
+                row["action_label"] = "Buy" if action.lower() == "buy" else action
+                row["readiness_label"] = str(row.get("readiness_label") or ("Buy" if action.lower() == "buy" else "Watch"))
+                row["valid_quote"] = bool(row.get("valid_quote", price > 0))
+                row["trusted_quote_for_buys"] = bool(row.get("trusted_quote_for_buys", price > 0))
+                row["live_buy_universe"] = bool(row.get("live_buy_universe", asset_type == "stock"))
+                row["top_6_rank"] = idx + 1
+                row["top_buys_fast_recovery"] = True
+                row["summary"] = str(
+                    row.get("summary")
+                    or f"{sym} rated {row.get('grade', 'n/a')} - {row.get('action_label', action)} bias active."
+                )
+                prepared.append(row)
+            prepared = sorted(
+                prepared,
+                key=lambda r: (
+                    _to_float(r.get("confidence"), 0.0),
+                    _to_float(r.get("grade_percent"), _to_float(r.get("persona_weighted_grade"), 0.0)),
+                    _to_float(r.get("price"), 0.0),
+                ),
+                reverse=True,
+            )
+            for idx, row in enumerate(prepared[:6]):
+                row["top_6_rank"] = idx + 1
+            return prepared[:6]
+
+        stock_final = _prep(stock_rows, "stock")
+        crypto_final = _prep(crypto_rows, "crypto")
+        combined = list(stock_final) + list(crypto_final)
+        top_action_views = {
+            "stocks_buy_first_hero_candidates": list(stock_final),
+            "crypto_buy_first_hero_candidates": list(crypto_final),
+            "canonical_release_views": {
+                "stocks_released_hero_buys": [r for r in stock_final if str(r.get("action") or "").lower() == "buy"],
+                "stocks_paper_ready_hero": [r for r in stock_final if str(r.get("action") or "").lower() != "buy"],
+                "stocks_watchlist_hero": [],
+                "stocks_blocked_hero": [],
+                "crypto_released_hero_buys": [r for r in crypto_final if str(r.get("action") or "").lower() == "buy"],
+                "crypto_paper_ready_hero": [r for r in crypto_final if str(r.get("action") or "").lower() != "buy"],
+                "crypto_watchlist_hero": [],
+                "crypto_blocked_hero": [],
+            },
+        }
+        trace = {
+            "stage_0_symbols_input": int(len(stock_rows or []) + len(crypto_rows or [])),
+            "stage_1_quotes_fetched": int(len(combined)),
+            "stage_8_final_output": int(len(combined)),
+            "drop_reasons_summary": {},
+            "fast_recovery_payload": True,
+        }
+        return {
+            "stocks": {"qualified": list(stock_final), "fill": [], "final": list(stock_final), "best_opportunities": list(stock_final), "watchlist": []},
+            "crypto": {"qualified": list(crypto_final), "fill": [], "final": list(crypto_final), "best_opportunities": list(crypto_final), "watchlist": []},
+            "stocks_final_count": int(len(stock_final)),
+            "crypto_final_count": int(len(crypto_final)),
+            "released_hero_count": int(sum(1 for r in combined if str(r.get("action") or "").lower() == "buy")),
+            "paper_ready_hero_count": int(sum(1 for r in combined if str(r.get("action") or "").lower() != "buy")),
+            "watchlist_hero_count": 0,
+            "blocked_hero_count": 0,
+            "all_top_trusted_for_buys": bool(combined and all(bool(r.get("trusted_quote_for_buys", False)) for r in combined)),
+            "hero_junk_label_violations": 0,
+            "blocked_shown_as_buy_violations": 0,
+            "candidate_stream_quality_summary": {
+                "rows_total": int(len(combined)),
+                "fast_recovery_payload": True,
+                "candidate_recovery_reason": "bounded_rankings_hot_path",
+            },
+            "filters_applied": {"buy_mode": str(buy_mode or "balanced"), "recovery_mode": "fast_rankings_top_buys_payload"},
+            "candidate_promotion_summary": {"mode": "fast_recovery"},
+            "uncertainty_summary_v1": {"enabled": True, "rows_with_uncertainty": 0},
+            "learning_activation_runtime_safe_mode": True,
+            "learning_activation_rows_processed": 0,
+            "learning_activation_avg_ms": 0.0,
+            "learning_activation_skipped_count": int(len(combined)),
+            "top_buys_partial_build": False,
+            "top_buys_partial_count": int(len(combined)),
+            "top_buys_partial_stage": "none",
+            "top_buys_partial_reason": "",
+            "candidate_build_progress_rows": int(len(combined)),
+            "candidate_build_partial_triggered": False,
+            "candidate_build_rows_before_abort": int(len(combined)),
+            "reasons_if_short": {},
+            "top_action_views": top_action_views,
+            "lifecycle_auto_tracking": {"mode": "skipped_fast_recovery", "api_calls_used": 0},
+            **({"candidate_pipeline_trace_v1": trace} if bool(include_trace) else {}),
+        }
+
     def _circuit_breaker_check(stage_hint):
         nonlocal partial_build_triggered
         nonlocal partial_build_reason
@@ -5048,6 +5187,8 @@ def _top_buys_minimal_recovery_payload(
         boot = _bootstrap_stock_rows_for_top_buys()
         if isinstance(boot, list) and boot:
             stock_rows = list(boot)
+    if str(os.getenv("ASTRA_TOP_BUYS_FAST_RECOVERY_PAYLOAD", "1")).strip().lower() in {"1", "true", "yes", "on"}:
+        return _fast_recovery_payload()
     _trace_phase_begin("candidate_build_prep")
     _circuit_breaker_check("candidate_build_prep_start")
     prep_t0 = time.perf_counter()
@@ -13618,7 +13759,15 @@ def _bootstrap_stock_rows_for_top_buys():
         if not isinstance(rows, list) or not rows:
             return []
         scored = [_ensure_persona_fields(dict(r)) for r in rows if isinstance(r, dict)]
-        scored = _prioritize_rankings(scored, learning_snapshot=_get_learning_insights_top_buys_fast())
+        scored = sorted(
+            scored,
+            key=lambda r: (
+                _to_float((r or {}).get("confidence"), 0.0),
+                _to_float((r or {}).get("grade_percent"), _to_float((r or {}).get("persona_weighted_grade"), 0.0)),
+                _to_float((r or {}).get("price"), 0.0),
+            ),
+            reverse=True,
+        )
         if scored:
             _update_last_rankings("stocks", scored)
             RANKINGS_ENDPOINT_CACHE["stocks"] = {"ts": time.time(), "payload": list(scored)}
@@ -21445,6 +21594,15 @@ def top_buys(
             # from already-available rankings rows instead of returning an empty top_buys response.
             stock_rows_fb = _rows_for_top_buys("stocks")
             crypto_rows_fb = _rows_for_top_buys("crypto")
+            if not stock_rows_fb:
+                fmp_mode_fb = str(os.getenv("ASTRA_FMP_MODE", "conserve")).strip().lower()
+                bootstrap_enabled_fb = str(os.getenv("ASTRA_TOP_BUYS_BOOTSTRAP_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+                bootstrap_in_conserve_fb = str(os.getenv("ASTRA_TOP_BUYS_BOOTSTRAP_IN_CONSERVE", "1")).strip().lower() in {"1", "true", "yes", "on"}
+                if bootstrap_enabled_fb and (fmp_mode_fb != "conserve" or bootstrap_in_conserve_fb):
+                    try:
+                        stock_rows_fb = _bootstrap_stock_rows_for_top_buys()
+                    except Exception:
+                        stock_rows_fb = []
             if stock_rows_fb or crypto_rows_fb:
                 try:
                     fallback_payload = _top_buys_minimal_recovery_payload(
@@ -21649,6 +21807,29 @@ def top_buys(
             return max(6.0, min(40.0, estimate))
         except Exception:
             return 12.0
+
+    def _recover_stale_top_buys_build_lock():
+        # Recovery guard: if lock is held but no active request/refresh is running, release it.
+        # This prevents perpetual empty fallbacks after abnormal worker exits.
+        if not _TOP_BUYS_BUILD_LOCK.locked():
+            return False
+        try:
+            with _TOP_BUYS_BUILD_LOCK_STATE_LOCK:
+                lock_age = max(0.0, time.time() - _to_float(_TOP_BUYS_BUILD_LOCK_STATE.get("acquired_at"), 0.0))
+            with _TOP_BUYS_RUNTIME_TRACE_LOCK:
+                active = dict(_TOP_BUYS_RUNTIME_TRACE_STATE.get("active") or {})
+            with _TOP_BUYS_ASYNC_REFRESH_LOCK:
+                refresh_running = bool(_TOP_BUYS_ASYNC_REFRESH_STATE.get("running", False))
+            stale_age_limit = max(18.0, _to_float(TOP_BUYS_MAX_BUILD_SECONDS, 10.0) + 8.0)
+            if (active or refresh_running) and lock_age < stale_age_limit:
+                return False
+            _TOP_BUYS_BUILD_LOCK.release()
+            with _TOP_BUYS_BUILD_LOCK_STATE_LOCK:
+                _TOP_BUYS_BUILD_LOCK_STATE["owner_request_id"] = ""
+                _TOP_BUYS_BUILD_LOCK_STATE["acquired_at"] = 0.0
+            return True
+        except Exception:
+            return False
     _runtime_phase_start("runtime_snapshot_lookup")
     runtime_snapshot = _top_buys_runtime_snapshot_get()
     _runtime_phase_end("runtime_snapshot_lookup")
@@ -21745,10 +21926,61 @@ def top_buys(
                 out["top_buys_runtime_trace_v1"] = trace_obj
             return out
 
+    if str(os.getenv("ASTRA_TOP_BUYS_LOCKLESS_RANKINGS_HOT_PATH", "1")).strip().lower() in {"1", "true", "yes", "on"}:
+        stock_rows_hot = _rows_for_top_buys("stocks")
+        crypto_rows_hot = _rows_for_top_buys("crypto")
+        if not stock_rows_hot:
+            try:
+                stock_rows_hot = _bootstrap_stock_rows_for_top_buys()
+            except Exception:
+                stock_rows_hot = []
+        if stock_rows_hot or crypto_rows_hot:
+            _runtime_phase_start("candidate_build")
+            hot_payload = _top_buys_minimal_recovery_payload(
+                stock_rows=stock_rows_hot,
+                crypto_rows=crypto_rows_hot,
+                buy_mode=mode_cfg["buy_mode"],
+                include_trace=bool(include_trace),
+                runtime_trace=runtime_trace,
+                runtime_trace_push=_runtime_trace_push_active,
+                started_at_perf=top_t0,
+                max_build_seconds=0.0,
+            )
+            _runtime_phase_end("candidate_build")
+            hot_payload["last_updated_utc"] = _now_utc_iso()
+            hot_payload["stale_cache"] = False
+            _CACHE["top_buys"][cache_key] = {"data": dict(hot_payload), "ts": time.time()}
+            _CACHE["top_buys"][f"mode::{mode_cfg['buy_mode']}"] = {"data": dict(hot_payload), "ts": time.time()}
+            _runtime_phase_start("serialization")
+            out = _decorate_top_buys_payload(
+                hot_payload,
+                source="rankings_hot_path",
+                build_ms=(time.perf_counter() - top_t0) * 1000.0,
+                cache_age_seconds=0.0,
+                timeout_guard=False,
+                cache_hit=False,
+                trace_included=bool(include_trace),
+                safe_mode=bool(safe_mode),
+                stage="lockless_rankings_hot_path",
+            )
+            out = _attach_cold_start_metadata(out)
+            _runtime_phase_end("serialization")
+            _runtime_phase_start("endpoint_return")
+            _runtime_phase_end("endpoint_return")
+            trace_obj = _runtime_finalize("rankings_hot_path", cache_hit=False, hint="", trace_included=bool(include_trace), payload=out)
+            if debug_trace:
+                out["top_buys_runtime_trace_v1"] = trace_obj
+            return out
+
     # Prevent concurrent top_buys rebuild storms under load.
+    _recover_stale_top_buys_build_lock()
     _runtime_phase_start("lock_acquire")
     lock_wait_t0 = time.perf_counter()
     have_lock = _TOP_BUYS_BUILD_LOCK.acquire(blocking=False)
+    if have_lock:
+        with _TOP_BUYS_BUILD_LOCK_STATE_LOCK:
+            _TOP_BUYS_BUILD_LOCK_STATE["owner_request_id"] = str(request_id)
+            _TOP_BUYS_BUILD_LOCK_STATE["acquired_at"] = time.time()
     runtime_trace["lock_wait_ms"] = round(max(0.0, (time.perf_counter() - lock_wait_t0) * 1000.0), 2)
     _runtime_phase_end("lock_acquire")
     if not have_lock:
@@ -21806,6 +22038,10 @@ def top_buys(
             else base_lock_wait_timeout
         )
         have_lock = _TOP_BUYS_BUILD_LOCK.acquire(timeout=lock_wait_timeout)
+        if have_lock:
+            with _TOP_BUYS_BUILD_LOCK_STATE_LOCK:
+                _TOP_BUYS_BUILD_LOCK_STATE["owner_request_id"] = str(request_id)
+                _TOP_BUYS_BUILD_LOCK_STATE["acquired_at"] = time.time()
         runtime_trace["lock_wait_ms"] = round(
             _to_float(runtime_trace.get("lock_wait_ms"), 0.0) + max(0.0, (time.perf_counter() - wait_t0) * 1000.0),
             2,
@@ -21820,6 +22056,9 @@ def top_buys(
         if isinstance(stale_payload, dict) and stale_payload:
             if have_lock:
                 _TOP_BUYS_BUILD_LOCK.release()
+                with _TOP_BUYS_BUILD_LOCK_STATE_LOCK:
+                    _TOP_BUYS_BUILD_LOCK_STATE["owner_request_id"] = ""
+                    _TOP_BUYS_BUILD_LOCK_STATE["acquired_at"] = 0.0
                 have_lock = False
             cold_start_cache_populated = True
             _PERF_COUNTERS["top_buys_cache_hit_count"] = int(_PERF_COUNTERS.get("top_buys_cache_hit_count", 0)) + 1
@@ -21853,7 +22092,7 @@ def top_buys(
         if not stock_rows:
             fmp_mode = str(os.getenv("ASTRA_FMP_MODE", "conserve")).strip().lower()
             bootstrap_enabled = str(os.getenv("ASTRA_TOP_BUYS_BOOTSTRAP_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
-            bootstrap_in_conserve = str(os.getenv("ASTRA_TOP_BUYS_BOOTSTRAP_IN_CONSERVE", "0")).strip().lower() in {"1", "true", "yes", "on"}
+            bootstrap_in_conserve = str(os.getenv("ASTRA_TOP_BUYS_BOOTSTRAP_IN_CONSERVE", "1")).strip().lower() in {"1", "true", "yes", "on"}
             if bootstrap_enabled and (fmp_mode != "conserve" or bootstrap_in_conserve):
                 stock_rows = _bootstrap_stock_rows_for_top_buys()
         if not crypto_rows:
@@ -26634,7 +26873,14 @@ def top_buys(
                 _TOP_BUYS_COLD_START_STATE["last_completed_at"] = time.time()
                 _TOP_BUYS_COLD_START_STATE["last_success"] = bool(cold_start_cache_populated)
         if have_lock:
-            _TOP_BUYS_BUILD_LOCK.release()
+            try:
+                _TOP_BUYS_BUILD_LOCK.release()
+            except Exception:
+                pass
+            with _TOP_BUYS_BUILD_LOCK_STATE_LOCK:
+                if str(_TOP_BUYS_BUILD_LOCK_STATE.get("owner_request_id") or "") == str(request_id):
+                    _TOP_BUYS_BUILD_LOCK_STATE["owner_request_id"] = ""
+                    _TOP_BUYS_BUILD_LOCK_STATE["acquired_at"] = 0.0
 
 
 @router.get("/api/top_buys_runtime_status")
@@ -28402,6 +28648,53 @@ def self_correction_status_v1():
             "local_only": True,
             "api_calls_used": 0,
             "error": f"self_correction_status_unavailable: {exc}",
+        }
+
+
+@router.get("/api/portfolio_risk_intelligence_status_v1")
+def portfolio_risk_intelligence_status_v1():
+    try:
+        payload = {}
+        try:
+            payload = dict(_latest_top_buys_runtime_snapshot() or {})
+        except Exception:
+            payload = {}
+        if not payload:
+            try:
+                cached = _CACHE.get("top_buys", {}) if isinstance(_CACHE.get("top_buys"), dict) else {}
+                mode_cached = ((cached.get("mode::balanced") or {}).get("data")) if isinstance(cached, dict) else {}
+                if isinstance(mode_cached, dict):
+                    payload = dict(mode_cached)
+            except Exception:
+                payload = {}
+        rows = _candidate_rows_from_payload(payload) if isinstance(payload, dict) else []
+        out = PORTFOLIO_RISK_INTELLIGENCE_SUITE.status(rows=rows)
+        out["portfolio_risk_intelligence_status_v1"] = True
+        out["api_calls_used"] = 0
+        out["live_trading_changed"] = False
+        out["broker_execution_changed"] = False
+        out["production_rankings_changed"] = False
+        out["production_weights_changed"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "portfolio_risk_intelligence_status_v1": True,
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "candidates_evaluated": 0,
+            "average_recommended_position_size_pct": 0.0,
+            "average_portfolio_risk_score": 0.0,
+            "average_capital_allocation_score": 0.0,
+            "highest_correlation_risk": 0.0,
+            "highest_concentration_risk": 0.0,
+            "live_trading_changed": False,
+            "broker_execution_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "error": f"portfolio_risk_intelligence_status_unavailable: {exc}",
         }
 
 
@@ -32466,7 +32759,24 @@ def _apply_rolling_conviction_v1(payload):
         if isinstance(pack, dict) and isinstance(pack.get("final"), list):
             pack["final"] = _sort_rows(pack.get("final") or [])
     p["top_buys_card_display_fields_v1"] = ["symbol", "canonical_final_state", "grade", "entry_filter_v2_score", "confidence", "rolling_conviction_10r", "predicted_profit_percent", "stop_loss", "action"]
-    p["top_buys_card_expanded_fields_v1"] = ["rolling_conviction_5r", "rolling_conviction_20r", "appearance_count_5r", "appearance_count_10r", "appearance_count_20r", "avg_rank_10r", "paper_ready_rate_10r", "session_type", "provider_notes"]
+    p["top_buys_card_expanded_fields_v1"] = [
+        "rolling_conviction_5r",
+        "rolling_conviction_20r",
+        "appearance_count_5r",
+        "appearance_count_10r",
+        "appearance_count_20r",
+        "avg_rank_10r",
+        "paper_ready_rate_10r",
+        "session_type",
+        "provider_notes",
+        "recommended_position_size_pct",
+        "portfolio_risk_score",
+        "capital_allocation_score",
+        "correlation_risk_score",
+        "concentration_score",
+        "drawdown_risk_score",
+        "portfolio_risk_summary",
+    ]
     p["ollama_summary_rule_v1"] = "max_2_sentences_reason_plus_conviction_trend_plus_action"
     return p
 
@@ -33430,23 +33740,41 @@ def _learning_loop_summary_fast():
 
 def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seconds=None, timeout_guard=False, cache_hit=False, trace_included=False, safe_mode=False, stage="final", snapshot_served=False, snapshot_age_seconds=None, background_refresh_triggered=False):
     out = dict(payload or {})
-    try:
-        out = _apply_controlled_fmp_enrichment_v1(out)
-    except Exception:
-        pass
-    try:
-        out, expansion_summary = _cached_only_learning_throughput_governor_v1(out)
-    except Exception:
-        expansion_summary = _paper_learning_expansion_default_summary()
-    out["paper_learning_expansion"] = dict(expansion_summary or _paper_learning_expansion_default_summary())
-    try:
-        out = _apply_rolling_conviction_v1(out)
-    except Exception:
-        pass
-    try:
-        out = _apply_entry_quality_v2_shadow(out)
-    except Exception:
-        pass
+    source_s = str(source or "").strip().lower()
+    # Fast path: avoid re-running expensive enrichers on payloads already decorated in a prior
+    # request (runtime snapshot/cache replay path). This keeps endpoint latency stable.
+    already_decorated = bool(
+        isinstance(out.get("paper_learning_expansion"), dict)
+        and (
+            bool(out.get("portfolio_risk_intelligence_suite_v1"))
+            or bool((out.get("portfolio_risk_intelligence_summary") or {}).get("portfolio_risk_intelligence_status_v1"))
+        )
+    )
+    reuse_decorated_payload = bool(source_s in {"runtime_snapshot", "cached"} and already_decorated)
+    if not reuse_decorated_payload:
+        try:
+            out = _apply_controlled_fmp_enrichment_v1(out)
+        except Exception:
+            pass
+        try:
+            out, expansion_summary = _cached_only_learning_throughput_governor_v1(out)
+        except Exception:
+            expansion_summary = _paper_learning_expansion_default_summary()
+        out["paper_learning_expansion"] = dict(expansion_summary or _paper_learning_expansion_default_summary())
+        try:
+            out = _apply_rolling_conviction_v1(out)
+        except Exception:
+            pass
+        try:
+            out = _apply_entry_quality_v2_shadow(out)
+        except Exception:
+            pass
+        try:
+            out = PORTFOLIO_RISK_INTELLIGENCE_SUITE.enrich_payload(out)
+        except Exception:
+            pass
+    elif not isinstance(out.get("paper_learning_expansion"), dict):
+        out["paper_learning_expansion"] = _paper_learning_expansion_default_summary()
     if not bool(trace_included):
         out.pop("candidate_pipeline_trace_v1", None)
     _top_buys_mark_real_payload(out)
@@ -33500,14 +33828,15 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
             refresh_status=refresh_status,
             last_error=refresh_last_error,
         )
-    try:
-        _log_candidate_decision_ledger_from_payload(out, decision_source=str(source or "top_buys"))
-    except Exception:
-        pass
-    try:
-        _fmp_usage_governor_snapshot(update=True)
-    except Exception:
-        pass
+    if not reuse_decorated_payload:
+        try:
+            _log_candidate_decision_ledger_from_payload(out, decision_source=str(source or "top_buys"))
+        except Exception:
+            pass
+        try:
+            _fmp_usage_governor_snapshot(update=True)
+        except Exception:
+            pass
     return out
 
 
