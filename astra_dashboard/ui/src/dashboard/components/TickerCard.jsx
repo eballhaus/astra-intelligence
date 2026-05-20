@@ -185,6 +185,8 @@ export default function TickerCard({
   const concentrationRiskText = `${fmtValue(item?.concentration_score)} (${String(item?.concentration_label || "n/a").replaceAll("_", " ")})`;
   const drawdownRiskText = `${fmtValue(item?.drawdown_risk_score)} (${String(item?.drawdown_risk_label || "n/a").replaceAll("_", " ")})`;
   const portfolioRiskSummaryText = String(item?.portfolio_risk_summary || "Portfolio risk diagnostics unavailable.");
+  const bestHorizonStyleText = String(item?.best_horizon_style || item?.trade_horizon_style || "n/a").replaceAll("_", " ");
+  const horizonSummaryText = String(item?.horizon_style_summary || "Multi-horizon paper diagnostics unavailable.");
 
   const actionText = positionState === "working" ? "Adding..." : positionState === "added" ? "Added" : positionState === "failed" ? "Retry Add" : "Add to Positions";
   const removeText = removeState === "working" ? "Removing..." : removeState === "failed" ? "Retry Remove" : "Remove";
@@ -346,6 +348,11 @@ export default function TickerCard({
               <div>Concentration Risk: {concentrationRiskText}</div>
               <div>Drawdown Risk: {drawdownRiskText}</div>
               <div>Portfolio Risk Summary: {portfolioRiskSummaryText}</div>
+              <div>Best Horizon Style: {bestHorizonStyleText}</div>
+              <div>Scalp Fit: {fmtValue(item?.scalp_fit_score)}</div>
+              <div>Day Trade Fit: {fmtValue(item?.day_trade_fit_score)}</div>
+              <div>Swing Trade Fit: {fmtValue(item?.swing_trade_fit_score)}</div>
+              <div>Horizon Summary: {horizonSummaryText}</div>
             </div>
           </details>
           {intelligenceText ? (

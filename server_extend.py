@@ -294,6 +294,40 @@ except Exception:
                 "suite_4_summary": "Inspect autonomous research self regulation suite import.",
             }
 try:
+    from engine.multi_horizon_paper_trading_learning_suite_v1 import MultiHorizonPaperTradingLearningSuiteV1
+except Exception:
+    class MultiHorizonPaperTradingLearningSuiteV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def enrich_payload(self, payload):
+            return dict(payload or {})
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "paper_only_shadow",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "multi_horizon_paper_trading_status_v1": True,
+                "current_learning_phase": "phase_1_foundation",
+                "recommended_next_phase": "remain_phase_1_foundation",
+                "suggested_scalp_trades_per_day": "0-2",
+                "suggested_day_trades_per_day": "5-10",
+                "suggested_swing_trades_per_day": "2-5",
+                "suggested_total_paper_trades_per_day": "7-17",
+                "best_current_horizon": "day_trade",
+                "weakest_current_horizon": "scalp",
+                "multi_horizon_learning_score": 0.0,
+                "multi_horizon_summary": "Inspect multi horizon paper trading learning suite import.",
+                "natural_exit_preserved": True,
+                "forced_early_exit_enabled": False,
+                "artificial_max_hold_exit_enabled": False,
+            }
+try:
     from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
 except Exception:
     class _AlpacaWSMonitorFallback:
@@ -380,6 +414,7 @@ PORTFOLIO_RISK_INTELLIGENCE_SUITE = PortfolioRiskIntelligenceSuiteV1(state_dir=S
 OBSERVATION_LEARNING_THROUGHPUT_SUITE = ObservationLearningThroughputSuiteV1(state_dir=STATE)
 EXECUTION_MARKET_LEARNING_EXPANSION_SUITE = ExecutionMarketLearningExpansionSuiteV1(state_dir=STATE)
 AUTONOMOUS_RESEARCH_SELF_REGULATION_SUITE = AutonomousResearchSelfRegulationSuiteV1(state_dir=STATE)
+MULTI_HORIZON_PAPER_TRADING_SUITE = MultiHorizonPaperTradingLearningSuiteV1(state_dir=STATE)
 FMP_USAGE_STATE_PATH = os.path.join(STATE, "fmp_usage_state.json")
 FMP_CACHE_INDEX_PATH = os.path.join(STATE, "fmp_cache_index.json")
 API_USAGE_GOVERNOR_PATH = os.path.join(STATE, "api_usage_governor.json")
@@ -29015,6 +29050,94 @@ def autonomous_research_self_regulation_status_v1():
     }
 
 
+@router.get("/api/multi_horizon_paper_trading_status_v1")
+def multi_horizon_paper_trading_status_v1():
+    try:
+        try:
+            obs = OBSERVATION_LEARNING_THROUGHPUT_SUITE.status()
+        except Exception:
+            obs = {}
+        try:
+            throughput = paper_autopilot_throughput_status_v1()
+        except Exception:
+            throughput = {}
+        try:
+            payload = dict(_latest_top_buys_runtime_snapshot() or {})
+        except Exception:
+            payload = {}
+        rows = _candidate_rows_from_payload(payload) if isinstance(payload, dict) else []
+        out = MULTI_HORIZON_PAPER_TRADING_SUITE.status(
+            rows=rows,
+            observation_payload=obs if isinstance(obs, dict) else {},
+            throughput_payload=throughput if isinstance(throughput, dict) else {},
+        )
+        if isinstance(out, dict):
+            out["multi_horizon_paper_trading_status_v1"] = True
+            out["api_calls_used"] = 0
+            out["live_trading_changed"] = False
+            out["broker_execution_changed"] = False
+            out["production_rankings_changed"] = False
+            out["production_weights_changed"] = False
+            out["paper_trading_changed"] = False
+            out["natural_exit_preserved"] = True
+            out["forced_early_exit_enabled"] = False
+            out["artificial_max_hold_exit_enabled"] = False
+            return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "paper_only_shadow",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_execution_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "multi_horizon_paper_trading_status_v1": True,
+            "current_learning_phase": "phase_1_foundation",
+            "recommended_next_phase": "remain_phase_1_foundation",
+            "suggested_scalp_trades_per_day": "0-2",
+            "suggested_day_trades_per_day": "5-10",
+            "suggested_swing_trades_per_day": "2-5",
+            "suggested_total_paper_trades_per_day": "7-17",
+            "scalp_entries_today": 0,
+            "day_trade_entries_today": 0,
+            "swing_trade_entries_today": 0,
+            "scalp_closures_today": 0,
+            "day_trade_closures_today": 0,
+            "swing_trade_closures_today": 0,
+            "best_current_horizon": "day_trade",
+            "weakest_current_horizon": "scalp",
+            "multi_horizon_learning_score": 0.0,
+            "multi_horizon_summary": f"Multi horizon paper trading status unavailable: {str(exc)[:140]}",
+            "natural_exit_preserved": True,
+            "forced_early_exit_enabled": False,
+            "artificial_max_hold_exit_enabled": False,
+        }
+    return {
+        "enabled": False,
+        "version": "1.0.0",
+        "mode": "paper_only_shadow",
+        "local_only": True,
+        "writes_files": False,
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+        "multi_horizon_paper_trading_status_v1": True,
+        "current_learning_phase": "phase_1_foundation",
+        "recommended_next_phase": "remain_phase_1_foundation",
+        "best_current_horizon": "day_trade",
+        "weakest_current_horizon": "scalp",
+        "multi_horizon_learning_score": 0.0,
+        "multi_horizon_summary": "Multi horizon paper trading status returned no payload.",
+        "natural_exit_preserved": True,
+        "forced_early_exit_enabled": False,
+        "artificial_max_hold_exit_enabled": False,
+    }
+
+
 @router.get("/api/self_correction_recommendations_v1")
 def self_correction_recommendations_v1(force_refresh: bool = Query(False)):
     try:
@@ -33093,6 +33216,11 @@ def _apply_rolling_conviction_v1(payload):
         "concentration_score",
         "drawdown_risk_score",
         "portfolio_risk_summary",
+        "best_horizon_style",
+        "scalp_fit_score",
+        "day_trade_fit_score",
+        "swing_trade_fit_score",
+        "horizon_style_summary",
     ]
     p["ollama_summary_rule_v1"] = "max_2_sentences_reason_plus_conviction_trend_plus_action"
     return p
@@ -34066,6 +34194,7 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
             bool(out.get("portfolio_risk_intelligence_suite_v1"))
             or bool((out.get("portfolio_risk_intelligence_summary") or {}).get("portfolio_risk_intelligence_status_v1"))
         )
+        and bool(out.get("multi_horizon_paper_trading_suite_v1"))
     )
     reuse_decorated_payload = bool(source_s in {"runtime_snapshot", "cached"} and already_decorated)
     if not reuse_decorated_payload:
@@ -34088,6 +34217,10 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
             pass
         try:
             out = PORTFOLIO_RISK_INTELLIGENCE_SUITE.enrich_payload(out)
+        except Exception:
+            pass
+        try:
+            out = MULTI_HORIZON_PAPER_TRADING_SUITE.enrich_payload(out)
         except Exception:
             pass
     elif not isinstance(out.get("paper_learning_expansion"), dict):
@@ -44374,6 +44507,17 @@ def learning_snapshot_fast_v1():
             snap["autonomous_research_self_regulation"] = suite4
             snap["suite_4_score"] = _to_float(suite4.get("suite_4_score"), 0.0)
             snap["primary_trading_weakness"] = str(suite4.get("primary_trading_weakness") or "")
+        try:
+            multi_horizon = MULTI_HORIZON_PAPER_TRADING_SUITE.status(
+                observation_payload=obs if isinstance(obs, dict) else {},
+                throughput_payload={},
+            )
+        except Exception:
+            multi_horizon = {}
+        if isinstance(multi_horizon, dict):
+            snap["multi_horizon_paper_trading"] = multi_horizon
+            snap["multi_horizon_learning_score"] = _to_float(multi_horizon.get("multi_horizon_learning_score"), 0.0)
+            snap["best_current_horizon"] = str(multi_horizon.get("best_current_horizon") or "")
         snap["ok"] = True
         snap["source"] = str((payload or {}).get("learning_payload_source") or ("learning_insights_last_good" if payload else "empty_fallback"))
         return snap

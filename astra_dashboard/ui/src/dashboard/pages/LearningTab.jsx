@@ -152,6 +152,7 @@ export default function LearningTab({ compact = false }) {
     executionMarketLearning: {},
     autonomousSelfRegulation: {},
     paperThroughputExpansion: {},
+    multiHorizonPaperTrading: {},
   });
   const refreshInFlightRef = useRef(false);
 
@@ -231,6 +232,7 @@ export default function LearningTab({ compact = false }) {
           fetchJson("execution_market_learning", "/api/execution_market_learning_expansion_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("autonomous_self_regulation", "/api/autonomous_research_self_regulation_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("paper_throughput_expansion", "/api/paper_autopilot_throughput_status_v1", {}, { timeoutMs: 8000 }),
+          fetchJson("multi_horizon_paper_trading", "/api/multi_horizon_paper_trading_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
         ]);
         secondaryResults.push(...secondaryBatch);
@@ -286,6 +288,7 @@ export default function LearningTab({ compact = false }) {
         const executionMarketLearning = selectPayload("execution_market_learning", prevSafe.executionMarketLearning);
         const autonomousSelfRegulation = selectPayload("autonomous_self_regulation", prevSafe.autonomousSelfRegulation);
         const paperThroughputExpansion = selectPayload("paper_throughput_expansion", prevSafe.paperThroughputExpansion);
+        const multiHorizonPaperTrading = selectPayload("multi_horizon_paper_trading", prevSafe.multiHorizonPaperTrading);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
         const learningSnapshotFast = selectPayload("learning_snapshot_fast_v1", prevSafe.learningSnapshotFast);
         const learningCandidate = selectPayload("learning_insights", prevSafe.learningInsights);
@@ -420,6 +423,7 @@ export default function LearningTab({ compact = false }) {
           executionMarketLearning,
           autonomousSelfRegulation,
           paperThroughputExpansion,
+          multiHorizonPaperTrading,
         };
       });
     };
@@ -447,6 +451,7 @@ export default function LearningTab({ compact = false }) {
   const executionMarketLearning = data.executionMarketLearning || {};
   const autonomousSelfRegulation = data.autonomousSelfRegulation || {};
   const paperThroughputExpansion = data.paperThroughputExpansion || {};
+  const multiHorizonPaperTrading = data.multiHorizonPaperTrading || {};
 
   const paperOutcome = paper?.paper_outcome_summary?.combined || {};
   const paperCohort = paper?.paper_cohort_trends || {};
@@ -2068,6 +2073,28 @@ export default function LearningTab({ compact = false }) {
           <div>API calls used: {safeNumber(paperThroughputExpansion?.api_calls_used).toFixed(0)}</div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Summary: {String(paperThroughputExpansion?.throughput_expansion_summary || "Waiting for paper throughput expansion diagnostics.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Multi-Horizon Paper Trading Learning</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Current phase: {String(multiHorizonPaperTrading?.current_learning_phase || "phase_1_foundation").replaceAll("_", " ")}</div>
+          <div>Recommended next phase: {String(multiHorizonPaperTrading?.recommended_next_phase || "remain_phase_1_foundation").replaceAll("_", " ")}</div>
+          <div>Scalp target/day: {String(multiHorizonPaperTrading?.suggested_scalp_trades_per_day || "0-2")}</div>
+          <div>Day-trade target/day: {String(multiHorizonPaperTrading?.suggested_day_trades_per_day || "5-10")}</div>
+          <div>Swing target/day: {String(multiHorizonPaperTrading?.suggested_swing_trades_per_day || "2-5")}</div>
+          <div>Total target/day: {String(multiHorizonPaperTrading?.suggested_total_paper_trades_per_day || "7-17")}</div>
+          <div>Entries: scalp {safeNumber(multiHorizonPaperTrading?.scalp_entries_today).toFixed(0)} / day {safeNumber(multiHorizonPaperTrading?.day_trade_entries_today).toFixed(0)} / swing {safeNumber(multiHorizonPaperTrading?.swing_trade_entries_today).toFixed(0)}</div>
+          <div>Closures: scalp {safeNumber(multiHorizonPaperTrading?.scalp_closures_today).toFixed(0)} / day {safeNumber(multiHorizonPaperTrading?.day_trade_closures_today).toFixed(0)} / swing {safeNumber(multiHorizonPaperTrading?.swing_trade_closures_today).toFixed(0)}</div>
+          <div>Best horizon: {String(multiHorizonPaperTrading?.best_current_horizon || "day_trade").replaceAll("_", " ")}</div>
+          <div>Weakest horizon: {String(multiHorizonPaperTrading?.weakest_current_horizon || "scalp").replaceAll("_", " ")}</div>
+          <div>Learning score: {safeNumber(multiHorizonPaperTrading?.multi_horizon_learning_score).toFixed(1)}</div>
+          <div>Natural exits preserved: {multiHorizonPaperTrading?.natural_exit_preserved === false ? "no" : "yes"}</div>
+          <div>API calls used: {safeNumber(multiHorizonPaperTrading?.api_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Summary: {String(multiHorizonPaperTrading?.multi_horizon_summary || "Waiting for multi-horizon paper trading diagnostics.")}
           </div>
         </div>
       </div>
