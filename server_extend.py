@@ -401,6 +401,26 @@ def _env_float(name, default):
     except Exception:
         return float(default)
 
+PAPER_THROUGHPUT_EXPANSION_ENABLED = str(os.getenv("ASTRA_PAPER_THROUGHPUT_EXPANSION_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+PAPER_THROUGHPUT_PRESERVE_NATURAL_EXITS = str(os.getenv("ASTRA_PAPER_THROUGHPUT_PRESERVE_NATURAL_EXITS", "1")).strip().lower() in {"1", "true", "yes", "on"}
+PAPER_THROUGHPUT_SOFT_CANDIDATE_EXPANSION_ENABLED = str(os.getenv("ASTRA_PAPER_SOFT_CANDIDATE_EXPANSION_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+PAPER_THROUGHPUT_ENTRY_THRESHOLD_RELIEF_POINTS = max(0.0, min(8.0, _env_float("ASTRA_PAPER_ENTRY_THRESHOLD_RELIEF_POINTS", 4.0)))
+PAPER_THROUGHPUT_BASE_MAX_NEW_PER_CYCLE = 2
+PAPER_THROUGHPUT_EXPANDED_MAX_NEW_PER_CYCLE = max(
+    PAPER_THROUGHPUT_BASE_MAX_NEW_PER_CYCLE,
+    int(_env_float("ASTRA_PAPER_AUTOPILOT_MAX_NEW_PER_CYCLE", 3)),
+)
+PAPER_THROUGHPUT_BASE_MAX_CONCURRENT_POSITIONS = 10
+PAPER_THROUGHPUT_EXPANDED_MAX_CONCURRENT_POSITIONS = max(
+    PAPER_THROUGHPUT_BASE_MAX_CONCURRENT_POSITIONS,
+    int(_env_float("ASTRA_PAPER_AUTOPILOT_MAX_OPEN_POSITIONS_TOTAL", 14)),
+)
+PAPER_THROUGHPUT_BASE_COOLDOWN_SECONDS = 300
+PAPER_THROUGHPUT_EXPANDED_COOLDOWN_SECONDS = max(
+    60,
+    int(_env_float("ASTRA_PAPER_AUTOPILOT_COOLDOWN_AFTER_CLOSE_SECONDS", 180)),
+)
+
 FMP_CONSERVATIVE_MODE = str(os.getenv("ASTRA_FMP_CONSERVATIVE_MODE", "1")).strip().lower() in {"1", "true", "yes", "on"}
 FMP_DAILY_BUDGET_GB = max(0.05, _env_float("ASTRA_FMP_DAILY_BUDGET_GB", 1.0))
 FMP_WARNING_GB = max(1.0, _env_float("ASTRA_FMP_WARNING_GB", 30.0))
@@ -14113,15 +14133,19 @@ PAPER_AUTOPILOT = PaperAutopilotEngine(
     db_path=os.path.join(STATE, "ai_trading_memory.db"),
     state_path=os.path.join(STATE, "paper_autopilot_state.json"),
     interval_seconds=int(os.getenv("ASTRA_PAPER_AUTOPILOT_INTERVAL_SECONDS", "45")),
-    max_stocks=int(os.getenv("ASTRA_PAPER_AUTOPILOT_MAX_STOCKS", "6")),
-    max_crypto=int(os.getenv("ASTRA_PAPER_AUTOPILOT_MAX_CRYPTO", "6")),
-    max_new_positions_per_cycle=int(os.getenv("ASTRA_PAPER_AUTOPILOT_MAX_NEW_PER_CYCLE", "2")),
+    max_stocks=int(os.getenv("ASTRA_PAPER_AUTOPILOT_MAX_STOCKS", "8" if PAPER_THROUGHPUT_EXPANSION_ENABLED else "6")),
+    max_crypto=int(os.getenv("ASTRA_PAPER_AUTOPILOT_MAX_CRYPTO", "8" if PAPER_THROUGHPUT_EXPANSION_ENABLED else "6")),
+    max_new_positions_per_cycle=int(PAPER_THROUGHPUT_EXPANDED_MAX_NEW_PER_CYCLE if PAPER_THROUGHPUT_EXPANSION_ENABLED else PAPER_THROUGHPUT_BASE_MAX_NEW_PER_CYCLE),
     min_hold_seconds_intraday=int(os.getenv("ASTRA_PAPER_AUTOPILOT_MIN_HOLD_INTRADAY_SECONDS", "300")),
     min_hold_seconds_swing=int(os.getenv("ASTRA_PAPER_AUTOPILOT_MIN_HOLD_SWING_SECONDS", "1800")),
     max_closes_per_cycle=int(os.getenv("ASTRA_PAPER_AUTOPILOT_MAX_CLOSES_PER_CYCLE", "2")),
-    cooldown_after_close_seconds=int(os.getenv("ASTRA_PAPER_AUTOPILOT_COOLDOWN_AFTER_CLOSE_SECONDS", "300")),
+    cooldown_after_close_seconds=int(PAPER_THROUGHPUT_EXPANDED_COOLDOWN_SECONDS if PAPER_THROUGHPUT_EXPANSION_ENABLED else PAPER_THROUGHPUT_BASE_COOLDOWN_SECONDS),
     paper_mode=str(os.getenv("ASTRA_PAPER_AUTOPILOT_MODE", "swing")),
     enabled=str(os.getenv("ASTRA_PAPER_AUTOPILOT_ENABLED", "0")).strip().lower() in {"1", "true", "yes", "on"},
+    max_open_positions_total=int(PAPER_THROUGHPUT_EXPANDED_MAX_CONCURRENT_POSITIONS if PAPER_THROUGHPUT_EXPANSION_ENABLED else PAPER_THROUGHPUT_BASE_MAX_CONCURRENT_POSITIONS),
+    throughput_expansion_enabled=bool(PAPER_THROUGHPUT_EXPANSION_ENABLED),
+    soft_candidate_expansion_enabled=bool(PAPER_THROUGHPUT_SOFT_CANDIDATE_EXPANSION_ENABLED),
+    paper_entry_threshold_relief_points=float(PAPER_THROUGHPUT_ENTRY_THRESHOLD_RELIEF_POINTS if PAPER_THROUGHPUT_EXPANSION_ENABLED else 0.0),
     get_top_buys_fn=_paper_top_buys_snapshot,
     get_latest_row_fn=_paper_latest_symbol_snapshot,
     exit_engine=EXIT_INTEL,
@@ -14249,6 +14273,15 @@ def _apply_day_trading_lifecycle_rules_v1():
     if not DAY_TRADING_LIFECYCLE_MODE_ENABLED:
         return out
     out["day_trade_lifecycle_status"] = "active"
+    if PAPER_THROUGHPUT_PRESERVE_NATURAL_EXITS:
+        out["day_trade_lifecycle_status"] = "natural_exit_preservation_active"
+        out["same_day_exit_required"] = False
+        out["forced_end_of_day_exit"] = False
+        out["forced_end_of_day_exit_reason"] = ""
+        out["overnight_hold_blocked"] = False
+        out["session_exit_reason"] = "natural_exit_logic_only"
+        out["natural_exit_preservation_active"] = True
+        return out
     if weekday >= 5:
         out["day_trade_lifecycle_status"] = "weekend_idle"
         return out
@@ -14337,9 +14370,11 @@ def _day_trading_lifecycle_loop():
                 if bool(lifecycle_state.get("entry_cutoff_active", False)):
                     setattr(PAPER_AUTOPILOT, "max_new_positions_per_cycle", 0)
                 elif session_type in {"premarket_learning", "after_hours_learning"}:
-                    setattr(PAPER_AUTOPILOT, "max_new_positions_per_cycle", max(0, min(int(base_max_new), 1)))
+                    off_hours_cap = 2 if PAPER_THROUGHPUT_EXPANSION_ENABLED else 1
+                    setattr(PAPER_AUTOPILOT, "max_new_positions_per_cycle", max(0, min(int(base_max_new), off_hours_cap)))
                 elif session_type == "overnight_learning":
-                    setattr(PAPER_AUTOPILOT, "max_new_positions_per_cycle", max(0, min(int(base_max_new), 1)))
+                    overnight_cap = 2 if PAPER_THROUGHPUT_EXPANSION_ENABLED else 1
+                    setattr(PAPER_AUTOPILOT, "max_new_positions_per_cycle", max(0, min(int(base_max_new), overnight_cap)))
                 else:
                     setattr(PAPER_AUTOPILOT, "max_new_positions_per_cycle", int(base_max_new))
         except Exception as e:
@@ -36221,6 +36256,86 @@ def paper_autopilot_status():
     out = PAPER_AUTOPILOT.control_status()
     out["last_updated_utc"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     return out
+
+
+@router.get("/api/paper_autopilot_throughput_status_v1")
+def paper_autopilot_throughput_status_v1():
+    try:
+        _ensure_paper_autopilot_started()
+        control = PAPER_AUTOPILOT.control_status()
+        status = PAPER_AUTOPILOT.status()
+        try:
+            obs = OBSERVATION_LEARNING_THROUGHPUT_SUITE.status()
+        except Exception:
+            obs = {}
+        try:
+            suite3 = EXECUTION_MARKET_LEARNING_EXPANSION_SUITE.status(observation_payload=obs if isinstance(obs, dict) else {})
+        except Exception:
+            suite3 = {}
+        current_max_new = int(_to_float(control.get("max_new_positions_per_cycle"), PAPER_THROUGHPUT_EXPANDED_MAX_NEW_PER_CYCLE))
+        current_max_concurrent = int(_to_float(control.get("max_open_positions_total"), PAPER_THROUGHPUT_EXPANDED_MAX_CONCURRENT_POSITIONS))
+        current_cooldown = int(_to_float(control.get("cooldown_after_close_seconds"), PAPER_THROUGHPUT_EXPANDED_COOLDOWN_SECONDS))
+        projected_opened = _to_float(suite3.get("projected_trades_opened_per_day"), max(1, current_max_new * 6))
+        projected_closed = _to_float(suite3.get("projected_trades_closed_per_day"), max(0.5, projected_opened * 0.28))
+        projected_labels = _to_float(suite3.get("projected_labels_created_per_day"), max(_to_float(obs.get("labels_created_today"), 0.0), projected_closed * 3.0))
+        learning_multiplier = _to_float(suite3.get("projected_learning_speed_multiplier"), 1.0 + min(1.0, current_max_new * 0.15))
+        return {
+            "enabled": bool(PAPER_THROUGHPUT_EXPANSION_ENABLED),
+            "version": "1.0.0",
+            "mode": "paper_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_execution_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "paper_autopilot_throughput_status_v1": True,
+            "autopilot_enabled": bool(status.get("autopilot_enabled", False)),
+            "paper_mode": str(status.get("paper_mode") or control.get("paper_mode") or ""),
+            "current_max_new_per_cycle": current_max_new,
+            "baseline_max_new_per_cycle": int(PAPER_THROUGHPUT_BASE_MAX_NEW_PER_CYCLE),
+            "current_max_concurrent_positions": current_max_concurrent,
+            "baseline_max_concurrent_positions": int(PAPER_THROUGHPUT_BASE_MAX_CONCURRENT_POSITIONS),
+            "current_cooldown_seconds": current_cooldown,
+            "baseline_cooldown_seconds": int(PAPER_THROUGHPUT_BASE_COOLDOWN_SECONDS),
+            "soft_candidate_expansion_enabled": bool(control.get("soft_candidate_expansion_enabled", PAPER_THROUGHPUT_SOFT_CANDIDATE_EXPANSION_ENABLED)),
+            "paper_entry_threshold_relief_points": _to_float(control.get("paper_entry_threshold_relief_points"), PAPER_THROUGHPUT_ENTRY_THRESHOLD_RELIEF_POINTS),
+            "natural_exit_preservation_active": bool(PAPER_THROUGHPUT_PRESERVE_NATURAL_EXITS),
+            "forced_early_exits_enabled": False,
+            "artificial_max_hold_forced_closures_enabled": False,
+            "max_stocks": int(_to_float(control.get("max_stocks"), 8)),
+            "max_crypto": int(_to_float(control.get("max_crypto"), 8)),
+            "open_positions_count": int(_to_float(status.get("open_positions_count"), 0.0)),
+            "projected_trades_opened_per_day": round(projected_opened, 3),
+            "projected_trades_closed_per_day": round(projected_closed, 3),
+            "projected_labels_created_per_day": round(projected_labels, 3),
+            "projected_learning_speed_multiplier": round(learning_multiplier, 3),
+            "throughput_expansion_summary": (
+                f"Paper-only throughput expanded from {PAPER_THROUGHPUT_BASE_MAX_NEW_PER_CYCLE} to {current_max_new} new entries/cycle, "
+                f"from {PAPER_THROUGHPUT_BASE_MAX_CONCURRENT_POSITIONS} to {current_max_concurrent} concurrent positions, "
+                f"and cooldown from {PAPER_THROUGHPUT_BASE_COOLDOWN_SECONDS}s to {current_cooldown}s; exits remain natural."
+            ),
+            "last_updated_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        }
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "paper_only",
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "paper_autopilot_throughput_status_v1": True,
+            "current_max_new_per_cycle": 0,
+            "current_max_concurrent_positions": 0,
+            "current_cooldown_seconds": 0,
+            "soft_candidate_expansion_enabled": False,
+            "projected_trades_opened_per_day": 0.0,
+            "projected_trades_closed_per_day": 0.0,
+            "projected_labels_created_per_day": 0.0,
+            "projected_learning_speed_multiplier": 1.0,
+            "error": f"paper_autopilot_throughput_status_unavailable: {str(exc)[:140]}",
+        }
 
 
 @router.post("/api/paper_worker_start")

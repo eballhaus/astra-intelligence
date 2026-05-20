@@ -81,6 +81,9 @@ class PaperAutopilotEngine:
         self.cooldown_after_close_seconds = max(0, _to_int(kwargs.get("cooldown_after_close_seconds"), 300))
         self.paper_mode = str(kwargs.get("paper_mode") or "intraday").strip().lower() or "intraday"
         self._enabled = bool(kwargs.get("enabled", False))
+        self.throughput_expansion_enabled = bool(kwargs.get("throughput_expansion_enabled", False))
+        self.soft_candidate_expansion_enabled = bool(kwargs.get("soft_candidate_expansion_enabled", False))
+        self.paper_entry_threshold_relief_points = max(0.0, min(12.0, _to_float(kwargs.get("paper_entry_threshold_relief_points"), 0.0)))
 
         self.get_top_buys_fn = kwargs.get("get_top_buys_fn") if callable(kwargs.get("get_top_buys_fn")) else None
         self.get_latest_row_fn = kwargs.get("get_latest_row_fn") if callable(kwargs.get("get_latest_row_fn")) else None
@@ -308,7 +311,9 @@ class PaperAutopilotEngine:
         if uncertainty_score >= 74.0:
             return False, "uncertainty_score_high", {"commitment_score": 0.0}
 
-        if quality < 48.0 and confidence < 52.0:
+        quality_floor = 44.0 if self.soft_candidate_expansion_enabled else 48.0
+        confidence_floor = 49.0 if self.soft_candidate_expansion_enabled else 52.0
+        if quality < quality_floor and confidence < confidence_floor:
             return False, "quality_confidence_too_low", {"commitment_score": 0.0}
 
         positive_signals = 0
@@ -321,10 +326,15 @@ class PaperAutopilotEngine:
         if confidence >= 56.0:
             positive_signals += 1
 
-        if positive_signals < 2:
+        if positive_signals < 2 and not (
+            self.soft_candidate_expansion_enabled
+            and quality >= quality_floor
+            and confidence >= confidence_floor
+        ):
             return False, "insufficient_positive_signals", {"commitment_score": 0.0}
 
-        if any(x in uncertainty_tier for x in ("high",)) and quality < 64.0:
+        high_uncertainty_quality_floor = 60.0 if self.soft_candidate_expansion_enabled else 64.0
+        if any(x in uncertainty_tier for x in ("high",)) and quality < high_uncertainty_quality_floor:
             return False, "high_uncertainty_not_high_quality", {"commitment_score": 0.0}
 
         commitment_score = (
@@ -345,9 +355,11 @@ class PaperAutopilotEngine:
             commitment_score -= 2.0
         commitment_score = max(0.0, min(100.0, commitment_score))
 
-        if commitment_score < 58.0:
+        base_commitment_floor = max(50.0, 58.0 - self.paper_entry_threshold_relief_points)
+        watchlist_commitment_floor = max(56.0, 64.0 - self.paper_entry_threshold_relief_points)
+        if commitment_score < base_commitment_floor:
             return False, "entry_commitment_below_threshold", {"commitment_score": round(commitment_score, 2)}
-        if commitment_score < 64.0 and "watchlist" in eligibility:
+        if commitment_score < watchlist_commitment_floor and "watchlist" in eligibility:
             return False, "watchlist_commitment_not_strong_enough", {"commitment_score": round(commitment_score, 2)}
 
         return True, "eligible", {
@@ -907,6 +919,13 @@ class PaperAutopilotEngine:
             "interval_seconds": int(self.interval_seconds),
             "max_new_positions_per_cycle": int(self.max_new_positions_per_cycle),
             "max_closes_per_cycle": int(self.max_closes_per_cycle),
+            "max_stocks": int(self.max_stocks),
+            "max_crypto": int(self.max_crypto),
+            "max_open_positions_total": int(self.max_open_positions_total),
+            "cooldown_after_close_seconds": int(self.cooldown_after_close_seconds),
+            "throughput_expansion_enabled": bool(self.throughput_expansion_enabled),
+            "soft_candidate_expansion_enabled": bool(self.soft_candidate_expansion_enabled),
+            "paper_entry_threshold_relief_points": round(float(self.paper_entry_threshold_relief_points), 3),
         }
 
     def run_cycle(self):

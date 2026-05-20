@@ -151,6 +151,7 @@ export default function LearningTab({ compact = false }) {
     observationThroughput: {},
     executionMarketLearning: {},
     autonomousSelfRegulation: {},
+    paperThroughputExpansion: {},
   });
   const refreshInFlightRef = useRef(false);
 
@@ -229,6 +230,7 @@ export default function LearningTab({ compact = false }) {
           fetchJson("observation_throughput", "/api/observation_learning_throughput_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("execution_market_learning", "/api/execution_market_learning_expansion_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("autonomous_self_regulation", "/api/autonomous_research_self_regulation_status_v1", {}, { timeoutMs: 8000 }),
+          fetchJson("paper_throughput_expansion", "/api/paper_autopilot_throughput_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
         ]);
         secondaryResults.push(...secondaryBatch);
@@ -283,6 +285,7 @@ export default function LearningTab({ compact = false }) {
         const observationThroughput = selectPayload("observation_throughput", prevSafe.observationThroughput);
         const executionMarketLearning = selectPayload("execution_market_learning", prevSafe.executionMarketLearning);
         const autonomousSelfRegulation = selectPayload("autonomous_self_regulation", prevSafe.autonomousSelfRegulation);
+        const paperThroughputExpansion = selectPayload("paper_throughput_expansion", prevSafe.paperThroughputExpansion);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
         const learningSnapshotFast = selectPayload("learning_snapshot_fast_v1", prevSafe.learningSnapshotFast);
         const learningCandidate = selectPayload("learning_insights", prevSafe.learningInsights);
@@ -416,6 +419,7 @@ export default function LearningTab({ compact = false }) {
           observationThroughput,
           executionMarketLearning,
           autonomousSelfRegulation,
+          paperThroughputExpansion,
         };
       });
     };
@@ -442,6 +446,7 @@ export default function LearningTab({ compact = false }) {
   const observationThroughput = data.observationThroughput || {};
   const executionMarketLearning = data.executionMarketLearning || {};
   const autonomousSelfRegulation = data.autonomousSelfRegulation || {};
+  const paperThroughputExpansion = data.paperThroughputExpansion || {};
 
   const paperOutcome = paper?.paper_outcome_summary?.combined || {};
   const paperCohort = paper?.paper_cohort_trends || {};
@@ -2045,6 +2050,24 @@ export default function LearningTab({ compact = false }) {
           <div>API calls used: {safeNumber(autonomousSelfRegulation?.api_calls_used).toFixed(0)}</div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Summary: {String(autonomousSelfRegulation?.suite_4_summary || "Waiting for autonomous self-regulation diagnostics.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Paper Autopilot Throughput Expansion</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Max new paper trades/cycle: {safeNumber(paperThroughputExpansion?.current_max_new_per_cycle).toFixed(0)}</div>
+          <div>Max concurrent positions: {safeNumber(paperThroughputExpansion?.current_max_concurrent_positions).toFixed(0)}</div>
+          <div>Cooldown seconds: {safeNumber(paperThroughputExpansion?.current_cooldown_seconds).toFixed(0)}</div>
+          <div>Soft candidates: {paperThroughputExpansion?.soft_candidate_expansion_enabled ? "enabled" : "disabled"}</div>
+          <div>Projected opened/day: {safeNumber(paperThroughputExpansion?.projected_trades_opened_per_day).toFixed(1)}</div>
+          <div>Projected closed/day: {safeNumber(paperThroughputExpansion?.projected_trades_closed_per_day).toFixed(1)}</div>
+          <div>Projected labels/day: {safeNumber(paperThroughputExpansion?.projected_labels_created_per_day).toFixed(1)}</div>
+          <div>Learning speed multiplier: {safeNumber(paperThroughputExpansion?.projected_learning_speed_multiplier, 1).toFixed(2)}x</div>
+          <div>API calls used: {safeNumber(paperThroughputExpansion?.api_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Summary: {String(paperThroughputExpansion?.throughput_expansion_summary || "Waiting for paper throughput expansion diagnostics.")}
           </div>
         </div>
       </div>
