@@ -236,6 +236,35 @@ except Exception:
                 "throughput_recommendation_summary": "Inspect observation learning throughput suite import.",
             }
 try:
+    from engine.execution_market_learning_expansion_suite_v1 import ExecutionMarketLearningExpansionSuiteV1
+except Exception:
+    class ExecutionMarketLearningExpansionSuiteV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "execution_market_learning_expansion_status_v1": True,
+                "current_entries_today": 0,
+                "current_closures_today": 0,
+                "suggested_max_new_paper_trades_per_cycle": 0,
+                "suggested_max_concurrent_paper_positions": 0,
+                "projected_learning_speed_multiplier": 1.0,
+                "execution_readiness_score": 0.0,
+                "market_knowledge_score": 0.0,
+                "learning_expansion_score": 0.0,
+                "master_suite_3_score": 0.0,
+                "primary_learning_constraint": "suite_import_unavailable",
+                "master_suite_3_summary": "Inspect execution market learning expansion suite import.",
+            }
+try:
     from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
 except Exception:
     class _AlpacaWSMonitorFallback:
@@ -320,6 +349,7 @@ LEARNING_DATA_QUALITY_MONITOR = LearningDataQualityMonitor(state_dir=STATE)
 SELF_CORRECTION_CONTROLLER = SelfCorrectionController(state_dir=STATE)
 PORTFOLIO_RISK_INTELLIGENCE_SUITE = PortfolioRiskIntelligenceSuiteV1(state_dir=STATE)
 OBSERVATION_LEARNING_THROUGHPUT_SUITE = ObservationLearningThroughputSuiteV1(state_dir=STATE)
+EXECUTION_MARKET_LEARNING_EXPANSION_SUITE = ExecutionMarketLearningExpansionSuiteV1(state_dir=STATE)
 FMP_USAGE_STATE_PATH = os.path.join(STATE, "fmp_usage_state.json")
 FMP_CACHE_INDEX_PATH = os.path.join(STATE, "fmp_cache_index.json")
 API_USAGE_GOVERNOR_PATH = os.path.join(STATE, "api_usage_governor.json")
@@ -28781,6 +28811,70 @@ def observation_learning_throughput_status_v1():
     }
 
 
+@router.get("/api/execution_market_learning_expansion_status_v1")
+def execution_market_learning_expansion_status_v1():
+    try:
+        try:
+            obs = OBSERVATION_LEARNING_THROUGHPUT_SUITE.status()
+        except Exception:
+            obs = {}
+        out = EXECUTION_MARKET_LEARNING_EXPANSION_SUITE.status(observation_payload=obs if isinstance(obs, dict) else {})
+        if isinstance(out, dict):
+            out["execution_market_learning_expansion_status_v1"] = True
+            out["api_calls_used"] = 0
+            out["live_trading_changed"] = False
+            out["broker_execution_changed"] = False
+            out["production_rankings_changed"] = False
+            out["production_weights_changed"] = False
+            out["paper_trading_changed"] = False
+            out["forced_early_exits"] = False
+            return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_execution_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "forced_early_exits": False,
+            "execution_market_learning_expansion_status_v1": True,
+            "current_entries_today": 0,
+            "current_closures_today": 0,
+            "suggested_max_new_paper_trades_per_cycle": 0,
+            "suggested_max_concurrent_paper_positions": 0,
+            "projected_trades_opened_per_day": 0.0,
+            "projected_trades_closed_per_day": 0.0,
+            "projected_labels_created_per_day": 0.0,
+            "projected_learning_speed_multiplier": 1.0,
+            "expected_slippage_bps": 0.0,
+            "liquidity_score": 0.0,
+            "execution_readiness_score": 0.0,
+            "market_knowledge_score": 0.0,
+            "learning_expansion_score": 0.0,
+            "master_suite_3_score": 0.0,
+            "primary_learning_constraint": "status_error",
+            "master_suite_3_summary": f"Execution market learning expansion status unavailable: {str(exc)[:140]}",
+        }
+    return {
+        "enabled": False,
+        "version": "1.0.0",
+        "mode": "shadow_only",
+        "local_only": True,
+        "writes_files": False,
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+        "execution_market_learning_expansion_status_v1": True,
+        "primary_learning_constraint": "empty_status",
+        "master_suite_3_summary": "Execution market learning expansion returned no payload.",
+    }
+
+
 @router.get("/api/self_correction_recommendations_v1")
 def self_correction_recommendations_v1(force_refresh: bool = Query(False)):
     try:
@@ -44033,6 +44127,16 @@ def learning_snapshot_fast_v1():
             snap["observation_completion_score"] = _to_float(obs.get("observation_completion_score"), 0.0)
             snap["learning_throughput_score"] = _to_float(obs.get("learning_throughput_score"), 0.0)
             snap["primary_learning_bottleneck"] = str(obs.get("primary_learning_bottleneck") or "")
+        try:
+            suite3 = EXECUTION_MARKET_LEARNING_EXPANSION_SUITE.status(observation_payload=obs if isinstance(obs, dict) else {})
+        except Exception:
+            suite3 = {}
+        if isinstance(suite3, dict):
+            snap["execution_market_learning_expansion"] = suite3
+            snap["execution_readiness_score"] = _to_float(suite3.get("execution_readiness_score"), 0.0)
+            snap["market_knowledge_score"] = _to_float(suite3.get("market_knowledge_score"), 0.0)
+            snap["learning_expansion_score"] = _to_float(suite3.get("learning_expansion_score"), 0.0)
+            snap["master_suite_3_score"] = _to_float(suite3.get("master_suite_3_score"), 0.0)
         snap["ok"] = True
         snap["source"] = str((payload or {}).get("learning_payload_source") or ("learning_insights_last_good" if payload else "empty_fallback"))
         return snap

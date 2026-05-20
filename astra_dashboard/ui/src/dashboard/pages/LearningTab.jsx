@@ -149,6 +149,7 @@ export default function LearningTab({ compact = false }) {
     systemStatus: {},
     portfolioRiskIntel: {},
     observationThroughput: {},
+    executionMarketLearning: {},
   });
   const refreshInFlightRef = useRef(false);
 
@@ -225,6 +226,7 @@ export default function LearningTab({ compact = false }) {
           fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, { timeoutMs: 15000 }),
           fetchJson("portfolio_risk_intel", "/api/portfolio_risk_intelligence_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("observation_throughput", "/api/observation_learning_throughput_status_v1", {}, { timeoutMs: 8000 }),
+          fetchJson("execution_market_learning", "/api/execution_market_learning_expansion_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
         ]);
         secondaryResults.push(...secondaryBatch);
@@ -277,6 +279,7 @@ export default function LearningTab({ compact = false }) {
         const topBuys = selectPayload("top_buys", prevSafe.topBuys);
         const portfolioRiskIntel = selectPayload("portfolio_risk_intel", prevSafe.portfolioRiskIntel);
         const observationThroughput = selectPayload("observation_throughput", prevSafe.observationThroughput);
+        const executionMarketLearning = selectPayload("execution_market_learning", prevSafe.executionMarketLearning);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
         const learningSnapshotFast = selectPayload("learning_snapshot_fast_v1", prevSafe.learningSnapshotFast);
         const learningCandidate = selectPayload("learning_insights", prevSafe.learningInsights);
@@ -408,6 +411,7 @@ export default function LearningTab({ compact = false }) {
           systemStatus,
           portfolioRiskIntel,
           observationThroughput,
+          executionMarketLearning,
         };
       });
     };
@@ -432,6 +436,7 @@ export default function LearningTab({ compact = false }) {
   const systemStatus = data.systemStatus || {};
   const portfolioRiskIntel = data.portfolioRiskIntel || {};
   const observationThroughput = data.observationThroughput || {};
+  const executionMarketLearning = data.executionMarketLearning || {};
 
   const paperOutcome = paper?.paper_outcome_summary?.combined || {};
   const paperCohort = paper?.paper_cohort_trends || {};
@@ -1990,6 +1995,27 @@ export default function LearningTab({ compact = false }) {
           <div>API calls used: {safeNumber(observationThroughput?.api_calls_used).toFixed(0)}</div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Recommendation: {String(observationThroughput?.throughput_recommendation_summary || "Waiting for observation throughput diagnostics.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Execution, Market Knowledge & Learning Expansion</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Current entries today: {safeNumber(executionMarketLearning?.current_entries_today).toFixed(0)}</div>
+          <div>Current closures today: {safeNumber(executionMarketLearning?.current_closures_today).toFixed(0)}</div>
+          <div>Projected opened/day: {safeNumber(executionMarketLearning?.projected_trades_opened_per_day).toFixed(1)}</div>
+          <div>Projected closed/day: {safeNumber(executionMarketLearning?.projected_trades_closed_per_day).toFixed(1)}</div>
+          <div>Projected labels/day: {safeNumber(executionMarketLearning?.projected_labels_created_per_day).toFixed(1)}</div>
+          <div>Learning speed multiplier: {safeNumber(executionMarketLearning?.projected_learning_speed_multiplier, 1).toFixed(2)}x</div>
+          <div>Execution readiness: {safeNumber(executionMarketLearning?.execution_readiness_score).toFixed(1)}</div>
+          <div>Market knowledge: {safeNumber(executionMarketLearning?.market_knowledge_score).toFixed(1)}</div>
+          <div>Learning expansion: {safeNumber(executionMarketLearning?.learning_expansion_score).toFixed(1)}</div>
+          <div>Master Suite 3 score: {safeNumber(executionMarketLearning?.master_suite_3_score).toFixed(1)}</div>
+          <div>Primary constraint: {String(executionMarketLearning?.primary_learning_constraint || "waiting_for_data").replaceAll("_", " ")}</div>
+          <div>API calls used: {safeNumber(executionMarketLearning?.api_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Summary: {String(executionMarketLearning?.master_suite_3_summary || "Waiting for execution and learning expansion diagnostics.")}
           </div>
         </div>
       </div>
