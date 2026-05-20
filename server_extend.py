@@ -265,6 +265,35 @@ except Exception:
                 "master_suite_3_summary": "Inspect execution market learning expansion suite import.",
             }
 try:
+    from engine.autonomous_research_self_regulation_suite_v1 import AutonomousResearchSelfRegulationSuiteV1
+except Exception:
+    class AutonomousResearchSelfRegulationSuiteV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "autonomous_research_self_regulation_status_v1": True,
+                "primary_trading_weakness": "suite_import_unavailable",
+                "weakness_severity_score": 100.0,
+                "likely_root_causes": ["suite_import_unavailable"],
+                "highest_priority_experiment": "inspect_suite_import",
+                "promotion_recommendation": "monitor_only",
+                "structural_health_score": 0.0,
+                "primary_structural_weakness": "suite_import_unavailable",
+                "learning_pipeline_integrity_score": 0.0,
+                "research_priority_score": 100.0,
+                "suite_4_score": 0.0,
+                "suite_4_summary": "Inspect autonomous research self regulation suite import.",
+            }
+try:
     from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
 except Exception:
     class _AlpacaWSMonitorFallback:
@@ -350,6 +379,7 @@ SELF_CORRECTION_CONTROLLER = SelfCorrectionController(state_dir=STATE)
 PORTFOLIO_RISK_INTELLIGENCE_SUITE = PortfolioRiskIntelligenceSuiteV1(state_dir=STATE)
 OBSERVATION_LEARNING_THROUGHPUT_SUITE = ObservationLearningThroughputSuiteV1(state_dir=STATE)
 EXECUTION_MARKET_LEARNING_EXPANSION_SUITE = ExecutionMarketLearningExpansionSuiteV1(state_dir=STATE)
+AUTONOMOUS_RESEARCH_SELF_REGULATION_SUITE = AutonomousResearchSelfRegulationSuiteV1(state_dir=STATE)
 FMP_USAGE_STATE_PATH = os.path.join(STATE, "fmp_usage_state.json")
 FMP_CACHE_INDEX_PATH = os.path.join(STATE, "fmp_cache_index.json")
 API_USAGE_GOVERNOR_PATH = os.path.join(STATE, "api_usage_governor.json")
@@ -28875,6 +28905,81 @@ def execution_market_learning_expansion_status_v1():
     }
 
 
+@router.get("/api/autonomous_research_self_regulation_status_v1")
+def autonomous_research_self_regulation_status_v1():
+    try:
+        try:
+            obs = OBSERVATION_LEARNING_THROUGHPUT_SUITE.status()
+        except Exception:
+            obs = {}
+        try:
+            suite3 = EXECUTION_MARKET_LEARNING_EXPANSION_SUITE.status(observation_payload=obs if isinstance(obs, dict) else {})
+        except Exception:
+            suite3 = {}
+        try:
+            portfolio = portfolio_risk_intelligence_status_v1()
+        except Exception:
+            portfolio = {}
+        try:
+            cached_payload = _get_learning_insights_top_buys_fast()
+            learning_snapshot = _learning_snapshot_fast_from_payload(cached_payload if isinstance(cached_payload, dict) else {})
+        except Exception:
+            learning_snapshot = {}
+        out = AUTONOMOUS_RESEARCH_SELF_REGULATION_SUITE.status(
+            observation_payload=obs if isinstance(obs, dict) else {},
+            execution_payload=suite3 if isinstance(suite3, dict) else {},
+            portfolio_payload=portfolio if isinstance(portfolio, dict) else {},
+            learning_snapshot_payload=learning_snapshot if isinstance(learning_snapshot, dict) else {},
+        )
+        if isinstance(out, dict):
+            out["autonomous_research_self_regulation_status_v1"] = True
+            out["api_calls_used"] = 0
+            out["live_trading_changed"] = False
+            out["broker_execution_changed"] = False
+            out["production_rankings_changed"] = False
+            out["production_weights_changed"] = False
+            out["paper_trading_changed"] = False
+            return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_execution_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "paper_trading_changed": False,
+            "autonomous_research_self_regulation_status_v1": True,
+            "primary_trading_weakness": "status_error",
+            "weakness_severity_score": 100.0,
+            "likely_root_causes": ["status_error"],
+            "highest_priority_experiment": "inspect_suite_runtime",
+            "promotion_recommendation": "monitor_only",
+            "structural_health_score": 0.0,
+            "primary_structural_weakness": "status_error",
+            "learning_pipeline_integrity_score": 0.0,
+            "research_priority_score": 100.0,
+            "suite_4_score": 0.0,
+            "suite_4_summary": f"Autonomous research self regulation unavailable: {str(exc)[:140]}",
+        }
+    return {
+        "enabled": False,
+        "version": "1.0.0",
+        "mode": "shadow_only",
+        "local_only": True,
+        "writes_files": False,
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+        "autonomous_research_self_regulation_status_v1": True,
+        "primary_trading_weakness": "empty_status",
+        "suite_4_summary": "Autonomous research self regulation returned no payload.",
+    }
+
+
 @router.get("/api/self_correction_recommendations_v1")
 def self_correction_recommendations_v1(force_refresh: bool = Query(False)):
     try:
@@ -44137,6 +44242,23 @@ def learning_snapshot_fast_v1():
             snap["market_knowledge_score"] = _to_float(suite3.get("market_knowledge_score"), 0.0)
             snap["learning_expansion_score"] = _to_float(suite3.get("learning_expansion_score"), 0.0)
             snap["master_suite_3_score"] = _to_float(suite3.get("master_suite_3_score"), 0.0)
+        try:
+            portfolio = PORTFOLIO_RISK_INTELLIGENCE_SUITE.status(rows=[])
+        except Exception:
+            portfolio = {}
+        try:
+            suite4 = AUTONOMOUS_RESEARCH_SELF_REGULATION_SUITE.status(
+                observation_payload=obs if isinstance(obs, dict) else {},
+                execution_payload=suite3 if isinstance(suite3, dict) else {},
+                portfolio_payload=portfolio if isinstance(portfolio, dict) else {},
+                learning_snapshot_payload=snap,
+            )
+        except Exception:
+            suite4 = {}
+        if isinstance(suite4, dict):
+            snap["autonomous_research_self_regulation"] = suite4
+            snap["suite_4_score"] = _to_float(suite4.get("suite_4_score"), 0.0)
+            snap["primary_trading_weakness"] = str(suite4.get("primary_trading_weakness") or "")
         snap["ok"] = True
         snap["source"] = str((payload or {}).get("learning_payload_source") or ("learning_insights_last_good" if payload else "empty_fallback"))
         return snap

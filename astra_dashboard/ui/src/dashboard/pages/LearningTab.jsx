@@ -150,6 +150,7 @@ export default function LearningTab({ compact = false }) {
     portfolioRiskIntel: {},
     observationThroughput: {},
     executionMarketLearning: {},
+    autonomousSelfRegulation: {},
   });
   const refreshInFlightRef = useRef(false);
 
@@ -227,6 +228,7 @@ export default function LearningTab({ compact = false }) {
           fetchJson("portfolio_risk_intel", "/api/portfolio_risk_intelligence_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("observation_throughput", "/api/observation_learning_throughput_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("execution_market_learning", "/api/execution_market_learning_expansion_status_v1", {}, { timeoutMs: 8000 }),
+          fetchJson("autonomous_self_regulation", "/api/autonomous_research_self_regulation_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
         ]);
         secondaryResults.push(...secondaryBatch);
@@ -280,6 +282,7 @@ export default function LearningTab({ compact = false }) {
         const portfolioRiskIntel = selectPayload("portfolio_risk_intel", prevSafe.portfolioRiskIntel);
         const observationThroughput = selectPayload("observation_throughput", prevSafe.observationThroughput);
         const executionMarketLearning = selectPayload("execution_market_learning", prevSafe.executionMarketLearning);
+        const autonomousSelfRegulation = selectPayload("autonomous_self_regulation", prevSafe.autonomousSelfRegulation);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
         const learningSnapshotFast = selectPayload("learning_snapshot_fast_v1", prevSafe.learningSnapshotFast);
         const learningCandidate = selectPayload("learning_insights", prevSafe.learningInsights);
@@ -412,6 +415,7 @@ export default function LearningTab({ compact = false }) {
           portfolioRiskIntel,
           observationThroughput,
           executionMarketLearning,
+          autonomousSelfRegulation,
         };
       });
     };
@@ -437,6 +441,7 @@ export default function LearningTab({ compact = false }) {
   const portfolioRiskIntel = data.portfolioRiskIntel || {};
   const observationThroughput = data.observationThroughput || {};
   const executionMarketLearning = data.executionMarketLearning || {};
+  const autonomousSelfRegulation = data.autonomousSelfRegulation || {};
 
   const paperOutcome = paper?.paper_outcome_summary?.combined || {};
   const paperCohort = paper?.paper_cohort_trends || {};
@@ -2016,6 +2021,30 @@ export default function LearningTab({ compact = false }) {
           <div>API calls used: {safeNumber(executionMarketLearning?.api_calls_used).toFixed(0)}</div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Summary: {String(executionMarketLearning?.master_suite_3_summary || "Waiting for execution and learning expansion diagnostics.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Autonomous Research & Self-Regulation</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Primary weakness: {String(autonomousSelfRegulation?.primary_trading_weakness || "waiting_for_data").replaceAll("_", " ")}</div>
+          <div>
+            Likely root cause: {String(
+              Array.isArray(autonomousSelfRegulation?.likely_root_causes)
+                ? autonomousSelfRegulation.likely_root_causes[0]
+                : autonomousSelfRegulation?.root_cause_summary || "waiting_for_data"
+            ).replaceAll("_", " ")}
+          </div>
+          <div>Highest priority experiment: {String(autonomousSelfRegulation?.highest_priority_experiment || "waiting_for_data").replaceAll("_", " ")}</div>
+          <div>Structural health: {safeNumber(autonomousSelfRegulation?.structural_health_score).toFixed(1)}</div>
+          <div>Learning pipeline integrity: {safeNumber(autonomousSelfRegulation?.learning_pipeline_integrity_score).toFixed(1)}</div>
+          <div>Promotion recommendation: {String(autonomousSelfRegulation?.promotion_recommendation || "monitor_only").replaceAll("_", " ")}</div>
+          <div>Next best action: {String(autonomousSelfRegulation?.next_best_action_summary || "continue_shadow_monitoring").replaceAll("_", " ")}</div>
+          <div>Suite 4 score: {safeNumber(autonomousSelfRegulation?.suite_4_score).toFixed(1)}</div>
+          <div>API calls used: {safeNumber(autonomousSelfRegulation?.api_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Summary: {String(autonomousSelfRegulation?.suite_4_summary || "Waiting for autonomous self-regulation diagnostics.")}
           </div>
         </div>
       </div>
