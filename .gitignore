@@ -83,3 +83,4 @@ logs/
 *.zip
 *.tar
 *.tar.gz
+.env
