@@ -154,6 +154,8 @@ export default function LearningTab({ compact = false }) {
     paperThroughputExpansion: {},
     multiHorizonPaperTrading: {},
     adaptiveMarketIntake: {},
+    alpacaPaperBroker: {},
+    horizonPerformanceDashboard: {},
   });
   const refreshInFlightRef = useRef(false);
 
@@ -235,6 +237,8 @@ export default function LearningTab({ compact = false }) {
           fetchJson("paper_throughput_expansion", "/api/paper_autopilot_throughput_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("multi_horizon_paper_trading", "/api/multi_horizon_paper_trading_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("adaptive_market_intake", "/api/adaptive_market_intake_fmp_budget_status_v1", {}, { timeoutMs: 8000 }),
+          fetchJson("alpaca_paper_broker", "/api/alpaca_paper_status_v1", {}, { timeoutMs: 8000 }),
+          fetchJson("horizon_performance_dashboard", "/api/horizon_performance_dashboard_v1", {}, { timeoutMs: 8000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
         ]);
         secondaryResults.push(...secondaryBatch);
@@ -292,6 +296,8 @@ export default function LearningTab({ compact = false }) {
         const paperThroughputExpansion = selectPayload("paper_throughput_expansion", prevSafe.paperThroughputExpansion);
         const multiHorizonPaperTrading = selectPayload("multi_horizon_paper_trading", prevSafe.multiHorizonPaperTrading);
         const adaptiveMarketIntake = selectPayload("adaptive_market_intake", prevSafe.adaptiveMarketIntake);
+        const alpacaPaperBroker = selectPayload("alpaca_paper_broker", prevSafe.alpacaPaperBroker);
+        const horizonPerformanceDashboard = selectPayload("horizon_performance_dashboard", prevSafe.horizonPerformanceDashboard);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
         const learningSnapshotFast = selectPayload("learning_snapshot_fast_v1", prevSafe.learningSnapshotFast);
         const learningCandidate = selectPayload("learning_insights", prevSafe.learningInsights);
@@ -428,6 +434,8 @@ export default function LearningTab({ compact = false }) {
           paperThroughputExpansion,
           multiHorizonPaperTrading,
           adaptiveMarketIntake,
+          alpacaPaperBroker,
+          horizonPerformanceDashboard,
         };
       });
     };
@@ -457,6 +465,8 @@ export default function LearningTab({ compact = false }) {
   const paperThroughputExpansion = data.paperThroughputExpansion || {};
   const multiHorizonPaperTrading = data.multiHorizonPaperTrading || {};
   const adaptiveMarketIntake = data.adaptiveMarketIntake || {};
+  const alpacaPaperBroker = data.alpacaPaperBroker || {};
+  const horizonPerformanceDashboard = data.horizonPerformanceDashboard || {};
 
   const paperOutcome = paper?.paper_outcome_summary?.combined || {};
   const paperCohort = paper?.paper_cohort_trends || {};
@@ -2124,6 +2134,59 @@ export default function LearningTab({ compact = false }) {
           <div>API calls used: {safeNumber(adaptiveMarketIntake?.api_calls_used).toFixed(0)}</div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Summary: {String(adaptiveMarketIntake?.intake_summary || "Waiting for adaptive market intake diagnostics.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Alpaca Paper Broker Status</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Enabled: {alpacaPaperBroker?.enabled ? "yes" : "no"}</div>
+          <div>Paper mode verified: {alpacaPaperBroker?.paper_mode_verified ? "yes" : "no"}</div>
+          <div>Broker execution enabled: {alpacaPaperBroker?.broker_execution_enabled ? "yes" : "no"}</div>
+          <div>Equity: ${safeNumber(alpacaPaperBroker?.account_equity).toFixed(2)}</div>
+          <div>Buying power: ${safeNumber(alpacaPaperBroker?.buying_power).toFixed(2)}</div>
+          <div>Open positions: {safeNumber(alpacaPaperBroker?.open_positions_count).toFixed(0)}</div>
+          <div>Open orders: {safeNumber(alpacaPaperBroker?.open_orders_count).toFixed(0)}</div>
+          <div>Safety: {String(alpacaPaperBroker?.safety_status || "disabled_or_blocked").replaceAll("_", " ")}</div>
+          <div>Last order: {String(alpacaPaperBroker?.last_order_status || "not_checked").replaceAll("_", " ")}</div>
+          <div>API calls used: {safeNumber(alpacaPaperBroker?.api_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Safety reasons: {(Array.isArray(alpacaPaperBroker?.safety_reasons) ? alpacaPaperBroker.safety_reasons : ["waiting_for_data"]).join(", ").replaceAll("_", " ")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Horizon Performance Dashboard</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "10px", fontSize: 12 }}>
+          {[
+            ["Scalp", horizonPerformanceDashboard?.scalp || {}],
+            ["Day Trade", horizonPerformanceDashboard?.day_trade || {}],
+            ["Swing Trade", horizonPerformanceDashboard?.swing_trade || {}],
+          ].map(([label, metrics]) => (
+            <div key={label} style={{ border: "1px solid rgba(124,154,201,0.35)", borderRadius: 10, padding: 10, background: "rgba(7,20,38,0.32)" }}>
+              <div style={{ color: "#dce7ff", fontWeight: 700, marginBottom: 6 }}>{label}</div>
+              <div>Entries today: {safeNumber(metrics?.entries_today).toFixed(0)}</div>
+              <div>Exits today: {safeNumber(metrics?.exits_today).toFixed(0)}</div>
+              <div>Open positions: {safeNumber(metrics?.open_positions).toFixed(0)}</div>
+              <div>Win rate: {safeNumber(metrics?.win_rate).toFixed(1)}%</div>
+              <div>Average return: {safeNumber(metrics?.average_return_pct).toFixed(2)}%</div>
+              <div>Average hold: {safeNumber(metrics?.average_hold_time_hours, metrics?.average_hold_time).toFixed(2)}h</div>
+              <div>Fill quality: {safeNumber(metrics?.broker_fill_quality, 100).toFixed(1)}</div>
+              <div>Slippage: {safeNumber(metrics?.average_slippage_bps).toFixed(1)} bps</div>
+              <div>Rejected orders: {safeNumber(metrics?.rejected_orders).toFixed(0)}</div>
+              <div>Natural exits: {safeNumber(metrics?.natural_exit_count).toFixed(0)}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Best horizon: {String(horizonPerformanceDashboard?.best_current_horizon || "waiting_for_data").replaceAll("_", " ")}</div>
+          <div>Weakest horizon: {String(horizonPerformanceDashboard?.weakest_current_horizon || "waiting_for_data").replaceAll("_", " ")}</div>
+          <div>Natural exits preserved: {horizonPerformanceDashboard?.natural_exit_preserved === false ? "no" : "yes"}</div>
+          <div>API calls used: {safeNumber(horizonPerformanceDashboard?.api_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Summary: {String(horizonPerformanceDashboard?.overall_horizon_summary || "Waiting for horizon performance diagnostics.")}
           </div>
         </div>
       </div>

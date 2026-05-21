@@ -383,6 +383,85 @@ except Exception:
             return {"ok": True, "fallback": True}
 
     ALPACA_WS_MONITOR = _AlpacaWSMonitorFallback()
+try:
+    from engine.alpaca_paper_broker import AlpacaPaperBroker
+except Exception:
+    class AlpacaPaperBroker:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self):
+            return {
+                "enabled": False,
+                "mode": "paper_only",
+                "paper_mode_verified": False,
+                "broker_execution_enabled": False,
+                "account_equity": 0.0,
+                "buying_power": 0.0,
+                "open_positions_count": 0,
+                "open_orders_count": 0,
+                "last_order_status": "broker_module_unavailable",
+                "safety_status": "disabled_or_blocked",
+                "safety_reasons": ["alpaca_paper_broker_import_failed"],
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+            }
+
+        def positions_status(self):
+            return {
+                "enabled": False,
+                "mode": "paper_only",
+                "paper_mode_verified": False,
+                "broker_execution_enabled": False,
+                "positions": [],
+                "open_positions_count": 0,
+                "safety_status": "disabled_or_blocked",
+                "safety_reasons": ["alpaca_paper_broker_import_failed"],
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+            }
+try:
+    from engine.horizon_performance_dashboard_v1 import HorizonPerformanceDashboardV1
+except Exception:
+    class HorizonPerformanceDashboardV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self):
+            empty = {
+                "entries_today": 0,
+                "exits_today": 0,
+                "open_positions": 0,
+                "win_rate": 0.0,
+                "average_return_pct": 0.0,
+                "profit_factor": 0.0,
+                "average_hold_time": 0.0,
+                "entry_quality": 0.0,
+                "exit_quality": 0.0,
+                "best_symbol": "n/a",
+                "weakest_symbol": "n/a",
+                "best_setup": "n/a",
+                "weakest_setup": "n/a",
+                "broker_fill_quality": 100.0,
+                "average_slippage_bps": 0.0,
+                "rejected_orders": 0,
+                "partial_fills": 0,
+                "natural_exit_count": 0,
+                "forced_exit_count": 0,
+            }
+            return {
+                "enabled": False,
+                "mode": "paper_only_dashboard",
+                "scalp": dict(empty),
+                "day_trade": dict(empty),
+                "swing_trade": dict(empty),
+                "best_current_horizon": "day_trade",
+                "weakest_current_horizon": "scalp",
+                "overall_horizon_summary": "Horizon performance dashboard module unavailable.",
+                "natural_exit_preserved": True,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+            }
 from core.guardian.guardian_secure_api import GuardianSecureAPI
 from engine.api_call_manager import (
     get_call_permission,
@@ -452,6 +531,8 @@ EXECUTION_MARKET_LEARNING_EXPANSION_SUITE = ExecutionMarketLearningExpansionSuit
 AUTONOMOUS_RESEARCH_SELF_REGULATION_SUITE = AutonomousResearchSelfRegulationSuiteV1(state_dir=STATE)
 MULTI_HORIZON_PAPER_TRADING_SUITE = MultiHorizonPaperTradingLearningSuiteV1(state_dir=STATE)
 ADAPTIVE_MARKET_INTAKE_FMP_BUDGET_SUITE = AdaptiveMarketIntakeFmpBudgetSuiteV1(state_dir=STATE)
+ALPACA_PAPER_BROKER = AlpacaPaperBroker()
+HORIZON_PERFORMANCE_DASHBOARD = HorizonPerformanceDashboardV1(state_dir=STATE, db_path=os.path.join(STATE, "ai_trading_memory.db"))
 FMP_USAGE_STATE_PATH = os.path.join(STATE, "fmp_usage_state.json")
 FMP_CACHE_INDEX_PATH = os.path.join(STATE, "fmp_cache_index.json")
 API_USAGE_GOVERNOR_PATH = os.path.join(STATE, "api_usage_governor.json")
@@ -29260,6 +29341,156 @@ def adaptive_market_intake_fmp_budget_status_v1():
         "intake_mode": "provider_pressure_pause",
         "recommended_refresh_intensity": "paused_runtime_protection",
         "intake_summary": "Adaptive market intake status returned no payload.",
+    }
+
+
+@router.get("/api/alpaca_paper_status_v1")
+def alpaca_paper_status_v1():
+    try:
+        out = ALPACA_PAPER_BROKER.status()
+        if isinstance(out, dict):
+            out["alpaca_paper_status_v1"] = True
+            out["live_trading_changed"] = False
+            out["broker_live_endpoint_allowed"] = False
+            return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "paper_only",
+            "paper_mode_verified": False,
+            "broker_execution_enabled": False,
+            "account_equity": 0.0,
+            "buying_power": 0.0,
+            "open_positions_count": 0,
+            "open_orders_count": 0,
+            "last_order_status": "status_error",
+            "safety_status": "disabled_or_blocked",
+            "safety_reasons": [f"alpaca_paper_status_unavailable: {str(exc)[:120]}"],
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_live_endpoint_allowed": False,
+            "crypto_broker_execution_supported": False,
+            "crypto_note": "Crypto broker execution deferred until exchange/broker coverage is selected.",
+            "alpaca_paper_status_v1": True,
+        }
+    return {
+        "enabled": False,
+        "version": "1.0.0",
+        "mode": "paper_only",
+        "paper_mode_verified": False,
+        "broker_execution_enabled": False,
+        "account_equity": 0.0,
+        "buying_power": 0.0,
+        "open_positions_count": 0,
+        "open_orders_count": 0,
+        "last_order_status": "empty_status",
+        "safety_status": "disabled_or_blocked",
+        "safety_reasons": ["alpaca_paper_status_returned_no_payload"],
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+        "broker_live_endpoint_allowed": False,
+        "alpaca_paper_status_v1": True,
+    }
+
+
+@router.get("/api/alpaca_paper_positions_v1")
+def alpaca_paper_positions_v1():
+    try:
+        out = ALPACA_PAPER_BROKER.positions_status()
+        if isinstance(out, dict):
+            out["alpaca_paper_positions_v1"] = True
+            out["live_trading_changed"] = False
+            out["broker_live_endpoint_allowed"] = False
+            return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "mode": "paper_only",
+            "paper_mode_verified": False,
+            "broker_execution_enabled": False,
+            "positions": [],
+            "open_positions_count": 0,
+            "safety_status": "disabled_or_blocked",
+            "safety_reasons": [f"alpaca_paper_positions_unavailable: {str(exc)[:120]}"],
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_live_endpoint_allowed": False,
+            "alpaca_paper_positions_v1": True,
+        }
+    return {
+        "enabled": False,
+        "mode": "paper_only",
+        "paper_mode_verified": False,
+        "broker_execution_enabled": False,
+        "positions": [],
+        "open_positions_count": 0,
+        "safety_status": "disabled_or_blocked",
+        "safety_reasons": ["alpaca_paper_positions_returned_no_payload"],
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+        "broker_live_endpoint_allowed": False,
+        "alpaca_paper_positions_v1": True,
+    }
+
+
+@router.get("/api/horizon_performance_dashboard_v1")
+def horizon_performance_dashboard_v1():
+    try:
+        out = HORIZON_PERFORMANCE_DASHBOARD.status()
+        if isinstance(out, dict):
+            out["horizon_performance_dashboard_v1"] = True
+            out["natural_exit_preserved"] = True
+            out["forced_early_exit_enabled"] = False
+            out["api_calls_used"] = 0
+            out["live_trading_changed"] = False
+            return out
+    except Exception as exc:
+        empty = {
+            "entries_today": 0,
+            "exits_today": 0,
+            "open_positions": 0,
+            "win_rate": 0.0,
+            "average_return_pct": 0.0,
+            "profit_factor": 0.0,
+            "average_hold_time": 0.0,
+            "entry_quality": 0.0,
+            "exit_quality": 0.0,
+            "broker_fill_quality": 100.0,
+            "average_slippage_bps": 0.0,
+            "rejected_orders": 0,
+            "partial_fills": 0,
+            "natural_exit_count": 0,
+            "forced_exit_count": 0,
+        }
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "paper_only_dashboard",
+            "scalp": dict(empty),
+            "day_trade": dict(empty),
+            "swing_trade": dict(empty),
+            "best_current_horizon": "day_trade",
+            "weakest_current_horizon": "scalp",
+            "overall_horizon_summary": f"Horizon performance dashboard unavailable: {str(exc)[:140]}",
+            "natural_exit_preserved": True,
+            "forced_early_exit_enabled": False,
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "horizon_performance_dashboard_v1": True,
+        }
+    return {
+        "enabled": False,
+        "version": "1.0.0",
+        "mode": "paper_only_dashboard",
+        "best_current_horizon": "day_trade",
+        "weakest_current_horizon": "scalp",
+        "overall_horizon_summary": "Horizon performance dashboard returned no payload.",
+        "natural_exit_preserved": True,
+        "forced_early_exit_enabled": False,
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+        "horizon_performance_dashboard_v1": True,
     }
 
 
