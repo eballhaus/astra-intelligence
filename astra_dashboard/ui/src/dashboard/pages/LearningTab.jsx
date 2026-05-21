@@ -156,6 +156,7 @@ export default function LearningTab({ compact = false }) {
     adaptiveMarketIntake: {},
     alpacaPaperBroker: {},
     horizonPerformanceDashboard: {},
+    dynamicOpportunityWeighting: {},
   });
   const refreshInFlightRef = useRef(false);
 
@@ -239,6 +240,7 @@ export default function LearningTab({ compact = false }) {
           fetchJson("adaptive_market_intake", "/api/adaptive_market_intake_fmp_budget_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("alpaca_paper_broker", "/api/alpaca_paper_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("horizon_performance_dashboard", "/api/horizon_performance_dashboard_v1", {}, { timeoutMs: 8000 }),
+          fetchJson("dynamic_opportunity_weighting", "/api/dynamic_opportunity_weighting_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
         ]);
         secondaryResults.push(...secondaryBatch);
@@ -298,6 +300,7 @@ export default function LearningTab({ compact = false }) {
         const adaptiveMarketIntake = selectPayload("adaptive_market_intake", prevSafe.adaptiveMarketIntake);
         const alpacaPaperBroker = selectPayload("alpaca_paper_broker", prevSafe.alpacaPaperBroker);
         const horizonPerformanceDashboard = selectPayload("horizon_performance_dashboard", prevSafe.horizonPerformanceDashboard);
+        const dynamicOpportunityWeighting = selectPayload("dynamic_opportunity_weighting", prevSafe.dynamicOpportunityWeighting);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
         const learningSnapshotFast = selectPayload("learning_snapshot_fast_v1", prevSafe.learningSnapshotFast);
         const learningCandidate = selectPayload("learning_insights", prevSafe.learningInsights);
@@ -436,6 +439,7 @@ export default function LearningTab({ compact = false }) {
           adaptiveMarketIntake,
           alpacaPaperBroker,
           horizonPerformanceDashboard,
+          dynamicOpportunityWeighting,
         };
       });
     };
@@ -467,6 +471,7 @@ export default function LearningTab({ compact = false }) {
   const adaptiveMarketIntake = data.adaptiveMarketIntake || {};
   const alpacaPaperBroker = data.alpacaPaperBroker || {};
   const horizonPerformanceDashboard = data.horizonPerformanceDashboard || {};
+  const dynamicOpportunityWeighting = data.dynamicOpportunityWeighting || {};
 
   const paperOutcome = paper?.paper_outcome_summary?.combined || {};
   const paperCohort = paper?.paper_cohort_trends || {};
@@ -2110,6 +2115,31 @@ export default function LearningTab({ compact = false }) {
           <div>API calls used: {safeNumber(multiHorizonPaperTrading?.api_calls_used).toFixed(0)}</div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Summary: {String(multiHorizonPaperTrading?.multi_horizon_summary || "Waiting for multi-horizon paper trading diagnostics.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Dynamic Opportunity Weighting & Profit Optimization</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>
+            Current profile: expected return {safeNumber((dynamicOpportunityWeighting?.current_weight_profile || {}).expected_return_percent, 0.3).toFixed(2)}
+            {" "} / confidence {safeNumber((dynamicOpportunityWeighting?.current_weight_profile || {}).probability_confidence, 0.25).toFixed(2)}
+          </div>
+          <div>Average aggressive profit score: {safeNumber(dynamicOpportunityWeighting?.average_aggressive_profit_score).toFixed(1)}</div>
+          <div>Average risk-adjusted profit score: {safeNumber(dynamicOpportunityWeighting?.average_risk_adjusted_profit_score).toFixed(1)}</div>
+          <div>High-profit candidates found: {safeNumber(dynamicOpportunityWeighting?.high_predicted_profit_candidate_count).toFixed(0)}</div>
+          <div>High-profit approved: {safeNumber(dynamicOpportunityWeighting?.high_profit_approved_count).toFixed(0)}</div>
+          <div>High-profit blocked: {safeNumber(dynamicOpportunityWeighting?.high_profit_blocked_count).toFixed(0)}</div>
+          <div>Large-cap bias detected: {dynamicOpportunityWeighting?.large_cap_bias_detected ? "yes" : "no"}</div>
+          <div>Candidate diversity score: {safeNumber(dynamicOpportunityWeighting?.candidate_diversity_score).toFixed(1)}</div>
+          <div>Weight confidence: {String(dynamicOpportunityWeighting?.weight_confidence || "low").replaceAll("_", " ")}</div>
+          <div>API calls used: {safeNumber(dynamicOpportunityWeighting?.api_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Recommended adjustments: {Object.entries(dynamicOpportunityWeighting?.recommended_weight_adjustments || {}).map(([k, v]) => `${String(k).replaceAll("_", " ")}: ${String(v).replaceAll("_", " ")}`).join(" | ") || "Waiting for outcome samples."}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Funnel summary: {String(dynamicOpportunityWeighting?.opportunity_funnel_summary || "Waiting for dynamic opportunity weighting diagnostics.")}
           </div>
         </div>
       </div>

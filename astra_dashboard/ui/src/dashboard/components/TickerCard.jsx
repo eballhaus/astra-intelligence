@@ -187,6 +187,11 @@ export default function TickerCard({
   const portfolioRiskSummaryText = String(item?.portfolio_risk_summary || "Portfolio risk diagnostics unavailable.");
   const bestHorizonStyleText = String(item?.best_horizon_style || item?.trade_horizon_style || "n/a").replaceAll("_", " ");
   const horizonSummaryText = String(item?.horizon_style_summary || "Multi-horizon paper diagnostics unavailable.");
+  const aggressiveProfitScoreText = fmtValue(item?.aggressive_profit_score);
+  const riskAdjustedProfitScoreText = fmtValue(item?.risk_adjusted_profit_score);
+  const bestProfitHorizonText = String(item?.best_profit_horizon || "n/a").replaceAll("_", " ");
+  const highProfitCandidateText = item?.high_profit_candidate === true ? "yes" : item?.high_profit_candidate === false ? "no" : "n/a";
+  const profitOptimizationSummaryText = String(item?.profit_optimization_summary || "Profit optimization diagnostics unavailable.");
 
   const actionText = positionState === "working" ? "Adding..." : positionState === "added" ? "Added" : positionState === "failed" ? "Retry Add" : "Add to Positions";
   const removeText = removeState === "working" ? "Removing..." : removeState === "failed" ? "Retry Remove" : "Remove";
@@ -353,6 +358,11 @@ export default function TickerCard({
               <div>Day Trade Fit: {fmtValue(item?.day_trade_fit_score)}</div>
               <div>Swing Trade Fit: {fmtValue(item?.swing_trade_fit_score)}</div>
               <div>Horizon Summary: {horizonSummaryText}</div>
+              <div>Aggressive Profit Score: {aggressiveProfitScoreText}</div>
+              <div>Risk-Adjusted Profit Score: {riskAdjustedProfitScoreText}</div>
+              <div>Best Profit Horizon: {bestProfitHorizonText}</div>
+              <div>High-Profit Candidate: {highProfitCandidateText}</div>
+              <div>Profit Optimization Summary: {profitOptimizationSummaryText}</div>
             </div>
           </details>
           {intelligenceText ? (

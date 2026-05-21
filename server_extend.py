@@ -328,6 +328,55 @@ except Exception:
                 "artificial_max_hold_exit_enabled": False,
             }
 try:
+    from engine.dynamic_opportunity_weighting_profit_optimization_v1 import DynamicOpportunityWeightingProfitOptimizationV1
+except Exception:
+    class DynamicOpportunityWeightingProfitOptimizationV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def enrich_payload(self, payload):
+            return dict(payload or {})
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_paper_only",
+                "local_only": True,
+                "writes_files": False,
+                "current_weight_profile": {
+                    "expected_return_percent": 0.30,
+                    "probability_confidence": 0.25,
+                    "entry_quality": 0.15,
+                    "execution_readiness": 0.10,
+                    "liquidity_quality": 0.08,
+                    "volatility_adjusted_reward": 0.05,
+                    "horizon_fit": 0.04,
+                    "portfolio_risk_control": 0.03,
+                },
+                "scalp_weight_profile": {},
+                "day_trade_weight_profile": {},
+                "swing_trade_weight_profile": {},
+                "average_aggressive_profit_score": 0.0,
+                "average_risk_adjusted_profit_score": 0.0,
+                "high_predicted_profit_candidate_count": 0,
+                "high_profit_approved_count": 0,
+                "high_profit_blocked_count": 0,
+                "large_cap_bias_detected": False,
+                "candidate_diversity_score": 0.0,
+                "recommended_weight_adjustments": {},
+                "weight_adjustment_reason": "dynamic_opportunity_weighting_import_unavailable",
+                "weight_confidence": "low",
+                "opportunity_funnel_summary": "Inspect dynamic opportunity weighting import.",
+                "auto_promotion_allowed": False,
+                "human_review_required": True,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "broker_execution_changed": False,
+                "production_rankings_changed": False,
+                "production_weights_changed": False,
+            }
+try:
     from engine.adaptive_market_intake_fmp_budget_suite_v1 import AdaptiveMarketIntakeFmpBudgetSuiteV1
 except Exception:
     class AdaptiveMarketIntakeFmpBudgetSuiteV1:  # type: ignore[override]
@@ -530,6 +579,7 @@ OBSERVATION_LEARNING_THROUGHPUT_SUITE = ObservationLearningThroughputSuiteV1(sta
 EXECUTION_MARKET_LEARNING_EXPANSION_SUITE = ExecutionMarketLearningExpansionSuiteV1(state_dir=STATE)
 AUTONOMOUS_RESEARCH_SELF_REGULATION_SUITE = AutonomousResearchSelfRegulationSuiteV1(state_dir=STATE)
 MULTI_HORIZON_PAPER_TRADING_SUITE = MultiHorizonPaperTradingLearningSuiteV1(state_dir=STATE)
+DYNAMIC_OPPORTUNITY_WEIGHTING_SUITE = DynamicOpportunityWeightingProfitOptimizationV1(state_dir=STATE)
 ADAPTIVE_MARKET_INTAKE_FMP_BUDGET_SUITE = AdaptiveMarketIntakeFmpBudgetSuiteV1(state_dir=STATE)
 ALPACA_PAPER_BROKER = AlpacaPaperBroker()
 HORIZON_PERFORMANCE_DASHBOARD = HorizonPerformanceDashboardV1(state_dir=STATE, db_path=os.path.join(STATE, "ai_trading_memory.db"))
@@ -29257,6 +29307,90 @@ def multi_horizon_paper_trading_status_v1():
     }
 
 
+@router.get("/api/dynamic_opportunity_weighting_status_v1")
+def dynamic_opportunity_weighting_status_v1():
+    try:
+        try:
+            payload = dict(_latest_top_buys_runtime_snapshot() or {})
+        except Exception:
+            payload = {}
+        if not payload:
+            try:
+                cached = _CACHE.get("top_buys", {}) if isinstance(_CACHE.get("top_buys"), dict) else {}
+                mode_cached = ((cached.get("mode::balanced") or {}).get("data")) if isinstance(cached, dict) else {}
+                if isinstance(mode_cached, dict):
+                    payload = dict(mode_cached)
+            except Exception:
+                payload = {}
+        rows = _candidate_rows_from_payload(payload) if isinstance(payload, dict) else []
+        out = DYNAMIC_OPPORTUNITY_WEIGHTING_SUITE.status(rows=rows)
+        if isinstance(out, dict):
+            out["dynamic_opportunity_weighting_status_v1"] = True
+            out["api_calls_used"] = 0
+            out["live_trading_changed"] = False
+            out["broker_execution_changed"] = False
+            out["production_rankings_changed"] = False
+            out["production_weights_changed"] = False
+            out["provider_rewrite_changed"] = False
+            out["auto_promotion_allowed"] = False
+            out["human_review_required"] = True
+            return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_paper_only",
+            "local_only": True,
+            "writes_files": False,
+            "dynamic_opportunity_weighting_status_v1": True,
+            "current_weight_profile": {
+                "expected_return_percent": 0.30,
+                "probability_confidence": 0.25,
+                "entry_quality": 0.15,
+                "execution_readiness": 0.10,
+                "liquidity_quality": 0.08,
+                "volatility_adjusted_reward": 0.05,
+                "horizon_fit": 0.04,
+                "portfolio_risk_control": 0.03,
+            },
+            "scalp_weight_profile": {},
+            "day_trade_weight_profile": {},
+            "swing_trade_weight_profile": {},
+            "average_aggressive_profit_score": 0.0,
+            "average_risk_adjusted_profit_score": 0.0,
+            "high_predicted_profit_candidate_count": 0,
+            "high_profit_approved_count": 0,
+            "high_profit_blocked_count": 0,
+            "large_cap_bias_detected": False,
+            "candidate_diversity_score": 0.0,
+            "recommended_weight_adjustments": {},
+            "weight_adjustment_reason": f"dynamic_opportunity_weighting_status_unavailable: {str(exc)[:140]}",
+            "weight_confidence": "low",
+            "opportunity_funnel_summary": "Dynamic opportunity weighting status unavailable.",
+            "auto_promotion_allowed": False,
+            "human_review_required": True,
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_execution_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+        }
+    return {
+        "enabled": False,
+        "version": "1.0.0",
+        "mode": "shadow_paper_only",
+        "dynamic_opportunity_weighting_status_v1": True,
+        "current_weight_profile": {},
+        "average_aggressive_profit_score": 0.0,
+        "average_risk_adjusted_profit_score": 0.0,
+        "opportunity_funnel_summary": "Dynamic opportunity weighting returned no payload.",
+        "auto_promotion_allowed": False,
+        "human_review_required": True,
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+    }
+
+
 @router.get("/api/adaptive_market_intake_fmp_budget_status_v1")
 def adaptive_market_intake_fmp_budget_status_v1():
     try:
@@ -33525,10 +33659,15 @@ def _cached_only_learning_throughput_governor_v1(payload):
         if sym in selected_symbols:
             _reject("symbol_cap_reached")
             continue
+        profit_score = _to_float(rr.get("risk_adjusted_profit_score"), _to_float(rr.get("aggressive_profit_score"), 0.0))
+        if bool(rr.get("high_profit_candidate", False)) and not bool(rr.get("paper_profit_candidate_eligible", True)):
+            _reject(str(rr.get("profit_weighting_rejection_reason") or "profit_weighting_gate_blocked"))
+            continue
         telemetry_score = 0.0
-        telemetry_score += _to_float(rr.get("entry_filter_v2_score"), 0.0) * 0.45
-        telemetry_score += _to_float(rr.get("confidence_truthfulness_score"), 0.0) * 0.35
-        telemetry_score += _to_float(rr.get("risk_tier_score"), 0.0) * 0.2
+        telemetry_score += _to_float(rr.get("entry_filter_v2_score"), 0.0) * 0.32
+        telemetry_score += _to_float(rr.get("confidence_truthfulness_score"), 0.0) * 0.25
+        telemetry_score += _to_float(rr.get("risk_tier_score"), 0.0) * 0.13
+        telemetry_score += profit_score * 0.30
         eligible.append((telemetry_score, sym, setup, regime))
 
     eligible.sort(key=lambda x: float(x[0]), reverse=True)
@@ -33567,6 +33706,7 @@ def _cached_only_learning_throughput_governor_v1(payload):
                 rr["paper_limits_ok"] = bool(is_selected)
                 rr["portfolio_risk_ok"] = bool(str(rr.get("portfolio_risk_label") or "").lower() not in {"high_risk", "blocked"})
                 rr["natural_exit_logic_preserved"] = True
+                rr["paper_profit_candidate_selected"] = bool(is_selected and rr.get("paper_profit_candidate_eligible", False))
                 updated.append(rr)
             b[key] = updated
         p[bucket] = b
@@ -33796,6 +33936,11 @@ def _apply_rolling_conviction_v1(payload):
         "day_trade_fit_score",
         "swing_trade_fit_score",
         "horizon_style_summary",
+        "aggressive_profit_score",
+        "risk_adjusted_profit_score",
+        "best_profit_horizon",
+        "high_profit_candidate",
+        "profit_optimization_summary",
     ]
     p["ollama_summary_rule_v1"] = "max_2_sentences_reason_plus_conviction_trend_plus_action"
     return p
@@ -34770,11 +34915,16 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
             or bool((out.get("portfolio_risk_intelligence_summary") or {}).get("portfolio_risk_intelligence_status_v1"))
         )
         and bool(out.get("multi_horizon_paper_trading_suite_v1"))
+        and bool(out.get("dynamic_opportunity_weighting_v1"))
     )
     reuse_decorated_payload = bool(source_s in {"runtime_snapshot", "cached"} and already_decorated)
     if not reuse_decorated_payload:
         try:
             out = _apply_controlled_fmp_enrichment_v1(out)
+        except Exception:
+            pass
+        try:
+            out = DYNAMIC_OPPORTUNITY_WEIGHTING_SUITE.enrich_payload(out)
         except Exception:
             pass
         try:
@@ -34796,6 +34946,10 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
             pass
         try:
             out = MULTI_HORIZON_PAPER_TRADING_SUITE.enrich_payload(out)
+        except Exception:
+            pass
+        try:
+            out = DYNAMIC_OPPORTUNITY_WEIGHTING_SUITE.enrich_payload(out)
         except Exception:
             pass
     elif not isinstance(out.get("paper_learning_expansion"), dict):
@@ -45093,6 +45247,17 @@ def learning_snapshot_fast_v1():
             snap["multi_horizon_paper_trading"] = multi_horizon
             snap["multi_horizon_learning_score"] = _to_float(multi_horizon.get("multi_horizon_learning_score"), 0.0)
             snap["best_current_horizon"] = str(multi_horizon.get("best_current_horizon") or "")
+        try:
+            dyn_payload = dict(_latest_top_buys_runtime_snapshot() or {})
+            dynamic_rows = _candidate_rows_from_payload(dyn_payload) if isinstance(dyn_payload, dict) else []
+            dynamic_weighting = DYNAMIC_OPPORTUNITY_WEIGHTING_SUITE.status(rows=dynamic_rows)
+        except Exception:
+            dynamic_weighting = {}
+        if isinstance(dynamic_weighting, dict):
+            snap["dynamic_opportunity_weighting"] = dynamic_weighting
+            snap["average_risk_adjusted_profit_score"] = _to_float(dynamic_weighting.get("average_risk_adjusted_profit_score"), 0.0)
+            snap["high_predicted_profit_candidate_count"] = int(_to_float(dynamic_weighting.get("high_predicted_profit_candidate_count"), 0.0))
+            snap["large_cap_bias_detected"] = bool(dynamic_weighting.get("large_cap_bias_detected", False))
         snap["ok"] = True
         snap["source"] = str((payload or {}).get("learning_payload_source") or ("learning_insights_last_good" if payload else "empty_fallback"))
         return snap

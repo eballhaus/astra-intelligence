@@ -88,6 +88,8 @@ def _entry_bridge_quality(row: dict[str, Any]):
         "entry_quality_score",
         "entry_quality",
         "execution_readiness_score",
+        "risk_adjusted_profit_score",
+        "aggressive_profit_score",
         "opportunity_score_pct",
         "best_horizon_score",
     ):
@@ -432,6 +434,8 @@ class PaperAutopilotEngine:
         if quality >= 55.0:
             positive_signals += 1
         if confidence >= 56.0:
+            positive_signals += 1
+        if bool(row.get("paper_profit_candidate_eligible", False)) and _to_float(row.get("risk_adjusted_profit_score"), 0.0) >= 58.0:
             positive_signals += 1
 
         if positive_signals < 2 and not (
