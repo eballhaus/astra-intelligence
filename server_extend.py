@@ -14303,6 +14303,7 @@ PAPER_AUTOPILOT = PaperAutopilotEngine(
     get_latest_row_fn=_paper_latest_symbol_snapshot,
     exit_engine=EXIT_INTEL,
     exit_learning=EXIT_LEARNING,
+    alpaca_paper_broker=ALPACA_PAPER_BROKER,
     live_performance_fn=LIVE_SIGNAL_LOG.live_performance,
     trade_intel=TRADE_INTEL,
     freshness_manager=PAPER_FRESHNESS,
@@ -33197,6 +33198,9 @@ def _paper_learning_expansion_default_summary():
         "alpaca_rest_calls_delta": 0,
         "fallback_calls_delta": 0,
         "selection_source": "cached_snapshot_ledger_only",
+        "entry_quality_bridge_enabled": True,
+        "entry_quality_bridge_sources": {},
+        "paper_entry_bridge_version": "paper_entry_eligibility_bridge_v1",
         "timestamp_utc": _now_utc_iso(),
     }
 
@@ -33212,6 +33216,199 @@ def _paper_learning_open_symbols_snapshot():
     except Exception:
         pass
     return out
+
+
+_PAPER_ENTRY_BRIDGE_SCORE_KEYS = (
+    "entry_filter_v2_score",
+    "entry_filter_score",
+    "entry_quality_v3_score",
+    "entry_quality_v2_score",
+    "entry_quality_score",
+    "entry_quality",
+    "execution_readiness_score",
+    "opportunity_score_pct",
+    "buy_quality_score",
+    "trade_quality_score",
+    "best_horizon_score",
+    "conviction_display_score",
+    "rolling_conviction_10r",
+)
+
+
+def _paper_entry_bridge_score(row):
+    r = dict(row or {})
+    for key in _PAPER_ENTRY_BRIDGE_SCORE_KEYS:
+        if r.get(key) is None:
+            continue
+        score = _to_float(r.get(key), None)
+        if score is None:
+            continue
+        if score <= 1.0 and key not in {"grade", "grade_percent"}:
+            score *= 100.0
+        return max(0.0, min(100.0, float(score))), key
+    grade_score = _to_float(r.get("grade_percent"), _to_float(r.get("persona_weighted_grade"), None))
+    if grade_score is None:
+        grade_map = {"A+": 96.0, "A": 90.0, "A-": 86.0, "B+": 82.0, "B": 75.0, "B-": 70.0, "C": 58.0, "D": 38.0, "F": 15.0}
+        grade_score = grade_map.get(str(r.get("grade") or "").upper().strip())
+    confidence = _to_float(r.get("confidence"), _to_float(r.get("predicted_win_probability"), None))
+    if confidence is not None and confidence <= 1.0:
+        confidence *= 100.0
+    parts = []
+    if grade_score is not None:
+        parts.append(max(0.0, min(100.0, float(grade_score))))
+    if confidence is not None:
+        parts.append(max(0.0, min(100.0, float(confidence))))
+    if parts:
+        # Conservative compatibility estimate only when modern entry fields are absent.
+        return round((sum(parts) / len(parts)) * 0.82, 2), "grade_confidence_compat"
+    return None, ""
+
+
+def _paper_entry_bridge_horizon(row):
+    r = dict(row or {})
+    for key in ("trade_horizon_style", "best_horizon_style", "recommended_hold_style", "intended_hold_category"):
+        raw = str(r.get(key) or "").strip().lower()
+        if raw in {"scalp", "day_trade", "swing_trade"}:
+            return raw, key, False
+        if raw in {"intraday", "day", "daytrading"}:
+            return "day_trade", key, True
+        if raw in {"swing", "position_trade", "position"}:
+            return "swing_trade", key, True
+    fits = {
+        "scalp": _to_float(r.get("scalp_fit_score"), None),
+        "day_trade": _to_float(r.get("day_trade_fit_score"), None),
+        "swing_trade": _to_float(r.get("swing_trade_fit_score"), None),
+    }
+    fits = {k: v for k, v in fits.items() if v is not None}
+    if fits:
+        best = max(fits.items(), key=lambda item: float(item[1]))[0]
+        return best, f"{best}_fit_score", True
+    action = str(r.get("action") or r.get("prediction") or r.get("action_label") or "").strip().lower()
+    readiness = " ".join(
+        str(r.get(k) or "").strip().lower()
+        for k in ("readiness_label", "paper_ready_status", "release_status", "buy_eligibility", "canonical_final_state")
+    )
+    if action in {"buy", "strong buy"} or "paper" in readiness or "watch" in readiness or "soft" in readiness:
+        return "day_trade", "paper_entry_safe_default", True
+    return "", "", False
+
+
+def _paper_entry_bridge_risk_tier(row):
+    r = dict(row or {})
+    raw = str(r.get("risk_tier_band") or r.get("risk_tier") or "").strip().lower()
+    if raw:
+        return raw, "existing"
+    label = str(r.get("portfolio_risk_label") or r.get("drawdown_risk_label") or "").strip().lower()
+    score = _to_float(r.get("portfolio_risk_score"), None)
+    drawdown = _to_float(r.get("drawdown_risk_score"), None)
+    if "high" in label or (drawdown is not None and drawdown >= 72.0) or (score is not None and score < 45.0):
+        return "blocked_shadow_risk", "portfolio_risk"
+    if "low" in label or (score is not None and score >= 70.0):
+        return "standard", "portfolio_risk"
+    if score is not None and score >= 55.0:
+        return "small", "portfolio_risk"
+    return "small", "neutral_compat"
+
+
+def _paper_entry_bridge_setup(row):
+    r = dict(row or {})
+    raw = str(r.get("setup_type") or r.get("detected_setup_type") or "").strip().lower()
+    if raw:
+        return raw, "existing"
+    horizon = str(r.get("trade_horizon_style") or r.get("best_horizon_style") or "").strip().lower()
+    action = str(r.get("action") or r.get("prediction") or "").strip().lower()
+    if horizon in {"scalp", "day_trade"}:
+        return f"{horizon}_momentum", "horizon_compat"
+    if action in {"buy", "strong buy"}:
+        return "buy_opportunity", "action_compat"
+    return "paper_learning_candidate", "neutral_compat"
+
+
+def _paper_entry_bridge_regime(row):
+    r = dict(row or {})
+    raw = str(r.get("regime_context") or r.get("regime") or r.get("market_regime") or "").strip().lower()
+    if raw:
+        return raw, "existing"
+    cap = str(r.get("market_cap_category") or r.get("market_cap_context_label") or "unknown").strip().lower()
+    horizon = str(r.get("trade_horizon_style") or r.get("best_horizon_style") or "unknown").strip().lower()
+    return f"{cap}_{horizon}_paper", "market_cap_horizon_compat"
+
+
+def _paper_entry_bridge_confidence_truthfulness(row):
+    r = dict(row or {})
+    if r.get("confidence_truthfulness_score") is not None:
+        return max(0.0, min(100.0, _to_float(r.get("confidence_truthfulness_score"), 0.0))), "existing"
+    confidence = _to_float(r.get("confidence"), _to_float(r.get("predicted_win_probability"), None))
+    if confidence is not None and confidence <= 1.0:
+        confidence *= 100.0
+    data_quality = _to_float(r.get("data_quality_score"), _to_float(r.get("provider_confidence"), None))
+    if data_quality is not None and data_quality <= 1.0:
+        data_quality *= 100.0
+    if confidence is None and data_quality is None:
+        return 55.0, "neutral_compat"
+    if confidence is None:
+        return max(0.0, min(100.0, float(data_quality))), "data_quality_compat"
+    if data_quality is None:
+        return max(0.0, min(100.0, float(confidence) * 0.88)), "confidence_compat"
+    return max(0.0, min(100.0, (float(confidence) * 0.58) + (float(data_quality) * 0.42))), "confidence_data_quality_compat"
+
+
+def _paper_entry_bridge_paper_action(row):
+    r = dict(row or {})
+    action = str(r.get("action") or r.get("prediction") or r.get("action_label") or "").strip().lower()
+    readiness = " ".join(
+        str(r.get(k) or "").strip().lower()
+        for k in ("readiness_label", "paper_ready_status", "release_status", "buy_eligibility", "canonical_final_state")
+    )
+    if action in {"sell", "avoid", "blocked"} or any(x in readiness for x in ("blocked", "avoid", "reject")):
+        return False, "blocked_or_sell"
+    if action in {"buy", "strong buy"}:
+        return True, "buy_action"
+    if "paper" in readiness or "watch" in readiness or "soft" in readiness:
+        return True, "paper_test_eligible"
+    return False, "not_buy_or_paper_test_eligible"
+
+
+def _apply_paper_entry_eligibility_bridge(row):
+    rr = dict(row or {})
+    score, score_source = _paper_entry_bridge_score(rr)
+    horizon, horizon_source, inferred_horizon = _paper_entry_bridge_horizon(rr)
+    risk_tier, risk_source = _paper_entry_bridge_risk_tier(rr)
+    setup, setup_source = _paper_entry_bridge_setup(rr)
+    regime, regime_source = _paper_entry_bridge_regime(rr)
+    truth, truth_source = _paper_entry_bridge_confidence_truthfulness(rr)
+    action_ok, action_reason = _paper_entry_bridge_paper_action(rr)
+    if score is not None and rr.get("entry_filter_v2_score") is None:
+        rr["entry_filter_v2_score"] = round(float(score), 2)
+        rr["entry_filter_v2_score_source"] = str(score_source)
+    if score is not None:
+        rr["paper_entry_bridge_score"] = round(float(score), 2)
+    rr["paper_entry_bridge_score_source"] = str(score_source or "")
+    if rr.get("entry_filter_v2_decision") is None and rr.get("entry_quality_v2_decision") is not None:
+        rr["entry_filter_v2_decision"] = rr.get("entry_quality_v2_decision")
+    if horizon:
+        rr.setdefault("trade_horizon_style", horizon)
+        rr.setdefault("best_horizon_style", horizon)
+        rr["paper_entry_horizon_style"] = horizon
+        rr["paper_entry_horizon_source"] = str(horizon_source)
+        rr["paper_entry_horizon_inferred"] = bool(inferred_horizon)
+    if risk_tier:
+        rr.setdefault("risk_tier", risk_tier)
+        rr.setdefault("risk_tier_band", risk_tier)
+        rr["paper_entry_risk_tier_source"] = str(risk_source)
+    if setup:
+        rr.setdefault("setup_type", setup)
+        rr["paper_entry_setup_source"] = str(setup_source)
+    if regime:
+        rr.setdefault("regime_context", regime)
+        rr["paper_entry_regime_source"] = str(regime_source)
+    if truth is not None:
+        rr.setdefault("confidence_truthfulness_score", round(float(truth), 2))
+        rr["paper_entry_truthfulness_source"] = str(truth_source)
+    rr["paper_entry_action_ok"] = bool(action_ok)
+    rr["paper_entry_action_reason"] = str(action_reason)
+    rr["paper_entry_eligibility_bridge_v1"] = True
+    return rr
 
 
 def _cached_only_learning_throughput_governor_v1(payload):
@@ -33242,10 +33439,14 @@ def _cached_only_learning_throughput_governor_v1(payload):
         selected_cap = 0
 
     by_sym = {}
+    bridge_sources = {}
     for r in rows:
+        r = _apply_paper_entry_eligibility_bridge(r)
         sym = str((r or {}).get("symbol") or "").upper().strip()
         if sym:
             by_sym[sym] = dict(r or {})
+            source = str((r or {}).get("paper_entry_bridge_score_source") or "unknown")
+            bridge_sources[source] = int(bridge_sources.get(source, 0)) + 1
 
     rejected = {}
     eligible = []
@@ -33258,6 +33459,7 @@ def _cached_only_learning_throughput_governor_v1(payload):
         rejected[rk] = int(rejected.get(rk, 0)) + 1
 
     for sym, rr in by_sym.items():
+        rr = _apply_paper_entry_eligibility_bridge(rr)
         setup = str(rr.get("setup_type") or rr.get("detected_setup_type") or "unknown").strip().lower()
         regime = str(rr.get("regime_context") or rr.get("regime") or "unknown").strip().lower()
         trusted = bool(rr.get("trusted_quote_for_buys", False))
@@ -33272,6 +33474,9 @@ def _cached_only_learning_throughput_governor_v1(payload):
         if sym in open_syms:
             _reject("duplicate_active_position")
             continue
+        if not bool(rr.get("paper_entry_action_ok", False)):
+            _reject(str(rr.get("paper_entry_action_reason") or "not_buy_or_paper_test_eligible"))
+            continue
         signal_decision = str(rr.get("signal_quality_decision") or "").strip().lower()
         if signal_decision == "reject" and not bool(rr.get("limited_data_mode", False)):
             _reject("hard_reject_signal_quality")
@@ -33282,10 +33487,14 @@ def _cached_only_learning_throughput_governor_v1(payload):
             continue
         entry_filter_score = rr.get("entry_filter_v2_score")
         if entry_filter_score is None:
-            _reject("missing_entry_filter_score")
+            _reject("missing_entry_quality_bridge_score")
             continue
         if _to_float(entry_filter_score, 0.0) < MIN_ENTRY_FILTER_SCORE_FOR_EXTRA:
             _reject("entry_filter_score_below_min")
+            continue
+        horizon_style = str(rr.get("trade_horizon_style") or rr.get("best_horizon_style") or rr.get("paper_entry_horizon_style") or "").strip().lower()
+        if horizon_style not in {"scalp", "day_trade", "swing_trade"}:
+            _reject("missing_or_unsafe_horizon_style")
             continue
         risk_tier = str(rr.get("risk_tier_band") or rr.get("risk_tier") or "").strip().lower()
         if risk_tier not in ALLOWED_RISK_TIERS_FOR_EXTRA:
@@ -33339,7 +33548,7 @@ def _cached_only_learning_throughput_governor_v1(payload):
             lst = list(b.get(key) or [])
             updated = []
             for row in lst:
-                rr = dict(row or {})
+                rr = _apply_paper_entry_eligibility_bridge(row)
                 sym = str(rr.get("symbol") or "").upper().strip()
                 is_selected = bool(sym and sym in selected_symbols and budget_safe)
                 rr["paper_learning_expansion_candidate"] = bool(is_selected)
@@ -33351,6 +33560,13 @@ def _cached_only_learning_throughput_governor_v1(payload):
                 rr["paper_learning_expansion_source"] = "cached_only"
                 rr["paper_learning_no_fresh_provider_call"] = True
                 rr["paper_learning_expansion_risk_cap_applied"] = True
+                rr["paper_test_eligible"] = bool(rr.get("paper_entry_action_ok", False))
+                rr["paper_logic_passed"] = bool(is_selected)
+                rr["astra_paper_logic_passed"] = bool(is_selected)
+                rr["paper_order_preflight_ready"] = bool(is_selected and budget_safe)
+                rr["paper_limits_ok"] = bool(is_selected)
+                rr["portfolio_risk_ok"] = bool(str(rr.get("portfolio_risk_label") or "").lower() not in {"high_risk", "blocked"})
+                rr["natural_exit_logic_preserved"] = True
                 updated.append(rr)
             b[key] = updated
         p[bucket] = b
@@ -33378,6 +33594,9 @@ def _cached_only_learning_throughput_governor_v1(payload):
     summary["rejected_count"] = int(max(0, len(by_sym) - summary["selected_count"]))
     summary["rejection_reasons"] = dict(rejected)
     summary["max_extra_positions"] = int(MAX_EXTRA_PAPER_LEARNING_POSITIONS)
+    summary["entry_quality_bridge_enabled"] = True
+    summary["entry_quality_bridge_sources"] = dict(bridge_sources)
+    summary["paper_entry_bridge_version"] = "paper_entry_eligibility_bridge_v1"
     summary["selection_source"] = "cached_snapshot_ledger_only"
     summary["timestamp_utc"] = _now_utc_iso()
     p["paper_learning_expansion"] = dict(summary)

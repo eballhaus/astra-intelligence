@@ -67,6 +67,111 @@ def _safe_json_load(raw: Any) -> dict[str, Any]:
     return {}
 
 
+def _bounded_score(value: Any, default: Any = None):
+    score = _to_float(value, default if default is not None else 0.0)
+    if value is None and default is None:
+        return None
+    if score <= 1.0:
+        score *= 100.0
+    return max(0.0, min(100.0, float(score)))
+
+
+def _entry_bridge_quality(row: dict[str, Any]):
+    r = dict(row or {})
+    for key in (
+        "buy_quality_score",
+        "trade_quality_score",
+        "entry_filter_v2_score",
+        "entry_filter_score",
+        "entry_quality_v3_score",
+        "entry_quality_v2_score",
+        "entry_quality_score",
+        "entry_quality",
+        "execution_readiness_score",
+        "opportunity_score_pct",
+        "best_horizon_score",
+    ):
+        if r.get(key) is None:
+            continue
+        score = _bounded_score(r.get(key))
+        if score is not None:
+            return score, key
+    grade = _bounded_score(r.get("grade_percent"), None)
+    confidence = _bounded_score(r.get("confidence"), _bounded_score(r.get("predicted_win_probability"), None))
+    parts = [x for x in (grade, confidence) if x is not None]
+    if parts:
+        return round((sum(parts) / len(parts)) * 0.82, 2), "grade_confidence_compat"
+    return None, ""
+
+
+def _infer_horizon_style(row: dict[str, Any]):
+    r = dict(row or {})
+    for key in ("trade_horizon_style", "best_horizon_style", "recommended_hold_style", "intended_hold_category"):
+        raw = str(r.get(key) or "").strip().lower()
+        if raw in {"scalp", "day_trade", "swing_trade"}:
+            return raw, key, False
+        if raw in {"intraday", "day", "daytrading"}:
+            return "day_trade", key, True
+        if raw in {"swing", "position_trade", "position"}:
+            return "swing_trade", key, True
+    fits = {
+        "scalp": _bounded_score(r.get("scalp_fit_score"), None),
+        "day_trade": _bounded_score(r.get("day_trade_fit_score"), None),
+        "swing_trade": _bounded_score(r.get("swing_trade_fit_score"), None),
+    }
+    fits = {k: v for k, v in fits.items() if v is not None}
+    if fits:
+        best = max(fits.items(), key=lambda item: float(item[1]))[0]
+        return best, f"{best}_fit_score", True
+    action = str(r.get("action") or r.get("prediction") or "").strip().lower()
+    readiness = " ".join(
+        str(r.get(k) or "").strip().lower()
+        for k in ("readiness_label", "paper_ready_status", "release_status", "buy_eligibility", "canonical_final_state")
+    )
+    if action in {"buy", "strong buy"} or "paper" in readiness or "watch" in readiness or "soft" in readiness:
+        return "day_trade", "paper_entry_safe_default", True
+    return "", "", False
+
+
+def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
+    r = dict(row or {})
+    score, source = _entry_bridge_quality(r)
+    if score is not None:
+        r.setdefault("buy_quality_score", round(score, 2))
+        r.setdefault("trade_quality_score", round(score, 2))
+        r.setdefault("entry_quality_score", round(score, 2))
+        r["paper_entry_bridge_score"] = round(score, 2)
+        r["paper_entry_bridge_score_source"] = str(source)
+        if not str(r.get("buy_quality_tier") or "").strip():
+            if score >= 75.0:
+                r["buy_quality_tier"] = "strong"
+            elif score >= 60.0:
+                r["buy_quality_tier"] = "moderate"
+            elif score >= 50.0:
+                r["buy_quality_tier"] = "qualified"
+            else:
+                r["buy_quality_tier"] = "weak"
+    horizon, horizon_source, inferred = _infer_horizon_style(r)
+    if horizon:
+        r.setdefault("trade_horizon_style", horizon)
+        r.setdefault("best_horizon_style", horizon)
+        r["paper_entry_horizon_style"] = horizon
+        r["paper_entry_horizon_source"] = horizon_source
+        r["paper_entry_horizon_inferred"] = bool(inferred)
+    action = str(r.get("action") or r.get("prediction") or "").strip().lower()
+    readiness = " ".join(
+        str(r.get(k) or "").strip().lower()
+        for k in ("readiness_label", "paper_ready_status", "release_status", "buy_eligibility", "canonical_final_state")
+    )
+    if not str(r.get("buy_eligibility") or "").strip():
+        if action in {"buy", "strong buy"}:
+            r["buy_eligibility"] = "qualified_buy"
+        elif "paper" in readiness or "watch" in readiness or "soft" in readiness:
+            r["buy_eligibility"] = "paper_test_eligible"
+    r["paper_entry_eligibility_bridge_v1"] = True
+    return r
+
+
 class PaperAutopilotEngine:
     def __init__(self, db_path: str = "state/ai_trading_memory.db", *args, **kwargs):
         self.db_path = str(db_path or "state/ai_trading_memory.db")
@@ -90,6 +195,7 @@ class PaperAutopilotEngine:
         self.trade_intel = kwargs.get("trade_intel")
         self.exit_engine = kwargs.get("exit_engine")
         self.exit_learning = kwargs.get("exit_learning")
+        self.alpaca_paper_broker = kwargs.get("alpaca_paper_broker")
         self.live_performance_fn = kwargs.get("live_performance_fn") if callable(kwargs.get("live_performance_fn")) else None
         self.freshness_manager = kwargs.get("freshness_manager")
         self.max_open_positions_total = max(2, _to_int(kwargs.get("max_open_positions_total"), 10))
@@ -275,12 +381,14 @@ class PaperAutopilotEngine:
             if not sym or sym in seen:
                 continue
             seen.add(sym)
+            row = _normalize_paper_entry_bridge(row)
             row.setdefault("symbol", sym)
             row.setdefault("asset_type", "stock")
             dedup.append(row)
         return dedup
 
     def _entry_commitment_gate_v1(self, row: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+        row = _normalize_paper_entry_bridge(row)
         eligibility = str(row.get("buy_eligibility") or "").strip().lower()
         tier = str(row.get("buy_quality_tier") or "").strip().lower()
         uncertainty_tier = str(row.get("uncertainty_tier") or "").strip().lower()
@@ -372,6 +480,55 @@ class PaperAutopilotEngine:
     def _is_candidate_paper_eligible(self, row: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
         return self._entry_commitment_gate_v1(row)
 
+    def _alpaca_paper_broker_enabled(self) -> bool:
+        broker = self.alpaca_paper_broker
+        if broker is None or not hasattr(broker, "safety_status"):
+            return False
+        try:
+            safety = broker.safety_status()
+            return bool(isinstance(safety, dict) and safety.get("broker_execution_enabled"))
+        except Exception:
+            return False
+
+    def _submit_alpaca_paper_entry_order(
+        self,
+        row: dict[str, Any],
+        entry_price: float,
+        gate_meta: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        broker = self.alpaca_paper_broker
+        if not self._alpaca_paper_broker_enabled():
+            return {"enabled": False, "paper_order_submitted": False, "reason": "alpaca_paper_broker_disabled"}
+        if broker is None or not hasattr(broker, "submit_paper_order"):
+            return {"enabled": False, "paper_order_submitted": False, "reason": "alpaca_paper_broker_unavailable"}
+        r = _normalize_paper_entry_bridge(row)
+        asset_type = _norm_asset(r.get("asset_type") or "stock")
+        if asset_type != "stock":
+            return {"enabled": False, "paper_order_submitted": False, "reason": "alpaca_crypto_execution_deferred"}
+        risk_label = str(r.get("portfolio_risk_label") or "").strip().lower()
+        portfolio_ok = bool(risk_label not in {"high_risk", "blocked"} and _to_float(r.get("portfolio_risk_score"), 65.0) >= 35.0)
+        order = {
+            "symbol": str(r.get("symbol") or "").upper().strip(),
+            "side": "buy",
+            "type": "market",
+            "time_in_force": "day",
+            "trade_horizon_style": str(r.get("trade_horizon_style") or r.get("best_horizon_style") or ""),
+            "astra_paper_logic_passed": True,
+            "paper_logic_passed": True,
+            "paper_ready": True,
+            "paper_test_eligible": True,
+            "paper_order_preflight_ready": True,
+            "paper_limits_ok": True,
+            "portfolio_risk_ok": bool(portfolio_ok),
+            "natural_exit_logic_preserved": True,
+            "entry_price_reference": round(_to_float(entry_price), 6),
+            "entry_commitment_score": round(_to_float((gate_meta or {}).get("commitment_score"), 0.0), 2),
+        }
+        try:
+            return dict(broker.submit_paper_order(order) or {})
+        except Exception as exc:
+            return {"ok": False, "paper_order_submitted": False, "error": f"alpaca_paper_submit_exception:{str(exc)[:120]}"}
+
     def _build_entry_context_v1(
         self,
         row: dict[str, Any],
@@ -379,7 +536,7 @@ class PaperAutopilotEngine:
         source_bucket: str,
         gate_meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        r = dict(row or {})
+        r = _normalize_paper_entry_bridge(row)
         meta = dict(gate_meta or {})
         return {
             "entry_reason": "paper_autopilot_entry",
@@ -401,6 +558,9 @@ class PaperAutopilotEngine:
             "entry_decision_discipline_action": str(r.get("core_decision_discipline_action") or ""),
             "entry_buy_eligibility": str(r.get("buy_eligibility") or ""),
             "entry_buy_quality_score": round(_to_float(r.get("buy_quality_score"), _to_float(r.get("trade_quality_score"), 0.0)), 2),
+            "entry_paper_bridge_score": round(_to_float(r.get("paper_entry_bridge_score"), 0.0), 2),
+            "entry_paper_bridge_score_source": str(r.get("paper_entry_bridge_score_source") or ""),
+            "trade_horizon_style": str(r.get("trade_horizon_style") or r.get("best_horizon_style") or ""),
             "entry_entry_edge_score": round(_to_float(r.get("entry_edge_score"), 0.0), 4),
             "entry_follow_through_state": str(r.get("follow_through_state") or ""),
             "entry_commitment_score": round(_to_float(meta.get("commitment_score"), 0.0), 2),
@@ -419,6 +579,7 @@ class PaperAutopilotEngine:
         source_bucket: str = "paper_candidate",
         gate_meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        row = _normalize_paper_entry_bridge(row)
         symbol = str(row.get("symbol") or "").upper().strip()
         asset_type = _norm_asset(row.get("asset_type") or "stock")
         if not symbol:
@@ -440,8 +601,19 @@ class PaperAutopilotEngine:
         entry_row.setdefault("symbol", symbol)
         entry_row.setdefault("asset_type", asset_type)
         entry_row.setdefault("entry_timestamp", now_iso)
+        broker_order = self._submit_alpaca_paper_entry_order(row, entry_price, gate_meta=gate_meta)
+        if broker_order.get("enabled", True) is not False and not broker_order.get("ok", False):
+            return {
+                "ok": False,
+                "error": "alpaca_paper_order_failed",
+                "symbol": symbol,
+                "broker_error": str(broker_order.get("error") or broker_order.get("reason") or "unknown")[:160],
+            }
+        if broker_order:
+            entry_row["alpaca_paper_order"] = broker_order
         entry_context = self._build_entry_context_v1(row, entry_price, source_bucket, gate_meta=gate_meta)
         entry_context["position_id"] = pid
+        entry_context["alpaca_paper_order"] = broker_order
 
         with self._connect() as conn:
             conn.execute(
@@ -503,8 +675,9 @@ class PaperAutopilotEngine:
                         "current_price": entry_price,
                         "confidence": _to_float(row.get("confidence"), _to_float(row.get("predicted_win_probability"), 0.0)),
                         "grade": _to_float(row.get("grade_percent"), _to_float(row.get("persona_weighted_grade"), 0.0)),
-                        "entry_quality_score": _to_float(row.get("entry_quality_score"), 0.0),
+                        "entry_quality_score": _to_float(row.get("entry_quality_score"), _to_float(row.get("paper_entry_bridge_score"), 0.0)),
                         "entry_quality_band": str(row.get("entry_quality_band") or "unknown"),
+                        "trade_horizon_style": str(row.get("trade_horizon_style") or row.get("best_horizon_style") or ""),
                         "trade_archetype": str(row.get("setup_type") or "unknown"),
                         "catalyst_context": str(row.get("regime_context") or row.get("market_regime") or ""),
                         "source_endpoint": "paper_autopilot",

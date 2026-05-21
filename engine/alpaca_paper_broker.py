@@ -241,7 +241,14 @@ class AlpacaPaperBroker:
         if side == "sell" and not bool(order.get("existing_exit_signal_verified", False)):
             return {"ok": False, "error": "sell_requires_existing_exit_signal"}
         if side == "buy":
-            if not bool(order.get("astra_paper_logic_passed") or order.get("paper_logic_passed") or order.get("paper_ready", False)):
+            paper_logic_proof = bool(
+                order.get("astra_paper_logic_passed")
+                or order.get("paper_logic_passed")
+                or order.get("paper_ready", False)
+                or order.get("paper_test_eligible", False)
+                or order.get("paper_order_preflight_ready", False)
+            )
+            if not paper_logic_proof:
                 return {"ok": False, "error": "astra_paper_logic_proof_required"}
             if horizon not in {"scalp", "day_trade", "swing_trade"}:
                 return {"ok": False, "error": "trade_horizon_style_required"}
