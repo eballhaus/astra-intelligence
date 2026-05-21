@@ -328,6 +328,42 @@ except Exception:
                 "artificial_max_hold_exit_enabled": False,
             }
 try:
+    from engine.adaptive_market_intake_fmp_budget_suite_v1 import AdaptiveMarketIntakeFmpBudgetSuiteV1
+except Exception:
+    class AdaptiveMarketIntakeFmpBudgetSuiteV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "adaptive_cached_recommendation",
+                "local_only": True,
+                "writes_files": False,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "broker_execution_changed": False,
+                "adaptive_market_intake_fmp_budget_status_v1": True,
+                "bandwidth_source": "local_estimate",
+                "monthly_bandwidth_limit_gb": 50.0,
+                "current_monthly_bandwidth_used_gb": 0.0,
+                "current_utilization_pct": 0.0,
+                "target_utilization_low_pct": 75.0,
+                "target_utilization_high_pct": 80.0,
+                "remaining_bandwidth_gb": 50.0,
+                "recommended_daily_bandwidth_budget_gb": 0.0,
+                "intake_mode": "provider_pressure_pause",
+                "recommended_refresh_intensity": "paused_runtime_protection",
+                "recommended_quote_refresh_multiplier": 0.0,
+                "recommended_exploration_multiplier": 0.0,
+                "recommended_small_mid_cap_scan_multiplier": 0.0,
+                "recommended_intraday_rescan_multiplier": 0.0,
+                "runtime_protection_active": True,
+                "provider_pressure_detected": True,
+                "intake_summary": "Inspect adaptive market intake FMP budget suite import.",
+            }
+try:
     from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
 except Exception:
     class _AlpacaWSMonitorFallback:
@@ -415,6 +451,7 @@ OBSERVATION_LEARNING_THROUGHPUT_SUITE = ObservationLearningThroughputSuiteV1(sta
 EXECUTION_MARKET_LEARNING_EXPANSION_SUITE = ExecutionMarketLearningExpansionSuiteV1(state_dir=STATE)
 AUTONOMOUS_RESEARCH_SELF_REGULATION_SUITE = AutonomousResearchSelfRegulationSuiteV1(state_dir=STATE)
 MULTI_HORIZON_PAPER_TRADING_SUITE = MultiHorizonPaperTradingLearningSuiteV1(state_dir=STATE)
+ADAPTIVE_MARKET_INTAKE_FMP_BUDGET_SUITE = AdaptiveMarketIntakeFmpBudgetSuiteV1(state_dir=STATE)
 FMP_USAGE_STATE_PATH = os.path.join(STATE, "fmp_usage_state.json")
 FMP_CACHE_INDEX_PATH = os.path.join(STATE, "fmp_cache_index.json")
 API_USAGE_GOVERNOR_PATH = os.path.join(STATE, "api_usage_governor.json")
@@ -29135,6 +29172,94 @@ def multi_horizon_paper_trading_status_v1():
         "natural_exit_preserved": True,
         "forced_early_exit_enabled": False,
         "artificial_max_hold_exit_enabled": False,
+    }
+
+
+@router.get("/api/adaptive_market_intake_fmp_budget_status_v1")
+def adaptive_market_intake_fmp_budget_status_v1():
+    try:
+        try:
+            payload = dict(_latest_top_buys_runtime_snapshot() or {})
+        except Exception:
+            payload = {}
+        try:
+            obs = OBSERVATION_LEARNING_THROUGHPUT_SUITE.status()
+        except Exception:
+            obs = {}
+        try:
+            suite3 = EXECUTION_MARKET_LEARNING_EXPANSION_SUITE.status(observation_payload=obs if isinstance(obs, dict) else {})
+        except Exception:
+            suite3 = {}
+        try:
+            multi_horizon = MULTI_HORIZON_PAPER_TRADING_SUITE.status(
+                rows=_candidate_rows_from_payload(payload) if isinstance(payload, dict) else [],
+                observation_payload=obs if isinstance(obs, dict) else {},
+                throughput_payload={},
+            )
+        except Exception:
+            multi_horizon = {}
+        out = ADAPTIVE_MARKET_INTAKE_FMP_BUDGET_SUITE.status(
+            top_buys_payload=payload if isinstance(payload, dict) else {},
+            observation_payload=obs if isinstance(obs, dict) else {},
+            execution_payload=suite3 if isinstance(suite3, dict) else {},
+            multi_horizon_payload=multi_horizon if isinstance(multi_horizon, dict) else {},
+        )
+        if isinstance(out, dict):
+            out["adaptive_market_intake_fmp_budget_status_v1"] = True
+            out["api_calls_used"] = 0
+            out["live_trading_changed"] = False
+            out["broker_execution_changed"] = False
+            out["production_rankings_changed"] = False
+            out["production_weights_changed"] = False
+            out["provider_rewrite_changed"] = False
+            out["uncontrolled_api_loops_enabled"] = False
+            return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "adaptive_cached_recommendation",
+            "local_only": True,
+            "writes_files": False,
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_execution_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "provider_rewrite_changed": False,
+            "uncontrolled_api_loops_enabled": False,
+            "adaptive_market_intake_fmp_budget_status_v1": True,
+            "bandwidth_source": "local_estimate",
+            "monthly_bandwidth_limit_gb": 50.0,
+            "current_monthly_bandwidth_used_gb": 0.0,
+            "current_utilization_pct": 0.0,
+            "target_utilization_low_pct": 75.0,
+            "target_utilization_high_pct": 80.0,
+            "remaining_bandwidth_gb": 50.0,
+            "recommended_daily_bandwidth_budget_gb": 0.0,
+            "intake_mode": "provider_pressure_pause",
+            "recommended_refresh_intensity": "paused_runtime_protection",
+            "recommended_quote_refresh_multiplier": 0.0,
+            "recommended_exploration_multiplier": 0.0,
+            "recommended_small_mid_cap_scan_multiplier": 0.0,
+            "recommended_intraday_rescan_multiplier": 0.0,
+            "runtime_protection_active": True,
+            "provider_pressure_detected": True,
+            "intake_summary": f"Adaptive market intake status unavailable: {str(exc)[:140]}",
+        }
+    return {
+        "enabled": False,
+        "version": "1.0.0",
+        "mode": "adaptive_cached_recommendation",
+        "local_only": True,
+        "writes_files": False,
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+        "adaptive_market_intake_fmp_budget_status_v1": True,
+        "bandwidth_source": "local_estimate",
+        "intake_mode": "provider_pressure_pause",
+        "recommended_refresh_intensity": "paused_runtime_protection",
+        "intake_summary": "Adaptive market intake status returned no payload.",
     }
 
 

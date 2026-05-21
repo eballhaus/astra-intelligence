@@ -153,6 +153,7 @@ export default function LearningTab({ compact = false }) {
     autonomousSelfRegulation: {},
     paperThroughputExpansion: {},
     multiHorizonPaperTrading: {},
+    adaptiveMarketIntake: {},
   });
   const refreshInFlightRef = useRef(false);
 
@@ -233,6 +234,7 @@ export default function LearningTab({ compact = false }) {
           fetchJson("autonomous_self_regulation", "/api/autonomous_research_self_regulation_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("paper_throughput_expansion", "/api/paper_autopilot_throughput_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("multi_horizon_paper_trading", "/api/multi_horizon_paper_trading_status_v1", {}, { timeoutMs: 8000 }),
+          fetchJson("adaptive_market_intake", "/api/adaptive_market_intake_fmp_budget_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
         ]);
         secondaryResults.push(...secondaryBatch);
@@ -289,6 +291,7 @@ export default function LearningTab({ compact = false }) {
         const autonomousSelfRegulation = selectPayload("autonomous_self_regulation", prevSafe.autonomousSelfRegulation);
         const paperThroughputExpansion = selectPayload("paper_throughput_expansion", prevSafe.paperThroughputExpansion);
         const multiHorizonPaperTrading = selectPayload("multi_horizon_paper_trading", prevSafe.multiHorizonPaperTrading);
+        const adaptiveMarketIntake = selectPayload("adaptive_market_intake", prevSafe.adaptiveMarketIntake);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
         const learningSnapshotFast = selectPayload("learning_snapshot_fast_v1", prevSafe.learningSnapshotFast);
         const learningCandidate = selectPayload("learning_insights", prevSafe.learningInsights);
@@ -424,6 +427,7 @@ export default function LearningTab({ compact = false }) {
           autonomousSelfRegulation,
           paperThroughputExpansion,
           multiHorizonPaperTrading,
+          adaptiveMarketIntake,
         };
       });
     };
@@ -452,6 +456,7 @@ export default function LearningTab({ compact = false }) {
   const autonomousSelfRegulation = data.autonomousSelfRegulation || {};
   const paperThroughputExpansion = data.paperThroughputExpansion || {};
   const multiHorizonPaperTrading = data.multiHorizonPaperTrading || {};
+  const adaptiveMarketIntake = data.adaptiveMarketIntake || {};
 
   const paperOutcome = paper?.paper_outcome_summary?.combined || {};
   const paperCohort = paper?.paper_cohort_trends || {};
@@ -2095,6 +2100,30 @@ export default function LearningTab({ compact = false }) {
           <div>API calls used: {safeNumber(multiHorizonPaperTrading?.api_calls_used).toFixed(0)}</div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Summary: {String(multiHorizonPaperTrading?.multi_horizon_summary || "Waiting for multi-horizon paper trading diagnostics.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Adaptive Market Intake & FMP Budget</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Current utilization: {safeNumber(adaptiveMarketIntake?.current_utilization_pct).toFixed(3)}%</div>
+          <div>
+            Monthly used / limit: {safeNumber(adaptiveMarketIntake?.current_monthly_bandwidth_used_gb).toFixed(3)} GB / {safeNumber(adaptiveMarketIntake?.monthly_bandwidth_limit_gb, 50).toFixed(1)} GB
+          </div>
+          <div>
+            Target range: {safeNumber(adaptiveMarketIntake?.target_utilization_low_pct, 75).toFixed(0)}-{safeNumber(adaptiveMarketIntake?.target_utilization_high_pct, 80).toFixed(0)}%
+          </div>
+          <div>Remaining bandwidth: {safeNumber(adaptiveMarketIntake?.remaining_bandwidth_gb).toFixed(2)} GB</div>
+          <div>Intake mode: {String(adaptiveMarketIntake?.intake_mode || adaptiveMarketIntake?.adaptive_intake_mode || "waiting_for_data").replaceAll("_", " ")}</div>
+          <div>Refresh intensity: {String(adaptiveMarketIntake?.recommended_refresh_intensity || "waiting_for_data").replaceAll("_", " ")}</div>
+          <div>Exploration multiplier: {safeNumber(adaptiveMarketIntake?.recommended_exploration_multiplier, 1).toFixed(2)}x</div>
+          <div>Small/mid-cap multiplier: {safeNumber(adaptiveMarketIntake?.recommended_small_mid_cap_scan_multiplier, 1).toFixed(2)}x</div>
+          <div>Runtime protection: {adaptiveMarketIntake?.runtime_protection_active ? "active" : "clear"}</div>
+          <div>Provider pressure: {adaptiveMarketIntake?.provider_pressure_detected ? "detected" : "clear"}</div>
+          <div>API calls used: {safeNumber(adaptiveMarketIntake?.api_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Summary: {String(adaptiveMarketIntake?.intake_summary || "Waiting for adaptive market intake diagnostics.")}
           </div>
         </div>
       </div>
