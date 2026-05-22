@@ -113,9 +113,28 @@ class AlpacaPaperBroker:
 
     def _env(self) -> dict[str, str]:
         base = _safe_text(os.getenv("APCA_API_BASE_URL") or os.getenv("ALPACA_BASE_URL") or PAPER_BASE).rstrip("/")
+        credential_pairs = (
+            ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "apca_official_pair"),
+            ("ALPACA_API_KEY", "ALPACA_SECRET_KEY", "alpaca_alias_pair"),
+            ("ALPACA_API_KEY_ID", "ALPACA_API_SECRET", "alpaca_legacy_pair"),
+            ("ALPACA_API_KEY", "APCA_API_SECRET_KEY", "mixed_key_apca_secret_pair"),
+            ("APCA_API_KEY_ID", "ALPACA_SECRET_KEY", "mixed_apca_key_alias_secret_pair"),
+        )
+        key = ""
+        secret = ""
+        source = "missing"
+        for key_name, secret_name, label in credential_pairs:
+            candidate_key = _safe_text(os.getenv(key_name))
+            candidate_secret = _safe_text(os.getenv(secret_name))
+            if candidate_key and candidate_secret:
+                key = candidate_key
+                secret = candidate_secret
+                source = label
+                break
         return {
-            "key": _safe_text(os.getenv("ALPACA_API_KEY") or os.getenv("APCA_API_KEY_ID") or os.getenv("ALPACA_API_KEY_ID")),
-            "secret": _safe_text(os.getenv("ALPACA_SECRET_KEY") or os.getenv("APCA_API_SECRET_KEY") or os.getenv("ALPACA_API_SECRET")),
+            "key": key,
+            "secret": secret,
+            "credential_source": source,
             "base_url": base,
             "mode": _safe_text(os.getenv("ALPACA_TRADING_MODE"), "paper").lower(),
             "enabled_raw": _safe_text(os.getenv("ASTRA_ENABLE_ALPACA_PAPER"), "false").lower(),
@@ -149,6 +168,7 @@ class AlpacaPaperBroker:
             "live_endpoint_rejected": live_endpoint_detected,
             "trading_mode": env["mode"],
             "base_url_host": urllib.parse.urlparse(env["base_url"]).netloc or env["base_url"],
+            "credential_source": env.get("credential_source") or "missing",
             "credentials_present": bool(env["key"] and env["secret"]),
             "safety_status": "pass" if verified else "disabled_or_blocked",
             "safety_reasons": reasons or ["paper_mode_verified"],
@@ -231,6 +251,15 @@ class AlpacaPaperBroker:
         safety = self.safety_status()
         if not safety.get("broker_execution_enabled"):
             return {"ok": False, "error": "broker_safety_blocked", "safety_reasons": safety.get("safety_reasons") or []}
+        account = self.account()
+        if not isinstance(account, dict) or not account.get("ok"):
+            err = _safe_text((account or {}).get("error") if isinstance(account, dict) else "", "account_preflight_failed")
+            self._last_order_status = f"preflight_rejected:{err[:80]}"
+            return {
+                "ok": False,
+                "error": f"alpaca_account_preflight_failed:{err[:140]}",
+                "paper_order_submitted": False,
+            }
         symbol = _safe_text(order.get("symbol")).upper()
         side = _safe_text(order.get("side"), "buy").lower()
         horizon = _safe_text(order.get("trade_horizon_style") or order.get("best_horizon_style")).lower()
@@ -302,23 +331,38 @@ class AlpacaPaperBroker:
             account = self.account()
             positions = self.positions()
             orders = self.orders(status="open", limit=50)
+        account_ok = bool(isinstance(account, dict) and account.get("ok"))
+        positions_ok = bool(isinstance(positions, dict) and positions.get("ok"))
+        orders_ok = bool(isinstance(orders, dict) and orders.get("ok"))
+        preflight_errors = [
+            _safe_text(x.get("error"), "")
+            for x in (account, positions, orders)
+            if isinstance(x, dict) and x.get("error")
+        ]
+        last_error = _safe_text(preflight_errors[0] if preflight_errors else self._last_error, "")
         return {
             "enabled": bool(safety.get("enabled_requested")),
             "version": VERSION,
             "mode": "paper_only",
             "paper_mode_verified": bool(safety.get("paper_mode_verified")),
             "broker_execution_enabled": bool(safety.get("broker_execution_enabled")),
+            "account_preflight_ok": account_ok,
+            "positions_preflight_ok": positions_ok,
+            "orders_preflight_ok": orders_ok,
+            "broker_execution_ready": bool(safety.get("broker_execution_enabled") and account_ok),
             "account_equity": _to_float(account.get("account_equity"), 0.0),
             "buying_power": _to_float(account.get("buying_power"), 0.0),
             "open_positions_count": _to_int(positions.get("open_positions_count"), 0),
             "open_orders_count": _to_int(orders.get("open_orders_count"), 0),
             "last_order_status": self._last_order_status,
+            "last_alpaca_error_sanitized": last_error,
             "safety_status": safety.get("safety_status"),
             "safety_reasons": safety.get("safety_reasons") or [],
             "paper_endpoint_required": True,
             "paper_endpoint_detected": bool(safety.get("paper_endpoint_detected")),
             "live_endpoint_detected": bool(safety.get("live_endpoint_detected")),
             "live_endpoint_rejected": bool(safety.get("live_endpoint_rejected")),
+            "credential_source": safety.get("credential_source"),
             "api_calls_used": int(self._api_calls_used),
             "live_trading_changed": False,
             "broker_live_endpoint_allowed": False,

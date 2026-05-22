@@ -208,6 +208,7 @@ class PaperAutopilotEngine:
         self._runtime_state: dict[str, Any] = {
             "last_cycle_utc": "",
             "last_cycle_summary": {},
+            "last_execution_trace": {},
             "last_error": "",
             "last_close_by_symbol": {},
         }
@@ -493,6 +494,94 @@ class PaperAutopilotEngine:
             return bool(isinstance(safety, dict) and safety.get("broker_execution_enabled"))
         except Exception:
             return False
+
+    def _alpaca_safety_snapshot(self) -> dict[str, Any]:
+        broker = self.alpaca_paper_broker
+        if broker is None or not hasattr(broker, "safety_status"):
+            return {
+                "alpaca_enabled": False,
+                "paper_mode_verified": False,
+                "broker_execution_enabled": False,
+                "safety_reasons": ["alpaca_paper_broker_unavailable"],
+            }
+        try:
+            safety = dict(broker.safety_status() or {})
+        except Exception as exc:
+            safety = {"safety_reasons": [f"alpaca_safety_status_exception:{str(exc)[:120]}"]}
+        return {
+            "alpaca_enabled": bool(safety.get("enabled_requested")),
+            "paper_mode_verified": bool(safety.get("paper_mode_verified")),
+            "broker_execution_enabled": bool(safety.get("broker_execution_enabled")),
+            "safety_reasons": list(safety.get("safety_reasons") or []),
+            "live_endpoint_detected": bool(safety.get("live_endpoint_detected", False)),
+            "live_endpoint_rejected": bool(safety.get("live_endpoint_rejected", True)),
+        }
+
+    def _sanitize_broker_error(self, result: dict[str, Any] | None) -> str:
+        if not isinstance(result, dict):
+            return ""
+        raw = str(result.get("broker_error") or result.get("error") or result.get("reason") or "").strip()
+        return raw[:180]
+
+    def _current_execution_capacities(self) -> dict[str, Any]:
+        counts = self._count_open_positions()
+        open_rows = self._fetch_open_positions()
+        open_syms = {str(r.get("symbol") or "").upper().strip() for r in open_rows}
+        stock_open = int(counts.get("stock", 0))
+        crypto_open = int(counts.get("crypto", 0))
+        return {
+            "open_symbols": open_syms,
+            "open_positions_count": stock_open + crypto_open,
+            "stock_capacity": max(0, self.max_stocks - stock_open),
+            "crypto_capacity": max(0, self.max_crypto - crypto_open),
+            "total_capacity": max(0, self.max_open_positions_total - (stock_open + crypto_open)),
+        }
+
+    def _candidate_trace_row(
+        self,
+        row: dict[str, Any],
+        open_syms: set[str],
+        stock_capacity: int,
+        crypto_capacity: int,
+        total_capacity: int,
+        selected_so_far: int = 0,
+    ) -> tuple[dict[str, Any], bool, str, dict[str, Any]]:
+        r = _normalize_paper_entry_bridge(row)
+        symbol = str(r.get("symbol") or "").upper().strip()
+        asset = _norm_asset(r.get("asset_type") or "stock")
+        allowed = False
+        reason = "not_evaluated"
+        gate_meta: dict[str, Any] = {"commitment_score": 0.0}
+        if not symbol:
+            reason = "missing_symbol"
+        elif symbol in open_syms:
+            reason = "duplicate_active_position"
+        elif self._cooldown_active(symbol):
+            reason = "cooldown_active"
+        elif total_capacity <= 0:
+            reason = "max_concurrent_positions_reached"
+        elif selected_so_far >= self.max_new_positions_per_cycle:
+            reason = "max_new_positions_per_cycle_reached"
+        elif asset == "stock" and stock_capacity <= 0:
+            reason = "stock_capacity_reached"
+        elif asset == "crypto" and crypto_capacity <= 0:
+            reason = "crypto_capacity_reached"
+        else:
+            allowed, reason, gate_meta = self._is_candidate_paper_eligible(r)
+        trace = {
+            "symbol": symbol,
+            "asset_type": asset,
+            "action": str(r.get("action") or r.get("prediction") or ""),
+            "readiness": str(r.get("readiness_label") or r.get("paper_ready_status") or r.get("buy_eligibility") or ""),
+            "trade_horizon_style": str(r.get("trade_horizon_style") or r.get("best_horizon_style") or ""),
+            "entry_score": round(_to_float(r.get("paper_entry_bridge_score"), _to_float(r.get("entry_quality_score"), 0.0)), 2),
+            "confidence": round(_to_float(r.get("confidence"), _to_float(r.get("predicted_win_probability"), 0.0)), 2),
+            "eligible": bool(allowed),
+            "decision_reason": str(reason),
+            "commitment_score": round(_to_float(gate_meta.get("commitment_score"), 0.0), 2),
+            "duplicate_active_position": bool(symbol in open_syms) if symbol else False,
+        }
+        return trace, bool(allowed), str(reason), dict(gate_meta or {})
 
     def _submit_alpaca_paper_entry_order(
         self,
@@ -1084,6 +1173,7 @@ class PaperAutopilotEngine:
             "total_closed_trades": int(total_closed),
             "last_cycle_utc": str(self._runtime_state.get("last_cycle_utc") or ""),
             "last_cycle_summary": dict(self._runtime_state.get("last_cycle_summary") or {}),
+            "last_execution_trace": dict(self._runtime_state.get("last_execution_trace") or {}),
             "last_error": str(self._runtime_state.get("last_error") or ""),
             "last_updated_utc": _now_iso(),
         }
@@ -1107,6 +1197,7 @@ class PaperAutopilotEngine:
 
     def run_cycle(self):
         if not self._enabled:
+            safety = self._alpaca_safety_snapshot()
             out = {
                 "ok": True,
                 "autopilot_enabled": False,
@@ -1114,14 +1205,38 @@ class PaperAutopilotEngine:
                 "positions_closed": 0,
                 "cycle_reason": "disabled",
             }
+            trace = {
+                "paper_worker_running": bool(self._thread and self._thread.is_alive()),
+                **safety,
+                "candidates_seen": 0,
+                "eligible_candidates": 0,
+                "selected_candidates": 0,
+                "orders_attempted": 0,
+                "orders_submitted": 0,
+                "orders_rejected": 0,
+                "final_blocker_reason": "paper_autopilot_disabled",
+                "per_candidate_decision_trace": [],
+                "last_alpaca_error_sanitized": "",
+                "live_trading_changed": False,
+                "secrets_exposed": False,
+            }
             self._runtime_state["last_cycle_utc"] = _now_iso()
             self._runtime_state["last_cycle_summary"] = out
+            self._runtime_state["last_execution_trace"] = trace
             return out
 
         with self._cycle_lock:
             opened = 0
             closed = 0
             skipped = 0
+            eligible_count = 0
+            selected_count = 0
+            orders_attempted = 0
+            orders_rejected = 0
+            final_blocker_reason = ""
+            last_alpaca_error = ""
+            decision_trace: list[dict[str, Any]] = []
+            safety = self._alpaca_safety_snapshot()
             open_syms = {str(r.get("symbol") or "").upper().strip() for r in self._fetch_open_positions()}
 
             open_rows = self._fetch_open_positions()
@@ -1168,27 +1283,64 @@ class PaperAutopilotEngine:
             candidates = self._collect_candidate_rows()
             for row in candidates:
                 if opened >= self.max_new_positions_per_cycle:
+                    final_blocker_reason = final_blocker_reason or "max_new_positions_per_cycle_reached"
                     break
                 if total_capacity <= 0:
+                    final_blocker_reason = final_blocker_reason or "max_concurrent_positions_reached"
                     break
                 symbol = str(row.get("symbol") or "").upper().strip()
                 asset = _norm_asset(row.get("asset_type") or "stock")
                 if not symbol or symbol in open_syms:
                     skipped += 1
+                    reason = "missing_symbol" if not symbol else "duplicate_active_position"
+                    decision_trace.append({
+                        "symbol": symbol,
+                        "asset_type": asset,
+                        "eligible": False,
+                        "selected": False,
+                        "decision_reason": reason,
+                    })
+                    final_blocker_reason = reason
                     continue
                 if self._cooldown_active(symbol):
                     skipped += 1
+                    decision_trace.append({
+                        "symbol": symbol,
+                        "asset_type": asset,
+                        "eligible": False,
+                        "selected": False,
+                        "decision_reason": "cooldown_active",
+                    })
+                    final_blocker_reason = "cooldown_active"
                     continue
                 if asset == "stock" and stock_capacity <= 0:
+                    final_blocker_reason = "stock_capacity_reached"
                     continue
                 if asset == "crypto" and crypto_capacity <= 0:
+                    final_blocker_reason = "crypto_capacity_reached"
                     continue
 
                 allowed, reason, gate_meta = self._is_candidate_paper_eligible(row)
+                row_trace, _allowed_trace, _reason_trace, _gate_meta_trace = self._candidate_trace_row(
+                    row,
+                    open_syms=open_syms,
+                    stock_capacity=stock_capacity,
+                    crypto_capacity=crypto_capacity,
+                    total_capacity=total_capacity,
+                    selected_so_far=selected_count,
+                )
                 if not allowed:
                     skipped += 1
+                    row_trace["selected"] = False
+                    decision_trace.append(row_trace)
+                    final_blocker_reason = str(reason)
                     continue
 
+                eligible_count += 1
+                selected_count += 1
+                orders_attempted += 1
+                row_trace["selected"] = True
+                row_trace["order_attempted"] = True
                 opened_row = self._open_position_from_row(
                     row,
                     source_bucket=f"paper_autopilot_{reason}",
@@ -1196,6 +1348,8 @@ class PaperAutopilotEngine:
                 )
                 if opened_row.get("ok"):
                     opened += 1
+                    row_trace["order_submitted"] = True
+                    row_trace["order_result"] = "submitted"
                     open_syms.add(symbol)
                     total_capacity = max(0, total_capacity - 1)
                     if asset == "stock":
@@ -1204,20 +1358,135 @@ class PaperAutopilotEngine:
                         crypto_capacity = max(0, crypto_capacity - 1)
                 else:
                     skipped += 1
+                    orders_rejected += 1
+                    row_trace["order_submitted"] = False
+                    row_trace["order_result"] = "rejected"
+                    row_trace["order_rejection_reason"] = str(opened_row.get("error") or "paper_order_rejected")[:160]
+                    broker_error = self._sanitize_broker_error(opened_row)
+                    if broker_error:
+                        row_trace["broker_error_sanitized"] = broker_error
+                        last_alpaca_error = broker_error
+                    final_blocker_reason = broker_error or str(opened_row.get("error") or "paper_order_rejected")
+                decision_trace.append(row_trace)
 
+            if not final_blocker_reason:
+                if opened > 0:
+                    final_blocker_reason = "orders_submitted"
+                elif not candidates:
+                    final_blocker_reason = "no_candidates_available"
+                elif eligible_count <= 0:
+                    final_blocker_reason = "no_eligible_candidates"
+                elif orders_attempted <= 0:
+                    final_blocker_reason = "no_orders_attempted"
+                else:
+                    final_blocker_reason = "orders_not_submitted"
             out = {
                 "ok": True,
                 "autopilot_enabled": True,
                 "orders_submitted": int(opened),
+                "orders_attempted": int(orders_attempted),
+                "orders_rejected": int(orders_rejected),
                 "positions_closed": int(closed),
                 "positions_skipped": int(skipped),
+                "candidates_seen": int(len(candidates)),
+                "eligible_candidates": int(eligible_count),
+                "selected_candidates": int(selected_count),
+                "final_blocker_reason": str(final_blocker_reason)[:180],
+                "last_alpaca_error_sanitized": str(last_alpaca_error)[:180],
                 "cycle_timestamp": _now_iso(),
+            }
+            trace = {
+                "paper_worker_running": bool(self._thread and self._thread.is_alive()),
+                **safety,
+                "candidates_seen": int(len(candidates)),
+                "eligible_candidates": int(eligible_count),
+                "selected_candidates": int(selected_count),
+                "orders_attempted": int(orders_attempted),
+                "orders_submitted": int(opened),
+                "orders_rejected": int(orders_rejected),
+                "final_blocker_reason": str(final_blocker_reason)[:180],
+                "per_candidate_decision_trace": decision_trace[:12],
+                "last_alpaca_error_sanitized": str(last_alpaca_error)[:180],
+                "live_trading_changed": False,
+                "secrets_exposed": False,
             }
             self._runtime_state["last_cycle_utc"] = out["cycle_timestamp"]
             self._runtime_state["last_cycle_summary"] = dict(out)
+            self._runtime_state["last_execution_trace"] = dict(trace)
             self._runtime_state["last_error"] = ""
             self._save_state_file()
             return out
+
+    def execution_trace(self, max_candidates: int = 12) -> dict[str, Any]:
+        status = self.status()
+        last_trace = dict(self._runtime_state.get("last_execution_trace") or {})
+        candidates = self._collect_candidate_rows()
+        capacities = self._current_execution_capacities()
+        open_syms = set(capacities.get("open_symbols") or set())
+        stock_capacity = int(capacities.get("stock_capacity", 0))
+        crypto_capacity = int(capacities.get("crypto_capacity", 0))
+        total_capacity = int(capacities.get("total_capacity", 0))
+        decision_rows: list[dict[str, Any]] = []
+        eligible = 0
+        selected = 0
+        for row in candidates[: max(1, min(30, int(max_candidates or 12)))]:
+            trace, allowed, _reason, _gate_meta = self._candidate_trace_row(
+                row,
+                open_syms=open_syms,
+                stock_capacity=stock_capacity,
+                crypto_capacity=crypto_capacity,
+                total_capacity=total_capacity,
+                selected_so_far=selected,
+            )
+            if allowed:
+                eligible += 1
+                if selected < self.max_new_positions_per_cycle and total_capacity > 0:
+                    selected += 1
+                    trace["selected"] = True
+                else:
+                    trace["selected"] = False
+            else:
+                trace["selected"] = False
+            decision_rows.append(trace)
+        safety = self._alpaca_safety_snapshot()
+        final_blocker = str(last_trace.get("final_blocker_reason") or "")
+        if not final_blocker:
+            if not self._enabled:
+                final_blocker = "paper_autopilot_disabled"
+            elif not candidates:
+                final_blocker = "no_candidates_available"
+            elif eligible <= 0:
+                final_blocker = "no_eligible_candidates"
+            elif not safety.get("broker_execution_enabled"):
+                final_blocker = "alpaca_paper_broker_disabled"
+            else:
+                final_blocker = "awaiting_next_worker_cycle"
+        return {
+            "enabled": True,
+            "mode": "paper_only",
+            "paper_worker_running": bool(self._thread and self._thread.is_alive()),
+            "autopilot_enabled": bool(self._enabled),
+            **safety,
+            "open_positions_count": int(status.get("open_positions_count", capacities.get("open_positions_count", 0))),
+            "max_new_positions_per_cycle": int(self.max_new_positions_per_cycle),
+            "max_open_positions_total": int(self.max_open_positions_total),
+            "candidates_seen": int(len(candidates)),
+            "eligible_candidates": int(last_trace.get("eligible_candidates", eligible)),
+            "selected_candidates": int(last_trace.get("selected_candidates", selected)),
+            "orders_attempted": int(last_trace.get("orders_attempted", 0)),
+            "orders_submitted": int(last_trace.get("orders_submitted", 0)),
+            "orders_rejected": int(last_trace.get("orders_rejected", 0)),
+            "final_blocker_reason": final_blocker[:180],
+            "per_candidate_decision_trace": list(last_trace.get("per_candidate_decision_trace") or decision_rows)[:max_candidates],
+            "last_alpaca_error_sanitized": str(last_trace.get("last_alpaca_error_sanitized") or "")[:180],
+            "last_cycle_utc": str(status.get("last_cycle_utc") or ""),
+            "last_cycle_summary": dict(status.get("last_cycle_summary") or {}),
+            "natural_exit_preserved": True,
+            "forced_early_exit_enabled": False,
+            "live_trading_changed": False,
+            "secrets_exposed": False,
+            "generated_at": _now_iso(),
+        }
 
     def paper_positions(self):
         open_rows = self._fetch_open_positions()

@@ -37200,6 +37200,118 @@ def paper_autopilot_throughput_status_v1():
         }
 
 
+def _paper_execution_trace_payload(run_result=None):
+    try:
+        _ensure_paper_autopilot_started()
+        trace = {}
+        if hasattr(PAPER_AUTOPILOT, "execution_trace"):
+            trace = dict(PAPER_AUTOPILOT.execution_trace() or {})
+        else:
+            status = PAPER_AUTOPILOT.status()
+            trace = {
+                "paper_worker_running": bool(getattr(PAPER_AUTOPILOT, "_thread", None) and PAPER_AUTOPILOT._thread.is_alive()),
+                "autopilot_enabled": bool(status.get("autopilot_enabled", False)),
+                "candidates_seen": 0,
+                "eligible_candidates": 0,
+                "selected_candidates": 0,
+                "orders_attempted": 0,
+                "orders_submitted": 0,
+                "orders_rejected": 0,
+                "final_blocker_reason": "paper_execution_trace_unavailable",
+                "per_candidate_decision_trace": [],
+                "last_alpaca_error_sanitized": "",
+            }
+        broker_status = {}
+        try:
+            broker_status = ALPACA_PAPER_BROKER.status()
+        except Exception as exc:
+            broker_status = {"last_alpaca_error_sanitized": f"alpaca_status_exception:{str(exc)[:120]}"}
+        if isinstance(run_result, dict):
+            trace["manual_cycle_result"] = dict(run_result)
+            trace["orders_attempted"] = int(_to_float(run_result.get("orders_attempted"), trace.get("orders_attempted", 0)))
+            trace["orders_submitted"] = int(_to_float(run_result.get("orders_submitted"), trace.get("orders_submitted", 0)))
+            trace["orders_rejected"] = int(_to_float(run_result.get("orders_rejected"), trace.get("orders_rejected", 0)))
+            if run_result.get("final_blocker_reason"):
+                trace["final_blocker_reason"] = str(run_result.get("final_blocker_reason"))[:180]
+            if run_result.get("last_alpaca_error_sanitized"):
+                trace["last_alpaca_error_sanitized"] = str(run_result.get("last_alpaca_error_sanitized"))[:180]
+        trace["paper_execution_trace_v1"] = True
+        trace["alpaca_enabled"] = bool(trace.get("alpaca_enabled", broker_status.get("enabled", False)))
+        trace["paper_mode_verified"] = bool(trace.get("paper_mode_verified", broker_status.get("paper_mode_verified", False)))
+        trace["broker_execution_enabled"] = bool(trace.get("broker_execution_enabled", broker_status.get("broker_execution_enabled", False)))
+        trace["account_preflight_ok"] = bool(broker_status.get("account_preflight_ok", False))
+        trace["broker_execution_ready"] = bool(broker_status.get("broker_execution_ready", False))
+        trace["last_alpaca_error_sanitized"] = str(
+            trace.get("last_alpaca_error_sanitized")
+            or broker_status.get("last_alpaca_error_sanitized")
+            or ""
+        )[:180]
+        if trace.get("broker_execution_enabled") and not trace.get("account_preflight_ok") and trace.get("last_alpaca_error_sanitized"):
+            trace["final_blocker_reason"] = f"alpaca_account_preflight_failed:{trace['last_alpaca_error_sanitized']}"[:180]
+        trace["api_calls_used"] = int(_to_float(broker_status.get("api_calls_used"), 0.0))
+        trace["live_trading_changed"] = False
+        trace["broker_live_endpoint_allowed"] = False
+        trace["natural_exit_preserved"] = True
+        trace["forced_early_exit_enabled"] = False
+        trace["secrets_exposed"] = False
+        return trace
+    except Exception as exc:
+        return {
+            "paper_execution_trace_v1": True,
+            "paper_worker_running": False,
+            "alpaca_enabled": False,
+            "paper_mode_verified": False,
+            "broker_execution_enabled": False,
+            "candidates_seen": 0,
+            "eligible_candidates": 0,
+            "selected_candidates": 0,
+            "orders_attempted": 0,
+            "orders_submitted": 0,
+            "orders_rejected": 0,
+            "final_blocker_reason": f"paper_execution_trace_unavailable:{str(exc)[:140]}",
+            "per_candidate_decision_trace": [],
+            "last_alpaca_error_sanitized": "",
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_live_endpoint_allowed": False,
+            "natural_exit_preserved": True,
+            "forced_early_exit_enabled": False,
+            "secrets_exposed": False,
+        }
+
+
+@router.get("/api/paper_execution_trace_v1")
+def paper_execution_trace_v1():
+    return _paper_execution_trace_payload()
+
+
+def _alpaca_paper_test_cycle_payload():
+    _ensure_paper_autopilot_started()
+    result = PAPER_AUTOPILOT.run_cycle()
+    return {
+        **_paper_execution_trace_payload(run_result=result),
+        "alpaca_paper_test_cycle_v1": True,
+        "manual_cycle_ran": True,
+        "live_trading_changed": False,
+        "broker_live_endpoint_allowed": False,
+        "natural_exit_preserved": True,
+        "forced_early_exit_enabled": False,
+        "secrets_exposed": False,
+    }
+
+
+@router.get("/api/alpaca_paper_test_cycle_v1")
+def alpaca_paper_test_cycle_v1_get():
+    # Manual paper-only test: uses the normal autopilot gates and never forces a trade.
+    return _alpaca_paper_test_cycle_payload()
+
+
+@router.post("/api/alpaca_paper_test_cycle_v1")
+def alpaca_paper_test_cycle_v1_post():
+    # Manual paper-only test: uses the normal autopilot gates and never forces a trade.
+    return _alpaca_paper_test_cycle_payload()
+
+
 @router.post("/api/paper_worker_start")
 def paper_worker_start():
     # Alias endpoint for worker control; remains paper-only and guardrail-safe.
