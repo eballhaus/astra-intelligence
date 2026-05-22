@@ -37287,7 +37287,19 @@ def paper_execution_trace_v1():
 
 def _alpaca_paper_test_cycle_payload():
     _ensure_paper_autopilot_started()
-    result = PAPER_AUTOPILOT.run_cycle()
+    lock = getattr(PAPER_AUTOPILOT, "_cycle_lock", None)
+    if lock is not None and hasattr(lock, "locked") and lock.locked():
+        result = {
+            "ok": True,
+            "autopilot_enabled": bool(PAPER_AUTOPILOT.enabled() if hasattr(PAPER_AUTOPILOT, "enabled") else True),
+            "cycle_skipped": True,
+            "cycle_reason": "cycle_already_running",
+            "orders_attempted": 0,
+            "orders_submitted": 0,
+            "orders_rejected": 0,
+        }
+    else:
+        result = PAPER_AUTOPILOT.run_cycle()
     return {
         **_paper_execution_trace_payload(run_result=result),
         "alpaca_paper_test_cycle_v1": True,

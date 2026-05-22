@@ -517,6 +517,42 @@ class PaperAutopilotEngine:
             "live_endpoint_rejected": bool(safety.get("live_endpoint_rejected", True)),
         }
 
+    def _broker_open_symbols_snapshot(self) -> dict[str, Any]:
+        safety = self._alpaca_safety_snapshot()
+        out = {
+            "broker_reconciliation_active": False,
+            "broker_positions_fetch_ok": False,
+            "broker_open_positions_count": 0,
+            "broker_open_symbols": set(),
+            "broker_positions_error_sanitized": "",
+        }
+        if not safety.get("broker_execution_enabled"):
+            return out
+        broker = self.alpaca_paper_broker
+        if broker is None or not hasattr(broker, "positions"):
+            out["broker_reconciliation_active"] = True
+            out["broker_positions_error_sanitized"] = "broker_positions_unavailable"
+            return out
+        out["broker_reconciliation_active"] = True
+        try:
+            payload = dict(broker.positions() or {})
+            if bool(payload.get("ok")):
+                symbols = set()
+                for row in list(payload.get("positions") or []):
+                    if not isinstance(row, dict):
+                        continue
+                    sym = str(row.get("symbol") or "").upper().strip()
+                    if sym:
+                        symbols.add(sym)
+                out["broker_positions_fetch_ok"] = True
+                out["broker_open_symbols"] = symbols
+                out["broker_open_positions_count"] = int(len(symbols))
+            else:
+                out["broker_positions_error_sanitized"] = str(payload.get("error") or "broker_positions_fetch_failed")[:180]
+        except Exception as exc:
+            out["broker_positions_error_sanitized"] = f"broker_positions_exception:{str(exc)[:120]}"
+        return out
+
     def _sanitize_broker_error(self, result: dict[str, Any] | None) -> str:
         if not isinstance(result, dict):
             return ""
@@ -545,6 +581,9 @@ class PaperAutopilotEngine:
         crypto_capacity: int,
         total_capacity: int,
         selected_so_far: int = 0,
+        internal_open_syms: set[str] | None = None,
+        broker_open_syms: set[str] | None = None,
+        broker_reconciliation_active: bool = False,
     ) -> tuple[dict[str, Any], bool, str, dict[str, Any]]:
         r = _normalize_paper_entry_bridge(row)
         symbol = str(r.get("symbol") or "").upper().strip()
@@ -552,6 +591,18 @@ class PaperAutopilotEngine:
         allowed = False
         reason = "not_evaluated"
         gate_meta: dict[str, Any] = {"commitment_score": 0.0}
+        internal_set = set(internal_open_syms or set())
+        broker_set = set(broker_open_syms or set())
+        duplicate_source = "none"
+        if symbol:
+            in_internal = symbol in internal_set
+            in_broker = symbol in broker_set
+            if in_internal and in_broker:
+                duplicate_source = "both"
+            elif in_internal:
+                duplicate_source = "internal"
+            elif in_broker:
+                duplicate_source = "broker"
         if not symbol:
             reason = "missing_symbol"
         elif symbol in open_syms:
@@ -580,6 +631,8 @@ class PaperAutopilotEngine:
             "decision_reason": str(reason),
             "commitment_score": round(_to_float(gate_meta.get("commitment_score"), 0.0), 2),
             "duplicate_active_position": bool(symbol in open_syms) if symbol else False,
+            "duplicate_source": duplicate_source,
+            "broker_reconciliation_active": bool(broker_reconciliation_active),
         }
         return trace, bool(allowed), str(reason), dict(gate_meta or {})
 
@@ -598,8 +651,54 @@ class PaperAutopilotEngine:
         asset_type = _norm_asset(r.get("asset_type") or "stock")
         if asset_type != "stock":
             return {"enabled": False, "paper_order_submitted": False, "reason": "alpaca_crypto_execution_deferred"}
-        risk_label = str(r.get("portfolio_risk_label") or "").strip().lower()
-        portfolio_ok = bool(risk_label not in {"high_risk", "blocked"} and _to_float(r.get("portfolio_risk_score"), 65.0) >= 35.0)
+        risk_label_raw = str(r.get("portfolio_risk_label") or "").strip()
+        risk_label = risk_label_raw.lower()
+        risk_score_raw = r.get("portfolio_risk_score")
+        risk_score = _to_float(risk_score_raw, 0.0) if risk_score_raw is not None else None
+        explicit_portfolio_ok = r.get("portfolio_risk_ok")
+        portfolio_risk_proof_present = bool(
+            explicit_portfolio_ok is not None
+            or risk_score is not None
+            or bool(risk_label_raw)
+        )
+        if not portfolio_risk_proof_present:
+            return {
+                "ok": False,
+                "paper_order_submitted": False,
+                "error": "missing_portfolio_risk_data",
+                "portfolio_risk_proof_present": False,
+                "portfolio_risk_score_used": None,
+                "portfolio_risk_label_used": "",
+                "portfolio_risk_preflight_reason": "missing_portfolio_risk_data",
+            }
+
+        if explicit_portfolio_ok is not None:
+            portfolio_ok = bool(explicit_portfolio_ok)
+            preflight_reason = "explicit_portfolio_risk_ok"
+        else:
+            # Conservative fallback: require a non-blocking label plus minimum score
+            # when explicit portfolio_risk_ok is not present.
+            if risk_score is None:
+                return {
+                    "ok": False,
+                    "paper_order_submitted": False,
+                    "error": "missing_portfolio_risk_data",
+                    "portfolio_risk_proof_present": False,
+                    "portfolio_risk_score_used": None,
+                    "portfolio_risk_label_used": risk_label_raw,
+                    "portfolio_risk_preflight_reason": "missing_portfolio_risk_score",
+                }
+            portfolio_ok = bool(risk_label not in {"high_risk", "blocked"} and risk_score >= 35.0)
+            preflight_reason = "derived_from_portfolio_risk_fields"
+
+        broker_snapshot = self._broker_open_symbols_snapshot()
+        reconciliation_checked = bool(
+            broker_snapshot.get("broker_reconciliation_active")
+            and (
+                broker_snapshot.get("broker_positions_fetch_ok")
+                or str(broker_snapshot.get("broker_positions_error_sanitized") or "").strip()
+            )
+        )
         order = {
             "symbol": str(r.get("symbol") or "").upper().strip(),
             "side": "buy",
@@ -611,16 +710,35 @@ class PaperAutopilotEngine:
             "paper_ready": True,
             "paper_test_eligible": True,
             "paper_order_preflight_ready": True,
-            "paper_limits_ok": True,
+            "paper_limits_ok": bool(r.get("paper_limits_ok", True)),
             "portfolio_risk_ok": bool(portfolio_ok),
+            "portfolio_risk_proof_present": bool(portfolio_risk_proof_present),
+            "portfolio_risk_score_used": (None if risk_score is None else round(float(risk_score), 4)),
+            "portfolio_risk_label_used": risk_label_raw,
+            "portfolio_risk_preflight_reason": preflight_reason,
+            "broker_reconciliation_active": bool(broker_snapshot.get("broker_reconciliation_active", False)),
+            "broker_positions_checked": bool(reconciliation_checked),
             "natural_exit_logic_preserved": True,
             "entry_price_reference": round(_to_float(entry_price), 6),
             "entry_commitment_score": round(_to_float((gate_meta or {}).get("commitment_score"), 0.0), 2),
         }
         try:
-            return dict(broker.submit_paper_order(order) or {})
+            res = dict(broker.submit_paper_order(order) or {})
+            res.setdefault("portfolio_risk_proof_present", bool(portfolio_risk_proof_present))
+            res.setdefault("portfolio_risk_score_used", (None if risk_score is None else round(float(risk_score), 4)))
+            res.setdefault("portfolio_risk_label_used", risk_label_raw)
+            res.setdefault("portfolio_risk_preflight_reason", preflight_reason)
+            return res
         except Exception as exc:
-            return {"ok": False, "paper_order_submitted": False, "error": f"alpaca_paper_submit_exception:{str(exc)[:120]}"}
+            return {
+                "ok": False,
+                "paper_order_submitted": False,
+                "error": f"alpaca_paper_submit_exception:{str(exc)[:120]}",
+                "portfolio_risk_proof_present": bool(portfolio_risk_proof_present),
+                "portfolio_risk_score_used": (None if risk_score is None else round(float(risk_score), 4)),
+                "portfolio_risk_label_used": risk_label_raw,
+                "portfolio_risk_preflight_reason": preflight_reason,
+            }
 
     def _build_entry_context_v1(
         self,
@@ -1235,11 +1353,27 @@ class PaperAutopilotEngine:
             orders_rejected = 0
             final_blocker_reason = ""
             last_alpaca_error = ""
+            portfolio_risk_proof_present = False
+            portfolio_risk_score_used = None
+            portfolio_risk_label_used = ""
+            portfolio_risk_preflight_reason = ""
             decision_trace: list[dict[str, Any]] = []
             safety = self._alpaca_safety_snapshot()
-            open_syms = {str(r.get("symbol") or "").upper().strip() for r in self._fetch_open_positions()}
+            open_rows_initial = self._fetch_open_positions()
+            internal_open_syms = {str(r.get("symbol") or "").upper().strip() for r in open_rows_initial}
+            broker_snapshot = self._broker_open_symbols_snapshot()
+            broker_open_syms = set(broker_snapshot.get("broker_open_symbols") or set())
+            broker_reconciliation_active = bool(broker_snapshot.get("broker_reconciliation_active", False))
+            broker_positions_fetch_ok = bool(broker_snapshot.get("broker_positions_fetch_ok", False))
+            stale_internal_positions = sorted(x for x in internal_open_syms if x and x not in broker_open_syms)
+            # When broker reconciliation is active and fetch succeeded, broker positions are the
+            # source of truth for duplicate suppression on paper order submission.
+            if broker_reconciliation_active and broker_positions_fetch_ok:
+                open_syms = set(broker_open_syms)
+            else:
+                open_syms = set(internal_open_syms)
 
-            open_rows = self._fetch_open_positions()
+            open_rows = list(open_rows_initial)
             min_hold = self._min_hold_seconds()
             for row in open_rows:
                 if closed >= self.max_closes_per_cycle:
@@ -1293,12 +1427,24 @@ class PaperAutopilotEngine:
                 if not symbol or symbol in open_syms:
                     skipped += 1
                     reason = "missing_symbol" if not symbol else "duplicate_active_position"
+                    duplicate_source = "none"
+                    if symbol:
+                        in_internal = symbol in internal_open_syms
+                        in_broker = symbol in broker_open_syms
+                        if in_internal and in_broker:
+                            duplicate_source = "both"
+                        elif in_internal:
+                            duplicate_source = "internal"
+                        elif in_broker:
+                            duplicate_source = "broker"
                     decision_trace.append({
                         "symbol": symbol,
                         "asset_type": asset,
                         "eligible": False,
                         "selected": False,
                         "decision_reason": reason,
+                        "duplicate_source": duplicate_source,
+                        "broker_reconciliation_active": broker_reconciliation_active,
                     })
                     final_blocker_reason = reason
                     continue
@@ -1328,6 +1474,9 @@ class PaperAutopilotEngine:
                     crypto_capacity=crypto_capacity,
                     total_capacity=total_capacity,
                     selected_so_far=selected_count,
+                    internal_open_syms=internal_open_syms,
+                    broker_open_syms=broker_open_syms,
+                    broker_reconciliation_active=broker_reconciliation_active,
                 )
                 if not allowed:
                     skipped += 1
@@ -1346,11 +1495,26 @@ class PaperAutopilotEngine:
                     source_bucket=f"paper_autopilot_{reason}",
                     gate_meta=gate_meta,
                 )
+                row_trace["portfolio_risk_proof_present"] = bool(opened_row.get("portfolio_risk_proof_present", False))
+                row_trace["portfolio_risk_score_used"] = opened_row.get("portfolio_risk_score_used")
+                row_trace["portfolio_risk_label_used"] = str(opened_row.get("portfolio_risk_label_used") or "")
+                row_trace["portfolio_risk_preflight_reason"] = str(opened_row.get("portfolio_risk_preflight_reason") or "")
+                if row_trace["portfolio_risk_proof_present"]:
+                    portfolio_risk_proof_present = True
+                if row_trace["portfolio_risk_score_used"] is not None:
+                    portfolio_risk_score_used = row_trace["portfolio_risk_score_used"]
+                if row_trace["portfolio_risk_label_used"]:
+                    portfolio_risk_label_used = row_trace["portfolio_risk_label_used"]
+                if row_trace["portfolio_risk_preflight_reason"]:
+                    portfolio_risk_preflight_reason = row_trace["portfolio_risk_preflight_reason"]
                 if opened_row.get("ok"):
                     opened += 1
                     row_trace["order_submitted"] = True
                     row_trace["order_result"] = "submitted"
                     open_syms.add(symbol)
+                    internal_open_syms.add(symbol)
+                    if broker_reconciliation_active:
+                        broker_open_syms.add(symbol)
                     total_capacity = max(0, total_capacity - 1)
                     if asset == "stock":
                         stock_capacity = max(0, stock_capacity - 1)
@@ -1393,6 +1557,16 @@ class PaperAutopilotEngine:
                 "selected_candidates": int(selected_count),
                 "final_blocker_reason": str(final_blocker_reason)[:180],
                 "last_alpaca_error_sanitized": str(last_alpaca_error)[:180],
+                "portfolio_risk_proof_present": bool(portfolio_risk_proof_present),
+                "portfolio_risk_score_used": portfolio_risk_score_used,
+                "portfolio_risk_label_used": str(portfolio_risk_label_used),
+                "portfolio_risk_preflight_reason": str(portfolio_risk_preflight_reason),
+                "internal_open_positions_count": int(len([s for s in internal_open_syms if s])),
+                "broker_open_positions_count": int(len([s for s in broker_open_syms if s])),
+                "stale_internal_positions": stale_internal_positions[:32],
+                "broker_reconciliation_active": broker_reconciliation_active,
+                "broker_positions_fetch_ok": broker_positions_fetch_ok,
+                "broker_positions_error_sanitized": str(broker_snapshot.get("broker_positions_error_sanitized") or "")[:180],
                 "cycle_timestamp": _now_iso(),
             }
             trace = {
@@ -1407,6 +1581,16 @@ class PaperAutopilotEngine:
                 "final_blocker_reason": str(final_blocker_reason)[:180],
                 "per_candidate_decision_trace": decision_trace[:12],
                 "last_alpaca_error_sanitized": str(last_alpaca_error)[:180],
+                "portfolio_risk_proof_present": bool(portfolio_risk_proof_present),
+                "portfolio_risk_score_used": portfolio_risk_score_used,
+                "portfolio_risk_label_used": str(portfolio_risk_label_used),
+                "portfolio_risk_preflight_reason": str(portfolio_risk_preflight_reason),
+                "internal_open_positions_count": int(len([s for s in internal_open_syms if s])),
+                "broker_open_positions_count": int(len([s for s in broker_open_syms if s])),
+                "stale_internal_positions": stale_internal_positions[:32],
+                "broker_reconciliation_active": broker_reconciliation_active,
+                "broker_positions_fetch_ok": broker_positions_fetch_ok,
+                "broker_positions_error_sanitized": str(broker_snapshot.get("broker_positions_error_sanitized") or "")[:180],
                 "live_trading_changed": False,
                 "secrets_exposed": False,
             }
@@ -1422,7 +1606,15 @@ class PaperAutopilotEngine:
         last_trace = dict(self._runtime_state.get("last_execution_trace") or {})
         candidates = self._collect_candidate_rows()
         capacities = self._current_execution_capacities()
-        open_syms = set(capacities.get("open_symbols") or set())
+        internal_open_syms = set(capacities.get("open_symbols") or set())
+        broker_snapshot = self._broker_open_symbols_snapshot()
+        broker_open_syms = set(broker_snapshot.get("broker_open_symbols") or set())
+        broker_reconciliation_active = bool(broker_snapshot.get("broker_reconciliation_active", False))
+        broker_positions_fetch_ok = bool(broker_snapshot.get("broker_positions_fetch_ok", False))
+        if broker_reconciliation_active and broker_positions_fetch_ok:
+            open_syms = set(broker_open_syms)
+        else:
+            open_syms = set(internal_open_syms)
         stock_capacity = int(capacities.get("stock_capacity", 0))
         crypto_capacity = int(capacities.get("crypto_capacity", 0))
         total_capacity = int(capacities.get("total_capacity", 0))
@@ -1437,6 +1629,9 @@ class PaperAutopilotEngine:
                 crypto_capacity=crypto_capacity,
                 total_capacity=total_capacity,
                 selected_so_far=selected,
+                internal_open_syms=internal_open_syms,
+                broker_open_syms=broker_open_syms,
+                broker_reconciliation_active=broker_reconciliation_active,
             )
             if allowed:
                 eligible += 1
@@ -1479,6 +1674,16 @@ class PaperAutopilotEngine:
             "final_blocker_reason": final_blocker[:180],
             "per_candidate_decision_trace": list(last_trace.get("per_candidate_decision_trace") or decision_rows)[:max_candidates],
             "last_alpaca_error_sanitized": str(last_trace.get("last_alpaca_error_sanitized") or "")[:180],
+            "portfolio_risk_proof_present": bool(last_trace.get("portfolio_risk_proof_present", False)),
+            "portfolio_risk_score_used": last_trace.get("portfolio_risk_score_used"),
+            "portfolio_risk_label_used": str(last_trace.get("portfolio_risk_label_used") or ""),
+            "portfolio_risk_preflight_reason": str(last_trace.get("portfolio_risk_preflight_reason") or ""),
+            "internal_open_positions_count": int(last_trace.get("internal_open_positions_count", len([s for s in internal_open_syms if s]))),
+            "broker_open_positions_count": int(last_trace.get("broker_open_positions_count", len([s for s in broker_open_syms if s]))),
+            "stale_internal_positions": list(last_trace.get("stale_internal_positions") or sorted(x for x in internal_open_syms if x and x not in broker_open_syms))[:32],
+            "broker_reconciliation_active": bool(last_trace.get("broker_reconciliation_active", broker_reconciliation_active)),
+            "broker_positions_fetch_ok": bool(last_trace.get("broker_positions_fetch_ok", broker_positions_fetch_ok)),
+            "broker_positions_error_sanitized": str(last_trace.get("broker_positions_error_sanitized") or broker_snapshot.get("broker_positions_error_sanitized") or "")[:180],
             "last_cycle_utc": str(status.get("last_cycle_utc") or ""),
             "last_cycle_summary": dict(status.get("last_cycle_summary") or {}),
             "natural_exit_preserved": True,
