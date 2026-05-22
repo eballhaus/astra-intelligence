@@ -12,6 +12,10 @@ export default defineConfig({
     open: true,
     strictPort: true,
     cors: true,
+    hmr: {
+      protocol: 'ws',
+      clientPort: 5173,
+    },
     watch: { usePolling: true }
   }
 })

@@ -6,6 +6,7 @@ export const DEFAULT_FETCH_TIMEOUT_MS = 9000;
 export const DEFAULT_STALE_PAYLOAD_TTL_MS = 180000;
 
 const LAST_GOOD_RESPONSE_CACHE = new Map();
+const REMOTE_HOST_API_PORT = "8000";
 
 function defaultApiBaseFromWindow() {
   try {
@@ -13,7 +14,7 @@ function defaultApiBaseFromWindow() {
     const proto = String(window.location.protocol || "http:");
     const host = String(window.location.hostname || "127.0.0.1");
     if (!host || host === "localhost" || host === "127.0.0.1") return DEFAULT_API_BASE;
-    return `${proto}//${host}:8000`;
+    return `${proto}//${host}:${REMOTE_HOST_API_PORT}`;
   } catch (_e) {
     return DEFAULT_API_BASE;
   }
@@ -64,17 +65,22 @@ export function resolveApiBase() {
 
 export function getInitialApiBase() {
   const resolved = resolveApiBase();
-  if (resolved) return resolved;
   try {
     const stored = normalizeApiBase(window.localStorage.getItem(API_BASE_STORAGE_KEY) || "");
-    if (stored) return stored;
+    if (stored && currentWindowHostIsRemote() && isLoopbackBase(stored)) {
+      window.localStorage.removeItem(API_BASE_STORAGE_KEY);
+    } else if (stored && !currentWindowHostIsRemote()) {
+      return stored;
+    }
   } catch (_e) {}
+  if (resolved) return resolved;
   return DEFAULT_API_BASE;
 }
 
 export function persistApiBase(base) {
   try {
     const normalized = normalizeApiBase(base);
+    if (currentWindowHostIsRemote() && isLoopbackBase(normalized)) return;
     window.localStorage.setItem(API_BASE_STORAGE_KEY, normalized);
     window.dispatchEvent(new CustomEvent(API_BASE_CHANGED_EVENT, { detail: { base: normalized } }));
   } catch (_e) {}
@@ -101,6 +107,15 @@ export function getApiBaseCandidates(preferredBase = "") {
     if (!candidates.includes(n)) candidates.push(n);
   };
 
+  if (currentWindowHostIsRemote()) {
+    // On mobile/Tailscale, loopback means the phone itself, not the Mac mini.
+    // Never try localhost/127.0.0.1 there; it causes slow failures and sticky
+    // degraded state when stale localStorage values exist.
+    push(defaultApiBaseFromWindow());
+    push(resolveApiBase());
+    push(preferredBase);
+    return candidates.filter((v) => !isLoopbackBase(v));
+  }
   push(preferredBase);
   push(getInitialApiBase());
   push(resolveApiBase());
@@ -109,11 +124,6 @@ export function getApiBaseCandidates(preferredBase = "") {
   push(alternateHost(getInitialApiBase()));
   push(alternateHost(resolveApiBase()));
   push(alternateHost(DEFAULT_API_BASE));
-  if (currentWindowHostIsRemote()) {
-    const remoteFirst = candidates.filter((v) => !isLoopbackBase(v));
-    const loopbackTail = candidates.filter((v) => isLoopbackBase(v));
-    return [...remoteFirst, ...loopbackTail];
-  }
   return candidates;
 }
 
@@ -157,7 +167,12 @@ export async function fetchJsonWithFallback(path, options = {}) {
     const url = buildApiUrl(base, path);
     try {
       const initHeaders = (init && init.headers) ? init.headers : {};
-      const headers = { ...initHeaders, "x-astra-access-token": envToken };
+      const headers = { ...initHeaders };
+      // Only attach the custom auth header when there is an actual token. An
+      // empty custom header turns simple GETs into CORS preflight requests on
+      // mobile browsers, which can make direct API URLs work while dashboard
+      // fetches fail over Tailscale.
+      if (envToken) headers["x-astra-access-token"] = envToken;
       const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
       const timeoutId = controller
         ? setTimeout(() => {
