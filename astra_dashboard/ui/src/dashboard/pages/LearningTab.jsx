@@ -157,6 +157,7 @@ export default function LearningTab({ compact = false }) {
     alpacaPaperBroker: {},
     horizonPerformanceDashboard: {},
     dynamicOpportunityWeighting: {},
+    opportunityDiscoveryExpansion: {},
   });
   const refreshInFlightRef = useRef(false);
 
@@ -241,6 +242,7 @@ export default function LearningTab({ compact = false }) {
           fetchJson("alpaca_paper_broker", "/api/alpaca_paper_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("horizon_performance_dashboard", "/api/horizon_performance_dashboard_v1", {}, { timeoutMs: 8000 }),
           fetchJson("dynamic_opportunity_weighting", "/api/dynamic_opportunity_weighting_status_v1", {}, { timeoutMs: 8000 }),
+          fetchJson("opportunity_discovery_expansion", "/api/opportunity_discovery_expansion_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
         ]);
         secondaryResults.push(...secondaryBatch);
@@ -301,6 +303,7 @@ export default function LearningTab({ compact = false }) {
         const alpacaPaperBroker = selectPayload("alpaca_paper_broker", prevSafe.alpacaPaperBroker);
         const horizonPerformanceDashboard = selectPayload("horizon_performance_dashboard", prevSafe.horizonPerformanceDashboard);
         const dynamicOpportunityWeighting = selectPayload("dynamic_opportunity_weighting", prevSafe.dynamicOpportunityWeighting);
+        const opportunityDiscoveryExpansion = selectPayload("opportunity_discovery_expansion", prevSafe.opportunityDiscoveryExpansion);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
         const learningSnapshotFast = selectPayload("learning_snapshot_fast_v1", prevSafe.learningSnapshotFast);
         const learningCandidate = selectPayload("learning_insights", prevSafe.learningInsights);
@@ -440,6 +443,7 @@ export default function LearningTab({ compact = false }) {
           alpacaPaperBroker,
           horizonPerformanceDashboard,
           dynamicOpportunityWeighting,
+          opportunityDiscoveryExpansion,
         };
       });
     };
@@ -472,6 +476,7 @@ export default function LearningTab({ compact = false }) {
   const alpacaPaperBroker = data.alpacaPaperBroker || {};
   const horizonPerformanceDashboard = data.horizonPerformanceDashboard || {};
   const dynamicOpportunityWeighting = data.dynamicOpportunityWeighting || {};
+  const opportunityDiscoveryExpansion = data.opportunityDiscoveryExpansion || {};
 
   const paperOutcome = paper?.paper_outcome_summary?.combined || {};
   const paperCohort = paper?.paper_cohort_trends || {};
@@ -2140,6 +2145,35 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Funnel summary: {String(dynamicOpportunityWeighting?.opportunity_funnel_summary || "Waiting for dynamic opportunity weighting diagnostics.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Opportunity Discovery Expansion & Momentum Intelligence</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Market-cap distribution: {String(opportunityDiscoveryExpansion?.market_cap_distribution_summary || "waiting for candidate mix")}</div>
+          <div>Discovery diversity: {safeNumber(opportunityDiscoveryExpansion?.average_discovery_diversity_score, opportunityDiscoveryExpansion?.discovery_diversity_score).toFixed(1)}</div>
+          <div>Momentum opportunities: {safeNumber(opportunityDiscoveryExpansion?.momentum_opportunity_count).toFixed(0)}</div>
+          <div>Breakout candidates: {safeNumber(opportunityDiscoveryExpansion?.breakout_candidate_count).toFixed(0)}</div>
+          <div>Unusual volume count: {safeNumber(opportunityDiscoveryExpansion?.unusual_volume_count).toFixed(0)}</div>
+          <div>High-upside candidates: {safeNumber(opportunityDiscoveryExpansion?.high_upside_candidate_count, opportunityDiscoveryExpansion?.high_predicted_profit_candidate_count).toFixed(0)}</div>
+          <div>Mega-cap concentration: {safeNumber(opportunityDiscoveryExpansion?.mega_cap_concentration_score).toFixed(1)}</div>
+          <div>Non-mega candidates: {safeNumber(opportunityDiscoveryExpansion?.non_mega_candidate_count).toFixed(0)}</div>
+          <div>API calls used: {safeNumber(opportunityDiscoveryExpansion?.api_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Top opportunity types: {(opportunityDiscoveryExpansion?.top_opportunity_types || [])
+              .slice(0, 5)
+              .map((item) => `${String(item?.type || "unknown").replaceAll("_", " ")} (${safeNumber(item?.count).toFixed(0)})`)
+              .join(" | ") || "Waiting for opportunity type diagnostics."}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Survival statistics: boosted {safeNumber((opportunityDiscoveryExpansion?.opportunity_survival_statistics || {})?.boosted_candidates).toFixed(0)}
+            {" "} / penalized {safeNumber((opportunityDiscoveryExpansion?.opportunity_survival_statistics || {})?.penalized_candidates).toFixed(0)}
+            {" "} / avg multiplier {safeNumber((opportunityDiscoveryExpansion?.opportunity_survival_statistics || {})?.average_multiplier, 1).toFixed(3)}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Summary: {String(opportunityDiscoveryExpansion?.opportunity_discovery_summary || "Waiting for opportunity discovery expansion diagnostics.")}
           </div>
         </div>
       </div>
