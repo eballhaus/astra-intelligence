@@ -568,6 +568,8 @@ class PaperAutopilotEngine:
         return {
             "open_symbols": open_syms,
             "open_positions_count": stock_open + crypto_open,
+            "open_positions_stock": stock_open,
+            "open_positions_crypto": crypto_open,
             "stock_capacity": max(0, self.max_stocks - stock_open),
             "crypto_capacity": max(0, self.max_crypto - crypto_open),
             "total_capacity": max(0, self.max_open_positions_total - (stock_open + crypto_open)),
@@ -1366,12 +1368,15 @@ class PaperAutopilotEngine:
             broker_reconciliation_active = bool(broker_snapshot.get("broker_reconciliation_active", False))
             broker_positions_fetch_ok = bool(broker_snapshot.get("broker_positions_fetch_ok", False))
             stale_internal_positions = sorted(x for x in internal_open_syms if x and x not in broker_open_syms)
+            stale_internal_positions_count = int(len(stale_internal_positions))
             # When broker reconciliation is active and fetch succeeded, broker positions are the
             # source of truth for duplicate suppression on paper order submission.
             if broker_reconciliation_active and broker_positions_fetch_ok:
                 open_syms = set(broker_open_syms)
+                capacity_source = "broker"
             else:
                 open_syms = set(internal_open_syms)
+                capacity_source = "internal"
 
             open_rows = list(open_rows_initial)
             min_hold = self._min_hold_seconds()
@@ -1410,10 +1415,24 @@ class PaperAutopilotEngine:
                         if symbol:
                             open_syms.discard(symbol)
 
-            counts = self._count_open_positions()
-            stock_capacity = max(0, self.max_stocks - int(counts.get("stock", 0)))
-            crypto_capacity = max(0, self.max_crypto - int(counts.get("crypto", 0)))
-            total_capacity = max(0, self.max_open_positions_total - (int(counts.get("stock", 0)) + int(counts.get("crypto", 0))))
+            if capacity_source == "broker":
+                broker_stock_open = int(len([s for s in broker_open_syms if s]))
+                broker_crypto_open = 0
+                effective_capacity_count = broker_stock_open + broker_crypto_open
+                stock_capacity = max(0, self.max_stocks - broker_stock_open)
+                crypto_capacity = max(0, self.max_crypto - broker_crypto_open)
+                total_capacity = max(0, self.max_open_positions_total - effective_capacity_count)
+                stale_internal_positions_ignored_for_broker_capacity = bool(stale_internal_positions_count > 0)
+            else:
+                counts = self._count_open_positions()
+                internal_stock_open = int(counts.get("stock", 0))
+                internal_crypto_open = int(counts.get("crypto", 0))
+                effective_capacity_count = internal_stock_open + internal_crypto_open
+                stock_capacity = max(0, self.max_stocks - internal_stock_open)
+                crypto_capacity = max(0, self.max_crypto - internal_crypto_open)
+                total_capacity = max(0, self.max_open_positions_total - effective_capacity_count)
+                stale_internal_positions_ignored_for_broker_capacity = False
+            stock_capacity_reason = "stock_capacity_available"
             candidates = self._collect_candidate_rows()
             for row in candidates:
                 if opened >= self.max_new_positions_per_cycle:
@@ -1461,6 +1480,7 @@ class PaperAutopilotEngine:
                     continue
                 if asset == "stock" and stock_capacity <= 0:
                     final_blocker_reason = "stock_capacity_reached"
+                    stock_capacity_reason = "stock_capacity_reached"
                     continue
                 if asset == "crypto" and crypto_capacity <= 0:
                     final_blocker_reason = "crypto_capacity_reached"
@@ -1563,7 +1583,14 @@ class PaperAutopilotEngine:
                 "portfolio_risk_preflight_reason": str(portfolio_risk_preflight_reason),
                 "internal_open_positions_count": int(len([s for s in internal_open_syms if s])),
                 "broker_open_positions_count": int(len([s for s in broker_open_syms if s])),
+                "effective_broker_capacity_count": int(len([s for s in broker_open_syms if s])),
+                "stale_internal_positions_count": stale_internal_positions_count,
                 "stale_internal_positions": stale_internal_positions[:32],
+                "capacity_source": str(capacity_source),
+                "effective_capacity_count": int(effective_capacity_count),
+                "stock_capacity_limit": int(self.max_stocks),
+                "stock_capacity_reason": str(stock_capacity_reason),
+                "stale_internal_positions_ignored_for_broker_capacity": bool(stale_internal_positions_ignored_for_broker_capacity),
                 "broker_reconciliation_active": broker_reconciliation_active,
                 "broker_positions_fetch_ok": broker_positions_fetch_ok,
                 "broker_positions_error_sanitized": str(broker_snapshot.get("broker_positions_error_sanitized") or "")[:180],
@@ -1587,7 +1614,14 @@ class PaperAutopilotEngine:
                 "portfolio_risk_preflight_reason": str(portfolio_risk_preflight_reason),
                 "internal_open_positions_count": int(len([s for s in internal_open_syms if s])),
                 "broker_open_positions_count": int(len([s for s in broker_open_syms if s])),
+                "effective_broker_capacity_count": int(len([s for s in broker_open_syms if s])),
+                "stale_internal_positions_count": stale_internal_positions_count,
                 "stale_internal_positions": stale_internal_positions[:32],
+                "capacity_source": str(capacity_source),
+                "effective_capacity_count": int(effective_capacity_count),
+                "stock_capacity_limit": int(self.max_stocks),
+                "stock_capacity_reason": str(stock_capacity_reason),
+                "stale_internal_positions_ignored_for_broker_capacity": bool(stale_internal_positions_ignored_for_broker_capacity),
                 "broker_reconciliation_active": broker_reconciliation_active,
                 "broker_positions_fetch_ok": broker_positions_fetch_ok,
                 "broker_positions_error_sanitized": str(broker_snapshot.get("broker_positions_error_sanitized") or "")[:180],
@@ -1611,13 +1645,21 @@ class PaperAutopilotEngine:
         broker_open_syms = set(broker_snapshot.get("broker_open_symbols") or set())
         broker_reconciliation_active = bool(broker_snapshot.get("broker_reconciliation_active", False))
         broker_positions_fetch_ok = bool(broker_snapshot.get("broker_positions_fetch_ok", False))
+        stale_internal_positions = sorted(x for x in internal_open_syms if x and x not in broker_open_syms)
         if broker_reconciliation_active and broker_positions_fetch_ok:
             open_syms = set(broker_open_syms)
+            capacity_source = "broker"
+            effective_stock_open = int(len([s for s in broker_open_syms if s]))
+            effective_crypto_open = 0
         else:
             open_syms = set(internal_open_syms)
-        stock_capacity = int(capacities.get("stock_capacity", 0))
-        crypto_capacity = int(capacities.get("crypto_capacity", 0))
-        total_capacity = int(capacities.get("total_capacity", 0))
+            capacity_source = "internal"
+            effective_stock_open = int(capacities.get("open_positions_stock", 0))
+            effective_crypto_open = int(capacities.get("open_positions_crypto", 0))
+        effective_capacity_count = int(effective_stock_open + effective_crypto_open)
+        stock_capacity = max(0, int(self.max_stocks) - int(effective_stock_open))
+        crypto_capacity = max(0, int(self.max_crypto) - int(effective_crypto_open))
+        total_capacity = max(0, int(self.max_open_positions_total) - int(effective_capacity_count))
         decision_rows: list[dict[str, Any]] = []
         eligible = 0
         selected = 0
@@ -1680,7 +1722,19 @@ class PaperAutopilotEngine:
             "portfolio_risk_preflight_reason": str(last_trace.get("portfolio_risk_preflight_reason") or ""),
             "internal_open_positions_count": int(last_trace.get("internal_open_positions_count", len([s for s in internal_open_syms if s]))),
             "broker_open_positions_count": int(last_trace.get("broker_open_positions_count", len([s for s in broker_open_syms if s]))),
+            "effective_broker_capacity_count": int(last_trace.get("effective_broker_capacity_count", len([s for s in broker_open_syms if s]))),
+            "stale_internal_positions_count": int(last_trace.get("stale_internal_positions_count", len(stale_internal_positions))),
             "stale_internal_positions": list(last_trace.get("stale_internal_positions") or sorted(x for x in internal_open_syms if x and x not in broker_open_syms))[:32],
+            "capacity_source": str(last_trace.get("capacity_source") or capacity_source),
+            "effective_capacity_count": int(last_trace.get("effective_capacity_count", effective_capacity_count)),
+            "stock_capacity_limit": int(last_trace.get("stock_capacity_limit", self.max_stocks)),
+            "stock_capacity_reason": str(last_trace.get("stock_capacity_reason") or ""),
+            "stale_internal_positions_ignored_for_broker_capacity": bool(
+                last_trace.get(
+                    "stale_internal_positions_ignored_for_broker_capacity",
+                    bool(capacity_source == "broker" and len(stale_internal_positions) > 0),
+                )
+            ),
             "broker_reconciliation_active": bool(last_trace.get("broker_reconciliation_active", broker_reconciliation_active)),
             "broker_positions_fetch_ok": bool(last_trace.get("broker_positions_fetch_ok", broker_positions_fetch_ok)),
             "broker_positions_error_sanitized": str(last_trace.get("broker_positions_error_sanitized") or broker_snapshot.get("broker_positions_error_sanitized") or "")[:180],
