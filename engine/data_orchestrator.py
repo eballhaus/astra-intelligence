@@ -11,9 +11,14 @@ from typing import Iterable
 
 from engine.provider_router import ProviderRouter
 from engine.ranking_engine import RankingEngine
+try:
+    from engine.edge_development_suite_v1 import EdgeDevelopmentSuiteV1
+except Exception:  # pragma: no cover - additive shadow decorator
+    EdgeDevelopmentSuiteV1 = None  # type: ignore[assignment]
 
 _router = ProviderRouter()
 _ranker = RankingEngine()
+_edge_development_suite = EdgeDevelopmentSuiteV1(state_dir="state") if EdgeDevelopmentSuiteV1 is not None else None
 _TEMP_STRATEGY_ENABLED = str(os.getenv("ASTRA_TEMP_PROVIDER_STRATEGY_V1", "1")).strip().lower() in {"1", "true", "yes", "on"}
 _TEMP_FMP_REST_DISABLED = str(os.getenv("ASTRA_TEMP_FMP_REST_DISABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
 _TEMP_FMP_WS_MONITOR_ONLY = str(os.getenv("ASTRA_TEMP_FMP_WEBSOCKET_MONITOR_ONLY", "1")).strip().lower() in {"1", "true", "yes", "on"}
@@ -277,6 +282,12 @@ def fetch_live_data(symbols=None):
             )
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
+
+    if _edge_development_suite is not None and hasattr(_edge_development_suite, "decorate_candidates"):
+        try:
+            rows = list(_edge_development_suite.decorate_candidates(rows) or rows)
+        except Exception:
+            pass
 
     provider_success_rate = {}
     for provider_name, attempts in provider_attempts.items():

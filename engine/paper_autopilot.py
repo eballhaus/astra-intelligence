@@ -26,6 +26,47 @@ except Exception:  # pragma: no cover - tracker is additive and optional
     create_lifecycle_record = None  # type: ignore[assignment]
     update_lifecycle_progress = None  # type: ignore[assignment]
 
+try:
+    from engine.paper_opportunity_allocation_engine_v1 import PaperOpportunityAllocationEngineV1
+except Exception:  # pragma: no cover - allocation engine is additive
+    class PaperOpportunityAllocationEngineV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def status(self, rows=None):
+            return {
+                "enabled": False,
+                "mode": "paper_only_shadow_allocation",
+                "paper_opportunity_allocation_status_v1": True,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "natural_exit_preserved": True,
+            }
+
+try:
+    from engine.edge_development_suite_v1 import EdgeDevelopmentSuiteV1
+except Exception:  # pragma: no cover - edge suite is additive
+    class EdgeDevelopmentSuiteV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def status(self, rows=None):
+            return {
+                "enabled": False,
+                "mode": "paper_only_shadow_learning",
+                "edge_development_status_v1": True,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "natural_exit_preserved": True,
+                "forced_early_exit_enabled": False,
+            }
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -201,6 +242,22 @@ class PaperAutopilotEngine:
         self.live_performance_fn = kwargs.get("live_performance_fn") if callable(kwargs.get("live_performance_fn")) else None
         self.freshness_manager = kwargs.get("freshness_manager")
         self.max_open_positions_total = max(2, _to_int(kwargs.get("max_open_positions_total"), 10))
+        self.paper_opportunity_allocator = kwargs.get("paper_opportunity_allocator")
+        if self.paper_opportunity_allocator is None:
+            try:
+                self.paper_opportunity_allocator = PaperOpportunityAllocationEngineV1(
+                    state_dir=os.path.dirname(self.state_path) or "state"
+                )
+            except Exception:
+                self.paper_opportunity_allocator = None
+        self.edge_development_suite = kwargs.get("edge_development_suite")
+        if self.edge_development_suite is None:
+            try:
+                self.edge_development_suite = EdgeDevelopmentSuiteV1(
+                    state_dir=os.path.dirname(self.state_path) or "state"
+                )
+            except Exception:
+                self.edge_development_suite = None
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -388,6 +445,16 @@ class PaperAutopilotEngine:
             row.setdefault("symbol", sym)
             row.setdefault("asset_type", "stock")
             dedup.append(row)
+        if self.edge_development_suite is not None and hasattr(self.edge_development_suite, "decorate_candidates"):
+            try:
+                dedup = list(self.edge_development_suite.decorate_candidates(dedup) or dedup)
+            except Exception:
+                pass
+        if self.paper_opportunity_allocator is not None and hasattr(self.paper_opportunity_allocator, "decorate_candidates"):
+            try:
+                return list(self.paper_opportunity_allocator.decorate_candidates(dedup) or dedup)
+            except Exception:
+                return dedup
         return dedup
 
     def _entry_commitment_gate_v1(self, row: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
@@ -627,6 +694,24 @@ class PaperAutopilotEngine:
             "action": str(r.get("action") or r.get("prediction") or ""),
             "readiness": str(r.get("readiness_label") or r.get("paper_ready_status") or r.get("buy_eligibility") or ""),
             "trade_horizon_style": str(r.get("trade_horizon_style") or r.get("best_horizon_style") or ""),
+            "opportunity_quality_score": round(_to_float(r.get("opportunity_quality_score"), 0.0), 2),
+            "opportunity_quality_label": str(r.get("opportunity_quality_label") or ""),
+            "expected_value_score": round(_to_float(r.get("expected_value_score"), 0.0), 2),
+            "expected_win_probability": round(_to_float(r.get("expected_win_probability"), 0.0), 2),
+            "trade_archetype": str(r.get("trade_archetype") or ""),
+            "archetype_quality_score": round(_to_float(r.get("archetype_quality_score"), 0.0), 2),
+            "regime_alignment_score": round(_to_float(r.get("regime_alignment_score"), 0.0), 2),
+            "regime_alignment_label": str(r.get("regime_alignment_label") or ""),
+            "edge_composite_score": round(_to_float(r.get("edge_composite_score"), 0.0), 2),
+            "edge_composite_label": str(r.get("edge_composite_label") or ""),
+            "allocation_lane": str(r.get("allocation_lane") or ""),
+            "allocation_lane_score": round(_to_float(r.get("allocation_lane_score"), 0.0), 2),
+            "paper_allocation_priority": round(_to_float(r.get("paper_allocation_priority"), 0.0), 2),
+            "exploration_candidate": bool(r.get("exploration_candidate", False)),
+            "exploration_allowed": bool(r.get("exploration_allowed", False)),
+            "exploration_risk_label": str(r.get("exploration_risk_label") or ""),
+            "exploration_rejection_reason": str(r.get("exploration_rejection_reason") or ""),
+            "risk_adjusted_opportunity_rank": int(_to_float(r.get("risk_adjusted_opportunity_rank"), 0.0)),
             "entry_score": round(_to_float(r.get("paper_entry_bridge_score"), _to_float(r.get("entry_quality_score"), 0.0)), 2),
             "confidence": round(_to_float(r.get("confidence"), _to_float(r.get("predicted_win_probability"), 0.0)), 2),
             "eligible": bool(allowed),
@@ -635,6 +720,8 @@ class PaperAutopilotEngine:
             "duplicate_active_position": bool(symbol in open_syms) if symbol else False,
             "duplicate_source": duplicate_source,
             "broker_reconciliation_active": bool(broker_reconciliation_active),
+            "selected": False,
+            "order_attempted": False,
         }
         return trace, bool(allowed), str(reason), dict(gate_meta or {})
 
@@ -650,9 +737,19 @@ class PaperAutopilotEngine:
         if broker is None or not hasattr(broker, "submit_paper_order"):
             return {"enabled": False, "paper_order_submitted": False, "reason": "alpaca_paper_broker_unavailable"}
         r = _normalize_paper_entry_bridge(row)
+        meta = dict(gate_meta or {})
         asset_type = _norm_asset(r.get("asset_type") or "stock")
         if asset_type != "stock":
             return {"enabled": False, "paper_order_submitted": False, "reason": "alpaca_crypto_execution_deferred"}
+        limits_ok = bool(meta.get("paper_autopilot_limits_ok", False))
+        if not limits_ok:
+            return {
+                "ok": False,
+                "paper_order_submitted": False,
+                "error": "paper_autopilot_limits_proof_required",
+                "paper_autopilot_limits_ok": False,
+                "paper_autopilot_limits_reason": str(meta.get("paper_autopilot_limits_reason") or "paper_limits_not_proven"),
+            }
         risk_label_raw = str(r.get("portfolio_risk_label") or "").strip()
         risk_label = risk_label_raw.lower()
         risk_score_raw = r.get("portfolio_risk_score")
@@ -712,7 +809,9 @@ class PaperAutopilotEngine:
             "paper_ready": True,
             "paper_test_eligible": True,
             "paper_order_preflight_ready": True,
-            "paper_limits_ok": bool(r.get("paper_limits_ok", True)),
+            "paper_limits_ok": True,
+            "paper_autopilot_limits_ok": True,
+            "paper_autopilot_limits_reason": str(meta.get("paper_autopilot_limits_reason") or "cycle_limits_passed"),
             "portfolio_risk_ok": bool(portfolio_ok),
             "portfolio_risk_proof_present": bool(portfolio_risk_proof_present),
             "portfolio_risk_score_used": (None if risk_score is None else round(float(risk_score), 4)),
@@ -726,6 +825,8 @@ class PaperAutopilotEngine:
         }
         try:
             res = dict(broker.submit_paper_order(order) or {})
+            res.setdefault("paper_autopilot_limits_ok", True)
+            res.setdefault("paper_autopilot_limits_reason", str(meta.get("paper_autopilot_limits_reason") or "cycle_limits_passed"))
             res.setdefault("portfolio_risk_proof_present", bool(portfolio_risk_proof_present))
             res.setdefault("portfolio_risk_score_used", (None if risk_score is None else round(float(risk_score), 4)))
             res.setdefault("portfolio_risk_label_used", risk_label_raw)
@@ -736,6 +837,8 @@ class PaperAutopilotEngine:
                 "ok": False,
                 "paper_order_submitted": False,
                 "error": f"alpaca_paper_submit_exception:{str(exc)[:120]}",
+                "paper_autopilot_limits_ok": True,
+                "paper_autopilot_limits_reason": str(meta.get("paper_autopilot_limits_reason") or "cycle_limits_passed"),
                 "portfolio_risk_proof_present": bool(portfolio_risk_proof_present),
                 "portfolio_risk_score_used": (None if risk_score is None else round(float(risk_score), 4)),
                 "portfolio_risk_label_used": risk_label_raw,
@@ -774,6 +877,30 @@ class PaperAutopilotEngine:
             "entry_paper_bridge_score": round(_to_float(r.get("paper_entry_bridge_score"), 0.0), 2),
             "entry_paper_bridge_score_source": str(r.get("paper_entry_bridge_score_source") or ""),
             "trade_horizon_style": str(r.get("trade_horizon_style") or r.get("best_horizon_style") or ""),
+            "trade_archetype": str(r.get("trade_archetype") or "unknown"),
+            "opportunity_quality_score": round(_to_float(r.get("opportunity_quality_score"), 0.0), 2),
+            "opportunity_quality_label": str(r.get("opportunity_quality_label") or ""),
+            "expected_value_score": round(_to_float(r.get("expected_value_score"), 0.0), 2),
+            "expected_win_probability": round(_to_float(r.get("expected_win_probability"), 0.0), 2),
+            "expected_reward_risk_ratio": round(_to_float(r.get("expected_reward_risk_ratio"), 0.0), 3),
+            "expected_follow_through_score": round(_to_float(r.get("expected_follow_through_score"), 0.0), 2),
+            "expected_loss_containment_score": round(_to_float(r.get("expected_loss_containment_score"), 0.0), 2),
+            "archetype_confidence": round(_to_float(r.get("archetype_confidence"), 0.0), 2),
+            "archetype_quality_score": round(_to_float(r.get("archetype_quality_score"), 0.0), 2),
+            "regime_alignment_score": round(_to_float(r.get("regime_alignment_score"), 0.0), 2),
+            "regime_alignment_label": str(r.get("regime_alignment_label") or ""),
+            "regime_edge_multiplier": round(_to_float(r.get("regime_edge_multiplier"), 1.0), 4),
+            "edge_composite_score": round(_to_float(r.get("edge_composite_score"), 0.0), 2),
+            "edge_composite_label": str(r.get("edge_composite_label") or ""),
+            "edge_development_shadow_only": bool(r.get("edge_development_shadow_only", True)),
+            "edge_summary": str(r.get("edge_summary") or ""),
+            "allocation_lane": str(r.get("allocation_lane") or ""),
+            "allocation_lane_score": round(_to_float(r.get("allocation_lane_score"), 0.0), 2),
+            "paper_allocation_priority": round(_to_float(r.get("paper_allocation_priority"), 0.0), 2),
+            "exploration_candidate": bool(r.get("exploration_candidate", False)),
+            "exploration_allowed": bool(r.get("exploration_allowed", False)),
+            "exploration_risk_label": str(r.get("exploration_risk_label") or ""),
+            "exploration_rejection_reason": str(r.get("exploration_rejection_reason") or ""),
             "entry_entry_edge_score": round(_to_float(r.get("entry_edge_score"), 0.0), 4),
             "entry_follow_through_state": str(r.get("follow_through_state") or ""),
             "entry_commitment_score": round(_to_float(meta.get("commitment_score"), 0.0), 2),
@@ -1434,6 +1561,12 @@ class PaperAutopilotEngine:
                 stale_internal_positions_ignored_for_broker_capacity = False
             stock_capacity_reason = "stock_capacity_available"
             candidates = self._collect_candidate_rows()
+            allocation_status = {}
+            if self.paper_opportunity_allocator is not None and hasattr(self.paper_opportunity_allocator, "status"):
+                try:
+                    allocation_status = dict(self.paper_opportunity_allocator.status(rows=candidates) or {})
+                except Exception:
+                    allocation_status = {}
             for row in candidates:
                 if opened >= self.max_new_positions_per_cycle:
                     final_blocker_reason = final_blocker_reason or "max_new_positions_per_cycle_reached"
@@ -1486,8 +1619,7 @@ class PaperAutopilotEngine:
                     final_blocker_reason = "crypto_capacity_reached"
                     continue
 
-                allowed, reason, gate_meta = self._is_candidate_paper_eligible(row)
-                row_trace, _allowed_trace, _reason_trace, _gate_meta_trace = self._candidate_trace_row(
+                row_trace, allowed, reason, gate_meta = self._candidate_trace_row(
                     row,
                     open_syms=open_syms,
                     stock_capacity=stock_capacity,
@@ -1501,6 +1633,7 @@ class PaperAutopilotEngine:
                 if not allowed:
                     skipped += 1
                     row_trace["selected"] = False
+                    row_trace["order_attempted"] = False
                     decision_trace.append(row_trace)
                     final_blocker_reason = str(reason)
                     continue
@@ -1510,6 +1643,9 @@ class PaperAutopilotEngine:
                 orders_attempted += 1
                 row_trace["selected"] = True
                 row_trace["order_attempted"] = True
+                gate_meta = dict(gate_meta or {})
+                gate_meta["paper_autopilot_limits_ok"] = True
+                gate_meta["paper_autopilot_limits_reason"] = "max_new_max_open_and_capacity_passed"
                 opened_row = self._open_position_from_row(
                     row,
                     source_bucket=f"paper_autopilot_{reason}",
@@ -1519,6 +1655,8 @@ class PaperAutopilotEngine:
                 row_trace["portfolio_risk_score_used"] = opened_row.get("portfolio_risk_score_used")
                 row_trace["portfolio_risk_label_used"] = str(opened_row.get("portfolio_risk_label_used") or "")
                 row_trace["portfolio_risk_preflight_reason"] = str(opened_row.get("portfolio_risk_preflight_reason") or "")
+                row_trace["paper_autopilot_limits_ok"] = bool(opened_row.get("paper_autopilot_limits_ok", True))
+                row_trace["paper_autopilot_limits_reason"] = str(opened_row.get("paper_autopilot_limits_reason") or "")
                 if row_trace["portfolio_risk_proof_present"]:
                     portfolio_risk_proof_present = True
                 if row_trace["portfolio_risk_score_used"] is not None:
@@ -1573,6 +1711,11 @@ class PaperAutopilotEngine:
                 "positions_closed": int(closed),
                 "positions_skipped": int(skipped),
                 "candidates_seen": int(len(candidates)),
+                "paper_opportunity_allocation": allocation_status,
+                "allocation_lane_counts": dict(allocation_status.get("lane_counts") or {}),
+                "valid_exploration_candidates": int(_to_float(allocation_status.get("valid_exploration_candidates"), 0.0)),
+                "high_upside_candidates_approved": int(_to_float(allocation_status.get("high_upside_candidates_approved"), 0.0)),
+                "high_upside_candidates_rejected": int(_to_float(allocation_status.get("high_upside_candidates_rejected"), 0.0)),
                 "eligible_candidates": int(eligible_count),
                 "selected_candidates": int(selected_count),
                 "final_blocker_reason": str(final_blocker_reason)[:180],
@@ -1600,6 +1743,11 @@ class PaperAutopilotEngine:
                 "paper_worker_running": bool(self._thread and self._thread.is_alive()),
                 **safety,
                 "candidates_seen": int(len(candidates)),
+                "paper_opportunity_allocation": allocation_status,
+                "allocation_lane_counts": dict(allocation_status.get("lane_counts") or {}),
+                "valid_exploration_candidates": int(_to_float(allocation_status.get("valid_exploration_candidates"), 0.0)),
+                "high_upside_candidates_approved": int(_to_float(allocation_status.get("high_upside_candidates_approved"), 0.0)),
+                "high_upside_candidates_rejected": int(_to_float(allocation_status.get("high_upside_candidates_rejected"), 0.0)),
                 "eligible_candidates": int(eligible_count),
                 "selected_candidates": int(selected_count),
                 "orders_attempted": int(orders_attempted),
@@ -1639,6 +1787,12 @@ class PaperAutopilotEngine:
         status = self.status()
         last_trace = dict(self._runtime_state.get("last_execution_trace") or {})
         candidates = self._collect_candidate_rows()
+        allocation_status = {}
+        if self.paper_opportunity_allocator is not None and hasattr(self.paper_opportunity_allocator, "status"):
+            try:
+                allocation_status = dict(self.paper_opportunity_allocator.status(rows=candidates) or {})
+            except Exception:
+                allocation_status = {}
         capacities = self._current_execution_capacities()
         internal_open_syms = set(capacities.get("open_symbols") or set())
         broker_snapshot = self._broker_open_symbols_snapshot()
@@ -1708,6 +1862,11 @@ class PaperAutopilotEngine:
             "max_new_positions_per_cycle": int(self.max_new_positions_per_cycle),
             "max_open_positions_total": int(self.max_open_positions_total),
             "candidates_seen": int(len(candidates)),
+            "paper_opportunity_allocation": allocation_status,
+            "allocation_lane_counts": dict(allocation_status.get("lane_counts") or {}),
+            "valid_exploration_candidates": int(_to_float(allocation_status.get("valid_exploration_candidates"), 0.0)),
+            "high_upside_candidates_approved": int(_to_float(allocation_status.get("high_upside_candidates_approved"), 0.0)),
+            "high_upside_candidates_rejected": int(_to_float(allocation_status.get("high_upside_candidates_rejected"), 0.0)),
             "eligible_candidates": int(last_trace.get("eligible_candidates", eligible)),
             "selected_candidates": int(last_trace.get("selected_candidates", selected)),
             "orders_attempted": int(last_trace.get("orders_attempted", 0)),

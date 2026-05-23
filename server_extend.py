@@ -417,6 +417,92 @@ except Exception:
                 "forced_early_exit_enabled": False,
             }
 try:
+    from engine.paper_opportunity_allocation_engine_v1 import PaperOpportunityAllocationEngineV1
+except Exception:
+    class PaperOpportunityAllocationEngineV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def enrich_payload(self, payload):
+            return dict(payload or {})
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "paper_only_shadow_allocation",
+                "paper_opportunity_allocation_status_v1": True,
+                "core_lane_target_pct": 55.0,
+                "momentum_lane_target_pct": 30.0,
+                "exploration_lane_target_pct": 15.0,
+                "current_core_lane_count": 0,
+                "current_momentum_lane_count": 0,
+                "current_exploration_lane_count": 0,
+                "valid_exploration_candidates": 0,
+                "high_upside_candidates_reviewed": 0,
+                "high_upside_candidates_approved": 0,
+                "high_upside_candidates_rejected": 0,
+                "top_exploration_rejection_reasons": [],
+                "mega_cap_concentration_pct": 0.0,
+                "non_mega_candidate_count": 0,
+                "allocation_summary": "Inspect paper opportunity allocation import.",
+                "recommended_core_lane_weight": 0.55,
+                "recommended_momentum_lane_weight": 0.30,
+                "recommended_exploration_lane_weight": 0.15,
+                "allocation_adjustment_reason": "engine_import_unavailable",
+                "allocation_confidence": "low",
+                "auto_apply_allowed": False,
+                "human_review_required": True,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+            }
+try:
+    from engine.edge_development_suite_v1 import EdgeDevelopmentSuiteV1
+except Exception:
+    class EdgeDevelopmentSuiteV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def enrich_payload(self, payload):
+            return dict(payload or {})
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "paper_only_shadow_learning",
+                "edge_development_status_v1": True,
+                "edge_development_shadow_only": True,
+                "candidates_evaluated": 0,
+                "archetype_distribution": {},
+                "opportunity_quality_distribution": {},
+                "average_opportunity_quality": 0.0,
+                "average_expectancy": 0.0,
+                "average_expected_value_score": 0.0,
+                "best_current_archetype": "insufficient_data",
+                "strongest_regime_alignment": "insufficient_data",
+                "regime_alignment_summary": "Inspect edge development suite import.",
+                "edge_distribution": {},
+                "edge_summary": "Inspect edge development suite import.",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "broker_execution_changed": False,
+                "production_rankings_changed": False,
+                "production_weights_changed": False,
+                "provider_rewrite_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_early_exit_enabled": False,
+                "auto_promotion_allowed": False,
+                "human_review_required": True,
+            }
+try:
     from engine.adaptive_market_intake_fmp_budget_suite_v1 import AdaptiveMarketIntakeFmpBudgetSuiteV1
 except Exception:
     class AdaptiveMarketIntakeFmpBudgetSuiteV1:  # type: ignore[override]
@@ -621,6 +707,8 @@ AUTONOMOUS_RESEARCH_SELF_REGULATION_SUITE = AutonomousResearchSelfRegulationSuit
 MULTI_HORIZON_PAPER_TRADING_SUITE = MultiHorizonPaperTradingLearningSuiteV1(state_dir=STATE)
 DYNAMIC_OPPORTUNITY_WEIGHTING_SUITE = DynamicOpportunityWeightingProfitOptimizationV1(state_dir=STATE)
 OPPORTUNITY_DISCOVERY_EXPANSION_SUITE = OpportunityDiscoveryExpansionV1(state_dir=STATE)
+PAPER_OPPORTUNITY_ALLOCATION_ENGINE = PaperOpportunityAllocationEngineV1(state_dir=STATE)
+EDGE_DEVELOPMENT_SUITE = EdgeDevelopmentSuiteV1(state_dir=STATE)
 ADAPTIVE_MARKET_INTAKE_FMP_BUDGET_SUITE = AdaptiveMarketIntakeFmpBudgetSuiteV1(state_dir=STATE)
 ALPACA_PAPER_BROKER = AlpacaPaperBroker()
 HORIZON_PERFORMANCE_DASHBOARD = HorizonPerformanceDashboardV1(state_dir=STATE, db_path=os.path.join(STATE, "ai_trading_memory.db"))
@@ -14398,6 +14486,8 @@ PAPER_AUTOPILOT = PaperAutopilotEngine(
     live_performance_fn=LIVE_SIGNAL_LOG.live_performance,
     trade_intel=TRADE_INTEL,
     freshness_manager=PAPER_FRESHNESS,
+    paper_opportunity_allocator=PAPER_OPPORTUNITY_ALLOCATION_ENGINE,
+    edge_development_suite=EDGE_DEVELOPMENT_SUITE,
 )
 _PAPER_AUTOPILOT_STARTED = False
 _PAPER_INPROC_HEARTBEAT_STATE = {"last_cycle_utc": "", "cycle_count": 0}
@@ -29503,6 +29593,162 @@ def opportunity_discovery_expansion_status_v1():
     }
 
 
+@router.get("/api/paper_opportunity_allocation_status_v1")
+def paper_opportunity_allocation_status_v1():
+    try:
+        try:
+            payload = dict(_latest_top_buys_runtime_snapshot() or {})
+        except Exception:
+            payload = {}
+        if not payload:
+            try:
+                cached = _CACHE.get("top_buys", {}) if isinstance(_CACHE.get("top_buys"), dict) else {}
+                mode_cached = ((cached.get("mode::balanced") or {}).get("data")) if isinstance(cached, dict) else {}
+                if isinstance(mode_cached, dict):
+                    payload = dict(mode_cached)
+            except Exception:
+                payload = {}
+        rows = _candidate_rows_from_payload(payload) if isinstance(payload, dict) else []
+        try:
+            rows = PAPER_OPPORTUNITY_ALLOCATION_ENGINE.decorate_candidates(rows)
+        except Exception:
+            pass
+        out = PAPER_OPPORTUNITY_ALLOCATION_ENGINE.status(rows=rows)
+        if isinstance(out, dict):
+            out["paper_opportunity_allocation_status_v1"] = True
+            out["api_calls_used"] = 0
+            out["live_trading_changed"] = False
+            out["broker_live_behavior_changed"] = False
+            out["natural_exit_preserved"] = True
+            out["forced_early_exit_enabled"] = False
+            out["alpaca_paper_only_preserved"] = True
+            return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "paper_only_shadow_allocation",
+            "paper_opportunity_allocation_status_v1": True,
+            "core_lane_target_pct": 55.0,
+            "momentum_lane_target_pct": 30.0,
+            "exploration_lane_target_pct": 15.0,
+            "current_core_lane_count": 0,
+            "current_momentum_lane_count": 0,
+            "current_exploration_lane_count": 0,
+            "valid_exploration_candidates": 0,
+            "high_upside_candidates_reviewed": 0,
+            "high_upside_candidates_approved": 0,
+            "high_upside_candidates_rejected": 0,
+            "top_exploration_rejection_reasons": [],
+            "mega_cap_concentration_pct": 0.0,
+            "non_mega_candidate_count": 0,
+            "allocation_summary": f"paper_opportunity_allocation_status_unavailable: {str(exc)[:140]}",
+            "recommended_core_lane_weight": 0.55,
+            "recommended_momentum_lane_weight": 0.30,
+            "recommended_exploration_lane_weight": 0.15,
+            "allocation_adjustment_reason": "status_unavailable",
+            "allocation_confidence": "low",
+            "auto_apply_allowed": False,
+            "human_review_required": True,
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "natural_exit_preserved": True,
+            "forced_early_exit_enabled": False,
+        }
+    return {
+        "enabled": False,
+        "version": "1.0.0",
+        "mode": "paper_only_shadow_allocation",
+        "paper_opportunity_allocation_status_v1": True,
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+        "natural_exit_preserved": True,
+    }
+
+
+@router.get("/api/edge_development_status_v1")
+def edge_development_status_v1():
+    try:
+        try:
+            payload = dict(_latest_top_buys_runtime_snapshot() or {})
+        except Exception:
+            payload = {}
+        if not payload:
+            try:
+                cached = _CACHE.get("top_buys", {}) if isinstance(_CACHE.get("top_buys"), dict) else {}
+                mode_cached = ((cached.get("mode::balanced") or {}).get("data")) if isinstance(cached, dict) else {}
+                if isinstance(mode_cached, dict):
+                    payload = dict(mode_cached)
+            except Exception:
+                payload = {}
+        rows = _candidate_rows_from_payload(payload) if isinstance(payload, dict) else []
+        try:
+            rows = EDGE_DEVELOPMENT_SUITE.decorate_candidates(rows)
+        except Exception:
+            pass
+        out = EDGE_DEVELOPMENT_SUITE.status(rows=rows)
+        if isinstance(out, dict):
+            out["edge_development_status_v1"] = True
+            out["edge_development_shadow_only"] = True
+            out["api_calls_used"] = 0
+            out["live_trading_changed"] = False
+            out["broker_execution_changed"] = False
+            out["production_rankings_changed"] = False
+            out["production_weights_changed"] = False
+            out["provider_rewrite_changed"] = False
+            out["alpaca_paper_only_preserved"] = True
+            out["natural_exit_preserved"] = True
+            out["forced_early_exit_enabled"] = False
+            out["auto_promotion_allowed"] = False
+            out["human_review_required"] = True
+            return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "paper_only_shadow_learning",
+            "edge_development_status_v1": True,
+            "edge_development_shadow_only": True,
+            "candidates_evaluated": 0,
+            "archetype_distribution": {},
+            "opportunity_quality_distribution": {},
+            "average_opportunity_quality": 0.0,
+            "average_expectancy": 0.0,
+            "average_expected_value_score": 0.0,
+            "best_current_archetype": "insufficient_data",
+            "strongest_regime_alignment": "insufficient_data",
+            "regime_alignment_summary": "Edge development status unavailable.",
+            "edge_distribution": {},
+            "edge_summary": f"edge_development_status_unavailable: {str(exc)[:140]}",
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_execution_changed": False,
+            "production_rankings_changed": False,
+            "production_weights_changed": False,
+            "provider_rewrite_changed": False,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_early_exit_enabled": False,
+            "auto_promotion_allowed": False,
+            "human_review_required": True,
+        }
+    return {
+        "enabled": False,
+        "version": "1.0.0",
+        "mode": "paper_only_shadow_learning",
+        "edge_development_status_v1": True,
+        "edge_development_shadow_only": True,
+        "candidates_evaluated": 0,
+        "edge_summary": "Edge development returned no payload.",
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+        "natural_exit_preserved": True,
+        "forced_early_exit_enabled": False,
+        "auto_promotion_allowed": False,
+        "human_review_required": True,
+    }
+
+
 @router.get("/api/adaptive_market_intake_fmp_budget_status_v1")
 def adaptive_market_intake_fmp_budget_status_v1():
     try:
@@ -35029,6 +35275,8 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
         and bool(out.get("multi_horizon_paper_trading_suite_v1"))
         and bool(out.get("dynamic_opportunity_weighting_v1"))
         and bool(out.get("opportunity_discovery_expansion_v1"))
+        and bool(out.get("edge_development_suite_v1"))
+        and bool(out.get("paper_opportunity_allocation_engine_v1"))
     )
     reuse_decorated_payload = bool(source_s in {"runtime_snapshot", "cached"} and already_decorated)
     if not reuse_decorated_payload:
@@ -35042,6 +35290,14 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
             pass
         try:
             out = OPPORTUNITY_DISCOVERY_EXPANSION_SUITE.enrich_payload(out)
+        except Exception:
+            pass
+        try:
+            out = EDGE_DEVELOPMENT_SUITE.enrich_payload(out)
+        except Exception:
+            pass
+        try:
+            out = PAPER_OPPORTUNITY_ALLOCATION_ENGINE.enrich_payload(out)
         except Exception:
             pass
         try:
@@ -35071,6 +35327,14 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
             pass
         try:
             out = OPPORTUNITY_DISCOVERY_EXPANSION_SUITE.enrich_payload(out)
+        except Exception:
+            pass
+        try:
+            out = EDGE_DEVELOPMENT_SUITE.enrich_payload(out)
+        except Exception:
+            pass
+        try:
+            out = PAPER_OPPORTUNITY_ALLOCATION_ENGINE.enrich_payload(out)
         except Exception:
             pass
     elif not isinstance(out.get("paper_learning_expansion"), dict):
@@ -45514,6 +45778,17 @@ def learning_snapshot_fast_v1():
             snap["opportunity_discovery_diversity_score"] = _to_float(opportunity_discovery.get("average_discovery_diversity_score"), 0.0)
             snap["momentum_opportunity_count"] = int(_to_float(opportunity_discovery.get("momentum_opportunity_count"), 0.0))
             snap["high_upside_candidate_count"] = int(_to_float(opportunity_discovery.get("high_upside_candidate_count"), 0.0))
+        try:
+            edge_payload = dict(_latest_top_buys_runtime_snapshot() or {})
+            edge_rows = _candidate_rows_from_payload(edge_payload) if isinstance(edge_payload, dict) else []
+            edge_status = EDGE_DEVELOPMENT_SUITE.status(rows=edge_rows)
+        except Exception:
+            edge_status = {}
+        if isinstance(edge_status, dict):
+            snap["edge_development"] = edge_status
+            snap["average_opportunity_quality"] = _to_float(edge_status.get("average_opportunity_quality"), 0.0)
+            snap["average_expected_value_score"] = _to_float(edge_status.get("average_expected_value_score"), 0.0)
+            snap["best_current_archetype"] = str(edge_status.get("best_current_archetype") or "")
         snap["ok"] = True
         snap["source"] = str((payload or {}).get("learning_payload_source") or ("learning_insights_last_good" if payload else "empty_fallback"))
         return snap

@@ -158,6 +158,7 @@ export default function LearningTab({ compact = false }) {
     horizonPerformanceDashboard: {},
     dynamicOpportunityWeighting: {},
     opportunityDiscoveryExpansion: {},
+    paperOpportunityAllocation: {},
   });
   const refreshInFlightRef = useRef(false);
 
@@ -243,6 +244,8 @@ export default function LearningTab({ compact = false }) {
           fetchJson("horizon_performance_dashboard", "/api/horizon_performance_dashboard_v1", {}, { timeoutMs: 8000 }),
           fetchJson("dynamic_opportunity_weighting", "/api/dynamic_opportunity_weighting_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("opportunity_discovery_expansion", "/api/opportunity_discovery_expansion_status_v1", {}, { timeoutMs: 8000 }),
+          fetchJson("edge_development", "/api/edge_development_status_v1", {}, { timeoutMs: 8000 }),
+          fetchJson("paper_opportunity_allocation", "/api/paper_opportunity_allocation_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
         ]);
         secondaryResults.push(...secondaryBatch);
@@ -304,6 +307,8 @@ export default function LearningTab({ compact = false }) {
         const horizonPerformanceDashboard = selectPayload("horizon_performance_dashboard", prevSafe.horizonPerformanceDashboard);
         const dynamicOpportunityWeighting = selectPayload("dynamic_opportunity_weighting", prevSafe.dynamicOpportunityWeighting);
         const opportunityDiscoveryExpansion = selectPayload("opportunity_discovery_expansion", prevSafe.opportunityDiscoveryExpansion);
+        const edgeDevelopment = selectPayload("edge_development", prevSafe.edgeDevelopment);
+        const paperOpportunityAllocation = selectPayload("paper_opportunity_allocation", prevSafe.paperOpportunityAllocation);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
         const learningSnapshotFast = selectPayload("learning_snapshot_fast_v1", prevSafe.learningSnapshotFast);
         const learningCandidate = selectPayload("learning_insights", prevSafe.learningInsights);
@@ -444,6 +449,8 @@ export default function LearningTab({ compact = false }) {
           horizonPerformanceDashboard,
           dynamicOpportunityWeighting,
           opportunityDiscoveryExpansion,
+          edgeDevelopment,
+          paperOpportunityAllocation,
         };
       });
     };
@@ -477,6 +484,8 @@ export default function LearningTab({ compact = false }) {
   const horizonPerformanceDashboard = data.horizonPerformanceDashboard || {};
   const dynamicOpportunityWeighting = data.dynamicOpportunityWeighting || {};
   const opportunityDiscoveryExpansion = data.opportunityDiscoveryExpansion || {};
+  const edgeDevelopment = data.edgeDevelopment || {};
+  const paperOpportunityAllocation = data.paperOpportunityAllocation || {};
 
   const paperOutcome = paper?.paper_outcome_summary?.combined || {};
   const paperCohort = paper?.paper_cohort_trends || {};
@@ -2174,6 +2183,71 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Summary: {String(opportunityDiscoveryExpansion?.opportunity_discovery_summary || "Waiting for opportunity discovery expansion diagnostics.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Edge Development & Expectancy Intelligence</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Candidates evaluated: {safeNumber(edgeDevelopment?.candidates_evaluated).toFixed(0)}</div>
+          <div>Average opportunity quality: {safeNumber(edgeDevelopment?.average_opportunity_quality).toFixed(1)}</div>
+          <div>Average expectancy: {safeNumber(edgeDevelopment?.average_expectancy, edgeDevelopment?.average_expected_value_score).toFixed(1)}</div>
+          <div>Average win probability: {safeNumber(edgeDevelopment?.average_expected_win_probability).toFixed(1)}%</div>
+          <div>Average reward/risk: {safeNumber(edgeDevelopment?.average_expected_reward_risk_ratio).toFixed(2)}</div>
+          <div>Best current archetype: {String(edgeDevelopment?.best_current_archetype || "insufficient_data").replaceAll("_", " ")}</div>
+          <div>Strongest regime alignment: {String(edgeDevelopment?.strongest_regime_alignment || "insufficient_data").replaceAll("_", " ")}</div>
+          <div>API calls used: {safeNumber(edgeDevelopment?.api_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Archetype breakdown: {Object.entries(edgeDevelopment?.archetype_distribution || {})
+              .slice(0, 6)
+              .map(([k, v]) => `${String(k).replaceAll("_", " ")} (${safeNumber(v).toFixed(0)})`)
+              .join(" | ") || "Waiting for archetype diagnostics."}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Opportunity quality: {Object.entries(edgeDevelopment?.opportunity_quality_distribution || {})
+              .slice(0, 5)
+              .map(([k, v]) => `${String(k).replaceAll("_", " ")} (${safeNumber(v).toFixed(0)})`)
+              .join(" | ") || "Waiting for opportunity quality distribution."}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Edge composite: {Object.entries(edgeDevelopment?.edge_distribution || {})
+              .slice(0, 5)
+              .map(([k, v]) => `${String(k).replaceAll("_", " ")} (${safeNumber(v).toFixed(0)})`)
+              .join(" | ") || "Waiting for edge composite distribution."}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Regime alignment: {String(edgeDevelopment?.regime_alignment_summary || "Waiting for regime alignment diagnostics.")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Summary: {String(edgeDevelopment?.edge_summary || "Waiting for edge development diagnostics.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Paper Opportunity Allocation & Exploration</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Lane targets: core {safeNumber(paperOpportunityAllocation?.core_lane_target_pct, 55).toFixed(0)}% / momentum {safeNumber(paperOpportunityAllocation?.momentum_lane_target_pct, 30).toFixed(0)}% / exploration {safeNumber(paperOpportunityAllocation?.exploration_lane_target_pct, 15).toFixed(0)}%</div>
+          <div>Current lanes: core {safeNumber(paperOpportunityAllocation?.current_core_lane_count).toFixed(0)} / momentum {safeNumber(paperOpportunityAllocation?.current_momentum_lane_count).toFixed(0)} / exploration {safeNumber(paperOpportunityAllocation?.current_exploration_lane_count).toFixed(0)}</div>
+          <div>Valid exploration candidates: {safeNumber(paperOpportunityAllocation?.valid_exploration_candidates).toFixed(0)}</div>
+          <div>High-upside approved/rejected: {safeNumber(paperOpportunityAllocation?.high_upside_candidates_approved).toFixed(0)} / {safeNumber(paperOpportunityAllocation?.high_upside_candidates_rejected).toFixed(0)}</div>
+          <div>Mega-cap concentration: {safeNumber(paperOpportunityAllocation?.mega_cap_concentration_pct).toFixed(1)}%</div>
+          <div>Non-mega candidates: {safeNumber(paperOpportunityAllocation?.non_mega_candidate_count).toFixed(0)}</div>
+          <div>Recommended weights: core {safeNumber(paperOpportunityAllocation?.recommended_core_lane_weight, 0.55).toFixed(2)} / momentum {safeNumber(paperOpportunityAllocation?.recommended_momentum_lane_weight, 0.3).toFixed(2)} / exploration {safeNumber(paperOpportunityAllocation?.recommended_exploration_lane_weight, 0.15).toFixed(2)}</div>
+          <div>Confidence: {String(paperOpportunityAllocation?.allocation_confidence || "low").replaceAll("_", " ")}</div>
+          <div>API calls used: {safeNumber(paperOpportunityAllocation?.api_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Top rejection reasons: {(paperOpportunityAllocation?.top_exploration_rejection_reasons || [])
+              .slice(0, 4)
+              .map((item) => `${String(item?.reason || "unknown").replaceAll("_", " ")} (${safeNumber(item?.count).toFixed(0)})`)
+              .join(" | ") || "No exploration rejection reasons yet."}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Adjustment: {String(paperOpportunityAllocation?.allocation_adjustment_reason || "waiting_for_lane_outcomes").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Summary: {String(paperOpportunityAllocation?.allocation_summary || "Waiting for paper allocation diagnostics.")}
           </div>
         </div>
       </div>
