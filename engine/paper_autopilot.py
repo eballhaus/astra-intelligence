@@ -159,6 +159,30 @@ except Exception:  # pragma: no cover - replay lifecycle suite is additive
                 "natural_exit_preserved": True,
             }
 
+try:
+    from engine.regime_execution_survivability_intelligence_v1 import RegimeExecutionSurvivabilityIntelligenceV1
+except Exception:  # pragma: no cover - regime execution suite is additive
+    class RegimeExecutionSurvivabilityIntelligenceV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "regime_execution_survivability_status_v1": True,
+                "current_market_regime": "uncertain_regime",
+                "execution_quality_score": 0.0,
+                "survivability_score": 0.0,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+            }
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -380,6 +404,14 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 self.replay_lifecycle_expectancy_suite = None
+        self.regime_execution_survivability_suite = kwargs.get("regime_execution_survivability_suite")
+        if self.regime_execution_survivability_suite is None:
+            try:
+                self.regime_execution_survivability_suite = RegimeExecutionSurvivabilityIntelligenceV1(
+                    state_dir=os.path.dirname(self.state_path) or "state"
+                )
+            except Exception:
+                self.regime_execution_survivability_suite = None
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -585,6 +617,11 @@ class PaperAutopilotEngine:
         if self.replay_lifecycle_expectancy_suite is not None and hasattr(self.replay_lifecycle_expectancy_suite, "decorate_candidates"):
             try:
                 dedup = list(self.replay_lifecycle_expectancy_suite.decorate_candidates(dedup) or dedup)
+            except Exception:
+                pass
+        if self.regime_execution_survivability_suite is not None and hasattr(self.regime_execution_survivability_suite, "decorate_candidates"):
+            try:
+                dedup = list(self.regime_execution_survivability_suite.decorate_candidates(dedup) or dedup)
             except Exception:
                 pass
         if self.paper_opportunity_allocator is not None and hasattr(self.paper_opportunity_allocator, "decorate_candidates"):
@@ -1870,6 +1907,12 @@ class PaperAutopilotEngine:
                     replay_lifecycle_status = dict(self.replay_lifecycle_expectancy_suite.status(rows=candidates) or {})
                 except Exception:
                     replay_lifecycle_status = {}
+            regime_execution_status = {}
+            if self.regime_execution_survivability_suite is not None and hasattr(self.regime_execution_survivability_suite, "status"):
+                try:
+                    regime_execution_status = dict(self.regime_execution_survivability_suite.status(rows=candidates) or {})
+                except Exception:
+                    regime_execution_status = {}
             for row in candidates:
                 if opened >= self.max_new_positions_per_cycle:
                     final_blocker_reason = final_blocker_reason or "max_new_positions_per_cycle_reached"
@@ -2033,6 +2076,7 @@ class PaperAutopilotEngine:
                 "market_session_execution_timing": session_status,
                 "adaptive_learning_infrastructure": adaptive_learning_status,
                 "replay_lifecycle_expectancy_learning": replay_lifecycle_status,
+                "regime_execution_survivability": regime_execution_status,
                 "market_session_mode": str(session_status.get("market_session_mode") or ""),
                 "paper_order_submission_allowed": bool(session_status.get("paper_order_submission_allowed", False)),
                 "execution_confirmation_required": bool(session_status.get("execution_confirmation_required", True)),
@@ -2073,6 +2117,7 @@ class PaperAutopilotEngine:
                 "market_session_execution_timing": session_status,
                 "adaptive_learning_infrastructure": adaptive_learning_status,
                 "replay_lifecycle_expectancy_learning": replay_lifecycle_status,
+                "regime_execution_survivability": regime_execution_status,
                 "market_session_mode": str(session_status.get("market_session_mode") or ""),
                 "paper_order_submission_allowed": bool(session_status.get("paper_order_submission_allowed", False)),
                 "execution_confirmation_required": bool(session_status.get("execution_confirmation_required", True)),
@@ -2164,6 +2209,18 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 replay_lifecycle_status = {}
+        regime_execution_status = {}
+        if self.regime_execution_survivability_suite is not None and hasattr(self.regime_execution_survivability_suite, "status"):
+            try:
+                regime_execution_status = dict(
+                    self.regime_execution_survivability_suite.status(
+                        rows=candidates,
+                        paper_trace=last_trace,
+                    )
+                    or {}
+                )
+            except Exception:
+                regime_execution_status = {}
         capacities = self._current_execution_capacities()
         internal_open_syms = set(capacities.get("open_symbols") or set())
         broker_snapshot = self._broker_open_symbols_snapshot()
@@ -2245,6 +2302,7 @@ class PaperAutopilotEngine:
             "market_session_execution_timing": session_status,
             "adaptive_learning_infrastructure": adaptive_learning_status,
             "replay_lifecycle_expectancy_learning": replay_lifecycle_status,
+            "regime_execution_survivability": regime_execution_status,
             "market_session_mode": str(last_trace.get("market_session_mode") or session_status.get("market_session_mode") or ""),
             "paper_order_submission_allowed": bool(last_trace.get("paper_order_submission_allowed", session_status.get("paper_order_submission_allowed", False))),
             "execution_confirmation_required": bool(last_trace.get("execution_confirmation_required", session_status.get("execution_confirmation_required", True))),

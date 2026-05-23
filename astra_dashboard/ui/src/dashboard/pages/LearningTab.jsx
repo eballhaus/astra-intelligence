@@ -248,6 +248,7 @@ export default function LearningTab({ compact = false }) {
           fetchJson("trade_management_portfolio", "/api/trade_management_portfolio_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("adaptive_learning_infrastructure", "/api/adaptive_learning_infrastructure_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("replay_lifecycle_expectancy", "/api/replay_lifecycle_expectancy_status_v1", {}, { timeoutMs: 8000 }),
+          fetchJson("regime_execution_survivability", "/api/regime_execution_survivability_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("market_session_execution_timing", "/api/market_session_execution_timing_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("paper_opportunity_allocation", "/api/paper_opportunity_allocation_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
@@ -315,6 +316,7 @@ export default function LearningTab({ compact = false }) {
         const tradeManagementPortfolio = selectPayload("trade_management_portfolio", prevSafe.tradeManagementPortfolio);
         const adaptiveLearningInfrastructure = selectPayload("adaptive_learning_infrastructure", prevSafe.adaptiveLearningInfrastructure);
         const replayLifecycleExpectancy = selectPayload("replay_lifecycle_expectancy", prevSafe.replayLifecycleExpectancy);
+        const regimeExecutionSurvivability = selectPayload("regime_execution_survivability", prevSafe.regimeExecutionSurvivability);
         const marketSessionExecutionTiming = selectPayload("market_session_execution_timing", prevSafe.marketSessionExecutionTiming);
         const paperOpportunityAllocation = selectPayload("paper_opportunity_allocation", prevSafe.paperOpportunityAllocation);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
@@ -461,6 +463,7 @@ export default function LearningTab({ compact = false }) {
           tradeManagementPortfolio,
           adaptiveLearningInfrastructure,
           replayLifecycleExpectancy,
+          regimeExecutionSurvivability,
           marketSessionExecutionTiming,
           paperOpportunityAllocation,
         };
@@ -500,6 +503,7 @@ export default function LearningTab({ compact = false }) {
   const tradeManagementPortfolio = data.tradeManagementPortfolio || {};
   const adaptiveLearningInfrastructure = data.adaptiveLearningInfrastructure || {};
   const replayLifecycleExpectancy = data.replayLifecycleExpectancy || {};
+  const regimeExecutionSurvivability = data.regimeExecutionSurvivability || {};
   const marketSessionExecutionTiming = data.marketSessionExecutionTiming || {};
   const paperOpportunityAllocation = data.paperOpportunityAllocation || {};
 
@@ -2370,6 +2374,48 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Loop summary: {String(replayLifecycleExpectancy?.learning_loop_summary || "Waiting for replay/lifecycle/expectancy loop diagnostics.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Regime, Execution & Survivability Intelligence</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Current regime: {String(regimeExecutionSurvivability?.current_market_regime || "uncertain_regime").replaceAll("_", " ")}</div>
+          <div>Regime confidence: {safeNumber(regimeExecutionSurvivability?.regime_confidence).toFixed(1)}</div>
+          <div>Execution quality: {safeNumber(regimeExecutionSurvivability?.execution_quality_score).toFixed(1)}</div>
+          <div>Breakout quality: {safeNumber(regimeExecutionSurvivability?.breakout_quality_score).toFixed(1)}</div>
+          <div>Chase risk: {safeNumber(regimeExecutionSurvivability?.chase_risk_score).toFixed(1)}</div>
+          <div>Follow-through: {safeNumber(regimeExecutionSurvivability?.follow_through_probability).toFixed(1)}</div>
+          <div>Survivability: {safeNumber(regimeExecutionSurvivability?.survivability_score).toFixed(1)}</div>
+          <div>Risk compression: {safeNumber(regimeExecutionSurvivability?.risk_compression_score).toFixed(1)}</div>
+          <div>Portfolio survivability: {safeNumber(regimeExecutionSurvivability?.portfolio_survivability_score).toFixed(1)}</div>
+          <div>Concentration risk: {safeNumber(regimeExecutionSurvivability?.portfolio_concentration_risk).toFixed(1)}</div>
+          <div>Correlation risk: {safeNumber(regimeExecutionSurvivability?.portfolio_correlation_risk).toFixed(1)}</div>
+          <div>Market context: {safeNumber(regimeExecutionSurvivability?.market_context_awareness_score).toFixed(1)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Strongest regime: {String(regimeExecutionSurvivability?.strongest_regime || "insufficient_data").replaceAll("_", " ")}
+            {" / "}
+            Weakest regime: {String(regimeExecutionSurvivability?.weakest_regime || "insufficient_data").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Survivability archetypes: {String(regimeExecutionSurvivability?.strongest_survivability_archetype || "insufficient_data").replaceAll("_", " ")}
+            {" / "}
+            {String(regimeExecutionSurvivability?.weakest_survivability_archetype || "insufficient_data").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Execution environments: {String(regimeExecutionSurvivability?.strongest_execution_environment || "insufficient_data").replaceAll("_", " ")}
+            {" / "}
+            {String(regimeExecutionSurvivability?.weakest_execution_environment || "insufficient_data").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Portfolio balance: {String(regimeExecutionSurvivability?.portfolio_balance_summary || "Waiting for portfolio adaptation diagnostics.")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Risk compression: {String(regimeExecutionSurvivability?.portfolio_risk_compression_summary || "Waiting for risk compression diagnostics.")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Adaptive execution: {String(regimeExecutionSurvivability?.adaptive_execution_summary || "Waiting for adaptive execution diagnostics.")}
           </div>
         </div>
       </div>

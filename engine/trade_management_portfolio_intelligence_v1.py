@@ -15,6 +15,10 @@ try:
     from engine.replay_lifecycle_expectancy_learning_v1 import ReplayLifecycleExpectancyLearningV1
 except Exception:  # pragma: no cover - additive diagnostics only
     ReplayLifecycleExpectancyLearningV1 = None  # type: ignore[assignment]
+try:
+    from engine.regime_execution_survivability_intelligence_v1 import RegimeExecutionSurvivabilityIntelligenceV1
+except Exception:  # pragma: no cover - additive diagnostics only
+    RegimeExecutionSurvivabilityIntelligenceV1 = None  # type: ignore[assignment]
 
 VERSION = "1.0.0"
 MAX_TAIL_BYTES = 2_000_000
@@ -190,6 +194,11 @@ class TradeManagementPortfolioIntelligenceV1:
         )
         self.replay_lifecycle_expectancy = (
             ReplayLifecycleExpectancyLearningV1(state_dir=self.state_dir) if ReplayLifecycleExpectancyLearningV1 is not None else None
+        )
+        self.regime_execution_survivability = (
+            RegimeExecutionSurvivabilityIntelligenceV1(state_dir=self.state_dir)
+            if RegimeExecutionSurvivabilityIntelligenceV1 is not None
+            else None
         )
 
     def _learning_hooks(self) -> dict[str, Any]:
@@ -453,6 +462,7 @@ class TradeManagementPortfolioIntelligenceV1:
             "adaptive_learning_infrastructure_hooks_ready": bool(self.adaptive_learning_infrastructure is not None),
             "adaptive_learning_review_integration": "status_reference_only_no_execution_authority",
             "replay_lifecycle_expectancy_hooks_ready": bool(self.replay_lifecycle_expectancy is not None),
+            "regime_execution_survivability_hooks_ready": bool(self.regime_execution_survivability is not None),
             "api_calls_used": 0,
             "live_trading_changed": False,
             "broker_execution_changed": False,

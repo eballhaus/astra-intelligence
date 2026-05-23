@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from statistics import mean, pstdev
 from typing import Any
 
+try:
+    from engine.regime_execution_survivability_intelligence_v1 import RegimeExecutionSurvivabilityIntelligenceV1
+except Exception:  # pragma: no cover - additive diagnostics only
+    RegimeExecutionSurvivabilityIntelligenceV1 = None  # type: ignore[assignment]
+
 VERSION = "1.0.0"
 MAX_TAIL_BYTES = 2_000_000
 MAX_ROWS = 1000
@@ -146,6 +151,11 @@ class ReplayLifecycleExpectancyLearningV1:
         self.ledger_path = os.path.join(self.state_dir, "candidate_decision_ledger_v1.jsonl")
         self.paper_state_path = os.path.join(self.state_dir, "paper_autopilot_state.json")
         self._cache: dict[str, Any] | None = None
+        self.regime_execution_survivability = (
+            RegimeExecutionSurvivabilityIntelligenceV1(state_dir=self.state_dir)
+            if RegimeExecutionSurvivabilityIntelligenceV1 is not None
+            else None
+        )
 
     def _rows(self) -> list[dict[str, Any]]:
         if self._cache is not None:
@@ -412,6 +422,7 @@ class ReplayLifecycleExpectancyLearningV1:
             "most_stable_archetype": stable_arch,
             "most_unstable_archetype": unstable_arch,
             "adaptive_policy_ready": True,
+            "regime_execution_survivability_hooks_ready": bool(self.regime_execution_survivability is not None),
             "adaptive_policy_score": round(policy_readiness, 2),
             "adaptive_policy_confidence": round(policy_conf, 2),
             "adaptive_policy_recommendation": policy_rec,
