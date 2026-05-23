@@ -540,6 +540,47 @@ except Exception:
                 "human_review_required": True,
             }
 try:
+    from engine.market_session_execution_timing_v1 import MarketSessionExecutionTimingV1
+except Exception:
+    class MarketSessionExecutionTimingV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "market_session_mode": "unknown_closed",
+                "market_is_open": False,
+                "market_is_tradable": False,
+                "paper_order_submission_allowed": False,
+                "order_queueing_allowed": False,
+                "execution_confirmation_required": True,
+                "session_reason": "market session timing import unavailable",
+                "open_confirmation_score": 0.0,
+                "open_confirmation_label": "watch_only",
+                "open_confirmation_reason": "market session timing import unavailable",
+                "open_orders_count": 0,
+                "stale_open_orders_count": 0,
+                "weekend_queued_orders_count": 0,
+                "stale_order_symbols": [],
+                "stale_order_reason": "unavailable",
+                "cancel_stale_orders_recommended": False,
+                "auto_cancel_stale_paper_orders": False,
+                "execution_intent_status": "intent_unavailable",
+                "defer_until_market_confirmation": True,
+                "requires_open_confirmation": True,
+                "replay_candidate_snapshot_saved": False,
+                "replay_learning_ready": False,
+                "session_timing_outcome_tracking_ready": True,
+                "microstructure_analysis_enabled": False,
+                "counterfactual_review_enabled": False,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+            }
+try:
     from engine.adaptive_market_intake_fmp_budget_suite_v1 import AdaptiveMarketIntakeFmpBudgetSuiteV1
 except Exception:
     class AdaptiveMarketIntakeFmpBudgetSuiteV1:  # type: ignore[override]
@@ -747,6 +788,7 @@ OPPORTUNITY_DISCOVERY_EXPANSION_SUITE = OpportunityDiscoveryExpansionV1(state_di
 PAPER_OPPORTUNITY_ALLOCATION_ENGINE = PaperOpportunityAllocationEngineV1(state_dir=STATE)
 EDGE_DEVELOPMENT_SUITE = EdgeDevelopmentSuiteV1(state_dir=STATE)
 TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE = TradeManagementPortfolioIntelligenceV1(state_dir=STATE)
+MARKET_SESSION_EXECUTION_TIMING_SUITE = MarketSessionExecutionTimingV1()
 ADAPTIVE_MARKET_INTAKE_FMP_BUDGET_SUITE = AdaptiveMarketIntakeFmpBudgetSuiteV1(state_dir=STATE)
 ALPACA_PAPER_BROKER = AlpacaPaperBroker()
 HORIZON_PERFORMANCE_DASHBOARD = HorizonPerformanceDashboardV1(state_dir=STATE, db_path=os.path.join(STATE, "ai_trading_memory.db"))
@@ -14527,6 +14569,7 @@ PAPER_AUTOPILOT = PaperAutopilotEngine(
     paper_opportunity_allocator=PAPER_OPPORTUNITY_ALLOCATION_ENGINE,
     edge_development_suite=EDGE_DEVELOPMENT_SUITE,
     trade_management_portfolio_suite=TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE,
+    market_session_timing_suite=MARKET_SESSION_EXECUTION_TIMING_SUITE,
 )
 _PAPER_AUTOPILOT_STARTED = False
 _PAPER_INPROC_HEARTBEAT_STATE = {"last_cycle_utc": "", "cycle_count": 0}
@@ -29861,6 +29904,77 @@ def trade_management_portfolio_status_v1():
         "forced_early_exit_enabled": False,
         "trade_management_shadow_only": True,
         "portfolio_intelligence_shadow_only": True,
+    }
+
+
+@router.get("/api/market_session_execution_timing_status_v1")
+def market_session_execution_timing_status_v1():
+    try:
+        broker_status = {}
+        try:
+            broker_status = dict(ALPACA_PAPER_BROKER.status() or {})
+        except Exception:
+            broker_status = {}
+        out = MARKET_SESSION_EXECUTION_TIMING_SUITE.status(
+            broker_ready=bool(broker_status.get("broker_execution_ready") or broker_status.get("broker_execution_enabled")),
+            open_orders_count=int(_to_float(broker_status.get("open_orders_count"), 0.0)),
+        )
+        if isinstance(out, dict):
+            out["market_session_execution_timing_status_v1"] = True
+            out["api_calls_used"] = int(_to_float(broker_status.get("api_calls_used"), 0.0))
+            out["live_trading_changed"] = False
+            out["alpaca_paper_only_preserved"] = True
+            out["natural_exit_preserved"] = True
+            out["forced_early_exit_enabled"] = False
+            out["forced_trade_enabled"] = False
+            return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "market_session_execution_timing_status_v1": True,
+            "market_session_mode": "unknown_closed",
+            "market_is_open": False,
+            "market_is_tradable": False,
+            "paper_order_submission_allowed": False,
+            "order_queueing_allowed": False,
+            "execution_confirmation_required": True,
+            "session_reason": f"market_session_execution_timing_unavailable: {str(exc)[:140]}",
+            "open_confirmation_score": 0.0,
+            "open_confirmation_label": "watch_only",
+            "open_confirmation_reason": "status unavailable",
+            "open_orders_count": 0,
+            "stale_open_orders_count": 0,
+            "weekend_queued_orders_count": 0,
+            "stale_order_symbols": [],
+            "stale_order_reason": "status_unavailable",
+            "cancel_stale_orders_recommended": False,
+            "auto_cancel_stale_paper_orders": False,
+            "execution_intent_status": "intent_unavailable",
+            "defer_until_market_confirmation": True,
+            "requires_open_confirmation": True,
+            "replay_candidate_snapshot_saved": False,
+            "replay_learning_ready": False,
+            "session_timing_outcome_tracking_ready": True,
+            "microstructure_analysis_enabled": False,
+            "counterfactual_review_enabled": False,
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+        }
+    return {
+        "enabled": False,
+        "version": "1.0.0",
+        "market_session_execution_timing_status_v1": True,
+        "market_session_mode": "unknown_closed",
+        "paper_order_submission_allowed": False,
+        "execution_confirmation_required": True,
+        "execution_intent_status": "intent_unavailable",
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+        "alpaca_paper_only_preserved": True,
+        "natural_exit_preserved": True,
     }
 
 

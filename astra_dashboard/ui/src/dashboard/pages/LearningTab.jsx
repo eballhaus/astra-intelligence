@@ -246,6 +246,7 @@ export default function LearningTab({ compact = false }) {
           fetchJson("opportunity_discovery_expansion", "/api/opportunity_discovery_expansion_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("edge_development", "/api/edge_development_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("trade_management_portfolio", "/api/trade_management_portfolio_status_v1", {}, { timeoutMs: 8000 }),
+          fetchJson("market_session_execution_timing", "/api/market_session_execution_timing_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("paper_opportunity_allocation", "/api/paper_opportunity_allocation_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
         ]);
@@ -310,6 +311,7 @@ export default function LearningTab({ compact = false }) {
         const opportunityDiscoveryExpansion = selectPayload("opportunity_discovery_expansion", prevSafe.opportunityDiscoveryExpansion);
         const edgeDevelopment = selectPayload("edge_development", prevSafe.edgeDevelopment);
         const tradeManagementPortfolio = selectPayload("trade_management_portfolio", prevSafe.tradeManagementPortfolio);
+        const marketSessionExecutionTiming = selectPayload("market_session_execution_timing", prevSafe.marketSessionExecutionTiming);
         const paperOpportunityAllocation = selectPayload("paper_opportunity_allocation", prevSafe.paperOpportunityAllocation);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
         const learningSnapshotFast = selectPayload("learning_snapshot_fast_v1", prevSafe.learningSnapshotFast);
@@ -453,6 +455,7 @@ export default function LearningTab({ compact = false }) {
           opportunityDiscoveryExpansion,
           edgeDevelopment,
           tradeManagementPortfolio,
+          marketSessionExecutionTiming,
           paperOpportunityAllocation,
         };
       });
@@ -489,6 +492,7 @@ export default function LearningTab({ compact = false }) {
   const opportunityDiscoveryExpansion = data.opportunityDiscoveryExpansion || {};
   const edgeDevelopment = data.edgeDevelopment || {};
   const tradeManagementPortfolio = data.tradeManagementPortfolio || {};
+  const marketSessionExecutionTiming = data.marketSessionExecutionTiming || {};
   const paperOpportunityAllocation = data.paperOpportunityAllocation || {};
 
   const paperOutcome = paper?.paper_outcome_summary?.combined || {};
@@ -2267,6 +2271,35 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Summary: {String(tradeManagementPortfolio?.trade_management_summary || "Waiting for trade management portfolio diagnostics.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Market Session, Execution Timing & Replay Readiness</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Session mode: {String(marketSessionExecutionTiming?.market_session_mode || "unknown_closed").replaceAll("_", " ")}</div>
+          <div>Market open: {marketSessionExecutionTiming?.market_is_open ? "yes" : "no"}</div>
+          <div>Tradable: {marketSessionExecutionTiming?.market_is_tradable ? "yes" : "no"}</div>
+          <div>Orders allowed: {marketSessionExecutionTiming?.paper_order_submission_allowed ? "yes" : "blocked"}</div>
+          <div>Confirmation required: {marketSessionExecutionTiming?.execution_confirmation_required === false ? "no" : "yes"}</div>
+          <div>Open confirmation: {String(marketSessionExecutionTiming?.open_confirmation_label || "watch_only").replaceAll("_", " ")} ({safeNumber(marketSessionExecutionTiming?.open_confirmation_score).toFixed(1)})</div>
+          <div>Open orders: {safeNumber(marketSessionExecutionTiming?.open_orders_count).toFixed(0)}</div>
+          <div>Stale open orders: {safeNumber(marketSessionExecutionTiming?.stale_open_orders_count).toFixed(0)}</div>
+          <div>Weekend queued orders: {safeNumber(marketSessionExecutionTiming?.weekend_queued_orders_count).toFixed(0)}</div>
+          <div>Intent status: {String(marketSessionExecutionTiming?.execution_intent_status || "intent_pending").replaceAll("_", " ")}</div>
+          <div>Replay ready: {marketSessionExecutionTiming?.replay_learning_ready ? "yes" : "no"}</div>
+          <div>Session tracking: {marketSessionExecutionTiming?.session_timing_outcome_tracking_ready === false ? "not ready" : "ready"}</div>
+          <div>Auto-cancel stale orders: {marketSessionExecutionTiming?.auto_cancel_stale_paper_orders ? "enabled" : "disabled"}</div>
+          <div>API calls used: {safeNumber(marketSessionExecutionTiming?.api_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Recommended action: {String(marketSessionExecutionTiming?.recommended_action || "create_execution_intent_and_wait_for_open_confirmation").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Session reason: {String(marketSessionExecutionTiming?.session_reason || marketSessionExecutionTiming?.open_confirmation_reason || "Waiting for session timing diagnostics.")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Stale order reason: {String(marketSessionExecutionTiming?.stale_order_reason || "no_stale_open_orders_detected").replaceAll("_", " ")}
           </div>
         </div>
       </div>

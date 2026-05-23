@@ -77,6 +77,32 @@ except Exception:  # pragma: no cover - trade management suite is additive
         def decorate_candidates(self, rows):
             return [dict(r) for r in (rows or []) if isinstance(r, dict)]
 
+try:
+    from engine.market_session_execution_timing_v1 import MarketSessionExecutionTimingV1
+except Exception:  # pragma: no cover - session timing suite is additive
+    class MarketSessionExecutionTimingV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "market_session_mode": "unknown_closed",
+                "market_is_open": False,
+                "market_is_tradable": False,
+                "paper_order_submission_allowed": False,
+                "execution_confirmation_required": True,
+                "execution_intent_status": "intent_unavailable",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+            }
+
+        def confirmation_for_candidate(self, *args, **kwargs):
+            return self.status()
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -276,6 +302,12 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 self.trade_management_portfolio_suite = None
+        self.market_session_timing_suite = kwargs.get("market_session_timing_suite")
+        if self.market_session_timing_suite is None:
+            try:
+                self.market_session_timing_suite = MarketSessionExecutionTimingV1()
+            except Exception:
+                self.market_session_timing_suite = None
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -711,6 +743,19 @@ class PaperAutopilotEngine:
             reason = "crypto_capacity_reached"
         else:
             allowed, reason, gate_meta = self._is_candidate_paper_eligible(r)
+        session_diag = {}
+        if self.market_session_timing_suite is not None and hasattr(self.market_session_timing_suite, "confirmation_for_candidate"):
+            try:
+                session_diag = dict(
+                    self.market_session_timing_suite.confirmation_for_candidate(
+                        r,
+                        gate_meta=gate_meta,
+                        broker_ready=self._alpaca_paper_broker_enabled(),
+                    )
+                    or {}
+                )
+            except Exception:
+                session_diag = {}
         trace = {
             "symbol": symbol,
             "asset_type": asset,
@@ -752,6 +797,19 @@ class PaperAutopilotEngine:
             "duplicate_active_position": bool(symbol in open_syms) if symbol else False,
             "duplicate_source": duplicate_source,
             "broker_reconciliation_active": bool(broker_reconciliation_active),
+            "market_session_mode": str(session_diag.get("market_session_mode") or ""),
+            "market_is_open": bool(session_diag.get("market_is_open", False)),
+            "market_is_tradable": bool(session_diag.get("market_is_tradable", False)),
+            "paper_order_submission_allowed": bool(session_diag.get("paper_order_submission_allowed", False)),
+            "execution_confirmation_required": bool(session_diag.get("execution_confirmation_required", True)),
+            "open_confirmation_score": round(_to_float(session_diag.get("open_confirmation_score"), 0.0), 2),
+            "open_confirmation_label": str(session_diag.get("open_confirmation_label") or ""),
+            "open_confirmation_reason": str(session_diag.get("open_confirmation_reason") or ""),
+            "execution_intent_status": str(session_diag.get("execution_intent_status") or ""),
+            "candidate_execution_intent": bool(session_diag.get("candidate_execution_intent", False)),
+            "defer_until_market_confirmation": bool(session_diag.get("defer_until_market_confirmation", False)),
+            "requires_open_confirmation": bool(session_diag.get("requires_open_confirmation", True)),
+            "weekend_watchlist_candidate": bool(session_diag.get("weekend_watchlist_candidate", False)),
             "selected": False,
             "order_attempted": False,
         }
@@ -822,6 +880,73 @@ class PaperAutopilotEngine:
             portfolio_ok = bool(risk_label not in {"high_risk", "blocked"} and risk_score >= 35.0)
             preflight_reason = "derived_from_portfolio_risk_fields"
 
+        session_diag = {}
+        if self.market_session_timing_suite is not None and hasattr(self.market_session_timing_suite, "confirmation_for_candidate"):
+            try:
+                session_diag = dict(
+                    self.market_session_timing_suite.confirmation_for_candidate(
+                        r,
+                        gate_meta=meta,
+                        broker_ready=self._alpaca_paper_broker_enabled(),
+                    )
+                    or {}
+                )
+            except Exception:
+                session_diag = {}
+        if not bool(session_diag.get("paper_order_submission_allowed", False)):
+            blocker = "session_order_submission_blocked"
+            if bool(session_diag.get("execution_confirmation_required", True)):
+                blocker = "open_confirmation_required"
+            return {
+                "ok": False,
+                "paper_order_submitted": False,
+                "error": blocker,
+                "market_session_mode": str(session_diag.get("market_session_mode") or "unknown_closed"),
+                "paper_order_submission_allowed": False,
+                "execution_confirmation_required": bool(session_diag.get("execution_confirmation_required", True)),
+                "open_confirmation_score": round(_to_float(session_diag.get("open_confirmation_score"), 0.0), 2),
+                "open_confirmation_label": str(session_diag.get("open_confirmation_label") or "wait_for_open_structure"),
+                "open_confirmation_reason": str(session_diag.get("open_confirmation_reason") or session_diag.get("session_reason") or ""),
+                "execution_intent_status": str(session_diag.get("execution_intent_status") or "intent_ready"),
+                "candidate_execution_intent": bool(session_diag.get("candidate_execution_intent", True)),
+                "defer_until_market_confirmation": bool(session_diag.get("defer_until_market_confirmation", True)),
+                "requires_open_confirmation": True,
+                "weekend_watchlist_candidate": bool(session_diag.get("weekend_watchlist_candidate", False)),
+                "intent_created_reason": str(session_diag.get("intent_created_reason") or "closed_market_execution_intent_only"),
+                "replay_candidate_snapshot_saved": bool(session_diag.get("replay_candidate_snapshot_saved", True)),
+                "replay_learning_ready": bool(session_diag.get("replay_learning_ready", True)),
+                "session_timing_outcome_tracking_ready": True,
+                "paper_autopilot_limits_ok": True,
+                "paper_autopilot_limits_reason": str(meta.get("paper_autopilot_limits_reason") or "cycle_limits_passed"),
+                "portfolio_risk_proof_present": bool(portfolio_risk_proof_present),
+                "portfolio_risk_score_used": (None if risk_score is None else round(float(risk_score), 4)),
+                "portfolio_risk_label_used": risk_label_raw,
+                "portfolio_risk_preflight_reason": preflight_reason,
+                "natural_exit_logic_preserved": True,
+            }
+        if str(session_diag.get("open_confirmation_label") or "") != "confirmed_execute":
+            return {
+                "ok": False,
+                "paper_order_submitted": False,
+                "error": "open_confirmation_required",
+                "market_session_mode": str(session_diag.get("market_session_mode") or "unknown_closed"),
+                "paper_order_submission_allowed": bool(session_diag.get("paper_order_submission_allowed", False)),
+                "execution_confirmation_required": True,
+                "open_confirmation_score": round(_to_float(session_diag.get("open_confirmation_score"), 0.0), 2),
+                "open_confirmation_label": str(session_diag.get("open_confirmation_label") or "wait_for_open_structure"),
+                "open_confirmation_reason": str(session_diag.get("open_confirmation_reason") or ""),
+                "execution_intent_status": str(session_diag.get("execution_intent_status") or "pending_confirmation"),
+                "defer_until_market_confirmation": bool(session_diag.get("defer_until_market_confirmation", True)),
+                "requires_open_confirmation": True,
+                "paper_autopilot_limits_ok": True,
+                "paper_autopilot_limits_reason": str(meta.get("paper_autopilot_limits_reason") or "cycle_limits_passed"),
+                "portfolio_risk_proof_present": bool(portfolio_risk_proof_present),
+                "portfolio_risk_score_used": (None if risk_score is None else round(float(risk_score), 4)),
+                "portfolio_risk_label_used": risk_label_raw,
+                "portfolio_risk_preflight_reason": preflight_reason,
+                "natural_exit_logic_preserved": True,
+            }
+
         broker_snapshot = self._broker_open_symbols_snapshot()
         reconciliation_checked = bool(
             broker_snapshot.get("broker_reconciliation_active")
@@ -849,6 +974,18 @@ class PaperAutopilotEngine:
             "portfolio_risk_score_used": (None if risk_score is None else round(float(risk_score), 4)),
             "portfolio_risk_label_used": risk_label_raw,
             "portfolio_risk_preflight_reason": preflight_reason,
+            "market_session_mode": str(session_diag.get("market_session_mode") or ""),
+            "paper_order_submission_allowed": bool(session_diag.get("paper_order_submission_allowed", False)),
+            "execution_confirmation_required": bool(session_diag.get("execution_confirmation_required", True)),
+            "open_confirmation_score": round(_to_float(session_diag.get("open_confirmation_score"), 0.0), 2),
+            "open_confirmation_label": str(session_diag.get("open_confirmation_label") or ""),
+            "open_confirmation_reason": str(session_diag.get("open_confirmation_reason") or ""),
+            "quote_freshness_confirmed": bool(session_diag.get("quote_freshness_confirmed", False)),
+            "spread_liquidity_confirmed": bool(session_diag.get("spread_liquidity_confirmed", False)),
+            "gap_behavior_confirmed": bool(session_diag.get("gap_behavior_confirmed", False)),
+            "entry_commitment_confirmed": bool(session_diag.get("entry_commitment_confirmed", False)),
+            "portfolio_risk_confirmed": bool(session_diag.get("portfolio_risk_confirmed", False)),
+            "broker_preflight_confirmed": bool(session_diag.get("broker_preflight_confirmed", False)),
             "broker_reconciliation_active": bool(broker_snapshot.get("broker_reconciliation_active", False)),
             "broker_positions_checked": bool(reconciliation_checked),
             "natural_exit_logic_preserved": True,
@@ -1621,6 +1758,18 @@ class PaperAutopilotEngine:
                     allocation_status = dict(self.paper_opportunity_allocator.status(rows=candidates) or {})
                 except Exception:
                     allocation_status = {}
+            session_status = {}
+            if self.market_session_timing_suite is not None and hasattr(self.market_session_timing_suite, "status"):
+                try:
+                    session_status = dict(
+                        self.market_session_timing_suite.status(
+                            broker_ready=bool(safety.get("broker_execution_ready") or safety.get("broker_execution_enabled")),
+                            open_orders_count=int(_to_float(safety.get("open_orders_count"), 0.0)),
+                        )
+                        or {}
+                    )
+                except Exception:
+                    session_status = {}
             for row in candidates:
                 if opened >= self.max_new_positions_per_cycle:
                     final_blocker_reason = final_blocker_reason or "max_new_positions_per_cycle_reached"
@@ -1711,6 +1860,19 @@ class PaperAutopilotEngine:
                 row_trace["portfolio_risk_preflight_reason"] = str(opened_row.get("portfolio_risk_preflight_reason") or "")
                 row_trace["paper_autopilot_limits_ok"] = bool(opened_row.get("paper_autopilot_limits_ok", True))
                 row_trace["paper_autopilot_limits_reason"] = str(opened_row.get("paper_autopilot_limits_reason") or "")
+                row_trace["market_session_mode"] = str(opened_row.get("market_session_mode") or row_trace.get("market_session_mode") or "")
+                row_trace["paper_order_submission_allowed"] = bool(opened_row.get("paper_order_submission_allowed", row_trace.get("paper_order_submission_allowed", False)))
+                row_trace["execution_confirmation_required"] = bool(opened_row.get("execution_confirmation_required", row_trace.get("execution_confirmation_required", True)))
+                row_trace["open_confirmation_score"] = round(_to_float(opened_row.get("open_confirmation_score"), _to_float(row_trace.get("open_confirmation_score"), 0.0)), 2)
+                row_trace["open_confirmation_label"] = str(opened_row.get("open_confirmation_label") or row_trace.get("open_confirmation_label") or "")
+                row_trace["open_confirmation_reason"] = str(opened_row.get("open_confirmation_reason") or row_trace.get("open_confirmation_reason") or "")
+                row_trace["execution_intent_status"] = str(opened_row.get("execution_intent_status") or row_trace.get("execution_intent_status") or "")
+                row_trace["defer_until_market_confirmation"] = bool(opened_row.get("defer_until_market_confirmation", row_trace.get("defer_until_market_confirmation", False)))
+                row_trace["requires_open_confirmation"] = bool(opened_row.get("requires_open_confirmation", row_trace.get("requires_open_confirmation", True)))
+                row_trace["weekend_watchlist_candidate"] = bool(opened_row.get("weekend_watchlist_candidate", row_trace.get("weekend_watchlist_candidate", False)))
+                row_trace["replay_candidate_snapshot_saved"] = bool(opened_row.get("replay_candidate_snapshot_saved", False))
+                row_trace["replay_learning_ready"] = bool(opened_row.get("replay_learning_ready", False))
+                row_trace["session_timing_outcome_tracking_ready"] = bool(opened_row.get("session_timing_outcome_tracking_ready", False))
                 if row_trace["portfolio_risk_proof_present"]:
                     portfolio_risk_proof_present = True
                 if row_trace["portfolio_risk_score_used"] is not None:
@@ -1756,6 +1918,8 @@ class PaperAutopilotEngine:
                     final_blocker_reason = "no_orders_attempted"
                 else:
                     final_blocker_reason = "orders_not_submitted"
+            if opened <= 0 and not bool(session_status.get("paper_order_submission_allowed", False)):
+                final_blocker_reason = "session_order_submission_blocked"
             out = {
                 "ok": True,
                 "autopilot_enabled": True,
@@ -1766,6 +1930,12 @@ class PaperAutopilotEngine:
                 "positions_skipped": int(skipped),
                 "candidates_seen": int(len(candidates)),
                 "paper_opportunity_allocation": allocation_status,
+                "market_session_execution_timing": session_status,
+                "market_session_mode": str(session_status.get("market_session_mode") or ""),
+                "paper_order_submission_allowed": bool(session_status.get("paper_order_submission_allowed", False)),
+                "execution_confirmation_required": bool(session_status.get("execution_confirmation_required", True)),
+                "execution_intent_status": str(session_status.get("execution_intent_status") or ""),
+                "defer_until_market_confirmation": bool(session_status.get("defer_until_market_confirmation", False)),
                 "allocation_lane_counts": dict(allocation_status.get("lane_counts") or {}),
                 "valid_exploration_candidates": int(_to_float(allocation_status.get("valid_exploration_candidates"), 0.0)),
                 "high_upside_candidates_approved": int(_to_float(allocation_status.get("high_upside_candidates_approved"), 0.0)),
@@ -1798,6 +1968,12 @@ class PaperAutopilotEngine:
                 **safety,
                 "candidates_seen": int(len(candidates)),
                 "paper_opportunity_allocation": allocation_status,
+                "market_session_execution_timing": session_status,
+                "market_session_mode": str(session_status.get("market_session_mode") or ""),
+                "paper_order_submission_allowed": bool(session_status.get("paper_order_submission_allowed", False)),
+                "execution_confirmation_required": bool(session_status.get("execution_confirmation_required", True)),
+                "execution_intent_status": str(session_status.get("execution_intent_status") or ""),
+                "defer_until_market_confirmation": bool(session_status.get("defer_until_market_confirmation", False)),
                 "allocation_lane_counts": dict(allocation_status.get("lane_counts") or {}),
                 "valid_exploration_candidates": int(_to_float(allocation_status.get("valid_exploration_candidates"), 0.0)),
                 "high_upside_candidates_approved": int(_to_float(allocation_status.get("high_upside_candidates_approved"), 0.0)),
@@ -1847,6 +2023,18 @@ class PaperAutopilotEngine:
                 allocation_status = dict(self.paper_opportunity_allocator.status(rows=candidates) or {})
             except Exception:
                 allocation_status = {}
+        session_status = {}
+        if self.market_session_timing_suite is not None and hasattr(self.market_session_timing_suite, "status"):
+            try:
+                session_status = dict(
+                    self.market_session_timing_suite.status(
+                        broker_ready=bool(self._alpaca_paper_broker_enabled()),
+                        open_orders_count=0,
+                    )
+                    or {}
+                )
+            except Exception:
+                session_status = {}
         capacities = self._current_execution_capacities()
         internal_open_syms = set(capacities.get("open_symbols") or set())
         broker_snapshot = self._broker_open_symbols_snapshot()
@@ -1906,6 +2094,14 @@ class PaperAutopilotEngine:
                 final_blocker = "alpaca_paper_broker_disabled"
             else:
                 final_blocker = "awaiting_next_worker_cycle"
+        session_allows_orders = bool(
+            last_trace.get(
+                "paper_order_submission_allowed",
+                session_status.get("paper_order_submission_allowed", False),
+            )
+        )
+        if not session_allows_orders and int(last_trace.get("orders_submitted", 0)) <= 0:
+            final_blocker = "session_order_submission_blocked"
         return {
             "enabled": True,
             "mode": "paper_only",
@@ -1917,6 +2113,12 @@ class PaperAutopilotEngine:
             "max_open_positions_total": int(self.max_open_positions_total),
             "candidates_seen": int(len(candidates)),
             "paper_opportunity_allocation": allocation_status,
+            "market_session_execution_timing": session_status,
+            "market_session_mode": str(last_trace.get("market_session_mode") or session_status.get("market_session_mode") or ""),
+            "paper_order_submission_allowed": bool(last_trace.get("paper_order_submission_allowed", session_status.get("paper_order_submission_allowed", False))),
+            "execution_confirmation_required": bool(last_trace.get("execution_confirmation_required", session_status.get("execution_confirmation_required", True))),
+            "execution_intent_status": str(last_trace.get("execution_intent_status") or session_status.get("execution_intent_status") or ""),
+            "defer_until_market_confirmation": bool(last_trace.get("defer_until_market_confirmation", session_status.get("defer_until_market_confirmation", False))),
             "allocation_lane_counts": dict(allocation_status.get("lane_counts") or {}),
             "valid_exploration_candidates": int(_to_float(allocation_status.get("valid_exploration_candidates"), 0.0)),
             "high_upside_candidates_approved": int(_to_float(allocation_status.get("high_upside_candidates_approved"), 0.0)),
