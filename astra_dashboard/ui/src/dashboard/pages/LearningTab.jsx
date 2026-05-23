@@ -245,6 +245,7 @@ export default function LearningTab({ compact = false }) {
           fetchJson("dynamic_opportunity_weighting", "/api/dynamic_opportunity_weighting_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("opportunity_discovery_expansion", "/api/opportunity_discovery_expansion_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("edge_development", "/api/edge_development_status_v1", {}, { timeoutMs: 8000 }),
+          fetchJson("trade_management_portfolio", "/api/trade_management_portfolio_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("paper_opportunity_allocation", "/api/paper_opportunity_allocation_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
         ]);
@@ -308,6 +309,7 @@ export default function LearningTab({ compact = false }) {
         const dynamicOpportunityWeighting = selectPayload("dynamic_opportunity_weighting", prevSafe.dynamicOpportunityWeighting);
         const opportunityDiscoveryExpansion = selectPayload("opportunity_discovery_expansion", prevSafe.opportunityDiscoveryExpansion);
         const edgeDevelopment = selectPayload("edge_development", prevSafe.edgeDevelopment);
+        const tradeManagementPortfolio = selectPayload("trade_management_portfolio", prevSafe.tradeManagementPortfolio);
         const paperOpportunityAllocation = selectPayload("paper_opportunity_allocation", prevSafe.paperOpportunityAllocation);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
         const learningSnapshotFast = selectPayload("learning_snapshot_fast_v1", prevSafe.learningSnapshotFast);
@@ -450,6 +452,7 @@ export default function LearningTab({ compact = false }) {
           dynamicOpportunityWeighting,
           opportunityDiscoveryExpansion,
           edgeDevelopment,
+          tradeManagementPortfolio,
           paperOpportunityAllocation,
         };
       });
@@ -485,6 +488,7 @@ export default function LearningTab({ compact = false }) {
   const dynamicOpportunityWeighting = data.dynamicOpportunityWeighting || {};
   const opportunityDiscoveryExpansion = data.opportunityDiscoveryExpansion || {};
   const edgeDevelopment = data.edgeDevelopment || {};
+  const tradeManagementPortfolio = data.tradeManagementPortfolio || {};
   const paperOpportunityAllocation = data.paperOpportunityAllocation || {};
 
   const paperOutcome = paper?.paper_outcome_summary?.combined || {};
@@ -2221,6 +2225,48 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Summary: {String(edgeDevelopment?.edge_summary || "Waiting for edge development diagnostics.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Trade Management & Portfolio Intelligence</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Portfolio heat: {safeNumber(tradeManagementPortfolio?.portfolio_heat_score).toFixed(1)}</div>
+          <div>Correlation risk: {safeNumber(tradeManagementPortfolio?.portfolio_correlation_risk).toFixed(1)}</div>
+          <div>Sector concentration: {safeNumber(tradeManagementPortfolio?.sector_concentration_score).toFixed(1)}</div>
+          <div>Correlated exposure: {safeNumber(tradeManagementPortfolio?.correlated_exposure_score).toFixed(1)}</div>
+          <div>Portfolio stability: {safeNumber(tradeManagementPortfolio?.portfolio_stability_score).toFixed(1)}</div>
+          <div>Diversification quality: {safeNumber(tradeManagementPortfolio?.diversification_quality_score).toFixed(1)}</div>
+          <div>Avg exit quality: {safeNumber(tradeManagementPortfolio?.average_exit_quality_score).toFixed(1)}</div>
+          <div>Avg position size: {safeNumber(tradeManagementPortfolio?.average_intelligent_position_size_pct).toFixed(2)}%</div>
+          <div>Avg survivability: {safeNumber(tradeManagementPortfolio?.average_survivability_score).toFixed(1)}</div>
+          <div>Avg trade management: {safeNumber(tradeManagementPortfolio?.average_trade_management_score).toFixed(1)}</div>
+          <div>Portfolio risk label: {String(tradeManagementPortfolio?.portfolio_risk_label || "stable").replaceAll("_", " ")}</div>
+          <div>API calls used: {safeNumber(tradeManagementPortfolio?.api_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Exit intelligence: {Object.entries(tradeManagementPortfolio?.exit_readiness_distribution || {})
+              .slice(0, 5)
+              .map(([k, v]) => `${String(k).replaceAll("_", " ")} (${safeNumber(v).toFixed(0)})`)
+              .join(" | ") || "Waiting for exit readiness diagnostics."}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Sizing diagnostics: {Object.entries(tradeManagementPortfolio?.sizing_distribution || {})
+              .slice(0, 5)
+              .map(([k, v]) => `${String(k).replaceAll("_", " ")} (${safeNumber(v).toFixed(0)})`)
+              .join(" | ") || "Waiting for sizing diagnostics."}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Trade management distribution: {Object.entries(tradeManagementPortfolio?.trade_management_distribution || {})
+              .slice(0, 5)
+              .map(([k, v]) => `${String(k).replaceAll("_", " ")} (${safeNumber(v).toFixed(0)})`)
+              .join(" | ") || "Waiting for managed-trade diagnostics."}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Survivability: {String(tradeManagementPortfolio?.survivability_diagnostics || "Waiting for survivability diagnostics.")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Summary: {String(tradeManagementPortfolio?.trade_management_summary || "Waiting for trade management portfolio diagnostics.")}
           </div>
         </div>
       </div>

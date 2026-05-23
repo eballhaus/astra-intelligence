@@ -503,6 +503,43 @@ except Exception:
                 "human_review_required": True,
             }
 try:
+    from engine.trade_management_portfolio_intelligence_v1 import TradeManagementPortfolioIntelligenceV1
+except Exception:
+    class TradeManagementPortfolioIntelligenceV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def enrich_payload(self, payload):
+            return dict(payload or {})
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "paper_only_shadow_learning",
+                "trade_management_portfolio_status_v1": True,
+                "portfolio_heat_score": 0.0,
+                "portfolio_correlation_risk": 0.0,
+                "sector_concentration_score": 0.0,
+                "average_exit_quality_score": 0.0,
+                "average_intelligent_position_size_pct": 0.0,
+                "average_survivability_score": 0.0,
+                "trade_management_distribution": {},
+                "trade_management_summary": "Inspect trade management portfolio intelligence import.",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "broker_execution_changed": False,
+                "natural_exit_preserved": True,
+                "forced_early_exit_enabled": False,
+                "trade_management_shadow_only": True,
+                "portfolio_intelligence_shadow_only": True,
+                "auto_execution_promotion_allowed": False,
+                "human_review_required": True,
+            }
+try:
     from engine.adaptive_market_intake_fmp_budget_suite_v1 import AdaptiveMarketIntakeFmpBudgetSuiteV1
 except Exception:
     class AdaptiveMarketIntakeFmpBudgetSuiteV1:  # type: ignore[override]
@@ -709,6 +746,7 @@ DYNAMIC_OPPORTUNITY_WEIGHTING_SUITE = DynamicOpportunityWeightingProfitOptimizat
 OPPORTUNITY_DISCOVERY_EXPANSION_SUITE = OpportunityDiscoveryExpansionV1(state_dir=STATE)
 PAPER_OPPORTUNITY_ALLOCATION_ENGINE = PaperOpportunityAllocationEngineV1(state_dir=STATE)
 EDGE_DEVELOPMENT_SUITE = EdgeDevelopmentSuiteV1(state_dir=STATE)
+TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE = TradeManagementPortfolioIntelligenceV1(state_dir=STATE)
 ADAPTIVE_MARKET_INTAKE_FMP_BUDGET_SUITE = AdaptiveMarketIntakeFmpBudgetSuiteV1(state_dir=STATE)
 ALPACA_PAPER_BROKER = AlpacaPaperBroker()
 HORIZON_PERFORMANCE_DASHBOARD = HorizonPerformanceDashboardV1(state_dir=STATE, db_path=os.path.join(STATE, "ai_trading_memory.db"))
@@ -14488,6 +14526,7 @@ PAPER_AUTOPILOT = PaperAutopilotEngine(
     freshness_manager=PAPER_FRESHNESS,
     paper_opportunity_allocator=PAPER_OPPORTUNITY_ALLOCATION_ENGINE,
     edge_development_suite=EDGE_DEVELOPMENT_SUITE,
+    trade_management_portfolio_suite=TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE,
 )
 _PAPER_AUTOPILOT_STARTED = False
 _PAPER_INPROC_HEARTBEAT_STATE = {"last_cycle_utc": "", "cycle_count": 0}
@@ -29749,6 +29788,82 @@ def edge_development_status_v1():
     }
 
 
+@router.get("/api/trade_management_portfolio_status_v1")
+def trade_management_portfolio_status_v1():
+    try:
+        try:
+            payload = dict(_latest_top_buys_runtime_snapshot() or {})
+        except Exception:
+            payload = {}
+        if not payload:
+            try:
+                cached = _CACHE.get("top_buys", {}) if isinstance(_CACHE.get("top_buys"), dict) else {}
+                mode_cached = ((cached.get("mode::balanced") or {}).get("data")) if isinstance(cached, dict) else {}
+                if isinstance(mode_cached, dict):
+                    payload = dict(mode_cached)
+            except Exception:
+                payload = {}
+        rows = _candidate_rows_from_payload(payload) if isinstance(payload, dict) else []
+        try:
+            rows = TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE.decorate_candidates(rows)
+        except Exception:
+            pass
+        out = TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE.status(rows=rows)
+        if isinstance(out, dict):
+            out["trade_management_portfolio_status_v1"] = True
+            out["trade_management_shadow_only"] = True
+            out["portfolio_intelligence_shadow_only"] = True
+            out["api_calls_used"] = 0
+            out["live_trading_changed"] = False
+            out["broker_execution_changed"] = False
+            out["production_rankings_changed"] = False
+            out["production_weights_changed"] = False
+            out["provider_rewrite_changed"] = False
+            out["alpaca_paper_only_preserved"] = True
+            out["natural_exit_preserved"] = True
+            out["forced_early_exit_enabled"] = False
+            out["auto_execution_promotion_allowed"] = False
+            out["human_review_required"] = True
+            return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "paper_only_shadow_learning",
+            "trade_management_portfolio_status_v1": True,
+            "portfolio_heat_score": 0.0,
+            "portfolio_correlation_risk": 0.0,
+            "sector_concentration_score": 0.0,
+            "average_exit_quality_score": 0.0,
+            "average_intelligent_position_size_pct": 0.0,
+            "average_survivability_score": 0.0,
+            "trade_management_distribution": {},
+            "trade_management_summary": f"trade_management_portfolio_status_unavailable: {str(exc)[:140]}",
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_execution_changed": False,
+            "natural_exit_preserved": True,
+            "forced_early_exit_enabled": False,
+            "trade_management_shadow_only": True,
+            "portfolio_intelligence_shadow_only": True,
+            "auto_execution_promotion_allowed": False,
+            "human_review_required": True,
+        }
+    return {
+        "enabled": False,
+        "version": "1.0.0",
+        "mode": "paper_only_shadow_learning",
+        "trade_management_portfolio_status_v1": True,
+        "trade_management_summary": "Trade management portfolio intelligence returned no payload.",
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+        "natural_exit_preserved": True,
+        "forced_early_exit_enabled": False,
+        "trade_management_shadow_only": True,
+        "portfolio_intelligence_shadow_only": True,
+    }
+
+
 @router.get("/api/adaptive_market_intake_fmp_budget_status_v1")
 def adaptive_market_intake_fmp_budget_status_v1():
     try:
@@ -35276,6 +35391,7 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
         and bool(out.get("dynamic_opportunity_weighting_v1"))
         and bool(out.get("opportunity_discovery_expansion_v1"))
         and bool(out.get("edge_development_suite_v1"))
+        and bool(out.get("trade_management_portfolio_intelligence_v1"))
         and bool(out.get("paper_opportunity_allocation_engine_v1"))
     )
     reuse_decorated_payload = bool(source_s in {"runtime_snapshot", "cached"} and already_decorated)
@@ -35294,6 +35410,10 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
             pass
         try:
             out = EDGE_DEVELOPMENT_SUITE.enrich_payload(out)
+        except Exception:
+            pass
+        try:
+            out = TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE.enrich_payload(out)
         except Exception:
             pass
         try:
@@ -35331,6 +35451,10 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
             pass
         try:
             out = EDGE_DEVELOPMENT_SUITE.enrich_payload(out)
+        except Exception:
+            pass
+        try:
+            out = TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE.enrich_payload(out)
         except Exception:
             pass
         try:
@@ -45789,6 +45913,17 @@ def learning_snapshot_fast_v1():
             snap["average_opportunity_quality"] = _to_float(edge_status.get("average_opportunity_quality"), 0.0)
             snap["average_expected_value_score"] = _to_float(edge_status.get("average_expected_value_score"), 0.0)
             snap["best_current_archetype"] = str(edge_status.get("best_current_archetype") or "")
+        try:
+            tm_payload = dict(_latest_top_buys_runtime_snapshot() or {})
+            tm_rows = _candidate_rows_from_payload(tm_payload) if isinstance(tm_payload, dict) else []
+            tm_status = TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE.status(rows=tm_rows)
+        except Exception:
+            tm_status = {}
+        if isinstance(tm_status, dict):
+            snap["trade_management_portfolio"] = tm_status
+            snap["portfolio_heat_score"] = _to_float(tm_status.get("portfolio_heat_score"), 0.0)
+            snap["trade_management_score"] = _to_float(tm_status.get("average_trade_management_score"), 0.0)
+            snap["survivability_score"] = _to_float(tm_status.get("average_survivability_score"), 0.0)
         snap["ok"] = True
         snap["source"] = str((payload or {}).get("learning_payload_source") or ("learning_insights_last_good" if payload else "empty_fallback"))
         return snap

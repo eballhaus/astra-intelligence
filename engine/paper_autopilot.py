@@ -67,6 +67,16 @@ except Exception:  # pragma: no cover - edge suite is additive
                 "forced_early_exit_enabled": False,
             }
 
+try:
+    from engine.trade_management_portfolio_intelligence_v1 import TradeManagementPortfolioIntelligenceV1
+except Exception:  # pragma: no cover - trade management suite is additive
+    class TradeManagementPortfolioIntelligenceV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -258,6 +268,14 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 self.edge_development_suite = None
+        self.trade_management_portfolio_suite = kwargs.get("trade_management_portfolio_suite")
+        if self.trade_management_portfolio_suite is None:
+            try:
+                self.trade_management_portfolio_suite = TradeManagementPortfolioIntelligenceV1(
+                    state_dir=os.path.dirname(self.state_path) or "state"
+                )
+            except Exception:
+                self.trade_management_portfolio_suite = None
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -448,6 +466,11 @@ class PaperAutopilotEngine:
         if self.edge_development_suite is not None and hasattr(self.edge_development_suite, "decorate_candidates"):
             try:
                 dedup = list(self.edge_development_suite.decorate_candidates(dedup) or dedup)
+            except Exception:
+                pass
+        if self.trade_management_portfolio_suite is not None and hasattr(self.trade_management_portfolio_suite, "decorate_candidates"):
+            try:
+                dedup = list(self.trade_management_portfolio_suite.decorate_candidates(dedup) or dedup)
             except Exception:
                 pass
         if self.paper_opportunity_allocator is not None and hasattr(self.paper_opportunity_allocator, "decorate_candidates"):
@@ -704,6 +727,15 @@ class PaperAutopilotEngine:
             "regime_alignment_label": str(r.get("regime_alignment_label") or ""),
             "edge_composite_score": round(_to_float(r.get("edge_composite_score"), 0.0), 2),
             "edge_composite_label": str(r.get("edge_composite_label") or ""),
+            "exit_quality_score": round(_to_float(r.get("exit_quality_score"), 0.0), 2),
+            "exit_readiness_label": str(r.get("exit_readiness_label") or ""),
+            "intelligent_position_size_pct": round(_to_float(r.get("intelligent_position_size_pct"), 0.0), 3),
+            "sizing_safety_label": str(r.get("sizing_safety_label") or ""),
+            "portfolio_heat_score": round(_to_float(r.get("portfolio_heat_score"), 0.0), 2),
+            "portfolio_correlation_risk": round(_to_float(r.get("portfolio_correlation_risk"), 0.0), 2),
+            "survivability_score": round(_to_float(r.get("survivability_score"), 0.0), 2),
+            "trade_management_score": round(_to_float(r.get("trade_management_score"), 0.0), 2),
+            "adaptive_trade_quality_label": str(r.get("adaptive_trade_quality_label") or ""),
             "allocation_lane": str(r.get("allocation_lane") or ""),
             "allocation_lane_score": round(_to_float(r.get("allocation_lane_score"), 0.0), 2),
             "paper_allocation_priority": round(_to_float(r.get("paper_allocation_priority"), 0.0), 2),
@@ -894,6 +926,28 @@ class PaperAutopilotEngine:
             "edge_composite_label": str(r.get("edge_composite_label") or ""),
             "edge_development_shadow_only": bool(r.get("edge_development_shadow_only", True)),
             "edge_summary": str(r.get("edge_summary") or ""),
+            "exit_quality_score": round(_to_float(r.get("exit_quality_score"), 0.0), 2),
+            "exit_readiness_label": str(r.get("exit_readiness_label") or ""),
+            "momentum_deterioration_score": round(_to_float(r.get("momentum_deterioration_score"), 0.0), 2),
+            "follow_through_decay_score": round(_to_float(r.get("follow_through_decay_score"), 0.0), 2),
+            "trend_exhaustion_score": round(_to_float(r.get("trend_exhaustion_score"), 0.0), 2),
+            "adaptive_stop_suggestion": str(r.get("adaptive_stop_suggestion") or ""),
+            "adaptive_profit_lock_score": round(_to_float(r.get("adaptive_profit_lock_score"), 0.0), 2),
+            "hold_quality_score": round(_to_float(r.get("hold_quality_score"), 0.0), 2),
+            "intelligent_position_size_pct": round(_to_float(r.get("intelligent_position_size_pct"), 0.0), 3),
+            "position_size_confidence": round(_to_float(r.get("position_size_confidence"), 0.0), 2),
+            "sizing_safety_label": str(r.get("sizing_safety_label") or ""),
+            "portfolio_heat_score": round(_to_float(r.get("portfolio_heat_score"), 0.0), 2),
+            "portfolio_correlation_risk": round(_to_float(r.get("portfolio_correlation_risk"), 0.0), 2),
+            "sector_concentration_score": round(_to_float(r.get("sector_concentration_score"), 0.0), 2),
+            "portfolio_stability_score": round(_to_float(r.get("portfolio_stability_score"), 0.0), 2),
+            "survivability_score": round(_to_float(r.get("survivability_score"), 0.0), 2),
+            "trade_management_score": round(_to_float(r.get("trade_management_score"), 0.0), 2),
+            "risk_adjusted_trade_quality": round(_to_float(r.get("risk_adjusted_trade_quality"), 0.0), 2),
+            "adaptive_trade_quality_label": str(r.get("adaptive_trade_quality_label") or ""),
+            "trade_management_shadow_only": bool(r.get("trade_management_shadow_only", True)),
+            "portfolio_intelligence_shadow_only": bool(r.get("portfolio_intelligence_shadow_only", True)),
+            "trade_management_summary": str(r.get("trade_management_summary") or ""),
             "allocation_lane": str(r.get("allocation_lane") or ""),
             "allocation_lane_score": round(_to_float(r.get("allocation_lane_score"), 0.0), 2),
             "paper_allocation_priority": round(_to_float(r.get("paper_allocation_priority"), 0.0), 2),
