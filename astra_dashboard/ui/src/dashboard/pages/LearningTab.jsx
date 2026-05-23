@@ -246,6 +246,7 @@ export default function LearningTab({ compact = false }) {
           fetchJson("opportunity_discovery_expansion", "/api/opportunity_discovery_expansion_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("edge_development", "/api/edge_development_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("trade_management_portfolio", "/api/trade_management_portfolio_status_v1", {}, { timeoutMs: 8000 }),
+          fetchJson("adaptive_learning_infrastructure", "/api/adaptive_learning_infrastructure_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("market_session_execution_timing", "/api/market_session_execution_timing_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("paper_opportunity_allocation", "/api/paper_opportunity_allocation_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
@@ -311,6 +312,7 @@ export default function LearningTab({ compact = false }) {
         const opportunityDiscoveryExpansion = selectPayload("opportunity_discovery_expansion", prevSafe.opportunityDiscoveryExpansion);
         const edgeDevelopment = selectPayload("edge_development", prevSafe.edgeDevelopment);
         const tradeManagementPortfolio = selectPayload("trade_management_portfolio", prevSafe.tradeManagementPortfolio);
+        const adaptiveLearningInfrastructure = selectPayload("adaptive_learning_infrastructure", prevSafe.adaptiveLearningInfrastructure);
         const marketSessionExecutionTiming = selectPayload("market_session_execution_timing", prevSafe.marketSessionExecutionTiming);
         const paperOpportunityAllocation = selectPayload("paper_opportunity_allocation", prevSafe.paperOpportunityAllocation);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
@@ -455,6 +457,7 @@ export default function LearningTab({ compact = false }) {
           opportunityDiscoveryExpansion,
           edgeDevelopment,
           tradeManagementPortfolio,
+          adaptiveLearningInfrastructure,
           marketSessionExecutionTiming,
           paperOpportunityAllocation,
         };
@@ -492,6 +495,7 @@ export default function LearningTab({ compact = false }) {
   const opportunityDiscoveryExpansion = data.opportunityDiscoveryExpansion || {};
   const edgeDevelopment = data.edgeDevelopment || {};
   const tradeManagementPortfolio = data.tradeManagementPortfolio || {};
+  const adaptiveLearningInfrastructure = data.adaptiveLearningInfrastructure || {};
   const marketSessionExecutionTiming = data.marketSessionExecutionTiming || {};
   const paperOpportunityAllocation = data.paperOpportunityAllocation || {};
 
@@ -2271,6 +2275,50 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Summary: {String(tradeManagementPortfolio?.trade_management_summary || "Waiting for trade management portfolio diagnostics.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Adaptive Intelligence & Learning Infrastructure</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Adaptive intelligence: {safeNumber(adaptiveLearningInfrastructure?.adaptive_intelligence_score).toFixed(1)}</div>
+          <div>Infrastructure maturity: {safeNumber(adaptiveLearningInfrastructure?.infrastructure_maturity_score).toFixed(1)}</div>
+          <div>Learning readiness: {safeNumber(adaptiveLearningInfrastructure?.learning_readiness_score).toFixed(1)}</div>
+          <div>Behavioral awareness: {safeNumber(adaptiveLearningInfrastructure?.behavioral_awareness_score).toFixed(1)}</div>
+          <div>Trading day health: {safeNumber(adaptiveLearningInfrastructure?.trading_day_health_score).toFixed(1)}</div>
+          <div>Daily survivability: {safeNumber(adaptiveLearningInfrastructure?.daily_survivability_score).toFixed(1)}</div>
+          <div>Replay ready: {adaptiveLearningInfrastructure?.replay_learning_ready ? "yes" : "no"}</div>
+          <div>Counterfactual tracking: {adaptiveLearningInfrastructure?.counterfactual_tracking_ready === false ? "not ready" : "ready"}</div>
+          <div>Copilot ready: {adaptiveLearningInfrastructure?.ollama_copilot_ready ? "yes" : "no"}</div>
+          <div>Hermes compatible: {adaptiveLearningInfrastructure?.hermes_agent_compatible ? "yes" : "no"}</div>
+          <div>AI execution authority: {adaptiveLearningInfrastructure?.ai_execution_authority ? "yes" : "no"}</div>
+          <div>API calls used: {safeNumber(adaptiveLearningInfrastructure?.api_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Strongest edge: {String(adaptiveLearningInfrastructure?.strongest_current_edge || "insufficient_data").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Weakest area: {String(adaptiveLearningInfrastructure?.weakest_current_area || adaptiveLearningInfrastructure?.current_primary_weakness || "waiting_for_self_review").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Portfolio health: {String(adaptiveLearningInfrastructure?.portfolio_heat_summary || "Waiting for portfolio health diagnostics.")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Blockers: {String(adaptiveLearningInfrastructure?.top_blocker_reason || "none").replaceAll("_", " ")}
+            {" / "}
+            Rejections: {String(adaptiveLearningInfrastructure?.most_common_rejection_reason || "none").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Self-review: {String(adaptiveLearningInfrastructure?.self_review_summary || "Waiting for self-review diagnostics.")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Market behavior: {String(adaptiveLearningInfrastructure?.current_market_behavior_summary || adaptiveLearningInfrastructure?.behavioral_risk_summary || "Waiting for behavioral diagnostics.")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Replay/session readiness: {String(adaptiveLearningInfrastructure?.replay_context_summary || "Replay hooks waiting for candidate snapshots.")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Copilot: {String(adaptiveLearningInfrastructure?.astra_copilot_summary || "Copilot diagnostics are explanation-only.")}
           </div>
         </div>
       </div>

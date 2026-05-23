@@ -581,6 +581,48 @@ except Exception:
                 "natural_exit_preserved": True,
             }
 try:
+    from engine.adaptive_learning_infrastructure_v1 import AdaptiveLearningInfrastructureV1
+except Exception:
+    class AdaptiveLearningInfrastructureV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def enrich_payload(self, payload):
+            return dict(payload or {})
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "adaptive_learning_infrastructure_status_v1": True,
+                "adaptive_intelligence_score": 0.0,
+                "infrastructure_maturity_score": 0.0,
+                "learning_readiness_score": 0.0,
+                "behavioral_awareness_score": 0.0,
+                "replay_learning_ready": False,
+                "counterfactual_tracking_ready": True,
+                "ollama_copilot_ready": True,
+                "hermes_agent_compatible": True,
+                "autonomous_ai_execution_allowed": False,
+                "ai_execution_authority": False,
+                "trading_day_health_score": 0.0,
+                "daily_survivability_score": 0.0,
+                "portfolio_heat_summary": "Inspect adaptive learning infrastructure import.",
+                "strongest_current_edge": "insufficient_data",
+                "current_primary_weakness": "engine_import_unavailable",
+                "top_blocker_reason": "engine_import_unavailable",
+                "current_market_behavior_summary": "Inspect adaptive learning infrastructure import.",
+                "regime_performance_summary": "insufficient_data",
+                "behavioral_risk_summary": "Inspect adaptive learning infrastructure import.",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+            }
+try:
     from engine.adaptive_market_intake_fmp_budget_suite_v1 import AdaptiveMarketIntakeFmpBudgetSuiteV1
 except Exception:
     class AdaptiveMarketIntakeFmpBudgetSuiteV1:  # type: ignore[override]
@@ -789,6 +831,7 @@ PAPER_OPPORTUNITY_ALLOCATION_ENGINE = PaperOpportunityAllocationEngineV1(state_d
 EDGE_DEVELOPMENT_SUITE = EdgeDevelopmentSuiteV1(state_dir=STATE)
 TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE = TradeManagementPortfolioIntelligenceV1(state_dir=STATE)
 MARKET_SESSION_EXECUTION_TIMING_SUITE = MarketSessionExecutionTimingV1()
+ADAPTIVE_LEARNING_INFRASTRUCTURE_SUITE = AdaptiveLearningInfrastructureV1(state_dir=STATE)
 ADAPTIVE_MARKET_INTAKE_FMP_BUDGET_SUITE = AdaptiveMarketIntakeFmpBudgetSuiteV1(state_dir=STATE)
 ALPACA_PAPER_BROKER = AlpacaPaperBroker()
 HORIZON_PERFORMANCE_DASHBOARD = HorizonPerformanceDashboardV1(state_dir=STATE, db_path=os.path.join(STATE, "ai_trading_memory.db"))
@@ -14570,6 +14613,7 @@ PAPER_AUTOPILOT = PaperAutopilotEngine(
     edge_development_suite=EDGE_DEVELOPMENT_SUITE,
     trade_management_portfolio_suite=TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE,
     market_session_timing_suite=MARKET_SESSION_EXECUTION_TIMING_SUITE,
+    adaptive_learning_infrastructure_suite=ADAPTIVE_LEARNING_INFRASTRUCTURE_SUITE,
 )
 _PAPER_AUTOPILOT_STARTED = False
 _PAPER_INPROC_HEARTBEAT_STATE = {"last_cycle_utc": "", "cycle_count": 0}
@@ -29978,6 +30022,115 @@ def market_session_execution_timing_status_v1():
     }
 
 
+@router.get("/api/adaptive_learning_infrastructure_status_v1")
+def adaptive_learning_infrastructure_status_v1():
+    try:
+        try:
+            payload = dict(_latest_top_buys_runtime_snapshot() or {})
+        except Exception:
+            payload = {}
+        if not payload:
+            try:
+                cached = _CACHE.get("top_buys", {}) if isinstance(_CACHE.get("top_buys"), dict) else {}
+                mode_cached = ((cached.get("mode::balanced") or {}).get("data")) if isinstance(cached, dict) else {}
+                if isinstance(mode_cached, dict):
+                    payload = dict(mode_cached)
+            except Exception:
+                payload = {}
+        rows = _candidate_rows_from_payload(payload) if isinstance(payload, dict) else []
+        try:
+            rows = ADAPTIVE_LEARNING_INFRASTRUCTURE_SUITE.decorate_candidates(rows)
+        except Exception:
+            pass
+        try:
+            trace = PAPER_AUTOPILOT.execution_trace(max_candidates=6)
+        except Exception:
+            trace = {}
+        try:
+            tm_status = TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE.status(rows=rows)
+        except Exception:
+            tm_status = {}
+        try:
+            session_status = MARKET_SESSION_EXECUTION_TIMING_SUITE.status(
+                broker_ready=bool((trace or {}).get("broker_execution_ready") or (trace or {}).get("broker_execution_enabled")),
+                open_orders_count=int(_to_float((trace or {}).get("open_orders_count"), 0.0)),
+            )
+        except Exception:
+            session_status = {}
+        out = ADAPTIVE_LEARNING_INFRASTRUCTURE_SUITE.status(
+            rows=rows,
+            paper_trace=trace if isinstance(trace, dict) else {},
+            trade_management=tm_status if isinstance(tm_status, dict) else {},
+            session_timing=session_status if isinstance(session_status, dict) else {},
+        )
+        if isinstance(out, dict):
+            out["adaptive_learning_infrastructure_status_v1"] = True
+            out["api_calls_used"] = 0
+            out["live_trading_changed"] = False
+            out["broker_execution_changed"] = False
+            out["production_rankings_changed"] = False
+            out["production_weights_changed"] = False
+            out["provider_rewrite_changed"] = False
+            out["alpaca_paper_only_preserved"] = True
+            out["natural_exit_preserved"] = True
+            out["forced_early_exit_enabled"] = False
+            out["forced_trade_enabled"] = False
+            out["autonomous_ai_execution_allowed"] = False
+            out["ai_execution_authority"] = False
+            return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "adaptive_learning_infrastructure_status_v1": True,
+            "adaptive_intelligence_score": 0.0,
+            "infrastructure_maturity_score": 0.0,
+            "learning_readiness_score": 0.0,
+            "behavioral_awareness_score": 0.0,
+            "replay_learning_ready": False,
+            "counterfactual_tracking_ready": True,
+            "ollama_copilot_ready": True,
+            "hermes_agent_compatible": True,
+            "autonomous_ai_execution_allowed": False,
+            "ai_execution_authority": False,
+            "trading_day_health_score": 0.0,
+            "daily_survivability_score": 0.0,
+            "portfolio_heat_summary": "Adaptive learning infrastructure status unavailable.",
+            "strongest_current_edge": "insufficient_data",
+            "current_primary_weakness": "status_unavailable",
+            "top_blocker_reason": "status_unavailable",
+            "current_market_behavior_summary": f"adaptive_learning_infrastructure_status_unavailable: {str(exc)[:140]}",
+            "regime_performance_summary": "insufficient_data",
+            "behavioral_risk_summary": "status_unavailable",
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_early_exit_enabled": False,
+            "forced_trade_enabled": False,
+        }
+    return {
+        "enabled": False,
+        "version": "1.0.0",
+        "adaptive_learning_infrastructure_status_v1": True,
+        "adaptive_intelligence_score": 0.0,
+        "infrastructure_maturity_score": 0.0,
+        "learning_readiness_score": 0.0,
+        "behavioral_awareness_score": 0.0,
+        "replay_learning_ready": False,
+        "counterfactual_tracking_ready": True,
+        "ollama_copilot_ready": True,
+        "hermes_agent_compatible": True,
+        "autonomous_ai_execution_allowed": False,
+        "ai_execution_authority": False,
+        "top_blocker_reason": "no_payload",
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+        "alpaca_paper_only_preserved": True,
+        "natural_exit_preserved": True,
+    }
+
+
 @router.get("/api/adaptive_market_intake_fmp_budget_status_v1")
 def adaptive_market_intake_fmp_budget_status_v1():
     try:
@@ -35506,6 +35659,7 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
         and bool(out.get("opportunity_discovery_expansion_v1"))
         and bool(out.get("edge_development_suite_v1"))
         and bool(out.get("trade_management_portfolio_intelligence_v1"))
+        and bool(out.get("adaptive_learning_infrastructure_v1"))
         and bool(out.get("paper_opportunity_allocation_engine_v1"))
     )
     reuse_decorated_payload = bool(source_s in {"runtime_snapshot", "cached"} and already_decorated)
@@ -35528,6 +35682,10 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
             pass
         try:
             out = TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE.enrich_payload(out)
+        except Exception:
+            pass
+        try:
+            out = ADAPTIVE_LEARNING_INFRASTRUCTURE_SUITE.enrich_payload(out)
         except Exception:
             pass
         try:
@@ -35569,6 +35727,10 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
             pass
         try:
             out = TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE.enrich_payload(out)
+        except Exception:
+            pass
+        try:
+            out = ADAPTIVE_LEARNING_INFRASTRUCTURE_SUITE.enrich_payload(out)
         except Exception:
             pass
         try:

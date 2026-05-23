@@ -19,12 +19,19 @@ try:
     from engine.trade_management_portfolio_intelligence_v1 import TradeManagementPortfolioIntelligenceV1
 except Exception:  # pragma: no cover - additive shadow decorator
     TradeManagementPortfolioIntelligenceV1 = None  # type: ignore[assignment]
+try:
+    from engine.adaptive_learning_infrastructure_v1 import AdaptiveLearningInfrastructureV1
+except Exception:  # pragma: no cover - additive shadow decorator
+    AdaptiveLearningInfrastructureV1 = None  # type: ignore[assignment]
 
 _router = ProviderRouter()
 _ranker = RankingEngine()
 _edge_development_suite = EdgeDevelopmentSuiteV1(state_dir="state") if EdgeDevelopmentSuiteV1 is not None else None
 _trade_management_portfolio_suite = (
     TradeManagementPortfolioIntelligenceV1(state_dir="state") if TradeManagementPortfolioIntelligenceV1 is not None else None
+)
+_adaptive_learning_infrastructure_suite = (
+    AdaptiveLearningInfrastructureV1(state_dir="state") if AdaptiveLearningInfrastructureV1 is not None else None
 )
 _TEMP_STRATEGY_ENABLED = str(os.getenv("ASTRA_TEMP_PROVIDER_STRATEGY_V1", "1")).strip().lower() in {"1", "true", "yes", "on"}
 _TEMP_FMP_REST_DISABLED = str(os.getenv("ASTRA_TEMP_FMP_REST_DISABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
@@ -298,6 +305,11 @@ def fetch_live_data(symbols=None):
     if _trade_management_portfolio_suite is not None and hasattr(_trade_management_portfolio_suite, "decorate_candidates"):
         try:
             rows = list(_trade_management_portfolio_suite.decorate_candidates(rows) or rows)
+        except Exception:
+            pass
+    if _adaptive_learning_infrastructure_suite is not None and hasattr(_adaptive_learning_infrastructure_suite, "decorate_candidates"):
+        try:
+            rows = list(_adaptive_learning_infrastructure_suite.decorate_candidates(rows) or rows)
         except Exception:
             pass
 

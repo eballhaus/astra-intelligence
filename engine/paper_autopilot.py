@@ -103,6 +103,34 @@ except Exception:  # pragma: no cover - session timing suite is additive
         def confirmation_for_candidate(self, *args, **kwargs):
             return self.status()
 
+try:
+    from engine.adaptive_learning_infrastructure_v1 import AdaptiveLearningInfrastructureV1
+except Exception:  # pragma: no cover - adaptive infrastructure is additive
+    class AdaptiveLearningInfrastructureV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "adaptive_learning_infrastructure_status_v1": True,
+                "adaptive_intelligence_score": 0.0,
+                "learning_readiness_score": 0.0,
+                "replay_learning_ready": False,
+                "ollama_copilot_ready": True,
+                "hermes_agent_compatible": True,
+                "autonomous_ai_execution_allowed": False,
+                "ai_execution_authority": False,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+            }
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -308,6 +336,14 @@ class PaperAutopilotEngine:
                 self.market_session_timing_suite = MarketSessionExecutionTimingV1()
             except Exception:
                 self.market_session_timing_suite = None
+        self.adaptive_learning_infrastructure_suite = kwargs.get("adaptive_learning_infrastructure_suite")
+        if self.adaptive_learning_infrastructure_suite is None:
+            try:
+                self.adaptive_learning_infrastructure_suite = AdaptiveLearningInfrastructureV1(
+                    state_dir=os.path.dirname(self.state_path) or "state"
+                )
+            except Exception:
+                self.adaptive_learning_infrastructure_suite = None
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -503,6 +539,11 @@ class PaperAutopilotEngine:
         if self.trade_management_portfolio_suite is not None and hasattr(self.trade_management_portfolio_suite, "decorate_candidates"):
             try:
                 dedup = list(self.trade_management_portfolio_suite.decorate_candidates(dedup) or dedup)
+            except Exception:
+                pass
+        if self.adaptive_learning_infrastructure_suite is not None and hasattr(self.adaptive_learning_infrastructure_suite, "decorate_candidates"):
+            try:
+                dedup = list(self.adaptive_learning_infrastructure_suite.decorate_candidates(dedup) or dedup)
             except Exception:
                 pass
         if self.paper_opportunity_allocator is not None and hasattr(self.paper_opportunity_allocator, "decorate_candidates"):
@@ -1770,6 +1811,18 @@ class PaperAutopilotEngine:
                     )
                 except Exception:
                     session_status = {}
+            adaptive_learning_status = {}
+            if self.adaptive_learning_infrastructure_suite is not None and hasattr(self.adaptive_learning_infrastructure_suite, "status"):
+                try:
+                    adaptive_learning_status = dict(
+                        self.adaptive_learning_infrastructure_suite.status(
+                            rows=candidates,
+                            session_timing=session_status,
+                        )
+                        or {}
+                    )
+                except Exception:
+                    adaptive_learning_status = {}
             for row in candidates:
                 if opened >= self.max_new_positions_per_cycle:
                     final_blocker_reason = final_blocker_reason or "max_new_positions_per_cycle_reached"
@@ -1931,6 +1984,7 @@ class PaperAutopilotEngine:
                 "candidates_seen": int(len(candidates)),
                 "paper_opportunity_allocation": allocation_status,
                 "market_session_execution_timing": session_status,
+                "adaptive_learning_infrastructure": adaptive_learning_status,
                 "market_session_mode": str(session_status.get("market_session_mode") or ""),
                 "paper_order_submission_allowed": bool(session_status.get("paper_order_submission_allowed", False)),
                 "execution_confirmation_required": bool(session_status.get("execution_confirmation_required", True)),
@@ -1969,6 +2023,7 @@ class PaperAutopilotEngine:
                 "candidates_seen": int(len(candidates)),
                 "paper_opportunity_allocation": allocation_status,
                 "market_session_execution_timing": session_status,
+                "adaptive_learning_infrastructure": adaptive_learning_status,
                 "market_session_mode": str(session_status.get("market_session_mode") or ""),
                 "paper_order_submission_allowed": bool(session_status.get("paper_order_submission_allowed", False)),
                 "execution_confirmation_required": bool(session_status.get("execution_confirmation_required", True)),
@@ -2035,6 +2090,19 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 session_status = {}
+        adaptive_learning_status = {}
+        if self.adaptive_learning_infrastructure_suite is not None and hasattr(self.adaptive_learning_infrastructure_suite, "status"):
+            try:
+                adaptive_learning_status = dict(
+                    self.adaptive_learning_infrastructure_suite.status(
+                        rows=candidates,
+                        paper_trace=last_trace,
+                        session_timing=session_status,
+                    )
+                    or {}
+                )
+            except Exception:
+                adaptive_learning_status = {}
         capacities = self._current_execution_capacities()
         internal_open_syms = set(capacities.get("open_symbols") or set())
         broker_snapshot = self._broker_open_symbols_snapshot()
@@ -2114,6 +2182,7 @@ class PaperAutopilotEngine:
             "candidates_seen": int(len(candidates)),
             "paper_opportunity_allocation": allocation_status,
             "market_session_execution_timing": session_status,
+            "adaptive_learning_infrastructure": adaptive_learning_status,
             "market_session_mode": str(last_trace.get("market_session_mode") or session_status.get("market_session_mode") or ""),
             "paper_order_submission_allowed": bool(last_trace.get("paper_order_submission_allowed", session_status.get("paper_order_submission_allowed", False))),
             "execution_confirmation_required": bool(last_trace.get("execution_confirmation_required", session_status.get("execution_confirmation_required", True))),
