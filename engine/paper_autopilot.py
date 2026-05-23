@@ -131,6 +131,34 @@ except Exception:  # pragma: no cover - adaptive infrastructure is additive
                 "natural_exit_preserved": True,
             }
 
+try:
+    from engine.replay_lifecycle_expectancy_learning_v1 import ReplayLifecycleExpectancyLearningV1
+except Exception:  # pragma: no cover - replay lifecycle suite is additive
+    class ReplayLifecycleExpectancyLearningV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "replay_lifecycle_expectancy_status_v1": True,
+                "replay_learning_score": 0.0,
+                "replay_learning_ready": False,
+                "lifecycle_tracking_ready": True,
+                "expectancy_learning_ready": False,
+                "adaptive_policy_ready": True,
+                "adaptive_policy_shadow_only": True,
+                "adaptive_policy_auto_apply_allowed": False,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+            }
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -344,6 +372,14 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 self.adaptive_learning_infrastructure_suite = None
+        self.replay_lifecycle_expectancy_suite = kwargs.get("replay_lifecycle_expectancy_suite")
+        if self.replay_lifecycle_expectancy_suite is None:
+            try:
+                self.replay_lifecycle_expectancy_suite = ReplayLifecycleExpectancyLearningV1(
+                    state_dir=os.path.dirname(self.state_path) or "state"
+                )
+            except Exception:
+                self.replay_lifecycle_expectancy_suite = None
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -544,6 +580,11 @@ class PaperAutopilotEngine:
         if self.adaptive_learning_infrastructure_suite is not None and hasattr(self.adaptive_learning_infrastructure_suite, "decorate_candidates"):
             try:
                 dedup = list(self.adaptive_learning_infrastructure_suite.decorate_candidates(dedup) or dedup)
+            except Exception:
+                pass
+        if self.replay_lifecycle_expectancy_suite is not None and hasattr(self.replay_lifecycle_expectancy_suite, "decorate_candidates"):
+            try:
+                dedup = list(self.replay_lifecycle_expectancy_suite.decorate_candidates(dedup) or dedup)
             except Exception:
                 pass
         if self.paper_opportunity_allocator is not None and hasattr(self.paper_opportunity_allocator, "decorate_candidates"):
@@ -1823,6 +1864,12 @@ class PaperAutopilotEngine:
                     )
                 except Exception:
                     adaptive_learning_status = {}
+            replay_lifecycle_status = {}
+            if self.replay_lifecycle_expectancy_suite is not None and hasattr(self.replay_lifecycle_expectancy_suite, "status"):
+                try:
+                    replay_lifecycle_status = dict(self.replay_lifecycle_expectancy_suite.status(rows=candidates) or {})
+                except Exception:
+                    replay_lifecycle_status = {}
             for row in candidates:
                 if opened >= self.max_new_positions_per_cycle:
                     final_blocker_reason = final_blocker_reason or "max_new_positions_per_cycle_reached"
@@ -1985,6 +2032,7 @@ class PaperAutopilotEngine:
                 "paper_opportunity_allocation": allocation_status,
                 "market_session_execution_timing": session_status,
                 "adaptive_learning_infrastructure": adaptive_learning_status,
+                "replay_lifecycle_expectancy_learning": replay_lifecycle_status,
                 "market_session_mode": str(session_status.get("market_session_mode") or ""),
                 "paper_order_submission_allowed": bool(session_status.get("paper_order_submission_allowed", False)),
                 "execution_confirmation_required": bool(session_status.get("execution_confirmation_required", True)),
@@ -2024,6 +2072,7 @@ class PaperAutopilotEngine:
                 "paper_opportunity_allocation": allocation_status,
                 "market_session_execution_timing": session_status,
                 "adaptive_learning_infrastructure": adaptive_learning_status,
+                "replay_lifecycle_expectancy_learning": replay_lifecycle_status,
                 "market_session_mode": str(session_status.get("market_session_mode") or ""),
                 "paper_order_submission_allowed": bool(session_status.get("paper_order_submission_allowed", False)),
                 "execution_confirmation_required": bool(session_status.get("execution_confirmation_required", True)),
@@ -2103,6 +2152,18 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 adaptive_learning_status = {}
+        replay_lifecycle_status = {}
+        if self.replay_lifecycle_expectancy_suite is not None and hasattr(self.replay_lifecycle_expectancy_suite, "status"):
+            try:
+                replay_lifecycle_status = dict(
+                    self.replay_lifecycle_expectancy_suite.status(
+                        rows=candidates,
+                        paper_trace=last_trace,
+                    )
+                    or {}
+                )
+            except Exception:
+                replay_lifecycle_status = {}
         capacities = self._current_execution_capacities()
         internal_open_syms = set(capacities.get("open_symbols") or set())
         broker_snapshot = self._broker_open_symbols_snapshot()
@@ -2183,6 +2244,7 @@ class PaperAutopilotEngine:
             "paper_opportunity_allocation": allocation_status,
             "market_session_execution_timing": session_status,
             "adaptive_learning_infrastructure": adaptive_learning_status,
+            "replay_lifecycle_expectancy_learning": replay_lifecycle_status,
             "market_session_mode": str(last_trace.get("market_session_mode") or session_status.get("market_session_mode") or ""),
             "paper_order_submission_allowed": bool(last_trace.get("paper_order_submission_allowed", session_status.get("paper_order_submission_allowed", False))),
             "execution_confirmation_required": bool(last_trace.get("execution_confirmation_required", session_status.get("execution_confirmation_required", True))),

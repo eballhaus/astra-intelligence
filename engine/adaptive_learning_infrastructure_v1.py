@@ -7,6 +7,11 @@ from datetime import date, datetime, timezone
 from statistics import mean
 from typing import Any
 
+try:
+    from engine.replay_lifecycle_expectancy_learning_v1 import ReplayLifecycleExpectancyLearningV1
+except Exception:  # pragma: no cover - additive learning reference only
+    ReplayLifecycleExpectancyLearningV1 = None  # type: ignore[assignment]
+
 VERSION = "1.0.0"
 MAX_TAIL_BYTES = 2_000_000
 MAX_ROWS = 900
@@ -155,6 +160,9 @@ class AdaptiveLearningInfrastructureV1:
         self.ledger_path = os.path.join(self.state_dir, "candidate_decision_ledger_v1.jsonl")
         self.paper_state_path = os.path.join(self.state_dir, "paper_autopilot_state.json")
         self._history_cache: dict[str, Any] | None = None
+        self.replay_lifecycle_expectancy = (
+            ReplayLifecycleExpectancyLearningV1(state_dir=self.state_dir) if ReplayLifecycleExpectancyLearningV1 is not None else None
+        )
 
     def _history(self) -> dict[str, Any]:
         if self._history_cache is not None:
@@ -467,6 +475,8 @@ class AdaptiveLearningInfrastructureV1:
             "behavioral_awareness_score": round(behavioral_awareness, 2),
             "self_review_summary": self_review_summary,
             "adaptive_learning_summary": f"Learning readiness {round(learning_readiness, 1)} with replay={bool(replay_ready)} and counterfactual tracking ready.",
+            "replay_lifecycle_expectancy_hooks_ready": bool(self.replay_lifecycle_expectancy is not None),
+            "replay_lifecycle_expectancy_integration": "status_reference_only_shadow_policy_recommendations",
             "recommended_next_focus": current_primary_weakness,
             "most_improved_area": most_improved,
             "weakest_current_area": weakest_area,

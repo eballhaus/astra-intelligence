@@ -247,6 +247,7 @@ export default function LearningTab({ compact = false }) {
           fetchJson("edge_development", "/api/edge_development_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("trade_management_portfolio", "/api/trade_management_portfolio_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("adaptive_learning_infrastructure", "/api/adaptive_learning_infrastructure_status_v1", {}, { timeoutMs: 8000 }),
+          fetchJson("replay_lifecycle_expectancy", "/api/replay_lifecycle_expectancy_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("market_session_execution_timing", "/api/market_session_execution_timing_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("paper_opportunity_allocation", "/api/paper_opportunity_allocation_status_v1", {}, { timeoutMs: 8000 }),
           fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
@@ -313,6 +314,7 @@ export default function LearningTab({ compact = false }) {
         const edgeDevelopment = selectPayload("edge_development", prevSafe.edgeDevelopment);
         const tradeManagementPortfolio = selectPayload("trade_management_portfolio", prevSafe.tradeManagementPortfolio);
         const adaptiveLearningInfrastructure = selectPayload("adaptive_learning_infrastructure", prevSafe.adaptiveLearningInfrastructure);
+        const replayLifecycleExpectancy = selectPayload("replay_lifecycle_expectancy", prevSafe.replayLifecycleExpectancy);
         const marketSessionExecutionTiming = selectPayload("market_session_execution_timing", prevSafe.marketSessionExecutionTiming);
         const paperOpportunityAllocation = selectPayload("paper_opportunity_allocation", prevSafe.paperOpportunityAllocation);
         const systemStatus = selectPayload("system_status", prevSafe.systemStatus);
@@ -458,6 +460,7 @@ export default function LearningTab({ compact = false }) {
           edgeDevelopment,
           tradeManagementPortfolio,
           adaptiveLearningInfrastructure,
+          replayLifecycleExpectancy,
           marketSessionExecutionTiming,
           paperOpportunityAllocation,
         };
@@ -496,6 +499,7 @@ export default function LearningTab({ compact = false }) {
   const edgeDevelopment = data.edgeDevelopment || {};
   const tradeManagementPortfolio = data.tradeManagementPortfolio || {};
   const adaptiveLearningInfrastructure = data.adaptiveLearningInfrastructure || {};
+  const replayLifecycleExpectancy = data.replayLifecycleExpectancy || {};
   const marketSessionExecutionTiming = data.marketSessionExecutionTiming || {};
   const paperOpportunityAllocation = data.paperOpportunityAllocation || {};
 
@@ -2319,6 +2323,53 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Copilot: {String(adaptiveLearningInfrastructure?.astra_copilot_summary || "Copilot diagnostics are explanation-only.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Replay, Lifecycle & Expectancy Learning</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Replay learning score: {safeNumber(replayLifecycleExpectancy?.replay_learning_score).toFixed(1)}</div>
+          <div>Replay maturity: {safeNumber(replayLifecycleExpectancy?.replay_learning_maturity_score).toFixed(1)}</div>
+          <div>Lifecycle quality: {safeNumber(replayLifecycleExpectancy?.lifecycle_tracking_quality_score).toFixed(1)}</div>
+          <div>Expectancy maturity: {safeNumber(replayLifecycleExpectancy?.expectancy_learning_maturity_score).toFixed(1)}</div>
+          <div>Adaptive maturity: {safeNumber(replayLifecycleExpectancy?.adaptive_learning_maturity_score).toFixed(1)}</div>
+          <div>Policy readiness: {safeNumber(replayLifecycleExpectancy?.adaptive_policy_readiness_score).toFixed(1)}</div>
+          <div>Expectancy sample size: {safeNumber(replayLifecycleExpectancy?.expectancy_sample_size).toFixed(0)}</div>
+          <div>Win rate: {safeNumber(replayLifecycleExpectancy?.expectancy_win_rate).toFixed(1)}%</div>
+          <div>Profit factor: {safeNumber(replayLifecycleExpectancy?.expectancy_profit_factor).toFixed(2)}</div>
+          <div>Avg return: {safeNumber(replayLifecycleExpectancy?.expectancy_avg_return).toFixed(3)}%</div>
+          <div>Replay ready: {replayLifecycleExpectancy?.replay_learning_ready ? "yes" : "no"}</div>
+          <div>Policy auto-apply: {replayLifecycleExpectancy?.adaptive_policy_auto_apply_allowed ? "yes" : "no"}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Strongest expectancy archetype: {String(replayLifecycleExpectancy?.top_expectancy_archetype || "insufficient_data").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Weakest expectancy archetype: {String(replayLifecycleExpectancy?.weakest_expectancy_archetype || "insufficient_data").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Learning signals: {String(replayLifecycleExpectancy?.strongest_learning_signal || "insufficient_data").replaceAll("_", " ")}
+            {" / "}
+            {String(replayLifecycleExpectancy?.weakest_learning_signal || "insufficient_data").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Adaptive policy: {String(replayLifecycleExpectancy?.current_policy_recommendation || replayLifecycleExpectancy?.adaptive_policy_recommendation || "waiting_for_policy_review").replaceAll("_", " ")}
+            {" ("}
+            {safeNumber(replayLifecycleExpectancy?.adaptive_policy_confidence).toFixed(1)}
+            {")"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Policy reason: {String(replayLifecycleExpectancy?.current_policy_reason || replayLifecycleExpectancy?.adaptive_policy_reason || "Waiting for expectancy evidence.")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Counterfactual: {String(replayLifecycleExpectancy?.replay_counterfactual_summary || "Waiting for replay counterfactual summary.")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Lifecycle: {String(replayLifecycleExpectancy?.lifecycle_summary || "Waiting for lifecycle tracking summary.")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Loop summary: {String(replayLifecycleExpectancy?.learning_loop_summary || "Waiting for replay/lifecycle/expectancy loop diagnostics.")}
           </div>
         </div>
       </div>
