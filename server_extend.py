@@ -699,6 +699,41 @@ except Exception:
                 "natural_exit_preserved": True,
             }
 try:
+    from engine.unified_learning_diagnostics_v1 import UnifiedLearningDiagnosticsV1
+except Exception:
+    class UnifiedLearningDiagnosticsV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def build(self, *args, **kwargs):
+            return {
+                "ok": False,
+                "enabled": True,
+                "version": "1.0.0",
+                "executive_snapshot": {
+                    "main_current_weakness": "unified_engine_import_unavailable",
+                    "strongest_current_area": "unknown",
+                    "next_best_focus": "restore_unified_learning_diagnostics_import",
+                    "primary_blocker_reason": "engine_import_unavailable",
+                    "confidence_label": "low",
+                    "evidence_label": "degraded",
+                },
+                "master_charts": {},
+                "stale_data_status": {"stale": True, "message": "Unified diagnostics import unavailable."},
+                "evidence_maturity_status": {"label": "degraded", "evidence_count": 0},
+                "future_suite_integration_contract": {
+                    "use_unified_learning_adapter": True,
+                    "avoid_frontend_endpoint_spam": True,
+                    "advanced_panels_lazy_load": True,
+                },
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "build_ms": 0.0,
+                "cache_hit": False,
+            }
+try:
     from engine.adaptive_market_intake_fmp_budget_suite_v1 import AdaptiveMarketIntakeFmpBudgetSuiteV1
 except Exception:
     class AdaptiveMarketIntakeFmpBudgetSuiteV1:  # type: ignore[override]
@@ -910,6 +945,7 @@ MARKET_SESSION_EXECUTION_TIMING_SUITE = MarketSessionExecutionTimingV1()
 ADAPTIVE_LEARNING_INFRASTRUCTURE_SUITE = AdaptiveLearningInfrastructureV1(state_dir=STATE)
 REPLAY_LIFECYCLE_EXPECTANCY_LEARNING_SUITE = ReplayLifecycleExpectancyLearningV1(state_dir=STATE)
 REGIME_EXECUTION_SURVIVABILITY_SUITE = RegimeExecutionSurvivabilityIntelligenceV1(state_dir=STATE)
+UNIFIED_LEARNING_DIAGNOSTICS = UnifiedLearningDiagnosticsV1(state_dir=STATE)
 ADAPTIVE_MARKET_INTAKE_FMP_BUDGET_SUITE = AdaptiveMarketIntakeFmpBudgetSuiteV1(state_dir=STATE)
 ALPACA_PAPER_BROKER = AlpacaPaperBroker()
 HORIZON_PERFORMANCE_DASHBOARD = HorizonPerformanceDashboardV1(state_dir=STATE, db_path=os.path.join(STATE, "ai_trading_memory.db"))
@@ -46502,6 +46538,99 @@ def learning_snapshot_fast_v1():
             "strongest_area": "insufficient_data",
             "operating_posture": "guarded",
         }
+
+
+@router.get("/api/unified_learning_diagnostics_v1")
+def unified_learning_diagnostics_v1(force: bool = False):
+    sources = {}
+    statuses = {}
+    try:
+        try:
+            top_payload = dict(_latest_top_buys_runtime_snapshot() or {})
+        except Exception:
+            top_payload = {}
+        if not top_payload:
+            try:
+                cached = _CACHE.get("top_buys", {}) if isinstance(_CACHE.get("top_buys"), dict) else {}
+                mode_cached = ((cached.get("mode::balanced") or {}).get("data")) if isinstance(cached, dict) else {}
+                if isinstance(mode_cached, dict):
+                    top_payload = dict(mode_cached)
+            except Exception:
+                top_payload = {}
+        sources["top_buys"] = top_payload if isinstance(top_payload, dict) else {}
+        rows = _candidate_rows_from_payload(top_payload) if isinstance(top_payload, dict) else []
+
+        try:
+            learning_payload = dict(_get_learning_insights_top_buys_fast() or {})
+            if not learning_payload:
+                learning_payload = dict(_load_learning_insights_last_good() or {})
+            sources["learning_snapshot_fast"] = _learning_snapshot_fast_from_payload(learning_payload)
+        except Exception:
+            sources["learning_snapshot_fast"] = {}
+
+        try:
+            paper_cached = ((_CACHE.get("paper_performance") or {}).get("data") or {})
+            sources["paper_performance"] = dict(paper_cached) if isinstance(paper_cached, dict) else {}
+        except Exception:
+            sources["paper_performance"] = {}
+
+        def _safe_status(name, fn):
+            try:
+                out = fn()
+                if isinstance(out, dict):
+                    statuses[name] = out
+            except Exception as exc:
+                statuses[name] = {
+                    "enabled": False,
+                    "degraded_reason": f"{name}_summary_unavailable: {str(exc)[:100]}",
+                    "api_calls_used": 0,
+                }
+
+        _safe_status("edge_development", lambda: EDGE_DEVELOPMENT_SUITE.status(rows=rows))
+        _safe_status("trade_management_portfolio", lambda: TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE.status(rows=rows))
+        _safe_status("adaptive_learning_infrastructure", lambda: ADAPTIVE_LEARNING_INFRASTRUCTURE_SUITE.status())
+        _safe_status("replay_lifecycle_expectancy", lambda: REPLAY_LIFECYCLE_EXPECTANCY_LEARNING_SUITE.status(rows=rows))
+        _safe_status("regime_execution_survivability", lambda: REGIME_EXECUTION_SURVIVABILITY_SUITE.status(rows=rows))
+        _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))
+        _safe_status("paper_opportunity_allocation", lambda: PAPER_OPPORTUNITY_ALLOCATION_ENGINE.status(rows=rows))
+        _safe_status("portfolio_risk_intelligence", lambda: PORTFOLIO_RISK_INTELLIGENCE_SUITE.status(rows=rows))
+        _safe_status("horizon_performance_dashboard", lambda: HORIZON_PERFORMANCE_DASHBOARD.status())
+
+        statuses["alpaca_paper_broker"] = {
+            "enabled": str(os.getenv("ASTRA_ENABLE_ALPACA_PAPER", "false")).strip().lower() == "true",
+            "paper_mode_verified": str(os.getenv("ALPACA_TRADING_MODE", "paper")).strip().lower() == "paper"
+            and "paper-api.alpaca.markets" in str(os.getenv("APCA_API_BASE_URL", "")),
+            "broker_execution_enabled": False,
+            "safety_status": "summary_only_no_broker_fetch",
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+        }
+
+        sources["statuses"] = statuses
+        out = UNIFIED_LEARNING_DIAGNOSTICS.build(sources, force=bool(force))
+        if isinstance(out, dict):
+            out["api_calls_used"] = 0
+            out["live_trading_changed"] = False
+            out["broker_behavior_changed"] = False
+            out["alpaca_paper_only_preserved"] = True
+            out["natural_exit_preserved"] = True
+            out["forced_trades_enabled"] = False
+            out["forced_exits_enabled"] = False
+            return out
+    except Exception as exc:
+        return UNIFIED_LEARNING_DIAGNOSTICS.build(
+            {
+                "statuses": {
+                    "unified_endpoint": {
+                        "enabled": False,
+                        "degraded_reason": f"unified_endpoint_failed: {str(exc)[:140]}",
+                        "api_calls_used": 0,
+                    }
+                }
+            },
+            force=True,
+        )
+    return UNIFIED_LEARNING_DIAGNOSTICS.build({}, force=bool(force))
 
 
 @router.get("/api/learning_weights")

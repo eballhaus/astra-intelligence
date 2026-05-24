@@ -139,6 +139,7 @@ export default function LearningTab({ compact = false }) {
   const [endpointStatus, setEndpointStatus] = useState({});
   const [timeline, setTimeline] = useState([]);
   const [data, setData] = useState({
+    unifiedLearningDiagnostics: {},
     learningSnapshotFast: {},
     learningInsights: {},
     paper: {},
@@ -222,38 +223,41 @@ export default function LearningTab({ compact = false }) {
       const secondaryResults = [];
       try {
         const primaryBatch = await Promise.all([
-          fetchJson("learning_snapshot_fast_v1", "/api/learning_snapshot_fast_v1", {}, { timeoutMs: 6000 }),
-          fetchJson("paper_performance", "/api/paper_performance", {}, { timeoutMs: 12000 }),
-          fetchJson("paper_status", "/api/paper_status", {}, { timeoutMs: 10000 }),
+          fetchJson("unified_learning_diagnostics", "/api/unified_learning_diagnostics_v1", {}, { timeoutMs: 6000 }),
         ]);
         fastResults.push(...primaryBatch);
 
-        const secondaryBatch = await Promise.all([
-          fetchJson("system_status", "/api/system_status", {}, { timeoutMs: 10000 }),
-          fetchJson("model_status", "/api/model_status", {}, { timeoutMs: 10000 }),
-          fetchJson("paper_worker_status", "/api/paper_worker_status", {}, { timeoutMs: 10000 }),
-          fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, { timeoutMs: 15000 }),
-          fetchJson("portfolio_risk_intel", "/api/portfolio_risk_intelligence_status_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("observation_throughput", "/api/observation_learning_throughput_status_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("execution_market_learning", "/api/execution_market_learning_expansion_status_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("autonomous_self_regulation", "/api/autonomous_research_self_regulation_status_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("paper_throughput_expansion", "/api/paper_autopilot_throughput_status_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("multi_horizon_paper_trading", "/api/multi_horizon_paper_trading_status_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("adaptive_market_intake", "/api/adaptive_market_intake_fmp_budget_status_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("alpaca_paper_broker", "/api/alpaca_paper_status_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("horizon_performance_dashboard", "/api/horizon_performance_dashboard_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("dynamic_opportunity_weighting", "/api/dynamic_opportunity_weighting_status_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("opportunity_discovery_expansion", "/api/opportunity_discovery_expansion_status_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("edge_development", "/api/edge_development_status_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("trade_management_portfolio", "/api/trade_management_portfolio_status_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("adaptive_learning_infrastructure", "/api/adaptive_learning_infrastructure_status_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("replay_lifecycle_expectancy", "/api/replay_lifecycle_expectancy_status_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("regime_execution_survivability", "/api/regime_execution_survivability_status_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("market_session_execution_timing", "/api/market_session_execution_timing_status_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("paper_opportunity_allocation", "/api/paper_opportunity_allocation_status_v1", {}, { timeoutMs: 8000 }),
-          fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
-        ]);
-        secondaryResults.push(...secondaryBatch);
+        if (showAdvancedSections) {
+          const secondaryBatch = await Promise.all([
+            fetchJson("learning_snapshot_fast_v1", "/api/learning_snapshot_fast_v1", {}, { timeoutMs: 6000 }),
+            fetchJson("paper_performance", "/api/paper_performance", {}, { timeoutMs: 12000 }),
+            fetchJson("paper_status", "/api/paper_status", {}, { timeoutMs: 10000 }),
+            fetchJson("system_status", "/api/system_status", {}, { timeoutMs: 10000 }),
+            fetchJson("model_status", "/api/model_status", {}, { timeoutMs: 10000 }),
+            fetchJson("paper_worker_status", "/api/paper_worker_status", {}, { timeoutMs: 10000 }),
+            fetchJson("top_buys", "/api/top_buys?buy_mode=balanced", {}, { timeoutMs: 15000 }),
+            fetchJson("portfolio_risk_intel", "/api/portfolio_risk_intelligence_status_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("observation_throughput", "/api/observation_learning_throughput_status_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("execution_market_learning", "/api/execution_market_learning_expansion_status_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("autonomous_self_regulation", "/api/autonomous_research_self_regulation_status_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("paper_throughput_expansion", "/api/paper_autopilot_throughput_status_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("multi_horizon_paper_trading", "/api/multi_horizon_paper_trading_status_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("adaptive_market_intake", "/api/adaptive_market_intake_fmp_budget_status_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("alpaca_paper_broker", "/api/alpaca_paper_status_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("horizon_performance_dashboard", "/api/horizon_performance_dashboard_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("dynamic_opportunity_weighting", "/api/dynamic_opportunity_weighting_status_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("opportunity_discovery_expansion", "/api/opportunity_discovery_expansion_status_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("edge_development", "/api/edge_development_status_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("trade_management_portfolio", "/api/trade_management_portfolio_status_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("adaptive_learning_infrastructure", "/api/adaptive_learning_infrastructure_status_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("replay_lifecycle_expectancy", "/api/replay_lifecycle_expectancy_status_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("regime_execution_survivability", "/api/regime_execution_survivability_status_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("market_session_execution_timing", "/api/market_session_execution_timing_status_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("paper_opportunity_allocation", "/api/paper_opportunity_allocation_status_v1", {}, { timeoutMs: 8000 }),
+            fetchJson("learning_insights", "/api/learning_insights", {}, { timeoutMs: 25000 }),
+          ]);
+          secondaryResults.push(...secondaryBatch);
+        }
       } finally {
         refreshInFlightRef.current = false;
       }
@@ -296,6 +300,7 @@ export default function LearningTab({ compact = false }) {
 
       setData((prev) => {
         const prevSafe = prev || {};
+        const unifiedLearningDiagnostics = selectPayload("unified_learning_diagnostics", prevSafe.unifiedLearningDiagnostics);
         const paper = selectPayload("paper_performance", prevSafe.paper);
         const paperStatus = selectPayload("paper_status", prevSafe.paperStatus);
         const workerStatus = selectPayload("paper_worker_status", prevSafe.workerStatus);
@@ -440,6 +445,7 @@ export default function LearningTab({ compact = false }) {
         });
 
         return {
+          unifiedLearningDiagnostics,
           learningSnapshotFast,
           learningInsights,
           paper,
@@ -476,9 +482,10 @@ export default function LearningTab({ compact = false }) {
       mounted = false;
       clearInterval(timer);
     };
-  }, [resolvedApiBase]);
+  }, [resolvedApiBase, showAdvancedSections]);
 
   const paper = data.paper || {};
+  const unifiedLearningDiagnostics = data.unifiedLearningDiagnostics || {};
   const paperStatus = data.paperStatus || {};
   const workerStatus = {
     ...(paperStatus?.worker || {}),
@@ -1531,6 +1538,96 @@ export default function LearningTab({ compact = false }) {
     { name: "Premature Exit", value: safeNumber(buyToPositionFeedbackSuite?.premature_exit_score) },
   ];
 
+  const unified = unifiedLearningDiagnostics || {};
+  const executive = unified?.executive_snapshot || {};
+  const masterCharts = unified?.master_charts || {};
+  const staleStatus = unified?.stale_data_status || {};
+  const evidenceStatus = unified?.evidence_maturity_status || {};
+  const futureContract = unified?.future_suite_integration_contract || {};
+  const advancedStatuses = unified?.advanced_panel_statuses || unified?.advanced_panel_links || {};
+  const metricDisplay = (metric, suffix = "") => {
+    if (!metric || typeof metric !== "object") return "n/a";
+    if (metric.value === null || metric.value === undefined) {
+      return String(metric.maturity || metric.label || "insufficient_evidence").replaceAll("_", " ");
+    }
+    const value = Number(metric.value);
+    if (!Number.isFinite(value)) return String(metric.label || "n/a").replaceAll("_", " ");
+    return `${value.toFixed(Math.abs(value) >= 10 ? 1 : 2)}${suffix}`;
+  };
+  const metricToneFromMaturity = (metric, invert = false) => {
+    const maturity = String(metric?.maturity || "").toLowerCase();
+    if (["insufficient_closed_trades", "awaiting_replay_data", "awaiting_lifecycle_outcomes", "insufficient_evidence", "warming_up"].includes(maturity)) return "caution";
+    const value = Number(metric?.value);
+    if (!Number.isFinite(value)) return "caution";
+    if (invert) {
+      if (value <= 35) return "strong";
+      if (value <= 65) return "mixed";
+      return "weak";
+    }
+    return metricTone(value, 70, 50);
+  };
+  const chartSeries = (chart, keys) => {
+    const timestamps = Array.isArray(chart?.timestamps) ? chart.timestamps : [];
+    return timestamps.map((ts, idx) => {
+      const row = { ts: String(ts || idx + 1).slice(0, 16) };
+      keys.forEach((key) => {
+        const series = Array.isArray(chart?.[key]) ? chart[key] : [];
+        row[key] = safeNumber(series[idx], null);
+      });
+      return row;
+    });
+  };
+  const equityChart = chartSeries(masterCharts?.equity_curve_drawdown_upgrade_timeline, ["equity_values", "drawdown_values", "portfolio_heat_markers"]);
+  const expectancyChart = chartSeries(masterCharts?.rolling_expectancy_profit_factor_win_rate, ["rolling_expectancy", "rolling_profit_factor", "rolling_win_rate"]);
+  const entryExitQualityChart = chartSeries(masterCharts?.entry_followthrough_exit_quality, ["entry_quality", "follow_through_quality", "exit_quality", "profit_giveback", "weak_follow_through_rate"]);
+  const portfolioChart = chartSeries(masterCharts?.portfolio_survivability, ["portfolio_survivability", "concentration_risk", "correlation_risk", "portfolio_heat", "diversification_quality"]);
+  const maturityChart = chartSeries(masterCharts?.learning_maturity_timeline, ["replay_maturity", "lifecycle_maturity", "expectancy_maturity", "closed_trade_coverage", "adaptive_confidence"]);
+  const topMetricGroups = [
+    ["Core Performance", executive?.core_performance || {}, [
+      ["Released WR", "released_win_rate", "%"],
+      ["Profit Factor", "profit_factor", ""],
+      ["Expectancy", "expectancy_score", ""],
+      ["Avg Return", "average_return", "%"],
+      ["Buy Purity", "buy_list_purity", ""],
+    ]],
+    ["Execution Quality", executive?.execution_quality || {}, [
+      ["Entry Quality", "entry_quality", ""],
+      ["Exit Quality", "exit_quality", ""],
+      ["Follow-Through", "follow_through_quality", ""],
+      ["Confidence Truth", "confidence_truthfulness", ""],
+    ]],
+    ["Portfolio Health", executive?.portfolio_health || {}, [
+      ["Survivability", "portfolio_survivability", ""],
+      ["Concentration", "concentration_risk", ""],
+      ["Correlation", "correlation_risk", ""],
+      ["Heat", "portfolio_heat", ""],
+    ]],
+    ["Learning Status", executive?.learning_status || {}, [
+      ["Replay", "replay_maturity", ""],
+      ["Lifecycle", "lifecycle_maturity", ""],
+      ["Expectancy", "expectancy_maturity", ""],
+      ["Coverage", "closed_trade_coverage", ""],
+      ["Adaptive Confidence", "adaptive_confidence", ""],
+    ]],
+    ["System Health", executive?.system_health || {}, [
+      ["Runtime", "runtime_integrity", ""],
+      ["Data Quality", "data_quality", ""],
+      ["Provider Health", "provider_health", ""],
+      ["Refresh Integrity", "learning_refresh_integrity", ""],
+    ]],
+  ];
+  const ChartShell = ({ title, subtitle, children, empty }) => (
+    <div style={{ background: "rgba(12,24,42,0.35)", border: "1px solid #2f4a72", borderRadius: 12, padding: 10, minHeight: 240 }}>
+      <div style={{ fontSize: 13, color: "#dbeafe", fontWeight: 700 }}>{title}</div>
+      <div style={{ fontSize: 11, color: "#91a8c8", marginBottom: 8 }}>{subtitle}</div>
+      {empty ? (
+        <div style={{ height: 190, display: "grid", placeItems: "center", color: "#9fb1cc", fontSize: 12, textAlign: "center" }}>
+          Insufficient evidence for this chart. Astra is waiting for more natural lifecycle outcomes.
+        </div>
+      ) : children}
+    </div>
+  );
+
   if (compact) {
     return (
       <div style={{ display: "grid", gap: 12 }}>
@@ -1592,6 +1689,228 @@ export default function LearningTab({ compact = false }) {
       </div>
     );
   }
+
+  return (
+    <div style={{ display: "grid", gap: "12px" }}>
+      <div style={{ ...panelStyle, padding: "16px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: "1.18rem", color: "#f3f8ff" }}>Unified Learning Diagnostics</h2>
+            <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 4 }}>
+              One fast control-tower snapshot for performance, execution, portfolio risk, learning maturity, and system health.
+            </div>
+            <div style={{ fontSize: 11, color: "#85a2c8", marginTop: 5 }}>
+              Evidence: {String(executive?.evidence_label || evidenceStatus?.label || "warming_up").replaceAll("_", " ")}
+              {" | "}
+              Confidence: {String(executive?.confidence_label || "low").replaceAll("_", " ")}
+              {" | "}
+              Build: {safeNumber(unified?.build_ms).toFixed(1)}ms
+              {" | "}
+              Cache: {unified?.cache_hit ? `hit (${safeNumber(unified?.cache_age_seconds).toFixed(1)}s)` : "fresh"}
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: "#9fb1cc", textAlign: "right" }}>
+            Updated {String(unified?.generated_at || lastFetchAt || "n/a")}
+            <br />
+            Initial endpoint calls: 1
+          </div>
+        </div>
+        {staleStatus?.stale || unified?.degraded_reason ? (
+          <div style={{ marginTop: 12, border: "1px solid #765d2e", background: "rgba(103, 74, 22, 0.28)", borderRadius: 10, padding: "9px 10px", color: "#ffe2a1", fontSize: 12 }}>
+            {String(staleStatus?.message || "Learning snapshot is using last-known-good data because some advanced diagnostics timed out.")}
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 12 }}>
+        {topMetricGroups.map(([groupTitle, groupPayload, metrics]) => (
+          <div key={groupTitle} style={{ ...panelStyle, padding: 12 }}>
+            <h3 style={{ margin: "0 0 8px", fontSize: 14 }}>{groupTitle}</h3>
+            <div style={{ display: "grid", gap: 8 }}>
+              {metrics.map(([label, key, suffix]) => {
+                const metric = groupPayload?.[key] || {};
+                const invert = ["concentration_risk", "correlation_risk", "portfolio_heat"].includes(key);
+                const tone = toneColors(metricToneFromMaturity(metric, invert));
+                return (
+                  <div key={`${groupTitle}-${key}`} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 9px" }} title={String(metric?.explanation || "")}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                      <div style={{ fontSize: 11, color: "#9fb1cc" }}>{label}</div>
+                      <div style={{ background: tone.badgeBg, border: `1px solid ${tone.badgeBorder}`, color: tone.badgeText, borderRadius: 999, padding: "1px 7px", fontSize: 9, textTransform: "uppercase" }}>
+                        {String(metric?.maturity || metric?.label || "n/a").replaceAll("_", " ")}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 19, color: "#f2f7ff", fontWeight: 800, marginTop: 4 }}>{metricDisplay(metric, suffix)}</div>
+                    <div style={{ fontSize: 10, color: "#7892ba", marginTop: 3 }}>Evidence {safeNumber(metric?.evidence_count).toFixed(0)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>What Needs Attention</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 9, fontSize: 12 }}>
+          <div style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "9px 10px" }}>
+            <div style={{ color: "#9fb1cc", fontSize: 11 }}>Main weakness</div>
+            <div style={{ fontWeight: 800, color: "#f2f7ff" }}>{String(executive?.main_current_weakness || "insufficient_evidence").replaceAll("_", " ")}</div>
+          </div>
+          <div style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "9px 10px" }}>
+            <div style={{ color: "#9fb1cc", fontSize: 11 }}>Strongest area</div>
+            <div style={{ fontWeight: 800, color: "#f2f7ff" }}>{String(executive?.strongest_current_area || "warming_up").replaceAll("_", " ")}</div>
+          </div>
+          <div style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "9px 10px" }}>
+            <div style={{ color: "#9fb1cc", fontSize: 11 }}>Primary blocker</div>
+            <div style={{ fontWeight: 800, color: "#f2f7ff" }}>{String(executive?.primary_blocker_reason || "none").replaceAll("_", " ")}</div>
+          </div>
+          <div style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "9px 10px" }}>
+            <div style={{ color: "#9fb1cc", fontSize: 11 }}>Next best focus</div>
+            <div style={{ fontWeight: 800, color: "#f2f7ff" }}>{String(executive?.next_best_focus || "collect more completed paper outcomes").replaceAll("_", " ")}</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Master Charts</h3>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginBottom: 10 }}>
+          Charts are powered by the unified snapshot and gracefully fall back when evidence is still warming up.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12 }}>
+          <ChartShell title="Equity Curve + Drawdown" subtitle="System progress with drawdown pressure." empty={equityChart.length === 0}>
+            <ResponsiveContainer width="100%" height={190}>
+              <LineChart data={equityChart}>
+                <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
+                <XAxis dataKey="ts" tick={{ fill: "#8ea1c3", fontSize: 10 }} />
+                <YAxis tick={{ fill: "#8ea1c3", fontSize: 10 }} />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="equity_values" stroke="#22c55e" strokeWidth={2} dot={false} name="Equity" />
+                <Line type="monotone" dataKey="drawdown_values" stroke="#f43f5e" strokeWidth={2} dot={false} name="Drawdown" />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartShell>
+          <ChartShell title="Rolling Expectancy + PF + WR" subtitle="Whether Astra is getting smarter, not just busier." empty={expectancyChart.length === 0}>
+            <ResponsiveContainer width="100%" height={190}>
+              <LineChart data={expectancyChart}>
+                <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
+                <XAxis dataKey="ts" tick={{ fill: "#8ea1c3", fontSize: 10 }} />
+                <YAxis tick={{ fill: "#8ea1c3", fontSize: 10 }} />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="rolling_expectancy" stroke="#38bdf8" strokeWidth={2} dot={false} name="Expectancy" />
+                <Line type="monotone" dataKey="rolling_profit_factor" stroke="#f59e0b" strokeWidth={2} dot={false} name="Profit Factor" />
+                <Line type="monotone" dataKey="rolling_win_rate" stroke="#a78bfa" strokeWidth={2} dot={false} name="Win Rate" />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartShell>
+          <ChartShell title="Entry → Follow-Through → Exit" subtitle="Execution and trade-management improvement." empty={entryExitQualityChart.length === 0}>
+            <ResponsiveContainer width="100%" height={190}>
+              <LineChart data={entryExitQualityChart}>
+                <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
+                <XAxis dataKey="ts" tick={{ fill: "#8ea1c3", fontSize: 10 }} />
+                <YAxis tick={{ fill: "#8ea1c3", fontSize: 10 }} />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="entry_quality" stroke="#22c55e" strokeWidth={2} dot={false} name="Entry" />
+                <Line type="monotone" dataKey="follow_through_quality" stroke="#38bdf8" strokeWidth={2} dot={false} name="Follow-Through" />
+                <Line type="monotone" dataKey="exit_quality" stroke="#f59e0b" strokeWidth={2} dot={false} name="Exit" />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartShell>
+          <ChartShell title="Portfolio Survivability" subtitle="Risk control, concentration, heat, and diversification." empty={portfolioChart.length === 0}>
+            <ResponsiveContainer width="100%" height={190}>
+              <LineChart data={portfolioChart}>
+                <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
+                <XAxis dataKey="ts" tick={{ fill: "#8ea1c3", fontSize: 10 }} />
+                <YAxis tick={{ fill: "#8ea1c3", fontSize: 10 }} />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="portfolio_survivability" stroke="#22c55e" strokeWidth={2} dot={false} name="Survivability" />
+                <Line type="monotone" dataKey="concentration_risk" stroke="#f43f5e" strokeWidth={2} dot={false} name="Concentration" />
+                <Line type="monotone" dataKey="correlation_risk" stroke="#f59e0b" strokeWidth={2} dot={false} name="Correlation" />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartShell>
+          <ChartShell title="Learning Maturity Timeline" subtitle="Replay, lifecycle, expectancy, coverage, and adaptive confidence." empty={maturityChart.length === 0}>
+            <ResponsiveContainer width="100%" height={190}>
+              <LineChart data={maturityChart}>
+                <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
+                <XAxis dataKey="ts" tick={{ fill: "#8ea1c3", fontSize: 10 }} />
+                <YAxis tick={{ fill: "#8ea1c3", fontSize: 10 }} />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="replay_maturity" stroke="#38bdf8" strokeWidth={2} dot={false} name="Replay" />
+                <Line type="monotone" dataKey="lifecycle_maturity" stroke="#22c55e" strokeWidth={2} dot={false} name="Lifecycle" />
+                <Line type="monotone" dataKey="expectancy_maturity" stroke="#a78bfa" strokeWidth={2} dot={false} name="Expectancy" />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartShell>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Learning Maturity & System Health</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+          <div>Evidence maturity: {String(evidenceStatus?.label || "warming_up").replaceAll("_", " ")}</div>
+          <div>Closed trade evidence: {safeNumber(evidenceStatus?.closed_trade_count, evidenceStatus?.evidence_count).toFixed(0)}</div>
+          <div>Replay ready: {evidenceStatus?.replay_ready ? "yes" : "no"}</div>
+          <div>Lifecycle ready: {evidenceStatus?.lifecycle_ready ? "yes" : "no"}</div>
+          <div>Expectancy ready: {evidenceStatus?.expectancy_ready ? "yes" : "no"}</div>
+          <div>API calls used: {safeNumber(unified?.api_calls_used).toFixed(0)}</div>
+          <div>Failed advanced sources: {safeNumber(unified?.failed_sources_count).toFixed(0)}</div>
+          <div>Future suites use adapter: {futureContract?.use_unified_learning_adapter ? "yes" : "no"}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            {String(evidenceStatus?.explanation || "Learning maturity diagnostics are warming up.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle, padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+        <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+          Advanced diagnostics are collapsed and lazy-loaded. New suites should feed this unified snapshot instead of adding initial frontend calls.
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowAdvancedSections((v) => !v)}
+          style={{
+            background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+            color: "#dce7ff",
+            border: "1px solid #496a97",
+            borderRadius: "6px",
+            fontSize: "0.72rem",
+            padding: "0.25rem 0.55rem",
+            cursor: "pointer",
+          }}
+        >
+          {showAdvancedSections ? "Hide Advanced Diagnostics" : "Load Advanced Diagnostics"}
+        </button>
+      </div>
+
+      {showAdvancedSections ? (
+        <div style={{ ...panelStyle }}>
+          <h3 style={{ marginTop: 0 }}>Advanced Diagnostics Status</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 9, fontSize: 12 }}>
+            {Object.entries(advancedStatuses || {}).map(([name, status]) => (
+              <div key={name} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+                <div style={{ color: "#dbeafe", fontWeight: 700 }}>{String(name).replaceAll("_", " ")}</div>
+                <div>Status: {String(status?.status || "not_loaded").replaceAll("_", " ")}</div>
+                <div>Maturity: {String(status?.maturity || "summary_only").replaceAll("_", " ")}</div>
+                <div>Blocker: {String(status?.blocker || "none").replaceAll("_", " ")}</div>
+                <div>API calls: {safeNumber(status?.api_calls_used).toFixed(0)} | Stale: {status?.stale ? "yes" : "no"}</div>
+              </div>
+            ))}
+          </div>
+          {fetchError ? (
+            <details style={{ marginTop: 12, fontSize: 12, color: "#f0c6b1" }}>
+              <summary style={{ cursor: "pointer" }}>Advanced fetch details</summary>
+              <div style={{ marginTop: 6 }}>{fetchError}</div>
+            </details>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
 
   return (
     <div style={{ display: "grid", gap: "12px" }}>
