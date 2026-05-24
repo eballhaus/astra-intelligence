@@ -699,6 +699,42 @@ except Exception:
                 "natural_exit_preserved": True,
             }
 try:
+    from engine.adaptive_execution_exit_intelligence_v2 import AdaptiveExecutionExitIntelligenceV2
+except Exception:
+    class AdaptiveExecutionExitIntelligenceV2:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def enrich_payload(self, payload):
+            return dict(payload or {})
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "2.0.0",
+                "mode": "paper_only_shadow_learning",
+                "adaptive_execution_exit_intelligence_status_v2": True,
+                "execution_posture": "confirmation_required",
+                "exit_quality": None,
+                "continuation_quality": None,
+                "chase_risk": None,
+                "adaptive_profitability": None,
+                "lifecycle_stability": None,
+                "strongest_adaptive_behavior": "insufficient_data",
+                "biggest_weakness": "engine_import_unavailable",
+                "summary": "Adaptive execution and exit V2 import unavailable.",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_trades_enabled": False,
+                "forced_exits_enabled": False,
+            }
+try:
     from engine.unified_learning_diagnostics_v1 import UnifiedLearningDiagnosticsV1
 except Exception:
     class UnifiedLearningDiagnosticsV1:  # type: ignore[override]
@@ -945,6 +981,7 @@ MARKET_SESSION_EXECUTION_TIMING_SUITE = MarketSessionExecutionTimingV1()
 ADAPTIVE_LEARNING_INFRASTRUCTURE_SUITE = AdaptiveLearningInfrastructureV1(state_dir=STATE)
 REPLAY_LIFECYCLE_EXPECTANCY_LEARNING_SUITE = ReplayLifecycleExpectancyLearningV1(state_dir=STATE)
 REGIME_EXECUTION_SURVIVABILITY_SUITE = RegimeExecutionSurvivabilityIntelligenceV1(state_dir=STATE)
+ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V2 = AdaptiveExecutionExitIntelligenceV2(state_dir=STATE)
 UNIFIED_LEARNING_DIAGNOSTICS = UnifiedLearningDiagnosticsV1(state_dir=STATE)
 ADAPTIVE_MARKET_INTAKE_FMP_BUDGET_SUITE = AdaptiveMarketIntakeFmpBudgetSuiteV1(state_dir=STATE)
 ALPACA_PAPER_BROKER = AlpacaPaperBroker()
@@ -14730,6 +14767,7 @@ PAPER_AUTOPILOT = PaperAutopilotEngine(
     adaptive_learning_infrastructure_suite=ADAPTIVE_LEARNING_INFRASTRUCTURE_SUITE,
     replay_lifecycle_expectancy_suite=REPLAY_LIFECYCLE_EXPECTANCY_LEARNING_SUITE,
     regime_execution_survivability_suite=REGIME_EXECUTION_SURVIVABILITY_SUITE,
+    adaptive_execution_exit_v2_suite=ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V2,
 )
 _PAPER_AUTOPILOT_STARTED = False
 _PAPER_INPROC_HEARTBEAT_STATE = {"last_cycle_utc": "", "cycle_count": 0}
@@ -30430,6 +30468,84 @@ def regime_execution_survivability_status_v1():
     }
 
 
+@router.get("/api/adaptive_execution_exit_intelligence_status_v2")
+def adaptive_execution_exit_intelligence_status_v2(force: bool = False):
+    try:
+        try:
+            payload = dict(_latest_top_buys_runtime_snapshot() or {})
+        except Exception:
+            payload = {}
+        if not payload:
+            try:
+                cached = _CACHE.get("top_buys", {}) if isinstance(_CACHE.get("top_buys"), dict) else {}
+                mode_cached = ((cached.get("mode::balanced") or {}).get("data")) if isinstance(cached, dict) else {}
+                if isinstance(mode_cached, dict):
+                    payload = dict(mode_cached)
+            except Exception:
+                payload = {}
+        rows = _candidate_rows_from_payload(payload) if isinstance(payload, dict) else []
+        try:
+            rows = ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V2.decorate_candidates(rows)
+        except Exception:
+            pass
+        out = ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V2.status(rows=rows, force=bool(force))
+        if isinstance(out, dict):
+            out["adaptive_execution_exit_intelligence_status_v2"] = True
+            out["api_calls_used"] = 0
+            out["live_trading_changed"] = False
+            out["broker_behavior_changed"] = False
+            out["production_rankings_changed"] = False
+            out["production_weights_changed"] = False
+            out["provider_rewrite_changed"] = False
+            out["paper_only_preserved"] = True
+            out["alpaca_paper_only_preserved"] = True
+            out["natural_exit_preserved"] = True
+            out["forced_trades_enabled"] = False
+            out["forced_exits_enabled"] = False
+            out["deterministic_execution_preserved"] = True
+            return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "2.0.0",
+            "mode": "paper_only_shadow_learning",
+            "adaptive_execution_exit_intelligence_status_v2": True,
+            "maturity": "degraded",
+            "execution_posture": "confirmation_required",
+            "exit_quality": None,
+            "continuation_quality": None,
+            "chase_risk": None,
+            "adaptive_profitability": None,
+            "lifecycle_stability": None,
+            "strongest_adaptive_behavior": "insufficient_data",
+            "biggest_weakness": "status_unavailable",
+            "summary": f"adaptive_execution_exit_intelligence_v2_status_unavailable: {str(exc)[:140]}",
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+        }
+    return {
+        "enabled": False,
+        "version": "2.0.0",
+        "mode": "paper_only_shadow_learning",
+        "adaptive_execution_exit_intelligence_status_v2": True,
+        "summary": "Adaptive execution and exit intelligence returned no payload.",
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+        "broker_behavior_changed": False,
+        "paper_only_preserved": True,
+        "alpaca_paper_only_preserved": True,
+        "natural_exit_preserved": True,
+        "forced_trades_enabled": False,
+        "forced_exits_enabled": False,
+    }
+
+
 @router.get("/api/adaptive_market_intake_fmp_budget_status_v1")
 def adaptive_market_intake_fmp_budget_status_v1():
     try:
@@ -35961,6 +36077,7 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
         and bool(out.get("adaptive_learning_infrastructure_v1"))
         and bool(out.get("replay_lifecycle_expectancy_learning_v1"))
         and bool(out.get("regime_execution_survivability_intelligence_v1"))
+        and bool(out.get("adaptive_execution_exit_intelligence_v2"))
         and bool(out.get("paper_opportunity_allocation_engine_v1"))
     )
     reuse_decorated_payload = bool(source_s in {"runtime_snapshot", "cached"} and already_decorated)
@@ -35995,6 +36112,10 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
             pass
         try:
             out = REGIME_EXECUTION_SURVIVABILITY_SUITE.enrich_payload(out)
+        except Exception:
+            pass
+        try:
+            out = ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V2.enrich_payload(out)
         except Exception:
             pass
         try:
@@ -36048,6 +36169,10 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
             pass
         try:
             out = REGIME_EXECUTION_SURVIVABILITY_SUITE.enrich_payload(out)
+        except Exception:
+            pass
+        try:
+            out = ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V2.enrich_payload(out)
         except Exception:
             pass
         try:
@@ -46591,6 +46716,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("adaptive_learning_infrastructure", lambda: ADAPTIVE_LEARNING_INFRASTRUCTURE_SUITE.status())
         _safe_status("replay_lifecycle_expectancy", lambda: REPLAY_LIFECYCLE_EXPECTANCY_LEARNING_SUITE.status(rows=rows))
         _safe_status("regime_execution_survivability", lambda: REGIME_EXECUTION_SURVIVABILITY_SUITE.status(rows=rows))
+        _safe_status("adaptive_execution_exit_intelligence_v2", lambda: ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V2.status(rows=rows))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))
         _safe_status("paper_opportunity_allocation", lambda: PAPER_OPPORTUNITY_ALLOCATION_ENGINE.status(rows=rows))
         _safe_status("portfolio_risk_intelligence", lambda: PORTFOLIO_RISK_INTELLIGENCE_SUITE.status(rows=rows))

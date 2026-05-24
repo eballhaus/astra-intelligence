@@ -263,6 +263,7 @@ class UnifiedLearningDiagnosticsV1:
         executive = self._executive_snapshot(perf, execution, portfolio, learning, regime, system, candidate_rows, evidence_count)
         charts = self._master_charts(history_rows, candidate_rows, statuses)
         advanced = self._advanced_statuses(statuses, sources)
+        adaptive_v2 = self._adaptive_execution_exit_summary(statuses.get("adaptive_execution_exit_intelligence_v2") or {})
         stale = self._stale_status(sources, system)
         return {
             "ok": True,
@@ -277,6 +278,12 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_health_summary": portfolio,
             "learning_maturity_summary": learning,
             "regime_context_summary": regime,
+            "adaptive_execution_exit_intelligence_v2": adaptive_v2,
+            "adaptive_execution_intelligence": adaptive_v2.get("adaptive_execution_intelligence", {}),
+            "exit_intelligence_v2": adaptive_v2.get("exit_intelligence_v2", {}),
+            "regime_adaptive_trading": adaptive_v2.get("regime_adaptive_trading", {}),
+            "lifecycle_adaptation": adaptive_v2.get("lifecycle_adaptation", {}),
+            "profitability_improvement_diagnostics": adaptive_v2.get("profitability_improvement_diagnostics", {}),
             "system_health_summary": system,
             "advanced_panel_links": advanced,
             "advanced_panel_statuses": advanced,
@@ -409,6 +416,40 @@ class UnifiedLearningDiagnosticsV1:
             "regime_behavior_summary": _text(regime.get("regime_behavior_summary"), "Waiting for regime evidence."),
         }
 
+    def _adaptive_execution_exit_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "2.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_shadow_learning"),
+            "maturity": _text(data.get("maturity"), "insufficient_lifecycle_data"),
+            "evidence_count": _to_int(data.get("evidence_count"), 0),
+            "execution_posture": _text(data.get("execution_posture"), "confirmation_required"),
+            "exit_quality": data.get("exit_quality"),
+            "continuation_quality": data.get("continuation_quality"),
+            "chase_risk": data.get("chase_risk"),
+            "adaptive_profitability": data.get("adaptive_profitability"),
+            "lifecycle_stability": data.get("lifecycle_stability"),
+            "strongest_adaptive_behavior": _text(data.get("strongest_adaptive_behavior"), "insufficient_data"),
+            "biggest_weakness": _text(data.get("biggest_weakness"), "insufficient_lifecycle_data"),
+            "summary": _text(data.get("summary"), "Adaptive execution and exit diagnostics are warming up."),
+            "adaptive_execution_intelligence": dict(data.get("execution_timing_diagnostics") or {}),
+            "exit_intelligence_v2": dict(data.get("adaptive_exit_diagnostics") or {}),
+            "regime_adaptive_trading": dict(data.get("regime_adaptation_diagnostics") or {}),
+            "lifecycle_adaptation": dict(data.get("lifecycle_adaptation_diagnostics") or {}),
+            "profitability_improvement_diagnostics": dict(data.get("profitability_improvement_diagnostics") or {}),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "stale": bool(data.get("stale") or data.get("stale_cache")),
+            "degraded_reason": _text(data.get("degraded_reason"), ""),
+            "live_trading_changed": False,
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+        }
+
     def _system_health_summary(self, sources: dict[str, Any], statuses: dict[str, dict[str, Any]], learning_fast: dict[str, Any]) -> dict[str, Any]:
         failed = [k for k, v in statuses.items() if isinstance(v, dict) and v.get("enabled") is False and v.get("degraded_reason")]
         runtime = _first_float(learning_fast.get("runtime_learning_stability"), (statuses.get("adaptive_learning_infrastructure") or {}).get("trading_day_health_score"), default=0.0)
@@ -507,6 +548,11 @@ class UnifiedLearningDiagnosticsV1:
         regime = statuses.get("regime_execution_survivability") or {}
         portfolio = statuses.get("trade_management_portfolio") or {}
         replay = statuses.get("replay_lifecycle_expectancy") or {}
+        adaptive_v2 = statuses.get("adaptive_execution_exit_intelligence_v2") or {}
+        adaptive_exit = dict(adaptive_v2.get("adaptive_exit_diagnostics") or {})
+        adaptive_exec = dict(adaptive_v2.get("execution_timing_diagnostics") or {})
+        adaptive_lifecycle = dict(adaptive_v2.get("lifecycle_adaptation_diagnostics") or {})
+        adaptive_profit = dict(adaptive_v2.get("profitability_improvement_diagnostics") or {})
         heat = _score(portfolio.get("portfolio_heat_score"), 50.0)
         concentration = _score(regime.get("portfolio_concentration_risk"), 50.0)
         correlation = _score(regime.get("portfolio_correlation_risk"), 50.0)
@@ -523,6 +569,11 @@ class UnifiedLearningDiagnosticsV1:
         expectancy_series = [round(_score(replay.get("expectancy_learning_maturity_score"), 0.0), 2)] * timeline_len
         coverage_series = [round(_score(replay.get("lifecycle_tracking_quality_score"), 0.0), 2)] * timeline_len
         adaptive_series = [round(_score((statuses.get("adaptive_learning_infrastructure") or {}).get("learning_readiness_score"), 0.0), 2)] * timeline_len
+        adaptive_giveback_series = [round(_score((adaptive_exit.get("profit_giveback_pressure") or {}).get("value"), 0.0), 2)] * timeline_len
+        adaptive_continuation_series = [round(_score(adaptive_v2.get("continuation_quality"), _score((adaptive_exit.get("continuation_strength") or {}).get("value"), 50.0)), 2)] * timeline_len
+        adaptive_hold_series = [round(_score((adaptive_exit.get("adaptive_hold_quality") or {}).get("value"), _score((adaptive_lifecycle.get("hold_quality") or {}).get("value"), 50.0)), 2)] * timeline_len
+        regime_expectancy_series = [round(_score((adaptive_profit.get("regime_adjusted_expectancy") or {}).get("value"), 50.0), 2)] * timeline_len
+        execution_timing_series = [round(_score((adaptive_exec.get("execution_timing_quality") or {}).get("value"), 50.0), 2)] * timeline_len
         matrix: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
         for r in history_rows[-MAX_ROWS:]:
             reg = _text(r.get("current_market_regime") or r.get("market_regime") or r.get("regime_context"), "unknown")
@@ -581,6 +632,14 @@ class UnifiedLearningDiagnosticsV1:
                 "closed_trade_coverage": coverage_series,
                 "adaptive_confidence": adaptive_series,
             },
+            "adaptive_execution_exit_v2_trends": {
+                "timestamps": timestamps,
+                "profit_giveback_trend": adaptive_giveback_series,
+                "continuation_quality_trend": adaptive_continuation_series,
+                "adaptive_hold_quality_trend": adaptive_hold_series,
+                "regime_adjusted_expectancy_trend": regime_expectancy_series,
+                "execution_timing_trend": execution_timing_series,
+            },
             "regime_archetype_performance_heatmap": {
                 "regime_archetype_matrix": heatmap,
                 "expectancy_by_regime": {k: round(mean([cell.get("expectancy") or 0 for cell in v.values()]), 4) for k, v in heatmap.items()},
@@ -604,7 +663,8 @@ class UnifiedLearningDiagnosticsV1:
         names = [
             "learning_snapshot", "paper_performance", "top_buys", "edge_development", "trade_management_portfolio",
             "adaptive_learning_infrastructure", "replay_lifecycle_expectancy", "regime_execution_survivability",
-            "market_session_execution_timing", "paper_opportunity_allocation", "alpaca_paper_broker", "horizon_performance_dashboard",
+            "adaptive_execution_exit_intelligence_v2", "market_session_execution_timing", "paper_opportunity_allocation",
+            "alpaca_paper_broker", "horizon_performance_dashboard",
         ]
         out = {}
         for name in names:
@@ -631,6 +691,7 @@ class UnifiedLearningDiagnosticsV1:
             "adaptive_learning_infrastructure": "/api/adaptive_learning_infrastructure_status_v1",
             "replay_lifecycle_expectancy": "/api/replay_lifecycle_expectancy_status_v1",
             "regime_execution_survivability": "/api/regime_execution_survivability_status_v1",
+            "adaptive_execution_exit_intelligence_v2": "/api/adaptive_execution_exit_intelligence_status_v2",
             "market_session_execution_timing": "/api/market_session_execution_timing_status_v1",
             "paper_opportunity_allocation": "/api/paper_opportunity_allocation_status_v1",
             "alpaca_paper_broker": "/api/alpaca_paper_status_v1",

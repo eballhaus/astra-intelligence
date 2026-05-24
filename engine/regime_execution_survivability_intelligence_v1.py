@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from statistics import mean, pstdev
 from typing import Any
 
+try:
+    from engine.adaptive_execution_exit_intelligence_v2 import AdaptiveExecutionExitIntelligenceV2
+except Exception:  # pragma: no cover - additive diagnostics only
+    AdaptiveExecutionExitIntelligenceV2 = None  # type: ignore[assignment]
+
 VERSION = "1.0.0"
 MAX_TAIL_BYTES = 2_000_000
 MAX_ROWS = 1000
@@ -198,6 +203,11 @@ class RegimeExecutionSurvivabilityIntelligenceV1:
         self.labels_path = os.path.join(self.state_dir, "outcome_labels_v1.jsonl")
         self.ledger_path = os.path.join(self.state_dir, "candidate_decision_ledger_v1.jsonl")
         self._cache: dict[str, Any] | None = None
+        self.adaptive_execution_exit_v2 = (
+            AdaptiveExecutionExitIntelligenceV2(state_dir=self.state_dir)
+            if AdaptiveExecutionExitIntelligenceV2 is not None
+            else None
+        )
 
     def _history(self) -> list[dict[str, Any]]:
         if self._cache is not None:
@@ -463,6 +473,7 @@ class RegimeExecutionSurvivabilityIntelligenceV1:
             "weakest_survivability_archetype": weakest_arch,
             "regime_execution_alignment": round(mean([_score01(r.get("regime_execution_alignment"), 50.0) for r in decorated]), 2) if decorated else 50.0,
             "adaptive_execution_summary": f"Regime {current_regime}; execution {round(execution_quality, 1)}, chase risk {round(chase_risk, 1)}, survivability {round(survivability_score, 1)}.",
+            "adaptive_execution_exit_v2_hooks_ready": bool(self.adaptive_execution_exit_v2 is not None),
             "api_calls_used": 0,
             "live_trading_changed": False,
             "broker_execution_changed": False,

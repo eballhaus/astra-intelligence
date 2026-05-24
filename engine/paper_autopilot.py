@@ -183,6 +183,31 @@ except Exception:  # pragma: no cover - regime execution suite is additive
                 "natural_exit_preserved": True,
             }
 
+try:
+    from engine.adaptive_execution_exit_intelligence_v2 import AdaptiveExecutionExitIntelligenceV2
+except Exception:  # pragma: no cover - adaptive execution V2 is additive
+    class AdaptiveExecutionExitIntelligenceV2:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "2.0.0",
+                "adaptive_execution_exit_intelligence_status_v2": True,
+                "mode": "paper_only_shadow_learning",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_trades_enabled": False,
+                "forced_exits_enabled": False,
+            }
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -412,6 +437,14 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 self.regime_execution_survivability_suite = None
+        self.adaptive_execution_exit_v2_suite = kwargs.get("adaptive_execution_exit_v2_suite")
+        if self.adaptive_execution_exit_v2_suite is None:
+            try:
+                self.adaptive_execution_exit_v2_suite = AdaptiveExecutionExitIntelligenceV2(
+                    state_dir=os.path.dirname(self.state_path) or "state"
+                )
+            except Exception:
+                self.adaptive_execution_exit_v2_suite = None
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -622,6 +655,11 @@ class PaperAutopilotEngine:
         if self.regime_execution_survivability_suite is not None and hasattr(self.regime_execution_survivability_suite, "decorate_candidates"):
             try:
                 dedup = list(self.regime_execution_survivability_suite.decorate_candidates(dedup) or dedup)
+            except Exception:
+                pass
+        if self.adaptive_execution_exit_v2_suite is not None and hasattr(self.adaptive_execution_exit_v2_suite, "decorate_candidates"):
+            try:
+                dedup = list(self.adaptive_execution_exit_v2_suite.decorate_candidates(dedup) or dedup)
             except Exception:
                 pass
         if self.paper_opportunity_allocator is not None and hasattr(self.paper_opportunity_allocator, "decorate_candidates"):
@@ -1913,6 +1951,12 @@ class PaperAutopilotEngine:
                     regime_execution_status = dict(self.regime_execution_survivability_suite.status(rows=candidates) or {})
                 except Exception:
                     regime_execution_status = {}
+            adaptive_execution_exit_status = {}
+            if self.adaptive_execution_exit_v2_suite is not None and hasattr(self.adaptive_execution_exit_v2_suite, "status"):
+                try:
+                    adaptive_execution_exit_status = dict(self.adaptive_execution_exit_v2_suite.status(rows=candidates) or {})
+                except Exception:
+                    adaptive_execution_exit_status = {}
             for row in candidates:
                 if opened >= self.max_new_positions_per_cycle:
                     final_blocker_reason = final_blocker_reason or "max_new_positions_per_cycle_reached"
@@ -2077,6 +2121,7 @@ class PaperAutopilotEngine:
                 "adaptive_learning_infrastructure": adaptive_learning_status,
                 "replay_lifecycle_expectancy_learning": replay_lifecycle_status,
                 "regime_execution_survivability": regime_execution_status,
+                "adaptive_execution_exit_intelligence_v2": adaptive_execution_exit_status,
                 "market_session_mode": str(session_status.get("market_session_mode") or ""),
                 "paper_order_submission_allowed": bool(session_status.get("paper_order_submission_allowed", False)),
                 "execution_confirmation_required": bool(session_status.get("execution_confirmation_required", True)),
@@ -2118,6 +2163,7 @@ class PaperAutopilotEngine:
                 "adaptive_learning_infrastructure": adaptive_learning_status,
                 "replay_lifecycle_expectancy_learning": replay_lifecycle_status,
                 "regime_execution_survivability": regime_execution_status,
+                "adaptive_execution_exit_intelligence_v2": adaptive_execution_exit_status,
                 "market_session_mode": str(session_status.get("market_session_mode") or ""),
                 "paper_order_submission_allowed": bool(session_status.get("paper_order_submission_allowed", False)),
                 "execution_confirmation_required": bool(session_status.get("execution_confirmation_required", True)),
@@ -2221,6 +2267,18 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 regime_execution_status = {}
+        adaptive_execution_exit_status = {}
+        if self.adaptive_execution_exit_v2_suite is not None and hasattr(self.adaptive_execution_exit_v2_suite, "status"):
+            try:
+                adaptive_execution_exit_status = dict(
+                    self.adaptive_execution_exit_v2_suite.status(
+                        rows=candidates,
+                        paper_trace=last_trace,
+                    )
+                    or {}
+                )
+            except Exception:
+                adaptive_execution_exit_status = {}
         capacities = self._current_execution_capacities()
         internal_open_syms = set(capacities.get("open_symbols") or set())
         broker_snapshot = self._broker_open_symbols_snapshot()
@@ -2303,6 +2361,7 @@ class PaperAutopilotEngine:
             "adaptive_learning_infrastructure": adaptive_learning_status,
             "replay_lifecycle_expectancy_learning": replay_lifecycle_status,
             "regime_execution_survivability": regime_execution_status,
+            "adaptive_execution_exit_intelligence_v2": adaptive_execution_exit_status,
             "market_session_mode": str(last_trace.get("market_session_mode") or session_status.get("market_session_mode") or ""),
             "paper_order_submission_allowed": bool(last_trace.get("paper_order_submission_allowed", session_status.get("paper_order_submission_allowed", False))),
             "execution_confirmation_required": bool(last_trace.get("execution_confirmation_required", session_status.get("execution_confirmation_required", True))),

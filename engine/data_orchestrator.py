@@ -31,6 +31,10 @@ try:
     from engine.regime_execution_survivability_intelligence_v1 import RegimeExecutionSurvivabilityIntelligenceV1
 except Exception:  # pragma: no cover - additive shadow decorator
     RegimeExecutionSurvivabilityIntelligenceV1 = None  # type: ignore[assignment]
+try:
+    from engine.adaptive_execution_exit_intelligence_v2 import AdaptiveExecutionExitIntelligenceV2
+except Exception:  # pragma: no cover - additive shadow decorator
+    AdaptiveExecutionExitIntelligenceV2 = None  # type: ignore[assignment]
 
 _router = ProviderRouter()
 _ranker = RankingEngine()
@@ -46,6 +50,9 @@ _replay_lifecycle_expectancy_suite = (
 )
 _regime_execution_survivability_suite = (
     RegimeExecutionSurvivabilityIntelligenceV1(state_dir="state") if RegimeExecutionSurvivabilityIntelligenceV1 is not None else None
+)
+_adaptive_execution_exit_v2_suite = (
+    AdaptiveExecutionExitIntelligenceV2(state_dir="state") if AdaptiveExecutionExitIntelligenceV2 is not None else None
 )
 _TEMP_STRATEGY_ENABLED = str(os.getenv("ASTRA_TEMP_PROVIDER_STRATEGY_V1", "1")).strip().lower() in {"1", "true", "yes", "on"}
 _TEMP_FMP_REST_DISABLED = str(os.getenv("ASTRA_TEMP_FMP_REST_DISABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
@@ -334,6 +341,11 @@ def fetch_live_data(symbols=None):
     if _regime_execution_survivability_suite is not None and hasattr(_regime_execution_survivability_suite, "decorate_candidates"):
         try:
             rows = list(_regime_execution_survivability_suite.decorate_candidates(rows) or rows)
+        except Exception:
+            pass
+    if _adaptive_execution_exit_v2_suite is not None and hasattr(_adaptive_execution_exit_v2_suite, "decorate_candidates"):
+        try:
+            rows = list(_adaptive_execution_exit_v2_suite.decorate_candidates(rows) or rows)
         except Exception:
             pass
 
