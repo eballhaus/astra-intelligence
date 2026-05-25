@@ -265,6 +265,7 @@ class UnifiedLearningDiagnosticsV1:
         advanced = self._advanced_statuses(statuses, sources)
         adaptive_v2 = self._adaptive_execution_exit_summary(statuses.get("adaptive_execution_exit_intelligence_v2") or {})
         diversification_v2 = self._portfolio_diversification_summary(statuses.get("portfolio_diversification_correlation_v2") or {})
+        mobile_compaction = self._mobile_runtime_compaction_summary(statuses.get("mobile_runtime_compaction") or {})
         stale = self._stale_status(sources, system)
         return {
             "ok": True,
@@ -278,6 +279,7 @@ class UnifiedLearningDiagnosticsV1:
             "execution_quality_summary": execution,
             "portfolio_health_summary": portfolio,
             "portfolio_diversification_correlation_v2": diversification_v2,
+            "mobile_runtime_compaction": mobile_compaction,
             "learning_maturity_summary": learning,
             "regime_context_summary": regime,
             "adaptive_execution_exit_intelligence_v2": adaptive_v2,
@@ -456,6 +458,37 @@ class UnifiedLearningDiagnosticsV1:
             "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
             "forced_trades_enabled": False,
             "forced_exits_enabled": False,
+        }
+
+    def _mobile_runtime_compaction_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_display_compaction"),
+            "mobile_runtime_compaction_active": bool(data.get("mobile_runtime_compaction_active", False)),
+            "true_broker_active_positions": data.get("true_broker_active_positions"),
+            "internal_open_workflow_rows": _to_int(data.get("internal_open_workflow_rows"), 0),
+            "stale_internal_positions": _to_int(data.get("stale_internal_positions"), 0),
+            "display_active_positions_count": _to_int(data.get("display_active_positions_count"), 0),
+            "active_positions_preview_limit": _to_int(data.get("active_positions_preview_limit"), 5),
+            "recent_orders_preview_limit": _to_int(data.get("recent_orders_preview_limit"), 5),
+            "canceled_orders_compacted_count": _to_int(data.get("canceled_orders_compacted_count"), 0),
+            "stale_rows_hidden_count": _to_int(data.get("stale_rows_hidden_count"), 0),
+            "learning_fast_path_active": bool(data.get("learning_fast_path_active", False)),
+            "canceled_order_scan_skipped": bool(data.get("canceled_order_scan_skipped", True)),
+            "learning_payload_compacted": bool(data.get("learning_payload_compacted", False)),
+            "mobile_payload_compacted": bool(data.get("mobile_payload_compacted", False)),
+            "full_history_preserved": bool(data.get("full_history_preserved", True)),
+            "replay_learning_preserved": bool(data.get("replay_learning_preserved", True)),
+            "summary": _text(data.get("summary"), "Mobile runtime compaction diagnostics are warming up."),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
         }
 
     def _portfolio_diversification_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -722,7 +755,7 @@ class UnifiedLearningDiagnosticsV1:
             "learning_snapshot", "paper_performance", "top_buys", "edge_development", "trade_management_portfolio",
             "adaptive_learning_infrastructure", "replay_lifecycle_expectancy", "regime_execution_survivability",
             "adaptive_execution_exit_intelligence_v2", "market_session_execution_timing", "paper_opportunity_allocation",
-            "portfolio_diversification_correlation_v2", "alpaca_paper_broker", "horizon_performance_dashboard",
+            "portfolio_diversification_correlation_v2", "mobile_runtime_compaction", "alpaca_paper_broker", "horizon_performance_dashboard",
         ]
         out = {}
         for name in names:
@@ -751,6 +784,7 @@ class UnifiedLearningDiagnosticsV1:
             "regime_execution_survivability": "/api/regime_execution_survivability_status_v1",
             "adaptive_execution_exit_intelligence_v2": "/api/adaptive_execution_exit_intelligence_status_v2",
             "portfolio_diversification_correlation_v2": "/api/portfolio_diversification_correlation_status_v2",
+            "mobile_runtime_compaction": "/api/mobile_runtime_compaction_status_v1",
             "market_session_execution_timing": "/api/market_session_execution_timing_status_v1",
             "paper_opportunity_allocation": "/api/paper_opportunity_allocation_status_v1",
             "alpaca_paper_broker": "/api/alpaca_paper_status_v1",

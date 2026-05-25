@@ -196,6 +196,8 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
   const [topBuys, setTopBuys] = useState({});
   const [systemStatus, setSystemStatus] = useState({});
   const [positions, setPositions] = useState([]);
+  const [positionsMeta, setPositionsMeta] = useState({});
+  const [isMobileView, setIsMobileView] = useState(false);
   const [positionActionState, setPositionActionState] = useState({});
   const [positionRemoveState, setPositionRemoveState] = useState({});
 
@@ -203,6 +205,13 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     const syncBase = () => setResolvedApiBase(getInitialApiBase());
     window.addEventListener(API_BASE_CHANGED_EVENT, syncBase);
     return () => window.removeEventListener(API_BASE_CHANGED_EVENT, syncBase);
+  }, []);
+
+  useEffect(() => {
+    const onResize = () => setIsMobileView(window.innerWidth <= 760);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, []);
 
   useEffect(() => {
@@ -245,7 +254,11 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
       setError(errors.join(" | "));
       if (byKey.top_buys?.ok && byKey.top_buys?.parsed) setTopBuys(byKey.top_buys.parsed || {});
       if (byKey.system_status?.ok && byKey.system_status?.parsed) setSystemStatus(byKey.system_status.parsed || {});
-      if (byKey.positions?.ok && byKey.positions?.parsed) setPositions(normalizePositions(byKey.positions.parsed || {}));
+      if (byKey.positions?.ok && byKey.positions?.parsed) {
+        const parsedPositions = byKey.positions.parsed || {};
+        setPositions(normalizePositions(parsedPositions));
+        setPositionsMeta(parsedPositions.mobile_runtime_compaction || {});
+      }
       setLoading(false);
       busy = false;
     };
@@ -287,6 +300,27 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     ? (safeNumber(systemStatus?.final_ranked_count, 0) > 0 ? "ranked-ready" : "minimal-payload")
     : "degraded";
   const asOf = formatTimestamp(systemStatus?.last_updated_utc || topBuys?.last_updated_utc || "");
+  const activePreviewLimit = isMobileView
+    ? safeNumber(positionsMeta?.active_positions_preview_limit, 5)
+    : safeNumber(positionsMeta?.desktop_active_positions_preview_limit, 10);
+  const displayedPositions = useMemo(
+    () => (Array.isArray(positions) ? positions.slice(0, activePreviewLimit) : []),
+    [positions, activePreviewLimit],
+  );
+  const hiddenPositionCount = Math.max(
+    0,
+    safeNumber(positionsMeta?.display_active_positions_count, positions.length) - displayedPositions.length,
+  );
+  const brokerTruthKnown = positionsMeta?.true_broker_active_positions !== undefined && positionsMeta?.true_broker_active_positions !== null;
+  const brokerActiveCount = safeNumber(positionsMeta?.true_broker_active_positions, positions.length);
+  const staleRowsHidden = safeNumber(positionsMeta?.stale_rows_hidden_count, 0);
+  const canceledOrdersCompacted = safeNumber(positionsMeta?.canceled_orders_compacted_count, 0);
+  const compactionSummary = String(
+    positionsMeta?.summary
+      || (brokerTruthKnown && brokerActiveCount === 0
+        ? "No broker-confirmed active positions."
+        : "Active position display is compacted for mobile runtime speed.")
+  );
 
   const topSection = remoteMode
     ? (remoteSection === "positions" ? "positions" : "buys")
@@ -300,6 +334,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     });
     if (result.ok && result.parsed) {
       setPositions(normalizePositions(result.parsed || {}));
+      setPositionsMeta((result.parsed || {}).mobile_runtime_compaction || {});
       return true;
     }
     return false;
@@ -421,12 +456,35 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
 
       {(topSection === "dashboard" || topSection === "positions") && (
         <section style={panelStyle}>
-          <div style={{ ...panelTitleStyle, marginBottom: "8px" }}>Active Positions</div>
-          {positions.length === 0 ? (
-            <div style={emptyStyle}>No active positions found</div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", flexWrap: "wrap", marginBottom: "8px" }}>
+            <div style={panelTitleStyle}>Active Positions</div>
+            <span style={{ color: "#9cb3d6", fontSize: "0.74rem" }}>
+              {brokerTruthKnown ? `${brokerActiveCount} broker-confirmed` : `${positions.length} workflow`} · compact view
+            </span>
+          </div>
+          <div
+            style={{
+              marginBottom: "8px",
+              padding: "8px 10px",
+              borderRadius: "10px",
+              background: "rgba(9, 20, 38, 0.38)",
+              border: "1px solid rgba(141, 171, 212, 0.24)",
+              color: "#c9d8ef",
+              fontSize: "0.78rem",
+              lineHeight: 1.35,
+            }}
+          >
+            {brokerTruthKnown && brokerActiveCount === 0
+              ? "No broker-confirmed active positions."
+              : compactionSummary}
+            {staleRowsHidden > 0 ? ` ${staleRowsHidden} stale internal workflow row${staleRowsHidden === 1 ? "" : "s"} hidden from active view.` : ""}
+            {canceledOrdersCompacted > 0 ? ` ${canceledOrdersCompacted} canceled paper order${canceledOrdersCompacted === 1 ? "" : "s"} hidden from mobile view; full broker history remains available in Alpaca.` : ""}
+          </div>
+          {displayedPositions.length === 0 ? (
+            <div style={emptyStyle}>{brokerTruthKnown ? "No broker-confirmed active positions" : "No active positions found"}</div>
           ) : (
             <div style={positionsGridStyle}>
-              {positions.map((row, idx) => (
+              {displayedPositions.map((row, idx) => (
                 <TickerCard
                   key={`${row.position_id || row.symbol || "POS"}-${idx}`}
                   item={row}
@@ -441,6 +499,11 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               ))}
             </div>
           )}
+          {hiddenPositionCount > 0 ? (
+            <div style={{ ...emptyStyle, paddingTop: "10px" }}>
+              {hiddenPositionCount} additional position row{hiddenPositionCount === 1 ? "" : "s"} hidden from compact view. Use Alpaca for full broker history.
+            </div>
+          ) : null}
         </section>
       )}
 

@@ -772,6 +772,43 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.mobile_runtime_compaction_v1 import MobileRuntimeCompactionV1
+except Exception:
+    class MobileRuntimeCompactionV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def build(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "paper_only_display_compaction",
+                "mobile_runtime_compaction_active": False,
+                "true_broker_active_positions": None,
+                "internal_open_workflow_rows": 0,
+                "stale_internal_positions": 0,
+                "display_active_positions_count": 0,
+                "active_positions_preview_limit": 5,
+                "recent_orders_preview_limit": 5,
+                "canceled_orders_compacted_count": 0,
+                "stale_rows_hidden_count": 0,
+                "learning_fast_path_active": False,
+                "canceled_order_scan_skipped": True,
+                "learning_payload_compacted": False,
+                "mobile_payload_compacted": False,
+                "full_history_preserved": True,
+                "replay_learning_preserved": True,
+                "summary": "Mobile runtime compaction import unavailable.",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+            }
+
+        def compact_positions_response(self, base_payload, *, compaction=None):
+            return dict(base_payload or {})
+try:
     from engine.unified_learning_diagnostics_v1 import UnifiedLearningDiagnosticsV1
 except Exception:
     class UnifiedLearningDiagnosticsV1:  # type: ignore[override]
@@ -1020,6 +1057,7 @@ REPLAY_LIFECYCLE_EXPECTANCY_LEARNING_SUITE = ReplayLifecycleExpectancyLearningV1
 REGIME_EXECUTION_SURVIVABILITY_SUITE = RegimeExecutionSurvivabilityIntelligenceV1(state_dir=STATE)
 ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V2 = AdaptiveExecutionExitIntelligenceV2(state_dir=STATE)
 PORTFOLIO_DIVERSIFICATION_CORRELATION_V2 = PortfolioDiversificationCorrelationV2(state_dir=STATE)
+MOBILE_RUNTIME_COMPACTION = MobileRuntimeCompactionV1(state_dir=STATE)
 UNIFIED_LEARNING_DIAGNOSTICS = UnifiedLearningDiagnosticsV1(state_dir=STATE)
 ADAPTIVE_MARKET_INTAKE_FMP_BUDGET_SUITE = AdaptiveMarketIntakeFmpBudgetSuiteV1(state_dir=STATE)
 ALPACA_PAPER_BROKER = AlpacaPaperBroker()
@@ -30847,6 +30885,109 @@ def alpaca_paper_positions_v1():
     }
 
 
+def _mobile_runtime_compaction_snapshot(force: bool = False, include_closed_orders: bool = False):
+    now = time.time()
+    cache_key = "mobile_runtime_compaction_v1"
+    cached = _CACHE.get(cache_key, {}) if isinstance(_CACHE.get(cache_key), dict) else {}
+    if (
+        not force
+        and cached.get("data")
+        and (now - _to_float(cached.get("ts"), 0.0)) <= 20.0
+        and (not include_closed_orders or cached.get("closed_orders_included"))
+    ):
+        return dict(cached.get("data") or {})
+    try:
+        internal_rows = list(POSITION_TRACKER.get_open_positions() or [])
+    except Exception:
+        internal_rows = []
+    broker_positions_payload = {}
+    broker_orders_payload = {}
+    try:
+        broker_positions_payload = ALPACA_PAPER_BROKER.positions_status()
+        if not isinstance(broker_positions_payload, dict):
+            broker_positions_payload = {}
+    except Exception as exc:
+        broker_positions_payload = {
+            "ok": False,
+            "positions": [],
+            "open_positions_count": 0,
+            "error": f"broker_positions_compaction_unavailable:{str(exc)[:120]}",
+            "api_calls_used": 0,
+        }
+    if include_closed_orders:
+        try:
+            broker_orders_payload = ALPACA_PAPER_BROKER.orders(status="closed", limit=100)
+            if not isinstance(broker_orders_payload, dict):
+                broker_orders_payload = {}
+            else:
+                broker_orders_payload["api_calls_used"] = int(_to_float(broker_orders_payload.get("api_calls_used"), 1.0))
+        except Exception as exc:
+            broker_orders_payload = {
+                "ok": False,
+                "orders": [],
+                "error": f"broker_orders_compaction_unavailable:{str(exc)[:120]}",
+                "api_calls_used": 0,
+            }
+    try:
+        out = MOBILE_RUNTIME_COMPACTION.build(
+            internal_positions=internal_rows,
+            broker_positions_payload=broker_positions_payload,
+            broker_orders_payload=broker_orders_payload,
+            force=bool(force or include_closed_orders),
+        )
+    except Exception as exc:
+        out = {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "paper_only_display_compaction",
+            "mobile_runtime_compaction_active": False,
+            "true_broker_active_positions": None,
+            "internal_open_workflow_rows": int(len(internal_rows)),
+            "stale_internal_positions": 0,
+            "display_active_positions_count": int(len(internal_rows)),
+            "active_positions_preview_limit": 5,
+            "recent_orders_preview_limit": 5,
+            "canceled_orders_compacted_count": 0,
+            "stale_rows_hidden_count": 0,
+            "learning_fast_path_active": False,
+            "canceled_order_scan_skipped": True,
+            "learning_payload_compacted": False,
+            "mobile_payload_compacted": False,
+            "full_history_preserved": True,
+            "replay_learning_preserved": True,
+            "summary": f"Mobile runtime compaction unavailable: {str(exc)[:140]}",
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+        }
+    if isinstance(out, dict):
+        if not include_closed_orders and isinstance(cached.get("data"), dict):
+            prior = dict(cached.get("data") or {})
+            prior_canceled = int(_to_float(prior.get("canceled_orders_compacted_count"), 0.0))
+            if prior_canceled > 0 and int(_to_float(out.get("canceled_orders_compacted_count"), 0.0)) <= 0:
+                out["canceled_orders_compacted_count"] = prior_canceled
+                out["canceled_order_history_count"] = prior_canceled
+                out["canceled_symbols_summary"] = list(prior.get("canceled_symbols_summary") or [])[:12]
+                out["canceled_order_time_range"] = dict(prior.get("canceled_order_time_range") or {})
+                out["canceled_order_scan_skipped"] = True
+                base_summary = str(out.get("summary") or "").rstrip(".")
+                out["summary"] = f"{base_summary}; {prior_canceled} canceled paper orders compacted from last compact scan."
+        out["mobile_runtime_compaction_status_v1"] = True
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+    _CACHE[cache_key] = {"data": dict(out or {}), "ts": now, "closed_orders_included": bool(include_closed_orders)}
+    return dict(out or {})
+
+
+@router.get("/api/mobile_runtime_compaction_status_v1")
+def mobile_runtime_compaction_status_v1(force: bool = False):
+    return _mobile_runtime_compaction_snapshot(force=bool(force), include_closed_orders=True)
+
+
 @router.get("/api/horizon_performance_dashboard_v1")
 def horizon_performance_dashboard_v1():
     try:
@@ -30944,6 +31085,28 @@ def self_correction_recommendations_v1(force_refresh: bool = Query(False)):
 
 @router.get("/api/positions")
 def positions(asset_type: str | None = Query(None)):
+    try:
+        compact = _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=True)
+        # If Alpaca paper reconciliation is available, broker positions are the display truth.
+        # Avoid the heavier internal enrichment path for compact mobile/dashboard views.
+        if bool(compact.get("mobile_runtime_compaction_active")) and bool(compact.get("broker_positions_fetch_ok")):
+            base_response = {
+                "count": int(_to_float(compact.get("display_active_positions_count"), 0.0)),
+                "positions": list(compact.get("desktop_positions_preview") or compact.get("true_broker_positions_preview") or []),
+                "position_lifecycle_intelligence": {
+                    "total_open_positions": int(_to_float(compact.get("display_active_positions_count"), 0.0)),
+                    "broker_confirmed_display": True,
+                    "internal_workflow_rows_hidden": int(_to_float(compact.get("stale_rows_hidden_count"), 0.0)),
+                },
+                "position_sync_v1": {
+                    "open_position_count": int(_to_float(compact.get("display_active_positions_count"), 0.0)),
+                    "source": "alpaca_broker_positions_compacted",
+                },
+                "last_updated_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            }
+            return MOBILE_RUNTIME_COMPACTION.compact_positions_response(base_response, compaction=compact)
+    except Exception:
+        pass
     _ensure_latest_rankings()
     at = _normalize_asset_type(asset_type) if asset_type else None
     rows = POSITION_TRACKER.get_open_positions(asset_type=at)
@@ -31290,7 +31453,7 @@ def positions(asset_type: str | None = Query(None)):
         position_sync_summary["position_decision_distribution"] = dist
         out.append(enriched)
 
-    return {
+    base_response = {
         "count": len(out),
         "positions": out,
         "position_lifecycle_intelligence": {
@@ -31326,6 +31489,17 @@ def positions(asset_type: str | None = Query(None)):
         },
         "last_updated_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
+    try:
+        compaction = _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False)
+        return MOBILE_RUNTIME_COMPACTION.compact_positions_response(base_response, compaction=compaction)
+    except Exception:
+        base_response["mobile_runtime_compaction"] = {
+            "mobile_runtime_compaction_active": False,
+            "mobile_payload_compacted": False,
+            "full_history_preserved": True,
+            "replay_learning_preserved": True,
+        }
+        return base_response
 
 
 @router.get("/api/sell_alerts")
@@ -46858,6 +47032,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("regime_execution_survivability", lambda: REGIME_EXECUTION_SURVIVABILITY_SUITE.status(rows=rows))
         _safe_status("adaptive_execution_exit_intelligence_v2", lambda: ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V2.status(rows=rows))
         _safe_status("portfolio_diversification_correlation_v2", lambda: PORTFOLIO_DIVERSIFICATION_CORRELATION_V2.status(rows=rows))
+        _safe_status("mobile_runtime_compaction", lambda: _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))
         _safe_status("paper_opportunity_allocation", lambda: PAPER_OPPORTUNITY_ALLOCATION_ENGINE.status(rows=rows))
         _safe_status("portfolio_risk_intelligence", lambda: PORTFOLIO_RISK_INTELLIGENCE_SUITE.status(rows=rows))

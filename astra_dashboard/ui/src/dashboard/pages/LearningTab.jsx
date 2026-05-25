@@ -225,7 +225,7 @@ export default function LearningTab({ compact = false }) {
       const secondaryResults = [];
       try {
         const primaryBatch = await Promise.all([
-          fetchJson("unified_learning_diagnostics", "/api/unified_learning_diagnostics_v1", {}, { timeoutMs: 6000 }),
+          fetchJson("unified_learning_diagnostics", "/api/unified_learning_diagnostics_v1", {}, { timeoutMs: 10000 }),
         ]);
         fastResults.push(...primaryBatch);
 
@@ -1554,6 +1554,7 @@ export default function LearningTab({ compact = false }) {
   const lifecycleAdaptation = adaptiveExecutionExitV2?.lifecycle_adaptation || unified?.lifecycle_adaptation || {};
   const adaptiveProfitabilityDiagnostics = adaptiveExecutionExitV2?.profitability_improvement_diagnostics || unified?.profitability_improvement_diagnostics || {};
   const portfolioDiversificationV2 = unified?.portfolio_diversification_correlation_v2 || {};
+  const mobileRuntimeCompaction = unified?.mobile_runtime_compaction || {};
   const metricDisplay = (metric, suffix = "") => {
     if (!metric || typeof metric !== "object") return "n/a";
     if (metric.value === null || metric.value === undefined) {
@@ -1887,6 +1888,35 @@ export default function LearningTab({ compact = false }) {
               </LineChart>
             </ResponsiveContainer>
           </ChartShell>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0, marginBottom: 4 }}>Mobile Runtime Compaction & Learning Fast-Path</h3>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginBottom: 12 }}>
+          Compact display diagnostics for broker-confirmed positions, stale internal workflow rows, and canceled-order noise.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, fontSize: 12 }}>
+          {[
+            ["Broker active positions", mobileRuntimeCompaction?.true_broker_active_positions],
+            ["Displayed active positions", mobileRuntimeCompaction?.display_active_positions_count],
+            ["Internal workflow rows", mobileRuntimeCompaction?.internal_open_workflow_rows],
+            ["Stale rows hidden", mobileRuntimeCompaction?.stale_rows_hidden_count],
+            ["Canceled orders compacted", mobileRuntimeCompaction?.canceled_orders_compacted_count],
+            ["Learning fast path", mobileRuntimeCompaction?.learning_fast_path_active ? "active" : "warming up"],
+            ["Mobile payload", mobileRuntimeCompaction?.mobile_payload_compacted ? "compacted" : "standard"],
+            ["Full history", mobileRuntimeCompaction?.full_history_preserved ? "preserved" : "check"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {typeof value === "number" ? value.toFixed(0) : String(value ?? "n/a").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            {String(mobileRuntimeCompaction?.summary || "Mobile runtime compaction is waiting for broker/workflow evidence.")}
+          </div>
         </div>
       </div>
 
