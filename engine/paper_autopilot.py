@@ -208,6 +208,30 @@ except Exception:  # pragma: no cover - adaptive execution V2 is additive
                 "forced_exits_enabled": False,
             }
 
+try:
+    from engine.portfolio_diversification_correlation_v2 import PortfolioDiversificationCorrelationV2
+except Exception:  # pragma: no cover - portfolio diversification V2 is additive
+    class PortfolioDiversificationCorrelationV2:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def decorate_candidates(self, rows, open_positions=None):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def rank_for_paper_selection(self, rows, open_positions=None):
+            return self.decorate_candidates(rows, open_positions=open_positions)
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "2.0.0",
+                "portfolio_diversification_v2_active": True,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+            }
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -445,6 +469,14 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 self.adaptive_execution_exit_v2_suite = None
+        self.portfolio_diversification_v2_suite = kwargs.get("portfolio_diversification_v2_suite")
+        if self.portfolio_diversification_v2_suite is None:
+            try:
+                self.portfolio_diversification_v2_suite = PortfolioDiversificationCorrelationV2(
+                    state_dir=os.path.dirname(self.state_path) or "state"
+                )
+            except Exception:
+                self.portfolio_diversification_v2_suite = None
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -664,7 +696,12 @@ class PaperAutopilotEngine:
                 pass
         if self.paper_opportunity_allocator is not None and hasattr(self.paper_opportunity_allocator, "decorate_candidates"):
             try:
-                return list(self.paper_opportunity_allocator.decorate_candidates(dedup) or dedup)
+                dedup = list(self.paper_opportunity_allocator.decorate_candidates(dedup) or dedup)
+            except Exception:
+                pass
+        if self.portfolio_diversification_v2_suite is not None and hasattr(self.portfolio_diversification_v2_suite, "rank_for_paper_selection"):
+            try:
+                return list(self.portfolio_diversification_v2_suite.rank_for_paper_selection(dedup) or dedup)
             except Exception:
                 return dedup
         return dedup
@@ -900,6 +937,17 @@ class PaperAutopilotEngine:
             reason = "crypto_capacity_reached"
         else:
             allowed, reason, gate_meta = self._is_candidate_paper_eligible(r)
+        portfolio_fit = _to_float(r.get("portfolio_fit_score"), 50.0)
+        portfolio_fit_label = str(r.get("portfolio_fit_label") or "").strip()
+        portfolio_diversification_block_reason = str(r.get("portfolio_diversification_block_reason") or "").strip()
+        if allowed and portfolio_diversification_block_reason in {
+            "correlation_overload",
+            "duplicate_theme_overstack",
+            "poor_portfolio_fit",
+            "concentration_pressure",
+        }:
+            allowed = False
+            reason = portfolio_diversification_block_reason
         session_diag = {}
         if self.market_session_timing_suite is not None and hasattr(self.market_session_timing_suite, "confirmation_for_candidate"):
             try:
@@ -935,6 +983,16 @@ class PaperAutopilotEngine:
             "sizing_safety_label": str(r.get("sizing_safety_label") or ""),
             "portfolio_heat_score": round(_to_float(r.get("portfolio_heat_score"), 0.0), 2),
             "portfolio_correlation_risk": round(_to_float(r.get("portfolio_correlation_risk"), 0.0), 2),
+            "portfolio_diversification_v2_active": bool(r.get("portfolio_diversification_v2_active", False)),
+            "portfolio_fit_score": round(portfolio_fit, 2),
+            "portfolio_fit_label": portfolio_fit_label,
+            "portfolio_fit_reason": str(r.get("portfolio_fit_reason") or ""),
+            "correlation_cluster_label": str(r.get("correlation_cluster_label") or ""),
+            "correlation_cluster_id": str(r.get("correlation_cluster_id") or ""),
+            "duplicate_theme_label": str(r.get("duplicate_theme_label") or ""),
+            "correlation_adjusted_expectancy": round(_to_float(r.get("correlation_adjusted_expectancy"), 0.0), 2),
+            "concentration_adjusted_expectancy": round(_to_float(r.get("concentration_adjusted_expectancy"), 0.0), 2),
+            "diversification_selection_reason": str(r.get("diversification_selection_reason") or ""),
             "survivability_score": round(_to_float(r.get("survivability_score"), 0.0), 2),
             "trade_management_score": round(_to_float(r.get("trade_management_score"), 0.0), 2),
             "adaptive_trade_quality_label": str(r.get("adaptive_trade_quality_label") or ""),
@@ -1235,6 +1293,15 @@ class PaperAutopilotEngine:
             "portfolio_correlation_risk": round(_to_float(r.get("portfolio_correlation_risk"), 0.0), 2),
             "sector_concentration_score": round(_to_float(r.get("sector_concentration_score"), 0.0), 2),
             "portfolio_stability_score": round(_to_float(r.get("portfolio_stability_score"), 0.0), 2),
+            "portfolio_diversification_v2_active": bool(r.get("portfolio_diversification_v2_active", False)),
+            "portfolio_fit_score": round(_to_float(r.get("portfolio_fit_score"), 0.0), 2),
+            "portfolio_fit_label": str(r.get("portfolio_fit_label") or ""),
+            "portfolio_fit_reason": str(r.get("portfolio_fit_reason") or ""),
+            "correlation_cluster_label": str(r.get("correlation_cluster_label") or ""),
+            "duplicate_theme_label": str(r.get("duplicate_theme_label") or ""),
+            "correlation_adjusted_expectancy": round(_to_float(r.get("correlation_adjusted_expectancy"), 0.0), 2),
+            "concentration_adjusted_expectancy": round(_to_float(r.get("concentration_adjusted_expectancy"), 0.0), 2),
+            "diversification_selection_reason": str(r.get("diversification_selection_reason") or ""),
             "survivability_score": round(_to_float(r.get("survivability_score"), 0.0), 2),
             "trade_management_score": round(_to_float(r.get("trade_management_score"), 0.0), 2),
             "risk_adjusted_trade_quality": round(_to_float(r.get("risk_adjusted_trade_quality"), 0.0), 2),
@@ -1957,6 +2024,18 @@ class PaperAutopilotEngine:
                     adaptive_execution_exit_status = dict(self.adaptive_execution_exit_v2_suite.status(rows=candidates) or {})
                 except Exception:
                     adaptive_execution_exit_status = {}
+            portfolio_diversification_status = {}
+            if self.portfolio_diversification_v2_suite is not None and hasattr(self.portfolio_diversification_v2_suite, "status"):
+                try:
+                    portfolio_diversification_status = dict(
+                        self.portfolio_diversification_v2_suite.status(
+                            rows=candidates,
+                            open_positions=open_rows_initial,
+                        )
+                        or {}
+                    )
+                except Exception:
+                    portfolio_diversification_status = {}
             for row in candidates:
                 if opened >= self.max_new_positions_per_cycle:
                     final_blocker_reason = final_blocker_reason or "max_new_positions_per_cycle_reached"
@@ -2122,6 +2201,7 @@ class PaperAutopilotEngine:
                 "replay_lifecycle_expectancy_learning": replay_lifecycle_status,
                 "regime_execution_survivability": regime_execution_status,
                 "adaptive_execution_exit_intelligence_v2": adaptive_execution_exit_status,
+                "portfolio_diversification_correlation_v2": portfolio_diversification_status,
                 "market_session_mode": str(session_status.get("market_session_mode") or ""),
                 "paper_order_submission_allowed": bool(session_status.get("paper_order_submission_allowed", False)),
                 "execution_confirmation_required": bool(session_status.get("execution_confirmation_required", True)),
@@ -2164,6 +2244,7 @@ class PaperAutopilotEngine:
                 "replay_lifecycle_expectancy_learning": replay_lifecycle_status,
                 "regime_execution_survivability": regime_execution_status,
                 "adaptive_execution_exit_intelligence_v2": adaptive_execution_exit_status,
+                "portfolio_diversification_correlation_v2": portfolio_diversification_status,
                 "market_session_mode": str(session_status.get("market_session_mode") or ""),
                 "paper_order_submission_allowed": bool(session_status.get("paper_order_submission_allowed", False)),
                 "execution_confirmation_required": bool(session_status.get("execution_confirmation_required", True)),
@@ -2279,6 +2360,18 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 adaptive_execution_exit_status = {}
+        portfolio_diversification_status = {}
+        if self.portfolio_diversification_v2_suite is not None and hasattr(self.portfolio_diversification_v2_suite, "status"):
+            try:
+                portfolio_diversification_status = dict(
+                    self.portfolio_diversification_v2_suite.status(
+                        rows=candidates,
+                        open_positions=self._fetch_open_positions(),
+                    )
+                    or {}
+                )
+            except Exception:
+                portfolio_diversification_status = {}
         capacities = self._current_execution_capacities()
         internal_open_syms = set(capacities.get("open_symbols") or set())
         broker_snapshot = self._broker_open_symbols_snapshot()
@@ -2362,6 +2455,7 @@ class PaperAutopilotEngine:
             "replay_lifecycle_expectancy_learning": replay_lifecycle_status,
             "regime_execution_survivability": regime_execution_status,
             "adaptive_execution_exit_intelligence_v2": adaptive_execution_exit_status,
+            "portfolio_diversification_correlation_v2": portfolio_diversification_status,
             "market_session_mode": str(last_trace.get("market_session_mode") or session_status.get("market_session_mode") or ""),
             "paper_order_submission_allowed": bool(last_trace.get("paper_order_submission_allowed", session_status.get("paper_order_submission_allowed", False))),
             "execution_confirmation_required": bool(last_trace.get("execution_confirmation_required", session_status.get("execution_confirmation_required", True))),

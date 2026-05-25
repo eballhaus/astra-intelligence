@@ -11,6 +11,10 @@ try:
     from engine.adaptive_execution_exit_intelligence_v2 import AdaptiveExecutionExitIntelligenceV2
 except Exception:  # pragma: no cover - additive diagnostics only
     AdaptiveExecutionExitIntelligenceV2 = None  # type: ignore[assignment]
+try:
+    from engine.portfolio_diversification_correlation_v2 import PortfolioDiversificationCorrelationV2
+except Exception:  # pragma: no cover - additive diagnostics only
+    PortfolioDiversificationCorrelationV2 = None  # type: ignore[assignment]
 
 VERSION = "1.0.0"
 MAX_TAIL_BYTES = 2_000_000
@@ -206,6 +210,11 @@ class RegimeExecutionSurvivabilityIntelligenceV1:
         self.adaptive_execution_exit_v2 = (
             AdaptiveExecutionExitIntelligenceV2(state_dir=self.state_dir)
             if AdaptiveExecutionExitIntelligenceV2 is not None
+            else None
+        )
+        self.portfolio_diversification_v2 = (
+            PortfolioDiversificationCorrelationV2(state_dir=self.state_dir)
+            if PortfolioDiversificationCorrelationV2 is not None
             else None
         )
 
@@ -474,6 +483,7 @@ class RegimeExecutionSurvivabilityIntelligenceV1:
             "regime_execution_alignment": round(mean([_score01(r.get("regime_execution_alignment"), 50.0) for r in decorated]), 2) if decorated else 50.0,
             "adaptive_execution_summary": f"Regime {current_regime}; execution {round(execution_quality, 1)}, chase risk {round(chase_risk, 1)}, survivability {round(survivability_score, 1)}.",
             "adaptive_execution_exit_v2_hooks_ready": bool(self.adaptive_execution_exit_v2 is not None),
+            "portfolio_diversification_v2_hooks_ready": bool(self.portfolio_diversification_v2 is not None),
             "api_calls_used": 0,
             "live_trading_changed": False,
             "broker_execution_changed": False,

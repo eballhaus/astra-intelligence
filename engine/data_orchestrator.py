@@ -35,6 +35,10 @@ try:
     from engine.adaptive_execution_exit_intelligence_v2 import AdaptiveExecutionExitIntelligenceV2
 except Exception:  # pragma: no cover - additive shadow decorator
     AdaptiveExecutionExitIntelligenceV2 = None  # type: ignore[assignment]
+try:
+    from engine.portfolio_diversification_correlation_v2 import PortfolioDiversificationCorrelationV2
+except Exception:  # pragma: no cover - additive shadow decorator
+    PortfolioDiversificationCorrelationV2 = None  # type: ignore[assignment]
 
 _router = ProviderRouter()
 _ranker = RankingEngine()
@@ -53,6 +57,9 @@ _regime_execution_survivability_suite = (
 )
 _adaptive_execution_exit_v2_suite = (
     AdaptiveExecutionExitIntelligenceV2(state_dir="state") if AdaptiveExecutionExitIntelligenceV2 is not None else None
+)
+_portfolio_diversification_v2_suite = (
+    PortfolioDiversificationCorrelationV2(state_dir="state") if PortfolioDiversificationCorrelationV2 is not None else None
 )
 _TEMP_STRATEGY_ENABLED = str(os.getenv("ASTRA_TEMP_PROVIDER_STRATEGY_V1", "1")).strip().lower() in {"1", "true", "yes", "on"}
 _TEMP_FMP_REST_DISABLED = str(os.getenv("ASTRA_TEMP_FMP_REST_DISABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
@@ -346,6 +353,11 @@ def fetch_live_data(symbols=None):
     if _adaptive_execution_exit_v2_suite is not None and hasattr(_adaptive_execution_exit_v2_suite, "decorate_candidates"):
         try:
             rows = list(_adaptive_execution_exit_v2_suite.decorate_candidates(rows) or rows)
+        except Exception:
+            pass
+    if _portfolio_diversification_v2_suite is not None and hasattr(_portfolio_diversification_v2_suite, "decorate_candidates"):
+        try:
+            rows = list(_portfolio_diversification_v2_suite.decorate_candidates(rows) or rows)
         except Exception:
             pass
 

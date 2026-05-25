@@ -8,6 +8,11 @@ from datetime import datetime, timezone
 from statistics import mean
 from typing import Any
 
+try:
+    from engine.portfolio_diversification_correlation_v2 import PortfolioDiversificationCorrelationV2
+except Exception:  # pragma: no cover - additive diagnostics only
+    PortfolioDiversificationCorrelationV2 = None  # type: ignore[assignment]
+
 VERSION = "2.0.0"
 MAX_TAIL_BYTES = 2_000_000
 MAX_ROWS = 900
@@ -198,6 +203,11 @@ class AdaptiveExecutionExitIntelligenceV2:
         self.ledger_path = os.path.join(self.state_dir, "candidate_decision_ledger_v1.jsonl")
         self._cache: dict[str, Any] | None = None
         self._cache_ts = 0.0
+        self.portfolio_diversification_v2 = (
+            PortfolioDiversificationCorrelationV2(state_dir=self.state_dir)
+            if PortfolioDiversificationCorrelationV2 is not None
+            else None
+        )
 
     def _history(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -513,6 +523,7 @@ class AdaptiveExecutionExitIntelligenceV2:
             "forced_trades_enabled": False,
             "forced_exits_enabled": False,
             "provider_rewrite_changed": False,
+            "portfolio_diversification_v2_hooks_ready": bool(self.portfolio_diversification_v2 is not None),
         }
         out["build_ms"] = round((time.perf_counter() - start) * 1000.0, 3)
         self._cache = dict(out)

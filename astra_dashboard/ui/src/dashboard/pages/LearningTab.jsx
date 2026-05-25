@@ -137,6 +137,7 @@ export default function LearningTab({ compact = false }) {
   const [showDebug, setShowDebug] = useState(false);
   const [showAdvancedSections, setShowAdvancedSections] = useState(false);
   const [showAdaptiveExitDetails, setShowAdaptiveExitDetails] = useState(false);
+  const [showPortfolioDiversificationDetails, setShowPortfolioDiversificationDetails] = useState(false);
   const [endpointStatus, setEndpointStatus] = useState({});
   const [timeline, setTimeline] = useState([]);
   const [data, setData] = useState({
@@ -1552,6 +1553,7 @@ export default function LearningTab({ compact = false }) {
   const regimeAdaptiveTrading = adaptiveExecutionExitV2?.regime_adaptive_trading || unified?.regime_adaptive_trading || {};
   const lifecycleAdaptation = adaptiveExecutionExitV2?.lifecycle_adaptation || unified?.lifecycle_adaptation || {};
   const adaptiveProfitabilityDiagnostics = adaptiveExecutionExitV2?.profitability_improvement_diagnostics || unified?.profitability_improvement_diagnostics || {};
+  const portfolioDiversificationV2 = unified?.portfolio_diversification_correlation_v2 || {};
   const metricDisplay = (metric, suffix = "") => {
     if (!metric || typeof metric !== "object") return "n/a";
     if (metric.value === null || metric.value === undefined) {
@@ -1590,6 +1592,7 @@ export default function LearningTab({ compact = false }) {
   const portfolioChart = chartSeries(masterCharts?.portfolio_survivability, ["portfolio_survivability", "concentration_risk", "correlation_risk", "portfolio_heat", "diversification_quality"]);
   const maturityChart = chartSeries(masterCharts?.learning_maturity_timeline, ["replay_maturity", "lifecycle_maturity", "expectancy_maturity", "closed_trade_coverage", "adaptive_confidence"]);
   const adaptiveExitChart = chartSeries(masterCharts?.adaptive_execution_exit_v2_trends, ["profit_giveback_trend", "continuation_quality_trend", "adaptive_hold_quality_trend", "regime_adjusted_expectancy_trend", "execution_timing_trend"]);
+  const diversificationChart = chartSeries(masterCharts?.portfolio_diversification_correlation_v2_trends, ["diversification_quality_trend", "correlation_risk_trend", "concentration_risk_trend", "portfolio_fit_trend", "cluster_pressure_trend"]);
   const topMetricGroups = [
     ["Core Performance", executive?.core_performance || {}, [
       ["Released WR", "released_win_rate", "%"],
@@ -1840,6 +1843,21 @@ export default function LearningTab({ compact = false }) {
               </LineChart>
             </ResponsiveContainer>
           </ChartShell>
+          <ChartShell title="Diversification & Correlation" subtitle="Portfolio fit, cluster pressure, concentration, and correlation." empty={diversificationChart.length === 0}>
+            <ResponsiveContainer width="100%" height={190}>
+              <LineChart data={diversificationChart}>
+                <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
+                <XAxis dataKey="ts" tick={{ fill: "#8ea1c3", fontSize: 10 }} />
+                <YAxis tick={{ fill: "#8ea1c3", fontSize: 10 }} />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="diversification_quality_trend" stroke="#22c55e" strokeWidth={2} dot={false} name="Diversification" />
+                <Line type="monotone" dataKey="portfolio_fit_trend" stroke="#38bdf8" strokeWidth={2} dot={false} name="Portfolio Fit" />
+                <Line type="monotone" dataKey="correlation_risk_trend" stroke="#f59e0b" strokeWidth={2} dot={false} name="Correlation" />
+                <Line type="monotone" dataKey="cluster_pressure_trend" stroke="#f43f5e" strokeWidth={2} dot={false} name="Cluster Pressure" />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartShell>
           <ChartShell title="Learning Maturity Timeline" subtitle="Replay, lifecycle, expectancy, coverage, and adaptive confidence." empty={maturityChart.length === 0}>
             <ResponsiveContainer width="100%" height={190}>
               <LineChart data={maturityChart}>
@@ -1870,6 +1888,76 @@ export default function LearningTab({ compact = false }) {
             </ResponsiveContainer>
           </ChartShell>
         </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Portfolio Diversification & Correlation Intelligence</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Shadow-only portfolio-fit diagnostics for concentration, duplicate themes, cluster pressure, and quality-preserving diversification.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowPortfolioDiversificationDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showPortfolioDiversificationDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Concentration risk", portfolioDiversificationV2?.average_concentration_pressure_score],
+            ["Correlation risk", portfolioDiversificationV2?.average_correlation_pressure_score],
+            ["Diversification quality", portfolioDiversificationV2?.average_diversification_quality_score],
+            ["Portfolio fit quality", portfolioDiversificationV2?.average_portfolio_fit_score],
+            ["Largest cluster", portfolioDiversificationV2?.largest_cluster],
+            ["Top duplicate theme", portfolioDiversificationV2?.top_duplicate_theme],
+            ["Penalized / boosted", `${safeNumber(portfolioDiversificationV2?.candidates_penalized_for_correlation).toFixed(0)} / ${safeNumber(portfolioDiversificationV2?.candidates_boosted_for_diversification).toFixed(0)}`],
+            ["Balance label", portfolioDiversificationV2?.current_portfolio_balance_label],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {typeof value === "number" ? value.toFixed(1) : String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            {String(portfolioDiversificationV2?.summary || "Portfolio diversification diagnostics are waiting for more candidate and position evidence.")}
+          </div>
+        </div>
+        {showPortfolioDiversificationDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 10, fontSize: 12 }}>
+            {[
+              ["Cluster summary", (portfolioDiversificationV2?.candidate_cluster_summary || {}).clusters || {}],
+              ["Theme families", (portfolioDiversificationV2?.candidate_cluster_summary || {}).families || {}],
+              ["Market-cap distribution", (portfolioDiversificationV2?.candidate_cluster_summary || {}).market_cap_distribution || {}],
+              ["Fit labels", (portfolioDiversificationV2?.candidate_cluster_summary || {}).portfolio_fit_labels || {}],
+            ].map(([title, payload]) => (
+              <div key={title} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+                <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>{title}</div>
+                {Object.keys(payload || {}).length === 0 ? (
+                  <div style={{ color: "#9fb1cc" }}>n/a</div>
+                ) : Object.entries(payload || {}).slice(0, 8).map(([key, value]) => (
+                  <div key={`${title}-${key}`} style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+                    <span style={{ color: "#9fb1cc" }}>{String(key).replaceAll("_", " ")}</span>
+                    <span style={{ color: "#f2f7ff", fontWeight: 700 }}>{String(value)}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div style={{ ...panelStyle }}>

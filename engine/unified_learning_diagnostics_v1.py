@@ -264,6 +264,7 @@ class UnifiedLearningDiagnosticsV1:
         charts = self._master_charts(history_rows, candidate_rows, statuses)
         advanced = self._advanced_statuses(statuses, sources)
         adaptive_v2 = self._adaptive_execution_exit_summary(statuses.get("adaptive_execution_exit_intelligence_v2") or {})
+        diversification_v2 = self._portfolio_diversification_summary(statuses.get("portfolio_diversification_correlation_v2") or {})
         stale = self._stale_status(sources, system)
         return {
             "ok": True,
@@ -276,6 +277,7 @@ class UnifiedLearningDiagnosticsV1:
             "performance_summary": perf,
             "execution_quality_summary": execution,
             "portfolio_health_summary": portfolio,
+            "portfolio_diversification_correlation_v2": diversification_v2,
             "learning_maturity_summary": learning,
             "regime_context_summary": regime,
             "adaptive_execution_exit_intelligence_v2": adaptive_v2,
@@ -374,16 +376,22 @@ class UnifiedLearningDiagnosticsV1:
         regime = statuses.get("regime_execution_survivability") or {}
         tm = statuses.get("trade_management_portfolio") or {}
         risk = statuses.get("portfolio_risk_intelligence") or {}
+        div = statuses.get("portfolio_diversification_correlation_v2") or {}
         mature = "healthy" if rows else maturity.get("label", "insufficient_evidence")
-        survivability = _first_float(regime.get("portfolio_survivability_score"), tm.get("portfolio_stability_score"), risk.get("average_portfolio_risk_score"), default=0.0)
-        concentration = _first_float(regime.get("portfolio_concentration_risk"), tm.get("sector_concentration_score"), risk.get("highest_concentration_risk"), default=0.0)
-        correlation = _first_float(regime.get("portfolio_correlation_risk"), tm.get("portfolio_correlation_risk"), risk.get("highest_correlation_risk"), default=0.0)
+        survivability = _first_float(div.get("portfolio_survivability"), regime.get("portfolio_survivability_score"), tm.get("portfolio_stability_score"), risk.get("average_portfolio_risk_score"), default=0.0)
+        concentration = _first_float(div.get("concentration_risk"), regime.get("portfolio_concentration_risk"), tm.get("sector_concentration_score"), risk.get("highest_concentration_risk"), default=0.0)
+        correlation = _first_float(div.get("correlation_risk"), regime.get("portfolio_correlation_risk"), tm.get("portfolio_correlation_risk"), risk.get("highest_correlation_risk"), default=0.0)
         heat = _first_float(tm.get("portfolio_heat_score"), risk.get("average_portfolio_risk_score"), default=0.0)
         return {
             "portfolio_survivability": _metric(survivability if survivability > 0 else None, evidence_count=len(rows), maturity=mature, explanation="Portfolio-level durability and survivability score."),
             "concentration_risk": _metric(concentration if concentration > 0 else None, evidence_count=len(rows), maturity=mature, explanation="Risk from clustered symbols/sectors/archetypes."),
             "correlation_risk": _metric(correlation if correlation > 0 else None, evidence_count=len(rows), maturity=mature, explanation="Risk from correlated candidates or positions."),
             "portfolio_heat": _metric(heat if heat > 0 else None, evidence_count=len(rows), maturity=mature, explanation="Aggregate pressure from open/selected risk."),
+            "diversification_quality": _metric(div.get("diversification_quality"), evidence_count=len(rows), maturity=_text(div.get("maturity"), mature), explanation="Quality of current sector/cap/archetype/horizon balance."),
+            "portfolio_fit_quality": _metric(div.get("portfolio_fit_quality"), evidence_count=len(rows), maturity=_text(div.get("maturity"), mature), explanation="Average paper candidate fit after concentration/correlation pressure."),
+            "largest_cluster": _text(div.get("largest_cluster"), "unknown_cluster"),
+            "top_duplicate_theme": _text(div.get("top_duplicate_theme"), "unknown"),
+            "current_portfolio_balance_label": _text(div.get("current_portfolio_balance_label"), "warming_up"),
             "portfolio_balance_summary": _text(regime.get("portfolio_balance_summary") or tm.get("portfolio_risk_summary"), "Waiting for portfolio diagnostics."),
         }
 
@@ -445,6 +453,41 @@ class UnifiedLearningDiagnosticsV1:
             "degraded_reason": _text(data.get("degraded_reason"), ""),
             "live_trading_changed": False,
             "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+        }
+
+    def _portfolio_diversification_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "2.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_shadow_diversification"),
+            "maturity": _text(data.get("maturity"), "warming_up"),
+            "portfolio_diversification_v2_active": bool(data.get("portfolio_diversification_v2_active", True)),
+            "average_portfolio_fit_score": data.get("average_portfolio_fit_score"),
+            "average_diversification_quality_score": data.get("average_diversification_quality_score"),
+            "average_correlation_pressure_score": data.get("average_correlation_pressure_score"),
+            "average_concentration_pressure_score": data.get("average_concentration_pressure_score"),
+            "largest_cluster": _text(data.get("largest_cluster"), "unknown_cluster"),
+            "largest_cluster_count": _to_int(data.get("largest_cluster_count"), 0),
+            "top_duplicate_theme": _text(data.get("top_duplicate_theme"), "unknown"),
+            "mega_cap_concentration_pct": _to_float(data.get("mega_cap_concentration_pct"), 0.0),
+            "non_mega_quality_candidates": _to_int(data.get("non_mega_quality_candidates"), 0),
+            "candidates_penalized_for_correlation": _to_int(data.get("candidates_penalized_for_correlation"), 0),
+            "candidates_boosted_for_diversification": _to_int(data.get("candidates_boosted_for_diversification"), 0),
+            "elite_candidates_survived_penalty": _to_int(data.get("elite_candidates_survived_penalty"), 0),
+            "current_portfolio_balance_label": _text(data.get("current_portfolio_balance_label"), "warming_up"),
+            "candidate_cluster_summary": dict(data.get("candidate_cluster_summary") or {}),
+            "summary": _text(data.get("summary"), "Portfolio diversification diagnostics are warming up."),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "stale": bool(data.get("stale") or data.get("stale_cache")),
+            "degraded_reason": _text(data.get("degraded_reason"), ""),
+            "live_trading_changed": False,
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
             "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
             "forced_trades_enabled": False,
             "forced_exits_enabled": False,
@@ -547,6 +590,7 @@ class UnifiedLearningDiagnosticsV1:
         weak_follow = [100.0 - v for v in follow]
         regime = statuses.get("regime_execution_survivability") or {}
         portfolio = statuses.get("trade_management_portfolio") or {}
+        div = statuses.get("portfolio_diversification_correlation_v2") or {}
         replay = statuses.get("replay_lifecycle_expectancy") or {}
         adaptive_v2 = statuses.get("adaptive_execution_exit_intelligence_v2") or {}
         adaptive_exit = dict(adaptive_v2.get("adaptive_exit_diagnostics") or {})
@@ -554,16 +598,20 @@ class UnifiedLearningDiagnosticsV1:
         adaptive_lifecycle = dict(adaptive_v2.get("lifecycle_adaptation_diagnostics") or {})
         adaptive_profit = dict(adaptive_v2.get("profitability_improvement_diagnostics") or {})
         heat = _score(portfolio.get("portfolio_heat_score"), 50.0)
-        concentration = _score(regime.get("portfolio_concentration_risk"), 50.0)
-        correlation = _score(regime.get("portfolio_correlation_risk"), 50.0)
-        survivability = _score(regime.get("portfolio_survivability_score"), 50.0)
-        diversification = max(0.0, 100.0 - concentration)
+        concentration = _score(div.get("concentration_risk"), _score(regime.get("portfolio_concentration_risk"), 50.0))
+        correlation = _score(div.get("correlation_risk"), _score(regime.get("portfolio_correlation_risk"), 50.0))
+        survivability = _score(div.get("portfolio_survivability"), _score(regime.get("portfolio_survivability_score"), 50.0))
+        diversification = _score(div.get("diversification_quality"), max(0.0, 100.0 - concentration))
+        portfolio_fit = _score(div.get("portfolio_fit_quality"), 50.0)
+        cluster_pressure = _score(div.get("average_correlation_pressure_score"), correlation)
         timeline_len = max(1, len(timestamps))
         heat_series = [round(heat, 2)] * timeline_len
         concentration_series = [round(concentration, 2)] * timeline_len
         correlation_series = [round(correlation, 2)] * timeline_len
         survivability_series = [round(survivability, 2)] * timeline_len
         diversification_series = [round(diversification, 2)] * timeline_len
+        portfolio_fit_series = [round(portfolio_fit, 2)] * timeline_len
+        cluster_pressure_series = [round(cluster_pressure, 2)] * timeline_len
         maturity_series = [round(_score(replay.get("replay_learning_maturity_score"), 0.0), 2)] * timeline_len
         lifecycle_series = [round(_score(replay.get("lifecycle_tracking_quality_score"), 0.0), 2)] * timeline_len
         expectancy_series = [round(_score(replay.get("expectancy_learning_maturity_score"), 0.0), 2)] * timeline_len
@@ -623,6 +671,16 @@ class UnifiedLearningDiagnosticsV1:
                 "correlation_risk": correlation_series,
                 "portfolio_heat": heat_series,
                 "diversification_quality": diversification_series,
+                "portfolio_fit_quality": portfolio_fit_series,
+                "cluster_pressure": cluster_pressure_series,
+            },
+            "portfolio_diversification_correlation_v2_trends": {
+                "timestamps": timestamps,
+                "diversification_quality_trend": diversification_series,
+                "correlation_risk_trend": correlation_series,
+                "concentration_risk_trend": concentration_series,
+                "portfolio_fit_trend": portfolio_fit_series,
+                "cluster_pressure_trend": cluster_pressure_series,
             },
             "learning_maturity_timeline": {
                 "timestamps": timestamps,
@@ -664,7 +722,7 @@ class UnifiedLearningDiagnosticsV1:
             "learning_snapshot", "paper_performance", "top_buys", "edge_development", "trade_management_portfolio",
             "adaptive_learning_infrastructure", "replay_lifecycle_expectancy", "regime_execution_survivability",
             "adaptive_execution_exit_intelligence_v2", "market_session_execution_timing", "paper_opportunity_allocation",
-            "alpaca_paper_broker", "horizon_performance_dashboard",
+            "portfolio_diversification_correlation_v2", "alpaca_paper_broker", "horizon_performance_dashboard",
         ]
         out = {}
         for name in names:
@@ -692,6 +750,7 @@ class UnifiedLearningDiagnosticsV1:
             "replay_lifecycle_expectancy": "/api/replay_lifecycle_expectancy_status_v1",
             "regime_execution_survivability": "/api/regime_execution_survivability_status_v1",
             "adaptive_execution_exit_intelligence_v2": "/api/adaptive_execution_exit_intelligence_status_v2",
+            "portfolio_diversification_correlation_v2": "/api/portfolio_diversification_correlation_status_v2",
             "market_session_execution_timing": "/api/market_session_execution_timing_status_v1",
             "paper_opportunity_allocation": "/api/paper_opportunity_allocation_status_v1",
             "alpaca_paper_broker": "/api/alpaca_paper_status_v1",

@@ -15,6 +15,10 @@ try:
     from engine.adaptive_execution_exit_intelligence_v2 import AdaptiveExecutionExitIntelligenceV2
 except Exception:  # pragma: no cover - additive diagnostics only
     AdaptiveExecutionExitIntelligenceV2 = None  # type: ignore[assignment]
+try:
+    from engine.portfolio_diversification_correlation_v2 import PortfolioDiversificationCorrelationV2
+except Exception:  # pragma: no cover - additive diagnostics only
+    PortfolioDiversificationCorrelationV2 = None  # type: ignore[assignment]
 
 VERSION = "1.0.0"
 MAX_TAIL_BYTES = 2_000_000
@@ -163,6 +167,11 @@ class ReplayLifecycleExpectancyLearningV1:
         self.adaptive_execution_exit_v2 = (
             AdaptiveExecutionExitIntelligenceV2(state_dir=self.state_dir)
             if AdaptiveExecutionExitIntelligenceV2 is not None
+            else None
+        )
+        self.portfolio_diversification_v2 = (
+            PortfolioDiversificationCorrelationV2(state_dir=self.state_dir)
+            if PortfolioDiversificationCorrelationV2 is not None
             else None
         )
 
@@ -433,6 +442,7 @@ class ReplayLifecycleExpectancyLearningV1:
             "adaptive_policy_ready": True,
             "regime_execution_survivability_hooks_ready": bool(self.regime_execution_survivability is not None),
             "adaptive_execution_exit_v2_hooks_ready": bool(self.adaptive_execution_exit_v2 is not None),
+            "portfolio_diversification_v2_hooks_ready": bool(self.portfolio_diversification_v2 is not None),
             "adaptive_policy_score": round(policy_readiness, 2),
             "adaptive_policy_confidence": round(policy_conf, 2),
             "adaptive_policy_recommendation": policy_rec,
