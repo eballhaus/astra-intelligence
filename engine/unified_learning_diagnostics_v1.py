@@ -266,6 +266,7 @@ class UnifiedLearningDiagnosticsV1:
         adaptive_v2 = self._adaptive_execution_exit_summary(statuses.get("adaptive_execution_exit_intelligence_v2") or {})
         diversification_v2 = self._portfolio_diversification_summary(statuses.get("portfolio_diversification_correlation_v2") or {})
         mobile_compaction = self._mobile_runtime_compaction_summary(statuses.get("mobile_runtime_compaction") or {})
+        profit_exploration = self._profit_seeking_exploration_summary(statuses.get("profit_seeking_adaptive_exploration") or {})
         stale = self._stale_status(sources, system)
         return {
             "ok": True,
@@ -280,6 +281,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_health_summary": portfolio,
             "portfolio_diversification_correlation_v2": diversification_v2,
             "mobile_runtime_compaction": mobile_compaction,
+            "profit_seeking_adaptive_exploration": profit_exploration,
             "learning_maturity_summary": learning,
             "regime_context_summary": regime,
             "adaptive_execution_exit_intelligence_v2": adaptive_v2,
@@ -489,6 +491,43 @@ class UnifiedLearningDiagnosticsV1:
             "broker_behavior_changed": False,
             "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
             "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+        }
+
+    def _profit_seeking_exploration_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_shadow_calibration"),
+            "controlled_exploration_enabled": bool(data.get("controlled_exploration_enabled", True)),
+            "exploration_mode": _text(data.get("exploration_mode"), "profit_seeking"),
+            "exploration_randomness_allowed": bool(data.get("exploration_randomness_allowed", False)),
+            "participation_quality_score": data.get("participation_quality_score"),
+            "caution_aggression_balance_score": data.get("caution_aggression_balance_score"),
+            "caution_aggression_label": _text(data.get("caution_aggression_label"), "insufficient_evidence"),
+            "over_cautious_risk": data.get("over_cautious_risk"),
+            "under_cautious_risk": data.get("under_cautious_risk"),
+            "missed_opportunity_pressure": data.get("missed_opportunity_pressure"),
+            "learning_diversity_score": data.get("learning_diversity_score"),
+            "exploration_trades_allowed_today": _to_int(data.get("exploration_trades_allowed_today"), _to_int(data.get("exploration_max_new_trades_per_day"), 0)),
+            "exploration_trades_used_today": _to_int(data.get("exploration_trades_used_today"), 0),
+            "underexplored_contexts": list(data.get("underexplored_contexts") or [])[:8],
+            "overexplored_contexts": list(data.get("overexplored_contexts") or [])[:8],
+            "exploration_allocation_pct": _to_float(data.get("exploration_allocation_pct"), 0.0),
+            "exploitation_allocation_pct": _to_float(data.get("exploitation_allocation_pct"), 100.0),
+            "exploration_decay_active": bool(data.get("exploration_decay_active", True)),
+            "exploration_decay_reason": _text(data.get("exploration_decay_reason"), "warming_up"),
+            "adaptive_exploration_recommendation": _text(data.get("adaptive_exploration_recommendation"), "maintain_bounded_profit_seeking_exploration"),
+            "summary": _text(data.get("summary"), "Profit-seeking exploration diagnostics are warming up."),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
         }
 
     def _portfolio_diversification_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -755,7 +794,8 @@ class UnifiedLearningDiagnosticsV1:
             "learning_snapshot", "paper_performance", "top_buys", "edge_development", "trade_management_portfolio",
             "adaptive_learning_infrastructure", "replay_lifecycle_expectancy", "regime_execution_survivability",
             "adaptive_execution_exit_intelligence_v2", "market_session_execution_timing", "paper_opportunity_allocation",
-            "portfolio_diversification_correlation_v2", "mobile_runtime_compaction", "alpaca_paper_broker", "horizon_performance_dashboard",
+            "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
+            "alpaca_paper_broker", "horizon_performance_dashboard",
         ]
         out = {}
         for name in names:
@@ -784,6 +824,7 @@ class UnifiedLearningDiagnosticsV1:
             "regime_execution_survivability": "/api/regime_execution_survivability_status_v1",
             "adaptive_execution_exit_intelligence_v2": "/api/adaptive_execution_exit_intelligence_status_v2",
             "portfolio_diversification_correlation_v2": "/api/portfolio_diversification_correlation_status_v2",
+            "profit_seeking_adaptive_exploration": "/api/profit_seeking_adaptive_exploration_status_v1",
             "mobile_runtime_compaction": "/api/mobile_runtime_compaction_status_v1",
             "market_session_execution_timing": "/api/market_session_execution_timing_status_v1",
             "paper_opportunity_allocation": "/api/paper_opportunity_allocation_status_v1",

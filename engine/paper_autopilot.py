@@ -232,6 +232,41 @@ except Exception:  # pragma: no cover - portfolio diversification V2 is additive
                 "natural_exit_preserved": True,
             }
 
+try:
+    from engine.profit_seeking_adaptive_exploration_v1 import ProfitSeekingAdaptiveExplorationV1
+except Exception:  # pragma: no cover - profit-seeking exploration is additive
+    class ProfitSeekingAdaptiveExplorationV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def evaluate_candidate(self, *args, **kwargs):
+            return {
+                "controlled_exploration_considered": True,
+                "controlled_exploration_allowed": False,
+                "controlled_exploration_reason": "profit_seeking_exploration_import_unavailable",
+                "exploration_rejection_reason": "profit_seeking_exploration_import_unavailable",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+            }
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "controlled_exploration_enabled": True,
+                "exploration_mode": "profit_seeking",
+                "exploration_randomness_allowed": False,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+            }
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -477,6 +512,14 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 self.portfolio_diversification_v2_suite = None
+        self.profit_seeking_exploration_suite = kwargs.get("profit_seeking_exploration_suite")
+        if self.profit_seeking_exploration_suite is None:
+            try:
+                self.profit_seeking_exploration_suite = ProfitSeekingAdaptiveExplorationV1(
+                    state_dir=os.path.dirname(self.state_path) or "state"
+                )
+            except Exception:
+                self.profit_seeking_exploration_suite = None
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -697,6 +740,11 @@ class PaperAutopilotEngine:
         if self.paper_opportunity_allocator is not None and hasattr(self.paper_opportunity_allocator, "decorate_candidates"):
             try:
                 dedup = list(self.paper_opportunity_allocator.decorate_candidates(dedup) or dedup)
+            except Exception:
+                pass
+        if self.profit_seeking_exploration_suite is not None and hasattr(self.profit_seeking_exploration_suite, "decorate_candidates"):
+            try:
+                dedup = list(self.profit_seeking_exploration_suite.decorate_candidates(dedup) or dedup)
             except Exception:
                 pass
         if self.portfolio_diversification_v2_suite is not None and hasattr(self.portfolio_diversification_v2_suite, "rank_for_paper_selection"):
@@ -1003,6 +1051,17 @@ class PaperAutopilotEngine:
             "exploration_allowed": bool(r.get("exploration_allowed", False)),
             "exploration_risk_label": str(r.get("exploration_risk_label") or ""),
             "exploration_rejection_reason": str(r.get("exploration_rejection_reason") or ""),
+            "controlled_exploration_considered": False,
+            "controlled_exploration_allowed": False,
+            "controlled_exploration_reason": "",
+            "exploration_selected": False,
+            "exploration_context": str(r.get("selected_exploration_context") or ""),
+            "exploration_expected_value_score": round(_to_float(r.get("exploration_expected_value_score"), 0.0), 2),
+            "exploration_trade_quality_score": round(_to_float(r.get("exploration_trade_quality_score"), 0.0), 2),
+            "exploration_survivability_score": round(_to_float(r.get("exploration_survivability_score"), 0.0), 2),
+            "caution_aggression_label": str(r.get("caution_aggression_label") or ""),
+            "missed_opportunity_pressure": round(_to_float(r.get("missed_opportunity_pressure"), 0.0), 2),
+            "participation_quality_score": round(_to_float(r.get("participation_quality_score"), 0.0), 2),
             "risk_adjusted_opportunity_rank": int(_to_float(r.get("risk_adjusted_opportunity_rank"), 0.0)),
             "entry_score": round(_to_float(r.get("paper_entry_bridge_score"), _to_float(r.get("entry_quality_score"), 0.0)), 2),
             "confidence": round(_to_float(r.get("confidence"), _to_float(r.get("predicted_win_probability"), 0.0)), 2),
@@ -2036,6 +2095,18 @@ class PaperAutopilotEngine:
                     )
                 except Exception:
                     portfolio_diversification_status = {}
+            profit_seeking_exploration_status = {}
+            if self.profit_seeking_exploration_suite is not None and hasattr(self.profit_seeking_exploration_suite, "status"):
+                try:
+                    profit_seeking_exploration_status = dict(
+                        self.profit_seeking_exploration_suite.status(
+                            rows=candidates,
+                            session_status=session_status,
+                        )
+                        or {}
+                    )
+                except Exception:
+                    profit_seeking_exploration_status = {}
             for row in candidates:
                 if opened >= self.max_new_positions_per_cycle:
                     final_blocker_reason = final_blocker_reason or "max_new_positions_per_cycle_reached"
@@ -2100,12 +2171,55 @@ class PaperAutopilotEngine:
                     broker_reconciliation_active=broker_reconciliation_active,
                 )
                 if not allowed:
-                    skipped += 1
-                    row_trace["selected"] = False
-                    row_trace["order_attempted"] = False
-                    decision_trace.append(row_trace)
-                    final_blocker_reason = str(reason)
-                    continue
+                    exploration_decision = {}
+                    if (
+                        self.profit_seeking_exploration_suite is not None
+                        and hasattr(self.profit_seeking_exploration_suite, "evaluate_candidate")
+                        and eligible_count <= 0
+                        and selected_count <= 0
+                    ):
+                        try:
+                            exploration_decision = dict(
+                                self.profit_seeking_exploration_suite.evaluate_candidate(
+                                    row,
+                                    trace=row_trace,
+                                    session_status=session_status,
+                                    safety=safety,
+                                    selected_this_cycle=selected_count,
+                                    normal_eligible_count=eligible_count,
+                                    portfolio_status=portfolio_diversification_status,
+                                )
+                                or {}
+                            )
+                        except Exception as exc:
+                            exploration_decision = {
+                                "controlled_exploration_considered": True,
+                                "controlled_exploration_allowed": False,
+                                "controlled_exploration_reason": f"exploration_eval_exception:{str(exc)[:100]}",
+                                "exploration_rejection_reason": "exploration_eval_exception",
+                            }
+                    if exploration_decision:
+                        row_trace.update(exploration_decision)
+                    if exploration_decision.get("controlled_exploration_allowed"):
+                        allowed = True
+                        reason = "controlled_profit_seeking_exploration"
+                        row_trace["eligible"] = True
+                        row_trace["decision_reason"] = reason
+                        row_trace["exploration_selected"] = True
+                        gate_meta = dict(gate_meta or {})
+                        gate_meta["commitment_score"] = max(
+                            _to_float(gate_meta.get("commitment_score"), 0.0),
+                            _to_float(exploration_decision.get("exploration_trade_quality_score"), 0.0),
+                        )
+                        gate_meta["controlled_exploration_ok"] = True
+                        gate_meta["controlled_exploration_reason"] = str(exploration_decision.get("controlled_exploration_reason") or reason)
+                    else:
+                        skipped += 1
+                        row_trace["selected"] = False
+                        row_trace["order_attempted"] = False
+                        decision_trace.append(row_trace)
+                        final_blocker_reason = str(exploration_decision.get("exploration_rejection_reason") or reason)
+                        continue
 
                 eligible_count += 1
                 selected_count += 1
@@ -2202,6 +2316,7 @@ class PaperAutopilotEngine:
                 "regime_execution_survivability": regime_execution_status,
                 "adaptive_execution_exit_intelligence_v2": adaptive_execution_exit_status,
                 "portfolio_diversification_correlation_v2": portfolio_diversification_status,
+                "profit_seeking_adaptive_exploration": profit_seeking_exploration_status,
                 "market_session_mode": str(session_status.get("market_session_mode") or ""),
                 "paper_order_submission_allowed": bool(session_status.get("paper_order_submission_allowed", False)),
                 "execution_confirmation_required": bool(session_status.get("execution_confirmation_required", True)),
@@ -2245,6 +2360,7 @@ class PaperAutopilotEngine:
                 "regime_execution_survivability": regime_execution_status,
                 "adaptive_execution_exit_intelligence_v2": adaptive_execution_exit_status,
                 "portfolio_diversification_correlation_v2": portfolio_diversification_status,
+                "profit_seeking_adaptive_exploration": profit_seeking_exploration_status,
                 "market_session_mode": str(session_status.get("market_session_mode") or ""),
                 "paper_order_submission_allowed": bool(session_status.get("paper_order_submission_allowed", False)),
                 "execution_confirmation_required": bool(session_status.get("execution_confirmation_required", True)),
@@ -2372,6 +2488,19 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 portfolio_diversification_status = {}
+        profit_seeking_exploration_status = {}
+        if self.profit_seeking_exploration_suite is not None and hasattr(self.profit_seeking_exploration_suite, "status"):
+            try:
+                profit_seeking_exploration_status = dict(
+                    self.profit_seeking_exploration_suite.status(
+                        rows=candidates,
+                        paper_trace=last_trace,
+                        session_status=session_status,
+                    )
+                    or {}
+                )
+            except Exception:
+                profit_seeking_exploration_status = {}
         capacities = self._current_execution_capacities()
         internal_open_syms = set(capacities.get("open_symbols") or set())
         broker_snapshot = self._broker_open_symbols_snapshot()
@@ -2396,6 +2525,7 @@ class PaperAutopilotEngine:
         decision_rows: list[dict[str, Any]] = []
         eligible = 0
         selected = 0
+        safety = self._alpaca_safety_snapshot()
         for row in candidates[: max(1, min(30, int(max_candidates or 12)))]:
             trace, allowed, _reason, _gate_meta = self._candidate_trace_row(
                 row,
@@ -2416,9 +2546,41 @@ class PaperAutopilotEngine:
                 else:
                     trace["selected"] = False
             else:
-                trace["selected"] = False
+                if self.profit_seeking_exploration_suite is not None and hasattr(self.profit_seeking_exploration_suite, "evaluate_candidate"):
+                    try:
+                        exploration_decision = dict(
+                            self.profit_seeking_exploration_suite.evaluate_candidate(
+                                row,
+                                trace=trace,
+                                session_status=session_status,
+                                safety=safety,
+                                selected_this_cycle=selected,
+                                normal_eligible_count=eligible,
+                                portfolio_status=portfolio_diversification_status,
+                            )
+                            or {}
+                        )
+                        trace.update(exploration_decision)
+                    except Exception as exc:
+                        trace.update({
+                            "controlled_exploration_considered": True,
+                            "controlled_exploration_allowed": False,
+                            "controlled_exploration_reason": f"exploration_eval_exception:{str(exc)[:100]}",
+                            "exploration_rejection_reason": "exploration_eval_exception",
+                        })
+                if trace.get("controlled_exploration_allowed"):
+                    eligible += 1
+                    trace["eligible"] = True
+                    trace["decision_reason"] = "controlled_profit_seeking_exploration"
+                    trace["exploration_selected"] = bool(selected < self.max_new_positions_per_cycle and total_capacity > 0)
+                    if selected < self.max_new_positions_per_cycle and total_capacity > 0:
+                        selected += 1
+                        trace["selected"] = True
+                    else:
+                        trace["selected"] = False
+                else:
+                    trace["selected"] = False
             decision_rows.append(trace)
-        safety = self._alpaca_safety_snapshot()
         final_blocker = str(last_trace.get("final_blocker_reason") or "")
         if not final_blocker:
             if not self._enabled:
@@ -2456,6 +2618,7 @@ class PaperAutopilotEngine:
             "regime_execution_survivability": regime_execution_status,
             "adaptive_execution_exit_intelligence_v2": adaptive_execution_exit_status,
             "portfolio_diversification_correlation_v2": portfolio_diversification_status,
+            "profit_seeking_adaptive_exploration": profit_seeking_exploration_status,
             "market_session_mode": str(last_trace.get("market_session_mode") or session_status.get("market_session_mode") or ""),
             "paper_order_submission_allowed": bool(last_trace.get("paper_order_submission_allowed", session_status.get("paper_order_submission_allowed", False))),
             "execution_confirmation_required": bool(last_trace.get("execution_confirmation_required", session_status.get("execution_confirmation_required", True))),
@@ -2471,7 +2634,7 @@ class PaperAutopilotEngine:
             "orders_submitted": int(last_trace.get("orders_submitted", 0)),
             "orders_rejected": int(last_trace.get("orders_rejected", 0)),
             "final_blocker_reason": final_blocker[:180],
-            "per_candidate_decision_trace": list(last_trace.get("per_candidate_decision_trace") or decision_rows)[:max_candidates],
+            "per_candidate_decision_trace": list(decision_rows or last_trace.get("per_candidate_decision_trace") or [])[:max_candidates],
             "last_alpaca_error_sanitized": str(last_trace.get("last_alpaca_error_sanitized") or "")[:180],
             "portfolio_risk_proof_present": bool(last_trace.get("portfolio_risk_proof_present", False)),
             "portfolio_risk_score_used": last_trace.get("portfolio_risk_score_used"),

@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from statistics import mean
 from typing import Any
 
+try:
+    from engine.profit_seeking_adaptive_exploration_v1 import ProfitSeekingAdaptiveExplorationV1
+except Exception:  # pragma: no cover - additive hook
+    ProfitSeekingAdaptiveExplorationV1 = None  # type: ignore[assignment]
+
 VERSION = "1.0.0"
 MAX_TAIL_BYTES = 2_000_000
 MAX_ROWS = 1_000
@@ -137,6 +142,9 @@ class PaperOpportunityAllocationEngineV1:
         self.labels_path = os.path.join(self.state_dir, "outcome_labels_v1.jsonl")
         self.ledger_path = os.path.join(self.state_dir, "candidate_decision_ledger_v1.jsonl")
         self._outcome_cache: dict[str, Any] | None = None
+        self.profit_seeking_exploration = (
+            ProfitSeekingAdaptiveExplorationV1(state_dir=self.state_dir) if ProfitSeekingAdaptiveExplorationV1 is not None else None
+        )
 
     def _features(self, row: dict[str, Any]) -> dict[str, float | str | bool]:
         r = dict(row or {})
@@ -361,6 +369,7 @@ class PaperOpportunityAllocationEngineV1:
             "allocation_summary": summary,
             **rec,
             "lane_outcome_stats": self._outcome_stats().get("lanes", {}),
+            "profit_seeking_adaptive_exploration_hooks_ready": bool(self.profit_seeking_exploration is not None),
             "auto_apply_allowed": False,
             "human_review_required": True,
             "api_calls_used": 0,

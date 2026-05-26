@@ -772,6 +772,34 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.profit_seeking_adaptive_exploration_v1 import ProfitSeekingAdaptiveExplorationV1
+except Exception:
+    class ProfitSeekingAdaptiveExplorationV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "paper_only_shadow_calibration",
+                "controlled_exploration_enabled": True,
+                "exploration_mode": "profit_seeking",
+                "exploration_randomness_allowed": False,
+                "adaptive_exploration_recommendation": "restore_profit_seeking_adaptive_exploration_import",
+                "summary": "Profit-seeking adaptive exploration import unavailable.",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_trades_enabled": False,
+                "forced_exits_enabled": False,
+            }
+try:
     from engine.mobile_runtime_compaction_v1 import MobileRuntimeCompactionV1
 except Exception:
     class MobileRuntimeCompactionV1:  # type: ignore[override]
@@ -1057,6 +1085,7 @@ REPLAY_LIFECYCLE_EXPECTANCY_LEARNING_SUITE = ReplayLifecycleExpectancyLearningV1
 REGIME_EXECUTION_SURVIVABILITY_SUITE = RegimeExecutionSurvivabilityIntelligenceV1(state_dir=STATE)
 ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V2 = AdaptiveExecutionExitIntelligenceV2(state_dir=STATE)
 PORTFOLIO_DIVERSIFICATION_CORRELATION_V2 = PortfolioDiversificationCorrelationV2(state_dir=STATE)
+PROFIT_SEEKING_ADAPTIVE_EXPLORATION = ProfitSeekingAdaptiveExplorationV1(state_dir=STATE)
 MOBILE_RUNTIME_COMPACTION = MobileRuntimeCompactionV1(state_dir=STATE)
 UNIFIED_LEARNING_DIAGNOSTICS = UnifiedLearningDiagnosticsV1(state_dir=STATE)
 ADAPTIVE_MARKET_INTAKE_FMP_BUDGET_SUITE = AdaptiveMarketIntakeFmpBudgetSuiteV1(state_dir=STATE)
@@ -14845,6 +14874,7 @@ PAPER_AUTOPILOT = PaperAutopilotEngine(
     regime_execution_survivability_suite=REGIME_EXECUTION_SURVIVABILITY_SUITE,
     adaptive_execution_exit_v2_suite=ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V2,
     portfolio_diversification_v2_suite=PORTFOLIO_DIVERSIFICATION_CORRELATION_V2,
+    profit_seeking_exploration_suite=PROFIT_SEEKING_ADAPTIVE_EXPLORATION,
 )
 _PAPER_AUTOPILOT_STARTED = False
 _PAPER_INPROC_HEARTBEAT_STATE = {"last_cycle_utc": "", "cycle_count": 0}
@@ -30704,6 +30734,96 @@ def portfolio_diversification_correlation_status_v2(force: bool = False):
         "live_trading_changed": False,
         "alpaca_paper_only_preserved": True,
         "natural_exit_preserved": True,
+    }
+
+
+@router.get("/api/profit_seeking_adaptive_exploration_status_v1")
+def profit_seeking_adaptive_exploration_status_v1(force: bool = False):
+    try:
+        try:
+            payload = dict(_latest_top_buys_runtime_snapshot() or {})
+        except Exception:
+            payload = {}
+        if not payload:
+            try:
+                cached = _CACHE.get("top_buys", {}) if isinstance(_CACHE.get("top_buys"), dict) else {}
+                mode_cached = ((cached.get("mode::balanced") or {}).get("data")) if isinstance(cached, dict) else {}
+                if isinstance(mode_cached, dict):
+                    payload = dict(mode_cached)
+            except Exception:
+                payload = {}
+        rows = _candidate_rows_from_payload(payload) if isinstance(payload, dict) else []
+        try:
+            rows = PROFIT_SEEKING_ADAPTIVE_EXPLORATION.decorate_candidates(rows)
+        except Exception:
+            pass
+        paper_trace = {}
+        try:
+            if hasattr(PAPER_AUTOPILOT, "execution_trace"):
+                paper_trace = dict(PAPER_AUTOPILOT.execution_trace(max_candidates=8) or {})
+        except Exception:
+            paper_trace = {}
+        session_status = {}
+        try:
+            session_status = dict(MARKET_SESSION_EXECUTION_TIMING_SUITE.status() or {})
+        except Exception:
+            session_status = {}
+        out = PROFIT_SEEKING_ADAPTIVE_EXPLORATION.status(
+            rows=rows,
+            paper_trace=paper_trace,
+            session_status=session_status,
+            force=bool(force),
+        )
+        if isinstance(out, dict):
+            out["profit_seeking_adaptive_exploration_status_v1"] = True
+            out["api_calls_used"] = 0
+            out["live_trading_changed"] = False
+            out["broker_behavior_changed"] = False
+            out["production_rankings_changed"] = False
+            out["production_weights_changed"] = False
+            out["provider_rewrite_changed"] = False
+            out["alpaca_paper_only_preserved"] = True
+            out["natural_exit_preserved"] = True
+            out["forced_trades_enabled"] = False
+            out["forced_exits_enabled"] = False
+            out["deterministic_execution_authority_preserved"] = True
+            return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "paper_only_shadow_calibration",
+            "profit_seeking_adaptive_exploration_status_v1": True,
+            "controlled_exploration_enabled": True,
+            "exploration_mode": "profit_seeking",
+            "exploration_randomness_allowed": False,
+            "adaptive_exploration_recommendation": "status_unavailable",
+            "summary": f"profit_seeking_adaptive_exploration_status_unavailable: {str(exc)[:140]}",
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+        }
+    return {
+        "enabled": False,
+        "version": "1.0.0",
+        "mode": "paper_only_shadow_calibration",
+        "profit_seeking_adaptive_exploration_status_v1": True,
+        "controlled_exploration_enabled": True,
+        "exploration_mode": "profit_seeking",
+        "exploration_randomness_allowed": False,
+        "adaptive_exploration_recommendation": "empty_status",
+        "summary": "Profit-seeking adaptive exploration returned no payload.",
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+        "broker_behavior_changed": False,
+        "alpaca_paper_only_preserved": True,
+        "natural_exit_preserved": True,
+        "forced_trades_enabled": False,
+        "forced_exits_enabled": False,
     }
 
 
@@ -47032,6 +47152,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("regime_execution_survivability", lambda: REGIME_EXECUTION_SURVIVABILITY_SUITE.status(rows=rows))
         _safe_status("adaptive_execution_exit_intelligence_v2", lambda: ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V2.status(rows=rows))
         _safe_status("portfolio_diversification_correlation_v2", lambda: PORTFOLIO_DIVERSIFICATION_CORRELATION_V2.status(rows=rows))
+        _safe_status("profit_seeking_adaptive_exploration", lambda: PROFIT_SEEKING_ADAPTIVE_EXPLORATION.status(rows=rows))
         _safe_status("mobile_runtime_compaction", lambda: _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))
         _safe_status("paper_opportunity_allocation", lambda: PAPER_OPPORTUNITY_ALLOCATION_ENGINE.status(rows=rows))
