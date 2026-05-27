@@ -471,6 +471,7 @@ class PaperAutopilotEngine:
         self.max_stocks = max(1, _to_int(kwargs.get("max_stocks"), 6))
         self.max_crypto = max(0, _to_int(kwargs.get("max_crypto"), 2))
         self.max_new_positions_per_cycle = max(1, _to_int(kwargs.get("max_new_positions_per_cycle"), 2))
+        self.configured_max_new_positions_per_cycle = int(self.max_new_positions_per_cycle)
         self.max_closes_per_cycle = max(1, _to_int(kwargs.get("max_closes_per_cycle"), 2))
         self.min_hold_seconds_intraday = max(30, _to_int(kwargs.get("min_hold_seconds_intraday"), 300))
         self.min_hold_seconds_swing = max(120, _to_int(kwargs.get("min_hold_seconds_swing"), 1800))
@@ -1024,6 +1025,7 @@ class PaperAutopilotEngine:
         internal_open_syms: set[str] | None = None,
         broker_open_syms: set[str] | None = None,
         broker_reconciliation_active: bool = False,
+        max_new_positions_per_cycle: int | None = None,
     ) -> tuple[dict[str, Any], bool, str, dict[str, Any]]:
         r = _normalize_paper_entry_bridge(row)
         symbol = str(r.get("symbol") or "").upper().strip()
@@ -1043,6 +1045,7 @@ class PaperAutopilotEngine:
                 duplicate_source = "internal"
             elif in_broker:
                 duplicate_source = "broker"
+        max_new_limit = int(max_new_positions_per_cycle) if max_new_positions_per_cycle is not None else int(self.max_new_positions_per_cycle)
         if not symbol:
             reason = "missing_symbol"
         elif symbol in open_syms:
@@ -1051,7 +1054,7 @@ class PaperAutopilotEngine:
             reason = "cooldown_active"
         elif total_capacity <= 0:
             reason = "max_concurrent_positions_reached"
-        elif selected_so_far >= self.max_new_positions_per_cycle:
+        elif selected_so_far >= max_new_limit:
             reason = "max_new_positions_per_cycle_reached"
         elif asset == "stock" and stock_capacity <= 0:
             reason = "stock_capacity_reached"
@@ -2791,6 +2794,299 @@ class PaperAutopilotEngine:
             "live_trading_changed": False,
             "secrets_exposed": False,
             "generated_at": _now_iso(),
+        }
+
+    def market_open_dry_run(self, max_candidates: int = 30) -> dict[str, Any]:
+        """Simulate a regular-market paper entry cycle without touching broker state."""
+        candidates = self._collect_candidate_rows()
+        safety = self._alpaca_safety_snapshot()
+        actual_session = {}
+        if self.market_session_timing_suite is not None and hasattr(self.market_session_timing_suite, "status"):
+            try:
+                actual_session = dict(
+                    self.market_session_timing_suite.status(
+                        broker_ready=bool(safety.get("broker_execution_enabled")),
+                        open_orders_count=0,
+                    )
+                    or {}
+                )
+            except Exception:
+                actual_session = {}
+        simulated_session = {
+            "market_session_mode": "regular_market",
+            "current_session_type": "regular_market",
+            "market_is_open": True,
+            "market_is_tradable": True,
+            "session_tradable": True,
+            "paper_order_submission_allowed": True,
+            "broker_order_submission_allowed": True,
+            "execution_confirmation_required": False,
+            "open_confirmation_score": 92.0,
+            "open_confirmation_label": "confirmed_execute",
+            "open_confirmation_reason": "dry_run_regular_market_simulation",
+            "quote_freshness_confirmed": True,
+            "spread_liquidity_confirmed": True,
+            "gap_behavior_confirmed": True,
+            "entry_commitment_confirmed": True,
+            "portfolio_risk_confirmed": True,
+            "broker_preflight_confirmed": bool(safety.get("broker_execution_enabled")),
+            "execution_intent_status": "dry_run_execute_ready",
+            "defer_until_market_confirmation": False,
+            "requires_open_confirmation": False,
+            "session_reason": "Simulated market-open dry run; real session gate left unchanged.",
+        }
+        broad_status = {}
+        if self.broad_universe_intake_promotion_suite is not None and hasattr(self.broad_universe_intake_promotion_suite, "status"):
+            try:
+                broad_status = dict(self.broad_universe_intake_promotion_suite.status(rows=candidates) or {})
+            except Exception:
+                broad_status = {}
+
+        capacities = self._current_execution_capacities()
+        internal_open_syms = set(capacities.get("open_symbols") or set())
+        broker_snapshot = self._broker_open_symbols_snapshot()
+        broker_open_syms = set(broker_snapshot.get("broker_open_symbols") or set())
+        broker_reconciliation_active = bool(broker_snapshot.get("broker_reconciliation_active", False))
+        broker_positions_fetch_ok = bool(broker_snapshot.get("broker_positions_fetch_ok", False))
+        if broker_reconciliation_active and broker_positions_fetch_ok:
+            open_syms = set(broker_open_syms)
+            effective_stock_open = int(len([s for s in broker_open_syms if s]))
+            effective_crypto_open = 0
+            capacity_source = "broker"
+        else:
+            open_syms = set(internal_open_syms)
+            effective_stock_open = int(capacities.get("open_positions_stock", 0))
+            effective_crypto_open = int(capacities.get("open_positions_crypto", 0))
+            capacity_source = "internal"
+        stock_capacity = max(0, int(self.max_stocks) - effective_stock_open)
+        crypto_capacity = max(0, int(self.max_crypto) - effective_crypto_open)
+        total_capacity = max(0, int(self.max_open_positions_total) - (effective_stock_open + effective_crypto_open))
+        current_runtime_max_new = int(self.max_new_positions_per_cycle)
+        simulated_max_new = max(1, int(getattr(self, "configured_max_new_positions_per_cycle", current_runtime_max_new) or current_runtime_max_new or 1))
+
+        selected_symbols: list[str] = []
+        selected_details: list[dict[str, Any]] = []
+        rejected_summary: list[dict[str, Any]] = []
+        decision_rows: list[dict[str, Any]] = []
+        blockers: dict[str, int] = {}
+        eligible = 0
+        selected = 0
+        would_attempt = 0
+        would_submit = 0
+        would_reject = 0
+        limit = max(1, min(60, int(max_candidates or 30)))
+        for row in candidates[:limit]:
+            trace, allowed, reason, gate_meta = self._candidate_trace_row(
+                row,
+                open_syms=open_syms,
+                stock_capacity=stock_capacity,
+                crypto_capacity=crypto_capacity,
+                total_capacity=total_capacity,
+                selected_so_far=selected,
+                internal_open_syms=internal_open_syms,
+                broker_open_syms=broker_open_syms,
+                broker_reconciliation_active=broker_reconciliation_active,
+                max_new_positions_per_cycle=simulated_max_new,
+            )
+            trace.update({
+                "dry_run_only": True,
+                "market_session_mode": "regular_market",
+                "market_calendar_session_type": "regular_market",
+                "market_is_open": True,
+                "market_is_tradable": True,
+                "session_tradable": True,
+                "paper_order_submission_allowed": True,
+                "execution_confirmation_required": False,
+                "open_confirmation_score": 92.0,
+                "open_confirmation_label": "confirmed_execute",
+                "open_confirmation_reason": "dry_run_regular_market_simulation",
+            })
+            if not allowed and self.profit_seeking_exploration_suite is not None and hasattr(self.profit_seeking_exploration_suite, "evaluate_candidate"):
+                try:
+                    exploration = dict(
+                        self.profit_seeking_exploration_suite.evaluate_candidate(
+                            row,
+                            trace=trace,
+                            session_status=simulated_session,
+                            market_context=simulated_session,
+                            safety=safety,
+                            selected_this_cycle=selected,
+                            normal_eligible_count=eligible,
+                            portfolio_status={},
+                        )
+                        or {}
+                    )
+                    trace.update(exploration)
+                    if exploration.get("controlled_exploration_allowed"):
+                        allowed = True
+                        reason = "controlled_profit_seeking_exploration"
+                        gate_meta = dict(gate_meta or {})
+                        gate_meta["controlled_exploration_ok"] = True
+                except Exception as exc:
+                    trace["exploration_rejection_reason"] = f"exploration_eval_exception:{str(exc)[:80]}"
+
+            if not allowed:
+                blockers[str(reason or trace.get("decision_reason") or "not_eligible")] = blockers.get(str(reason or "not_eligible"), 0) + 1
+                trace["selected"] = False
+                trace["order_attempted"] = False
+                decision_rows.append(trace)
+                rejected_summary.append({
+                    "symbol": trace.get("symbol"),
+                    "reason": str(reason or trace.get("decision_reason") or "not_eligible"),
+                    "source": trace.get("paper_autopilot_candidate_source"),
+                })
+                continue
+
+            eligible += 1
+            asset = _norm_asset(row.get("asset_type") or "stock")
+            symbol = str(row.get("symbol") or trace.get("symbol") or "").upper().strip()
+            capacity_ok = bool(total_capacity > 0 and selected < simulated_max_new)
+            if asset == "stock" and stock_capacity <= 0:
+                capacity_ok = False
+                reason = "stock_capacity_reached"
+            if asset == "crypto" and crypto_capacity <= 0:
+                capacity_ok = False
+                reason = "crypto_capacity_reached"
+            if not capacity_ok:
+                blockers[str(reason or "paper_capacity_limit_reached")] = blockers.get(str(reason or "paper_capacity_limit_reached"), 0) + 1
+                trace["selected"] = False
+                trace["order_attempted"] = False
+                decision_rows.append(trace)
+                continue
+
+            selected += 1
+            would_attempt += 1
+            trace["selected"] = True
+            trace["order_attempted"] = True
+            trace["dry_run_order_attempted"] = True
+            risk_label_raw = str(row.get("portfolio_risk_label") or "").strip()
+            risk_score_raw = row.get("portfolio_risk_score")
+            risk_score = _to_float(risk_score_raw, 0.0) if risk_score_raw is not None else None
+            explicit_ok = row.get("portfolio_risk_ok")
+            risk_proof_present = bool(explicit_ok is not None or risk_score is not None or risk_label_raw)
+            if explicit_ok is not None:
+                portfolio_ok = bool(explicit_ok)
+                preflight_reason = "explicit_portfolio_risk_ok"
+            elif risk_score is not None:
+                portfolio_ok = bool(risk_label_raw.lower() not in {"high_risk", "blocked"} and risk_score >= 35.0)
+                preflight_reason = "derived_from_portfolio_risk_fields"
+            else:
+                portfolio_ok = False
+                preflight_reason = "missing_portfolio_risk_data"
+            submit_ready = bool(
+                safety.get("broker_execution_enabled")
+                and safety.get("paper_mode_verified")
+                and asset == "stock"
+                and symbol
+                and risk_proof_present
+                and portfolio_ok
+            )
+            trace.update({
+                "portfolio_risk_proof_present": bool(risk_proof_present),
+                "portfolio_risk_score_used": (None if risk_score is None else round(float(risk_score), 4)),
+                "portfolio_risk_label_used": risk_label_raw,
+                "portfolio_risk_preflight_reason": preflight_reason,
+                "paper_autopilot_limits_ok": True,
+                "paper_autopilot_limits_reason": "dry_run_max_new_max_open_and_capacity_passed",
+                "broker_submit_function_called": False,
+                "real_order_submitted": False,
+                "would_submit_order": bool(submit_ready),
+            })
+            if submit_ready:
+                would_submit += 1
+                selected_symbols.append(symbol)
+                selected_details.append({
+                    "symbol": symbol,
+                    "source": trace.get("paper_autopilot_candidate_source"),
+                    "cap_tier": trace.get("selected_cap_tier"),
+                    "sector": trace.get("selected_sector"),
+                    "opportunity_type": trace.get("selected_opportunity_type"),
+                    "commitment_score": trace.get("commitment_score"),
+                    "portfolio_risk_score": trace.get("portfolio_risk_score_used"),
+                    "portfolio_risk_label": trace.get("portfolio_risk_label_used"),
+                    "expected_return_percent": row.get("expected_return_percent") or row.get("predicted_profit_percent"),
+                })
+                open_syms.add(symbol)
+                total_capacity = max(0, total_capacity - 1)
+                if asset == "stock":
+                    stock_capacity = max(0, stock_capacity - 1)
+                else:
+                    crypto_capacity = max(0, crypto_capacity - 1)
+            else:
+                would_reject += 1
+                reject_reason = "broker_not_ready"
+                if asset != "stock":
+                    reject_reason = "alpaca_crypto_execution_deferred"
+                elif not risk_proof_present:
+                    reject_reason = "missing_portfolio_risk_data"
+                elif not portfolio_ok:
+                    reject_reason = "portfolio_risk_preflight_failed"
+                blockers[reject_reason] = blockers.get(reject_reason, 0) + 1
+                trace["dry_run_rejection_reason"] = reject_reason
+            decision_rows.append(trace)
+
+        final = "dry_run_would_submit_orders" if would_submit > 0 else "dry_run_no_orders_would_submit"
+        if not candidates:
+            final = "candidate_source_empty"
+            blockers[final] = blockers.get(final, 0) + 1
+        elif eligible <= 0:
+            final = "no_eligible_candidates"
+        elif selected <= 0:
+            final = "no_selected_candidates"
+        elif would_attempt <= 0:
+            final = "no_orders_would_be_attempted"
+        elif would_submit <= 0 and blockers:
+            final = max(blockers.items(), key=lambda kv: kv[1])[0]
+
+        return {
+            "enabled": True,
+            "version": "1.0.0",
+            "dry_run_only": True,
+            "simulate_market_open": True,
+            "simulated_session_type": "regular_market",
+            "simulated_broker_order_submission_allowed": True,
+            "real_orders_submitted": 0,
+            "broker_submit_function_called": False,
+            "broad_universe_pipeline_active": bool(broad_status.get("broad_universe_pipeline_active", False)),
+            "broad_universe_size": int(_to_float(broad_status.get("broad_universe_size"), 0.0)),
+            "tradable_universe_size": int(_to_float(broad_status.get("tradable_universe_size"), 0.0)),
+            "candidates_detected": int(_to_float(broad_status.get("candidates_detected"), 0.0)),
+            "shortlist_count": int(_to_float(broad_status.get("shortlist_count"), 0.0)),
+            "deep_scored_count": int(_to_float(broad_status.get("deep_scored_count"), 0.0)),
+            "promoted_to_top_buys_count": int(_to_float(broad_status.get("promoted_to_top_buys_count"), 0.0)),
+            "top_buys_rows_count": int(len(candidates)),
+            "current_runtime_max_new_positions_per_cycle": int(current_runtime_max_new),
+            "simulated_max_new_positions_per_cycle": int(simulated_max_new),
+            "paper_autopilot_candidate_source": (
+                "broad_universe_promoted_top_buys"
+                if any(bool((r or {}).get("selected_from_broad_universe", False)) for r in candidates)
+                else "top_buys"
+            ),
+            "candidates_seen": int(len(candidates)),
+            "eligible_candidates": int(eligible),
+            "selected_candidates": int(selected),
+            "would_attempt_orders": int(would_attempt),
+            "would_submit_orders": int(would_submit),
+            "would_reject_orders": int(would_reject),
+            "final_blocker_reason": str(final)[:180],
+            "blocker_breakdown": dict(sorted(blockers.items(), key=lambda kv: kv[1], reverse=True)),
+            "selected_symbols": list(selected_symbols),
+            "selected_symbol_details": list(selected_details),
+            "rejected_candidate_summary": list(rejected_summary[:20]),
+            "per_candidate_decision_trace": list(decision_rows[:limit]),
+            "market_session_block_bypassed_for_simulation_only": True,
+            "actual_market_session_type": str(actual_session.get("current_session_type") or actual_session.get("market_session_mode") or ""),
+            "actual_broker_order_submission_allowed": bool(actual_session.get("broker_order_submission_allowed", actual_session.get("paper_order_submission_allowed", False))),
+            "fmp_budget_state": str(broad_status.get("fmp_budget_state") or ""),
+            "capacity_source": str(capacity_source),
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+            "deterministic_execution_authority_preserved": True,
+            "broker_behavior_changed": False,
         }
 
     def paper_positions(self):

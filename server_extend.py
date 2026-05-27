@@ -39188,6 +39188,55 @@ def paper_execution_trace_v1():
     return _paper_execution_trace_payload()
 
 
+@router.get("/api/paper_autopilot_market_open_dry_run_v1")
+def paper_autopilot_market_open_dry_run_v1():
+    try:
+        _ensure_paper_autopilot_started()
+        if hasattr(PAPER_AUTOPILOT, "market_open_dry_run"):
+            out = dict(PAPER_AUTOPILOT.market_open_dry_run() or {})
+        else:
+            out = {
+                "enabled": False,
+                "version": "1.0.0",
+                "dry_run_only": True,
+                "final_blocker_reason": "paper_autopilot_market_open_dry_run_unavailable",
+            }
+        out["paper_autopilot_market_open_dry_run_v1"] = True
+        out["dry_run_only"] = True
+        out["real_orders_submitted"] = 0
+        out["broker_submit_function_called"] = False
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        out["deterministic_execution_authority_preserved"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "paper_autopilot_market_open_dry_run_v1": True,
+            "dry_run_only": True,
+            "simulate_market_open": True,
+            "real_orders_submitted": 0,
+            "broker_submit_function_called": False,
+            "would_attempt_orders": 0,
+            "would_submit_orders": 0,
+            "final_blocker_reason": f"dry_run_unavailable:{str(exc)[:140]}",
+            "blocker_breakdown": {"dry_run_unavailable": 1},
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+            "deterministic_execution_authority_preserved": True,
+        }
+
+
 def _alpaca_paper_test_cycle_payload():
     _ensure_paper_autopilot_started()
     lock = getattr(PAPER_AUTOPILOT, "_cycle_lock", None)
