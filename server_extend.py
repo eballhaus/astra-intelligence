@@ -581,6 +581,41 @@ except Exception:
                 "natural_exit_preserved": True,
             }
 try:
+    from engine.market_calendar_knowledge_intelligence_v1 import MarketCalendarKnowledgeIntelligenceV1
+except Exception:
+    class MarketCalendarKnowledgeIntelligenceV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def enrich_payload(self, payload):
+            return dict(payload or {})
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "market_calendar_knowledge_status_v1": True,
+                "market_calendar_available": False,
+                "market_calendar_source": "unavailable",
+                "current_session_type": "unknown_closed",
+                "session_tradable": False,
+                "broker_order_submission_allowed": False,
+                "session_risk_label": "unknown",
+                "session_risk_score": 100.0,
+                "market_structure_label": "unknown",
+                "trade_style_environment": "unknown",
+                "behavioral_market_state": "unknown",
+                "market_context_summary": "Market calendar knowledge import unavailable.",
+                "market_knowledge_confidence": 0.0,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+            }
+try:
     from engine.adaptive_learning_infrastructure_v1 import AdaptiveLearningInfrastructureV1
 except Exception:
     class AdaptiveLearningInfrastructureV1:  # type: ignore[override]
@@ -1079,7 +1114,10 @@ OPPORTUNITY_DISCOVERY_EXPANSION_SUITE = OpportunityDiscoveryExpansionV1(state_di
 PAPER_OPPORTUNITY_ALLOCATION_ENGINE = PaperOpportunityAllocationEngineV1(state_dir=STATE)
 EDGE_DEVELOPMENT_SUITE = EdgeDevelopmentSuiteV1(state_dir=STATE)
 TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE = TradeManagementPortfolioIntelligenceV1(state_dir=STATE)
-MARKET_SESSION_EXECUTION_TIMING_SUITE = MarketSessionExecutionTimingV1()
+MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE = MarketCalendarKnowledgeIntelligenceV1(state_dir=STATE)
+MARKET_SESSION_EXECUTION_TIMING_SUITE = MarketSessionExecutionTimingV1(
+    market_calendar_knowledge_suite=MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE
+)
 ADAPTIVE_LEARNING_INFRASTRUCTURE_SUITE = AdaptiveLearningInfrastructureV1(state_dir=STATE)
 REPLAY_LIFECYCLE_EXPECTANCY_LEARNING_SUITE = ReplayLifecycleExpectancyLearningV1(state_dir=STATE)
 REGIME_EXECUTION_SURVIVABILITY_SUITE = RegimeExecutionSurvivabilityIntelligenceV1(state_dir=STATE)
@@ -14869,6 +14907,7 @@ PAPER_AUTOPILOT = PaperAutopilotEngine(
     edge_development_suite=EDGE_DEVELOPMENT_SUITE,
     trade_management_portfolio_suite=TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE,
     market_session_timing_suite=MARKET_SESSION_EXECUTION_TIMING_SUITE,
+    market_calendar_knowledge_suite=MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE,
     adaptive_learning_infrastructure_suite=ADAPTIVE_LEARNING_INFRASTRUCTURE_SUITE,
     replay_lifecycle_expectancy_suite=REPLAY_LIFECYCLE_EXPECTANCY_LEARNING_SUITE,
     regime_execution_survivability_suite=REGIME_EXECUTION_SURVIVABILITY_SUITE,
@@ -30737,6 +30776,81 @@ def portfolio_diversification_correlation_status_v2(force: bool = False):
     }
 
 
+@router.get("/api/market_calendar_knowledge_status_v1")
+def market_calendar_knowledge_status_v1(force: bool = False, refresh_calendar: bool = True):
+    try:
+        try:
+            payload = dict(_latest_top_buys_runtime_snapshot() or {})
+        except Exception:
+            payload = {}
+        if not payload:
+            try:
+                cached = _CACHE.get("top_buys", {}) if isinstance(_CACHE.get("top_buys"), dict) else {}
+                mode_cached = ((cached.get("mode::balanced") or {}).get("data")) if isinstance(cached, dict) else {}
+                if isinstance(mode_cached, dict):
+                    payload = dict(mode_cached)
+            except Exception:
+                payload = {}
+        rows = _candidate_rows_from_payload(payload) if isinstance(payload, dict) else []
+        out = MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE.status(
+            rows=rows,
+            allow_live_fetch=bool(refresh_calendar),
+            force=bool(force),
+        )
+        if isinstance(out, dict):
+            out["market_calendar_knowledge_status_v1"] = True
+            out["live_trading_changed"] = False
+            out["broker_behavior_changed"] = False
+            out["alpaca_paper_only_preserved"] = True
+            out["natural_exit_preserved"] = True
+            out["forced_trades_enabled"] = False
+            out["forced_exits_enabled"] = False
+            out["deterministic_execution_authority_preserved"] = True
+            return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "market_calendar_knowledge_status_v1": True,
+            "market_calendar_available": False,
+            "market_calendar_source": "status_unavailable",
+            "market_calendar_cache_hit": False,
+            "market_calendar_stale": True,
+            "current_session_type": "unknown_closed",
+            "session_tradable": False,
+            "broker_order_submission_allowed": False,
+            "session_risk_label": "unknown",
+            "session_risk_score": 100.0,
+            "market_structure_label": "unknown",
+            "trade_style_environment": "unknown",
+            "behavioral_market_state": "unknown",
+            "market_context_summary": f"market_calendar_knowledge_status_unavailable: {str(exc)[:140]}",
+            "market_knowledge_confidence": 0.0,
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+        }
+    return {
+        "enabled": False,
+        "version": "1.0.0",
+        "market_calendar_knowledge_status_v1": True,
+        "market_calendar_available": False,
+        "market_calendar_source": "empty_status",
+        "current_session_type": "unknown_closed",
+        "session_tradable": False,
+        "broker_order_submission_allowed": False,
+        "market_context_summary": "Market calendar knowledge returned no payload.",
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+        "alpaca_paper_only_preserved": True,
+        "natural_exit_preserved": True,
+    }
+
+
 @router.get("/api/profit_seeking_adaptive_exploration_status_v1")
 def profit_seeking_adaptive_exploration_status_v1(force: bool = False):
     try:
@@ -30768,10 +30882,16 @@ def profit_seeking_adaptive_exploration_status_v1(force: bool = False):
             session_status = dict(MARKET_SESSION_EXECUTION_TIMING_SUITE.status() or {})
         except Exception:
             session_status = {}
+        market_context = {}
+        try:
+            market_context = dict(MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE.status(rows=rows, allow_live_fetch=False) or {})
+        except Exception:
+            market_context = {}
         out = PROFIT_SEEKING_ADAPTIVE_EXPLORATION.status(
             rows=rows,
             paper_trace=paper_trace,
             session_status=session_status,
+            market_context=market_context or session_status,
             force=bool(force),
         )
         if isinstance(out, dict):
@@ -34672,6 +34792,8 @@ def _top_buys_cached_payload_for_mode(buy_mode, include_trace=None, max_age_seco
 
 def _top_buys_row_count(payload):
     p = dict(payload or {})
+    root_rows = p.get("rows") if isinstance(p.get("rows"), list) else None
+    root_top_buys = p.get("top_buys") if isinstance(p.get("top_buys"), list) else None
     stocks_n = int(
         _to_float(
             p.get("stocks_final_count"),
@@ -34684,7 +34806,8 @@ def _top_buys_row_count(payload):
             len(((p.get("crypto") or {}).get("final") or [])),
         )
     )
-    return max(0, stocks_n + crypto_n)
+    nested_n = max(0, stocks_n + crypto_n)
+    return max(nested_n, len(root_rows or []), len(root_top_buys or []))
 
 
 def _top_buys_runtime_snapshot_get():
@@ -34772,6 +34895,10 @@ def _tail_jsonl_rows(path, max_rows=500):
 def _candidate_rows_from_payload(payload):
     p = dict(payload or {})
     rows = []
+    for key in ("rows", "top_buys"):
+        existing = p.get(key)
+        if isinstance(existing, list):
+            rows.extend(existing)
     for bucket in ("stocks", "crypto"):
         b = dict(p.get(bucket) or {})
         rows.extend(list(b.get("final") or []))
@@ -36497,6 +36624,7 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
         and bool(out.get("adaptive_execution_exit_intelligence_v2"))
         and bool(out.get("portfolio_diversification_correlation_v2"))
         and bool(out.get("paper_opportunity_allocation_engine_v1"))
+        and bool(out.get("market_calendar_knowledge_intelligence_v1"))
     )
     reuse_decorated_payload = bool(source_s in {"runtime_snapshot", "cached"} and already_decorated)
     if not reuse_decorated_payload:
@@ -36534,6 +36662,10 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
             pass
         try:
             out = ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V2.enrich_payload(out)
+        except Exception:
+            pass
+        try:
+            out = MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE.enrich_payload(out)
         except Exception:
             pass
         try:
@@ -36602,6 +36734,10 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
         except Exception:
             pass
         try:
+            out = MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE.enrich_payload(out)
+        except Exception:
+            pass
+        try:
             out = PORTFOLIO_DIVERSIFICATION_CORRELATION_V2.enrich_payload(out)
         except Exception:
             pass
@@ -36629,6 +36765,13 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
     out["top_buys_safe_mode"] = bool(safe_mode)
     out["top_buys_stage"] = str(stage or "final")
     out["top_buys_last_real_rows_count"] = int(last_real_rows_count)
+    try:
+        canonical_rows = list(_candidate_rows_from_payload(out) or [])
+    except Exception:
+        canonical_rows = []
+    out["rows"] = [dict(r) for r in canonical_rows if isinstance(r, dict)]
+    out["top_buys"] = [dict(r) for r in out["rows"]]
+    out["top_buys_row_count"] = int(len(out["rows"]))
     out["top_buys_cache_populated"] = bool(cache_hit or _top_buys_row_count(out) > 0 or last_real_rows_count > 0)
     out["learning_activation_runtime_safe_mode"] = bool(out.get("learning_activation_runtime_safe_mode", False))
     snap = _top_buys_runtime_snapshot_get()
@@ -47152,7 +47295,8 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("regime_execution_survivability", lambda: REGIME_EXECUTION_SURVIVABILITY_SUITE.status(rows=rows))
         _safe_status("adaptive_execution_exit_intelligence_v2", lambda: ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V2.status(rows=rows))
         _safe_status("portfolio_diversification_correlation_v2", lambda: PORTFOLIO_DIVERSIFICATION_CORRELATION_V2.status(rows=rows))
-        _safe_status("profit_seeking_adaptive_exploration", lambda: PROFIT_SEEKING_ADAPTIVE_EXPLORATION.status(rows=rows))
+        _safe_status("market_calendar_knowledge", lambda: MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE.status(rows=rows, allow_live_fetch=False))
+        _safe_status("profit_seeking_adaptive_exploration", lambda: PROFIT_SEEKING_ADAPTIVE_EXPLORATION.status(rows=rows, market_context=statuses.get("market_calendar_knowledge") or {}))
         _safe_status("mobile_runtime_compaction", lambda: _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))
         _safe_status("paper_opportunity_allocation", lambda: PAPER_OPPORTUNITY_ALLOCATION_ENGINE.status(rows=rows))

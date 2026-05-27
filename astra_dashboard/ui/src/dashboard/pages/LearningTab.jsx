@@ -139,6 +139,7 @@ export default function LearningTab({ compact = false }) {
   const [showAdaptiveExitDetails, setShowAdaptiveExitDetails] = useState(false);
   const [showPortfolioDiversificationDetails, setShowPortfolioDiversificationDetails] = useState(false);
   const [showProfitExplorationDetails, setShowProfitExplorationDetails] = useState(false);
+  const [showMarketCalendarDetails, setShowMarketCalendarDetails] = useState(false);
   const [endpointStatus, setEndpointStatus] = useState({});
   const [timeline, setTimeline] = useState([]);
   const [data, setData] = useState({
@@ -1557,6 +1558,7 @@ export default function LearningTab({ compact = false }) {
   const portfolioDiversificationV2 = unified?.portfolio_diversification_correlation_v2 || {};
   const mobileRuntimeCompaction = unified?.mobile_runtime_compaction || {};
   const profitSeekingExploration = unified?.profit_seeking_adaptive_exploration || {};
+  const marketCalendarKnowledge = unified?.market_calendar_knowledge || {};
   const metricDisplay = (metric, suffix = "") => {
     if (!metric || typeof metric !== "object") return "n/a";
     if (metric.value === null || metric.value === undefined) {
@@ -1891,6 +1893,80 @@ export default function LearningTab({ compact = false }) {
             </ResponsiveContainer>
           </ChartShell>
         </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Market Calendar & Market Knowledge</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Cached market-session truth plus structured context for timing, style fit, and behavioral risk.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowMarketCalendarDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showMarketCalendarDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Current session", marketCalendarKnowledge?.current_session_type],
+            ["Tradable", marketCalendarKnowledge?.session_tradable ? "yes" : "blocked"],
+            ["Orders", marketCalendarKnowledge?.broker_order_submission_allowed ? "allowed" : "blocked"],
+            ["Holiday", marketCalendarKnowledge?.is_market_holiday ? (marketCalendarKnowledge?.holiday_name || "yes") : "no"],
+            ["Early close", marketCalendarKnowledge?.is_early_close ? (marketCalendarKnowledge?.early_close_time || "yes") : "no"],
+            ["Session posture", marketCalendarKnowledge?.session_execution_posture],
+            ["Market structure", marketCalendarKnowledge?.market_structure_label],
+            ["Best style", marketCalendarKnowledge?.trade_style_environment],
+            ["Behavior", marketCalendarKnowledge?.behavioral_market_state],
+            ["Knowledge confidence", marketCalendarKnowledge?.market_knowledge_confidence],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {typeof value === "number" ? value.toFixed(1) : String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Next open: {String(marketCalendarKnowledge?.next_market_open || "n/a")} | Next close: {String(marketCalendarKnowledge?.next_market_close || "n/a")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            {String(marketCalendarKnowledge?.market_context_summary || "Market context diagnostics are warming up.")}
+          </div>
+        </div>
+        {showMarketCalendarDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 10, fontSize: 12 }}>
+            {[
+              ["Calendar source", marketCalendarKnowledge?.market_calendar_source],
+              ["Calendar cache", marketCalendarKnowledge?.market_calendar_cache_hit ? "hit" : "fresh/local"],
+              ["Calendar stale", marketCalendarKnowledge?.market_calendar_stale ? "yes" : "no"],
+              ["Session risk", marketCalendarKnowledge?.session_risk_score],
+              ["Risk label", marketCalendarKnowledge?.session_risk_label],
+              ["Confirmation", marketCalendarKnowledge?.session_confirmation_requirement],
+              ["Exploration support", marketCalendarKnowledge?.market_context_supports_exploration ? "yes" : "no"],
+              ["Exploration quality", marketCalendarKnowledge?.exploration_context_quality],
+            ].map(([label, value]) => (
+              <div key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+                <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+                <div style={{ color: "#dbeafe", fontWeight: 800 }}>
+                  {typeof value === "number" ? value.toFixed(1) : String(value || "n/a").replaceAll("_", " ")}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div style={{ ...panelStyle }}>

@@ -104,6 +104,32 @@ except Exception:  # pragma: no cover - session timing suite is additive
             return self.status()
 
 try:
+    from engine.market_calendar_knowledge_intelligence_v1 import MarketCalendarKnowledgeIntelligenceV1
+except Exception:  # pragma: no cover - market knowledge suite is additive
+    class MarketCalendarKnowledgeIntelligenceV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "current_session_type": "unknown_closed",
+                "session_tradable": False,
+                "broker_order_submission_allowed": False,
+                "market_structure_label": "unknown",
+                "trade_style_environment": "unknown",
+                "behavioral_market_state": "unknown",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+            }
+
+try:
     from engine.adaptive_learning_infrastructure_v1 import AdaptiveLearningInfrastructureV1
 except Exception:  # pragma: no cover - adaptive infrastructure is additive
     class AdaptiveLearningInfrastructureV1:  # type: ignore[override]
@@ -472,6 +498,14 @@ class PaperAutopilotEngine:
                 self.market_session_timing_suite = MarketSessionExecutionTimingV1()
             except Exception:
                 self.market_session_timing_suite = None
+        self.market_calendar_knowledge_suite = kwargs.get("market_calendar_knowledge_suite")
+        if self.market_calendar_knowledge_suite is None:
+            try:
+                self.market_calendar_knowledge_suite = MarketCalendarKnowledgeIntelligenceV1(
+                    state_dir=os.path.dirname(self.state_path) or "state"
+                )
+            except Exception:
+                self.market_calendar_knowledge_suite = None
         self.adaptive_learning_infrastructure_suite = kwargs.get("adaptive_learning_infrastructure_suite")
         if self.adaptive_learning_infrastructure_suite is None:
             try:
@@ -735,6 +769,11 @@ class PaperAutopilotEngine:
         if self.adaptive_execution_exit_v2_suite is not None and hasattr(self.adaptive_execution_exit_v2_suite, "decorate_candidates"):
             try:
                 dedup = list(self.adaptive_execution_exit_v2_suite.decorate_candidates(dedup) or dedup)
+            except Exception:
+                pass
+        if self.market_calendar_knowledge_suite is not None and hasattr(self.market_calendar_knowledge_suite, "decorate_candidates"):
+            try:
+                dedup = list(self.market_calendar_knowledge_suite.decorate_candidates(dedup) or dedup)
             except Exception:
                 pass
         if self.paper_opportunity_allocator is not None and hasattr(self.paper_opportunity_allocator, "decorate_candidates"):
@@ -1084,6 +1123,16 @@ class PaperAutopilotEngine:
             "defer_until_market_confirmation": bool(session_diag.get("defer_until_market_confirmation", False)),
             "requires_open_confirmation": bool(session_diag.get("requires_open_confirmation", True)),
             "weekend_watchlist_candidate": bool(session_diag.get("weekend_watchlist_candidate", False)),
+            "market_calendar_session_type": str(r.get("market_calendar_session_type") or session_diag.get("current_session_type") or session_diag.get("market_session_mode") or ""),
+            "session_tradable": bool(session_diag.get("session_tradable", session_diag.get("market_is_tradable", False))),
+            "session_execution_posture": str(r.get("session_execution_posture") or session_diag.get("session_execution_posture") or ""),
+            "session_confirmation_requirement": str(r.get("session_confirmation_requirement") or session_diag.get("session_confirmation_requirement") or ""),
+            "market_structure_label": str(r.get("market_structure_label") or session_diag.get("market_structure_label") or ""),
+            "trade_style_environment": str(r.get("trade_style_environment") or session_diag.get("trade_style_environment") or ""),
+            "behavioral_market_state": str(r.get("behavioral_market_state") or session_diag.get("behavioral_market_state") or ""),
+            "market_context_supports_trade": bool(r.get("market_context_supports_trade", session_diag.get("market_context_supports_trade", True))),
+            "market_context_rejection_reason": str(r.get("market_context_rejection_reason") or session_diag.get("market_context_rejection_reason") or ""),
+            "context_adjusted_opportunity_score": round(_to_float(r.get("context_adjusted_opportunity_score"), _to_float(session_diag.get("context_adjusted_opportunity_score"), 50.0)), 2),
             "selected": False,
             "order_attempted": False,
         }
@@ -2184,6 +2233,7 @@ class PaperAutopilotEngine:
                                     row,
                                     trace=row_trace,
                                     session_status=session_status,
+                                    market_context=session_status,
                                     safety=safety,
                                     selected_this_cycle=selected_count,
                                     normal_eligible_count=eligible_count,
@@ -2553,6 +2603,7 @@ class PaperAutopilotEngine:
                                 row,
                                 trace=trace,
                                 session_status=session_status,
+                                market_context=session_status,
                                 safety=safety,
                                 selected_this_cycle=selected,
                                 normal_eligible_count=eligible,
@@ -2601,13 +2652,30 @@ class PaperAutopilotEngine:
         )
         if not session_allows_orders and int(last_trace.get("orders_submitted", 0)) <= 0:
             final_blocker = "session_order_submission_blocked"
+        internal_open_workflow_rows = int(len([s for s in internal_open_syms if s]))
+        broker_open_positions_count = int(len([s for s in broker_open_syms if s]))
+        stale_internal_positions_count = int(len(stale_internal_positions))
+        broker_truth_available = bool(broker_reconciliation_active and broker_positions_fetch_ok)
+        if broker_truth_available:
+            display_active_positions_count = broker_open_positions_count
+            position_display_truth_source = "alpaca_broker_positions"
+            open_positions_count_source = "alpaca_broker_positions"
+        else:
+            display_active_positions_count = internal_open_workflow_rows
+            position_display_truth_source = "internal_workflow_rows"
+            open_positions_count_source = "internal_workflow_rows"
+        stale_hidden_from_active = bool(broker_truth_available and stale_internal_positions_count > 0)
         return {
             "enabled": True,
             "mode": "paper_only",
             "paper_worker_running": bool(self._thread and self._thread.is_alive()),
             "autopilot_enabled": bool(self._enabled),
             **safety,
-            "open_positions_count": int(status.get("open_positions_count", capacities.get("open_positions_count", 0))),
+            "open_positions_count": int(display_active_positions_count),
+            "open_positions_count_source": str(open_positions_count_source),
+            "display_active_positions_count": int(display_active_positions_count),
+            "position_display_truth_source": str(position_display_truth_source),
+            "stale_internal_positions_hidden_from_active_view": bool(stale_hidden_from_active),
             "max_new_positions_per_cycle": int(self.max_new_positions_per_cycle),
             "max_open_positions_total": int(self.max_open_positions_total),
             "candidates_seen": int(len(candidates)),
@@ -2640,10 +2708,11 @@ class PaperAutopilotEngine:
             "portfolio_risk_score_used": last_trace.get("portfolio_risk_score_used"),
             "portfolio_risk_label_used": str(last_trace.get("portfolio_risk_label_used") or ""),
             "portfolio_risk_preflight_reason": str(last_trace.get("portfolio_risk_preflight_reason") or ""),
-            "internal_open_positions_count": int(last_trace.get("internal_open_positions_count", len([s for s in internal_open_syms if s]))),
-            "broker_open_positions_count": int(last_trace.get("broker_open_positions_count", len([s for s in broker_open_syms if s]))),
+            "internal_open_workflow_rows": int(internal_open_workflow_rows),
+            "internal_open_positions_count": int(internal_open_workflow_rows),
+            "broker_open_positions_count": int(broker_open_positions_count),
             "effective_broker_capacity_count": int(last_trace.get("effective_broker_capacity_count", len([s for s in broker_open_syms if s]))),
-            "stale_internal_positions_count": int(last_trace.get("stale_internal_positions_count", len(stale_internal_positions))),
+            "stale_internal_positions_count": int(stale_internal_positions_count),
             "stale_internal_positions": list(last_trace.get("stale_internal_positions") or sorted(x for x in internal_open_syms if x and x not in broker_open_syms))[:32],
             "capacity_source": str(last_trace.get("capacity_source") or capacity_source),
             "effective_capacity_count": int(last_trace.get("effective_capacity_count", effective_capacity_count)),

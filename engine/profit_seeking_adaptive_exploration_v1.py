@@ -234,6 +234,7 @@ class ProfitSeekingAdaptiveExplorationV1:
         *,
         trace: dict[str, Any] | None = None,
         session_status: dict[str, Any] | None = None,
+        market_context: dict[str, Any] | None = None,
         safety: dict[str, Any] | None = None,
         selected_today: int | None = None,
         selected_this_cycle: int = 0,
@@ -243,6 +244,9 @@ class ProfitSeekingAdaptiveExplorationV1:
         item = dict(row or {})
         trace = dict(trace or {})
         session = dict(session_status or {})
+        context_status = dict(market_context or {})
+        if not context_status:
+            context_status = session
         safety = dict(safety or {})
         portfolio = dict(portfolio_status or {})
         scores = self._candidate_scores(item, trace=trace)
@@ -260,9 +264,11 @@ class ProfitSeekingAdaptiveExplorationV1:
         reason = "controlled_profit_seeking_exploration_passed"
         allowed = True
         if not market_open or not session_allowed:
-            allowed, reason = False, "market_closed"
+            allowed, reason = False, _text(context_status.get("current_session_type"), "market_closed") if str(context_status.get("current_session_type") or "").endswith("_closed") else "market_closed"
         elif not broker_ready:
             allowed, reason = False, "broker_not_ready"
+        elif context_status and not bool(context_status.get("market_context_supports_exploration", True)) and _to_float(context_status.get("context_adjusted_exploration_score"), 50.0) < 35.0:
+            allowed, reason = False, "poor_market_structure"
         elif action not in {"buy", "strong buy"} and not any(x in readiness for x in ("paper", "buy", "watch", "eligible")):
             allowed, reason = False, "quality_floor_failed"
         elif normal_eligible_count > 0:
@@ -294,6 +300,11 @@ class ProfitSeekingAdaptiveExplorationV1:
             "selected_exploration_context": context,
             "exploration_context_reason": _text(item.get("exploration_context_reason"), "controlled_profit_seeking_second_look"),
             "exploration_profit_rationale": self._profit_rationale(item, scores),
+            "market_context_supports_exploration": bool(context_status.get("market_context_supports_exploration", allowed)),
+            "exploration_context_quality": round(_to_float(context_status.get("exploration_context_quality"), _to_float(context_status.get("context_adjusted_exploration_score"), 50.0)), 2),
+            "exploration_session_reason": _text(context_status.get("exploration_session_reason") or context_status.get("session_reason"), ""),
+            "exploration_market_knowledge_reason": _text(context_status.get("exploration_market_knowledge_reason"), ""),
+            "context_adjusted_exploration_score": round(_to_float(context_status.get("context_adjusted_exploration_score"), 50.0), 2),
             "exploration_randomness_allowed": random_allowed,
             "exploration_quality_floor": QUALITY_FLOOR,
             "exploration_survivability_floor": SURVIVABILITY_FLOOR,
@@ -355,6 +366,7 @@ class ProfitSeekingAdaptiveExplorationV1:
         rows: list[dict[str, Any]] | None = None,
         paper_trace: dict[str, Any] | None = None,
         session_status: dict[str, Any] | None = None,
+        market_context: dict[str, Any] | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
         start = time.perf_counter()
@@ -374,6 +386,7 @@ class ProfitSeekingAdaptiveExplorationV1:
         used_today = self._exploration_used_today()
         trace = dict(paper_trace or {})
         session = dict(session_status or {})
+        context_status = dict(market_context or session)
         market_open = bool(session.get("market_is_open") or trace.get("market_is_open") or session.get("paper_order_submission_allowed") or trace.get("paper_order_submission_allowed"))
         avg_quality = sum(_to_float(r.get("exploration_trade_quality_score"), 0.0) for r in decorated) / max(1, len(decorated))
         avg_survive = sum(_to_float(r.get("exploration_survivability_score"), 0.0) for r in decorated) / max(1, len(decorated))
@@ -433,6 +446,11 @@ class ProfitSeekingAdaptiveExplorationV1:
             "learning_participation_score": round(_clamp((diversity * 0.35) + (balance * 0.35) + (avg_quality * 0.30)), 2),
             "adaptive_exploration_recommendation": self._recommendation(label, missed, weak_trade_pressure),
             "summary": self._summary(label, used_today, under, over, market_open),
+            "market_context_supports_exploration": bool(context_status.get("market_context_supports_exploration", market_open)),
+            "exploration_context_quality": round(_to_float(context_status.get("exploration_context_quality"), _to_float(context_status.get("context_adjusted_exploration_score"), 50.0)), 2),
+            "exploration_session_reason": _text(context_status.get("exploration_session_reason") or context_status.get("session_reason"), ""),
+            "exploration_market_knowledge_reason": _text(context_status.get("exploration_market_knowledge_reason"), ""),
+            "context_adjusted_exploration_score": round(_to_float(context_status.get("context_adjusted_exploration_score"), 50.0), 2),
             "api_calls_used": 0,
             "cache_hit": False,
             "cache_age_seconds": 0.0,

@@ -267,6 +267,7 @@ class UnifiedLearningDiagnosticsV1:
         diversification_v2 = self._portfolio_diversification_summary(statuses.get("portfolio_diversification_correlation_v2") or {})
         mobile_compaction = self._mobile_runtime_compaction_summary(statuses.get("mobile_runtime_compaction") or {})
         profit_exploration = self._profit_seeking_exploration_summary(statuses.get("profit_seeking_adaptive_exploration") or {})
+        market_calendar_knowledge = self._market_calendar_knowledge_summary(statuses.get("market_calendar_knowledge") or {})
         stale = self._stale_status(sources, system)
         return {
             "ok": True,
@@ -282,6 +283,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_diversification_correlation_v2": diversification_v2,
             "mobile_runtime_compaction": mobile_compaction,
             "profit_seeking_adaptive_exploration": profit_exploration,
+            "market_calendar_knowledge": market_calendar_knowledge,
             "learning_maturity_summary": learning,
             "regime_context_summary": regime,
             "adaptive_execution_exit_intelligence_v2": adaptive_v2,
@@ -528,6 +530,45 @@ class UnifiedLearningDiagnosticsV1:
             "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
             "forced_trades_enabled": False,
             "forced_exits_enabled": False,
+        }
+
+    def _market_calendar_knowledge_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "market_calendar_available": bool(data.get("market_calendar_available", False)),
+            "market_calendar_source": _text(data.get("market_calendar_source"), "local_estimate"),
+            "market_calendar_cache_hit": bool(data.get("market_calendar_cache_hit", False)),
+            "market_calendar_stale": bool(data.get("market_calendar_stale", False)),
+            "current_session_type": _text(data.get("current_session_type") or data.get("market_session_mode"), "unknown_closed"),
+            "session_tradable": bool(data.get("session_tradable") or data.get("market_is_tradable")),
+            "broker_order_submission_allowed": bool(data.get("broker_order_submission_allowed") or data.get("paper_order_submission_allowed")),
+            "next_market_open": _text(data.get("next_market_open")),
+            "next_market_close": _text(data.get("next_market_close")),
+            "holiday_name": _text(data.get("holiday_name")),
+            "is_market_holiday": bool(data.get("is_market_holiday", False)),
+            "is_early_close": bool(data.get("is_early_close", False)),
+            "early_close_time": _text(data.get("early_close_time")),
+            "minutes_until_open": data.get("minutes_until_open"),
+            "minutes_until_close": data.get("minutes_until_close"),
+            "session_risk_label": _text(data.get("session_risk_label"), "unknown"),
+            "session_risk_score": data.get("session_risk_score"),
+            "session_execution_posture": _text(data.get("session_execution_posture"), "observe_only_execution_intent"),
+            "session_confirmation_requirement": _text(data.get("session_confirmation_requirement"), "market_open_confirmation_required"),
+            "market_structure_label": _text(data.get("market_structure_label"), "unknown"),
+            "trade_style_environment": _text(data.get("trade_style_environment"), "unknown"),
+            "behavioral_market_state": _text(data.get("behavioral_market_state"), "unknown"),
+            "market_context_summary": _text(data.get("market_context_summary"), "Market context diagnostics are warming up."),
+            "market_knowledge_confidence": data.get("market_knowledge_confidence"),
+            "market_context_supports_exploration": bool(data.get("market_context_supports_exploration", False)),
+            "exploration_context_quality": data.get("exploration_context_quality"),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
         }
 
     def _portfolio_diversification_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -795,7 +836,7 @@ class UnifiedLearningDiagnosticsV1:
             "adaptive_learning_infrastructure", "replay_lifecycle_expectancy", "regime_execution_survivability",
             "adaptive_execution_exit_intelligence_v2", "market_session_execution_timing", "paper_opportunity_allocation",
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
-            "alpaca_paper_broker", "horizon_performance_dashboard",
+            "market_calendar_knowledge", "alpaca_paper_broker", "horizon_performance_dashboard",
         ]
         out = {}
         for name in names:
@@ -825,6 +866,7 @@ class UnifiedLearningDiagnosticsV1:
             "adaptive_execution_exit_intelligence_v2": "/api/adaptive_execution_exit_intelligence_status_v2",
             "portfolio_diversification_correlation_v2": "/api/portfolio_diversification_correlation_status_v2",
             "profit_seeking_adaptive_exploration": "/api/profit_seeking_adaptive_exploration_status_v1",
+            "market_calendar_knowledge": "/api/market_calendar_knowledge_status_v1",
             "mobile_runtime_compaction": "/api/mobile_runtime_compaction_status_v1",
             "market_session_execution_timing": "/api/market_session_execution_timing_status_v1",
             "paper_opportunity_allocation": "/api/paper_opportunity_allocation_status_v1",

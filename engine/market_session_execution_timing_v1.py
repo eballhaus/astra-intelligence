@@ -50,8 +50,9 @@ class MarketSessionExecutionTimingV1:
     but still allows ranking, monitoring, learning, and execution intent.
     """
 
-    def __init__(self, timezone_name: str = "America/New_York") -> None:
+    def __init__(self, timezone_name: str = "America/New_York", market_calendar_knowledge_suite: Any | None = None) -> None:
         self.timezone_name = str(timezone_name or "America/New_York")
+        self.market_calendar_knowledge_suite = market_calendar_knowledge_suite
 
     def _et_now(self, now_utc: datetime | None = None) -> datetime:
         now = now_utc or _now_utc()
@@ -118,6 +119,28 @@ class MarketSessionExecutionTimingV1:
         return day in holidays
 
     def session_status(self, now_utc: datetime | None = None) -> dict[str, Any]:
+        if self.market_calendar_knowledge_suite is not None and hasattr(self.market_calendar_knowledge_suite, "status"):
+            try:
+                ctx = dict(self.market_calendar_knowledge_suite.status(allow_live_fetch=False, now_utc=now_utc) or {})
+                if ctx:
+                    return {
+                        "enabled": True,
+                        "version": VERSION,
+                        "market_session_mode": _safe_text(ctx.get("current_session_type") or ctx.get("market_session_mode"), "unknown_closed"),
+                        "market_is_open": bool(ctx.get("session_tradable") or ctx.get("market_is_open")),
+                        "market_is_tradable": bool(ctx.get("session_tradable") or ctx.get("market_is_tradable")),
+                        "paper_order_submission_allowed": bool(ctx.get("broker_order_submission_allowed") or ctx.get("paper_order_submission_allowed")),
+                        "order_queueing_allowed": False,
+                        "execution_confirmation_required": True,
+                        "session_reason": _safe_text(ctx.get("session_reason"), "Market calendar context available."),
+                        "session_timestamp_et": _safe_text(ctx.get("session_timestamp_et")),
+                        "live_trading_changed": False,
+                        "alpaca_paper_only_preserved": True,
+                        "natural_exit_preserved": True,
+                        **{k: v for k, v in ctx.items() if k not in {"enabled", "version", "api_calls_used"}},
+                    }
+            except Exception:
+                pass
         et = self._et_now(now_utc)
         weekday = et.weekday()
         current = et.time()

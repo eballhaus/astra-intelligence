@@ -16,6 +16,10 @@ try:
     from engine.profit_seeking_adaptive_exploration_v1 import ProfitSeekingAdaptiveExplorationV1
 except Exception:  # pragma: no cover - additive diagnostics only
     ProfitSeekingAdaptiveExplorationV1 = None  # type: ignore[assignment]
+try:
+    from engine.market_calendar_knowledge_intelligence_v1 import MarketCalendarKnowledgeIntelligenceV1
+except Exception:  # pragma: no cover - additive diagnostics only
+    MarketCalendarKnowledgeIntelligenceV1 = None  # type: ignore[assignment]
 
 VERSION = "2.0.0"
 MAX_TAIL_BYTES = 2_000_000
@@ -215,6 +219,11 @@ class AdaptiveExecutionExitIntelligenceV2:
         self.profit_seeking_exploration = (
             ProfitSeekingAdaptiveExplorationV1(state_dir=self.state_dir)
             if ProfitSeekingAdaptiveExplorationV1 is not None
+            else None
+        )
+        self.market_calendar_knowledge = (
+            MarketCalendarKnowledgeIntelligenceV1(state_dir=self.state_dir)
+            if MarketCalendarKnowledgeIntelligenceV1 is not None
             else None
         )
 
@@ -534,6 +543,7 @@ class AdaptiveExecutionExitIntelligenceV2:
             "provider_rewrite_changed": False,
             "portfolio_diversification_v2_hooks_ready": bool(self.portfolio_diversification_v2 is not None),
             "profit_seeking_adaptive_exploration_hooks_ready": bool(self.profit_seeking_exploration is not None),
+            "market_calendar_knowledge_hooks_ready": bool(self.market_calendar_knowledge is not None),
         }
         out["build_ms"] = round((time.perf_counter() - start) * 1000.0, 3)
         self._cache = dict(out)

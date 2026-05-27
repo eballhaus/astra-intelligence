@@ -15,6 +15,10 @@ try:
     from engine.portfolio_diversification_correlation_v2 import PortfolioDiversificationCorrelationV2
 except Exception:  # pragma: no cover - additive diagnostics only
     PortfolioDiversificationCorrelationV2 = None  # type: ignore[assignment]
+try:
+    from engine.market_calendar_knowledge_intelligence_v1 import MarketCalendarKnowledgeIntelligenceV1
+except Exception:  # pragma: no cover - additive diagnostics only
+    MarketCalendarKnowledgeIntelligenceV1 = None  # type: ignore[assignment]
 
 VERSION = "1.0.0"
 MAX_TAIL_BYTES = 2_000_000
@@ -215,6 +219,11 @@ class RegimeExecutionSurvivabilityIntelligenceV1:
         self.portfolio_diversification_v2 = (
             PortfolioDiversificationCorrelationV2(state_dir=self.state_dir)
             if PortfolioDiversificationCorrelationV2 is not None
+            else None
+        )
+        self.market_calendar_knowledge = (
+            MarketCalendarKnowledgeIntelligenceV1(state_dir=self.state_dir)
+            if MarketCalendarKnowledgeIntelligenceV1 is not None
             else None
         )
 
@@ -484,6 +493,7 @@ class RegimeExecutionSurvivabilityIntelligenceV1:
             "adaptive_execution_summary": f"Regime {current_regime}; execution {round(execution_quality, 1)}, chase risk {round(chase_risk, 1)}, survivability {round(survivability_score, 1)}.",
             "adaptive_execution_exit_v2_hooks_ready": bool(self.adaptive_execution_exit_v2 is not None),
             "portfolio_diversification_v2_hooks_ready": bool(self.portfolio_diversification_v2 is not None),
+            "market_calendar_knowledge_hooks_ready": bool(self.market_calendar_knowledge is not None),
             "api_calls_used": 0,
             "live_trading_changed": False,
             "broker_execution_changed": False,
