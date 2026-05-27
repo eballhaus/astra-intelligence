@@ -43,6 +43,10 @@ try:
     from engine.profit_seeking_adaptive_exploration_v1 import ProfitSeekingAdaptiveExplorationV1
 except Exception:  # pragma: no cover - additive shadow decorator
     ProfitSeekingAdaptiveExplorationV1 = None  # type: ignore[assignment]
+try:
+    from engine.broad_universe_intake_promotion_v1 import BroadUniverseIntakePromotionV1
+except Exception:  # pragma: no cover - additive shadow decorator
+    BroadUniverseIntakePromotionV1 = None  # type: ignore[assignment]
 
 _router = ProviderRouter()
 _ranker = RankingEngine()
@@ -67,6 +71,9 @@ _portfolio_diversification_v2_suite = (
 )
 _profit_seeking_exploration_suite = (
     ProfitSeekingAdaptiveExplorationV1(state_dir="state") if ProfitSeekingAdaptiveExplorationV1 is not None else None
+)
+_broad_universe_intake_promotion_suite = (
+    BroadUniverseIntakePromotionV1(state_dir="state") if BroadUniverseIntakePromotionV1 is not None else None
 )
 _TEMP_STRATEGY_ENABLED = str(os.getenv("ASTRA_TEMP_PROVIDER_STRATEGY_V1", "1")).strip().lower() in {"1", "true", "yes", "on"}
 _TEMP_FMP_REST_DISABLED = str(os.getenv("ASTRA_TEMP_FMP_REST_DISABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
@@ -365,6 +372,11 @@ def fetch_live_data(symbols=None):
     if _profit_seeking_exploration_suite is not None and hasattr(_profit_seeking_exploration_suite, "decorate_candidates"):
         try:
             rows = list(_profit_seeking_exploration_suite.decorate_candidates(rows) or rows)
+        except Exception:
+            pass
+    if _broad_universe_intake_promotion_suite is not None and hasattr(_broad_universe_intake_promotion_suite, "decorate_candidates"):
+        try:
+            rows = list(_broad_universe_intake_promotion_suite.decorate_candidates(rows) or rows)
         except Exception:
             pass
     if _portfolio_diversification_v2_suite is not None and hasattr(_portfolio_diversification_v2_suite, "decorate_candidates"):

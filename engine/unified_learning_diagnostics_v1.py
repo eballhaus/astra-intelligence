@@ -268,6 +268,7 @@ class UnifiedLearningDiagnosticsV1:
         mobile_compaction = self._mobile_runtime_compaction_summary(statuses.get("mobile_runtime_compaction") or {})
         profit_exploration = self._profit_seeking_exploration_summary(statuses.get("profit_seeking_adaptive_exploration") or {})
         market_calendar_knowledge = self._market_calendar_knowledge_summary(statuses.get("market_calendar_knowledge") or {})
+        broad_universe = self._broad_universe_intake_summary(statuses.get("broad_universe_intake_promotion") or {})
         stale = self._stale_status(sources, system)
         return {
             "ok": True,
@@ -284,6 +285,7 @@ class UnifiedLearningDiagnosticsV1:
             "mobile_runtime_compaction": mobile_compaction,
             "profit_seeking_adaptive_exploration": profit_exploration,
             "market_calendar_knowledge": market_calendar_knowledge,
+            "broad_universe_intake_promotion": broad_universe,
             "learning_maturity_summary": learning,
             "regime_context_summary": regime,
             "adaptive_execution_exit_intelligence_v2": adaptive_v2,
@@ -571,6 +573,50 @@ class UnifiedLearningDiagnosticsV1:
             "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
         }
 
+    def _broad_universe_intake_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_candidate_promotion"),
+            "broad_universe_pipeline_active": bool(data.get("broad_universe_pipeline_active", False)),
+            "broad_universe_size": _to_int(data.get("broad_universe_size"), 0),
+            "tradable_universe_size": _to_int(data.get("tradable_universe_size"), 0),
+            "universe_source": _text(data.get("universe_source"), "local_cache"),
+            "universe_cache_hit": bool(data.get("universe_cache_hit", False)),
+            "universe_stale": bool(data.get("universe_stale", False)),
+            "scan_slice_size": _to_int(data.get("scan_slice_size"), 0),
+            "scan_slice_index": _to_int(data.get("scan_slice_index"), 0),
+            "scan_slice_total": _to_int(data.get("scan_slice_total"), 0),
+            "symbols_scanned_this_cycle": _to_int(data.get("symbols_scanned_this_cycle"), 0),
+            "symbols_scanned_today": _to_int(data.get("symbols_scanned_today"), 0),
+            "universe_coverage_today_pct": _to_float(data.get("universe_coverage_today_pct"), 0.0),
+            "candidates_detected": _to_int(data.get("candidates_detected"), 0),
+            "lightweight_scored_count": _to_int(data.get("lightweight_scored_count"), 0),
+            "shortlist_count": _to_int(data.get("shortlist_count"), 0),
+            "deep_scored_count": _to_int(data.get("deep_scored_count"), 0),
+            "promoted_to_top_buys_count": _to_int(data.get("promoted_to_top_buys_count"), 0),
+            "promoted_symbols": list(data.get("promoted_symbols") or [])[:20],
+            "promoted_cap_distribution": dict(data.get("promoted_cap_distribution") or {}),
+            "promoted_sector_distribution": dict(data.get("promoted_sector_distribution") or {}),
+            "fmp_usage_pct": _to_float(data.get("fmp_usage_pct"), 0.0),
+            "fmp_bandwidth_used_gb": _to_float(data.get("fmp_bandwidth_used_gb"), 0.0),
+            "fmp_bandwidth_limit_gb": _to_float(data.get("fmp_bandwidth_limit_gb"), 50.0),
+            "fmp_budget_state": _text(data.get("fmp_budget_state"), "degraded_unknown_usage"),
+            "current_learning_bias": _text(data.get("current_learning_bias"), "warming_up"),
+            "next_scan_focus": _text(data.get("next_scan_focus"), "quality_rotation"),
+            "learning_diversity_improved": bool(data.get("learning_diversity_improved", False)),
+            "summary": _text(
+                data.get("summary"),
+                f"Broad universe scanned {_to_int(data.get('symbols_scanned_this_cycle'), 0)} symbols and promoted {_to_int(data.get('promoted_to_top_buys_count'), 0)} bounded candidates.",
+            ),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "live_trading_changed": False,
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+        }
+
     def _portfolio_diversification_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -836,7 +882,7 @@ class UnifiedLearningDiagnosticsV1:
             "adaptive_learning_infrastructure", "replay_lifecycle_expectancy", "regime_execution_survivability",
             "adaptive_execution_exit_intelligence_v2", "market_session_execution_timing", "paper_opportunity_allocation",
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
-            "market_calendar_knowledge", "alpaca_paper_broker", "horizon_performance_dashboard",
+            "market_calendar_knowledge", "broad_universe_intake_promotion", "alpaca_paper_broker", "horizon_performance_dashboard",
         ]
         out = {}
         for name in names:
@@ -867,6 +913,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_diversification_correlation_v2": "/api/portfolio_diversification_correlation_status_v2",
             "profit_seeking_adaptive_exploration": "/api/profit_seeking_adaptive_exploration_status_v1",
             "market_calendar_knowledge": "/api/market_calendar_knowledge_status_v1",
+            "broad_universe_intake_promotion": "/api/broad_universe_intake_status_v1",
             "mobile_runtime_compaction": "/api/mobile_runtime_compaction_status_v1",
             "market_session_execution_timing": "/api/market_session_execution_timing_status_v1",
             "paper_opportunity_allocation": "/api/paper_opportunity_allocation_status_v1",

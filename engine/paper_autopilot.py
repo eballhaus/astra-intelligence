@@ -130,6 +130,28 @@ except Exception:  # pragma: no cover - market knowledge suite is additive
             }
 
 try:
+    from engine.broad_universe_intake_promotion_v1 import BroadUniverseIntakePromotionV1
+except Exception:  # pragma: no cover - broad universe suite is additive
+    class BroadUniverseIntakePromotionV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "broad_universe_pipeline_active": False,
+                "promoted_to_top_buys_count": 0,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+            }
+
+try:
     from engine.adaptive_learning_infrastructure_v1 import AdaptiveLearningInfrastructureV1
 except Exception:  # pragma: no cover - adaptive infrastructure is additive
     class AdaptiveLearningInfrastructureV1:  # type: ignore[override]
@@ -506,6 +528,14 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 self.market_calendar_knowledge_suite = None
+        self.broad_universe_intake_promotion_suite = kwargs.get("broad_universe_intake_promotion_suite")
+        if self.broad_universe_intake_promotion_suite is None:
+            try:
+                self.broad_universe_intake_promotion_suite = BroadUniverseIntakePromotionV1(
+                    state_dir=os.path.dirname(self.state_path) or "state"
+                )
+            except Exception:
+                self.broad_universe_intake_promotion_suite = None
         self.adaptive_learning_infrastructure_suite = kwargs.get("adaptive_learning_infrastructure_suite")
         if self.adaptive_learning_infrastructure_suite is None:
             try:
@@ -774,6 +804,11 @@ class PaperAutopilotEngine:
         if self.market_calendar_knowledge_suite is not None and hasattr(self.market_calendar_knowledge_suite, "decorate_candidates"):
             try:
                 dedup = list(self.market_calendar_knowledge_suite.decorate_candidates(dedup) or dedup)
+            except Exception:
+                pass
+        if self.broad_universe_intake_promotion_suite is not None and hasattr(self.broad_universe_intake_promotion_suite, "decorate_candidates"):
+            try:
+                dedup = list(self.broad_universe_intake_promotion_suite.decorate_candidates(dedup) or dedup)
             except Exception:
                 pass
         if self.paper_opportunity_allocator is not None and hasattr(self.paper_opportunity_allocator, "decorate_candidates"):
@@ -1133,6 +1168,14 @@ class PaperAutopilotEngine:
             "market_context_supports_trade": bool(r.get("market_context_supports_trade", session_diag.get("market_context_supports_trade", True))),
             "market_context_rejection_reason": str(r.get("market_context_rejection_reason") or session_diag.get("market_context_rejection_reason") or ""),
             "context_adjusted_opportunity_score": round(_to_float(r.get("context_adjusted_opportunity_score"), _to_float(session_diag.get("context_adjusted_opportunity_score"), 50.0)), 2),
+            "paper_autopilot_candidate_source": str(r.get("paper_autopilot_candidate_source") or r.get("top_buys_candidate_source") or "top_buys"),
+            "broad_universe_candidates_available": bool(r.get("broad_universe_promoted", False) or r.get("selected_from_broad_universe", False)),
+            "promoted_candidates_available": bool(r.get("broad_universe_promoted", False)),
+            "selected_from_broad_universe": bool(r.get("selected_from_broad_universe", False)),
+            "selected_cap_tier": str(r.get("candidate_universe_tier") or ""),
+            "selected_sector": str(r.get("sector") or ""),
+            "selected_opportunity_type": str(r.get("candidate_opportunity_type") or ""),
+            "broad_universe_rejection_reason": str(r.get("broad_universe_rejection_reason") or ""),
             "selected": False,
             "order_attempted": False,
         }
@@ -2551,6 +2594,12 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 profit_seeking_exploration_status = {}
+        broad_universe_status = {}
+        if self.broad_universe_intake_promotion_suite is not None and hasattr(self.broad_universe_intake_promotion_suite, "status"):
+            try:
+                broad_universe_status = dict(self.broad_universe_intake_promotion_suite.status(rows=candidates) or {})
+            except Exception:
+                broad_universe_status = {}
         capacities = self._current_execution_capacities()
         internal_open_syms = set(capacities.get("open_symbols") or set())
         broker_snapshot = self._broker_open_symbols_snapshot()
@@ -2687,6 +2736,14 @@ class PaperAutopilotEngine:
             "adaptive_execution_exit_intelligence_v2": adaptive_execution_exit_status,
             "portfolio_diversification_correlation_v2": portfolio_diversification_status,
             "profit_seeking_adaptive_exploration": profit_seeking_exploration_status,
+            "broad_universe_intake_promotion": broad_universe_status,
+            "paper_autopilot_candidate_source": (
+                "broad_universe_promoted_top_buys"
+                if any(bool((r or {}).get("selected_from_broad_universe", False)) for r in candidates)
+                else "top_buys"
+            ),
+            "broad_universe_candidates_available": bool(broad_universe_status.get("promoted_to_top_buys_count", 0)),
+            "promoted_candidates_available": bool(broad_universe_status.get("promoted_to_top_buys_count", 0)),
             "market_session_mode": str(last_trace.get("market_session_mode") or session_status.get("market_session_mode") or ""),
             "paper_order_submission_allowed": bool(last_trace.get("paper_order_submission_allowed", session_status.get("paper_order_submission_allowed", False))),
             "execution_confirmation_required": bool(last_trace.get("execution_confirmation_required", session_status.get("execution_confirmation_required", True))),

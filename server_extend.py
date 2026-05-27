@@ -616,6 +616,37 @@ except Exception:
                 "natural_exit_preserved": True,
             }
 try:
+    from engine.broad_universe_intake_promotion_v1 import BroadUniverseIntakePromotionV1
+except Exception:
+    class BroadUniverseIntakePromotionV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def decorate_candidates(self, rows):
+            return [dict(r) for r in (rows or []) if isinstance(r, dict)]
+
+        def enrich_payload(self, payload):
+            return dict(payload or {})
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "broad_universe_pipeline_active": False,
+                "broad_universe_size": 0,
+                "tradable_universe_size": 0,
+                "scan_slice_size": 0,
+                "candidates_detected": 0,
+                "shortlist_count": 0,
+                "deep_scored_count": 0,
+                "promoted_to_top_buys_count": 0,
+                "fmp_budget_state": "degraded_unknown_usage",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+            }
+try:
     from engine.adaptive_learning_infrastructure_v1 import AdaptiveLearningInfrastructureV1
 except Exception:
     class AdaptiveLearningInfrastructureV1:  # type: ignore[override]
@@ -1115,6 +1146,7 @@ PAPER_OPPORTUNITY_ALLOCATION_ENGINE = PaperOpportunityAllocationEngineV1(state_d
 EDGE_DEVELOPMENT_SUITE = EdgeDevelopmentSuiteV1(state_dir=STATE)
 TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE = TradeManagementPortfolioIntelligenceV1(state_dir=STATE)
 MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE = MarketCalendarKnowledgeIntelligenceV1(state_dir=STATE)
+BROAD_UNIVERSE_INTAKE_PROMOTION = BroadUniverseIntakePromotionV1(state_dir=STATE)
 MARKET_SESSION_EXECUTION_TIMING_SUITE = MarketSessionExecutionTimingV1(
     market_calendar_knowledge_suite=MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE
 )
@@ -14908,6 +14940,7 @@ PAPER_AUTOPILOT = PaperAutopilotEngine(
     trade_management_portfolio_suite=TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE,
     market_session_timing_suite=MARKET_SESSION_EXECUTION_TIMING_SUITE,
     market_calendar_knowledge_suite=MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE,
+    broad_universe_intake_promotion_suite=BROAD_UNIVERSE_INTAKE_PROMOTION,
     adaptive_learning_infrastructure_suite=ADAPTIVE_LEARNING_INFRASTRUCTURE_SUITE,
     replay_lifecycle_expectancy_suite=REPLAY_LIFECYCLE_EXPECTANCY_LEARNING_SUITE,
     regime_execution_survivability_suite=REGIME_EXECUTION_SURVIVABILITY_SUITE,
@@ -30851,6 +30884,68 @@ def market_calendar_knowledge_status_v1(force: bool = False, refresh_calendar: b
     }
 
 
+@router.get("/api/broad_universe_intake_status_v1")
+def broad_universe_intake_status_v1(force: bool = False):
+    try:
+        try:
+            payload = dict(_latest_top_buys_runtime_snapshot() or {})
+        except Exception:
+            payload = {}
+        if not payload:
+            try:
+                cached = _CACHE.get("top_buys", {}) if isinstance(_CACHE.get("top_buys"), dict) else {}
+                mode_cached = ((cached.get("mode::balanced") or {}).get("data")) if isinstance(cached, dict) else {}
+                if isinstance(mode_cached, dict):
+                    payload = dict(mode_cached)
+            except Exception:
+                payload = {}
+        rows = _candidate_rows_from_payload(payload) if isinstance(payload, dict) else []
+        out = BROAD_UNIVERSE_INTAKE_PROMOTION.status(rows=rows, force=bool(force))
+        if isinstance(out, dict):
+            out["broad_universe_intake_status_v1"] = True
+            out["api_calls_used"] = 0
+            out["live_trading_changed"] = False
+            out["broker_behavior_changed"] = False
+            out["alpaca_paper_only_preserved"] = True
+            out["natural_exit_preserved"] = True
+            out["forced_trades_enabled"] = False
+            out["forced_exits_enabled"] = False
+            out["deterministic_execution_authority_preserved"] = True
+            return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "broad_universe_intake_status_v1": True,
+            "broad_universe_pipeline_active": False,
+            "broad_universe_size": 0,
+            "tradable_universe_size": 0,
+            "universe_source": "status_unavailable",
+            "scan_slice_size": 0,
+            "candidates_detected": 0,
+            "shortlist_count": 0,
+            "deep_scored_count": 0,
+            "promoted_to_top_buys_count": 0,
+            "fmp_budget_state": "degraded_unknown_usage",
+            "summary": f"broad_universe_intake_status_unavailable: {str(exc)[:140]}",
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+        }
+    return {
+        "enabled": False,
+        "version": "1.0.0",
+        "broad_universe_intake_status_v1": True,
+        "broad_universe_pipeline_active": False,
+        "summary": "Broad universe intake returned no payload.",
+        "api_calls_used": 0,
+        "live_trading_changed": False,
+        "alpaca_paper_only_preserved": True,
+        "natural_exit_preserved": True,
+    }
+
+
 @router.get("/api/profit_seeking_adaptive_exploration_status_v1")
 def profit_seeking_adaptive_exploration_status_v1(force: bool = False):
     try:
@@ -36666,6 +36761,10 @@ def _decorate_top_buys_payload(payload, *, source, build_ms=None, cache_age_seco
             pass
         try:
             out = MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE.enrich_payload(out)
+        except Exception:
+            pass
+        try:
+            out = BROAD_UNIVERSE_INTAKE_PROMOTION.enrich_payload(out)
         except Exception:
             pass
         try:
@@ -47296,6 +47395,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("adaptive_execution_exit_intelligence_v2", lambda: ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V2.status(rows=rows))
         _safe_status("portfolio_diversification_correlation_v2", lambda: PORTFOLIO_DIVERSIFICATION_CORRELATION_V2.status(rows=rows))
         _safe_status("market_calendar_knowledge", lambda: MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE.status(rows=rows, allow_live_fetch=False))
+        _safe_status("broad_universe_intake_promotion", lambda: BROAD_UNIVERSE_INTAKE_PROMOTION.status(rows=rows))
         _safe_status("profit_seeking_adaptive_exploration", lambda: PROFIT_SEEKING_ADAPTIVE_EXPLORATION.status(rows=rows, market_context=statuses.get("market_calendar_knowledge") or {}))
         _safe_status("mobile_runtime_compaction", lambda: _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))

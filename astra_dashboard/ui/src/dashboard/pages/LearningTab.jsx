@@ -140,6 +140,7 @@ export default function LearningTab({ compact = false }) {
   const [showPortfolioDiversificationDetails, setShowPortfolioDiversificationDetails] = useState(false);
   const [showProfitExplorationDetails, setShowProfitExplorationDetails] = useState(false);
   const [showMarketCalendarDetails, setShowMarketCalendarDetails] = useState(false);
+  const [showBroadUniverseDetails, setShowBroadUniverseDetails] = useState(false);
   const [endpointStatus, setEndpointStatus] = useState({});
   const [timeline, setTimeline] = useState([]);
   const [data, setData] = useState({
@@ -1559,6 +1560,7 @@ export default function LearningTab({ compact = false }) {
   const mobileRuntimeCompaction = unified?.mobile_runtime_compaction || {};
   const profitSeekingExploration = unified?.profit_seeking_adaptive_exploration || {};
   const marketCalendarKnowledge = unified?.market_calendar_knowledge || {};
+  const broadUniverseIntake = unified?.broad_universe_intake_promotion || {};
   const metricDisplay = (metric, suffix = "") => {
     if (!metric || typeof metric !== "object") return "n/a";
     if (metric.value === null || metric.value === undefined) {
@@ -1893,6 +1895,78 @@ export default function LearningTab({ compact = false }) {
             </ResponsiveContainer>
           </ChartShell>
         </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Broad Universe Intake & Candidate Promotion</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Cached rotating-symbol discovery that shortlists broad-market opportunities without slowing the main Learning tab.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowBroadUniverseDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showBroadUniverseDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Universe observed", broadUniverseIntake?.broad_universe_size],
+            ["Tradable universe", broadUniverseIntake?.tradable_universe_size],
+            ["Scanned today", broadUniverseIntake?.symbols_scanned_today],
+            ["Coverage today", `${safeNumber(broadUniverseIntake?.universe_coverage_today_pct).toFixed(1)}%`],
+            ["Candidates detected", broadUniverseIntake?.candidates_detected],
+            ["Deep scored", broadUniverseIntake?.deep_scored_count],
+            ["Promoted", broadUniverseIntake?.promoted_to_top_buys_count],
+            ["FMP budget", broadUniverseIntake?.fmp_budget_state],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {typeof value === "number" ? value.toFixed(0) : String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Current bias: {String(broadUniverseIntake?.current_learning_bias || "warming_up").replaceAll("_", " ")} | Next scan: {String(broadUniverseIntake?.next_scan_focus || "quality_rotation").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            {String(broadUniverseIntake?.summary || "Broad universe promotion diagnostics are warming up.")}
+          </div>
+        </div>
+        {showBroadUniverseDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Promoted Symbols</div>
+              <div style={{ color: "#b8c7e6" }}>
+                {(broadUniverseIntake?.promoted_symbols || []).slice(0, 14).join(", ") || "waiting for scan slice"}
+              </div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Cap / Sector Mix</div>
+              <div>Cap: {JSON.stringify(broadUniverseIntake?.promoted_cap_distribution || {})}</div>
+              <div>Sector: {JSON.stringify(broadUniverseIntake?.promoted_sector_distribution || {})}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Budget</div>
+              <div>FMP usage: {safeNumber(broadUniverseIntake?.fmp_usage_pct).toFixed(2)}%</div>
+              <div>Bandwidth: {safeNumber(broadUniverseIntake?.fmp_bandwidth_used_gb).toFixed(4)} / {safeNumber(broadUniverseIntake?.fmp_bandwidth_limit_gb, 50).toFixed(1)} GB</div>
+              <div>Universe source: {String(broadUniverseIntake?.universe_source || "local_cache").replaceAll("_", " ")}</div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div style={{ ...panelStyle }}>
