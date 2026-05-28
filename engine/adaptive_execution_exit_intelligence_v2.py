@@ -207,6 +207,7 @@ class AdaptiveExecutionExitIntelligenceV2:
         self.state_dir = str(state_dir or "state")
         self.ttl_seconds = float(ttl_seconds or CACHE_TTL_SECONDS)
         self.lifecycle_path = os.path.join(self.state_dir, "trade_lifecycle_v1.jsonl")
+        self.excursion_path = os.path.join(self.state_dir, "trade_lifecycle_excursion_v1.jsonl")
         self.labels_path = os.path.join(self.state_dir, "outcome_labels_v1.jsonl")
         self.ledger_path = os.path.join(self.state_dir, "candidate_decision_ledger_v1.jsonl")
         self._cache: dict[str, Any] | None = None
@@ -230,6 +231,7 @@ class AdaptiveExecutionExitIntelligenceV2:
     def _history(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         rows.extend(_tail_jsonl(self.lifecycle_path, max_rows=350))
+        rows.extend(_tail_jsonl(self.excursion_path, max_rows=350))
         rows.extend(_tail_jsonl(self.labels_path, max_rows=300))
         rows.extend(_tail_jsonl(self.ledger_path, max_rows=250))
         return rows[-MAX_ROWS:]

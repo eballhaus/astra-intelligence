@@ -27,6 +27,30 @@ except Exception:  # pragma: no cover - tracker is additive and optional
     update_lifecycle_progress = None  # type: ignore[assignment]
 
 try:
+    from engine.trade_lifecycle_excursion_v1 import TradeLifecycleExcursionV1
+except Exception:  # pragma: no cover - excursion telemetry is additive
+    class TradeLifecycleExcursionV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def record_open_position(self, *args, **kwargs):
+            return {"ok": False, "reason": "trade_lifecycle_excursion_unavailable"}
+
+        def record_closed_position(self, *args, **kwargs):
+            return {"ok": False, "reason": "trade_lifecycle_excursion_unavailable"}
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "trade_lifecycle_excursion_status_v1": True,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_exits_enabled": False,
+            }
+
+try:
     from engine.paper_opportunity_allocation_engine_v1 import PaperOpportunityAllocationEngineV1
 except Exception:  # pragma: no cover - allocation engine is additive
     class PaperOpportunityAllocationEngineV1:  # type: ignore[override]
@@ -585,6 +609,14 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 self.profit_seeking_exploration_suite = None
+        self.trade_lifecycle_excursion_suite = kwargs.get("trade_lifecycle_excursion_suite")
+        if self.trade_lifecycle_excursion_suite is None:
+            try:
+                self.trade_lifecycle_excursion_suite = TradeLifecycleExcursionV1(
+                    state_dir=os.path.dirname(self.state_path) or "state"
+                )
+            except Exception:
+                self.trade_lifecycle_excursion_suite = None
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -1688,6 +1720,21 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 pass
+        if self.trade_lifecycle_excursion_suite is not None and hasattr(self.trade_lifecycle_excursion_suite, "record_closed_position"):
+            try:
+                self.trade_lifecycle_excursion_suite.record_closed_position(
+                    {
+                        **dict(open_row or {}),
+                        "exit_timestamp": now_iso,
+                        "exit_price": exit_price,
+                        "hold_seconds": hold_seconds,
+                    },
+                    {"price": exit_price, "current_price": exit_price, "timestamp": now_iso},
+                    exit_reason=str(exit_reason or ""),
+                    source_endpoint="paper_autopilot_natural_close",
+                )
+            except Exception:
+                pass
 
         if self.trade_intel is not None and hasattr(self.trade_intel, "record_trade"):
             try:
@@ -1930,6 +1977,28 @@ class PaperAutopilotEngine:
                         "source_endpoint": "paper_autopilot",
                         "lifecycle_stage": "monitoring",
                     },
+                )
+            except Exception:
+                pass
+        if self.trade_lifecycle_excursion_suite is not None and hasattr(self.trade_lifecycle_excursion_suite, "record_open_position"):
+            try:
+                self.trade_lifecycle_excursion_suite.record_open_position(
+                    {
+                        **dict(open_row or {}),
+                        "lifecycle_notes": _safe_json(
+                            {
+                                "current_price": current,
+                                "current_return_percent": ret,
+                                "peak_unrealized_pnl_percent": peak,
+                                "drawdown_from_peak_percent": drawdown,
+                                "max_favorable_excursion": mfe,
+                                "max_adverse_excursion": mae,
+                            }
+                        ),
+                        "hold_seconds": hold_seconds,
+                    },
+                    latest_row,
+                    source_endpoint="paper_autopilot_open_snapshot",
                 )
             except Exception:
                 pass

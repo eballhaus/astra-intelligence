@@ -647,6 +647,33 @@ except Exception:
                 "natural_exit_preserved": True,
             }
 try:
+    from engine.trade_lifecycle_excursion_v1 import TradeLifecycleExcursionV1
+except Exception:
+    class TradeLifecycleExcursionV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def record_open_position(self, *args, **kwargs):
+            return {"ok": False, "reason": "trade_lifecycle_excursion_unavailable"}
+
+        def record_closed_position(self, *args, **kwargs):
+            return {"ok": False, "reason": "trade_lifecycle_excursion_unavailable"}
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "trade_lifecycle_excursion_status_v1": True,
+                "tracked_active_trades": 0,
+                "tracked_closed_trades": 0,
+                "learning_ready": False,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_exits_enabled": False,
+            }
+try:
     from engine.adaptive_learning_infrastructure_v1 import AdaptiveLearningInfrastructureV1
 except Exception:
     class AdaptiveLearningInfrastructureV1:  # type: ignore[override]
@@ -1147,6 +1174,7 @@ EDGE_DEVELOPMENT_SUITE = EdgeDevelopmentSuiteV1(state_dir=STATE)
 TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE = TradeManagementPortfolioIntelligenceV1(state_dir=STATE)
 MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE = MarketCalendarKnowledgeIntelligenceV1(state_dir=STATE)
 BROAD_UNIVERSE_INTAKE_PROMOTION = BroadUniverseIntakePromotionV1(state_dir=STATE)
+TRADE_LIFECYCLE_EXCURSION = TradeLifecycleExcursionV1(state_dir=STATE)
 MARKET_SESSION_EXECUTION_TIMING_SUITE = MarketSessionExecutionTimingV1(
     market_calendar_knowledge_suite=MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE
 )
@@ -14947,6 +14975,7 @@ PAPER_AUTOPILOT = PaperAutopilotEngine(
     adaptive_execution_exit_v2_suite=ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V2,
     portfolio_diversification_v2_suite=PORTFOLIO_DIVERSIFICATION_CORRELATION_V2,
     profit_seeking_exploration_suite=PROFIT_SEEKING_ADAPTIVE_EXPLORATION,
+    trade_lifecycle_excursion_suite=TRADE_LIFECYCLE_EXCURSION,
 )
 _PAPER_AUTOPILOT_STARTED = False
 _PAPER_INPROC_HEARTBEAT_STATE = {"last_cycle_utc": "", "cycle_count": 0}
@@ -39237,6 +39266,53 @@ def paper_autopilot_market_open_dry_run_v1():
         }
 
 
+@router.get("/api/trade_lifecycle_excursion_status_v1")
+def trade_lifecycle_excursion_status_v1(force: bool = False):
+    try:
+        open_positions = []
+        try:
+            if hasattr(PAPER_AUTOPILOT, "paper_positions"):
+                open_positions = [dict(r) for r in (PAPER_AUTOPILOT.paper_positions() or []) if isinstance(r, dict)]
+        except Exception:
+            open_positions = []
+        out = dict(TRADE_LIFECYCLE_EXCURSION.status(open_positions=open_positions, force=bool(force)) or {})
+        out["trade_lifecycle_excursion_status_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "trade_lifecycle_excursion_status_v1": True,
+            "tracked_active_trades": 0,
+            "tracked_closed_trades": 0,
+            "average_mfe_pct": None,
+            "average_mae_pct": None,
+            "average_profit_giveback_pct": None,
+            "average_hold_duration_minutes": None,
+            "follow_through_quality_score": None,
+            "exit_quality_score": None,
+            "profit_capture_quality": None,
+            "exit_label_distribution": {},
+            "follow_through_distribution": {},
+            "learning_ready": False,
+            "degraded_reason": f"trade_lifecycle_excursion_status_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+        }
+
+
 def _alpaca_paper_test_cycle_payload():
     _ensure_paper_autopilot_started()
     lock = getattr(PAPER_AUTOPILOT, "_cycle_lock", None)
@@ -47446,6 +47522,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("market_calendar_knowledge", lambda: MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE.status(rows=rows, allow_live_fetch=False))
         _safe_status("broad_universe_intake_promotion", lambda: BROAD_UNIVERSE_INTAKE_PROMOTION.status(rows=rows))
         _safe_status("profit_seeking_adaptive_exploration", lambda: PROFIT_SEEKING_ADAPTIVE_EXPLORATION.status(rows=rows, market_context=statuses.get("market_calendar_knowledge") or {}))
+        _safe_status("trade_lifecycle_excursion", lambda: TRADE_LIFECYCLE_EXCURSION.status(force=False))
         _safe_status("mobile_runtime_compaction", lambda: _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))
         _safe_status("paper_opportunity_allocation", lambda: PAPER_OPPORTUNITY_ALLOCATION_ENGINE.status(rows=rows))

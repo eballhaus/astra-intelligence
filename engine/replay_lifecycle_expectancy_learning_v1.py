@@ -159,6 +159,7 @@ class ReplayLifecycleExpectancyLearningV1:
     def __init__(self, state_dir: str = "state") -> None:
         self.state_dir = str(state_dir or "state")
         self.lifecycle_path = os.path.join(self.state_dir, "trade_lifecycle_v1.jsonl")
+        self.excursion_path = os.path.join(self.state_dir, "trade_lifecycle_excursion_v1.jsonl")
         self.labels_path = os.path.join(self.state_dir, "outcome_labels_v1.jsonl")
         self.ledger_path = os.path.join(self.state_dir, "candidate_decision_ledger_v1.jsonl")
         self.paper_state_path = os.path.join(self.state_dir, "paper_autopilot_state.json")
@@ -189,6 +190,7 @@ class ReplayLifecycleExpectancyLearningV1:
             return list(self._cache.get("rows") or [])
         rows: list[dict[str, Any]] = []
         rows.extend(_tail_jsonl(self.lifecycle_path, max_rows=400))
+        rows.extend(_tail_jsonl(self.excursion_path, max_rows=400))
         rows.extend(_tail_jsonl(self.labels_path, max_rows=350))
         rows.extend(_tail_jsonl(self.ledger_path, max_rows=250))
         self._cache = {"rows": rows[-MAX_ROWS:]}
