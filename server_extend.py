@@ -674,6 +674,32 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.execution_participation_audit_v1 import ExecutionParticipationAuditV1
+except Exception:
+    class ExecutionParticipationAuditV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def record_candidate_traces(self, *args, **kwargs):
+            return {"ok": False, "records_written": 0, "reason": "execution_participation_audit_unavailable"}
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "execution_participation_audit_status_v1": True,
+                "candidates_execution_reviewed": 0,
+                "participation_efficiency_score": 0.0,
+                "participation_suppression_score": 0.0,
+                "top_rejection_reasons": {},
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "paper_only_preserved": True,
+                "forced_trades_enabled": False,
+                "forced_exits_enabled": False,
+            }
+try:
     from engine.adaptive_learning_infrastructure_v1 import AdaptiveLearningInfrastructureV1
 except Exception:
     class AdaptiveLearningInfrastructureV1:  # type: ignore[override]
@@ -1175,6 +1201,7 @@ TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE = TradeManagementPortfolioIntellig
 MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE = MarketCalendarKnowledgeIntelligenceV1(state_dir=STATE)
 BROAD_UNIVERSE_INTAKE_PROMOTION = BroadUniverseIntakePromotionV1(state_dir=STATE)
 TRADE_LIFECYCLE_EXCURSION = TradeLifecycleExcursionV1(state_dir=STATE)
+EXECUTION_PARTICIPATION_AUDIT = ExecutionParticipationAuditV1(state_dir=STATE)
 MARKET_SESSION_EXECUTION_TIMING_SUITE = MarketSessionExecutionTimingV1(
     market_calendar_knowledge_suite=MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE
 )
@@ -14976,6 +15003,7 @@ PAPER_AUTOPILOT = PaperAutopilotEngine(
     portfolio_diversification_v2_suite=PORTFOLIO_DIVERSIFICATION_CORRELATION_V2,
     profit_seeking_exploration_suite=PROFIT_SEEKING_ADAPTIVE_EXPLORATION,
     trade_lifecycle_excursion_suite=TRADE_LIFECYCLE_EXCURSION,
+    execution_participation_audit_suite=EXECUTION_PARTICIPATION_AUDIT,
 )
 _PAPER_AUTOPILOT_STARTED = False
 _PAPER_INPROC_HEARTBEAT_STATE = {"last_cycle_utc": "", "cycle_count": 0}
@@ -39313,6 +39341,58 @@ def trade_lifecycle_excursion_status_v1(force: bool = False):
         }
 
 
+@router.get("/api/execution_participation_audit_status_v1")
+def execution_participation_audit_status_v1(force: bool = False):
+    try:
+        paper_trace = {}
+        try:
+            if hasattr(PAPER_AUTOPILOT, "execution_trace"):
+                paper_trace = dict(PAPER_AUTOPILOT.execution_trace(max_candidates=30) or {})
+        except Exception:
+            paper_trace = {}
+        out = dict(EXECUTION_PARTICIPATION_AUDIT.status(paper_trace=paper_trace, force=bool(force)) or {})
+        out["execution_participation_audit_status_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "execution_participation_audit_status_v1": True,
+            "participation_label": "status_unavailable",
+            "candidates_execution_reviewed": 0,
+            "participation_efficiency_score": 0.0,
+            "participation_suppression_score": 0.0,
+            "missed_opportunity_pressure": 0.0,
+            "overprotection_risk": 0.0,
+            "underparticipation_risk": 0.0,
+            "execution_conversion_rate": 0.0,
+            "eligible_to_submitted_rate": 0.0,
+            "submitted_to_filled_rate": 0.0,
+            "market_opportunity_capture_rate": 0.0,
+            "top_rejection_reasons": {},
+            "rejection_stage_counts": {},
+            "degraded_reason": f"execution_participation_audit_status_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "cache_hit": False,
+            "build_ms": 0.0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+        }
+
+
 def _alpaca_paper_test_cycle_payload():
     _ensure_paper_autopilot_started()
     lock = getattr(PAPER_AUTOPILOT, "_cycle_lock", None)
@@ -47523,6 +47603,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("broad_universe_intake_promotion", lambda: BROAD_UNIVERSE_INTAKE_PROMOTION.status(rows=rows))
         _safe_status("profit_seeking_adaptive_exploration", lambda: PROFIT_SEEKING_ADAPTIVE_EXPLORATION.status(rows=rows, market_context=statuses.get("market_calendar_knowledge") or {}))
         _safe_status("trade_lifecycle_excursion", lambda: TRADE_LIFECYCLE_EXCURSION.status(force=False))
+        _safe_status("execution_participation_audit", lambda: EXECUTION_PARTICIPATION_AUDIT.status(paper_trace=_paper_execution_trace_payload(), force=False))
         _safe_status("mobile_runtime_compaction", lambda: _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))
         _safe_status("paper_opportunity_allocation", lambda: PAPER_OPPORTUNITY_ALLOCATION_ENGINE.status(rows=rows))

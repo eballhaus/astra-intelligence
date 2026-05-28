@@ -142,6 +142,7 @@ export default function LearningTab({ compact = false }) {
   const [showMarketCalendarDetails, setShowMarketCalendarDetails] = useState(false);
   const [showBroadUniverseDetails, setShowBroadUniverseDetails] = useState(false);
   const [showTradeLifecycleExcursionDetails, setShowTradeLifecycleExcursionDetails] = useState(false);
+  const [showExecutionParticipationDetails, setShowExecutionParticipationDetails] = useState(false);
   const [endpointStatus, setEndpointStatus] = useState({});
   const [timeline, setTimeline] = useState([]);
   const [data, setData] = useState({
@@ -1563,6 +1564,7 @@ export default function LearningTab({ compact = false }) {
   const marketCalendarKnowledge = unified?.market_calendar_knowledge || {};
   const broadUniverseIntake = unified?.broad_universe_intake_promotion || {};
   const tradeLifecycleExcursion = unified?.trade_lifecycle_excursion || {};
+  const executionParticipationAudit = unified?.execution_participation_audit || {};
   const metricDisplay = (metric, suffix = "") => {
     if (!metric || typeof metric !== "object") return "n/a";
     if (metric.value === null || metric.value === undefined) {
@@ -1897,6 +1899,83 @@ export default function LearningTab({ compact = false }) {
             </ResponsiveContainer>
           </ChartShell>
         </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Execution Participation Audit & Calibration</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Shadow-only funnel diagnostics showing where valid paper candidates are suppressed before broker submission.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowExecutionParticipationDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showExecutionParticipationDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Participation", executionParticipationAudit?.participation_label],
+            ["Efficiency", `${safeNumber(executionParticipationAudit?.participation_efficiency_score).toFixed(1)}`],
+            ["Suppression", `${safeNumber(executionParticipationAudit?.participation_suppression_score).toFixed(1)}`],
+            ["Reviewed", executionParticipationAudit?.candidates_execution_reviewed],
+            ["Eligible", executionParticipationAudit?.eligible_candidates],
+            ["Submitted", executionParticipationAudit?.candidates_submitted],
+            ["Eligible → Submitted", `${safeNumber(executionParticipationAudit?.eligible_to_submitted_rate).toFixed(1)}%`],
+            ["Missed pressure", `${safeNumber(executionParticipationAudit?.missed_opportunity_pressure).toFixed(1)}`],
+            ["Overprotection", `${safeNumber(executionParticipationAudit?.overprotection_risk).toFixed(1)}`],
+            ["Underparticipation", `${safeNumber(executionParticipationAudit?.underparticipation_risk).toFixed(1)}`],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {typeof value === "number" ? value.toFixed(0) : String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Top rejection reasons: {Object.entries(executionParticipationAudit?.top_rejection_reasons || {}).slice(0, 4).map(([k, v]) => `${String(k).replaceAll("_", " ")} (${v})`).join(", ") || "collecting suppression evidence"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            {String(executionParticipationAudit?.summary || "Execution participation audit is collecting funnel evidence.")}
+          </div>
+        </div>
+        {showExecutionParticipationDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Execution Funnel</div>
+              <div>Seen: {safeNumber(executionParticipationAudit?.candidates_seen).toFixed(0)}</div>
+              <div>Promoted: {safeNumber(executionParticipationAudit?.candidates_promoted).toFixed(0)}</div>
+              <div>Deep scored: {safeNumber(executionParticipationAudit?.candidates_deep_scored).toFixed(0)}</div>
+              <div>Execution reviewed: {safeNumber(executionParticipationAudit?.candidates_execution_reviewed).toFixed(0)}</div>
+              <div>Submitted: {safeNumber(executionParticipationAudit?.candidates_submitted).toFixed(0)}</div>
+              <div>Filled: {safeNumber(executionParticipationAudit?.candidates_filled).toFixed(0)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Rejection Stages</div>
+              <div style={{ color: "#b8c7e6" }}>{JSON.stringify(executionParticipationAudit?.rejection_stage_counts || {})}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Missed Opportunity Tracking</div>
+              <div>High-expectancy missed: {safeNumber(executionParticipationAudit?.missed_high_expectancy_candidates).toFixed(0)}</div>
+              <div>Missed breakout: {safeNumber(executionParticipationAudit?.missed_breakout_count).toFixed(0)}</div>
+              <div>Missed continuation: {safeNumber(executionParticipationAudit?.missed_continuation_count).toFixed(0)}</div>
+              <div>Capture rate: {safeNumber(executionParticipationAudit?.market_opportunity_capture_rate).toFixed(1)}%</div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div style={{ ...panelStyle }}>

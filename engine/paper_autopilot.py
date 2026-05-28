@@ -51,6 +51,28 @@ except Exception:  # pragma: no cover - excursion telemetry is additive
             }
 
 try:
+    from engine.execution_participation_audit_v1 import ExecutionParticipationAuditV1
+except Exception:  # pragma: no cover - execution audit is additive
+    class ExecutionParticipationAuditV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def record_candidate_traces(self, *args, **kwargs):
+            return {"ok": False, "records_written": 0, "reason": "execution_participation_audit_unavailable"}
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "execution_participation_audit_status_v1": True,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "paper_only_preserved": True,
+                "forced_trades_enabled": False,
+                "forced_exits_enabled": False,
+            }
+
+try:
     from engine.paper_opportunity_allocation_engine_v1 import PaperOpportunityAllocationEngineV1
 except Exception:  # pragma: no cover - allocation engine is additive
     class PaperOpportunityAllocationEngineV1:  # type: ignore[override]
@@ -617,6 +639,14 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 self.trade_lifecycle_excursion_suite = None
+        self.execution_participation_audit_suite = kwargs.get("execution_participation_audit_suite")
+        if self.execution_participation_audit_suite is None:
+            try:
+                self.execution_participation_audit_suite = ExecutionParticipationAuditV1(
+                    state_dir=os.path.dirname(self.state_path) or "state"
+                )
+            except Exception:
+                self.execution_participation_audit_suite = None
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -2563,6 +2593,14 @@ class PaperAutopilotEngine:
                 "live_trading_changed": False,
                 "secrets_exposed": False,
             }
+            if self.execution_participation_audit_suite is not None and hasattr(self.execution_participation_audit_suite, "record_candidate_traces"):
+                try:
+                    self.execution_participation_audit_suite.record_candidate_traces(
+                        decision_trace,
+                        context={**trace, "cycle_timestamp": out["cycle_timestamp"]},
+                    )
+                except Exception:
+                    pass
             self._runtime_state["last_cycle_utc"] = out["cycle_timestamp"]
             self._runtime_state["last_cycle_summary"] = dict(out)
             self._runtime_state["last_execution_trace"] = dict(trace)

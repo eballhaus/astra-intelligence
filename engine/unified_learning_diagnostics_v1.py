@@ -271,6 +271,7 @@ class UnifiedLearningDiagnosticsV1:
         market_calendar_knowledge = self._market_calendar_knowledge_summary(statuses.get("market_calendar_knowledge") or {})
         broad_universe = self._broad_universe_intake_summary(statuses.get("broad_universe_intake_promotion") or {})
         trade_lifecycle_excursion = self._trade_lifecycle_excursion_summary(statuses.get("trade_lifecycle_excursion") or {})
+        execution_participation_audit = self._execution_participation_audit_summary(statuses.get("execution_participation_audit") or {})
         stale = self._stale_status(sources, system)
         return {
             "ok": True,
@@ -289,6 +290,7 @@ class UnifiedLearningDiagnosticsV1:
             "market_calendar_knowledge": market_calendar_knowledge,
             "broad_universe_intake_promotion": broad_universe,
             "trade_lifecycle_excursion": trade_lifecycle_excursion,
+            "execution_participation_audit": execution_participation_audit,
             "learning_maturity_summary": learning,
             "regime_context_summary": regime,
             "adaptive_execution_exit_intelligence_v2": adaptive_v2,
@@ -660,6 +662,58 @@ class UnifiedLearningDiagnosticsV1:
             "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
         }
 
+    def _execution_participation_audit_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_shadow_audit"),
+            "participation_label": _text(data.get("participation_label"), "insufficient_evidence"),
+            "candidates_seen": _to_int(data.get("candidates_seen"), 0),
+            "candidates_promoted": _to_int(data.get("candidates_promoted"), 0),
+            "candidates_deep_scored": _to_int(data.get("candidates_deep_scored"), 0),
+            "candidates_execution_reviewed": _to_int(data.get("candidates_execution_reviewed"), 0),
+            "candidates_portfolio_rejected": _to_int(data.get("candidates_portfolio_rejected"), 0),
+            "candidates_timing_rejected": _to_int(data.get("candidates_timing_rejected"), 0),
+            "candidates_correlation_rejected": _to_int(data.get("candidates_correlation_rejected"), 0),
+            "candidates_confirmation_rejected": _to_int(data.get("candidates_confirmation_rejected"), 0),
+            "candidates_exploration_rejected": _to_int(data.get("candidates_exploration_rejected"), 0),
+            "candidates_position_limit_rejected": _to_int(data.get("candidates_position_limit_rejected"), 0),
+            "candidates_submitted": _to_int(data.get("candidates_submitted"), 0),
+            "candidates_filled": _to_int(data.get("candidates_filled"), 0),
+            "eligible_candidates": _to_int(data.get("eligible_candidates"), 0),
+            "orders_attempted": _to_int(data.get("orders_attempted"), 0),
+            "orders_rejected": _to_int(data.get("orders_rejected"), 0),
+            "participation_efficiency_score": _to_float(data.get("participation_efficiency_score"), 0.0),
+            "participation_suppression_score": _to_float(data.get("participation_suppression_score"), 0.0),
+            "missed_opportunity_pressure": _to_float(data.get("missed_opportunity_pressure"), 0.0),
+            "overprotection_risk": _to_float(data.get("overprotection_risk"), 0.0),
+            "underparticipation_risk": _to_float(data.get("underparticipation_risk"), 0.0),
+            "execution_conversion_rate": _to_float(data.get("execution_conversion_rate"), 0.0),
+            "eligible_to_submitted_rate": _to_float(data.get("eligible_to_submitted_rate"), 0.0),
+            "submitted_to_filled_rate": _to_float(data.get("submitted_to_filled_rate"), 0.0),
+            "market_opportunity_capture_rate": _to_float(data.get("market_opportunity_capture_rate"), 0.0),
+            "missed_follow_through_pct": _to_float(data.get("missed_follow_through_pct"), 0.0),
+            "missed_profit_capture_pct": _to_float(data.get("missed_profit_capture_pct"), 0.0),
+            "missed_breakout_count": _to_int(data.get("missed_breakout_count"), 0),
+            "missed_continuation_count": _to_int(data.get("missed_continuation_count"), 0),
+            "missed_high_expectancy_candidates": _to_int(data.get("missed_high_expectancy_candidates"), 0),
+            "top_rejection_reasons": dict(data.get("top_rejection_reasons") or {}),
+            "rejection_stage_counts": dict(data.get("rejection_stage_counts") or {}),
+            "final_blocker_reason": _text(data.get("final_blocker_reason"), "none"),
+            "summary": _text(data.get("summary"), "Execution participation audit is collecting suppression evidence."),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+        }
+
     def _portfolio_diversification_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -926,6 +980,7 @@ class UnifiedLearningDiagnosticsV1:
             "adaptive_execution_exit_intelligence_v2", "market_session_execution_timing", "paper_opportunity_allocation",
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
+            "execution_participation_audit",
             "alpaca_paper_broker", "horizon_performance_dashboard",
         ]
         out = {}
@@ -959,6 +1014,7 @@ class UnifiedLearningDiagnosticsV1:
             "market_calendar_knowledge": "/api/market_calendar_knowledge_status_v1",
             "broad_universe_intake_promotion": "/api/broad_universe_intake_status_v1",
             "trade_lifecycle_excursion": "/api/trade_lifecycle_excursion_status_v1",
+            "execution_participation_audit": "/api/execution_participation_audit_status_v1",
             "mobile_runtime_compaction": "/api/mobile_runtime_compaction_status_v1",
             "market_session_execution_timing": "/api/market_session_execution_timing_status_v1",
             "paper_opportunity_allocation": "/api/paper_opportunity_allocation_status_v1",
