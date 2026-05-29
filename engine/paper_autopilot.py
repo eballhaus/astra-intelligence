@@ -366,6 +366,19 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _age_seconds_from_iso(value: Any) -> float | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return max(0.0, (datetime.now(UTC) - dt.astimezone(UTC)).total_seconds())
+    except Exception:
+        return None
+
+
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
         if value is None:
@@ -1039,14 +1052,17 @@ class PaperAutopilotEngine:
             payload = dict(broker.positions() or {})
             if bool(payload.get("ok")):
                 symbols = set()
+                positions_by_symbol: dict[str, dict[str, Any]] = {}
                 for row in list(payload.get("positions") or []):
                     if not isinstance(row, dict):
                         continue
                     sym = str(row.get("symbol") or "").upper().strip()
                     if sym:
                         symbols.add(sym)
+                        positions_by_symbol[sym] = dict(row)
                 out["broker_positions_fetch_ok"] = True
                 out["broker_open_symbols"] = symbols
+                out["broker_position_by_symbol"] = positions_by_symbol
                 out["broker_open_positions_count"] = int(len(symbols))
             else:
                 out["broker_positions_error_sanitized"] = str(payload.get("error") or "broker_positions_fetch_failed")[:180]
@@ -1057,8 +1073,71 @@ class PaperAutopilotEngine:
     def _sanitize_broker_error(self, result: dict[str, Any] | None) -> str:
         if not isinstance(result, dict):
             return ""
-        raw = str(result.get("broker_error") or result.get("error") or result.get("reason") or "").strip()
+        raw = str(
+            result.get("broker_error")
+            or result.get("open_confirmation_reason")
+            or result.get("error")
+            or result.get("reason")
+            or ""
+        ).strip()
         return raw[:180]
+
+    def _merge_latest_quote_for_submission(
+        self,
+        row: dict[str, Any],
+        quote: dict[str, Any] | None,
+        entry_price: float,
+    ) -> dict[str, Any]:
+        submit_row = dict(row or {})
+        q = dict(quote or {})
+        symbol = str(submit_row.get("symbol") or q.get("symbol") or "").upper().strip()
+        asset_type = _norm_asset(submit_row.get("asset_type") or q.get("asset_type") or "stock")
+        submit_row["symbol"] = symbol
+        submit_row["asset_type"] = asset_type
+        submit_row["price"] = entry_price
+        submit_row["current_price"] = entry_price
+        submit_row["last_price_seen"] = entry_price
+
+        for key in (
+            "prev_close",
+            "provider_used",
+            "source",
+            "quote_quality",
+            "cache_hit",
+            "data_unavailable_reason",
+            "quote_timestamp",
+            "timestamp",
+            "last_snapshot_timestamp",
+            "last_updated_utc",
+        ):
+            if q.get(key) not in (None, ""):
+                submit_row[key] = q.get(key)
+
+        quote_ts = (
+            submit_row.get("quote_timestamp")
+            or submit_row.get("timestamp")
+            or submit_row.get("last_snapshot_timestamp")
+            or submit_row.get("last_updated_utc")
+        )
+        age = _age_seconds_from_iso(quote_ts)
+        if age is not None:
+            submit_row["quote_age_seconds"] = round(age, 3)
+            submit_row["freshness_seconds"] = round(age, 3)
+        elif str(submit_row.get("quote_quality") or "").lower() == "live":
+            submit_row.setdefault("quote_age_seconds", 0.0)
+            submit_row.setdefault("freshness_seconds", 0.0)
+        elif q and entry_price > 0.0:
+            # get_latest_row_fn is invoked immediately before broker preflight. Some
+            # runtime/promoted snapshots carry a valid price but no timestamp; mark
+            # freshness for this just-fetched local snapshot without relaxing any
+            # downstream broker, session, portfolio, or limit gates.
+            submit_row.setdefault("quote_quality", "runtime_snapshot")
+            submit_row["quote_age_seconds"] = 0.0
+            submit_row["freshness_seconds"] = 0.0
+
+        submit_row["latest_quote_preflight_used"] = bool(q)
+        submit_row["latest_quote_preflight_at"] = _now_iso()
+        return submit_row
 
     def _current_execution_capacities(self) -> dict[str, Any]:
         counts = self._count_open_positions()
@@ -1562,27 +1641,64 @@ class PaperAutopilotEngine:
                 quote = dict(self.get_latest_row_fn(symbol, asset_type) or {})
             except Exception:
                 quote = {}
-        entry_price = _to_float(quote.get("price"), _to_float(row.get("price"), 0.0))
+        quote_price = _to_float(
+            quote.get("price"),
+            _to_float(quote.get("current_price"), _to_float(quote.get("last_price"), 0.0)),
+        )
+        row_price = _to_float(
+            row.get("price"),
+            _to_float(row.get("current_price"), _to_float(row.get("last_price"), _to_float(row.get("entry_price"), 0.0))),
+        )
+        entry_price = quote_price if quote_price > 0.0 else row_price
         if entry_price <= 0.0:
             return {"ok": False, "error": "no_valid_entry_price", "symbol": symbol}
 
         now_iso = _now_iso()
         pid = str(uuid.uuid4())
-        entry_row = dict(row)
+        submit_row = self._merge_latest_quote_for_submission(row, quote, entry_price)
+        entry_row = dict(submit_row)
         entry_row.setdefault("symbol", symbol)
         entry_row.setdefault("asset_type", asset_type)
         entry_row.setdefault("entry_timestamp", now_iso)
-        broker_order = self._submit_alpaca_paper_entry_order(row, entry_price, gate_meta=gate_meta)
+        broker_order = self._submit_alpaca_paper_entry_order(submit_row, entry_price, gate_meta=gate_meta)
         if broker_order.get("enabled", True) is not False and not broker_order.get("ok", False):
+            broker_error = str(
+                broker_order.get("error")
+                or broker_order.get("open_confirmation_reason")
+                or broker_order.get("reason")
+                or "unknown"
+            )[:180]
             return {
                 "ok": False,
                 "error": "alpaca_paper_order_failed",
                 "symbol": symbol,
-                "broker_error": str(broker_order.get("error") or broker_order.get("reason") or "unknown")[:160],
+                "broker_error": broker_error,
+                "paper_autopilot_limits_ok": bool(broker_order.get("paper_autopilot_limits_ok", False)),
+                "paper_autopilot_limits_reason": str(broker_order.get("paper_autopilot_limits_reason") or ""),
+                "portfolio_risk_proof_present": bool(broker_order.get("portfolio_risk_proof_present", False)),
+                "portfolio_risk_score_used": broker_order.get("portfolio_risk_score_used"),
+                "portfolio_risk_label_used": str(broker_order.get("portfolio_risk_label_used") or ""),
+                "portfolio_risk_preflight_reason": str(broker_order.get("portfolio_risk_preflight_reason") or ""),
+                "market_session_mode": str(broker_order.get("market_session_mode") or ""),
+                "paper_order_submission_allowed": bool(broker_order.get("paper_order_submission_allowed", False)),
+                "execution_confirmation_required": bool(broker_order.get("execution_confirmation_required", True)),
+                "open_confirmation_score": broker_order.get("open_confirmation_score"),
+                "open_confirmation_label": str(broker_order.get("open_confirmation_label") or ""),
+                "open_confirmation_reason": str(broker_order.get("open_confirmation_reason") or ""),
+                "execution_intent_status": str(broker_order.get("execution_intent_status") or ""),
+                "defer_until_market_confirmation": bool(broker_order.get("defer_until_market_confirmation", False)),
+                "requires_open_confirmation": bool(broker_order.get("requires_open_confirmation", True)),
+                "weekend_watchlist_candidate": bool(broker_order.get("weekend_watchlist_candidate", False)),
+                "replay_candidate_snapshot_saved": bool(broker_order.get("replay_candidate_snapshot_saved", False)),
+                "replay_learning_ready": bool(broker_order.get("replay_learning_ready", False)),
+                "session_timing_outcome_tracking_ready": bool(broker_order.get("session_timing_outcome_tracking_ready", False)),
+                "quote_age_seconds": submit_row.get("quote_age_seconds"),
+                "quote_quality": str(submit_row.get("quote_quality") or ""),
+                "latest_quote_preflight_used": bool(submit_row.get("latest_quote_preflight_used", False)),
             }
         if broker_order:
             entry_row["alpaca_paper_order"] = broker_order
-        entry_context = self._build_entry_context_v1(row, entry_price, source_bucket, gate_meta=gate_meta)
+        entry_context = self._build_entry_context_v1(submit_row, entry_price, source_bucket, gate_meta=gate_meta)
         entry_context["position_id"] = pid
         entry_context["alpaca_paper_order"] = broker_order
 
@@ -1658,7 +1774,28 @@ class PaperAutopilotEngine:
             except Exception:
                 pass
 
-        return {"ok": True, "position_id": pid, "symbol": symbol, "entry_price": entry_price, "asset_type": asset_type}
+        return {
+            "ok": True,
+            "position_id": pid,
+            "symbol": symbol,
+            "entry_price": entry_price,
+            "asset_type": asset_type,
+            "paper_autopilot_limits_ok": bool(broker_order.get("paper_autopilot_limits_ok", True)) if isinstance(broker_order, dict) else True,
+            "paper_autopilot_limits_reason": str(broker_order.get("paper_autopilot_limits_reason") or "") if isinstance(broker_order, dict) else "",
+            "portfolio_risk_proof_present": bool(broker_order.get("portfolio_risk_proof_present", True)) if isinstance(broker_order, dict) else True,
+            "portfolio_risk_score_used": broker_order.get("portfolio_risk_score_used") if isinstance(broker_order, dict) else None,
+            "portfolio_risk_label_used": str(broker_order.get("portfolio_risk_label_used") or "") if isinstance(broker_order, dict) else "",
+            "portfolio_risk_preflight_reason": str(broker_order.get("portfolio_risk_preflight_reason") or "") if isinstance(broker_order, dict) else "",
+            "market_session_mode": str(broker_order.get("market_session_mode") or "") if isinstance(broker_order, dict) else "",
+            "paper_order_submission_allowed": bool(broker_order.get("paper_order_submission_allowed", True)) if isinstance(broker_order, dict) else True,
+            "execution_confirmation_required": bool(broker_order.get("execution_confirmation_required", False)) if isinstance(broker_order, dict) else False,
+            "open_confirmation_score": broker_order.get("open_confirmation_score") if isinstance(broker_order, dict) else None,
+            "open_confirmation_label": str(broker_order.get("open_confirmation_label") or "") if isinstance(broker_order, dict) else "",
+            "open_confirmation_reason": str(broker_order.get("open_confirmation_reason") or "") if isinstance(broker_order, dict) else "",
+            "quote_age_seconds": submit_row.get("quote_age_seconds"),
+            "quote_quality": str(submit_row.get("quote_quality") or ""),
+            "latest_quote_preflight_used": bool(submit_row.get("latest_quote_preflight_used", False)),
+        }
 
     def _close_position(self, open_row: dict[str, Any], latest_row: dict[str, Any], exit_reason: str) -> dict[str, Any]:
         pid = str(open_row.get("position_id") or "").strip()
@@ -2160,6 +2297,7 @@ class PaperAutopilotEngine:
             internal_open_syms = {str(r.get("symbol") or "").upper().strip() for r in open_rows_initial}
             broker_snapshot = self._broker_open_symbols_snapshot()
             broker_open_syms = set(broker_snapshot.get("broker_open_symbols") or set())
+            broker_position_by_symbol = dict(broker_snapshot.get("broker_position_by_symbol") or {})
             broker_reconciliation_active = bool(broker_snapshot.get("broker_reconciliation_active", False))
             broker_positions_fetch_ok = bool(broker_snapshot.get("broker_positions_fetch_ok", False))
             stale_internal_positions = sorted(x for x in internal_open_syms if x and x not in broker_open_syms)
@@ -2174,6 +2312,22 @@ class PaperAutopilotEngine:
                 capacity_source = "internal"
 
             open_rows = list(open_rows_initial)
+            stale_internal_positions_skipped_for_exit_scan = 0
+            if broker_reconciliation_active and broker_positions_fetch_ok:
+                broker_symbols_for_exit_scan = {str(s or "").upper().strip() for s in broker_open_syms if str(s or "").strip()}
+                broker_confirmed_open_rows = []
+                broker_exit_seen: set[str] = set()
+                for r in open_rows_initial:
+                    row_symbol = str((r or {}).get("symbol") or "").upper().strip()
+                    if row_symbol not in broker_symbols_for_exit_scan or row_symbol in broker_exit_seen:
+                        continue
+                    broker_exit_seen.add(row_symbol)
+                    broker_confirmed_open_rows.append(r)
+                stale_internal_positions_skipped_for_exit_scan = max(
+                    0,
+                    len(open_rows_initial) - len(broker_confirmed_open_rows),
+                )
+                open_rows = broker_confirmed_open_rows
             min_hold = self._min_hold_seconds()
             for row in open_rows:
                 if closed >= self.max_closes_per_cycle:
@@ -2181,11 +2335,29 @@ class PaperAutopilotEngine:
                 symbol = str(row.get("symbol") or "").upper().strip()
                 asset = _norm_asset(row.get("asset_type") or "stock")
                 latest = {}
+                if broker_reconciliation_active and broker_positions_fetch_ok:
+                    broker_pos = dict(broker_position_by_symbol.get(symbol) or {})
+                    broker_price = _to_float(
+                        broker_pos.get("current_price"),
+                        _to_float(broker_pos.get("market_price"), _to_float(broker_pos.get("lastday_price"), 0.0)),
+                    )
+                    if broker_price > 0.0:
+                        latest = {
+                            "symbol": symbol,
+                            "asset_type": asset,
+                            "price": broker_price,
+                            "quote_quality": "alpaca_broker_position",
+                            "quote_timestamp": _now_iso(),
+                            "timestamp": _now_iso(),
+                            "source": "alpaca_broker_positions",
+                            "provider_used": "alpaca_paper",
+                        }
                 if callable(self.get_latest_row_fn):
-                    try:
-                        latest = dict(self.get_latest_row_fn(symbol, asset) or {})
-                    except Exception:
-                        latest = {}
+                    if not latest:
+                        try:
+                            latest = dict(self.get_latest_row_fn(symbol, asset) or {})
+                        except Exception:
+                            latest = {}
                 if not latest:
                     skipped += 1
                     continue
@@ -2229,6 +2401,17 @@ class PaperAutopilotEngine:
                 stale_internal_positions_ignored_for_broker_capacity = False
             stock_capacity_reason = "stock_capacity_available"
             candidates = self._collect_candidate_rows()
+            candidate_source = "candidate_source_empty"
+            if candidates:
+                source_counts: dict[str, int] = {}
+                for candidate_row in candidates:
+                    source = str(
+                        candidate_row.get("paper_autopilot_candidate_source")
+                        or candidate_row.get("top_buys_candidate_source")
+                        or "top_buys"
+                    ).strip() or "top_buys"
+                    source_counts[source] = source_counts.get(source, 0) + 1
+                candidate_source = max(source_counts.items(), key=lambda item: item[1])[0]
             allocation_status = {}
             if self.paper_opportunity_allocator is not None and hasattr(self.paper_opportunity_allocator, "status"):
                 try:
@@ -2302,7 +2485,7 @@ class PaperAutopilotEngine:
                 except Exception:
                     profit_seeking_exploration_status = {}
             for row in candidates:
-                if opened >= self.max_new_positions_per_cycle:
+                if selected_count >= self.max_new_positions_per_cycle:
                     final_blocker_reason = final_blocker_reason or "max_new_positions_per_cycle_reached"
                     break
                 if total_capacity <= 0:
@@ -2413,7 +2596,8 @@ class PaperAutopilotEngine:
                         row_trace["selected"] = False
                         row_trace["order_attempted"] = False
                         decision_trace.append(row_trace)
-                        final_blocker_reason = str(exploration_decision.get("exploration_rejection_reason") or reason)
+                        if orders_attempted <= 0 and orders_rejected <= 0:
+                            final_blocker_reason = str(exploration_decision.get("exploration_rejection_reason") or reason)
                         continue
 
                 eligible_count += 1
@@ -2441,6 +2625,9 @@ class PaperAutopilotEngine:
                 row_trace["open_confirmation_score"] = round(_to_float(opened_row.get("open_confirmation_score"), _to_float(row_trace.get("open_confirmation_score"), 0.0)), 2)
                 row_trace["open_confirmation_label"] = str(opened_row.get("open_confirmation_label") or row_trace.get("open_confirmation_label") or "")
                 row_trace["open_confirmation_reason"] = str(opened_row.get("open_confirmation_reason") or row_trace.get("open_confirmation_reason") or "")
+                row_trace["quote_age_seconds"] = opened_row.get("quote_age_seconds", row_trace.get("quote_age_seconds"))
+                row_trace["quote_quality"] = str(opened_row.get("quote_quality") or row_trace.get("quote_quality") or "")
+                row_trace["latest_quote_preflight_used"] = bool(opened_row.get("latest_quote_preflight_used", row_trace.get("latest_quote_preflight_used", False)))
                 row_trace["execution_intent_status"] = str(opened_row.get("execution_intent_status") or row_trace.get("execution_intent_status") or "")
                 row_trace["defer_until_market_confirmation"] = bool(opened_row.get("defer_until_market_confirmation", row_trace.get("defer_until_market_confirmation", False)))
                 row_trace["requires_open_confirmation"] = bool(opened_row.get("requires_open_confirmation", row_trace.get("requires_open_confirmation", True)))
@@ -2474,7 +2661,12 @@ class PaperAutopilotEngine:
                     orders_rejected += 1
                     row_trace["order_submitted"] = False
                     row_trace["order_result"] = "rejected"
-                    row_trace["order_rejection_reason"] = str(opened_row.get("error") or "paper_order_rejected")[:160]
+                    row_trace["order_rejection_reason"] = str(
+                        opened_row.get("broker_error")
+                        or opened_row.get("open_confirmation_reason")
+                        or opened_row.get("error")
+                        or "paper_order_rejected"
+                    )[:180]
                     broker_error = self._sanitize_broker_error(opened_row)
                     if broker_error:
                         row_trace["broker_error_sanitized"] = broker_error
@@ -2482,10 +2674,10 @@ class PaperAutopilotEngine:
                     final_blocker_reason = broker_error or str(opened_row.get("error") or "paper_order_rejected")
                 decision_trace.append(row_trace)
 
-            if not final_blocker_reason:
-                if opened > 0:
-                    final_blocker_reason = "orders_submitted"
-                elif not candidates:
+            if opened > 0:
+                final_blocker_reason = "orders_submitted"
+            elif not final_blocker_reason:
+                if not candidates:
                     final_blocker_reason = "no_candidates_available"
                 elif eligible_count <= 0:
                     final_blocker_reason = "no_eligible_candidates"
@@ -2534,6 +2726,7 @@ class PaperAutopilotEngine:
                 "effective_broker_capacity_count": int(len([s for s in broker_open_syms if s])),
                 "stale_internal_positions_count": stale_internal_positions_count,
                 "stale_internal_positions": stale_internal_positions[:32],
+                "stale_internal_positions_skipped_for_exit_scan": int(stale_internal_positions_skipped_for_exit_scan),
                 "capacity_source": str(capacity_source),
                 "effective_capacity_count": int(effective_capacity_count),
                 "stock_capacity_limit": int(self.max_stocks),
@@ -2543,11 +2736,27 @@ class PaperAutopilotEngine:
                 "broker_positions_fetch_ok": broker_positions_fetch_ok,
                 "broker_positions_error_sanitized": str(broker_snapshot.get("broker_positions_error_sanitized") or "")[:180],
                 "cycle_timestamp": _now_iso(),
+                "last_autopilot_cycle_at": _now_iso(),
+                "autopilot_loop_active": bool(self._thread and self._thread.is_alive()),
+                "market_open_cycle_detected": bool(session_status.get("paper_order_submission_allowed", False)),
+                "candidate_source": str(candidate_source),
+                "bridge_available": False,
+                "bridge_used": False,
+                "bridge_selected_symbols": [],
+                "why_no_trade_today": (
+                    "orders_submitted"
+                    if opened > 0
+                    else str(final_blocker_reason or "orders_not_submitted")[:180]
+                ),
             }
             trace = {
                 "paper_worker_running": bool(self._thread and self._thread.is_alive()),
+                "last_autopilot_cycle_at": out["last_autopilot_cycle_at"],
+                "autopilot_loop_active": bool(self._thread and self._thread.is_alive()),
+                "market_open_cycle_detected": bool(session_status.get("paper_order_submission_allowed", False)),
                 **safety,
                 "candidates_seen": int(len(candidates)),
+                "candidate_source": str(candidate_source),
                 "paper_opportunity_allocation": allocation_status,
                 "market_session_execution_timing": session_status,
                 "adaptive_learning_infrastructure": adaptive_learning_status,
@@ -2582,6 +2791,7 @@ class PaperAutopilotEngine:
                 "effective_broker_capacity_count": int(len([s for s in broker_open_syms if s])),
                 "stale_internal_positions_count": stale_internal_positions_count,
                 "stale_internal_positions": stale_internal_positions[:32],
+                "stale_internal_positions_skipped_for_exit_scan": int(stale_internal_positions_skipped_for_exit_scan),
                 "capacity_source": str(capacity_source),
                 "effective_capacity_count": int(effective_capacity_count),
                 "stock_capacity_limit": int(self.max_stocks),
@@ -2590,6 +2800,14 @@ class PaperAutopilotEngine:
                 "broker_reconciliation_active": broker_reconciliation_active,
                 "broker_positions_fetch_ok": broker_positions_fetch_ok,
                 "broker_positions_error_sanitized": str(broker_snapshot.get("broker_positions_error_sanitized") or "")[:180],
+                "bridge_available": False,
+                "bridge_used": False,
+                "bridge_selected_symbols": [],
+                "why_no_trade_today": (
+                    "orders_submitted"
+                    if opened > 0
+                    else str(final_blocker_reason or "orders_not_submitted")[:180]
+                ),
                 "live_trading_changed": False,
                 "secrets_exposed": False,
             }
@@ -2824,10 +3042,14 @@ class PaperAutopilotEngine:
             position_display_truth_source = "internal_workflow_rows"
             open_positions_count_source = "internal_workflow_rows"
         stale_hidden_from_active = bool(broker_truth_available and stale_internal_positions_count > 0)
+        returned_decision_trace = list(last_trace.get("per_candidate_decision_trace") or [])
+        if not returned_decision_trace:
+            returned_decision_trace = list(decision_rows)
         return {
             "enabled": True,
             "mode": "paper_only",
             "paper_worker_running": bool(self._thread and self._thread.is_alive()),
+            "autopilot_loop_active": bool(self._thread and self._thread.is_alive()),
             "autopilot_enabled": bool(self._enabled),
             **safety,
             "open_positions_count": int(display_active_positions_count),
@@ -2856,6 +3078,17 @@ class PaperAutopilotEngine:
             "promoted_candidates_available": bool(broad_universe_status.get("promoted_to_top_buys_count", 0)),
             "market_session_mode": str(last_trace.get("market_session_mode") or session_status.get("market_session_mode") or ""),
             "paper_order_submission_allowed": bool(last_trace.get("paper_order_submission_allowed", session_status.get("paper_order_submission_allowed", False))),
+            "market_open_cycle_detected": bool(
+                last_trace.get("market_open_cycle_detected", session_status.get("paper_order_submission_allowed", False))
+            ),
+            "candidate_source": str(
+                last_trace.get("candidate_source")
+                or (
+                    "broad_universe_promoted_top_buys"
+                    if any(bool((r or {}).get("selected_from_broad_universe", False)) for r in candidates)
+                    else "top_buys"
+                )
+            ),
             "execution_confirmation_required": bool(last_trace.get("execution_confirmation_required", session_status.get("execution_confirmation_required", True))),
             "execution_intent_status": str(last_trace.get("execution_intent_status") or session_status.get("execution_intent_status") or ""),
             "defer_until_market_confirmation": bool(last_trace.get("defer_until_market_confirmation", session_status.get("defer_until_market_confirmation", False))),
@@ -2869,7 +3102,7 @@ class PaperAutopilotEngine:
             "orders_submitted": int(last_trace.get("orders_submitted", 0)),
             "orders_rejected": int(last_trace.get("orders_rejected", 0)),
             "final_blocker_reason": final_blocker[:180],
-            "per_candidate_decision_trace": list(decision_rows or last_trace.get("per_candidate_decision_trace") or [])[:max_candidates],
+            "per_candidate_decision_trace": returned_decision_trace[:max_candidates],
             "last_alpaca_error_sanitized": str(last_trace.get("last_alpaca_error_sanitized") or "")[:180],
             "portfolio_risk_proof_present": bool(last_trace.get("portfolio_risk_proof_present", False)),
             "portfolio_risk_score_used": last_trace.get("portfolio_risk_score_used"),
@@ -2895,7 +3128,12 @@ class PaperAutopilotEngine:
             "broker_positions_fetch_ok": bool(last_trace.get("broker_positions_fetch_ok", broker_positions_fetch_ok)),
             "broker_positions_error_sanitized": str(last_trace.get("broker_positions_error_sanitized") or broker_snapshot.get("broker_positions_error_sanitized") or "")[:180],
             "last_cycle_utc": str(status.get("last_cycle_utc") or ""),
+            "last_autopilot_cycle_at": str(last_trace.get("last_autopilot_cycle_at") or status.get("last_cycle_utc") or ""),
             "last_cycle_summary": dict(status.get("last_cycle_summary") or {}),
+            "bridge_available": bool(last_trace.get("bridge_available", False)),
+            "bridge_used": bool(last_trace.get("bridge_used", False)),
+            "bridge_selected_symbols": list(last_trace.get("bridge_selected_symbols") or [])[:8],
+            "why_no_trade_today": str(last_trace.get("why_no_trade_today") or final_blocker or "")[:180],
             "natural_exit_preserved": True,
             "forced_early_exit_enabled": False,
             "live_trading_changed": False,

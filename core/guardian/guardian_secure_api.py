@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import requests
 
 
@@ -110,7 +111,8 @@ class GuardianSecureAPI:
 
             print(f"[GuardianV7] ⚠️ No stock data available for {symbol}")
         except Exception as e:
-            print(f"[GuardianV7] ⚠️ Stock data error for {symbol}: {e}")
+            safe_error = re.sub(r"(?i)(apikey|api_key|apiKey|token|api_token)=([^&\\s)]+)", r"\1=REDACTED", str(e))
+            print(f"[GuardianV7] ⚠️ Stock data error for {symbol}: {safe_error}")
         return None
 
     def fetch_crypto(self, symbol="BTC-USD"):
