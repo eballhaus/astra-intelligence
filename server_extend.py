@@ -674,6 +674,27 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.trade_lifecycle_excursion_v2 import TradeLifecycleExcursionV2
+except Exception:
+    class TradeLifecycleExcursionV2:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "2.0.0",
+                "trade_lifecycle_excursion_v2_status": True,
+                "tracked_active_trades": 0,
+                "tracked_closed_trades": 0,
+                "learning_readiness": "unavailable",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_exits_enabled": False,
+            }
+try:
     from engine.execution_participation_audit_v1 import ExecutionParticipationAuditV1
 except Exception:
     class ExecutionParticipationAuditV1:  # type: ignore[override]
@@ -1201,6 +1222,7 @@ TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE = TradeManagementPortfolioIntellig
 MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE = MarketCalendarKnowledgeIntelligenceV1(state_dir=STATE)
 BROAD_UNIVERSE_INTAKE_PROMOTION = BroadUniverseIntakePromotionV1(state_dir=STATE)
 TRADE_LIFECYCLE_EXCURSION = TradeLifecycleExcursionV1(state_dir=STATE)
+TRADE_LIFECYCLE_EXCURSION_V2 = TradeLifecycleExcursionV2(state_dir=STATE)
 EXECUTION_PARTICIPATION_AUDIT = ExecutionParticipationAuditV1(state_dir=STATE)
 MARKET_SESSION_EXECUTION_TIMING_SUITE = MarketSessionExecutionTimingV1(
     market_calendar_knowledge_suite=MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE
@@ -39341,6 +39363,53 @@ def trade_lifecycle_excursion_status_v1(force: bool = False):
         }
 
 
+@router.get("/api/trade_lifecycle_excursion_v2_status")
+def trade_lifecycle_excursion_v2_status(force: bool = False):
+    try:
+        open_positions = []
+        try:
+            if hasattr(PAPER_AUTOPILOT, "paper_positions"):
+                open_positions = [dict(r) for r in (PAPER_AUTOPILOT.paper_positions() or []) if isinstance(r, dict)]
+        except Exception:
+            open_positions = []
+        out = dict(TRADE_LIFECYCLE_EXCURSION_V2.status(open_positions=open_positions, force=bool(force)) or {})
+        out["trade_lifecycle_excursion_v2_status"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "2.0.0",
+            "trade_lifecycle_excursion_v2_status": True,
+            "tracked_active_trades": 0,
+            "tracked_closed_trades": 0,
+            "average_mfe_pct": None,
+            "average_mae_pct": None,
+            "average_profit_giveback_pct": None,
+            "average_profit_capture_ratio": None,
+            "average_hold_duration_minutes": None,
+            "average_exit_quality": None,
+            "average_follow_through_quality": None,
+            "exit_label_distribution": {},
+            "follow_through_distribution": {},
+            "learning_readiness": "unavailable",
+            "degraded_reason": f"trade_lifecycle_excursion_v2_status_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+        }
+
+
 @router.get("/api/execution_participation_audit_status_v1")
 def execution_participation_audit_status_v1(force: bool = False):
     try:
@@ -47603,6 +47672,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("broad_universe_intake_promotion", lambda: BROAD_UNIVERSE_INTAKE_PROMOTION.status(rows=rows))
         _safe_status("profit_seeking_adaptive_exploration", lambda: PROFIT_SEEKING_ADAPTIVE_EXPLORATION.status(rows=rows, market_context=statuses.get("market_calendar_knowledge") or {}))
         _safe_status("trade_lifecycle_excursion", lambda: TRADE_LIFECYCLE_EXCURSION.status(force=False))
+        _safe_status("trade_lifecycle_excursion_v2", lambda: TRADE_LIFECYCLE_EXCURSION_V2.status(force=False))
         _safe_status("execution_participation_audit", lambda: EXECUTION_PARTICIPATION_AUDIT.status(paper_trace=_paper_execution_trace_payload(), force=False))
         _safe_status("mobile_runtime_compaction", lambda: _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))

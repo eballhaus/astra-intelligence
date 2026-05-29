@@ -235,6 +235,7 @@ class UnifiedLearningDiagnosticsV1:
     def _rows(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for name, limit in (
+            ("trade_lifecycle_excursion_v2.jsonl", 360),
             ("trade_lifecycle_excursion_v1.jsonl", 360),
             ("trade_lifecycle_v1.jsonl", 320),
             ("outcome_labels_v1.jsonl", 280),
@@ -271,6 +272,7 @@ class UnifiedLearningDiagnosticsV1:
         market_calendar_knowledge = self._market_calendar_knowledge_summary(statuses.get("market_calendar_knowledge") or {})
         broad_universe = self._broad_universe_intake_summary(statuses.get("broad_universe_intake_promotion") or {})
         trade_lifecycle_excursion = self._trade_lifecycle_excursion_summary(statuses.get("trade_lifecycle_excursion") or {})
+        trade_lifecycle_excursion_v2 = self._trade_lifecycle_excursion_v2_summary(statuses.get("trade_lifecycle_excursion_v2") or {})
         execution_participation_audit = self._execution_participation_audit_summary(statuses.get("execution_participation_audit") or {})
         stale = self._stale_status(sources, system)
         return {
@@ -290,6 +292,7 @@ class UnifiedLearningDiagnosticsV1:
             "market_calendar_knowledge": market_calendar_knowledge,
             "broad_universe_intake_promotion": broad_universe,
             "trade_lifecycle_excursion": trade_lifecycle_excursion,
+            "trade_lifecycle_excursion_v2": trade_lifecycle_excursion_v2,
             "execution_participation_audit": execution_participation_audit,
             "learning_maturity_summary": learning,
             "regime_context_summary": regime,
@@ -662,6 +665,63 @@ class UnifiedLearningDiagnosticsV1:
             "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
         }
 
+    def _trade_lifecycle_excursion_v2_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        tracked_total = _to_int(data.get("total_tracked_lifecycles"), 0)
+        maturity = _text(data.get("maturity"), "warming_up" if tracked_total else "awaiting_lifecycle_outcomes")
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "2.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_lifecycle_learning_v2"),
+            "maturity": maturity,
+            "tracked_active_trades": _to_int(data.get("tracked_active_trades"), 0),
+            "tracked_closed_trades": _to_int(data.get("tracked_closed_trades"), 0),
+            "total_tracked_lifecycles": tracked_total,
+            "average_mfe_pct": data.get("average_mfe_pct"),
+            "average_mae_pct": data.get("average_mae_pct"),
+            "average_profit_giveback_pct": data.get("average_profit_giveback_pct"),
+            "average_profit_capture_ratio": data.get("average_profit_capture_ratio"),
+            "average_giveback_after_mfe": data.get("average_giveback_after_mfe"),
+            "average_hold_duration_minutes": data.get("average_hold_duration_minutes"),
+            "average_hold_duration_quality": data.get("average_hold_duration_quality"),
+            "average_exit_quality": data.get("average_exit_quality"),
+            "average_exit_efficiency": data.get("average_exit_efficiency"),
+            "average_follow_through_quality": data.get("average_follow_through_quality"),
+            "high_giveback_trade_count": _to_int(data.get("high_giveback_trade_count"), 0),
+            "premature_exit_count": _to_int(data.get("premature_exit_count"), 0),
+            "overstayed_exit_count": _to_int(data.get("overstayed_exit_count"), 0),
+            "stop_loss_exit_count": _to_int(data.get("stop_loss_exit_count"), 0),
+            "profit_protection_exit_count": _to_int(data.get("profit_protection_exit_count"), 0),
+            "exit_label_distribution": dict(data.get("exit_label_distribution") or {}),
+            "follow_through_distribution": dict(data.get("follow_through_distribution") or {}),
+            "best_follow_through_context": _text(data.get("best_follow_through_context"), "insufficient_evidence"),
+            "weakest_follow_through_context": _text(data.get("weakest_follow_through_context"), "insufficient_evidence"),
+            "best_hold_duration_context": _text(data.get("best_hold_duration_context"), "insufficient_evidence"),
+            "weakest_hold_duration_context": _text(data.get("weakest_hold_duration_context"), "insufficient_evidence"),
+            "best_profit_capture_context": _text(data.get("best_profit_capture_context"), "insufficient_evidence"),
+            "weakest_profit_capture_context": _text(data.get("weakest_profit_capture_context"), "insufficient_evidence"),
+            "strongest_continuation_archetype": _text(data.get("strongest_continuation_archetype"), "insufficient_evidence"),
+            "weakest_continuation_archetype": _text(data.get("weakest_continuation_archetype"), "insufficient_evidence"),
+            "symbols_with_best_continuation": list(data.get("symbols_with_best_continuation") or [])[:5],
+            "symbols_with_worst_giveback": list(data.get("symbols_with_worst_giveback") or [])[:5],
+            "best_profit_capture_symbol": _text(data.get("best_profit_capture_symbol"), "insufficient_evidence"),
+            "worst_giveback_symbol": _text(data.get("worst_giveback_symbol"), "insufficient_evidence"),
+            "learning_readiness": _text(data.get("learning_readiness"), "warming_up"),
+            "learning_ready": bool(data.get("learning_ready", False)),
+            "summary": _text(
+                data.get("summary"),
+                "Trade lifecycle V2 is waiting for active or naturally closed paper lifecycle evidence.",
+            ),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+        }
+
     def _execution_participation_audit_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -980,6 +1040,7 @@ class UnifiedLearningDiagnosticsV1:
             "adaptive_execution_exit_intelligence_v2", "market_session_execution_timing", "paper_opportunity_allocation",
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
+            "trade_lifecycle_excursion_v2",
             "execution_participation_audit",
             "alpaca_paper_broker", "horizon_performance_dashboard",
         ]
@@ -1014,6 +1075,7 @@ class UnifiedLearningDiagnosticsV1:
             "market_calendar_knowledge": "/api/market_calendar_knowledge_status_v1",
             "broad_universe_intake_promotion": "/api/broad_universe_intake_status_v1",
             "trade_lifecycle_excursion": "/api/trade_lifecycle_excursion_status_v1",
+            "trade_lifecycle_excursion_v2": "/api/trade_lifecycle_excursion_v2_status",
             "execution_participation_audit": "/api/execution_participation_audit_status_v1",
             "mobile_runtime_compaction": "/api/mobile_runtime_compaction_status_v1",
             "market_session_execution_timing": "/api/market_session_execution_timing_status_v1",

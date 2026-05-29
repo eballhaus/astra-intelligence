@@ -1563,7 +1563,7 @@ export default function LearningTab({ compact = false }) {
   const profitSeekingExploration = unified?.profit_seeking_adaptive_exploration || {};
   const marketCalendarKnowledge = unified?.market_calendar_knowledge || {};
   const broadUniverseIntake = unified?.broad_universe_intake_promotion || {};
-  const tradeLifecycleExcursion = unified?.trade_lifecycle_excursion || {};
+  const tradeLifecycleExcursion = unified?.trade_lifecycle_excursion_v2 || unified?.trade_lifecycle_excursion || {};
   const executionParticipationAudit = unified?.execution_participation_audit || {};
   const metricDisplay = (metric, suffix = "") => {
     if (!metric || typeof metric !== "object") return "n/a";
@@ -1981,9 +1981,9 @@ export default function LearningTab({ compact = false }) {
       <div style={{ ...panelStyle }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
           <div>
-            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Trade Lifecycle Excursion & Exit Learning</h3>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Trade Lifecycle Excursion & Exit Learning V2</h3>
             <div style={{ fontSize: 12, color: "#9fb1cc" }}>
-              Paper-only MFE/MAE, hold-time, follow-through, and natural-exit labels for learning without changing execution.
+              Paper-only hold-duration, profit giveback, continuation, and natural-exit learning without changing execution.
             </div>
           </div>
           <button
@@ -2009,9 +2009,12 @@ export default function LearningTab({ compact = false }) {
             ["Avg MFE", tradeLifecycleExcursion?.average_mfe_pct === null || tradeLifecycleExcursion?.average_mfe_pct === undefined ? "warming up" : `${safeNumber(tradeLifecycleExcursion?.average_mfe_pct).toFixed(2)}%`],
             ["Avg MAE", tradeLifecycleExcursion?.average_mae_pct === null || tradeLifecycleExcursion?.average_mae_pct === undefined ? "warming up" : `${safeNumber(tradeLifecycleExcursion?.average_mae_pct).toFixed(2)}%`],
             ["Profit giveback", tradeLifecycleExcursion?.average_profit_giveback_pct === null || tradeLifecycleExcursion?.average_profit_giveback_pct === undefined ? "warming up" : `${safeNumber(tradeLifecycleExcursion?.average_profit_giveback_pct).toFixed(2)}%`],
+            ["Capture ratio", tradeLifecycleExcursion?.average_profit_capture_ratio === null || tradeLifecycleExcursion?.average_profit_capture_ratio === undefined ? "warming up" : `${(safeNumber(tradeLifecycleExcursion?.average_profit_capture_ratio) * 100).toFixed(1)}%`],
             ["Avg hold", tradeLifecycleExcursion?.average_hold_duration_minutes === null || tradeLifecycleExcursion?.average_hold_duration_minutes === undefined ? "warming up" : `${safeNumber(tradeLifecycleExcursion?.average_hold_duration_minutes).toFixed(1)} min`],
-            ["Follow-through", tradeLifecycleExcursion?.follow_through_quality_score === null || tradeLifecycleExcursion?.follow_through_quality_score === undefined ? "warming up" : safeNumber(tradeLifecycleExcursion?.follow_through_quality_score).toFixed(1)],
-            ["Exit quality", tradeLifecycleExcursion?.exit_quality_score === null || tradeLifecycleExcursion?.exit_quality_score === undefined ? "awaiting closes" : safeNumber(tradeLifecycleExcursion?.exit_quality_score).toFixed(1)],
+            ["Hold quality", tradeLifecycleExcursion?.average_hold_duration_quality === null || tradeLifecycleExcursion?.average_hold_duration_quality === undefined ? "warming up" : safeNumber(tradeLifecycleExcursion?.average_hold_duration_quality).toFixed(1)],
+            ["Follow-through", (tradeLifecycleExcursion?.average_follow_through_quality ?? tradeLifecycleExcursion?.follow_through_quality_score) === null || (tradeLifecycleExcursion?.average_follow_through_quality ?? tradeLifecycleExcursion?.follow_through_quality_score) === undefined ? "warming up" : safeNumber(tradeLifecycleExcursion?.average_follow_through_quality ?? tradeLifecycleExcursion?.follow_through_quality_score).toFixed(1)],
+            ["Exit quality", (tradeLifecycleExcursion?.average_exit_quality ?? tradeLifecycleExcursion?.exit_quality_score) === null || (tradeLifecycleExcursion?.average_exit_quality ?? tradeLifecycleExcursion?.exit_quality_score) === undefined ? "awaiting closes" : safeNumber(tradeLifecycleExcursion?.average_exit_quality ?? tradeLifecycleExcursion?.exit_quality_score).toFixed(1)],
+            ["High giveback", tradeLifecycleExcursion?.high_giveback_trade_count],
           ].map(([label, value]) => (
             <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
               <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
@@ -2021,7 +2024,7 @@ export default function LearningTab({ compact = false }) {
             </div>
           ))}
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
-            Learning readiness: {tradeLifecycleExcursion?.learning_ready ? "ready" : String(tradeLifecycleExcursion?.maturity || "warming_up").replaceAll("_", " ")}
+            Learning readiness: {String(tradeLifecycleExcursion?.learning_readiness || (tradeLifecycleExcursion?.learning_ready ? "ready" : tradeLifecycleExcursion?.maturity) || "warming_up").replaceAll("_", " ")}
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             {String(tradeLifecycleExcursion?.summary || "Trade lifecycle excursion diagnostics are waiting for paper lifecycle evidence.")}
@@ -2039,8 +2042,10 @@ export default function LearningTab({ compact = false }) {
             </div>
             <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
               <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Contexts</div>
-              <div>Strongest: {String(tradeLifecycleExcursion?.strongest_follow_through_context || "insufficient_evidence").replaceAll("_", " ")}</div>
-              <div>Weakest: {String(tradeLifecycleExcursion?.weakest_follow_through_context || "insufficient_evidence").replaceAll("_", " ")}</div>
+              <div>Best follow-through: {String(tradeLifecycleExcursion?.best_follow_through_context || tradeLifecycleExcursion?.strongest_follow_through_context || "insufficient_evidence").replaceAll("_", " ")}</div>
+              <div>Weakest follow-through: {String(tradeLifecycleExcursion?.weakest_follow_through_context || "insufficient_evidence").replaceAll("_", " ")}</div>
+              <div>Best capture: {String(tradeLifecycleExcursion?.best_profit_capture_context || "insufficient_evidence").replaceAll("_", " ")}</div>
+              <div>Worst giveback symbol: {String(tradeLifecycleExcursion?.worst_giveback_symbol || "insufficient_evidence").replaceAll("_", " ")}</div>
               <div>Premature exits: {safeNumber(tradeLifecycleExcursion?.premature_exit_count).toFixed(0)}</div>
               <div>Overstayed exits: {safeNumber(tradeLifecycleExcursion?.overstayed_exit_count).toFixed(0)}</div>
             </div>
