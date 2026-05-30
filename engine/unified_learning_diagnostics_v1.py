@@ -235,6 +235,8 @@ class UnifiedLearningDiagnosticsV1:
     def _rows(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for name, limit in (
+            ("opportunity_cost_learning_v1.jsonl", 360),
+            ("replay_counterfactual_learning_v2.jsonl", 360),
             ("trade_archetype_regime_intelligence_v1.jsonl", 360),
             ("adaptive_profit_capture_intelligence_v1.jsonl", 360),
             ("trade_lifecycle_excursion_v2.jsonl", 360),
@@ -277,6 +279,8 @@ class UnifiedLearningDiagnosticsV1:
         trade_lifecycle_excursion_v2 = self._trade_lifecycle_excursion_v2_summary(statuses.get("trade_lifecycle_excursion_v2") or {})
         adaptive_profit_capture = self._adaptive_profit_capture_summary(statuses.get("adaptive_profit_capture") or {})
         trade_archetype_regime = self._trade_archetype_regime_summary(statuses.get("trade_archetype_regime") or {})
+        replay_counterfactual_learning_v2 = self._replay_counterfactual_learning_v2_summary(statuses.get("replay_counterfactual_learning_v2") or {})
+        opportunity_cost_learning = self._opportunity_cost_learning_summary(statuses.get("opportunity_cost_learning") or {})
         execution_participation_audit = self._execution_participation_audit_summary(statuses.get("execution_participation_audit") or {})
         stale = self._stale_status(sources, system)
         return {
@@ -299,6 +303,8 @@ class UnifiedLearningDiagnosticsV1:
             "trade_lifecycle_excursion_v2": trade_lifecycle_excursion_v2,
             "adaptive_profit_capture_intelligence": adaptive_profit_capture,
             "trade_archetype_regime_intelligence": trade_archetype_regime,
+            "replay_counterfactual_learning_v2": replay_counterfactual_learning_v2,
+            "opportunity_cost_learning": opportunity_cost_learning,
             "execution_participation_audit": execution_participation_audit,
             "learning_maturity_summary": learning,
             "regime_context_summary": regime,
@@ -812,6 +818,62 @@ class UnifiedLearningDiagnosticsV1:
             "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
         }
 
+    def _replay_counterfactual_learning_v2_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "2.0.0"),
+            "tracked_lifecycles": _to_int(data.get("tracked_lifecycles"), 0),
+            "counterfactuals_generated": _to_int(data.get("counterfactuals_generated"), 0),
+            "average_actual_return": data.get("average_actual_return"),
+            "average_best_counterfactual_return": data.get("average_best_counterfactual_return"),
+            "average_counterfactual_improvement": data.get("average_counterfactual_improvement"),
+            "average_actual_vs_best_possible": data.get("average_actual_vs_best_possible"),
+            "best_counterfactual_pattern": _text(data.get("best_counterfactual_pattern"), "insufficient_data"),
+            "most_common_missed_improvement": _text(data.get("most_common_missed_improvement"), "insufficient_data"),
+            "replay_learning_score": data.get("replay_learning_score"),
+            "replay_learning_recommendation": _text(data.get("replay_learning_recommendation"), "insufficient_data"),
+            "human_review_required": bool(data.get("human_review_required", True)),
+            "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+        }
+
+    def _opportunity_cost_learning_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "selected_candidates_reviewed": _to_int(data.get("selected_candidates_reviewed"), 0),
+            "rejected_candidates_reviewed": _to_int(data.get("rejected_candidates_reviewed"), 0),
+            "average_opportunity_cost": data.get("average_opportunity_cost"),
+            "missed_opportunity_count": _to_int(data.get("missed_opportunity_count"), 0),
+            "correct_selection_count": _to_int(data.get("correct_selection_count"), 0),
+            "selection_quality_score": data.get("selection_quality_score"),
+            "ranking_quality_score": data.get("ranking_quality_score"),
+            "best_selected_symbol": _text(data.get("best_selected_symbol"), "insufficient_data"),
+            "worst_selected_symbol": _text(data.get("worst_selected_symbol"), "insufficient_data"),
+            "best_rejected_symbol": _text(data.get("best_rejected_symbol"), "insufficient_data"),
+            "missed_best_symbol": _text(data.get("missed_best_symbol"), "insufficient_data"),
+            "ranking_improvement_recommendation": _text(data.get("ranking_improvement_recommendation"), "insufficient_data"),
+            "human_review_required": bool(data.get("human_review_required", True)),
+            "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+        }
+
     def _execution_participation_audit_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -1131,6 +1193,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
             "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "trade_archetype_regime",
+            "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "execution_participation_audit",
             "alpaca_paper_broker", "horizon_performance_dashboard",
         ]
@@ -1168,6 +1231,8 @@ class UnifiedLearningDiagnosticsV1:
             "trade_lifecycle_excursion_v2": "/api/trade_lifecycle_excursion_v2_status",
             "adaptive_profit_capture": "/api/adaptive_profit_capture_status_v1",
             "trade_archetype_regime": "/api/trade_archetype_regime_status_v1",
+            "replay_counterfactual_learning_v2": "/api/replay_counterfactual_learning_v2_status",
+            "opportunity_cost_learning": "/api/opportunity_cost_learning_status_v1",
             "execution_participation_audit": "/api/execution_participation_audit_status_v1",
             "mobile_runtime_compaction": "/api/mobile_runtime_compaction_status_v1",
             "market_session_execution_timing": "/api/market_session_execution_timing_status_v1",

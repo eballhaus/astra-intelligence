@@ -144,6 +144,8 @@ export default function LearningTab({ compact = false }) {
   const [showTradeLifecycleExcursionDetails, setShowTradeLifecycleExcursionDetails] = useState(false);
   const [showAdaptiveProfitCaptureDetails, setShowAdaptiveProfitCaptureDetails] = useState(false);
   const [showTradeArchetypeRegimeDetails, setShowTradeArchetypeRegimeDetails] = useState(false);
+  const [showReplayCounterfactualDetails, setShowReplayCounterfactualDetails] = useState(false);
+  const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
   const [showExecutionParticipationDetails, setShowExecutionParticipationDetails] = useState(false);
   const [endpointStatus, setEndpointStatus] = useState({});
   const [timeline, setTimeline] = useState([]);
@@ -1568,6 +1570,8 @@ export default function LearningTab({ compact = false }) {
   const tradeLifecycleExcursion = unified?.trade_lifecycle_excursion_v2 || unified?.trade_lifecycle_excursion || {};
   const adaptiveProfitCapture = unified?.adaptive_profit_capture_intelligence || {};
   const tradeArchetypeRegime = unified?.trade_archetype_regime_intelligence || {};
+  const replayCounterfactual = unified?.replay_counterfactual_learning_v2 || {};
+  const opportunityCostLearning = unified?.opportunity_cost_learning || {};
   const executionParticipationAudit = unified?.execution_participation_audit || {};
   const metricDisplay = (metric, suffix = "") => {
     if (!metric || typeof metric !== "object") return "n/a";
@@ -1903,6 +1907,109 @@ export default function LearningTab({ compact = false }) {
             </ResponsiveContainer>
           </ChartShell>
         </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Replay & Counterfactual Learning V2</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Shadow replay diagnostics comparing actual paper outcomes with virtual entry, exit, and hold alternatives.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowReplayCounterfactualDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showReplayCounterfactualDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Lifecycles", replayCounterfactual?.tracked_lifecycles],
+            ["Counterfactuals", replayCounterfactual?.counterfactuals_generated],
+            ["Actual avg", replayCounterfactual?.average_actual_return === null || replayCounterfactual?.average_actual_return === undefined ? "warming up" : `${safeNumber(replayCounterfactual?.average_actual_return).toFixed(2)}%`],
+            ["Best virtual avg", replayCounterfactual?.average_best_counterfactual_return === null || replayCounterfactual?.average_best_counterfactual_return === undefined ? "warming up" : `${safeNumber(replayCounterfactual?.average_best_counterfactual_return).toFixed(2)}%`],
+            ["Missed improvement", replayCounterfactual?.average_counterfactual_improvement === null || replayCounterfactual?.average_counterfactual_improvement === undefined ? "warming up" : `${safeNumber(replayCounterfactual?.average_counterfactual_improvement).toFixed(2)}%`],
+            ["Replay score", replayCounterfactual?.replay_learning_score === null || replayCounterfactual?.replay_learning_score === undefined ? "warming up" : safeNumber(replayCounterfactual?.replay_learning_score).toFixed(1)],
+            ["Best pattern", replayCounterfactual?.best_counterfactual_pattern],
+            ["Recommendation", replayCounterfactual?.replay_learning_recommendation],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {typeof value === "number" ? value.toFixed(0) : String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Most common missed improvement: {String(replayCounterfactual?.most_common_missed_improvement || "insufficient_data").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showReplayCounterfactualDetails ? (
+          <div style={{ marginTop: 12, color: "#b8c7e6", fontSize: 12 }}>
+            Human review required: {replayCounterfactual?.human_review_required ? "yes" : "no"} | Auto apply: {replayCounterfactual?.auto_apply_allowed ? "yes" : "no"} | API calls: {safeNumber(replayCounterfactual?.api_calls_used).toFixed(0)}
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Opportunity Cost Learning</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Shadow comparison of selected paper trades versus rejected or non-selected candidates.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowOpportunityCostDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showOpportunityCostDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Selected reviewed", opportunityCostLearning?.selected_candidates_reviewed],
+            ["Rejected reviewed", opportunityCostLearning?.rejected_candidates_reviewed],
+            ["Avg opportunity cost", opportunityCostLearning?.average_opportunity_cost === null || opportunityCostLearning?.average_opportunity_cost === undefined ? "warming up" : `${safeNumber(opportunityCostLearning?.average_opportunity_cost).toFixed(2)}%`],
+            ["Missed count", opportunityCostLearning?.missed_opportunity_count],
+            ["Correct count", opportunityCostLearning?.correct_selection_count],
+            ["Selection quality", opportunityCostLearning?.selection_quality_score === null || opportunityCostLearning?.selection_quality_score === undefined ? "warming up" : safeNumber(opportunityCostLearning?.selection_quality_score).toFixed(1)],
+            ["Missed best", opportunityCostLearning?.missed_best_symbol],
+            ["Recommendation", opportunityCostLearning?.ranking_improvement_recommendation],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {typeof value === "number" ? value.toFixed(0) : String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+        </div>
+        {showOpportunityCostDetails ? (
+          <div style={{ marginTop: 12, color: "#b8c7e6", fontSize: 12 }}>
+            Best selected: {String(opportunityCostLearning?.best_selected_symbol || "insufficient_data").replaceAll("_", " ")} | Worst selected: {String(opportunityCostLearning?.worst_selected_symbol || "insufficient_data").replaceAll("_", " ")} | Best rejected: {String(opportunityCostLearning?.best_rejected_symbol || "insufficient_data").replaceAll("_", " ")}
+          </div>
+        ) : null}
       </div>
 
       <div style={{ ...panelStyle }}>

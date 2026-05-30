@@ -739,6 +739,45 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.replay_counterfactual_learning_v2 import ReplayCounterfactualLearningV2
+except Exception:
+    class ReplayCounterfactualLearningV2:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "2.0.0",
+                "tracked_lifecycles": 0,
+                "counterfactuals_generated": 0,
+                "replay_learning_recommendation": "unavailable",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_exits_enabled": False,
+            }
+try:
+    from engine.opportunity_cost_learning_v1 import OpportunityCostLearningV1
+except Exception:
+    class OpportunityCostLearningV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "selected_candidates_reviewed": 0,
+                "rejected_candidates_reviewed": 0,
+                "ranking_improvement_recommendation": "unavailable",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "forced_trades_enabled": False,
+            }
+try:
     from engine.execution_participation_audit_v1 import ExecutionParticipationAuditV1
 except Exception:
     class ExecutionParticipationAuditV1:  # type: ignore[override]
@@ -1269,6 +1308,8 @@ TRADE_LIFECYCLE_EXCURSION = TradeLifecycleExcursionV1(state_dir=STATE)
 TRADE_LIFECYCLE_EXCURSION_V2 = TradeLifecycleExcursionV2(state_dir=STATE)
 ADAPTIVE_PROFIT_CAPTURE_INTELLIGENCE = AdaptiveProfitCaptureIntelligenceV1(state_dir=STATE)
 TRADE_ARCHETYPE_REGIME_INTELLIGENCE = TradeArchetypeRegimeIntelligenceV1(state_dir=STATE)
+REPLAY_COUNTERFACTUAL_LEARNING_V2 = ReplayCounterfactualLearningV2(state_dir=STATE)
+OPPORTUNITY_COST_LEARNING = OpportunityCostLearningV1(state_dir=STATE)
 EXECUTION_PARTICIPATION_AUDIT = ExecutionParticipationAuditV1(state_dir=STATE)
 MARKET_SESSION_EXECUTION_TIMING_SUITE = MarketSessionExecutionTimingV1(
     market_calendar_knowledge_suite=MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE
@@ -39549,6 +39590,90 @@ def trade_archetype_regime_status_v1(force: bool = False):
         }
 
 
+@router.get("/api/replay_counterfactual_learning_v2_status")
+def replay_counterfactual_learning_v2_status(force: bool = False):
+    try:
+        out = dict(REPLAY_COUNTERFACTUAL_LEARNING_V2.status(force=bool(force)) or {})
+        out["replay_counterfactual_learning_v2_status"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "2.0.0",
+            "replay_counterfactual_learning_v2_status": True,
+            "tracked_lifecycles": 0,
+            "counterfactuals_generated": 0,
+            "average_actual_return": None,
+            "average_best_counterfactual_return": None,
+            "average_counterfactual_improvement": None,
+            "best_counterfactual_pattern": "insufficient_data",
+            "most_common_missed_improvement": "insufficient_data",
+            "replay_learning_score": None,
+            "replay_learning_recommendation": "unavailable",
+            "human_review_required": True,
+            "auto_apply_allowed": False,
+            "degraded_reason": f"replay_counterfactual_learning_v2_status_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "build_ms": 0.0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+        }
+
+
+@router.get("/api/opportunity_cost_learning_status_v1")
+def opportunity_cost_learning_status_v1(force: bool = False):
+    try:
+        out = dict(OPPORTUNITY_COST_LEARNING.status(force=bool(force)) or {})
+        out["opportunity_cost_learning_status_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "opportunity_cost_learning_status_v1": True,
+            "selected_candidates_reviewed": 0,
+            "rejected_candidates_reviewed": 0,
+            "average_opportunity_cost": None,
+            "missed_opportunity_count": 0,
+            "correct_selection_count": 0,
+            "selection_quality_score": None,
+            "ranking_quality_score": None,
+            "best_selected_symbol": "insufficient_data",
+            "worst_selected_symbol": "insufficient_data",
+            "missed_best_symbol": "insufficient_data",
+            "ranking_improvement_recommendation": "unavailable",
+            "human_review_required": True,
+            "auto_apply_allowed": False,
+            "degraded_reason": f"opportunity_cost_learning_status_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "build_ms": 0.0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+        }
+
+
 @router.get("/api/execution_participation_audit_status_v1")
 def execution_participation_audit_status_v1(force: bool = False):
     try:
@@ -47814,6 +47939,8 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("trade_lifecycle_excursion_v2", lambda: TRADE_LIFECYCLE_EXCURSION_V2.status(force=False))
         _safe_status("adaptive_profit_capture", lambda: ADAPTIVE_PROFIT_CAPTURE_INTELLIGENCE.status(force=False))
         _safe_status("trade_archetype_regime", lambda: TRADE_ARCHETYPE_REGIME_INTELLIGENCE.status(force=False))
+        _safe_status("replay_counterfactual_learning_v2", lambda: REPLAY_COUNTERFACTUAL_LEARNING_V2.status(force=False))
+        _safe_status("opportunity_cost_learning", lambda: OPPORTUNITY_COST_LEARNING.status(force=False))
         _safe_status("execution_participation_audit", lambda: EXECUTION_PARTICIPATION_AUDIT.status(paper_trace=_paper_execution_trace_payload(), force=False))
         _safe_status("mobile_runtime_compaction", lambda: _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))
