@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.astra.watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/eric/Desktop/astra-intelligence-clean/scripts/astra_watchdog.py</string>
+    <string>--loop</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/eric/Desktop/astra-intelligence-clean</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/eric/Desktop/astra-intelligence-clean/logs/astra_watchdog.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/eric/Desktop/astra-intelligence-clean/logs/astra_watchdog.launchd.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>ASTRA_REMOTE_MODE</key>
+    <string>1</string>
+  </dict>
+</dict>
+</plist>
