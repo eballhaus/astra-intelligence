@@ -146,6 +146,7 @@ export default function LearningTab({ compact = false }) {
   const [showTradeArchetypeRegimeDetails, setShowTradeArchetypeRegimeDetails] = useState(false);
   const [showReplayCounterfactualDetails, setShowReplayCounterfactualDetails] = useState(false);
   const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
+  const [showAdvancedLearningIntelligenceDetails, setShowAdvancedLearningIntelligenceDetails] = useState(false);
   const [showExecutionParticipationDetails, setShowExecutionParticipationDetails] = useState(false);
   const [endpointStatus, setEndpointStatus] = useState({});
   const [timeline, setTimeline] = useState([]);
@@ -1572,6 +1573,7 @@ export default function LearningTab({ compact = false }) {
   const tradeArchetypeRegime = unified?.trade_archetype_regime_intelligence || {};
   const replayCounterfactual = unified?.replay_counterfactual_learning_v2 || {};
   const opportunityCostLearning = unified?.opportunity_cost_learning || {};
+  const advancedLearningIntelligence = unified?.advanced_learning_intelligence || {};
   const executionParticipationAudit = unified?.execution_participation_audit || {};
   const metricDisplay = (metric, suffix = "") => {
     if (!metric || typeof metric !== "object") return "n/a";
@@ -2008,6 +2010,73 @@ export default function LearningTab({ compact = false }) {
         {showOpportunityCostDetails ? (
           <div style={{ marginTop: 12, color: "#b8c7e6", fontSize: 12 }}>
             Best selected: {String(opportunityCostLearning?.best_selected_symbol || "insufficient_data").replaceAll("_", " ")} | Worst selected: {String(opportunityCostLearning?.worst_selected_symbol || "insufficient_data").replaceAll("_", " ")} | Best rejected: {String(opportunityCostLearning?.best_rejected_symbol || "insufficient_data").replaceAll("_", " ")}
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Advanced Learning Intelligence</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Metric reconciliation, trade-memory similarity, knowledge graph links, and evidence-backed explanations.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAdvancedLearningIntelligenceDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showAdvancedLearningIntelligenceDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Metric confidence", safeNumber(advancedLearningIntelligence?.metric_confidence_score).toFixed(1)],
+            ["Evidence consistency", safeNumber(advancedLearningIntelligence?.evidence_consistency_score).toFixed(1)],
+            ["Memory quality", safeNumber(advancedLearningIntelligence?.memory_quality_score).toFixed(1)],
+            ["Graph maturity", advancedLearningIntelligence?.graph_maturity],
+            ["Explanation quality", safeNumber(advancedLearningIntelligence?.explanation_quality_score).toFixed(1)],
+            ["Similar trades", advancedLearningIntelligence?.similar_trade_count],
+            ["Strongest connection", advancedLearningIntelligence?.strongest_learning_connection],
+            ["Recommendation", advancedLearningIntelligence?.recommendation],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {typeof value === "number" ? value.toFixed(0) : String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            {String(advancedLearningIntelligence?.reconciliation_summary || "Waiting for metric reconciliation evidence.")}
+          </div>
+        </div>
+        {showAdvancedLearningIntelligenceDetails ? (
+          <div style={{ marginTop: 12, color: "#b8c7e6", fontSize: 12, display: "grid", gap: 8 }}>
+            <div>
+              Core metrics: WR {advancedLearningIntelligence?.win_rate === null || advancedLearningIntelligence?.win_rate === undefined ? "warming up" : `${safeNumber(advancedLearningIntelligence?.win_rate).toFixed(1)}%`} | PF {advancedLearningIntelligence?.profit_factor === null || advancedLearningIntelligence?.profit_factor === undefined ? "warming up" : safeNumber(advancedLearningIntelligence?.profit_factor).toFixed(2)} | Avg return {advancedLearningIntelligence?.average_return === null || advancedLearningIntelligence?.average_return === undefined ? "warming up" : `${safeNumber(advancedLearningIntelligence?.average_return).toFixed(2)}%`}
+            </div>
+            <div>
+              Weakest connection: {String(advancedLearningIntelligence?.weakest_learning_connection || "insufficient_data").replaceAll("_", " ")}
+            </div>
+            <div>
+              Graph insights: {(advancedLearningIntelligence?.graph_insights || []).length ? advancedLearningIntelligence.graph_insights.join(" ") : "Waiting for graph insight evidence."}
+            </div>
+            <div>
+              Explanation template: {String(advancedLearningIntelligence?.candidate_explanation_template || "Waiting for evidence-backed explanations.")}
+            </div>
+            <div>
+              Human review required: {advancedLearningIntelligence?.human_review_required ? "yes" : "no"} | Auto apply: {advancedLearningIntelligence?.auto_apply_allowed ? "yes" : "no"} | API calls: {safeNumber(advancedLearningIntelligence?.api_calls_used).toFixed(0)}
+            </div>
           </div>
         ) : null}
       </div>

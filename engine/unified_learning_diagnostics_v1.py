@@ -237,6 +237,9 @@ class UnifiedLearningDiagnosticsV1:
         for name, limit in (
             ("opportunity_cost_learning_v1.jsonl", 360),
             ("replay_counterfactual_learning_v2.jsonl", 360),
+            ("trade_memory_similarity_v1.jsonl", 320),
+            ("learning_knowledge_graph_v1.jsonl", 320),
+            ("explanation_intelligence_v1.jsonl", 240),
             ("trade_archetype_regime_intelligence_v1.jsonl", 360),
             ("adaptive_profit_capture_intelligence_v1.jsonl", 360),
             ("trade_lifecycle_excursion_v2.jsonl", 360),
@@ -281,6 +284,7 @@ class UnifiedLearningDiagnosticsV1:
         trade_archetype_regime = self._trade_archetype_regime_summary(statuses.get("trade_archetype_regime") or {})
         replay_counterfactual_learning_v2 = self._replay_counterfactual_learning_v2_summary(statuses.get("replay_counterfactual_learning_v2") or {})
         opportunity_cost_learning = self._opportunity_cost_learning_summary(statuses.get("opportunity_cost_learning") or {})
+        advanced_learning_intelligence = self._advanced_learning_intelligence_summary(statuses.get("advanced_learning_intelligence") or {})
         execution_participation_audit = self._execution_participation_audit_summary(statuses.get("execution_participation_audit") or {})
         stale = self._stale_status(sources, system)
         return {
@@ -305,6 +309,7 @@ class UnifiedLearningDiagnosticsV1:
             "trade_archetype_regime_intelligence": trade_archetype_regime,
             "replay_counterfactual_learning_v2": replay_counterfactual_learning_v2,
             "opportunity_cost_learning": opportunity_cost_learning,
+            "advanced_learning_intelligence": advanced_learning_intelligence,
             "execution_participation_audit": execution_participation_audit,
             "learning_maturity_summary": learning,
             "regime_context_summary": regime,
@@ -874,6 +879,56 @@ class UnifiedLearningDiagnosticsV1:
             "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
         }
 
+    def _advanced_learning_intelligence_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_advanced_learning_diagnostics"),
+            "metrics_reconciled": bool(data.get("metrics_reconciled", False)),
+            "source_validation_passed": bool(data.get("source_validation_passed", False)),
+            "evidence_consistency_score": _to_float(data.get("evidence_consistency_score"), 0.0),
+            "metric_confidence_score": _to_float(data.get("metric_confidence_score"), 0.0),
+            "memory_quality_score": _to_float(data.get("memory_quality_score"), 0.0),
+            "graph_maturity": _text(data.get("graph_maturity"), "warming_up"),
+            "graph_confidence": _to_float(data.get("graph_confidence"), 0.0),
+            "explanation_quality_score": _to_float(data.get("explanation_quality_score"), 0.0),
+            "explanation_confidence": _to_float(data.get("explanation_confidence"), 0.0),
+            "supporting_evidence_count": _to_int(data.get("supporting_evidence_count"), 0),
+            "strongest_learning_connection": _text(data.get("strongest_learning_connection"), "insufficient_data"),
+            "weakest_learning_connection": _text(data.get("weakest_learning_connection"), "insufficient_data"),
+            "similar_trade_count": _to_int(data.get("similar_trade_count"), 0),
+            "closest_trade_matches": list(data.get("closest_trade_matches") or [])[:8],
+            "average_similar_return": data.get("average_similar_return"),
+            "average_similar_follow_through": data.get("average_similar_follow_through"),
+            "average_similar_profit_capture": data.get("average_similar_profit_capture"),
+            "best_similar_context": _text(data.get("best_similar_context"), "insufficient_data"),
+            "worst_similar_context": _text(data.get("worst_similar_context"), "insufficient_data"),
+            "graph_insights": list(data.get("graph_insights") or [])[:6],
+            "released_win_rate": data.get("released_win_rate"),
+            "win_rate": data.get("win_rate"),
+            "profit_factor": data.get("profit_factor"),
+            "average_return": data.get("average_return"),
+            "expectancy": data.get("expectancy"),
+            "evidence_counts": dict(data.get("evidence_counts") or {}),
+            "mismatches": list(data.get("mismatches") or [])[:8],
+            "reconciliation_summary": _text(data.get("reconciliation_summary"), "Waiting for performance metric reconciliation evidence."),
+            "candidate_explanation_template": _text(data.get("candidate_explanation_template"), "Waiting for evidence-backed explanation templates."),
+            "recommendation": _text(data.get("recommendation"), "insufficient_data"),
+            "human_review_required": bool(data.get("human_review_required", True)),
+            "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+        }
+
     def _execution_participation_audit_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -1194,6 +1249,7 @@ class UnifiedLearningDiagnosticsV1:
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
             "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "trade_archetype_regime",
             "replay_counterfactual_learning_v2", "opportunity_cost_learning",
+            "advanced_learning_intelligence",
             "execution_participation_audit",
             "alpaca_paper_broker", "horizon_performance_dashboard",
         ]
@@ -1233,6 +1289,7 @@ class UnifiedLearningDiagnosticsV1:
             "trade_archetype_regime": "/api/trade_archetype_regime_status_v1",
             "replay_counterfactual_learning_v2": "/api/replay_counterfactual_learning_v2_status",
             "opportunity_cost_learning": "/api/opportunity_cost_learning_status_v1",
+            "advanced_learning_intelligence": "/api/advanced_learning_intelligence_status_v1",
             "execution_participation_audit": "/api/execution_participation_audit_status_v1",
             "mobile_runtime_compaction": "/api/mobile_runtime_compaction_status_v1",
             "market_session_execution_timing": "/api/market_session_execution_timing_status_v1",
