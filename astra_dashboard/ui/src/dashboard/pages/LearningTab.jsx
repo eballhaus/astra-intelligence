@@ -143,6 +143,7 @@ export default function LearningTab({ compact = false }) {
   const [showBroadUniverseDetails, setShowBroadUniverseDetails] = useState(false);
   const [showTradeLifecycleExcursionDetails, setShowTradeLifecycleExcursionDetails] = useState(false);
   const [showAdaptiveProfitCaptureDetails, setShowAdaptiveProfitCaptureDetails] = useState(false);
+  const [showTradeArchetypeRegimeDetails, setShowTradeArchetypeRegimeDetails] = useState(false);
   const [showExecutionParticipationDetails, setShowExecutionParticipationDetails] = useState(false);
   const [endpointStatus, setEndpointStatus] = useState({});
   const [timeline, setTimeline] = useState([]);
@@ -1566,6 +1567,7 @@ export default function LearningTab({ compact = false }) {
   const broadUniverseIntake = unified?.broad_universe_intake_promotion || {};
   const tradeLifecycleExcursion = unified?.trade_lifecycle_excursion_v2 || unified?.trade_lifecycle_excursion || {};
   const adaptiveProfitCapture = unified?.adaptive_profit_capture_intelligence || {};
+  const tradeArchetypeRegime = unified?.trade_archetype_regime_intelligence || {};
   const executionParticipationAudit = unified?.execution_participation_audit || {};
   const metricDisplay = (metric, suffix = "") => {
     if (!metric || typeof metric !== "object") return "n/a";
@@ -1901,6 +1903,79 @@ export default function LearningTab({ compact = false }) {
             </ResponsiveContainer>
           </ChartShell>
         </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Trade Archetype & Market Regime Intelligence</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Paper-only archetype/regime learning matrix for understanding which trade types fit which market environments.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowTradeArchetypeRegimeDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showTradeArchetypeRegimeDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Tracked trades", tradeArchetypeRegime?.tracked_trades],
+            ["Best archetype", tradeArchetypeRegime?.best_archetype],
+            ["Weakest archetype", tradeArchetypeRegime?.weakest_archetype],
+            ["Current regime", tradeArchetypeRegime?.current_regime],
+            ["Best regime", tradeArchetypeRegime?.best_regime],
+            ["Weakest regime", tradeArchetypeRegime?.weakest_regime],
+            ["Supported archetype", tradeArchetypeRegime?.current_best_supported_archetype],
+            ["Alignment", tradeArchetypeRegime?.current_archetype_regime_alignment_score === null || tradeArchetypeRegime?.current_archetype_regime_alignment_score === undefined ? "warming up" : safeNumber(tradeArchetypeRegime?.current_archetype_regime_alignment_score).toFixed(1)],
+            ["Recommendation", tradeArchetypeRegime?.shadow_recommendation],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {typeof value === "number" ? value.toFixed(0) : String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Best pair: {String(tradeArchetypeRegime?.best_archetype_regime_pair || "insufficient_data").replaceAll("_", " ").replace("|", " in ")} | Weakest pair: {String(tradeArchetypeRegime?.weakest_archetype_regime_pair || "insufficient_data").replaceAll("_", " ").replace("|", " in ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            {String(tradeArchetypeRegime?.summary || "Trade archetype and regime diagnostics are collecting lifecycle evidence.")}
+          </div>
+        </div>
+        {showTradeArchetypeRegimeDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Archetype Distribution</div>
+              <div style={{ color: "#b8c7e6" }}>{JSON.stringify(tradeArchetypeRegime?.archetype_distribution || {})}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Regime Distribution</div>
+              <div style={{ color: "#b8c7e6" }}>{JSON.stringify(tradeArchetypeRegime?.regime_distribution || {})}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Shadow Review</div>
+              <div>Most consistent: {String(tradeArchetypeRegime?.most_consistent_archetype || "insufficient_data").replaceAll("_", " ")}</div>
+              <div>High giveback: {String(tradeArchetypeRegime?.highest_giveback_archetype || "insufficient_data").replaceAll("_", " ")}</div>
+              <div>Best follow-through: {String(tradeArchetypeRegime?.best_follow_through_archetype || "insufficient_data").replaceAll("_", " ")}</div>
+              <div>Worst follow-through: {String(tradeArchetypeRegime?.worst_follow_through_archetype || "insufficient_data").replaceAll("_", " ")}</div>
+              <div>Human review: {tradeArchetypeRegime?.human_review_required ? "yes" : "no"}</div>
+              <div>Auto apply: {tradeArchetypeRegime?.auto_apply_allowed ? "yes" : "no"}</div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div style={{ ...panelStyle }}>

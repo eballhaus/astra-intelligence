@@ -235,6 +235,7 @@ class UnifiedLearningDiagnosticsV1:
     def _rows(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for name, limit in (
+            ("trade_archetype_regime_intelligence_v1.jsonl", 360),
             ("adaptive_profit_capture_intelligence_v1.jsonl", 360),
             ("trade_lifecycle_excursion_v2.jsonl", 360),
             ("trade_lifecycle_excursion_v1.jsonl", 360),
@@ -275,6 +276,7 @@ class UnifiedLearningDiagnosticsV1:
         trade_lifecycle_excursion = self._trade_lifecycle_excursion_summary(statuses.get("trade_lifecycle_excursion") or {})
         trade_lifecycle_excursion_v2 = self._trade_lifecycle_excursion_v2_summary(statuses.get("trade_lifecycle_excursion_v2") or {})
         adaptive_profit_capture = self._adaptive_profit_capture_summary(statuses.get("adaptive_profit_capture") or {})
+        trade_archetype_regime = self._trade_archetype_regime_summary(statuses.get("trade_archetype_regime") or {})
         execution_participation_audit = self._execution_participation_audit_summary(statuses.get("execution_participation_audit") or {})
         stale = self._stale_status(sources, system)
         return {
@@ -296,6 +298,7 @@ class UnifiedLearningDiagnosticsV1:
             "trade_lifecycle_excursion": trade_lifecycle_excursion,
             "trade_lifecycle_excursion_v2": trade_lifecycle_excursion_v2,
             "adaptive_profit_capture_intelligence": adaptive_profit_capture,
+            "trade_archetype_regime_intelligence": trade_archetype_regime,
             "execution_participation_audit": execution_participation_audit,
             "learning_maturity_summary": learning,
             "regime_context_summary": regime,
@@ -767,6 +770,48 @@ class UnifiedLearningDiagnosticsV1:
             "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
         }
 
+    def _trade_archetype_regime_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_archetype_regime_learning"),
+            "tracked_trades": _to_int(data.get("tracked_trades"), 0),
+            "archetype_distribution": dict(data.get("archetype_distribution") or {}),
+            "regime_distribution": dict(data.get("regime_distribution") or {}),
+            "best_archetype": _text(data.get("best_archetype"), "insufficient_data"),
+            "weakest_archetype": _text(data.get("weakest_archetype"), "insufficient_data"),
+            "most_consistent_archetype": _text(data.get("most_consistent_archetype"), "insufficient_data"),
+            "highest_giveback_archetype": _text(data.get("highest_giveback_archetype"), "insufficient_data"),
+            "best_follow_through_archetype": _text(data.get("best_follow_through_archetype"), "insufficient_data"),
+            "worst_follow_through_archetype": _text(data.get("worst_follow_through_archetype"), "insufficient_data"),
+            "best_regime": _text(data.get("best_regime"), "insufficient_data"),
+            "weakest_regime": _text(data.get("weakest_regime"), "insufficient_data"),
+            "current_regime": _text(data.get("current_regime"), "uncertain_regime"),
+            "current_regime_quality": _to_float(data.get("current_regime_quality"), 0.0),
+            "current_regime_trade_support": _text(data.get("current_regime_trade_support"), "selective_or_uncertain"),
+            "best_archetype_regime_pair": _text(data.get("best_archetype_regime_pair"), "insufficient_data"),
+            "weakest_archetype_regime_pair": _text(data.get("weakest_archetype_regime_pair"), "insufficient_data"),
+            "current_best_supported_archetype": _text(data.get("current_best_supported_archetype"), "insufficient_data"),
+            "current_archetype_regime_alignment_score": _to_float(data.get("current_archetype_regime_alignment_score"), 0.0),
+            "poor_fit_archetype_warning": bool(data.get("poor_fit_archetype_warning", False)),
+            "archetype_quality_scores": dict(data.get("archetype_quality_scores") or {}),
+            "regime_quality_scores": dict(data.get("regime_quality_scores") or {}),
+            "archetype_regime_matrix_summary": dict(data.get("archetype_regime_matrix_summary") or {}),
+            "shadow_recommendation": _text(data.get("shadow_recommendation"), "insufficient_data"),
+            "human_review_required": bool(data.get("human_review_required", True)),
+            "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
+            "summary": _text(data.get("summary"), "Trade archetype and regime intelligence is collecting lifecycle evidence."),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+        }
+
     def _execution_participation_audit_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -1085,7 +1130,7 @@ class UnifiedLearningDiagnosticsV1:
             "adaptive_execution_exit_intelligence_v2", "market_session_execution_timing", "paper_opportunity_allocation",
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
-            "trade_lifecycle_excursion_v2", "adaptive_profit_capture",
+            "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "trade_archetype_regime",
             "execution_participation_audit",
             "alpaca_paper_broker", "horizon_performance_dashboard",
         ]
@@ -1122,6 +1167,7 @@ class UnifiedLearningDiagnosticsV1:
             "trade_lifecycle_excursion": "/api/trade_lifecycle_excursion_status_v1",
             "trade_lifecycle_excursion_v2": "/api/trade_lifecycle_excursion_v2_status",
             "adaptive_profit_capture": "/api/adaptive_profit_capture_status_v1",
+            "trade_archetype_regime": "/api/trade_archetype_regime_status_v1",
             "execution_participation_audit": "/api/execution_participation_audit_status_v1",
             "mobile_runtime_compaction": "/api/mobile_runtime_compaction_status_v1",
             "market_session_execution_timing": "/api/market_session_execution_timing_status_v1",

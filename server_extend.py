@@ -716,6 +716,29 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.trade_archetype_regime_intelligence_v1 import TradeArchetypeRegimeIntelligenceV1
+except Exception:
+    class TradeArchetypeRegimeIntelligenceV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "tracked_trades": 0,
+                "archetype_distribution": {},
+                "regime_distribution": {},
+                "current_regime": "uncertain_regime",
+                "shadow_recommendation": "unavailable",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_trades_enabled": False,
+                "forced_exits_enabled": False,
+            }
+try:
     from engine.execution_participation_audit_v1 import ExecutionParticipationAuditV1
 except Exception:
     class ExecutionParticipationAuditV1:  # type: ignore[override]
@@ -1245,6 +1268,7 @@ BROAD_UNIVERSE_INTAKE_PROMOTION = BroadUniverseIntakePromotionV1(state_dir=STATE
 TRADE_LIFECYCLE_EXCURSION = TradeLifecycleExcursionV1(state_dir=STATE)
 TRADE_LIFECYCLE_EXCURSION_V2 = TradeLifecycleExcursionV2(state_dir=STATE)
 ADAPTIVE_PROFIT_CAPTURE_INTELLIGENCE = AdaptiveProfitCaptureIntelligenceV1(state_dir=STATE)
+TRADE_ARCHETYPE_REGIME_INTELLIGENCE = TradeArchetypeRegimeIntelligenceV1(state_dir=STATE)
 EXECUTION_PARTICIPATION_AUDIT = ExecutionParticipationAuditV1(state_dir=STATE)
 MARKET_SESSION_EXECUTION_TIMING_SUITE = MarketSessionExecutionTimingV1(
     market_calendar_knowledge_suite=MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE
@@ -39477,6 +39501,54 @@ def adaptive_profit_capture_status_v1(force: bool = False):
         }
 
 
+@router.get("/api/trade_archetype_regime_status_v1")
+def trade_archetype_regime_status_v1(force: bool = False):
+    try:
+        out = dict(TRADE_ARCHETYPE_REGIME_INTELLIGENCE.status(force=bool(force)) or {})
+        out["trade_archetype_regime_status_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "trade_archetype_regime_status_v1": True,
+            "tracked_trades": 0,
+            "archetype_distribution": {},
+            "regime_distribution": {},
+            "best_archetype": "insufficient_data",
+            "weakest_archetype": "insufficient_data",
+            "best_regime": "insufficient_data",
+            "weakest_regime": "insufficient_data",
+            "best_archetype_regime_pair": "insufficient_data",
+            "weakest_archetype_regime_pair": "insufficient_data",
+            "current_regime": "uncertain_regime",
+            "current_best_supported_archetype": "insufficient_data",
+            "current_archetype_regime_alignment_score": 0.0,
+            "archetype_quality_scores": {},
+            "regime_quality_scores": {},
+            "archetype_regime_matrix_summary": {},
+            "shadow_recommendation": "unavailable",
+            "human_review_required": True,
+            "auto_apply_allowed": False,
+            "degraded_reason": f"trade_archetype_regime_status_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "build_ms": 0.0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+        }
+
+
 @router.get("/api/execution_participation_audit_status_v1")
 def execution_participation_audit_status_v1(force: bool = False):
     try:
@@ -47741,6 +47813,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("trade_lifecycle_excursion", lambda: TRADE_LIFECYCLE_EXCURSION.status(force=False))
         _safe_status("trade_lifecycle_excursion_v2", lambda: TRADE_LIFECYCLE_EXCURSION_V2.status(force=False))
         _safe_status("adaptive_profit_capture", lambda: ADAPTIVE_PROFIT_CAPTURE_INTELLIGENCE.status(force=False))
+        _safe_status("trade_archetype_regime", lambda: TRADE_ARCHETYPE_REGIME_INTELLIGENCE.status(force=False))
         _safe_status("execution_participation_audit", lambda: EXECUTION_PARTICIPATION_AUDIT.status(paper_trace=_paper_execution_trace_payload(), force=False))
         _safe_status("mobile_runtime_compaction", lambda: _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))
