@@ -695,6 +695,27 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.adaptive_profit_capture_intelligence_v1 import AdaptiveProfitCaptureIntelligenceV1
+except Exception:
+    class AdaptiveProfitCaptureIntelligenceV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "tracked_lifecycles": 0,
+                "active_trades_reviewed": 0,
+                "closed_trades_reviewed": 0,
+                "profit_capture_recommendation": "unavailable",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_exits_enabled": False,
+            }
+try:
     from engine.execution_participation_audit_v1 import ExecutionParticipationAuditV1
 except Exception:
     class ExecutionParticipationAuditV1:  # type: ignore[override]
@@ -1223,6 +1244,7 @@ MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE = MarketCalendarKnowledgeIntelligenceV1(s
 BROAD_UNIVERSE_INTAKE_PROMOTION = BroadUniverseIntakePromotionV1(state_dir=STATE)
 TRADE_LIFECYCLE_EXCURSION = TradeLifecycleExcursionV1(state_dir=STATE)
 TRADE_LIFECYCLE_EXCURSION_V2 = TradeLifecycleExcursionV2(state_dir=STATE)
+ADAPTIVE_PROFIT_CAPTURE_INTELLIGENCE = AdaptiveProfitCaptureIntelligenceV1(state_dir=STATE)
 EXECUTION_PARTICIPATION_AUDIT = ExecutionParticipationAuditV1(state_dir=STATE)
 MARKET_SESSION_EXECUTION_TIMING_SUITE = MarketSessionExecutionTimingV1(
     market_calendar_knowledge_suite=MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE
@@ -39410,6 +39432,51 @@ def trade_lifecycle_excursion_v2_status(force: bool = False):
         }
 
 
+@router.get("/api/adaptive_profit_capture_status_v1")
+def adaptive_profit_capture_status_v1(force: bool = False):
+    try:
+        open_positions = []
+        try:
+            if hasattr(PAPER_AUTOPILOT, "paper_positions"):
+                open_positions = [dict(r) for r in (PAPER_AUTOPILOT.paper_positions() or []) if isinstance(r, dict)]
+        except Exception:
+            open_positions = []
+        out = dict(ADAPTIVE_PROFIT_CAPTURE_INTELLIGENCE.status(open_positions=open_positions, force=bool(force)) or {})
+        out["adaptive_profit_capture_status_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "adaptive_profit_capture_status_v1": True,
+            "tracked_lifecycles": 0,
+            "active_trades_reviewed": 0,
+            "closed_trades_reviewed": 0,
+            "average_profit_capture_ratio": None,
+            "average_profit_giveback_pct": None,
+            "average_missed_profit_pct": None,
+            "profit_capture_quality_score": None,
+            "open_position_watchlist": [],
+            "profit_capture_recommendation": "unavailable",
+            "degraded_reason": f"adaptive_profit_capture_status_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "build_ms": 0.0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+        }
+
+
 @router.get("/api/execution_participation_audit_status_v1")
 def execution_participation_audit_status_v1(force: bool = False):
     try:
@@ -47673,6 +47740,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("profit_seeking_adaptive_exploration", lambda: PROFIT_SEEKING_ADAPTIVE_EXPLORATION.status(rows=rows, market_context=statuses.get("market_calendar_knowledge") or {}))
         _safe_status("trade_lifecycle_excursion", lambda: TRADE_LIFECYCLE_EXCURSION.status(force=False))
         _safe_status("trade_lifecycle_excursion_v2", lambda: TRADE_LIFECYCLE_EXCURSION_V2.status(force=False))
+        _safe_status("adaptive_profit_capture", lambda: ADAPTIVE_PROFIT_CAPTURE_INTELLIGENCE.status(force=False))
         _safe_status("execution_participation_audit", lambda: EXECUTION_PARTICIPATION_AUDIT.status(paper_trace=_paper_execution_trace_payload(), force=False))
         _safe_status("mobile_runtime_compaction", lambda: _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))

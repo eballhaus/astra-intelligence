@@ -142,6 +142,7 @@ export default function LearningTab({ compact = false }) {
   const [showMarketCalendarDetails, setShowMarketCalendarDetails] = useState(false);
   const [showBroadUniverseDetails, setShowBroadUniverseDetails] = useState(false);
   const [showTradeLifecycleExcursionDetails, setShowTradeLifecycleExcursionDetails] = useState(false);
+  const [showAdaptiveProfitCaptureDetails, setShowAdaptiveProfitCaptureDetails] = useState(false);
   const [showExecutionParticipationDetails, setShowExecutionParticipationDetails] = useState(false);
   const [endpointStatus, setEndpointStatus] = useState({});
   const [timeline, setTimeline] = useState([]);
@@ -1564,6 +1565,7 @@ export default function LearningTab({ compact = false }) {
   const marketCalendarKnowledge = unified?.market_calendar_knowledge || {};
   const broadUniverseIntake = unified?.broad_universe_intake_promotion || {};
   const tradeLifecycleExcursion = unified?.trade_lifecycle_excursion_v2 || unified?.trade_lifecycle_excursion || {};
+  const adaptiveProfitCapture = unified?.adaptive_profit_capture_intelligence || {};
   const executionParticipationAudit = unified?.execution_participation_audit || {};
   const metricDisplay = (metric, suffix = "") => {
     if (!metric || typeof metric !== "object") return "n/a";
@@ -1899,6 +1901,85 @@ export default function LearningTab({ compact = false }) {
             </ResponsiveContainer>
           </ChartShell>
         </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Adaptive Profit Capture Intelligence</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Watch-only profit-retention, giveback, and peak-decay diagnostics from paper lifecycle evidence.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAdaptiveProfitCaptureDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showAdaptiveProfitCaptureDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Capture ratio", adaptiveProfitCapture?.average_profit_capture_ratio === null || adaptiveProfitCapture?.average_profit_capture_ratio === undefined ? "warming up" : `${(safeNumber(adaptiveProfitCapture?.average_profit_capture_ratio) * 100).toFixed(1)}%`],
+            ["Avg giveback", adaptiveProfitCapture?.average_profit_giveback_pct === null || adaptiveProfitCapture?.average_profit_giveback_pct === undefined ? "warming up" : `${safeNumber(adaptiveProfitCapture?.average_profit_giveback_pct).toFixed(2)}%`],
+            ["Missed profit", adaptiveProfitCapture?.average_missed_profit_pct === null || adaptiveProfitCapture?.average_missed_profit_pct === undefined ? "warming up" : `${safeNumber(adaptiveProfitCapture?.average_missed_profit_pct).toFixed(2)}%`],
+            ["Retention score", adaptiveProfitCapture?.average_profit_retention_score === null || adaptiveProfitCapture?.average_profit_retention_score === undefined ? "warming up" : safeNumber(adaptiveProfitCapture?.average_profit_retention_score).toFixed(1)],
+            ["Capture quality", adaptiveProfitCapture?.profit_capture_quality_score === null || adaptiveProfitCapture?.profit_capture_quality_score === undefined ? "warming up" : safeNumber(adaptiveProfitCapture?.profit_capture_quality_score).toFixed(1)],
+            ["High giveback", adaptiveProfitCapture?.high_giveback_trade_count],
+            ["Worst giveback", adaptiveProfitCapture?.worst_giveback_symbol],
+            ["Watchlist", adaptiveProfitCapture?.open_position_watchlist_count],
+            ["Recommendation", adaptiveProfitCapture?.profit_capture_recommendation],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {typeof value === "number" ? value.toFixed(0) : String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Contexts: best {String(adaptiveProfitCapture?.best_profit_capture_context || "insufficient_data").replaceAll("_", " ")} | weakest {String(adaptiveProfitCapture?.weakest_profit_capture_context || "insufficient_data").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            {String(adaptiveProfitCapture?.profit_capture_reason || adaptiveProfitCapture?.summary || "Adaptive profit capture diagnostics are collecting lifecycle evidence.")}
+          </div>
+        </div>
+        {showAdaptiveProfitCaptureDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Giveback Patterns</div>
+              <div style={{ color: "#b8c7e6" }}>{JSON.stringify(adaptiveProfitCapture?.top_giveback_patterns || {})}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Capture Labels</div>
+              <div>Excellent: {safeNumber(adaptiveProfitCapture?.excellent_capture_count).toFixed(0)}</div>
+              <div>Weak: {safeNumber(adaptiveProfitCapture?.weak_capture_count).toFixed(0)}</div>
+              <div>Severe giveback: {safeNumber(adaptiveProfitCapture?.severe_giveback_count).toFixed(0)}</div>
+              <div>Human review: {adaptiveProfitCapture?.human_review_required ? "yes" : "no"}</div>
+              <div>Auto apply: {adaptiveProfitCapture?.auto_apply_allowed ? "yes" : "no"}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Open Watchlist</div>
+              {(adaptiveProfitCapture?.open_position_watchlist || []).slice(0, 5).map((row) => (
+                <div key={row?.symbol || JSON.stringify(row)} style={{ color: "#b8c7e6", marginBottom: 4 }}>
+                  {row?.symbol || "unknown"}: {String(row?.giveback_severity_label || "watch").replaceAll("_", " ")} | attention {safeNumber(row?.profit_protection_attention_score).toFixed(1)}
+                </div>
+              ))}
+              {(!adaptiveProfitCapture?.open_position_watchlist || adaptiveProfitCapture.open_position_watchlist.length === 0) ? (
+                <div style={{ color: "#b8c7e6" }}>No active profit-capture watch items.</div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div style={{ ...panelStyle }}>

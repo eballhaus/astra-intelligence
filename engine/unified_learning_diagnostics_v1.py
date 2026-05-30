@@ -235,6 +235,7 @@ class UnifiedLearningDiagnosticsV1:
     def _rows(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for name, limit in (
+            ("adaptive_profit_capture_intelligence_v1.jsonl", 360),
             ("trade_lifecycle_excursion_v2.jsonl", 360),
             ("trade_lifecycle_excursion_v1.jsonl", 360),
             ("trade_lifecycle_v1.jsonl", 320),
@@ -273,6 +274,7 @@ class UnifiedLearningDiagnosticsV1:
         broad_universe = self._broad_universe_intake_summary(statuses.get("broad_universe_intake_promotion") or {})
         trade_lifecycle_excursion = self._trade_lifecycle_excursion_summary(statuses.get("trade_lifecycle_excursion") or {})
         trade_lifecycle_excursion_v2 = self._trade_lifecycle_excursion_v2_summary(statuses.get("trade_lifecycle_excursion_v2") or {})
+        adaptive_profit_capture = self._adaptive_profit_capture_summary(statuses.get("adaptive_profit_capture") or {})
         execution_participation_audit = self._execution_participation_audit_summary(statuses.get("execution_participation_audit") or {})
         stale = self._stale_status(sources, system)
         return {
@@ -293,6 +295,7 @@ class UnifiedLearningDiagnosticsV1:
             "broad_universe_intake_promotion": broad_universe,
             "trade_lifecycle_excursion": trade_lifecycle_excursion,
             "trade_lifecycle_excursion_v2": trade_lifecycle_excursion_v2,
+            "adaptive_profit_capture_intelligence": adaptive_profit_capture,
             "execution_participation_audit": execution_participation_audit,
             "learning_maturity_summary": learning,
             "regime_context_summary": regime,
@@ -722,6 +725,48 @@ class UnifiedLearningDiagnosticsV1:
             "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
         }
 
+    def _adaptive_profit_capture_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_profit_capture_learning"),
+            "tracked_lifecycles": _to_int(data.get("tracked_lifecycles"), 0),
+            "active_trades_reviewed": _to_int(data.get("active_trades_reviewed"), 0),
+            "closed_trades_reviewed": _to_int(data.get("closed_trades_reviewed"), 0),
+            "average_profit_capture_ratio": data.get("average_profit_capture_ratio"),
+            "average_profit_giveback_pct": data.get("average_profit_giveback_pct"),
+            "average_missed_profit_pct": data.get("average_missed_profit_pct"),
+            "average_profit_retention_score": data.get("average_profit_retention_score"),
+            "profit_capture_quality_score": data.get("profit_capture_quality_score"),
+            "high_giveback_trade_count": _to_int(data.get("high_giveback_trade_count"), 0),
+            "excellent_capture_count": _to_int(data.get("excellent_capture_count"), 0),
+            "weak_capture_count": _to_int(data.get("weak_capture_count"), 0),
+            "severe_giveback_count": _to_int(data.get("severe_giveback_count"), 0),
+            "best_profit_capture_context": _text(data.get("best_profit_capture_context"), "insufficient_data"),
+            "weakest_profit_capture_context": _text(data.get("weakest_profit_capture_context"), "insufficient_data"),
+            "best_profit_capture_symbol": _text(data.get("best_profit_capture_symbol"), "insufficient_data"),
+            "worst_profit_capture_symbol": _text(data.get("worst_profit_capture_symbol"), "insufficient_data"),
+            "worst_giveback_symbol": _text(data.get("worst_giveback_symbol"), "insufficient_data"),
+            "top_giveback_patterns": dict(data.get("top_giveback_patterns") or {}),
+            "most_common_giveback_pattern": _text(data.get("most_common_giveback_pattern"), "insufficient_data"),
+            "open_position_watchlist": list(data.get("open_position_watchlist") or [])[:12],
+            "open_position_watchlist_count": _to_int(data.get("open_position_watchlist_count"), len(data.get("open_position_watchlist") or [])),
+            "profit_capture_recommendation": _text(data.get("profit_capture_recommendation"), "insufficient_data"),
+            "profit_capture_reason": _text(data.get("profit_capture_reason"), "Waiting for profit-capture evidence."),
+            "human_review_required": bool(data.get("human_review_required", True)),
+            "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
+            "summary": _text(data.get("summary"), "Adaptive profit capture intelligence is collecting lifecycle evidence."),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+        }
+
     def _execution_participation_audit_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -1040,7 +1085,7 @@ class UnifiedLearningDiagnosticsV1:
             "adaptive_execution_exit_intelligence_v2", "market_session_execution_timing", "paper_opportunity_allocation",
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
-            "trade_lifecycle_excursion_v2",
+            "trade_lifecycle_excursion_v2", "adaptive_profit_capture",
             "execution_participation_audit",
             "alpaca_paper_broker", "horizon_performance_dashboard",
         ]
@@ -1076,6 +1121,7 @@ class UnifiedLearningDiagnosticsV1:
             "broad_universe_intake_promotion": "/api/broad_universe_intake_status_v1",
             "trade_lifecycle_excursion": "/api/trade_lifecycle_excursion_status_v1",
             "trade_lifecycle_excursion_v2": "/api/trade_lifecycle_excursion_v2_status",
+            "adaptive_profit_capture": "/api/adaptive_profit_capture_status_v1",
             "execution_participation_audit": "/api/execution_participation_audit_status_v1",
             "mobile_runtime_compaction": "/api/mobile_runtime_compaction_status_v1",
             "market_session_execution_timing": "/api/market_session_execution_timing_status_v1",
