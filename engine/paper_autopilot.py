@@ -540,6 +540,9 @@ class PaperAutopilotEngine:
         self.throughput_expansion_enabled = bool(kwargs.get("throughput_expansion_enabled", False))
         self.soft_candidate_expansion_enabled = bool(kwargs.get("soft_candidate_expansion_enabled", False))
         self.paper_entry_threshold_relief_points = max(0.0, min(12.0, _to_float(kwargs.get("paper_entry_threshold_relief_points"), 0.0)))
+        self.paper_learning_capacity_expansion_v1 = bool(self.throughput_expansion_enabled and self.max_stocks >= 12)
+        self.paper_learning_capacity_default_target = 12
+        self.paper_learning_capacity_upper_bound = 15
 
         self.get_top_buys_fn = kwargs.get("get_top_buys_fn") if callable(kwargs.get("get_top_buys_fn")) else None
         self.get_latest_row_fn = kwargs.get("get_latest_row_fn") if callable(kwargs.get("get_latest_row_fn")) else None
@@ -2245,6 +2248,11 @@ class PaperAutopilotEngine:
             "throughput_expansion_enabled": bool(self.throughput_expansion_enabled),
             "soft_candidate_expansion_enabled": bool(self.soft_candidate_expansion_enabled),
             "paper_entry_threshold_relief_points": round(float(self.paper_entry_threshold_relief_points), 3),
+            "paper_learning_capacity_expansion_v1": bool(self.paper_learning_capacity_expansion_v1),
+            "paper_learning_capacity_default_target": int(self.paper_learning_capacity_default_target),
+            "paper_learning_capacity_upper_bound": int(self.paper_learning_capacity_upper_bound),
+            "paper_learning_capacity_reason": "cautious_learning_acceleration_without_forced_trades",
+            "suggested_horizon_mix": {"scalp": 3, "day_trade": 5, "swing_short_swing_max": 7},
         }
 
     def run_cycle(self):
@@ -2730,6 +2738,11 @@ class PaperAutopilotEngine:
                 "capacity_source": str(capacity_source),
                 "effective_capacity_count": int(effective_capacity_count),
                 "stock_capacity_limit": int(self.max_stocks),
+                "paper_learning_capacity_expansion_v1": bool(self.paper_learning_capacity_expansion_v1),
+                "paper_learning_capacity_reason": "cautious_learning_acceleration_without_forced_trades",
+                "paper_learning_capacity_default_target": int(self.paper_learning_capacity_default_target),
+                "paper_learning_capacity_upper_bound": int(self.paper_learning_capacity_upper_bound),
+                "suggested_horizon_mix": {"scalp": 3, "day_trade": 5, "swing_short_swing_max": 7},
                 "stock_capacity_reason": str(stock_capacity_reason),
                 "stale_internal_positions_ignored_for_broker_capacity": bool(stale_internal_positions_ignored_for_broker_capacity),
                 "broker_reconciliation_active": broker_reconciliation_active,
@@ -3117,6 +3130,11 @@ class PaperAutopilotEngine:
             "capacity_source": str(last_trace.get("capacity_source") or capacity_source),
             "effective_capacity_count": int(last_trace.get("effective_capacity_count", effective_capacity_count)),
             "stock_capacity_limit": int(last_trace.get("stock_capacity_limit", self.max_stocks)),
+            "paper_learning_capacity_expansion_v1": bool(last_trace.get("paper_learning_capacity_expansion_v1", self.paper_learning_capacity_expansion_v1)),
+            "paper_learning_capacity_reason": str(last_trace.get("paper_learning_capacity_reason") or "cautious_learning_acceleration_without_forced_trades"),
+            "paper_learning_capacity_default_target": int(last_trace.get("paper_learning_capacity_default_target", self.paper_learning_capacity_default_target)),
+            "paper_learning_capacity_upper_bound": int(last_trace.get("paper_learning_capacity_upper_bound", self.paper_learning_capacity_upper_bound)),
+            "suggested_horizon_mix": dict(last_trace.get("suggested_horizon_mix") or {"scalp": 3, "day_trade": 5, "swing_short_swing_max": 7}),
             "stock_capacity_reason": str(last_trace.get("stock_capacity_reason") or ""),
             "stale_internal_positions_ignored_for_broker_capacity": bool(
                 last_trace.get(

@@ -808,6 +808,37 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.blind_spot_detection_v1 import BlindSpotDetectionV1
+except Exception:
+    class BlindSpotDetectionV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "blind_spot_score": 0.0,
+                "missed_opportunity_count": 0,
+                "top_missed_symbols": [],
+                "underselected_sectors": [],
+                "overselected_sectors": [],
+                "underselected_archetypes": [],
+                "cap_tier_bias": "unavailable",
+                "horizon_bias": "unavailable",
+                "strongest_blind_spot": "unavailable",
+                "recommendation": "unavailable",
+                "auto_apply_allowed": False,
+                "human_review_required": True,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_trades_enabled": False,
+                "forced_exits_enabled": False,
+            }
+try:
     from engine.execution_participation_audit_v1 import ExecutionParticipationAuditV1
 except Exception:
     class ExecutionParticipationAuditV1:  # type: ignore[override]
@@ -1341,6 +1372,7 @@ TRADE_ARCHETYPE_REGIME_INTELLIGENCE = TradeArchetypeRegimeIntelligenceV1(state_d
 REPLAY_COUNTERFACTUAL_LEARNING_V2 = ReplayCounterfactualLearningV2(state_dir=STATE)
 OPPORTUNITY_COST_LEARNING = OpportunityCostLearningV1(state_dir=STATE)
 ADVANCED_LEARNING_INTELLIGENCE = AdvancedLearningIntelligenceV1(state_dir=STATE)
+BLIND_SPOT_DETECTION = BlindSpotDetectionV1(state_dir=STATE)
 EXECUTION_PARTICIPATION_AUDIT = ExecutionParticipationAuditV1(state_dir=STATE)
 MARKET_SESSION_EXECUTION_TIMING_SUITE = MarketSessionExecutionTimingV1(
     market_calendar_knowledge_suite=MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE
@@ -1388,8 +1420,8 @@ PAPER_THROUGHPUT_EXPANDED_MAX_NEW_PER_CYCLE = max(
 )
 PAPER_THROUGHPUT_BASE_MAX_CONCURRENT_POSITIONS = 10
 PAPER_THROUGHPUT_EXPANDED_MAX_CONCURRENT_POSITIONS = max(
-    PAPER_THROUGHPUT_BASE_MAX_CONCURRENT_POSITIONS,
-    int(_env_float("ASTRA_PAPER_AUTOPILOT_MAX_OPEN_POSITIONS_TOTAL", 14)),
+    12,
+    int(_env_float("ASTRA_PAPER_AUTOPILOT_MAX_OPEN_POSITIONS_TOTAL", 15)),
 )
 PAPER_THROUGHPUT_BASE_COOLDOWN_SECONDS = 300
 PAPER_THROUGHPUT_EXPANDED_COOLDOWN_SECONDS = max(
@@ -15109,7 +15141,7 @@ PAPER_AUTOPILOT = PaperAutopilotEngine(
     db_path=os.path.join(STATE, "ai_trading_memory.db"),
     state_path=os.path.join(STATE, "paper_autopilot_state.json"),
     interval_seconds=int(os.getenv("ASTRA_PAPER_AUTOPILOT_INTERVAL_SECONDS", "45")),
-    max_stocks=int(os.getenv("ASTRA_PAPER_AUTOPILOT_MAX_STOCKS", "8" if PAPER_THROUGHPUT_EXPANSION_ENABLED else "6")),
+    max_stocks=int(os.getenv("ASTRA_PAPER_AUTOPILOT_MAX_STOCKS", "12" if PAPER_THROUGHPUT_EXPANSION_ENABLED else "6")),
     max_crypto=int(os.getenv("ASTRA_PAPER_AUTOPILOT_MAX_CRYPTO", "8" if PAPER_THROUGHPUT_EXPANSION_ENABLED else "6")),
     max_new_positions_per_cycle=int(PAPER_THROUGHPUT_EXPANDED_MAX_NEW_PER_CYCLE if PAPER_THROUGHPUT_EXPANSION_ENABLED else PAPER_THROUGHPUT_BASE_MAX_NEW_PER_CYCLE),
     min_hold_seconds_intraday=int(os.getenv("ASTRA_PAPER_AUTOPILOT_MIN_HOLD_INTRADAY_SECONDS", "300")),
@@ -39266,8 +39298,19 @@ def paper_autopilot_throughput_status_v1():
             "natural_exit_preservation_active": bool(PAPER_THROUGHPUT_PRESERVE_NATURAL_EXITS),
             "forced_early_exits_enabled": False,
             "artificial_max_hold_forced_closures_enabled": False,
-            "max_stocks": int(_to_float(control.get("max_stocks"), 8)),
+            "max_stocks": int(_to_float(control.get("max_stocks"), 12)),
             "max_crypto": int(_to_float(control.get("max_crypto"), 8)),
+            "paper_learning_capacity_expansion_v1": {
+                "enabled": True,
+                "target_stock_positions_default": 12,
+                "target_stock_positions_upper_bound": 15,
+                "suggested_horizon_mix": {"scalp": 3, "day_trade": 5, "swing_short_swing_max": 7},
+                "paper_only": True,
+                "quality_candidates_required": True,
+                "duplicate_active_symbol_block_preserved": True,
+                "market_session_gate_preserved": True,
+                "broker_safeguards_preserved": True,
+            },
             "open_positions_count": int(_to_float(status.get("open_positions_count"), 0.0)),
             "projected_trades_opened_per_day": round(projected_opened, 3),
             "projected_trades_closed_per_day": round(projected_closed, 3),
@@ -39276,7 +39319,7 @@ def paper_autopilot_throughput_status_v1():
             "throughput_expansion_summary": (
                 f"Paper-only throughput expanded from {PAPER_THROUGHPUT_BASE_MAX_NEW_PER_CYCLE} to {current_max_new} new entries/cycle, "
                 f"from {PAPER_THROUGHPUT_BASE_MAX_CONCURRENT_POSITIONS} to {current_max_concurrent} concurrent positions, "
-                f"and cooldown from {PAPER_THROUGHPUT_BASE_COOLDOWN_SECONDS}s to {current_cooldown}s; exits remain natural."
+                f"with stock capacity targeting 12 by default and up to 15 only within paper safety gates; exits remain natural."
             ),
             "last_updated_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         }
@@ -39749,6 +39792,134 @@ def advanced_learning_intelligence_status_v1(force: bool = False):
             "forced_trades_enabled": False,
             "forced_exits_enabled": False,
             "auto_apply_allowed": False,
+        }
+
+
+@router.get("/api/blind_spot_detection_status_v1")
+def blind_spot_detection_status_v1(force: bool = False):
+    try:
+        out = dict(BLIND_SPOT_DETECTION.status(force=bool(force)) or {})
+        out["blind_spot_detection_status_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        out["auto_apply_allowed"] = False
+        out["human_review_required"] = True
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "blind_spot_detection_status_v1": True,
+            "blind_spot_score": 0.0,
+            "missed_opportunity_count": 0,
+            "top_missed_symbols": [],
+            "underselected_sectors": [],
+            "overselected_sectors": [],
+            "underselected_archetypes": [],
+            "cap_tier_bias": "unavailable",
+            "horizon_bias": "unavailable",
+            "strongest_blind_spot": "unavailable",
+            "recommendation": "unavailable",
+            "degraded_reason": f"blind_spot_detection_status_unavailable:{str(exc)[:140]}",
+            "auto_apply_allowed": False,
+            "human_review_required": True,
+            "api_calls_used": 0,
+            "build_ms": 0.0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+        }
+
+
+def _remote_runtime_consistency_payload() -> dict:
+    start = time.perf_counter()
+    backend_url = str(os.getenv("ASTRA_UI_API_BASE_URL") or "http://127.0.0.1:8000").rstrip("/")
+    frontend_url = str(os.getenv("ASTRA_UI_FRONTEND_URL") or "http://127.0.0.1:5173").rstrip("/")
+    local_backend_ok = False
+    frontend_ok = False
+    try:
+        local_backend_ok = bool(requests.get(f"{backend_url}/api/health", timeout=3).status_code == 200)
+    except Exception:
+        local_backend_ok = False
+    try:
+        resp = requests.get(frontend_url, timeout=3)
+        frontend_ok = bool(resp.status_code == 200 and ("<!doctype html" in resp.text.lower() or "<html" in resp.text.lower()))
+    except Exception:
+        frontend_ok = False
+    unified_cache = getattr(UNIFIED_LEARNING_DIAGNOSTICS, "_cache", {}) or {}
+    advanced = dict((unified_cache.get("advanced_learning_intelligence") or {}) if isinstance(unified_cache, dict) else {})
+    unified_ts = str(unified_cache.get("generated_at") or unified_cache.get("backend_time_utc") or "") if isinstance(unified_cache, dict) else ""
+    cache_age = 0.0
+    try:
+        cache_age = max(0.0, time.time() - float(getattr(UNIFIED_LEARNING_DIAGNOSTICS, "_cache_ts", 0.0) or 0.0))
+    except Exception:
+        cache_age = 0.0
+    initial_count = int(_to_float(((unified_cache.get("frontend_endpoint_policy") or {}) if isinstance(unified_cache, dict) else {}).get("initial_learning_tab_endpoint_count"), 1.0))
+    advanced_visible = bool(advanced.get("metric_confidence_score") or advanced.get("metrics_reconciled"))
+    stale_ui = bool(cache_age > 180 or not advanced_visible)
+    status = "consistent" if local_backend_ok and frontend_ok and initial_count == 1 and advanced_visible and not stale_ui else "review_recommended"
+    action = "remote_ui_consistent"
+    if not local_backend_ok:
+        action = "verify_backend_url_or_restart_astra"
+    elif not frontend_ok:
+        action = "verify_frontend_url_or_refresh_remote_browser"
+    elif stale_ui:
+        action = "hard_refresh_remote_browser_or_reload_unified_snapshot"
+    return {
+        "enabled": True,
+        "version": "1.0.0",
+        "local_backend_ok": bool(local_backend_ok),
+        "frontend_ok": bool(frontend_ok),
+        "backend_url": backend_url,
+        "frontend_url": frontend_url,
+        "unified_timestamp": unified_ts,
+        "learning_tab_endpoint_count": initial_count,
+        "cache_age_seconds": round(cache_age, 3),
+        "advanced_learning_metrics_visible": bool(advanced_visible),
+        "remote_consistency_status": status,
+        "stale_ui_detected": bool(stale_ui),
+        "recommended_action": action,
+        "api_calls_used": 0,
+        "build_ms": round((time.perf_counter() - start) * 1000.0, 3),
+        "live_trading_changed": False,
+        "broker_behavior_changed": False,
+        "paper_only_preserved": True,
+        "alpaca_paper_only_preserved": True,
+        "natural_exit_preserved": True,
+        "forced_trades_enabled": False,
+        "forced_exits_enabled": False,
+    }
+
+
+@router.get("/api/remote_runtime_consistency_status_v1")
+def remote_runtime_consistency_status_v1():
+    try:
+        return _remote_runtime_consistency_payload()
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "local_backend_ok": False,
+            "frontend_ok": False,
+            "remote_consistency_status": "unavailable",
+            "stale_ui_detected": True,
+            "recommended_action": "restart_or_refresh_astra_runtime",
+            "degraded_reason": f"remote_runtime_consistency_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "build_ms": 0.0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "paper_only_preserved": True,
         }
 
 
@@ -48020,6 +48191,16 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("replay_counterfactual_learning_v2", lambda: REPLAY_COUNTERFACTUAL_LEARNING_V2.status(force=False))
         _safe_status("opportunity_cost_learning", lambda: OPPORTUNITY_COST_LEARNING.status(force=False))
         _safe_status("advanced_learning_intelligence", lambda: ADVANCED_LEARNING_INTELLIGENCE.status(force=False))
+        _safe_status("blind_spot_detection", lambda: BLIND_SPOT_DETECTION.status(force=False))
+        _safe_status("paper_execution_trace", lambda: _paper_execution_trace_payload())
+        _safe_status("paper_autopilot_throughput", lambda: {
+            "enabled": bool(PAPER_THROUGHPUT_EXPANSION_ENABLED),
+            "max_stocks": int(_to_float(PAPER_AUTOPILOT.control_status().get("max_stocks"), 12)),
+            "current_max_concurrent_positions": int(_to_float(PAPER_AUTOPILOT.control_status().get("max_open_positions_total"), 15)),
+            "api_calls_used": 0,
+            "live_trading_changed": False,
+        })
+        _safe_status("remote_runtime_consistency", lambda: _remote_runtime_consistency_payload())
         _safe_status("execution_participation_audit", lambda: EXECUTION_PARTICIPATION_AUDIT.status(paper_trace=_paper_execution_trace_payload(), force=False))
         _safe_status("mobile_runtime_compaction", lambda: _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))

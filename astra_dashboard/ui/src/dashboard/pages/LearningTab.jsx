@@ -147,6 +147,8 @@ export default function LearningTab({ compact = false }) {
   const [showReplayCounterfactualDetails, setShowReplayCounterfactualDetails] = useState(false);
   const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
   const [showAdvancedLearningIntelligenceDetails, setShowAdvancedLearningIntelligenceDetails] = useState(false);
+  const [showBlindSpotDetails, setShowBlindSpotDetails] = useState(false);
+  const [showRemoteRuntimeDetails, setShowRemoteRuntimeDetails] = useState(false);
   const [showExecutionParticipationDetails, setShowExecutionParticipationDetails] = useState(false);
   const [endpointStatus, setEndpointStatus] = useState({});
   const [timeline, setTimeline] = useState([]);
@@ -1574,6 +1576,9 @@ export default function LearningTab({ compact = false }) {
   const replayCounterfactual = unified?.replay_counterfactual_learning_v2 || {};
   const opportunityCostLearning = unified?.opportunity_cost_learning || {};
   const advancedLearningIntelligence = unified?.advanced_learning_intelligence || {};
+  const blindSpotDetection = unified?.blind_spot_detection || {};
+  const remoteRuntimeConsistency = unified?.remote_runtime_consistency || {};
+  const capacityExpansionStatus = unified?.capacity_expansion_status || {};
   const executionParticipationAudit = unified?.execution_participation_audit || {};
   const metricDisplay = (metric, suffix = "") => {
     if (!metric || typeof metric !== "object") return "n/a";
@@ -1772,7 +1777,10 @@ export default function LearningTab({ compact = false }) {
                       </div>
                     </div>
                     <div style={{ fontSize: 19, color: "#f2f7ff", fontWeight: 800, marginTop: 4 }}>{metricDisplay(metric, suffix)}</div>
-                    <div style={{ fontSize: 10, color: "#7892ba", marginTop: 3 }}>Evidence {safeNumber(metric?.evidence_count).toFixed(0)}</div>
+                    <div style={{ fontSize: 10, color: "#7892ba", marginTop: 3 }}>
+                      Evidence {safeNumber(metric?.evidence_count).toFixed(0)}
+                      {metric?.source ? ` | Source ${String(metric.source).replaceAll("_", " ")}` : ""}
+                    </div>
                   </div>
                 );
               })}
@@ -2077,6 +2085,101 @@ export default function LearningTab({ compact = false }) {
             <div>
               Human review required: {advancedLearningIntelligence?.human_review_required ? "yes" : "no"} | Auto apply: {advancedLearningIntelligence?.auto_apply_allowed ? "yes" : "no"} | API calls: {safeNumber(advancedLearningIntelligence?.api_calls_used).toFixed(0)}
             </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Blind Spot Detection</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Shadow-only review of missed contexts, opportunity-cost blind spots, and selection bias.
+            </div>
+          </div>
+          <button type="button" onClick={() => setShowBlindSpotDetails((v) => !v)} style={{
+            background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+            color: "#dce7ff",
+            border: "1px solid #496a97",
+            borderRadius: "6px",
+            fontSize: "0.72rem",
+            padding: "0.25rem 0.55rem",
+            cursor: "pointer",
+          }}>
+            {showBlindSpotDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Blind spot score", safeNumber(blindSpotDetection?.blind_spot_score).toFixed(1)],
+            ["Missed opportunities", blindSpotDetection?.missed_opportunity_count],
+            ["Strongest blind spot", blindSpotDetection?.strongest_blind_spot],
+            ["Cap tier bias", blindSpotDetection?.cap_tier_bias],
+            ["Horizon bias", blindSpotDetection?.horizon_bias],
+            ["Recommendation", blindSpotDetection?.recommendation],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{typeof value === "number" ? value.toFixed(0) : String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+        </div>
+        {showBlindSpotDetails ? (
+          <div style={{ marginTop: 12, color: "#b8c7e6", fontSize: 12, display: "grid", gap: 6 }}>
+            <div>Top missed symbols: {(blindSpotDetection?.top_missed_symbols || []).length ? blindSpotDetection.top_missed_symbols.join(", ") : "warming up"}</div>
+            <div>Underselected sectors: {(blindSpotDetection?.underselected_sectors || []).length ? blindSpotDetection.underselected_sectors.join(", ") : "none detected"}</div>
+            <div>Overselected sectors: {(blindSpotDetection?.overselected_sectors || []).length ? blindSpotDetection.overselected_sectors.join(", ") : "none detected"}</div>
+            <div>Underselected archetypes: {(blindSpotDetection?.underselected_archetypes || []).length ? blindSpotDetection.underselected_archetypes.join(", ") : "none detected"}</div>
+            <div>Human review required: {blindSpotDetection?.human_review_required ? "yes" : "no"} | Auto apply: {blindSpotDetection?.auto_apply_allowed ? "yes" : "no"}</div>
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Remote Runtime Consistency & Paper Capacity</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Checks whether the mirrored UI is looking at fresh unified diagnostics and shows the current bounded paper-learning capacity.
+            </div>
+          </div>
+          <button type="button" onClick={() => setShowRemoteRuntimeDetails((v) => !v)} style={{
+            background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+            color: "#dce7ff",
+            border: "1px solid #496a97",
+            borderRadius: "6px",
+            fontSize: "0.72rem",
+            padding: "0.25rem 0.55rem",
+            cursor: "pointer",
+          }}>
+            {showRemoteRuntimeDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Backend", remoteRuntimeConsistency?.local_backend_ok ? "ok" : "review"],
+            ["Frontend", remoteRuntimeConsistency?.frontend_ok ? "ok" : "review"],
+            ["Remote status", remoteRuntimeConsistency?.remote_consistency_status],
+            ["UI stale", remoteRuntimeConsistency?.stale_ui_detected ? "yes" : "no"],
+            ["Stock capacity", capacityExpansionStatus?.current_stock_capacity_limit],
+            ["Total capacity", capacityExpansionStatus?.current_total_capacity_limit],
+            ["Capacity mode", capacityExpansionStatus?.paper_learning_capacity_expansion_active ? "expanded paper learning" : "baseline"],
+            ["Action", remoteRuntimeConsistency?.recommended_action],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{typeof value === "number" ? value.toFixed(0) : String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+        </div>
+        {showRemoteRuntimeDetails ? (
+          <div style={{ marginTop: 12, color: "#b8c7e6", fontSize: 12, display: "grid", gap: 6 }}>
+            <div>Backend URL: {String(remoteRuntimeConsistency?.backend_url || "http://127.0.0.1:8000")}</div>
+            <div>Frontend URL: {String(remoteRuntimeConsistency?.frontend_url || "http://127.0.0.1:5173")}</div>
+            <div>Unified timestamp: {String(remoteRuntimeConsistency?.unified_timestamp || "warming up")} | Cache age: {safeNumber(remoteRuntimeConsistency?.cache_age_seconds).toFixed(1)}s</div>
+            <div>Initial endpoint count: {safeNumber(remoteRuntimeConsistency?.learning_tab_endpoint_count, 1).toFixed(0)} | Advanced metrics visible: {remoteRuntimeConsistency?.advanced_learning_metrics_visible ? "yes" : "no"}</div>
+            <div>Suggested horizon mix: scalp {safeNumber((capacityExpansionStatus?.suggested_horizon_mix || {}).scalp).toFixed(0)}, day trade {safeNumber((capacityExpansionStatus?.suggested_horizon_mix || {}).day_trade).toFixed(0)}, swing/short-swing max {safeNumber((capacityExpansionStatus?.suggested_horizon_mix || {}).swing_short_swing_max).toFixed(0)}</div>
+            <div>Safety: market-session gate {capacityExpansionStatus?.market_session_gate_preserved ? "preserved" : "review"}, duplicate symbol block {capacityExpansionStatus?.duplicate_active_symbol_block_preserved ? "preserved" : "review"}, broker safeguards {capacityExpansionStatus?.broker_safeguards_preserved ? "preserved" : "review"}</div>
           </div>
         ) : null}
       </div>
