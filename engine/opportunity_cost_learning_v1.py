@@ -5,7 +5,7 @@ import math
 import os
 import time
 from datetime import datetime, timezone
-from statistics import mean
+from statistics import mean, median
 from typing import Any
 
 VERSION = "1.0.0"
@@ -198,6 +198,32 @@ class OpportunityCostLearningV1:
         vals = [_to_float(row.get(key)) for row in rows if row.get(key) not in (None, "")]
         return round(mean(vals), 4) if vals else None
 
+    @staticmethod
+    def _median(rows: list[dict[str, Any]], key: str) -> float | None:
+        vals = [_to_float(row.get(key)) for row in rows if row.get(key) not in (None, "")]
+        return round(median(vals), 4) if vals else None
+
+    @staticmethod
+    def _gap_row(rows: list[dict[str, Any]], *, positive: bool) -> dict[str, Any]:
+        if not rows:
+            return {}
+        return max(rows, key=lambda row: _to_float(row.get("opportunity_cost_pct"))) if positive else min(rows, key=lambda row: _to_float(row.get("opportunity_cost_pct")))
+
+    def _outlier_symbols(self, rows: list[dict[str, Any]]) -> list[str]:
+        med = self._median(rows, "opportunity_cost_pct")
+        if med is None:
+            return []
+        threshold = max(50.0, abs(med) * 2.0)
+        ranked = sorted(rows, key=lambda row: abs(_to_float(row.get("opportunity_cost_pct")) - med), reverse=True)
+        out: list[str] = []
+        for row in ranked[:8]:
+            gap = _to_float(row.get("opportunity_cost_pct"))
+            if abs(gap - med) >= threshold or abs(gap) >= 100.0:
+                symbol = _text(row.get("rejected_symbol") or row.get("selected_symbol"), "unknown").upper()
+                if symbol not in out:
+                    out.append(symbol)
+        return out
+
     def status(self, *, force: bool = False) -> dict[str, Any]:
         start = time.perf_counter()
         now = time.time()
@@ -218,17 +244,36 @@ class OpportunityCostLearningV1:
         best_rejected = max(rows, key=lambda row: _to_float(row.get("rejected_return_pct")), default={})
         missed_best = max(missed, key=lambda row: _to_float(row.get("opportunity_cost_pct")), default={})
         avg_cost = self._avg(rows, "opportunity_cost_pct")
+        avg_selected_return = self._avg(rows, "selected_return_pct")
+        avg_rejected_return = self._avg(rows, "rejected_return_pct")
+        median_cost = self._median(rows, "opportunity_cost_pct")
+        largest_positive = self._gap_row(rows, positive=True)
+        largest_negative = self._gap_row(rows, positive=False)
         selection_quality = self._avg(rows, "selection_efficiency_score")
         ranking_quality = self._avg(rows, "ranking_quality_score")
         recommendation = "insufficient_data"
         if rows:
             recommendation = "review_candidate_suppression_vs_selected" if len(missed) > len(correct) else "preserve_current_selection_bias"
+        calculation_method = (
+            "opportunity_cost_pct = rejected_return_pct - selected_return_pct; rejected_return_pct uses realized_return_pct "
+            "when available, otherwise proxy ((quality - 70)/18)+((live_quality - 80)/80)-penalty; selected_return_pct "
+            "uses same-symbol selected lifecycle if available, otherwise best selected lifecycle return."
+        )
         out = {
             "enabled": True,
             "version": VERSION,
             "selected_candidates_reviewed": len(selected),
             "rejected_candidates_reviewed": len(rejected),
             "average_opportunity_cost": avg_cost,
+            "avg_selected_return": avg_selected_return,
+            "avg_rejected_return": avg_rejected_return,
+            "median_opportunity_cost": median_cost,
+            "largest_positive_gap": _round(largest_positive.get("opportunity_cost_pct")) if largest_positive else None,
+            "largest_negative_gap": _round(largest_negative.get("opportunity_cost_pct")) if largest_negative else None,
+            "largest_positive_gap_symbol": _text(largest_positive.get("rejected_symbol"), "insufficient_data"),
+            "largest_negative_gap_symbol": _text(largest_negative.get("rejected_symbol"), "insufficient_data"),
+            "outlier_symbols": self._outlier_symbols(rows),
+            "calculation_method": calculation_method,
             "missed_opportunity_count": len(missed),
             "correct_selection_count": len(correct),
             "selection_quality_score": selection_quality,

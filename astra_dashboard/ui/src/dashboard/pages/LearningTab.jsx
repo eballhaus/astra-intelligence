@@ -148,6 +148,7 @@ export default function LearningTab({ compact = false }) {
   const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
   const [showAdvancedLearningIntelligenceDetails, setShowAdvancedLearningIntelligenceDetails] = useState(false);
   const [showBlindSpotDetails, setShowBlindSpotDetails] = useState(false);
+  const [showLearningIssueAuditDetails, setShowLearningIssueAuditDetails] = useState(false);
   const [showRemoteRuntimeDetails, setShowRemoteRuntimeDetails] = useState(false);
   const [showExecutionParticipationDetails, setShowExecutionParticipationDetails] = useState(false);
   const [endpointStatus, setEndpointStatus] = useState({});
@@ -1577,6 +1578,7 @@ export default function LearningTab({ compact = false }) {
   const opportunityCostLearning = unified?.opportunity_cost_learning || {};
   const advancedLearningIntelligence = unified?.advanced_learning_intelligence || {};
   const blindSpotDetection = unified?.blind_spot_detection || {};
+  const learningIssueAudit = unified?.learning_issue_audit || {};
   const remoteRuntimeConsistency = unified?.remote_runtime_consistency || {};
   const capacityExpansionStatus = unified?.capacity_expansion_status || {};
   const executionParticipationAudit = unified?.execution_participation_audit || {};
@@ -2016,8 +2018,90 @@ export default function LearningTab({ compact = false }) {
           ))}
         </div>
         {showOpportunityCostDetails ? (
-          <div style={{ marginTop: 12, color: "#b8c7e6", fontSize: 12 }}>
-            Best selected: {String(opportunityCostLearning?.best_selected_symbol || "insufficient_data").replaceAll("_", " ")} | Worst selected: {String(opportunityCostLearning?.worst_selected_symbol || "insufficient_data").replaceAll("_", " ")} | Best rejected: {String(opportunityCostLearning?.best_rejected_symbol || "insufficient_data").replaceAll("_", " ")}
+          <div style={{ marginTop: 12, color: "#b8c7e6", fontSize: 12, display: "grid", gap: 6 }}>
+            <div>Best selected: {String(opportunityCostLearning?.best_selected_symbol || "insufficient_data").replaceAll("_", " ")} | Worst selected: {String(opportunityCostLearning?.worst_selected_symbol || "insufficient_data").replaceAll("_", " ")} | Best rejected: {String(opportunityCostLearning?.best_rejected_symbol || "insufficient_data").replaceAll("_", " ")}</div>
+            <div>Avg selected return: {opportunityCostLearning?.avg_selected_return === null || opportunityCostLearning?.avg_selected_return === undefined ? "warming up" : `${safeNumber(opportunityCostLearning?.avg_selected_return).toFixed(2)}%`} | Avg rejected return: {opportunityCostLearning?.avg_rejected_return === null || opportunityCostLearning?.avg_rejected_return === undefined ? "warming up" : `${safeNumber(opportunityCostLearning?.avg_rejected_return).toFixed(2)}%`} | Median cost: {opportunityCostLearning?.median_opportunity_cost === null || opportunityCostLearning?.median_opportunity_cost === undefined ? "warming up" : `${safeNumber(opportunityCostLearning?.median_opportunity_cost).toFixed(2)}%`}</div>
+            <div>Largest positive gap: {opportunityCostLearning?.largest_positive_gap === null || opportunityCostLearning?.largest_positive_gap === undefined ? "warming up" : `${safeNumber(opportunityCostLearning?.largest_positive_gap).toFixed(2)}%`} ({String(opportunityCostLearning?.largest_positive_gap_symbol || "n/a")}) | Largest negative gap: {opportunityCostLearning?.largest_negative_gap === null || opportunityCostLearning?.largest_negative_gap === undefined ? "warming up" : `${safeNumber(opportunityCostLearning?.largest_negative_gap).toFixed(2)}%`} ({String(opportunityCostLearning?.largest_negative_gap_symbol || "n/a")})</div>
+            <div>Outliers: {(opportunityCostLearning?.outlier_symbols || []).length ? opportunityCostLearning.outlier_symbols.join(", ") : "none detected"}.</div>
+            <div style={{ color: "#9fb1cc" }}>Formula: {String(opportunityCostLearning?.calculation_method || "opportunity cost = rejected return - selected return")}</div>
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Learning Issue Audit</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Reconciles confusing Learning Tab readings and separates real weaknesses from display or calculation ambiguity.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowLearningIssueAuditDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showLearningIssueAuditDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Likely cause", learningIssueAudit?.likely_cause_summary],
+            ["Opportunity cost", learningIssueAudit?.issue_status?.opportunity_cost?.issue_status],
+            ["Execution audit", learningIssueAudit?.issue_status?.execution_participation?.issue_status],
+            ["Profit capture", learningIssueAudit?.issue_status?.profit_capture?.issue_status],
+            ["Follow-through", learningIssueAudit?.issue_status?.follow_through_continuation?.issue_status],
+            ["Buy purity", learningIssueAudit?.issue_status?.buy_purity?.issue_status],
+            ["Exit quality", learningIssueAudit?.issue_status?.exit_quality?.issue_status],
+            ["Behavior safe to change", learningIssueAudit?.safe_to_change_behavior ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            {String(learningIssueAudit?.recommended_action || "Collecting issue evidence.")}
+          </div>
+        </div>
+        {showLearningIssueAuditDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Opportunity Cost</div>
+              <div>Avg selected: {learningIssueAudit?.opportunity_cost_diagnostics?.avg_selected_return === null || learningIssueAudit?.opportunity_cost_diagnostics?.avg_selected_return === undefined ? "warming up" : `${safeNumber(learningIssueAudit?.opportunity_cost_diagnostics?.avg_selected_return).toFixed(2)}%`}</div>
+              <div>Avg rejected: {learningIssueAudit?.opportunity_cost_diagnostics?.avg_rejected_return === null || learningIssueAudit?.opportunity_cost_diagnostics?.avg_rejected_return === undefined ? "warming up" : `${safeNumber(learningIssueAudit?.opportunity_cost_diagnostics?.avg_rejected_return).toFixed(2)}%`}</div>
+              <div>Median cost: {learningIssueAudit?.opportunity_cost_diagnostics?.median_opportunity_cost === null || learningIssueAudit?.opportunity_cost_diagnostics?.median_opportunity_cost === undefined ? "warming up" : `${safeNumber(learningIssueAudit?.opportunity_cost_diagnostics?.median_opportunity_cost).toFixed(2)}%`}</div>
+              <div>Outliers: {(learningIssueAudit?.opportunity_cost_diagnostics?.outlier_symbols || []).join(", ") || "none"}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Execution Blocks</div>
+              <div>Unique reviewed: {safeNumber(learningIssueAudit?.execution_participation_diagnostics?.unique_candidates_reviewed).toFixed(0)}</div>
+              <div>Duplicate symbol blocks: {safeNumber(learningIssueAudit?.execution_participation_diagnostics?.duplicate_symbol_blocks).toFixed(0)}</div>
+              <div>Active-position blocks: {safeNumber(learningIssueAudit?.execution_participation_diagnostics?.active_position_blocks).toFixed(0)}</div>
+              <div>Confirmation required: {safeNumber(learningIssueAudit?.execution_participation_diagnostics?.confirmation_required_blocks).toFixed(0)}</div>
+              <div>Unique submission rate: {safeNumber(learningIssueAudit?.execution_participation_diagnostics?.submission_rate_unique_candidates).toFixed(1)}%</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Profit / Continuation</div>
+              <div>Avg peak gain: {learningIssueAudit?.profit_capture_diagnostics?.avg_peak_gain === null || learningIssueAudit?.profit_capture_diagnostics?.avg_peak_gain === undefined ? "warming up" : `${safeNumber(learningIssueAudit?.profit_capture_diagnostics?.avg_peak_gain).toFixed(2)}%`}</div>
+              <div>Avg giveback: {learningIssueAudit?.profit_capture_diagnostics?.avg_giveback === null || learningIssueAudit?.profit_capture_diagnostics?.avg_giveback === undefined ? "warming up" : `${safeNumber(learningIssueAudit?.profit_capture_diagnostics?.avg_giveback).toFixed(2)}%`}</div>
+              <div>Continued: {safeNumber(learningIssueAudit?.follow_through_diagnostics?.continued_as_expected_count).toFixed(0)} | Stalled: {safeNumber(learningIssueAudit?.follow_through_diagnostics?.stalled_count).toFixed(0)} | Reversed: {safeNumber(learningIssueAudit?.follow_through_diagnostics?.reversed_count).toFixed(0)}</div>
+              <div>Worst giveback: {(learningIssueAudit?.profit_capture_diagnostics?.worst_giveback_symbols || []).join(", ") || "none"}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Display Mapping</div>
+              <div>Buy purity cause: {String(learningIssueAudit?.issue_status?.buy_purity?.likely_cause || "warming_up").replaceAll("_", " ")}</div>
+              <div>Exit quality cause: {String(learningIssueAudit?.issue_status?.exit_quality?.likely_cause || "warming_up").replaceAll("_", " ")}</div>
+              <div>Shadow only: {String(learningIssueAudit?.shadow_only_recommendation || "no behavior change")}</div>
+            </div>
           </div>
         ) : null}
       </div>
@@ -2366,6 +2450,7 @@ export default function LearningTab({ compact = false }) {
             ["Efficiency", `${safeNumber(executionParticipationAudit?.participation_efficiency_score).toFixed(1)}`],
             ["Suppression", `${safeNumber(executionParticipationAudit?.participation_suppression_score).toFixed(1)}`],
             ["Reviewed", executionParticipationAudit?.candidates_execution_reviewed],
+            ["Unique reviewed", executionParticipationAudit?.unique_candidates_reviewed],
             ["Eligible", executionParticipationAudit?.eligible_candidates],
             ["Submitted", executionParticipationAudit?.candidates_submitted],
             ["Eligible → Submitted", `${safeNumber(executionParticipationAudit?.eligible_to_submitted_rate).toFixed(1)}%`],
@@ -2395,12 +2480,17 @@ export default function LearningTab({ compact = false }) {
               <div>Promoted: {safeNumber(executionParticipationAudit?.candidates_promoted).toFixed(0)}</div>
               <div>Deep scored: {safeNumber(executionParticipationAudit?.candidates_deep_scored).toFixed(0)}</div>
               <div>Execution reviewed: {safeNumber(executionParticipationAudit?.candidates_execution_reviewed).toFixed(0)}</div>
+              <div>Unique reviewed: {safeNumber(executionParticipationAudit?.unique_candidates_reviewed).toFixed(0)}</div>
               <div>Submitted: {safeNumber(executionParticipationAudit?.candidates_submitted).toFixed(0)}</div>
               <div>Filled: {safeNumber(executionParticipationAudit?.candidates_filled).toFixed(0)}</div>
+              <div>Unique submission rate: {safeNumber(executionParticipationAudit?.submission_rate_unique_candidates).toFixed(1)}%</div>
             </div>
             <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
               <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Rejection Stages</div>
               <div style={{ color: "#b8c7e6" }}>{JSON.stringify(executionParticipationAudit?.rejection_stage_counts || {})}</div>
+              <div style={{ marginTop: 6 }}>Duplicate: {safeNumber(executionParticipationAudit?.duplicate_symbol_blocks).toFixed(0)} | Active-position: {safeNumber(executionParticipationAudit?.active_position_blocks).toFixed(0)} | Confirmation: {safeNumber(executionParticipationAudit?.confirmation_required_blocks).toFixed(0)}</div>
+              <div>Quality: {safeNumber(executionParticipationAudit?.quality_rejections).toFixed(0)} | Risk: {safeNumber(executionParticipationAudit?.risk_rejections).toFixed(0)} | Portfolio fit: {safeNumber(executionParticipationAudit?.portfolio_fit_rejections).toFixed(0)}</div>
+              <div>Eligible not submitted reason: {String(executionParticipationAudit?.eligible_not_submitted_reason || "none").replaceAll("_", " ")}</div>
             </div>
             <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
               <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Missed Opportunity Tracking</div>

@@ -839,6 +839,31 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.learning_issue_audit_v1 import LearningIssueAuditV1
+except Exception:
+    class LearningIssueAuditV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "learning_issue_audit_status_v1": True,
+                "issue_status": {},
+                "likely_cause_summary": "unavailable",
+                "recommended_action": "unavailable",
+                "safe_to_change_behavior": False,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_trades_enabled": False,
+                "forced_exits_enabled": False,
+            }
+try:
     from engine.execution_participation_audit_v1 import ExecutionParticipationAuditV1
 except Exception:
     class ExecutionParticipationAuditV1:  # type: ignore[override]
@@ -1373,6 +1398,7 @@ REPLAY_COUNTERFACTUAL_LEARNING_V2 = ReplayCounterfactualLearningV2(state_dir=STA
 OPPORTUNITY_COST_LEARNING = OpportunityCostLearningV1(state_dir=STATE)
 ADVANCED_LEARNING_INTELLIGENCE = AdvancedLearningIntelligenceV1(state_dir=STATE)
 BLIND_SPOT_DETECTION = BlindSpotDetectionV1(state_dir=STATE)
+LEARNING_ISSUE_AUDIT = LearningIssueAuditV1(state_dir=STATE)
 EXECUTION_PARTICIPATION_AUDIT = ExecutionParticipationAuditV1(state_dir=STATE)
 MARKET_SESSION_EXECUTION_TIMING_SUITE = MarketSessionExecutionTimingV1(
     market_calendar_knowledge_suite=MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE
@@ -39841,6 +39867,53 @@ def blind_spot_detection_status_v1(force: bool = False):
         }
 
 
+@router.get("/api/learning_issue_audit_status_v1")
+def learning_issue_audit_status_v1(force: bool = False):
+    try:
+        out = dict(LEARNING_ISSUE_AUDIT.status(force=bool(force)) or {})
+        out["learning_issue_audit_status_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        out["auto_apply_allowed"] = False
+        out["human_review_required"] = True
+        out["safe_to_change_behavior"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "learning_issue_audit_status_v1": True,
+            "issue_status": {},
+            "opportunity_cost_diagnostics": {},
+            "execution_participation_diagnostics": {},
+            "profit_capture_diagnostics": {},
+            "follow_through_diagnostics": {},
+            "buy_purity_diagnostics": {},
+            "exit_quality_diagnostics": {},
+            "likely_cause_summary": "learning_issue_audit_unavailable",
+            "recommended_action": "Check backend logs for learning issue audit import/status failure.",
+            "degraded_reason": f"learning_issue_audit_status_unavailable:{str(exc)[:140]}",
+            "safe_to_change_behavior": False,
+            "auto_apply_allowed": False,
+            "human_review_required": True,
+            "api_calls_used": 0,
+            "build_ms": 0.0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+        }
+
+
 def _remote_runtime_consistency_payload() -> dict:
     start = time.perf_counter()
     backend_url = str(os.getenv("ASTRA_UI_API_BASE_URL") or "http://127.0.0.1:8000").rstrip("/")
@@ -48192,6 +48265,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("opportunity_cost_learning", lambda: OPPORTUNITY_COST_LEARNING.status(force=False))
         _safe_status("advanced_learning_intelligence", lambda: ADVANCED_LEARNING_INTELLIGENCE.status(force=False))
         _safe_status("blind_spot_detection", lambda: BLIND_SPOT_DETECTION.status(force=False))
+        _safe_status("learning_issue_audit", lambda: LEARNING_ISSUE_AUDIT.status(sources={"statuses": statuses}, force=False))
         _safe_status("paper_execution_trace", lambda: _paper_execution_trace_payload())
         _safe_status("paper_autopilot_throughput", lambda: {
             "enabled": bool(PAPER_THROUGHPUT_EXPANSION_ENABLED),

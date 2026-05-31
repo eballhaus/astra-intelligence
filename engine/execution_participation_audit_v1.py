@@ -192,6 +192,16 @@ class ExecutionParticipationAuditV1:
         attempted = sum(1 for r in recent if bool(r.get("order_attempted")))
         filled = sum(1 for r in recent if _text(r.get("order_result")).lower() == "filled")
         promoted = sum(1 for r in recent if _text(r.get("promoted_status")) == "promoted")
+        unique_candidates = len({_text(r.get("symbol")).upper() for r in recent if _text(r.get("symbol"))})
+        reason_texts = [_text(r.get("rejection_reason") or r.get("suppression_reason"), "none").lower() for r in recent]
+        duplicate_symbol_blocks = sum(1 for reason in reason_texts if "duplicate_active_position" in reason or "duplicate" in reason)
+        active_position_blocks = sum(1 for reason in reason_texts if "active_position" in reason or "already_open" in reason)
+        confirmation_required_blocks = sum(1 for reason in reason_texts if "confirmation" in reason or "open_confirmation" in reason)
+        quality_rejections = sum(1 for reason in reason_texts if "quality" in reason or "commitment" in reason or "entry" in reason)
+        risk_rejections = sum(1 for reason in reason_texts if "risk" in reason or "heat" in reason or "survivability" in reason)
+        liquidity_rejections = sum(1 for reason in reason_texts if "liquidity" in reason or "spread" in reason)
+        portfolio_fit_rejections = sum(1 for reason in reason_texts if "portfolio_fit" in reason or "portfolio" in reason)
+        regime_rejections = sum(1 for reason in reason_texts if "regime" in reason or "context" in reason or "market_structure" in reason)
         high_expectancy_rejected = [
             r for r in recent
             if not bool(r.get("order_submitted"))
@@ -202,6 +212,7 @@ class ExecutionParticipationAuditV1:
         conversion = (submitted / reviewed * 100.0) if reviewed else 0.0
         eligible_to_submitted = (submitted / eligible * 100.0) if eligible else 0.0
         submitted_to_filled = (filled / submitted * 100.0) if submitted else 0.0
+        submission_rate_unique = (submitted / unique_candidates * 100.0) if unique_candidates else 0.0
         suppression = 100.0 - conversion if reviewed else 0.0
         broker_allowed = bool(paper_trace.get("paper_order_submission_allowed", False))
         broker_ready = bool(paper_trace.get("broker_execution_enabled") or paper_trace.get("paper_mode_verified"))
@@ -218,12 +229,18 @@ class ExecutionParticipationAuditV1:
         if reviewed >= 5:
             if session_blocked:
                 label = "session_blocked_observation_only"
+            elif duplicate_symbol_blocks >= max(1, reviewed * 0.65) and unique_candidates < reviewed * 0.25:
+                label = "expected_active_position_repeat_blocks"
             elif overprotection >= 65.0 or underparticipation >= 65.0:
                 label = "overprotective_underparticipating"
             elif efficiency >= 55.0:
                 label = "balanced_participation"
             else:
                 label = "underparticipating"
+        eligible_not_submitted_reason = "none"
+        if eligible > submitted:
+            top_reason = reason_counts.most_common(1)
+            eligible_not_submitted_reason = top_reason[0][0] if top_reason else "eligible_without_submission_trace"
         return {
             "enabled": True,
             "version": VERSION,
@@ -231,6 +248,7 @@ class ExecutionParticipationAuditV1:
             "execution_participation_audit_status_v1": True,
             "participation_label": label,
             "candidates_seen": _to_int(paper_trace.get("candidates_seen"), reviewed),
+            "unique_candidates_reviewed": int(unique_candidates),
             "candidates_promoted": _to_int((paper_trace.get("broad_universe_intake_promotion") or {}).get("promoted_to_top_buys_count"), promoted),
             "candidates_deep_scored": _to_int((paper_trace.get("broad_universe_intake_promotion") or {}).get("deep_scored_count"), promoted),
             "candidates_execution_reviewed": reviewed,
@@ -245,6 +263,17 @@ class ExecutionParticipationAuditV1:
             "eligible_candidates": _to_int(paper_trace.get("eligible_candidates"), eligible),
             "orders_attempted": _to_int(paper_trace.get("orders_attempted"), attempted),
             "orders_rejected": _to_int(paper_trace.get("orders_rejected"), max(0, attempted - submitted)),
+            "duplicate_symbol_blocks": int(duplicate_symbol_blocks),
+            "active_position_blocks": int(active_position_blocks),
+            "confirmation_required_blocks": int(confirmation_required_blocks),
+            "quality_rejections": int(quality_rejections),
+            "risk_rejections": int(risk_rejections),
+            "liquidity_rejections": int(liquidity_rejections),
+            "portfolio_fit_rejections": int(portfolio_fit_rejections),
+            "regime_rejections": int(regime_rejections),
+            "eligible_not_submitted_reason": eligible_not_submitted_reason,
+            "submitted_count": int(submitted),
+            "submission_rate_unique_candidates": round(submission_rate_unique, 2),
             "participation_efficiency_score": round(efficiency, 2),
             "participation_suppression_score": round(suppression, 2),
             "missed_opportunity_pressure": round(opportunity_pressure, 2),

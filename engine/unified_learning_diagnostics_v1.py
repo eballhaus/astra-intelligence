@@ -286,6 +286,7 @@ class UnifiedLearningDiagnosticsV1:
         opportunity_cost_learning = self._opportunity_cost_learning_summary(statuses.get("opportunity_cost_learning") or {})
         advanced_learning_intelligence = self._advanced_learning_intelligence_summary(statuses.get("advanced_learning_intelligence") or {})
         blind_spot_detection = self._blind_spot_detection_summary(statuses.get("blind_spot_detection") or {})
+        learning_issue_audit = self._learning_issue_audit_summary(statuses.get("learning_issue_audit") or {})
         remote_runtime_consistency = self._remote_runtime_consistency_summary(statuses.get("remote_runtime_consistency") or {})
         capacity_expansion_status = self._capacity_expansion_summary(statuses)
         execution_participation_audit = self._execution_participation_audit_summary(statuses.get("execution_participation_audit") or {})
@@ -314,6 +315,7 @@ class UnifiedLearningDiagnosticsV1:
             "opportunity_cost_learning": opportunity_cost_learning,
             "advanced_learning_intelligence": advanced_learning_intelligence,
             "blind_spot_detection": blind_spot_detection,
+            "learning_issue_audit": learning_issue_audit,
             "remote_runtime_consistency": remote_runtime_consistency,
             "capacity_expansion_status": capacity_expansion_status,
             "execution_participation_audit": execution_participation_audit,
@@ -377,6 +379,8 @@ class UnifiedLearningDiagnosticsV1:
         replay = statuses.get("replay_lifecycle_expectancy") or {}
         edge = statuses.get("edge_development") or {}
         advanced = statuses.get("advanced_learning_intelligence") or {}
+        issue_audit = statuses.get("learning_issue_audit") or {}
+        buy_purity_diag = dict(issue_audit.get("buy_purity_diagnostics") or {})
         closed = max(evidence_count, _to_int(paper_combined.get("valid_closed"), 0), _to_int(paper.get("closed_trades_count"), 0))
         advanced_count = _to_int((advanced.get("evidence_counts") or {}).get("return_evidence"), 0)
         advanced_available = bool(advanced.get("source_validation_passed") and advanced_count > 0)
@@ -392,7 +396,16 @@ class UnifiedLearningDiagnosticsV1:
         expectancy = _first_float(replay.get("expectancy_score"), edge.get("average_expected_value_score"), default=0.0)
         if expectancy <= 0 and advanced.get("expectancy") not in (None, ""):
             expectancy = _first_float(advanced.get("expectancy"), default=0.0)
-        buy_purity = _first_float(learning_fast.get("buy_list_purity"), default=0.0)
+        buy_purity = _first_float(
+            buy_purity_diag.get("mapped_buy_purity"),
+            learning_fast.get("buy_list_purity"),
+            learning_fast.get("buy_list_purity_score"),
+            learning_fast.get("buy_ranking_quality_score"),
+            edge.get("buy_list_purity_score"),
+            edge.get("buy_ranking_quality_score"),
+            edge.get("average_expected_value_score"),
+            default=0.0,
+        )
         mature = metric_maturity if closed > 0 else maturity.get("label", "insufficient_evidence")
         source = "advanced_learning_intelligence_v1" if advanced_available else "legacy_learning_sources"
         return {
@@ -400,7 +413,7 @@ class UnifiedLearningDiagnosticsV1:
             "profit_factor": {**_metric(pf_value, evidence_count=closed, maturity=mature if pf_value is not None else "insufficient_closed_trades", explanation=f"Gross winners divided by gross losers. Source: {source}."), "source": source},
             "expectancy_score": {**_metric(expectancy if closed > 0 or expectancy > 0 else None, evidence_count=closed, maturity=mature, explanation=f"Outcome-weighted expectancy quality score. Source: {source}."), "source": source},
             "average_return": {**_metric(avg_return if closed > 0 else None, evidence_count=closed, maturity=mature, explanation=f"Average paper return from reconciled available outcomes. Source: {source}."), "source": source},
-            "buy_list_purity": _metric(buy_purity if buy_purity > 0 else None, evidence_count=max(closed, 0), maturity="healthy" if buy_purity > 0 else maturity.get("label", "insufficient_evidence"), explanation="Cleanliness of the promoted buy list."),
+            "buy_list_purity": {**_metric(buy_purity if buy_purity > 0 else None, evidence_count=max(closed, 0), maturity="healthy" if buy_purity > 0 else maturity.get("label", "insufficient_evidence"), explanation="Cleanliness of the promoted buy list from mapped buy-purity/ranking-quality sources."), "source": "buy_purity_alias_mapping" if buy_purity > 0 else "unavailable"},
             "closed_trade_count": closed,
             "metric_source": source,
         }
@@ -409,9 +422,22 @@ class UnifiedLearningDiagnosticsV1:
         regime = statuses.get("regime_execution_survivability") or {}
         tm = statuses.get("trade_management_portfolio") or {}
         edge = statuses.get("edge_development") or {}
+        lifecycle_v2 = statuses.get("trade_lifecycle_excursion_v2") or {}
+        adaptive_exit_v2 = statuses.get("adaptive_execution_exit_intelligence_v2") or {}
+        issue_audit = statuses.get("learning_issue_audit") or {}
+        exit_diag = dict(issue_audit.get("exit_quality_diagnostics") or {})
         mature = "healthy" if evidence_count > 0 or rows else maturity.get("label", "insufficient_evidence")
         entry = _first_float(learning_fast.get("entry_quality"), regime.get("entry_timing_quality"), tm.get("average_entry_quality_shadow"), default=0.0)
-        exit_q = _first_float(learning_fast.get("exit_quality"), regime.get("exit_timing_quality"), tm.get("average_exit_quality_score"), default=0.0)
+        exit_q = _first_float(
+            exit_diag.get("average_exit_quality"),
+            learning_fast.get("exit_quality"),
+            regime.get("exit_timing_quality"),
+            tm.get("average_exit_quality_score"),
+            lifecycle_v2.get("average_exit_quality"),
+            adaptive_exit_v2.get("exit_quality"),
+            adaptive_exit_v2.get("exit_efficiency_score"),
+            default=0.0,
+        )
         follow = _first_float(learning_fast.get("follow_through_quality"), regime.get("follow_through_probability"), edge.get("average_expected_follow_through_score"), default=0.0)
         truth = _first_float(edge.get("average_expected_win_probability"), default=0.0)
         return {
@@ -875,6 +901,15 @@ class UnifiedLearningDiagnosticsV1:
             "selected_candidates_reviewed": _to_int(data.get("selected_candidates_reviewed"), 0),
             "rejected_candidates_reviewed": _to_int(data.get("rejected_candidates_reviewed"), 0),
             "average_opportunity_cost": data.get("average_opportunity_cost"),
+            "avg_selected_return": data.get("avg_selected_return"),
+            "avg_rejected_return": data.get("avg_rejected_return"),
+            "median_opportunity_cost": data.get("median_opportunity_cost"),
+            "largest_positive_gap": data.get("largest_positive_gap"),
+            "largest_negative_gap": data.get("largest_negative_gap"),
+            "largest_positive_gap_symbol": _text(data.get("largest_positive_gap_symbol"), "insufficient_data"),
+            "largest_negative_gap_symbol": _text(data.get("largest_negative_gap_symbol"), "insufficient_data"),
+            "outlier_symbols": list(data.get("outlier_symbols") or [])[:8],
+            "calculation_method": _text(data.get("calculation_method"), "opportunity_cost_pct = rejected_return_pct - selected_return_pct"),
             "missed_opportunity_count": _to_int(data.get("missed_opportunity_count"), 0),
             "correct_selection_count": _to_int(data.get("correct_selection_count"), 0),
             "selection_quality_score": data.get("selection_quality_score"),
@@ -975,6 +1010,37 @@ class UnifiedLearningDiagnosticsV1:
             "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
         }
 
+    def _learning_issue_audit_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_learning_issue_audit"),
+            "issue_status": dict(data.get("issue_status") or {}),
+            "opportunity_cost_diagnostics": dict(data.get("opportunity_cost_diagnostics") or {}),
+            "execution_participation_diagnostics": dict(data.get("execution_participation_diagnostics") or {}),
+            "profit_capture_diagnostics": dict(data.get("profit_capture_diagnostics") or {}),
+            "follow_through_diagnostics": dict(data.get("follow_through_diagnostics") or {}),
+            "buy_purity_diagnostics": dict(data.get("buy_purity_diagnostics") or {}),
+            "exit_quality_diagnostics": dict(data.get("exit_quality_diagnostics") or {}),
+            "likely_cause_summary": _text(data.get("likely_cause_summary"), "collecting_issue_evidence"),
+            "recommended_action": _text(data.get("recommended_action"), "keep_behavior_changes_shadow_only"),
+            "safe_to_change_behavior": bool(data.get("safe_to_change_behavior", False)),
+            "shadow_only_recommendation": _text(data.get("shadow_only_recommendation"), "no_behavior_change"),
+            "human_review_required": bool(data.get("human_review_required", True)),
+            "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+        }
+
     def _remote_runtime_consistency_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -1030,6 +1096,7 @@ class UnifiedLearningDiagnosticsV1:
             "mode": _text(data.get("mode"), "paper_only_shadow_audit"),
             "participation_label": _text(data.get("participation_label"), "insufficient_evidence"),
             "candidates_seen": _to_int(data.get("candidates_seen"), 0),
+            "unique_candidates_reviewed": _to_int(data.get("unique_candidates_reviewed"), 0),
             "candidates_promoted": _to_int(data.get("candidates_promoted"), 0),
             "candidates_deep_scored": _to_int(data.get("candidates_deep_scored"), 0),
             "candidates_execution_reviewed": _to_int(data.get("candidates_execution_reviewed"), 0),
@@ -1044,6 +1111,17 @@ class UnifiedLearningDiagnosticsV1:
             "eligible_candidates": _to_int(data.get("eligible_candidates"), 0),
             "orders_attempted": _to_int(data.get("orders_attempted"), 0),
             "orders_rejected": _to_int(data.get("orders_rejected"), 0),
+            "duplicate_symbol_blocks": _to_int(data.get("duplicate_symbol_blocks"), 0),
+            "active_position_blocks": _to_int(data.get("active_position_blocks"), 0),
+            "confirmation_required_blocks": _to_int(data.get("confirmation_required_blocks"), 0),
+            "quality_rejections": _to_int(data.get("quality_rejections"), 0),
+            "risk_rejections": _to_int(data.get("risk_rejections"), 0),
+            "liquidity_rejections": _to_int(data.get("liquidity_rejections"), 0),
+            "portfolio_fit_rejections": _to_int(data.get("portfolio_fit_rejections"), 0),
+            "regime_rejections": _to_int(data.get("regime_rejections"), 0),
+            "eligible_not_submitted_reason": _text(data.get("eligible_not_submitted_reason"), "none"),
+            "submitted_count": _to_int(data.get("submitted_count"), _to_int(data.get("candidates_submitted"), 0)),
+            "submission_rate_unique_candidates": _to_float(data.get("submission_rate_unique_candidates"), 0.0),
             "participation_efficiency_score": _to_float(data.get("participation_efficiency_score"), 0.0),
             "participation_suppression_score": _to_float(data.get("participation_suppression_score"), 0.0),
             "missed_opportunity_pressure": _to_float(data.get("missed_opportunity_pressure"), 0.0),
@@ -1343,7 +1421,7 @@ class UnifiedLearningDiagnosticsV1:
             "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "trade_archetype_regime",
             "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
-            "blind_spot_detection", "remote_runtime_consistency", "capacity_expansion_status",
+            "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
             "execution_participation_audit",
             "alpaca_paper_broker", "horizon_performance_dashboard",
         ]
@@ -1385,6 +1463,7 @@ class UnifiedLearningDiagnosticsV1:
             "opportunity_cost_learning": "/api/opportunity_cost_learning_status_v1",
             "advanced_learning_intelligence": "/api/advanced_learning_intelligence_status_v1",
             "blind_spot_detection": "/api/blind_spot_detection_status_v1",
+            "learning_issue_audit": "/api/learning_issue_audit_status_v1",
             "remote_runtime_consistency": "/api/remote_runtime_consistency_status_v1",
             "execution_participation_audit": "/api/execution_participation_audit_status_v1",
             "mobile_runtime_compaction": "/api/mobile_runtime_compaction_status_v1",
