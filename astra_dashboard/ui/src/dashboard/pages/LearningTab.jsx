@@ -145,6 +145,7 @@ export default function LearningTab({ compact = false }) {
   const [showAdaptiveProfitCaptureDetails, setShowAdaptiveProfitCaptureDetails] = useState(false);
   const [showAdaptiveExitV3Details, setShowAdaptiveExitV3Details] = useState(false);
   const [showExitLearningExpansionDetails, setShowExitLearningExpansionDetails] = useState(false);
+  const [showMarketContextLearningDetails, setShowMarketContextLearningDetails] = useState(false);
   const [showTradeArchetypeRegimeDetails, setShowTradeArchetypeRegimeDetails] = useState(false);
   const [showReplayCounterfactualDetails, setShowReplayCounterfactualDetails] = useState(false);
   const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
@@ -1578,6 +1579,7 @@ export default function LearningTab({ compact = false }) {
   const adaptiveProfitCapture = unified?.adaptive_profit_capture_intelligence || {};
   const adaptiveExecutionExitV3 = unified?.adaptive_execution_exit_intelligence_v3 || {};
   const exitLearningExpansion = unified?.exit_learning_expansion_suite_v1 || {};
+  const marketContextLearning = unified?.market_context_learning_suite_v1 || {};
   const tradeArchetypeRegime = unified?.trade_archetype_regime_intelligence || {};
   const replayCounterfactual = unified?.replay_counterfactual_learning_v2 || {};
   const opportunityCostLearning = unified?.opportunity_cost_learning || {};
@@ -2023,6 +2025,106 @@ export default function LearningTab({ compact = false }) {
               ))}
               <div>Behavior safe to apply: {adaptiveExecutionExitV3?.behavior_safe_to_apply ? "yes" : "no"}</div>
               <div>Forced exits: {adaptiveExecutionExitV3?.forced_exits_enabled ? "enabled" : "disabled"}</div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Market Context Learning Suite V1</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is studying what happened before the market opened, after the market closed, and what catalyst may be driving each move. This helps Astra learn whether a trade should behave more like a scalp, day trade, or swing trade. This is shadow-only and does not change trading behavior yet.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowMarketContextLearningDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showMarketContextLearningDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Tracked symbols", safeNumber(marketContextLearning?.tracked_symbols).toFixed(0)],
+            ["Premarket profile", marketContextLearning?.strongest_premarket_profile],
+            ["Catalyst type", marketContextLearning?.dominant_catalyst_type],
+            ["After-hours profile", marketContextLearning?.strongest_after_hours_profile],
+            ["Best context horizon", marketContextLearning?.best_context_horizon],
+            ["Highest giveback context", marketContextLearning?.highest_giveback_context],
+            ["Gap-and-fade risk", marketContextLearning?.gap_and_fade_probability === null || marketContextLearning?.gap_and_fade_probability === undefined ? "warming up" : safeNumber(marketContextLearning?.gap_and_fade_probability).toFixed(1)],
+            ["Continuation probability", marketContextLearning?.premarket_continuation_probability === null || marketContextLearning?.premarket_continuation_probability === undefined ? "warming up" : safeNumber(marketContextLearning?.premarket_continuation_probability).toFixed(1)],
+            ["Context confidence", safeNumber(marketContextLearning?.context_confidence).toFixed(1)],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(marketContextLearning?.shadow_context_recommendation || "Collecting premarket, catalyst, and after-hours evidence.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showMarketContextLearningDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Premarket Intelligence</div>
+              <div>Strongest profile: {String(marketContextLearning?.strongest_premarket_profile || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Weakest profile: {String(marketContextLearning?.weakest_premarket_profile || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Momentum score: {safeNumber(marketContextLearning?.premarket_momentum_score).toFixed(1)}</div>
+              <div>Gap risk: {safeNumber(marketContextLearning?.gap_risk_score).toFixed(1)}</div>
+              <div>Giveback risk: {safeNumber(marketContextLearning?.premarket_giveback_risk).toFixed(1)}</div>
+              {Object.entries(marketContextLearning?.premarket_profile_distribution || {}).slice(0, 5).map(([name, count]) => (
+                <div key={name}>{String(name).replaceAll("_", " ")}: {safeNumber(count).toFixed(0)}</div>
+              ))}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Catalyst Intelligence</div>
+              <div>Dominant catalyst: {String(marketContextLearning?.dominant_catalyst_type || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Strongest catalyst: {String(marketContextLearning?.strongest_catalyst_type || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Weakest catalyst: {String(marketContextLearning?.weakest_catalyst_type || "insufficient data").replaceAll("_", " ")}</div>
+              {Object.entries(marketContextLearning?.catalyst_type_distribution || {}).slice(0, 6).map(([name, count]) => (
+                <div key={name}>{String(name).replaceAll("_", " ")}: {safeNumber(count).toFixed(0)}</div>
+              ))}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>After-Hours Intelligence</div>
+              <div>Strongest profile: {String(marketContextLearning?.strongest_after_hours_profile || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Highest fade risk: {String(marketContextLearning?.highest_gap_fade_risk_profile || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Overnight momentum: {safeNumber(marketContextLearning?.overnight_momentum_score).toFixed(1)}</div>
+              <div>Gap-and-run probability: {safeNumber(marketContextLearning?.gap_and_run_probability).toFixed(1)}</div>
+              <div>Gap-and-fade probability: {safeNumber(marketContextLearning?.gap_and_fade_probability).toFixed(1)}</div>
+              {Object.entries(marketContextLearning?.after_hours_profile_distribution || {}).slice(0, 5).map(([name, count]) => (
+                <div key={name}>{String(name).replaceAll("_", " ")}: {safeNumber(count).toFixed(0)}</div>
+              ))}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Context Horizons</div>
+              <div>Best context horizon: {String(marketContextLearning?.best_context_horizon || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Highest giveback context: {String(marketContextLearning?.highest_giveback_context || "insufficient data").replaceAll("_", " ")}</div>
+              {Object.entries(marketContextLearning?.best_horizon_by_catalyst || {}).slice(0, 6).map(([name, count]) => (
+                <div key={name}>{String(name).replaceAll("_", " ")}: {safeNumber(count).toFixed(0)}</div>
+              ))}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Safety</div>
+              <div>Behavior safe to apply: {marketContextLearning?.behavior_safe_to_apply ? "yes" : "no"}</div>
+              <div>Auto apply: {marketContextLearning?.auto_apply_allowed ? "yes" : "no"}</div>
+              <div>Ranking changed: {marketContextLearning?.ranking_behavior_changed ? "yes" : "no"}</div>
+              <div>Paper execution changed: {marketContextLearning?.paper_execution_behavior_changed ? "yes" : "no"}</div>
+              <div>Forced exits: {marketContextLearning?.forced_exits_enabled ? "enabled" : "disabled"}</div>
             </div>
           </div>
         ) : null}

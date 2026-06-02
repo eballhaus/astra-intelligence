@@ -574,6 +574,7 @@ class LearningIssueAuditV1:
         replay_diag, replay_issue = self._replay_conflict(replay_rows, statuses)
         v3 = dict(statuses.get("adaptive_execution_exit_intelligence_v3") or {})
         exit_learning = dict(statuses.get("exit_learning_expansion_suite_v1") or {})
+        market_context = dict(statuses.get("market_context_learning_suite_v1") or {})
         v3_issue = _issue(
             "shadow_exit_learning_active" if v3.get("enabled") else "shadow_exit_learning_unavailable",
             "adaptive_execution_exit_v3_tracks_profit_capture_horizon_and_peak_decay" if v3.get("enabled") else "adaptive_execution_exit_v3_not_available",
@@ -590,6 +591,14 @@ class LearningIssueAuditV1:
             "Use the expansion suite for shadow-only partial-exit, time-window, personality, holding-time, and decay review.",
             _text(exit_learning.get("shadow_exit_learning_recommendation"), "No behavior change."),
         )
+        market_context_issue = _issue(
+            "market_context_learning_active" if market_context.get("enabled") else "market_context_learning_unavailable",
+            "premarket_catalyst_after_hours_context_learning_active" if market_context.get("enabled") else "market_context_learning_not_available",
+            "medium" if market_context.get("enabled") and _to_float(market_context.get("context_confidence"), 0.0) < 45.0 else "low",
+            _to_int(market_context.get("context_records"), 0),
+            "Use market context as shadow-only evidence for horizon and exit-learning interpretation.",
+            _text(market_context.get("shadow_context_recommendation"), "No behavior change."),
+        )
         issue_status = {
             "core_metric_source_regression": core_issue,
             "dataset_scope_mismatch": dataset_issue,
@@ -602,6 +611,7 @@ class LearningIssueAuditV1:
             "replay_conflict": replay_issue,
             "adaptive_execution_exit_v3": v3_issue,
             "exit_learning_expansion_suite_v1": exit_learning_issue,
+            "market_context_learning_suite_v1": market_context_issue,
         }
         medium_or_higher = [name for name, issue in issue_status.items() if issue.get("severity") in {"medium", "high"}]
         out = {
@@ -617,6 +627,7 @@ class LearningIssueAuditV1:
             "replay_conflict_status": replay_issue,
             "adaptive_execution_exit_v3_status": v3_issue,
             "exit_learning_expansion_status": exit_learning_issue,
+            "market_context_learning_status": market_context_issue,
             "execution_participation_display_status": exec_issue,
             "core_metric_source_diagnostics": core_diag,
             "dataset_scope_diagnostics": dataset_diag,
@@ -656,6 +667,26 @@ class LearningIssueAuditV1:
                 "continuation_after_profit_score": exit_learning.get("continuation_after_profit_score"),
                 "shadow_exit_learning_recommendation": exit_learning.get("shadow_exit_learning_recommendation"),
                 "behavior_safe_to_apply": bool(exit_learning.get("behavior_safe_to_apply", False)),
+            },
+            "market_context_learning_diagnostics": {
+                "tracked_symbols": market_context.get("tracked_symbols"),
+                "tracked_trades": market_context.get("tracked_trades"),
+                "context_records": market_context.get("context_records"),
+                "strongest_premarket_profile": market_context.get("strongest_premarket_profile"),
+                "weakest_premarket_profile": market_context.get("weakest_premarket_profile"),
+                "dominant_catalyst_type": market_context.get("dominant_catalyst_type"),
+                "strongest_catalyst_type": market_context.get("strongest_catalyst_type"),
+                "weakest_catalyst_type": market_context.get("weakest_catalyst_type"),
+                "strongest_after_hours_profile": market_context.get("strongest_after_hours_profile"),
+                "highest_gap_fade_risk_profile": market_context.get("highest_gap_fade_risk_profile"),
+                "best_context_horizon": market_context.get("best_context_horizon"),
+                "highest_giveback_context": market_context.get("highest_giveback_context"),
+                "context_confidence": market_context.get("context_confidence"),
+                "gap_risk_score": market_context.get("gap_risk_score"),
+                "premarket_continuation_probability": market_context.get("premarket_continuation_probability"),
+                "gap_and_fade_probability": market_context.get("gap_and_fade_probability"),
+                "shadow_context_recommendation": market_context.get("shadow_context_recommendation"),
+                "behavior_safe_to_apply": bool(market_context.get("behavior_safe_to_apply", False)),
             },
             "likely_cause_summary": ", ".join(medium_or_higher) if medium_or_higher else "no_behavior_change_indicated",
             "recommended_action": "Apply display/source reconciliation and keep behavior changes shadow-only.",

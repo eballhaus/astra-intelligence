@@ -283,6 +283,7 @@ class UnifiedLearningDiagnosticsV1:
         adaptive_profit_capture = self._adaptive_profit_capture_summary(statuses.get("adaptive_profit_capture") or {})
         adaptive_execution_exit_v3 = self._adaptive_execution_exit_v3_summary(statuses.get("adaptive_execution_exit_intelligence_v3") or {})
         exit_learning_expansion = self._exit_learning_expansion_summary(statuses.get("exit_learning_expansion_suite_v1") or {})
+        market_context_learning = self._market_context_learning_summary(statuses.get("market_context_learning_suite_v1") or {})
         trade_archetype_regime = self._trade_archetype_regime_summary(statuses.get("trade_archetype_regime") or {})
         replay_counterfactual_learning_v2 = self._replay_counterfactual_learning_v2_summary(statuses.get("replay_counterfactual_learning_v2") or {})
         opportunity_cost_learning = self._opportunity_cost_learning_summary(statuses.get("opportunity_cost_learning") or {})
@@ -314,6 +315,7 @@ class UnifiedLearningDiagnosticsV1:
             "adaptive_profit_capture_intelligence": adaptive_profit_capture,
             "adaptive_execution_exit_intelligence_v3": adaptive_execution_exit_v3,
             "exit_learning_expansion_suite_v1": exit_learning_expansion,
+            "market_context_learning_suite_v1": market_context_learning,
             "trade_archetype_regime_intelligence": trade_archetype_regime,
             "replay_counterfactual_learning_v2": replay_counterfactual_learning_v2,
             "opportunity_cost_learning": opportunity_cost_learning,
@@ -1044,6 +1046,65 @@ class UnifiedLearningDiagnosticsV1:
             "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
         }
 
+    def _market_context_learning_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_market_context_learning"),
+            "tracked_symbols": _to_int(data.get("tracked_symbols"), 0),
+            "tracked_trades": _to_int(data.get("tracked_trades"), 0),
+            "context_records": _to_int(data.get("context_records"), 0),
+            "premarket_profile_distribution": dict(data.get("premarket_profile_distribution") or {}),
+            "catalyst_type_distribution": dict(data.get("catalyst_type_distribution") or {}),
+            "after_hours_profile_distribution": dict(data.get("after_hours_profile_distribution") or {}),
+            "strongest_premarket_profile": _text(data.get("strongest_premarket_profile"), "insufficient_data"),
+            "weakest_premarket_profile": _text(data.get("weakest_premarket_profile"), "insufficient_data"),
+            "dominant_catalyst_type": _text(data.get("dominant_catalyst_type"), "insufficient_data"),
+            "strongest_catalyst_type": _text(data.get("strongest_catalyst_type"), "insufficient_data"),
+            "weakest_catalyst_type": _text(data.get("weakest_catalyst_type"), "insufficient_data"),
+            "strongest_after_hours_profile": _text(data.get("strongest_after_hours_profile"), "insufficient_data"),
+            "highest_gap_fade_risk_profile": _text(data.get("highest_gap_fade_risk_profile"), "insufficient_data"),
+            "best_context_horizon": _text(data.get("best_context_horizon"), "insufficient_data"),
+            "highest_giveback_context": _text(data.get("highest_giveback_context"), "insufficient_data"),
+            "context_confidence": _to_float(data.get("context_confidence"), 0.0),
+            "premarket_momentum_score": data.get("premarket_momentum_score"),
+            "gap_risk_score": data.get("gap_risk_score"),
+            "premarket_continuation_probability": data.get("premarket_continuation_probability"),
+            "premarket_giveback_risk": data.get("premarket_giveback_risk"),
+            "overnight_momentum_score": data.get("overnight_momentum_score"),
+            "gap_and_run_probability": data.get("gap_and_run_probability"),
+            "gap_and_fade_probability": data.get("gap_and_fade_probability"),
+            "historical_expectancy_by_catalyst": dict(data.get("historical_expectancy_by_catalyst") or {}),
+            "average_hold_duration_by_catalyst": dict(data.get("average_hold_duration_by_catalyst") or {}),
+            "giveback_risk_by_catalyst": dict(data.get("giveback_risk_by_catalyst") or {}),
+            "best_horizon_by_catalyst": dict(data.get("best_horizon_by_catalyst") or {}),
+            "profile_samples": list(data.get("profile_samples") or [])[:8],
+            "shadow_context_recommendation": _text(data.get("shadow_context_recommendation"), "insufficient_data"),
+            "summary": _text(
+                data.get("summary"),
+                "Astra is studying premarket, catalyst, and after-hours context without changing trading behavior.",
+            ),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+            "human_review_required": bool(data.get("human_review_required", True)),
+            "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "ranking_behavior_changed": bool(data.get("ranking_behavior_changed", False)),
+            "paper_execution_behavior_changed": bool(data.get("paper_execution_behavior_changed", False)),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "partial_sells_enabled": bool(data.get("partial_sells_enabled", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+        }
+
     def _trade_archetype_regime_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -1666,7 +1727,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
             "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "adaptive_execution_exit_intelligence_v3", "trade_archetype_regime",
-            "exit_learning_expansion_suite_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
+            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
             "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
             "execution_participation_audit",
@@ -1707,6 +1768,7 @@ class UnifiedLearningDiagnosticsV1:
             "adaptive_profit_capture": "/api/adaptive_profit_capture_status_v1",
             "adaptive_execution_exit_intelligence_v3": "/api/adaptive_execution_exit_intelligence_v3",
             "exit_learning_expansion_suite_v1": "/api/exit_learning_expansion_suite_v1",
+            "market_context_learning_suite_v1": "/api/market_context_learning_suite_v1",
             "trade_archetype_regime": "/api/trade_archetype_regime_status_v1",
             "replay_counterfactual_learning_v2": "/api/replay_counterfactual_learning_v2_status",
             "opportunity_cost_learning": "/api/opportunity_cost_learning_status_v1",
