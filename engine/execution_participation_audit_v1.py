@@ -193,6 +193,8 @@ class ExecutionParticipationAuditV1:
         filled = sum(1 for r in recent if _text(r.get("order_result")).lower() == "filled")
         promoted = sum(1 for r in recent if _text(r.get("promoted_status")) == "promoted")
         unique_candidates = len({_text(r.get("symbol")).upper() for r in recent if _text(r.get("symbol"))})
+        eligible_unique = len({_text(r.get("symbol")).upper() for r in recent if bool(r.get("eligible")) and _text(r.get("symbol"))})
+        submitted_unique = len({_text(r.get("symbol")).upper() for r in recent if bool(r.get("order_submitted")) and _text(r.get("symbol"))})
         reason_texts = [_text(r.get("rejection_reason") or r.get("suppression_reason"), "none").lower() for r in recent]
         duplicate_symbol_blocks = sum(1 for reason in reason_texts if "duplicate_active_position" in reason or "duplicate" in reason)
         active_position_blocks = sum(1 for reason in reason_texts if "active_position" in reason or "already_open" in reason)
@@ -248,7 +250,10 @@ class ExecutionParticipationAuditV1:
             "execution_participation_audit_status_v1": True,
             "participation_label": label,
             "candidates_seen": _to_int(paper_trace.get("candidates_seen"), reviewed),
+            "reviewed_total": int(reviewed),
             "unique_candidates_reviewed": int(unique_candidates),
+            "eligible_unique": int(eligible_unique),
+            "submitted_unique": int(submitted_unique),
             "candidates_promoted": _to_int((paper_trace.get("broad_universe_intake_promotion") or {}).get("promoted_to_top_buys_count"), promoted),
             "candidates_deep_scored": _to_int((paper_trace.get("broad_universe_intake_promotion") or {}).get("deep_scored_count"), promoted),
             "candidates_execution_reviewed": reviewed,
@@ -264,16 +269,22 @@ class ExecutionParticipationAuditV1:
             "orders_attempted": _to_int(paper_trace.get("orders_attempted"), attempted),
             "orders_rejected": _to_int(paper_trace.get("orders_rejected"), max(0, attempted - submitted)),
             "duplicate_symbol_blocks": int(duplicate_symbol_blocks),
+            "duplicate_review_count": int(duplicate_symbol_blocks),
             "active_position_blocks": int(active_position_blocks),
+            "active_position_block_count": int(active_position_blocks),
             "confirmation_required_blocks": int(confirmation_required_blocks),
+            "confirmation_required_count": int(confirmation_required_blocks),
             "quality_rejections": int(quality_rejections),
             "risk_rejections": int(risk_rejections),
             "liquidity_rejections": int(liquidity_rejections),
             "portfolio_fit_rejections": int(portfolio_fit_rejections),
             "regime_rejections": int(regime_rejections),
             "eligible_not_submitted_reason": eligible_not_submitted_reason,
+            "final_submission_suppression_detected": bool(eligible > submitted),
             "submitted_count": int(submitted),
+            "submission_rate_total_reviews": round(conversion, 2),
             "submission_rate_unique_candidates": round(submission_rate_unique, 2),
+            "display_explanation": "Total review rows can include repeated checks of already-active symbols; unique-candidate rate separates symbol-level participation from repeated duplicate-active-position blocks.",
             "participation_efficiency_score": round(efficiency, 2),
             "participation_suppression_score": round(suppression, 2),
             "missed_opportunity_pressure": round(opportunity_pressure, 2),

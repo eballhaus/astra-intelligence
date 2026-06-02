@@ -39870,7 +39870,24 @@ def blind_spot_detection_status_v1(force: bool = False):
 @router.get("/api/learning_issue_audit_status_v1")
 def learning_issue_audit_status_v1(force: bool = False):
     try:
-        out = dict(LEARNING_ISSUE_AUDIT.status(force=bool(force)) or {})
+        statuses = {}
+        try:
+            statuses["advanced_learning_intelligence"] = ADVANCED_LEARNING_INTELLIGENCE.status(force=False)
+        except Exception:
+            statuses["advanced_learning_intelligence"] = {}
+        try:
+            statuses["replay_counterfactual_learning_v2"] = REPLAY_COUNTERFACTUAL_LEARNING_V2.status(force=False)
+        except Exception:
+            statuses["replay_counterfactual_learning_v2"] = {}
+        try:
+            statuses["opportunity_cost_learning"] = OPPORTUNITY_COST_LEARNING.status(force=False)
+        except Exception:
+            statuses["opportunity_cost_learning"] = {}
+        try:
+            statuses["execution_participation_audit"] = EXECUTION_PARTICIPATION_AUDIT.status(paper_trace=_paper_execution_trace_payload(), force=False)
+        except Exception:
+            statuses["execution_participation_audit"] = {}
+        out = dict(LEARNING_ISSUE_AUDIT.status(sources={"statuses": statuses}, force=bool(force)) or {})
         out["learning_issue_audit_status_v1"] = True
         out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
         out["live_trading_changed"] = False

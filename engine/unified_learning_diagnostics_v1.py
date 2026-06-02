@@ -377,22 +377,32 @@ class UnifiedLearningDiagnosticsV1:
     def _performance_summary(self, learning_fast: dict[str, Any], paper: dict[str, Any], statuses: dict[str, dict[str, Any]], returns: list[float], evidence_count: int, maturity: dict[str, Any]) -> dict[str, Any]:
         paper_combined = dict(paper.get("combined") or paper.get("paper_outcome_summary", {}).get("combined") or {})
         replay = statuses.get("replay_lifecycle_expectancy") or {}
+        replay_cf = statuses.get("replay_counterfactual_learning_v2") or {}
+        lifecycle_v2 = statuses.get("trade_lifecycle_excursion_v2") or {}
         edge = statuses.get("edge_development") or {}
         advanced = statuses.get("advanced_learning_intelligence") or {}
         issue_audit = statuses.get("learning_issue_audit") or {}
         buy_purity_diag = dict(issue_audit.get("buy_purity_diagnostics") or {})
         closed = max(evidence_count, _to_int(paper_combined.get("valid_closed"), 0), _to_int(paper.get("closed_trades_count"), 0))
         advanced_count = _to_int((advanced.get("evidence_counts") or {}).get("return_evidence"), 0)
-        advanced_available = bool(advanced.get("source_validation_passed") and advanced_count > 0)
+        advanced_core_values_available = all(advanced.get(key) not in (None, "") for key in ("released_win_rate", "profit_factor", "average_return"))
+        advanced_available = bool(
+            advanced_count > 0
+            and advanced_core_values_available
+            and (advanced.get("source_validation_passed") or _to_float(advanced.get("metric_confidence_score"), 0.0) >= 45.0)
+        )
         if advanced_available:
             closed = max(closed, advanced_count)
         metric_maturity = "healthy" if closed >= 20 else ("warming_up" if closed > 0 else "insufficient_closed_trades")
-        released_wr = _first_float(advanced.get("released_win_rate"), advanced.get("win_rate"), learning_fast.get("current_engine_released_wr"), paper_combined.get("win_rate"), paper.get("win_rate"), default=0.0)
-        pf = _first_float(replay.get("expectancy_profit_factor"), default=0.0)
-        pf_value = _first_float(advanced.get("profit_factor"), default=0.0)
-        if pf_value <= 0:
-            pf_value = pf if pf > 0 else _profit_factor(returns)
-        avg_return = _first_float(advanced.get("average_return"), replay.get("expectancy_avg_return"), paper_combined.get("avg_return"), paper.get("avg_return"), default=0.0)
+        if advanced_available:
+            released_wr = _first_float(advanced.get("released_win_rate"), advanced.get("win_rate"), default=0.0)
+            pf_value = _first_float(advanced.get("profit_factor"), default=0.0)
+            avg_return = _first_float(advanced.get("average_return"), default=0.0)
+        else:
+            released_wr = _first_float(learning_fast.get("current_engine_released_wr"), paper_combined.get("win_rate"), paper.get("win_rate"), default=0.0)
+            pf = _first_float(replay.get("expectancy_profit_factor"), default=0.0)
+            pf_value = pf if pf > 0 else (_profit_factor(returns) or 0.0)
+            avg_return = _first_float(replay.get("expectancy_avg_return"), paper_combined.get("avg_return"), paper.get("avg_return"), default=0.0)
         expectancy = _first_float(replay.get("expectancy_score"), edge.get("average_expected_value_score"), default=0.0)
         if expectancy <= 0 and advanced.get("expectancy") not in (None, ""):
             expectancy = _first_float(advanced.get("expectancy"), default=0.0)
@@ -408,6 +418,42 @@ class UnifiedLearningDiagnosticsV1:
         )
         mature = metric_maturity if closed > 0 else maturity.get("label", "insufficient_evidence")
         source = "advanced_learning_intelligence_v1" if advanced_available else "legacy_learning_sources"
+        available_metric_sources = {
+            "advanced_learning_intelligence_v1": {
+                "available": bool(advanced_core_values_available and advanced_count > 0),
+                "source_validation_passed": bool(advanced.get("source_validation_passed")),
+                "metric_confidence_score": _to_float(advanced.get("metric_confidence_score"), 0.0),
+                "sample_size": advanced_count,
+                "dataset_scope_label": _text(advanced.get("dataset_scope_label"), "unknown"),
+                "dataset_scope_mismatch_detected": bool(advanced.get("dataset_scope_mismatch_detected", False)),
+            },
+            "replay_lifecycle_expectancy": {
+                "available": bool(replay),
+                "sample_size": _to_int(replay.get("expectancy_sample_size"), 0),
+            },
+            "lifecycle_rows": {
+                "available": bool(returns),
+                "sample_size": len(returns),
+            },
+            "legacy_learning_sources": {
+                "available": bool(learning_fast or paper_combined or paper),
+                "sample_size": _to_int(paper_combined.get("valid_closed"), _to_int(paper.get("closed_trades_count"), 0)),
+            },
+        }
+        rejected_metric_sources: dict[str, str] = {}
+        if not advanced_available:
+            if not advanced_core_values_available:
+                rejected_metric_sources["advanced_learning_intelligence_v1"] = "missing_core_reconciled_metric_values"
+            elif advanced_count <= 0:
+                rejected_metric_sources["advanced_learning_intelligence_v1"] = "no_return_evidence"
+            elif not advanced.get("source_validation_passed") and _to_float(advanced.get("metric_confidence_score"), 0.0) < 45.0:
+                rejected_metric_sources["advanced_learning_intelligence_v1"] = "low_metric_confidence"
+        source_selection_reason = (
+            "using_reconciled_advanced_learning_metrics_with_scope_labels"
+            if advanced_available
+            else "advanced_reconciled_metrics_unavailable_using_legacy_fallback"
+        )
+        legacy_fallback_used = source == "legacy_learning_sources"
         return {
             "released_win_rate": {**_metric(released_wr if closed > 0 else None, evidence_count=closed, maturity=mature, explanation=f"Win rate for released/current-engine paper outcomes. Source: {source}."), "source": source},
             "profit_factor": {**_metric(pf_value, evidence_count=closed, maturity=mature if pf_value is not None else "insufficient_closed_trades", explanation=f"Gross winners divided by gross losers. Source: {source}."), "source": source},
@@ -416,6 +462,22 @@ class UnifiedLearningDiagnosticsV1:
             "buy_list_purity": {**_metric(buy_purity if buy_purity > 0 else None, evidence_count=max(closed, 0), maturity="healthy" if buy_purity > 0 else maturity.get("label", "insufficient_evidence"), explanation="Cleanliness of the promoted buy list from mapped buy-purity/ranking-quality sources."), "source": "buy_purity_alias_mapping" if buy_purity > 0 else "unavailable"},
             "closed_trade_count": closed,
             "metric_source": source,
+            "selected_metric_source": source,
+            "available_metric_sources": available_metric_sources,
+            "rejected_metric_sources": rejected_metric_sources,
+            "source_selection_reason": source_selection_reason,
+            "reconciled_metrics_available": bool(advanced_available),
+            "legacy_fallback_used": bool(legacy_fallback_used),
+            "fallback_reason": "" if not legacy_fallback_used else _text(next(iter(rejected_metric_sources.values()), "advanced_metrics_unavailable")),
+            "core_performance_sample_size": int(closed),
+            "replay_sample_size": _to_int(replay_cf.get("tracked_lifecycles"), _to_int(replay.get("expectancy_sample_size"), 0)),
+            "lifecycle_sample_size": _to_int(lifecycle_v2.get("tracked_active_trades"), 0) + _to_int(lifecycle_v2.get("tracked_closed_trades"), 0),
+            "advanced_learning_sample_size": int(advanced_count),
+            "broker_confirmed_sample_size": _to_int(paper.get("closed_trades_count"), _to_int(paper_combined.get("valid_closed"), 0)),
+            "open_trade_inclusion": _text(advanced.get("open_trade_inclusion"), "included_when_current_return_available" if advanced_available else "source_dependent"),
+            "closed_trade_inclusion": _text(advanced.get("closed_trade_inclusion"), "included_when_exit_or_return_available" if advanced_available else "source_dependent"),
+            "dataset_scope_label": _text(advanced.get("dataset_scope_label"), "legacy_or_mixed_scope" if legacy_fallback_used else "advanced_learning_scope"),
+            "dataset_scope_mismatch_detected": bool(advanced.get("dataset_scope_mismatch_detected", False)),
         }
 
     def _execution_quality_summary(self, learning_fast: dict[str, Any], statuses: dict[str, dict[str, Any]], rows: list[dict[str, Any]], evidence_count: int, maturity: dict[str, Any]) -> dict[str, Any]:
@@ -442,7 +504,17 @@ class UnifiedLearningDiagnosticsV1:
         truth = _first_float(edge.get("average_expected_win_probability"), default=0.0)
         return {
             "entry_quality": _metric(entry if entry > 0 else None, evidence_count=evidence_count, maturity=mature, explanation="Entry timing and quality from current learning summaries."),
-            "exit_quality": _metric(exit_q if exit_q > 0 else None, evidence_count=evidence_count, maturity=mature, explanation="Exit timing quality without forcing exits."),
+            "exit_quality": {
+                **_metric(exit_q if exit_q > 0 else None, evidence_count=evidence_count, maturity=mature, explanation="Exit timing quality without forcing exits."),
+                "exit_quality_source": _text(exit_diag.get("exit_quality_source"), "mixed_learning_sources"),
+                "exit_quality_sample_size": _to_int(exit_diag.get("exit_quality_sample_size"), 0),
+                "natural_exit_count": _to_int(exit_diag.get("natural_exit_count"), 0),
+                "simulated_exit_count": _to_int(exit_diag.get("simulated_exit_count"), 0),
+                "open_position_count_used": _to_int(exit_diag.get("open_position_count_used"), 0),
+                "closed_position_count_used": _to_int(exit_diag.get("closed_position_count_used"), 0),
+                "exit_quality_confidence": _to_float(exit_diag.get("exit_quality_confidence"), 0.0),
+                "exit_quality_scope_label": _text(exit_diag.get("exit_quality_scope_label"), "source_dependent"),
+            },
             "follow_through_quality": _metric(follow if follow > 0 else None, evidence_count=max(evidence_count, len(rows)), maturity=mature, explanation="Likelihood that entries continue after trigger."),
             "confidence_truthfulness": _metric(truth if truth > 0 else None, evidence_count=evidence_count, maturity=mature if truth > 0 else "insufficient_evidence", explanation="How calibrated confidence appears versus observed outcomes."),
             "execution_quality_score": _metric(_first_float(regime.get("execution_quality_score"), default=0.0) or None, evidence_count=max(evidence_count, len(rows)), maturity=mature),
@@ -881,6 +953,13 @@ class UnifiedLearningDiagnosticsV1:
             "most_common_missed_improvement": _text(data.get("most_common_missed_improvement"), "insufficient_data"),
             "replay_learning_score": data.get("replay_learning_score"),
             "replay_learning_recommendation": _text(data.get("replay_learning_recommendation"), "insufficient_data"),
+            "replay_actual_avg_source": _text(data.get("replay_actual_avg_source"), "unknown"),
+            "replay_best_virtual_source": _text(data.get("replay_best_virtual_source"), "unknown"),
+            "replay_scope_label": _text(data.get("replay_scope_label"), "unknown"),
+            "replay_closed_only": bool(data.get("replay_closed_only", False)),
+            "replay_open_included": bool(data.get("replay_open_included", False)),
+            "replay_outlier_symbols": list(data.get("replay_outlier_symbols") or [])[:8],
+            "replay_negative_return_drivers": dict(data.get("replay_negative_return_drivers") or {}),
             "human_review_required": bool(data.get("human_review_required", True)),
             "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
             "api_calls_used": _to_int(data.get("api_calls_used"), 0),
@@ -1017,12 +1096,21 @@ class UnifiedLearningDiagnosticsV1:
             "version": _text(data.get("version"), "1.0.0"),
             "mode": _text(data.get("mode"), "paper_only_learning_issue_audit"),
             "issue_status": dict(data.get("issue_status") or {}),
+            "core_metric_source_regression_status": dict(data.get("core_metric_source_regression_status") or {}),
+            "dataset_scope_mismatch_status": dict(data.get("dataset_scope_mismatch_status") or {}),
+            "profit_capture_issue_status": dict(data.get("profit_capture_issue_status") or {}),
+            "exit_quality_issue_status": dict(data.get("exit_quality_issue_status") or {}),
+            "replay_conflict_status": dict(data.get("replay_conflict_status") or {}),
+            "execution_participation_display_status": dict(data.get("execution_participation_display_status") or {}),
+            "core_metric_source_diagnostics": dict(data.get("core_metric_source_diagnostics") or {}),
+            "dataset_scope_diagnostics": dict(data.get("dataset_scope_diagnostics") or {}),
             "opportunity_cost_diagnostics": dict(data.get("opportunity_cost_diagnostics") or {}),
             "execution_participation_diagnostics": dict(data.get("execution_participation_diagnostics") or {}),
             "profit_capture_diagnostics": dict(data.get("profit_capture_diagnostics") or {}),
             "follow_through_diagnostics": dict(data.get("follow_through_diagnostics") or {}),
             "buy_purity_diagnostics": dict(data.get("buy_purity_diagnostics") or {}),
             "exit_quality_diagnostics": dict(data.get("exit_quality_diagnostics") or {}),
+            "replay_conflict_diagnostics": dict(data.get("replay_conflict_diagnostics") or {}),
             "likely_cause_summary": _text(data.get("likely_cause_summary"), "collecting_issue_evidence"),
             "recommended_action": _text(data.get("recommended_action"), "keep_behavior_changes_shadow_only"),
             "safe_to_change_behavior": bool(data.get("safe_to_change_behavior", False)),
@@ -1096,7 +1184,10 @@ class UnifiedLearningDiagnosticsV1:
             "mode": _text(data.get("mode"), "paper_only_shadow_audit"),
             "participation_label": _text(data.get("participation_label"), "insufficient_evidence"),
             "candidates_seen": _to_int(data.get("candidates_seen"), 0),
+            "reviewed_total": _to_int(data.get("reviewed_total"), _to_int(data.get("candidates_execution_reviewed"), 0)),
             "unique_candidates_reviewed": _to_int(data.get("unique_candidates_reviewed"), 0),
+            "eligible_unique": _to_int(data.get("eligible_unique"), 0),
+            "submitted_unique": _to_int(data.get("submitted_unique"), 0),
             "candidates_promoted": _to_int(data.get("candidates_promoted"), 0),
             "candidates_deep_scored": _to_int(data.get("candidates_deep_scored"), 0),
             "candidates_execution_reviewed": _to_int(data.get("candidates_execution_reviewed"), 0),
@@ -1112,16 +1203,22 @@ class UnifiedLearningDiagnosticsV1:
             "orders_attempted": _to_int(data.get("orders_attempted"), 0),
             "orders_rejected": _to_int(data.get("orders_rejected"), 0),
             "duplicate_symbol_blocks": _to_int(data.get("duplicate_symbol_blocks"), 0),
+            "duplicate_review_count": _to_int(data.get("duplicate_review_count"), _to_int(data.get("duplicate_symbol_blocks"), 0)),
             "active_position_blocks": _to_int(data.get("active_position_blocks"), 0),
+            "active_position_block_count": _to_int(data.get("active_position_block_count"), _to_int(data.get("active_position_blocks"), 0)),
             "confirmation_required_blocks": _to_int(data.get("confirmation_required_blocks"), 0),
+            "confirmation_required_count": _to_int(data.get("confirmation_required_count"), _to_int(data.get("confirmation_required_blocks"), 0)),
             "quality_rejections": _to_int(data.get("quality_rejections"), 0),
             "risk_rejections": _to_int(data.get("risk_rejections"), 0),
             "liquidity_rejections": _to_int(data.get("liquidity_rejections"), 0),
             "portfolio_fit_rejections": _to_int(data.get("portfolio_fit_rejections"), 0),
             "regime_rejections": _to_int(data.get("regime_rejections"), 0),
             "eligible_not_submitted_reason": _text(data.get("eligible_not_submitted_reason"), "none"),
+            "final_submission_suppression_detected": bool(data.get("final_submission_suppression_detected", False)),
             "submitted_count": _to_int(data.get("submitted_count"), _to_int(data.get("candidates_submitted"), 0)),
+            "submission_rate_total_reviews": _to_float(data.get("submission_rate_total_reviews"), _to_float(data.get("execution_conversion_rate"), 0.0)),
             "submission_rate_unique_candidates": _to_float(data.get("submission_rate_unique_candidates"), 0.0),
+            "display_explanation": _text(data.get("display_explanation"), "Total reviews and unique candidates are separate participation views."),
             "participation_efficiency_score": _to_float(data.get("participation_efficiency_score"), 0.0),
             "participation_suppression_score": _to_float(data.get("participation_suppression_score"), 0.0),
             "missed_opportunity_pressure": _to_float(data.get("missed_opportunity_pressure"), 0.0),

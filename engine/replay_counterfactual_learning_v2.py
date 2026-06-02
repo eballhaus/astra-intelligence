@@ -198,10 +198,13 @@ class ReplayCounterfactualLearningV2:
         self._write_rows(records)
         patterns = Counter(_text(row.get("best_counterfactual_path"), "unknown") for row in records)
         missed = Counter(_text(row.get("most_likely_missed_improvement"), "unknown") for row in records)
+        negative_rows = [row for row in records if _to_float(row.get("actual_return_pct")) < 0]
+        outlier_rows = sorted(records, key=lambda row: abs(_to_float(row.get("actual_return_pct")) - (avg_actual or 0.0)) if 'avg_actual' in locals() and avg_actual is not None else abs(_to_float(row.get("actual_return_pct"))), reverse=True)[:6]
         avg_actual = self._avg(records, "actual_return_pct")
         avg_best = self._avg(records, "best_counterfactual_return")
         avg_improvement = self._avg(records, "improvement_vs_actual")
         avg_quality = self._avg(records, "replay_quality_score")
+        outlier_rows = sorted(records, key=lambda row: abs(_to_float(row.get("actual_return_pct")) - (avg_actual or 0.0)), reverse=True)[:6]
         recommendation = "insufficient_data"
         if len(records) >= 5:
             recommendation = "review_exit_timing_counterfactuals" if missed.most_common(1) and missed.most_common(1)[0][0] == "exit_timing_profit_capture" else "review_entry_and_hold_counterfactuals"
@@ -218,6 +221,13 @@ class ReplayCounterfactualLearningV2:
             "most_common_missed_improvement": missed.most_common(1)[0][0] if missed else "insufficient_data",
             "replay_learning_score": avg_quality,
             "replay_learning_recommendation": recommendation,
+            "replay_actual_avg_source": "trade_lifecycle_current_or_exit_profit_pct",
+            "replay_best_virtual_source": "shadow_counterfactual_paths_from_mfe_mae_giveback",
+            "replay_scope_label": "active_and_closed_lifecycle_rows_shadow_counterfactual",
+            "replay_closed_only": False,
+            "replay_open_included": True,
+            "replay_outlier_symbols": [_text(row.get("symbol"), "unknown") for row in outlier_rows if _text(row.get("symbol"))],
+            "replay_negative_return_drivers": dict(Counter(_text(row.get("symbol"), "unknown") for row in negative_rows).most_common(8)),
             "human_review_required": True,
             "auto_apply_allowed": False,
             "api_calls_used": 0,

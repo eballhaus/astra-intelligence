@@ -1555,6 +1555,7 @@ export default function LearningTab({ compact = false }) {
 
   const unified = unifiedLearningDiagnostics || {};
   const executive = unified?.executive_snapshot || {};
+  const performanceSummary = unified?.performance_summary || {};
   const masterCharts = unified?.master_charts || {};
   const staleStatus = unified?.stale_data_status || {};
   const evidenceStatus = unified?.evidence_maturity_status || {};
@@ -1765,6 +1766,14 @@ export default function LearningTab({ compact = false }) {
         {topMetricGroups.map(([groupTitle, groupPayload, metrics]) => (
           <div key={groupTitle} style={{ ...panelStyle, padding: 12 }}>
             <h3 style={{ margin: "0 0 8px", fontSize: 14 }}>{groupTitle}</h3>
+            {groupTitle === "Core Performance" ? (
+              <div style={{ margin: "-2px 0 8px", color: performanceSummary?.legacy_fallback_used ? "#fcd34d" : "#9fd3ff", fontSize: 11 }}>
+                Source: {String(performanceSummary?.selected_metric_source || performanceSummary?.metric_source || "unknown").replaceAll("_", " ")}
+                {performanceSummary?.legacy_fallback_used ? " | legacy fallback active" : ""}
+                {" | Scope: "}
+                {String(performanceSummary?.dataset_scope_label || "unknown").replaceAll("_", " ")}
+              </div>
+            ) : null}
             <div style={{ display: "grid", gap: 8 }}>
               {metrics.map(([label, key, suffix]) => {
                 const metric = groupPayload?.[key] || {};
@@ -2075,6 +2084,14 @@ export default function LearningTab({ compact = false }) {
         {showLearningIssueAuditDetails ? (
           <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
             <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Metric Source</div>
+              <div>Selected: {String(performanceSummary?.selected_metric_source || learningIssueAudit?.core_metric_source_diagnostics?.selected_metric_source || "unknown").replaceAll("_", " ")}</div>
+              <div>Legacy fallback: {(performanceSummary?.legacy_fallback_used ?? learningIssueAudit?.core_metric_source_diagnostics?.legacy_fallback_used) ? "yes" : "no"}</div>
+              <div>Reason: {String(performanceSummary?.source_selection_reason || learningIssueAudit?.core_metric_source_diagnostics?.source_selection_reason || "collecting").replaceAll("_", " ")}</div>
+              <div>Advanced sample: {safeNumber(performanceSummary?.advanced_learning_sample_size ?? learningIssueAudit?.dataset_scope_diagnostics?.advanced_learning_sample_size).toFixed(0)} | Replay sample: {safeNumber(performanceSummary?.replay_sample_size ?? learningIssueAudit?.dataset_scope_diagnostics?.replay_sample_size).toFixed(0)}</div>
+              <div>Scope mismatch: {(performanceSummary?.dataset_scope_mismatch_detected ?? learningIssueAudit?.dataset_scope_diagnostics?.dataset_scope_mismatch_detected) ? "yes" : "no"}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
               <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Opportunity Cost</div>
               <div>Avg selected: {learningIssueAudit?.opportunity_cost_diagnostics?.avg_selected_return === null || learningIssueAudit?.opportunity_cost_diagnostics?.avg_selected_return === undefined ? "warming up" : `${safeNumber(learningIssueAudit?.opportunity_cost_diagnostics?.avg_selected_return).toFixed(2)}%`}</div>
               <div>Avg rejected: {learningIssueAudit?.opportunity_cost_diagnostics?.avg_rejected_return === null || learningIssueAudit?.opportunity_cost_diagnostics?.avg_rejected_return === undefined ? "warming up" : `${safeNumber(learningIssueAudit?.opportunity_cost_diagnostics?.avg_rejected_return).toFixed(2)}%`}</div>
@@ -2092,14 +2109,27 @@ export default function LearningTab({ compact = false }) {
             <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
               <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Profit / Continuation</div>
               <div>Avg peak gain: {learningIssueAudit?.profit_capture_diagnostics?.avg_peak_gain === null || learningIssueAudit?.profit_capture_diagnostics?.avg_peak_gain === undefined ? "warming up" : `${safeNumber(learningIssueAudit?.profit_capture_diagnostics?.avg_peak_gain).toFixed(2)}%`}</div>
+              <div>Avg current/exit gain: {learningIssueAudit?.profit_capture_diagnostics?.avg_current_or_exit_gain === null || learningIssueAudit?.profit_capture_diagnostics?.avg_current_or_exit_gain === undefined ? "warming up" : `${safeNumber(learningIssueAudit?.profit_capture_diagnostics?.avg_current_or_exit_gain).toFixed(2)}%`}</div>
               <div>Avg giveback: {learningIssueAudit?.profit_capture_diagnostics?.avg_giveback === null || learningIssueAudit?.profit_capture_diagnostics?.avg_giveback === undefined ? "warming up" : `${safeNumber(learningIssueAudit?.profit_capture_diagnostics?.avg_giveback).toFixed(2)}%`}</div>
+              <div>Capture ratio: {learningIssueAudit?.profit_capture_diagnostics?.capture_ratio === null || learningIssueAudit?.profit_capture_diagnostics?.capture_ratio === undefined ? "warming up" : `${(safeNumber(learningIssueAudit?.profit_capture_diagnostics?.capture_ratio) * 100).toFixed(1)}%`}</div>
               <div>Continued: {safeNumber(learningIssueAudit?.follow_through_diagnostics?.continued_as_expected_count).toFixed(0)} | Stalled: {safeNumber(learningIssueAudit?.follow_through_diagnostics?.stalled_count).toFixed(0)} | Reversed: {safeNumber(learningIssueAudit?.follow_through_diagnostics?.reversed_count).toFixed(0)}</div>
               <div>Worst giveback: {(learningIssueAudit?.profit_capture_diagnostics?.worst_giveback_symbols || []).join(", ") || "none"}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Replay Scope</div>
+              <div>Replay scope: {String(learningIssueAudit?.replay_conflict_diagnostics?.replay_scope_label || replayCounterfactual?.replay_scope_label || "unknown").replaceAll("_", " ")}</div>
+              <div>Actual avg: {learningIssueAudit?.replay_conflict_diagnostics?.average_actual_return === null || learningIssueAudit?.replay_conflict_diagnostics?.average_actual_return === undefined ? "warming up" : `${safeNumber(learningIssueAudit?.replay_conflict_diagnostics?.average_actual_return).toFixed(2)}%`}</div>
+              <div>Best virtual: {learningIssueAudit?.replay_conflict_diagnostics?.average_best_counterfactual_return === null || learningIssueAudit?.replay_conflict_diagnostics?.average_best_counterfactual_return === undefined ? "warming up" : `${safeNumber(learningIssueAudit?.replay_conflict_diagnostics?.average_best_counterfactual_return).toFixed(2)}%`}</div>
+              <div>Open included: {learningIssueAudit?.replay_conflict_diagnostics?.replay_open_included ? "yes" : "no"} | Closed only: {learningIssueAudit?.replay_conflict_diagnostics?.replay_closed_only ? "yes" : "no"}</div>
+              <div>Negative drivers: {Object.entries(learningIssueAudit?.replay_conflict_diagnostics?.replay_negative_return_drivers || {}).slice(0, 3).map(([k, v]) => `${k} (${v})`).join(", ") || "none"}</div>
             </div>
             <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
               <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Display Mapping</div>
               <div>Buy purity cause: {String(learningIssueAudit?.issue_status?.buy_purity?.likely_cause || "warming_up").replaceAll("_", " ")}</div>
               <div>Exit quality cause: {String(learningIssueAudit?.issue_status?.exit_quality?.likely_cause || "warming_up").replaceAll("_", " ")}</div>
+              <div>Exit source: {String(learningIssueAudit?.exit_quality_diagnostics?.exit_quality_source || "unknown").replaceAll("_", " ")}</div>
+              <div>Exit scope: {String(learningIssueAudit?.exit_quality_diagnostics?.exit_quality_scope_label || "unknown").replaceAll("_", " ")}</div>
+              <div>Exit confidence: {safeNumber(learningIssueAudit?.exit_quality_diagnostics?.exit_quality_confidence).toFixed(1)}</div>
               <div>Shadow only: {String(learningIssueAudit?.shadow_only_recommendation || "no behavior change")}</div>
             </div>
           </div>

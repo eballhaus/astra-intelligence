@@ -153,6 +153,7 @@ class AdvancedLearningIntelligenceV1:
         replay_count = len(replay_rows)
         opportunity_count = len(opportunity_rows)
         broker_close_count = len([r for r in lifecycle_rows if r.get("closed") or r.get("exit_timestamp")])
+        replay_actual = _avg(replay_rows, "actual_return_pct")
         source_counts = {
             "lifecycle_evidence": len(lifecycle_rows),
             "return_evidence": sample,
@@ -166,14 +167,16 @@ class AdvancedLearningIntelligenceV1:
         mismatch_flags: list[str] = []
         if lifecycle_rows and not non_zero_returns:
             mismatch_flags.append("lifecycle_rows_without_return_values")
-        if replay_rows and sample and abs((_avg(replay_rows, "actual_return_pct") or 0.0) - (avg_return or 0.0)) > 8.0:
+        if replay_rows and sample and abs((replay_actual or 0.0) - (avg_return or 0.0)) > 8.0:
             mismatch_flags.append("replay_actual_return_differs_from_lifecycle_average")
         if not lifecycle_rows:
             mismatch_flags.append("empty_lifecycle_dataset")
         confidence = _clamp(consistency - len(mismatch_flags) * 9.0 + min(12.0, sample * 0.8))
+        blocking_mismatches = [flag for flag in mismatch_flags if flag in {"lifecycle_rows_without_return_values", "empty_lifecycle_dataset"}]
+        scope_mismatch = bool("replay_actual_return_differs_from_lifecycle_average" in mismatch_flags)
         return {
-            "metrics_reconciled": bool(sample > 0 and not mismatch_flags),
-            "source_validation_passed": bool(populated_sources >= 3 and not mismatch_flags),
+            "metrics_reconciled": bool(sample > 0 and not blocking_mismatches),
+            "source_validation_passed": bool(populated_sources >= 3 and sample > 0 and not blocking_mismatches),
             "evidence_consistency_score": round(consistency, 4),
             "metric_confidence_score": round(confidence, 4),
             "released_win_rate": win_rate,
@@ -183,8 +186,14 @@ class AdvancedLearningIntelligenceV1:
             "expectancy": expectancy,
             "evidence_counts": source_counts,
             "mismatches": mismatch_flags,
+            "dataset_scope_label": "lifecycle_return_rows_with_replay_scope_mismatch" if scope_mismatch else "lifecycle_return_rows",
+            "dataset_scope_mismatch_detected": scope_mismatch,
+            "open_trade_inclusion": "included_when_current_return_available",
+            "closed_trade_inclusion": "included_when_exit_or_return_available",
+            "replay_actual_average_return": replay_actual,
             "reconciliation_summary": (
                 f"Reconciled {sample} return-bearing lifecycle rows across {populated_sources} learning sources."
+                + (" Replay uses a different counterfactual/lifecycle scope, so it is labeled separately." if scope_mismatch else "")
                 if sample
                 else "Waiting for return-bearing lifecycle evidence before reconciling core performance metrics."
             ),

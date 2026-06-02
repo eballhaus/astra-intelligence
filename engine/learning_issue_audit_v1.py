@@ -198,6 +198,9 @@ class LearningIssueAuditV1:
         regime_blocks = sum(1 for reason in reasons if "regime" in reason or "context" in reason or "market_structure" in reason)
         submitted = sum(1 for row in rows if bool(row.get("order_submitted")))
         eligible = sum(1 for row in rows if bool(row.get("eligible")))
+        eligible_unique = len({_text(r.get("symbol")).upper() for r in rows if bool(r.get("eligible")) and _text(r.get("symbol"))})
+        submitted_unique = len({_text(r.get("symbol")).upper() for r in rows if bool(r.get("order_submitted")) and _text(r.get("symbol"))})
+        submission_rate_total = round((submitted / reviewed * 100.0), 4) if reviewed else 0.0
         submission_rate_unique = round((submitted / unique_count * 100.0), 4) if unique_count else 0.0
         eligible_not_submitted = "none"
         if eligible > submitted:
@@ -209,12 +212,18 @@ class LearningIssueAuditV1:
             severity = "low"
             action = "Keep duplicate-active-position gate; display unique candidate rate so the funnel does not look self-blocking."
             shadow = "Audit unique candidates separately from repeated active-position rows."
-        elif eligible > submitted:
+        elif eligible > submitted and submitted_unique <= 0:
             status = "possible_final_submission_suppression"
             cause = "eligible_candidates_not_reaching_submission"
             severity = "medium"
             action = "Inspect final submission preflight, but do not loosen gates without symbol-level proof."
             shadow = "Track eligible-not-submitted reasons per cycle."
+        elif submitted_unique > 0 and duplicate_blocks / max(1, reviewed) >= 0.50:
+            status = "participation_math_display_clarified"
+            cause = "unique_symbol_submissions_exist_but_total_reviews_are_dominated_by_duplicate_active_rows"
+            severity = "low"
+            action = "Show total-review and unique-symbol rates separately."
+            shadow = "No participation gate changes."
         elif reviewed and submitted == 0:
             status = "underparticipation_needs_context"
             cause = "no_submission_in_recent_audit_window"
@@ -228,10 +237,16 @@ class LearningIssueAuditV1:
             action = "No behavior change indicated by audit decomposition."
             shadow = "Continue monitoring unique candidate conversion."
         diagnostics = {
+            "reviewed_total": reviewed,
             "unique_candidates_reviewed": unique_count,
+            "eligible_unique": eligible_unique,
+            "submitted_unique": submitted_unique,
             "duplicate_symbol_blocks": duplicate_blocks,
+            "duplicate_review_count": duplicate_blocks,
             "active_position_blocks": active_blocks,
+            "active_position_block_count": active_blocks,
             "confirmation_required_blocks": confirmation_blocks,
+            "confirmation_required_count": confirmation_blocks,
             "quality_rejections": quality_blocks,
             "risk_rejections": risk_blocks,
             "liquidity_rejections": liquidity_blocks,
@@ -239,7 +254,10 @@ class LearningIssueAuditV1:
             "regime_rejections": regime_blocks,
             "eligible_not_submitted_reason": eligible_not_submitted,
             "submitted_count": submitted,
+            "final_submission_suppression_detected": bool(eligible > submitted),
+            "submission_rate_total_reviews": submission_rate_total,
             "submission_rate_unique_candidates": submission_rate_unique,
+            "display_explanation": "Reviewed total counts repeated checks; unique reviewed counts distinct symbols. Duplicate-active-position blocks are expected when Astra keeps re-evaluating symbols already held.",
             "top_rejection_reasons": dict(Counter(reason for reason in reasons if reason != "none").most_common(8)),
             "status_payload_label": _text(status_payload.get("participation_label"), "unknown"),
         }
@@ -277,16 +295,26 @@ class LearningIssueAuditV1:
         diagnostics = {
             "avg_peak_gain": _avg(peak_vals),
             "avg_exit_gain": _avg(exit_vals),
+            "avg_current_or_exit_gain": _avg(exit_vals),
             "avg_giveback": avg_giveback,
             "median_giveback": _median(giveback_vals),
             "average_profit_capture_ratio": avg_capture,
+            "capture_ratio": avg_capture,
             "worst_giveback_symbols": [_text(r.get("symbol"), "unknown") for r in worst if _text(r.get("symbol"))],
             "best_capture_symbols": [_text(r.get("symbol"), "unknown") for r in best if _text(r.get("symbol"))],
             "sample_size": len(rows),
             "by_archetype_capture": _group_average(rows, "trade_archetype", ("profit_capture_ratio",)),
             "by_regime_capture": _group_average(rows, "market_regime", ("profit_capture_ratio",)),
             "by_horizon_capture": _group_average(rows, "horizon_style", ("profit_capture_ratio",)),
+            "capture_ratio_by_archetype": _group_average(rows, "trade_archetype", ("profit_capture_ratio",)),
+            "capture_ratio_by_regime": _group_average(rows, "market_regime", ("profit_capture_ratio",)),
+            "capture_ratio_by_horizon": _group_average(rows, "horizon_style", ("profit_capture_ratio",)),
+            "open_vs_closed_capture": {
+                "open": _avg(_values([r for r in rows if not (r.get("exit_timestamp") or r.get("exit_price") or r.get("closed"))], "profit_capture_ratio")),
+                "closed": _avg(_values([r for r in rows if r.get("exit_timestamp") or r.get("exit_price") or r.get("closed")], "profit_capture_ratio")),
+            },
             "replay_missed_improvement": replay_improvement,
+            "recommendation": shadow,
         }
         return diagnostics, _issue(status, cause, severity, len(rows), action, shadow)
 
@@ -389,8 +417,134 @@ class LearningIssueAuditV1:
             "exit_quality_sample_size": len(exit_vals),
             "average_exit_quality": _avg(exit_vals),
             "exit_label_distribution": dict(Counter(_text(r.get("exit_label") or r.get("exit_classification"), "unknown") for r in closed).most_common(8)),
+            "exit_quality_source": "natural_lifecycle_exit_quality_score",
+            "natural_exit_count": len([r for r in closed if _text(r.get("exit_label") or r.get("exit_classification"), "").lower() not in {"simulated_exit", "counterfactual_exit"}]),
+            "simulated_exit_count": len([r for r in closed if _text(r.get("exit_label") or r.get("exit_classification"), "").lower() in {"simulated_exit", "counterfactual_exit"}]),
+            "open_position_count_used": 0,
+            "closed_position_count_used": len(closed),
+            "exit_quality_confidence": round(min(100.0, len(exit_vals) * 2.5), 4),
+            "exit_quality_scope_label": "closed_natural_lifecycle_rows",
         }
         return diagnostics, _issue(status, cause, severity, max(len(closed), len(exit_vals)), action, shadow)
+
+    def _core_metric_source(self, statuses: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        advanced = dict(statuses.get("advanced_learning_intelligence") or {})
+        advanced_count = _to_int((advanced.get("evidence_counts") or {}).get("return_evidence"), 0)
+        advanced_values = {
+            "released_win_rate": advanced.get("released_win_rate") or advanced.get("win_rate"),
+            "profit_factor": advanced.get("profit_factor"),
+            "average_return": advanced.get("average_return"),
+        }
+        reconciled_available = bool(advanced_count > 0 and all(v not in (None, "") for v in advanced_values.values()))
+        validation = bool(advanced.get("source_validation_passed"))
+        scope_mismatch = bool(advanced.get("dataset_scope_mismatch_detected")) or "replay_actual_return_differs_from_lifecycle_average" in list(advanced.get("mismatches") or [])
+        if reconciled_available and not validation and scope_mismatch:
+            issue = _issue(
+                "display_source_fix",
+                "advanced_metrics_available_but_demoted_by_replay_scope_mismatch",
+                "medium",
+                advanced_count,
+                "Use advanced reconciled lifecycle metrics for Core Performance and label replay scope separately.",
+                "No strategy behavior change; this is source-priority/display reconciliation.",
+            )
+        elif reconciled_available:
+            issue = _issue(
+                "advanced_source_available",
+                "advanced_reconciled_metrics_available",
+                "low",
+                advanced_count,
+                "Use advanced_learning_intelligence_v1 as preferred Core Performance source.",
+                "No behavior change.",
+            )
+        else:
+            issue = _issue(
+                "legacy_fallback_expected",
+                "advanced_reconciled_metrics_missing",
+                "low",
+                advanced_count,
+                "Use audited lifecycle/replay/legacy fallback until advanced metrics return.",
+                "No behavior change.",
+            )
+        diagnostics = {
+            "selected_metric_source": "advanced_learning_intelligence_v1" if reconciled_available else "legacy_learning_sources",
+            "available_metric_sources": {
+                "advanced_learning_intelligence_v1": {
+                    "available": reconciled_available,
+                    "sample_size": advanced_count,
+                    "source_validation_passed": validation,
+                    "metric_confidence_score": advanced.get("metric_confidence_score"),
+                    "dataset_scope_label": advanced.get("dataset_scope_label"),
+                },
+                "legacy_learning_sources": {"available": True},
+            },
+            "rejected_metric_sources": {} if reconciled_available else {"advanced_learning_intelligence_v1": "missing_reconciled_core_values"},
+            "source_selection_reason": issue["likely_cause"],
+            "reconciled_metrics_available": reconciled_available,
+            "legacy_fallback_used": not reconciled_available,
+            "fallback_reason": "" if reconciled_available else "advanced_reconciled_metrics_missing",
+            **advanced_values,
+        }
+        return diagnostics, issue
+
+    def _dataset_scope(self, lifecycle_rows: list[dict[str, Any]], profit_rows: list[dict[str, Any]], replay_rows: list[dict[str, Any]], statuses: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        advanced = dict(statuses.get("advanced_learning_intelligence") or {})
+        advanced_counts = dict(advanced.get("evidence_counts") or {})
+        closed_lifecycle = [r for r in lifecycle_rows if r.get("exit_timestamp") or r.get("exit_price") or r.get("closed")]
+        open_lifecycle = [r for r in lifecycle_rows if r not in closed_lifecycle]
+        mismatch = bool(advanced.get("dataset_scope_mismatch_detected")) or bool(replay_rows and lifecycle_rows)
+        diagnostics = {
+            "core_performance_sample_size": _to_int(advanced_counts.get("return_evidence"), len([r for r in lifecycle_rows if _values([r], "current_or_exit_profit_pct", "current_return_pct", "actual_return_pct")])),
+            "replay_sample_size": len(replay_rows),
+            "lifecycle_sample_size": len(lifecycle_rows),
+            "advanced_learning_sample_size": _to_int(advanced_counts.get("return_evidence"), 0),
+            "broker_confirmed_sample_size": _to_int(advanced_counts.get("broker_confirmed_closes_proxy"), len(closed_lifecycle)),
+            "open_trade_inclusion": advanced.get("open_trade_inclusion") or ("included" if open_lifecycle else "not_present"),
+            "closed_trade_inclusion": advanced.get("closed_trade_inclusion") or ("included" if closed_lifecycle else "not_present"),
+            "dataset_scope_label": advanced.get("dataset_scope_label") or "mixed_lifecycle_replay_profit_capture_scope",
+            "dataset_scope_mismatch_detected": mismatch,
+        }
+        issue = _issue(
+            "scope_mismatch_labeled" if mismatch else "scope_consistent",
+            "systems_use_different_open_closed_and_counterfactual_scopes" if mismatch else "learning_systems_share_compatible_scope",
+            "medium" if mismatch else "low",
+            max(diagnostics["core_performance_sample_size"], diagnostics["replay_sample_size"], diagnostics["lifecycle_sample_size"]),
+            "Label scope differences instead of comparing headline metrics as if they share one dataset.",
+            "No behavior change; scope labeling only.",
+        )
+        return diagnostics, issue
+
+    def _replay_conflict(self, replay_rows: list[dict[str, Any]], statuses: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        replay = dict(statuses.get("replay_counterfactual_learning_v2") or {})
+        actual_vals = _values(replay_rows, "actual_return_pct")
+        best_vals = _values(replay_rows, "best_counterfactual_return", "average_best_counterfactual_return")
+        improvement_vals = _values(replay_rows, "improvement_vs_actual", "average_counterfactual_improvement")
+        negative = [r for r in replay_rows if _to_float(r.get("actual_return_pct")) < 0]
+        outliers = sorted(replay_rows, key=lambda r: abs(_to_float(r.get("actual_return_pct")) - (_avg(actual_vals) or 0.0)), reverse=True)[:8]
+        avg_actual = replay.get("average_actual_return") if replay.get("average_actual_return") not in (None, "") else _avg(actual_vals)
+        avg_best = replay.get("average_best_counterfactual_return") if replay.get("average_best_counterfactual_return") not in (None, "") else _avg(best_vals)
+        avg_improvement = replay.get("average_counterfactual_improvement") if replay.get("average_counterfactual_improvement") not in (None, "") else _avg(improvement_vals)
+        conflict = bool(avg_actual is not None and avg_best is not None and abs(_to_float(avg_best) - _to_float(avg_actual)) >= 5.0)
+        diagnostics = {
+            "average_actual_return": avg_actual,
+            "average_best_counterfactual_return": avg_best,
+            "average_counterfactual_improvement": avg_improvement,
+            "replay_actual_avg_source": replay.get("replay_actual_avg_source") or "trade_lifecycle_current_or_exit_profit_pct",
+            "replay_best_virtual_source": replay.get("replay_best_virtual_source") or "shadow_counterfactual_paths_from_mfe_mae_giveback",
+            "replay_scope_label": replay.get("replay_scope_label") or "active_and_closed_lifecycle_rows_shadow_counterfactual",
+            "replay_closed_only": bool(replay.get("replay_closed_only", False)),
+            "replay_open_included": bool(replay.get("replay_open_included", True)),
+            "replay_outlier_symbols": [_text(r.get("symbol"), "unknown") for r in outliers if _text(r.get("symbol"))],
+            "replay_negative_return_drivers": dict(Counter(_text(r.get("symbol"), "unknown") for r in negative).most_common(8)),
+        }
+        issue = _issue(
+            "scope_conflict_not_core_metric_failure" if conflict else "no_material_replay_conflict",
+            "replay_compares_actual_to_best_virtual_paths_not_core_closed_performance" if conflict else "replay_and_core_difference_within_current_band",
+            "medium" if conflict else "low",
+            len(replay_rows),
+            "Show replay as counterfactual profit-capture learning, not as the Core Performance source.",
+            "Use for shadow-only exit/profit-capture review.",
+        )
+        return diagnostics, issue
 
     def status(self, *, sources: dict[str, Any] | None = None, force: bool = False) -> dict[str, Any]:
         start = time.perf_counter()
@@ -415,13 +569,19 @@ class LearningIssueAuditV1:
         follow_diag, follow_issue = self._follow_through(lifecycle_rows)
         buy_diag, buy_issue = self._buy_purity(candidate_rows, statuses.get("advanced_learning_intelligence") or {})
         exit_diag, exit_issue = self._exit_quality(lifecycle_rows)
+        core_diag, core_issue = self._core_metric_source(statuses)
+        dataset_diag, dataset_issue = self._dataset_scope(lifecycle_rows, profit_rows, replay_rows, statuses)
+        replay_diag, replay_issue = self._replay_conflict(replay_rows, statuses)
         issue_status = {
+            "core_metric_source_regression": core_issue,
+            "dataset_scope_mismatch": dataset_issue,
             "opportunity_cost": opp_issue,
             "execution_participation": exec_issue,
             "profit_capture": profit_issue,
             "follow_through_continuation": follow_issue,
             "buy_purity": buy_issue,
             "exit_quality": exit_issue,
+            "replay_conflict": replay_issue,
         }
         medium_or_higher = [name for name, issue in issue_status.items() if issue.get("severity") in {"medium", "high"}]
         out = {
@@ -430,12 +590,21 @@ class LearningIssueAuditV1:
             "mode": "paper_only_learning_issue_audit",
             "generated_at": _now_iso(),
             "issue_status": issue_status,
+            "core_metric_source_regression_status": core_issue,
+            "dataset_scope_mismatch_status": dataset_issue,
+            "profit_capture_issue_status": profit_issue,
+            "exit_quality_issue_status": exit_issue,
+            "replay_conflict_status": replay_issue,
+            "execution_participation_display_status": exec_issue,
+            "core_metric_source_diagnostics": core_diag,
+            "dataset_scope_diagnostics": dataset_diag,
             "opportunity_cost_diagnostics": opp_diag,
             "execution_participation_diagnostics": exec_diag,
             "profit_capture_diagnostics": profit_diag,
             "follow_through_diagnostics": follow_diag,
             "buy_purity_diagnostics": buy_diag,
             "exit_quality_diagnostics": exit_diag,
+            "replay_conflict_diagnostics": replay_diag,
             "likely_cause_summary": ", ".join(medium_or_higher) if medium_or_higher else "no_behavior_change_indicated",
             "recommended_action": "Apply display/source reconciliation and keep behavior changes shadow-only.",
             "safe_to_change_behavior": False,
