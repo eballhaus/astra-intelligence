@@ -573,6 +573,7 @@ class LearningIssueAuditV1:
         dataset_diag, dataset_issue = self._dataset_scope(lifecycle_rows, profit_rows, replay_rows, statuses)
         replay_diag, replay_issue = self._replay_conflict(replay_rows, statuses)
         v3 = dict(statuses.get("adaptive_execution_exit_intelligence_v3") or {})
+        exit_learning = dict(statuses.get("exit_learning_expansion_suite_v1") or {})
         v3_issue = _issue(
             "shadow_exit_learning_active" if v3.get("enabled") else "shadow_exit_learning_unavailable",
             "adaptive_execution_exit_v3_tracks_profit_capture_horizon_and_peak_decay" if v3.get("enabled") else "adaptive_execution_exit_v3_not_available",
@@ -580,6 +581,14 @@ class LearningIssueAuditV1:
             _to_int(v3.get("tracked_trades"), 0),
             "Use V3 for shadow-only profit capture and horizon diagnostics; do not auto-apply exits.",
             _text(v3.get("shadow_only_recommendation"), "No behavior change."),
+        )
+        exit_learning_issue = _issue(
+            "exit_learning_expansion_active" if exit_learning.get("enabled") else "exit_learning_expansion_unavailable",
+            "partial_exit_time_of_day_personality_hold_and_profit_decay_learning_active" if exit_learning.get("enabled") else "exit_learning_expansion_not_available",
+            "medium" if exit_learning.get("enabled") and _to_float(exit_learning.get("protect_profit_score"), 0.0) >= 45.0 else "low",
+            _to_int(exit_learning.get("tracked_trades"), 0),
+            "Use the expansion suite for shadow-only partial-exit, time-window, personality, holding-time, and decay review.",
+            _text(exit_learning.get("shadow_exit_learning_recommendation"), "No behavior change."),
         )
         issue_status = {
             "core_metric_source_regression": core_issue,
@@ -592,6 +601,7 @@ class LearningIssueAuditV1:
             "exit_quality": exit_issue,
             "replay_conflict": replay_issue,
             "adaptive_execution_exit_v3": v3_issue,
+            "exit_learning_expansion_suite_v1": exit_learning_issue,
         }
         medium_or_higher = [name for name, issue in issue_status.items() if issue.get("severity") in {"medium", "high"}]
         out = {
@@ -606,6 +616,7 @@ class LearningIssueAuditV1:
             "exit_quality_issue_status": exit_issue,
             "replay_conflict_status": replay_issue,
             "adaptive_execution_exit_v3_status": v3_issue,
+            "exit_learning_expansion_status": exit_learning_issue,
             "execution_participation_display_status": exec_issue,
             "core_metric_source_diagnostics": core_diag,
             "dataset_scope_diagnostics": dataset_diag,
@@ -628,6 +639,23 @@ class LearningIssueAuditV1:
                 "shadow_exit_bias": v3.get("shadow_exit_bias"),
                 "shadow_only_recommendation": v3.get("shadow_only_recommendation"),
                 "behavior_safe_to_apply": bool(v3.get("behavior_safe_to_apply", False)),
+            },
+            "exit_learning_expansion_diagnostics": {
+                "tracked_trades": exit_learning.get("tracked_trades"),
+                "best_partial_exit_variant": exit_learning.get("best_partial_exit_variant"),
+                "partial_exit_profit_delta": exit_learning.get("partial_exit_profit_delta"),
+                "partial_exit_capture_improvement": exit_learning.get("partial_exit_capture_improvement"),
+                "best_profit_window": exit_learning.get("best_profit_window"),
+                "highest_giveback_window": exit_learning.get("highest_giveback_window"),
+                "dominant_trade_personality": exit_learning.get("dominant_trade_personality"),
+                "weakest_trade_personality": exit_learning.get("weakest_trade_personality"),
+                "best_hold_window": exit_learning.get("best_hold_window"),
+                "highest_decay_milestone": exit_learning.get("highest_decay_milestone"),
+                "protect_profit_score": exit_learning.get("protect_profit_score"),
+                "hold_longer_score": exit_learning.get("hold_longer_score"),
+                "continuation_after_profit_score": exit_learning.get("continuation_after_profit_score"),
+                "shadow_exit_learning_recommendation": exit_learning.get("shadow_exit_learning_recommendation"),
+                "behavior_safe_to_apply": bool(exit_learning.get("behavior_safe_to_apply", False)),
             },
             "likely_cause_summary": ", ".join(medium_or_higher) if medium_or_higher else "no_behavior_change_indicated",
             "recommended_action": "Apply display/source reconciliation and keep behavior changes shadow-only.",

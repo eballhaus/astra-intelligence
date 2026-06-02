@@ -144,6 +144,7 @@ export default function LearningTab({ compact = false }) {
   const [showTradeLifecycleExcursionDetails, setShowTradeLifecycleExcursionDetails] = useState(false);
   const [showAdaptiveProfitCaptureDetails, setShowAdaptiveProfitCaptureDetails] = useState(false);
   const [showAdaptiveExitV3Details, setShowAdaptiveExitV3Details] = useState(false);
+  const [showExitLearningExpansionDetails, setShowExitLearningExpansionDetails] = useState(false);
   const [showTradeArchetypeRegimeDetails, setShowTradeArchetypeRegimeDetails] = useState(false);
   const [showReplayCounterfactualDetails, setShowReplayCounterfactualDetails] = useState(false);
   const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
@@ -1576,6 +1577,7 @@ export default function LearningTab({ compact = false }) {
   const tradeLifecycleExcursion = unified?.trade_lifecycle_excursion_v2 || unified?.trade_lifecycle_excursion || {};
   const adaptiveProfitCapture = unified?.adaptive_profit_capture_intelligence || {};
   const adaptiveExecutionExitV3 = unified?.adaptive_execution_exit_intelligence_v3 || {};
+  const exitLearningExpansion = unified?.exit_learning_expansion_suite_v1 || {};
   const tradeArchetypeRegime = unified?.trade_archetype_regime_intelligence || {};
   const replayCounterfactual = unified?.replay_counterfactual_learning_v2 || {};
   const opportunityCostLearning = unified?.opportunity_cost_learning || {};
@@ -2021,6 +2023,117 @@ export default function LearningTab({ compact = false }) {
               ))}
               <div>Behavior safe to apply: {adaptiveExecutionExitV3?.behavior_safe_to_apply ? "yes" : "no"}</div>
               <div>Forced exits: {adaptiveExecutionExitV3?.forced_exits_enabled ? "enabled" : "disabled"}</div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Exit Learning Expansion Suite V1</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is studying whether winners should be held, partially protected, or exited sooner based on time of day, trade personality, holding time, and profit decay. This is shadow-only learning and does not change trading behavior yet.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowExitLearningExpansionDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showExitLearningExpansionDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Tracked trades", safeNumber(exitLearningExpansion?.tracked_trades).toFixed(0)],
+            ["Best partial variant", exitLearningExpansion?.best_partial_exit_variant],
+            ["Partial delta", exitLearningExpansion?.partial_exit_profit_delta === null || exitLearningExpansion?.partial_exit_profit_delta === undefined ? "warming up" : `${safeNumber(exitLearningExpansion?.partial_exit_profit_delta).toFixed(2)}%`],
+            ["Best profit window", exitLearningExpansion?.best_profit_window],
+            ["Highest giveback window", exitLearningExpansion?.highest_giveback_window],
+            ["Dominant personality", exitLearningExpansion?.dominant_trade_personality],
+            ["Weakest personality", exitLearningExpansion?.weakest_trade_personality],
+            ["Best hold window", exitLearningExpansion?.best_hold_window],
+            ["Highest decay milestone", exitLearningExpansion?.highest_decay_milestone],
+            ["Protect profit score", exitLearningExpansion?.protect_profit_score === null || exitLearningExpansion?.protect_profit_score === undefined ? "warming up" : safeNumber(exitLearningExpansion?.protect_profit_score).toFixed(1)],
+            ["Hold longer score", exitLearningExpansion?.hold_longer_score === null || exitLearningExpansion?.hold_longer_score === undefined ? "warming up" : safeNumber(exitLearningExpansion?.hold_longer_score).toFixed(1)],
+            ["Continuation after profit", exitLearningExpansion?.continuation_after_profit_score === null || exitLearningExpansion?.continuation_after_profit_score === undefined ? "warming up" : safeNumber(exitLearningExpansion?.continuation_after_profit_score).toFixed(1)],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(exitLearningExpansion?.shadow_exit_learning_recommendation || "Collecting partial-exit and decay evidence.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showExitLearningExpansionDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Partial Exit Learning</div>
+              <div>Best variant: {String(exitLearningExpansion?.best_partial_exit_variant || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Profit delta: {safeNumber(exitLearningExpansion?.partial_exit_profit_delta).toFixed(2)}%</div>
+              <div>Capture improvement: {(safeNumber(exitLearningExpansion?.partial_exit_capture_improvement) * 100).toFixed(1)}%</div>
+              <div>Confidence: {safeNumber(exitLearningExpansion?.partial_exit_confidence).toFixed(1)}</div>
+              <div>Recommendation: {String(exitLearningExpansion?.partial_exit_recommendation || "shadow review only").replaceAll("_", " ")}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Time-of-Day Learning</div>
+              <div>First 15 min: {fmtPct(exitLearningExpansion?.first_15_min_return)}</div>
+              <div>First 30 min: {fmtPct(exitLearningExpansion?.first_30_min_return)}</div>
+              <div>First 60 min: {fmtPct(exitLearningExpansion?.first_60_min_return)}</div>
+              <div>Lunch period: {fmtPct(exitLearningExpansion?.lunch_period_return)}</div>
+              <div>Power hour: {fmtPct(exitLearningExpansion?.power_hour_return)}</div>
+              <div>Overnight: {fmtPct(exitLearningExpansion?.overnight_return)}</div>
+              <div>Exit bias: {String(exitLearningExpansion?.time_of_day_exit_bias || "insufficient data").replaceAll("_", " ")}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Trade Personality</div>
+              {Object.entries(exitLearningExpansion?.trade_personality_distribution || {}).slice(0, 6).map(([name, count]) => (
+                <div key={name}>{String(name).replaceAll("_", " ")}: {safeNumber(count).toFixed(0)}</div>
+              ))}
+              {Object.keys(exitLearningExpansion?.trade_personality_distribution || {}).length === 0 ? (
+                <div>Personality evidence is warming up.</div>
+              ) : null}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Holding-Time Optimization</div>
+              <div>Avg profitable hold: {safeNumber(exitLearningExpansion?.avg_profitable_hold_time).toFixed(1)} min</div>
+              <div>Median profitable hold: {safeNumber(exitLearningExpansion?.median_profitable_hold_time).toFixed(1)} min</div>
+              <div>Optimal window: {String(exitLearningExpansion?.optimal_hold_window || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Hold too short: {safeNumber(exitLearningExpansion?.hold_too_short_count).toFixed(0)}</div>
+              <div>Hold too long: {safeNumber(exitLearningExpansion?.hold_too_long_count).toFixed(0)}</div>
+              <div>Confidence: {safeNumber(exitLearningExpansion?.holding_time_confidence).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Profit Decay Curve</div>
+              <div>Highest decay milestone: {String(exitLearningExpansion?.highest_decay_milestone || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Decay risk: {safeNumber(exitLearningExpansion?.profit_decay_risk).toFixed(1)}</div>
+              <div>Milestone bias: {String(exitLearningExpansion?.milestone_exit_bias || "insufficient data").replaceAll("_", " ")}</div>
+              {Object.entries(exitLearningExpansion?.milestone_stats || {}).slice(0, 4).map(([name, row]) => (
+                <div key={name}>
+                  {String(name).replaceAll("_", " ")}: decay {safeNumber(row?.decay_probability).toFixed(1)}% | continuation {safeNumber(row?.continuation_probability).toFixed(1)}%
+                </div>
+              ))}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Safety</div>
+              <div>Behavior safe to apply: {exitLearningExpansion?.behavior_safe_to_apply ? "yes" : "no"}</div>
+              <div>Auto apply: {exitLearningExpansion?.auto_apply_allowed ? "yes" : "no"}</div>
+              <div>Partial sells: {exitLearningExpansion?.partial_sells_enabled ? "enabled" : "disabled"}</div>
+              <div>Forced exits: {exitLearningExpansion?.forced_exits_enabled ? "enabled" : "disabled"}</div>
+              <div>Trailing stops: {exitLearningExpansion?.automatic_trailing_stops_enabled ? "enabled" : "disabled"}</div>
             </div>
           </div>
         ) : null}

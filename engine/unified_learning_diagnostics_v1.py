@@ -282,6 +282,7 @@ class UnifiedLearningDiagnosticsV1:
         trade_lifecycle_excursion_v2 = self._trade_lifecycle_excursion_v2_summary(statuses.get("trade_lifecycle_excursion_v2") or {})
         adaptive_profit_capture = self._adaptive_profit_capture_summary(statuses.get("adaptive_profit_capture") or {})
         adaptive_execution_exit_v3 = self._adaptive_execution_exit_v3_summary(statuses.get("adaptive_execution_exit_intelligence_v3") or {})
+        exit_learning_expansion = self._exit_learning_expansion_summary(statuses.get("exit_learning_expansion_suite_v1") or {})
         trade_archetype_regime = self._trade_archetype_regime_summary(statuses.get("trade_archetype_regime") or {})
         replay_counterfactual_learning_v2 = self._replay_counterfactual_learning_v2_summary(statuses.get("replay_counterfactual_learning_v2") or {})
         opportunity_cost_learning = self._opportunity_cost_learning_summary(statuses.get("opportunity_cost_learning") or {})
@@ -312,6 +313,7 @@ class UnifiedLearningDiagnosticsV1:
             "trade_lifecycle_excursion_v2": trade_lifecycle_excursion_v2,
             "adaptive_profit_capture_intelligence": adaptive_profit_capture,
             "adaptive_execution_exit_intelligence_v3": adaptive_execution_exit_v3,
+            "exit_learning_expansion_suite_v1": exit_learning_expansion,
             "trade_archetype_regime_intelligence": trade_archetype_regime,
             "replay_counterfactual_learning_v2": replay_counterfactual_learning_v2,
             "opportunity_cost_learning": opportunity_cost_learning,
@@ -965,6 +967,83 @@ class UnifiedLearningDiagnosticsV1:
             "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
         }
 
+    def _exit_learning_expansion_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_exit_learning_expansion"),
+            "tracked_trades": _to_int(data.get("tracked_trades"), 0),
+            "best_partial_exit_variant": _text(data.get("best_partial_exit_variant"), "insufficient_data"),
+            "partial_exit_profit_delta": data.get("partial_exit_profit_delta"),
+            "partial_exit_capture_improvement": data.get("partial_exit_capture_improvement"),
+            "partial_exit_confidence": data.get("partial_exit_confidence"),
+            "partial_exit_recommendation": _text(data.get("partial_exit_recommendation"), "shadow_review_only"),
+            "first_15_min_return": data.get("first_15_min_return"),
+            "first_30_min_return": data.get("first_30_min_return"),
+            "first_60_min_return": data.get("first_60_min_return"),
+            "lunch_period_return": data.get("lunch_period_return"),
+            "power_hour_return": data.get("power_hour_return"),
+            "overnight_return": data.get("overnight_return"),
+            "time_to_peak": data.get("time_to_peak"),
+            "time_of_peak": _text(data.get("time_of_peak"), "insufficient_data"),
+            "best_time_window": _text(data.get("best_time_window"), "insufficient_data"),
+            "weakest_time_window": _text(data.get("weakest_time_window"), "insufficient_data"),
+            "time_window_by_horizon": dict(data.get("time_window_by_horizon") or {}),
+            "time_window_by_archetype": dict(data.get("time_window_by_archetype") or {}),
+            "time_window_by_regime": dict(data.get("time_window_by_regime") or {}),
+            "best_profit_window": _text(data.get("best_profit_window"), "insufficient_data"),
+            "highest_giveback_window": _text(data.get("highest_giveback_window"), "insufficient_data"),
+            "best_entry_to_exit_window": _text(data.get("best_entry_to_exit_window"), "insufficient_data"),
+            "time_of_day_exit_bias": _text(data.get("time_of_day_exit_bias"), "insufficient_data"),
+            "dominant_trade_personality": _text(data.get("dominant_trade_personality"), "insufficient_evidence"),
+            "weakest_trade_personality": _text(data.get("weakest_trade_personality"), "insufficient_evidence"),
+            "trade_personality_distribution": dict(data.get("trade_personality_distribution") or {}),
+            "personality_best_exit_style": dict(data.get("personality_best_exit_style") or {}),
+            "personality_giveback_risk": dict(data.get("personality_giveback_risk") or {}),
+            "personality_hold_score": dict(data.get("personality_hold_score") or {}),
+            "personality_profit_protection_score": dict(data.get("personality_profit_protection_score") or {}),
+            "avg_profitable_hold_time": data.get("avg_profitable_hold_time"),
+            "median_profitable_hold_time": data.get("median_profitable_hold_time"),
+            "best_hold_duration": data.get("best_hold_duration"),
+            "worst_hold_duration": data.get("worst_hold_duration"),
+            "time_after_peak_before_decay": data.get("time_after_peak_before_decay"),
+            "optimal_hold_window": _text(data.get("optimal_hold_window"), "insufficient_data"),
+            "best_hold_window": _text(data.get("best_hold_window"), "insufficient_data"),
+            "hold_too_short_count": _to_int(data.get("hold_too_short_count"), 0),
+            "hold_too_long_count": _to_int(data.get("hold_too_long_count"), 0),
+            "hold_longer_supported": bool(data.get("hold_longer_supported", False)),
+            "exit_sooner_supported": bool(data.get("exit_sooner_supported", False)),
+            "holding_time_confidence": data.get("holding_time_confidence"),
+            "milestone_stats": dict(data.get("milestone_stats") or {}),
+            "highest_decay_milestone": _text(data.get("highest_decay_milestone"), "insufficient_data"),
+            "profit_decay_risk": data.get("profit_decay_risk"),
+            "continuation_after_profit_score": data.get("continuation_after_profit_score"),
+            "protect_profit_score": data.get("protect_profit_score"),
+            "hold_longer_score": data.get("hold_longer_score"),
+            "milestone_exit_bias": _text(data.get("milestone_exit_bias"), "insufficient_data"),
+            "shadow_exit_learning_recommendation": _text(data.get("shadow_exit_learning_recommendation"), "insufficient_data"),
+            "summary": _text(
+                data.get("summary"),
+                "Astra is studying partial exits, time-of-day behavior, trade personality, holding time, and profit decay without changing trading behavior.",
+            ),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+            "human_review_required": bool(data.get("human_review_required", True)),
+            "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "partial_sells_enabled": bool(data.get("partial_sells_enabled", False)),
+            "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
+        }
+
     def _trade_archetype_regime_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -1587,7 +1666,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
             "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "adaptive_execution_exit_intelligence_v3", "trade_archetype_regime",
-            "replay_counterfactual_learning_v2", "opportunity_cost_learning",
+            "exit_learning_expansion_suite_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
             "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
             "execution_participation_audit",
@@ -1627,6 +1706,7 @@ class UnifiedLearningDiagnosticsV1:
             "trade_lifecycle_excursion_v2": "/api/trade_lifecycle_excursion_v2_status",
             "adaptive_profit_capture": "/api/adaptive_profit_capture_status_v1",
             "adaptive_execution_exit_intelligence_v3": "/api/adaptive_execution_exit_intelligence_v3",
+            "exit_learning_expansion_suite_v1": "/api/exit_learning_expansion_suite_v1",
             "trade_archetype_regime": "/api/trade_archetype_regime_status_v1",
             "replay_counterfactual_learning_v2": "/api/replay_counterfactual_learning_v2_status",
             "opportunity_cost_learning": "/api/opportunity_cost_learning_status_v1",
