@@ -572,6 +572,15 @@ class LearningIssueAuditV1:
         core_diag, core_issue = self._core_metric_source(statuses)
         dataset_diag, dataset_issue = self._dataset_scope(lifecycle_rows, profit_rows, replay_rows, statuses)
         replay_diag, replay_issue = self._replay_conflict(replay_rows, statuses)
+        v3 = dict(statuses.get("adaptive_execution_exit_intelligence_v3") or {})
+        v3_issue = _issue(
+            "shadow_exit_learning_active" if v3.get("enabled") else "shadow_exit_learning_unavailable",
+            "adaptive_execution_exit_v3_tracks_profit_capture_horizon_and_peak_decay" if v3.get("enabled") else "adaptive_execution_exit_v3_not_available",
+            "medium" if v3.get("enabled") and _to_float(v3.get("protect_profit_score"), 0.0) >= 45.0 else "low",
+            _to_int(v3.get("tracked_trades"), 0),
+            "Use V3 for shadow-only profit capture and horizon diagnostics; do not auto-apply exits.",
+            _text(v3.get("shadow_only_recommendation"), "No behavior change."),
+        )
         issue_status = {
             "core_metric_source_regression": core_issue,
             "dataset_scope_mismatch": dataset_issue,
@@ -582,6 +591,7 @@ class LearningIssueAuditV1:
             "buy_purity": buy_issue,
             "exit_quality": exit_issue,
             "replay_conflict": replay_issue,
+            "adaptive_execution_exit_v3": v3_issue,
         }
         medium_or_higher = [name for name, issue in issue_status.items() if issue.get("severity") in {"medium", "high"}]
         out = {
@@ -595,6 +605,7 @@ class LearningIssueAuditV1:
             "profit_capture_issue_status": profit_issue,
             "exit_quality_issue_status": exit_issue,
             "replay_conflict_status": replay_issue,
+            "adaptive_execution_exit_v3_status": v3_issue,
             "execution_participation_display_status": exec_issue,
             "core_metric_source_diagnostics": core_diag,
             "dataset_scope_diagnostics": dataset_diag,
@@ -605,6 +616,19 @@ class LearningIssueAuditV1:
             "buy_purity_diagnostics": buy_diag,
             "exit_quality_diagnostics": exit_diag,
             "replay_conflict_diagnostics": replay_diag,
+            "adaptive_execution_exit_v3_diagnostics": {
+                "profit_capture_score": v3.get("profit_capture_score"),
+                "avg_giveback": v3.get("avg_giveback"),
+                "avg_capture_ratio": v3.get("avg_capture_ratio"),
+                "most_profitable_horizon": v3.get("most_profitable_horizon"),
+                "highest_giveback_horizon": v3.get("highest_giveback_horizon"),
+                "protect_profit_score": v3.get("protect_profit_score"),
+                "hold_longer_score": v3.get("hold_longer_score"),
+                "continuation_probability": v3.get("continuation_probability"),
+                "shadow_exit_bias": v3.get("shadow_exit_bias"),
+                "shadow_only_recommendation": v3.get("shadow_only_recommendation"),
+                "behavior_safe_to_apply": bool(v3.get("behavior_safe_to_apply", False)),
+            },
             "likely_cause_summary": ", ".join(medium_or_higher) if medium_or_higher else "no_behavior_change_indicated",
             "recommended_action": "Apply display/source reconciliation and keep behavior changes shadow-only.",
             "safe_to_change_behavior": False,

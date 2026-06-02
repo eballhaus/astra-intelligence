@@ -716,6 +716,32 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.adaptive_execution_exit_intelligence_v3 import AdaptiveExecutionExitIntelligenceV3
+except Exception:
+    class AdaptiveExecutionExitIntelligenceV3:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "3.0.0",
+                "mode": "paper_only_shadow_exit_learning",
+                "tracked_trades": 0,
+                "profit_capture_score": None,
+                "avg_giveback": None,
+                "avg_capture_ratio": None,
+                "shadow_only_recommendation": "unavailable",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_trades_enabled": False,
+                "forced_exits_enabled": False,
+            }
+try:
     from engine.trade_archetype_regime_intelligence_v1 import TradeArchetypeRegimeIntelligenceV1
 except Exception:
     class TradeArchetypeRegimeIntelligenceV1:  # type: ignore[override]
@@ -1393,6 +1419,7 @@ BROAD_UNIVERSE_INTAKE_PROMOTION = BroadUniverseIntakePromotionV1(state_dir=STATE
 TRADE_LIFECYCLE_EXCURSION = TradeLifecycleExcursionV1(state_dir=STATE)
 TRADE_LIFECYCLE_EXCURSION_V2 = TradeLifecycleExcursionV2(state_dir=STATE)
 ADAPTIVE_PROFIT_CAPTURE_INTELLIGENCE = AdaptiveProfitCaptureIntelligenceV1(state_dir=STATE)
+ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V3 = AdaptiveExecutionExitIntelligenceV3(state_dir=STATE)
 TRADE_ARCHETYPE_REGIME_INTELLIGENCE = TradeArchetypeRegimeIntelligenceV1(state_dir=STATE)
 REPLAY_COUNTERFACTUAL_LEARNING_V2 = ReplayCounterfactualLearningV2(state_dir=STATE)
 OPPORTUNITY_COST_LEARNING = OpportunityCostLearningV1(state_dir=STATE)
@@ -39642,6 +39669,53 @@ def adaptive_profit_capture_status_v1(force: bool = False):
         }
 
 
+@router.get("/api/adaptive_execution_exit_intelligence_v3")
+def adaptive_execution_exit_intelligence_v3(force: bool = False):
+    try:
+        out = dict(ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V3.status(force=bool(force)) or {})
+        out["adaptive_execution_exit_intelligence_v3"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        out["automatic_profit_taking_enabled"] = False
+        out["automatic_trailing_stops_enabled"] = False
+        out["auto_apply_allowed"] = False
+        out["human_review_required"] = True
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "3.0.0",
+            "mode": "paper_only_shadow_exit_learning",
+            "adaptive_execution_exit_intelligence_v3": True,
+            "tracked_trades": 0,
+            "profit_capture_score": None,
+            "avg_giveback": None,
+            "avg_capture_ratio": None,
+            "most_profitable_horizon": "insufficient_data",
+            "shadow_only_recommendation": "unavailable",
+            "degraded_reason": f"adaptive_execution_exit_intelligence_v3_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "build_ms": 0.0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+            "automatic_profit_taking_enabled": False,
+            "automatic_trailing_stops_enabled": False,
+            "auto_apply_allowed": False,
+            "human_review_required": True,
+        }
+
+
 @router.get("/api/trade_archetype_regime_status_v1")
 def trade_archetype_regime_status_v1(force: bool = False):
     try:
@@ -39879,6 +39953,10 @@ def learning_issue_audit_status_v1(force: bool = False):
             statuses["replay_counterfactual_learning_v2"] = REPLAY_COUNTERFACTUAL_LEARNING_V2.status(force=False)
         except Exception:
             statuses["replay_counterfactual_learning_v2"] = {}
+        try:
+            statuses["adaptive_execution_exit_intelligence_v3"] = ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V3.status(force=False)
+        except Exception:
+            statuses["adaptive_execution_exit_intelligence_v3"] = {}
         try:
             statuses["opportunity_cost_learning"] = OPPORTUNITY_COST_LEARNING.status(force=False)
         except Exception:
@@ -48277,6 +48355,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("trade_lifecycle_excursion", lambda: TRADE_LIFECYCLE_EXCURSION.status(force=False))
         _safe_status("trade_lifecycle_excursion_v2", lambda: TRADE_LIFECYCLE_EXCURSION_V2.status(force=False))
         _safe_status("adaptive_profit_capture", lambda: ADAPTIVE_PROFIT_CAPTURE_INTELLIGENCE.status(force=False))
+        _safe_status("adaptive_execution_exit_intelligence_v3", lambda: ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V3.status(force=False))
         _safe_status("trade_archetype_regime", lambda: TRADE_ARCHETYPE_REGIME_INTELLIGENCE.status(force=False))
         _safe_status("replay_counterfactual_learning_v2", lambda: REPLAY_COUNTERFACTUAL_LEARNING_V2.status(force=False))
         _safe_status("opportunity_cost_learning", lambda: OPPORTUNITY_COST_LEARNING.status(force=False))

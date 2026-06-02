@@ -281,6 +281,7 @@ class UnifiedLearningDiagnosticsV1:
         trade_lifecycle_excursion = self._trade_lifecycle_excursion_summary(statuses.get("trade_lifecycle_excursion") or {})
         trade_lifecycle_excursion_v2 = self._trade_lifecycle_excursion_v2_summary(statuses.get("trade_lifecycle_excursion_v2") or {})
         adaptive_profit_capture = self._adaptive_profit_capture_summary(statuses.get("adaptive_profit_capture") or {})
+        adaptive_execution_exit_v3 = self._adaptive_execution_exit_v3_summary(statuses.get("adaptive_execution_exit_intelligence_v3") or {})
         trade_archetype_regime = self._trade_archetype_regime_summary(statuses.get("trade_archetype_regime") or {})
         replay_counterfactual_learning_v2 = self._replay_counterfactual_learning_v2_summary(statuses.get("replay_counterfactual_learning_v2") or {})
         opportunity_cost_learning = self._opportunity_cost_learning_summary(statuses.get("opportunity_cost_learning") or {})
@@ -310,6 +311,7 @@ class UnifiedLearningDiagnosticsV1:
             "trade_lifecycle_excursion": trade_lifecycle_excursion,
             "trade_lifecycle_excursion_v2": trade_lifecycle_excursion_v2,
             "adaptive_profit_capture_intelligence": adaptive_profit_capture,
+            "adaptive_execution_exit_intelligence_v3": adaptive_execution_exit_v3,
             "trade_archetype_regime_intelligence": trade_archetype_regime,
             "replay_counterfactual_learning_v2": replay_counterfactual_learning_v2,
             "opportunity_cost_learning": opportunity_cost_learning,
@@ -896,6 +898,73 @@ class UnifiedLearningDiagnosticsV1:
             "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
         }
 
+    def _adaptive_execution_exit_v3_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "3.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_shadow_exit_learning"),
+            "tracked_trades": _to_int(data.get("tracked_trades"), 0),
+            "closed_trades_reviewed": _to_int(data.get("closed_trades_reviewed"), 0),
+            "open_trades_reviewed": _to_int(data.get("open_trades_reviewed"), 0),
+            "profit_capture_score": data.get("profit_capture_score"),
+            "avg_peak_gain": data.get("avg_peak_gain"),
+            "avg_exit_gain": data.get("avg_exit_gain"),
+            "avg_current_gain": data.get("avg_current_gain"),
+            "avg_giveback": data.get("avg_giveback"),
+            "median_giveback": data.get("median_giveback"),
+            "avg_capture_ratio": data.get("avg_capture_ratio"),
+            "capture_ratio": data.get("capture_ratio"),
+            "capture_ratio_by_horizon": dict(data.get("capture_ratio_by_horizon") or {}),
+            "capture_ratio_by_archetype": dict(data.get("capture_ratio_by_archetype") or {}),
+            "capture_ratio_by_regime": dict(data.get("capture_ratio_by_regime") or {}),
+            "worst_giveback_symbols": list(data.get("worst_giveback_symbols") or [])[:8],
+            "best_capture_symbols": list(data.get("best_capture_symbols") or [])[:8],
+            "open_vs_closed_capture": dict(data.get("open_vs_closed_capture") or {}),
+            "strongest_exit_context": _text(data.get("strongest_exit_context"), "insufficient_data"),
+            "weakest_exit_context": _text(data.get("weakest_exit_context"), "insufficient_data"),
+            "biggest_giveback_context": _text(data.get("biggest_giveback_context"), "insufficient_data"),
+            "best_profit_retention_context": _text(data.get("best_profit_retention_context"), "insufficient_data"),
+            "protect_gains_sooner_context": _text(data.get("protect_gains_sooner_context"), "insufficient_data"),
+            "hold_longer_context": _text(data.get("hold_longer_context"), "insufficient_data"),
+            "horizon_profitability": dict(data.get("horizon_profitability") or {}),
+            "most_profitable_horizon": _text(data.get("most_profitable_horizon"), "insufficient_data"),
+            "safest_horizon": _text(data.get("safest_horizon"), "insufficient_data"),
+            "highest_frequency_horizon": _text(data.get("highest_frequency_horizon"), "insufficient_data"),
+            "highest_giveback_horizon": _text(data.get("highest_giveback_horizon"), "insufficient_data"),
+            "best_risk_adjusted_horizon": _text(data.get("best_risk_adjusted_horizon"), "insufficient_data"),
+            "horizon_allocation_recommendation": _text(data.get("horizon_allocation_recommendation"), "insufficient_data"),
+            "continued_after_profit_count": _to_int(data.get("continued_after_profit_count"), 0),
+            "faded_after_profit_count": _to_int(data.get("faded_after_profit_count"), 0),
+            "reversed_after_profit_count": _to_int(data.get("reversed_after_profit_count"), 0),
+            "average_time_to_peak": data.get("average_time_to_peak"),
+            "average_time_from_peak_to_exit": data.get("average_time_from_peak_to_exit"),
+            "peak_decay_rate": data.get("peak_decay_rate"),
+            "continuation_probability": data.get("continuation_probability"),
+            "peak_decay_risk": data.get("peak_decay_risk"),
+            "hold_longer_score": data.get("hold_longer_score"),
+            "protect_profit_score": data.get("protect_profit_score"),
+            "shadow_exit_bias": _text(data.get("shadow_exit_bias"), "insufficient_data"),
+            "shadow_exit_recommendations": list(data.get("shadow_exit_recommendations") or [])[:12],
+            "shadow_only_recommendation": _text(data.get("shadow_only_recommendation"), "insufficient_data"),
+            "summary": _text(data.get("summary"), "Adaptive Execution & Exit Intelligence V3 is collecting profit-capture evidence."),
+            "human_review_required": bool(data.get("human_review_required", True)),
+            "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "automatic_profit_taking_enabled": bool(data.get("automatic_profit_taking_enabled", False)),
+            "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
+        }
+
     def _trade_archetype_regime_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -1101,6 +1170,7 @@ class UnifiedLearningDiagnosticsV1:
             "profit_capture_issue_status": dict(data.get("profit_capture_issue_status") or {}),
             "exit_quality_issue_status": dict(data.get("exit_quality_issue_status") or {}),
             "replay_conflict_status": dict(data.get("replay_conflict_status") or {}),
+            "adaptive_execution_exit_v3_status": dict(data.get("adaptive_execution_exit_v3_status") or {}),
             "execution_participation_display_status": dict(data.get("execution_participation_display_status") or {}),
             "core_metric_source_diagnostics": dict(data.get("core_metric_source_diagnostics") or {}),
             "dataset_scope_diagnostics": dict(data.get("dataset_scope_diagnostics") or {}),
@@ -1111,6 +1181,7 @@ class UnifiedLearningDiagnosticsV1:
             "buy_purity_diagnostics": dict(data.get("buy_purity_diagnostics") or {}),
             "exit_quality_diagnostics": dict(data.get("exit_quality_diagnostics") or {}),
             "replay_conflict_diagnostics": dict(data.get("replay_conflict_diagnostics") or {}),
+            "adaptive_execution_exit_v3_diagnostics": dict(data.get("adaptive_execution_exit_v3_diagnostics") or {}),
             "likely_cause_summary": _text(data.get("likely_cause_summary"), "collecting_issue_evidence"),
             "recommended_action": _text(data.get("recommended_action"), "keep_behavior_changes_shadow_only"),
             "safe_to_change_behavior": bool(data.get("safe_to_change_behavior", False)),
@@ -1515,7 +1586,7 @@ class UnifiedLearningDiagnosticsV1:
             "adaptive_execution_exit_intelligence_v2", "market_session_execution_timing", "paper_opportunity_allocation",
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
-            "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "trade_archetype_regime",
+            "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "adaptive_execution_exit_intelligence_v3", "trade_archetype_regime",
             "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
             "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
@@ -1555,6 +1626,7 @@ class UnifiedLearningDiagnosticsV1:
             "trade_lifecycle_excursion": "/api/trade_lifecycle_excursion_status_v1",
             "trade_lifecycle_excursion_v2": "/api/trade_lifecycle_excursion_v2_status",
             "adaptive_profit_capture": "/api/adaptive_profit_capture_status_v1",
+            "adaptive_execution_exit_intelligence_v3": "/api/adaptive_execution_exit_intelligence_v3",
             "trade_archetype_regime": "/api/trade_archetype_regime_status_v1",
             "replay_counterfactual_learning_v2": "/api/replay_counterfactual_learning_v2_status",
             "opportunity_cost_learning": "/api/opportunity_cost_learning_status_v1",

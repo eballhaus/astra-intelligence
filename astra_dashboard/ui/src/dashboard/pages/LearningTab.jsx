@@ -143,6 +143,7 @@ export default function LearningTab({ compact = false }) {
   const [showBroadUniverseDetails, setShowBroadUniverseDetails] = useState(false);
   const [showTradeLifecycleExcursionDetails, setShowTradeLifecycleExcursionDetails] = useState(false);
   const [showAdaptiveProfitCaptureDetails, setShowAdaptiveProfitCaptureDetails] = useState(false);
+  const [showAdaptiveExitV3Details, setShowAdaptiveExitV3Details] = useState(false);
   const [showTradeArchetypeRegimeDetails, setShowTradeArchetypeRegimeDetails] = useState(false);
   const [showReplayCounterfactualDetails, setShowReplayCounterfactualDetails] = useState(false);
   const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
@@ -1574,6 +1575,7 @@ export default function LearningTab({ compact = false }) {
   const broadUniverseIntake = unified?.broad_universe_intake_promotion || {};
   const tradeLifecycleExcursion = unified?.trade_lifecycle_excursion_v2 || unified?.trade_lifecycle_excursion || {};
   const adaptiveProfitCapture = unified?.adaptive_profit_capture_intelligence || {};
+  const adaptiveExecutionExitV3 = unified?.adaptive_execution_exit_intelligence_v3 || {};
   const tradeArchetypeRegime = unified?.trade_archetype_regime_intelligence || {};
   const replayCounterfactual = unified?.replay_counterfactual_learning_v2 || {};
   const opportunityCostLearning = unified?.opportunity_cost_learning || {};
@@ -1928,6 +1930,100 @@ export default function LearningTab({ compact = false }) {
             </ResponsiveContainer>
           </ChartShell>
         </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Adaptive Execution & Exit Intelligence V3</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is finding profitable trades, but some winners are giving back too much profit before exit. This panel studies which trade types should be held longer and which should have profits protected sooner. No trading behavior is changed yet.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAdaptiveExitV3Details((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showAdaptiveExitV3Details ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Profit capture score", adaptiveExecutionExitV3?.profit_capture_score === null || adaptiveExecutionExitV3?.profit_capture_score === undefined ? "warming up" : safeNumber(adaptiveExecutionExitV3?.profit_capture_score).toFixed(1)],
+            ["Avg giveback", adaptiveExecutionExitV3?.avg_giveback === null || adaptiveExecutionExitV3?.avg_giveback === undefined ? "warming up" : `${safeNumber(adaptiveExecutionExitV3?.avg_giveback).toFixed(2)}%`],
+            ["Capture ratio", adaptiveExecutionExitV3?.capture_ratio === null || adaptiveExecutionExitV3?.capture_ratio === undefined ? "warming up" : `${(safeNumber(adaptiveExecutionExitV3?.capture_ratio) * 100).toFixed(1)}%`],
+            ["Worst giveback", (adaptiveExecutionExitV3?.worst_giveback_symbols || [])[0] || "warming up"],
+            ["Best capture", (adaptiveExecutionExitV3?.best_capture_symbols || [])[0] || "warming up"],
+            ["Best horizon", adaptiveExecutionExitV3?.most_profitable_horizon],
+            ["Weakest horizon", adaptiveExecutionExitV3?.highest_giveback_horizon],
+            ["Protect profit score", adaptiveExecutionExitV3?.protect_profit_score === null || adaptiveExecutionExitV3?.protect_profit_score === undefined ? "warming up" : safeNumber(adaptiveExecutionExitV3?.protect_profit_score).toFixed(1)],
+            ["Hold longer score", adaptiveExecutionExitV3?.hold_longer_score === null || adaptiveExecutionExitV3?.hold_longer_score === undefined ? "warming up" : safeNumber(adaptiveExecutionExitV3?.hold_longer_score).toFixed(1)],
+            ["Continuation probability", adaptiveExecutionExitV3?.continuation_probability === null || adaptiveExecutionExitV3?.continuation_probability === undefined ? "warming up" : `${safeNumber(adaptiveExecutionExitV3?.continuation_probability).toFixed(1)}%`],
+            ["Shadow bias", adaptiveExecutionExitV3?.shadow_exit_bias],
+            ["Auto apply", adaptiveExecutionExitV3?.auto_apply_allowed ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {typeof value === "number" ? value.toFixed(0) : String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Recommendation: {String(adaptiveExecutionExitV3?.shadow_only_recommendation || "Collecting shadow exit evidence.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showAdaptiveExitV3Details ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Horizon Profitability</div>
+              {Object.entries(adaptiveExecutionExitV3?.horizon_profitability || {}).slice(0, 5).map(([horizon, row]) => (
+                <div key={horizon} style={{ color: "#b8c7e6", marginBottom: 4 }}>
+                  {String(horizon).replaceAll("_", " ")}: trades {safeNumber(row?.trade_count).toFixed(0)} | WR {safeNumber(row?.win_rate).toFixed(1)}% | avg {safeNumber(row?.avg_return).toFixed(2)}% | capture {(safeNumber(row?.capture_ratio) * 100).toFixed(1)}%
+                </div>
+              ))}
+              {Object.keys(adaptiveExecutionExitV3?.horizon_profitability || {}).length === 0 ? (
+                <div style={{ color: "#b8c7e6" }}>Horizon evidence is warming up.</div>
+              ) : null}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Context Diagnostics</div>
+              <div>Strongest exit context: {String(adaptiveExecutionExitV3?.strongest_exit_context || "insufficient_data").replaceAll("_", " ")}</div>
+              <div>Weakest exit context: {String(adaptiveExecutionExitV3?.weakest_exit_context || "insufficient_data").replaceAll("_", " ")}</div>
+              <div>Biggest giveback context: {String(adaptiveExecutionExitV3?.biggest_giveback_context || "insufficient_data").replaceAll("_", " ")}</div>
+              <div>Best retention context: {String(adaptiveExecutionExitV3?.best_profit_retention_context || "insufficient_data").replaceAll("_", " ")}</div>
+              <div>Protect sooner: {String(adaptiveExecutionExitV3?.protect_gains_sooner_context || "insufficient_data").replaceAll("_", " ")}</div>
+              <div>Hold longer: {String(adaptiveExecutionExitV3?.hold_longer_context || "insufficient_data").replaceAll("_", " ")}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Peak Decay</div>
+              <div>Continued after profit: {safeNumber(adaptiveExecutionExitV3?.continued_after_profit_count).toFixed(0)}</div>
+              <div>Faded after profit: {safeNumber(adaptiveExecutionExitV3?.faded_after_profit_count).toFixed(0)}</div>
+              <div>Reversed after profit: {safeNumber(adaptiveExecutionExitV3?.reversed_after_profit_count).toFixed(0)}</div>
+              <div>Avg time to peak: {safeNumber(adaptiveExecutionExitV3?.average_time_to_peak).toFixed(1)} min</div>
+              <div>Peak decay risk: {safeNumber(adaptiveExecutionExitV3?.peak_decay_risk).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Shadow Recommendations</div>
+              {(adaptiveExecutionExitV3?.shadow_exit_recommendations || []).slice(0, 5).map((row) => (
+                <div key={`${row?.symbol}-${row?.recommendation}`} style={{ color: "#b8c7e6", marginBottom: 5 }}>
+                  {row?.symbol || "unknown"}: {String(row?.recommendation || "insufficient_evidence").replaceAll("_", " ")} | confidence {safeNumber(row?.confidence).toFixed(1)}
+                </div>
+              ))}
+              <div>Behavior safe to apply: {adaptiveExecutionExitV3?.behavior_safe_to_apply ? "yes" : "no"}</div>
+              <div>Forced exits: {adaptiveExecutionExitV3?.forced_exits_enabled ? "enabled" : "disabled"}</div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div style={{ ...panelStyle }}>
