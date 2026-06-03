@@ -398,6 +398,7 @@ class AdaptiveLearningInfrastructureSuiteV1:
             cached["build_ms"] = round((time.perf_counter() - start) * 1000.0, 3)
             return cached
         status_map = {k: dict(v) for k, v in dict(statuses or {}).items() if isinstance(v, dict)}
+        activation = status_map.get("adaptive_worker_activation_orchestration_v1") or {}
         rows = self._collect_rows()
         worker = self._worker_foundation(rows, status_map)
         orchestrator = self._orchestrator(rows, status_map)
@@ -444,6 +445,10 @@ class AdaptiveLearningInfrastructureSuiteV1:
                     "market_context_learning_suite_v1",
                 ],
             },
+            "adaptive_worker_activation_compatible": True,
+            "adaptive_worker_activation_status": _text(activation.get("orchestrator_status"), "not_loaded"),
+            "adaptive_worker_activation_focus": _text(activation.get("recommended_next_worker_focus"), "collect_more_lifecycle_evidence"),
+            "adaptive_worker_activation_active_workers": _to_int(activation.get("active_worker_count"), 0),
             "workers_started_by_dashboard": False,
             "dashboard_request_blocking": False,
             "behavior_safe_to_apply": False,

@@ -148,6 +148,7 @@ export default function LearningTab({ compact = false }) {
   const [showMarketContextLearningDetails, setShowMarketContextLearningDetails] = useState(false);
   const [showLearningAccelerationDetails, setShowLearningAccelerationDetails] = useState(false);
   const [showAdaptiveLearningInfrastructureDetails, setShowAdaptiveLearningInfrastructureDetails] = useState(false);
+  const [showAdaptiveWorkerActivationDetails, setShowAdaptiveWorkerActivationDetails] = useState(false);
   const [showTradeArchetypeRegimeDetails, setShowTradeArchetypeRegimeDetails] = useState(false);
   const [showReplayCounterfactualDetails, setShowReplayCounterfactualDetails] = useState(false);
   const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
@@ -1584,6 +1585,7 @@ export default function LearningTab({ compact = false }) {
   const marketContextLearning = unified?.market_context_learning_suite_v1 || {};
   const learningAccelerationRetention = unified?.learning_acceleration_retention_suite_v1 || {};
   const adaptiveLearningInfrastructureSuite = unified?.adaptive_learning_infrastructure_suite_v1 || {};
+  const adaptiveWorkerActivation = unified?.adaptive_worker_activation_orchestration_v1 || {};
   const tradeArchetypeRegime = unified?.trade_archetype_regime_intelligence || {};
   const replayCounterfactual = unified?.replay_counterfactual_learning_v2 || {};
   const opportunityCostLearning = unified?.opportunity_cost_learning || {};
@@ -2128,6 +2130,103 @@ export default function LearningTab({ compact = false }) {
               <div>Worker alerts: {(adaptiveLearningInfrastructureSuite?.worker_alerts || []).join(", ").replaceAll("_", " ") || "none"}</div>
               <div>Behavior safe to apply: {adaptiveLearningInfrastructureSuite?.behavior_safe_to_apply ? "yes" : "no"}</div>
               <div>Paper execution changed: {adaptiveLearningInfrastructureSuite?.paper_execution_behavior_changed ? "yes" : "no"}</div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Adaptive Worker Activation & Orchestration V1</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is coordinating learning workers that collect premarket, after-hours, open-trade, replay, and coverage-gap evidence in the background. This helps Astra learn faster without changing trading behavior.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAdaptiveWorkerActivationDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showAdaptiveWorkerActivationDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Orchestrator status", adaptiveWorkerActivation?.orchestrator_status],
+            ["Active workers", safeNumber(adaptiveWorkerActivation?.active_worker_count).toFixed(0)],
+            ["Completed jobs", safeNumber(adaptiveWorkerActivation?.completed_jobs).toFixed(0)],
+            ["Failed / skipped", `${safeNumber(adaptiveWorkerActivation?.failed_jobs).toFixed(0)} / ${safeNumber(adaptiveWorkerActivation?.skipped_jobs).toFixed(0)}`],
+            ["Queue depth", safeNumber(adaptiveWorkerActivation?.queue_depth).toFixed(0)],
+            ["API budget score", safeNumber(adaptiveWorkerActivation?.api_budget_score).toFixed(1)],
+            ["Cache hit rate", `${safeNumber(adaptiveWorkerActivation?.cache_hit_rate).toFixed(1)}%`],
+            ["Premarket worker", adaptiveWorkerActivation?.premarket_worker_status],
+            ["Open trade worker", adaptiveWorkerActivation?.open_trade_worker_status],
+            ["After-hours worker", adaptiveWorkerActivation?.after_hours_worker_status],
+            ["Replay worker", adaptiveWorkerActivation?.replay_worker_status],
+            ["Coverage worker", adaptiveWorkerActivation?.coverage_worker_status],
+            ["Next focus", adaptiveWorkerActivation?.recommended_next_worker_focus],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(adaptiveWorkerActivation?.shadow_recommendation || "Preparing cached worker activation diagnostics.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showAdaptiveWorkerActivationDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Premarket Worker</div>
+              <div>Snapshots: {safeNumber(adaptiveWorkerActivation?.snapshots_collected).toFixed(0)}</div>
+              <div>Strongest: {String(adaptiveWorkerActivation?.strongest_premarket_symbol || "warming up")}</div>
+              <div>Weakest: {String(adaptiveWorkerActivation?.weakest_premarket_symbol || "warming up")}</div>
+              <div>Confidence: {safeNumber(adaptiveWorkerActivation?.premarket_context_confidence).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Open Trade Worker</div>
+              <div>Active monitored: {safeNumber(adaptiveWorkerActivation?.active_trades_monitored).toFixed(0)}</div>
+              <div>Profit decay alerts: {safeNumber(adaptiveWorkerActivation?.profit_decay_alerts).toFixed(0)}</div>
+              <div>Strongest open: {String(adaptiveWorkerActivation?.strongest_open_trade || "warming up")}</div>
+              <div>Weakest open: {String(adaptiveWorkerActivation?.weakest_open_trade || "warming up")}</div>
+              <div>Confidence: {safeNumber(adaptiveWorkerActivation?.open_trade_learning_confidence).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>After-Hours Worker</div>
+              <div>Snapshots: {safeNumber(adaptiveWorkerActivation?.after_hours_snapshots_collected).toFixed(0)}</div>
+              <div>Strongest: {String(adaptiveWorkerActivation?.strongest_after_hours_symbol || "warming up")}</div>
+              <div>Gap-fade risk: {String(adaptiveWorkerActivation?.highest_gap_fade_risk_symbol || "warming up")}</div>
+              <div>Confidence: {safeNumber(adaptiveWorkerActivation?.after_hours_context_confidence).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Replay & Coverage</div>
+              <div>Replay jobs: {safeNumber(adaptiveWorkerActivation?.replay_jobs_completed).toFixed(0)}</div>
+              <div>Replay value: {safeNumber(adaptiveWorkerActivation?.replay_learning_value).toFixed(1)}</div>
+              <div>Replay runtime: {safeNumber(adaptiveWorkerActivation?.replay_runtime_ms).toFixed(1)}ms</div>
+              <div>Coverage targets: {(adaptiveWorkerActivation?.targeted_contexts || []).join(", ").replaceAll("_", " ") || "warming up"}</div>
+              <div>New evidence: {safeNumber(adaptiveWorkerActivation?.new_evidence_collected).toFixed(0)}</div>
+              <div>Weakest remaining: {String(adaptiveWorkerActivation?.weakest_remaining_context || "warming up").replaceAll("_", " ")}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Safety</div>
+              <div>Provider calls: {safeNumber(adaptiveWorkerActivation?.provider_calls_used).toFixed(0)}</div>
+              <div>LLM calls: {safeNumber(adaptiveWorkerActivation?.llm_calls_used).toFixed(0)}</div>
+              <div>Bounded scans: {adaptiveWorkerActivation?.bounded_scans_only === false ? "no" : "yes"}</div>
+              <div>Timeouts: {adaptiveWorkerActivation?.worker_timeouts_enabled === false ? "no" : "yes"}</div>
+              <div>Behavior safe to apply: {adaptiveWorkerActivation?.behavior_safe_to_apply ? "yes" : "no"}</div>
+              <div>Paper execution changed: {adaptiveWorkerActivation?.paper_execution_behavior_changed ? "yes" : "no"}</div>
             </div>
           </div>
         ) : null}

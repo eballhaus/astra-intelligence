@@ -577,6 +577,7 @@ class LearningIssueAuditV1:
         market_context = dict(statuses.get("market_context_learning_suite_v1") or {})
         acceleration = dict(statuses.get("learning_acceleration_retention_suite_v1") or {})
         infrastructure = dict(statuses.get("adaptive_learning_infrastructure_suite_v1") or {})
+        worker_activation = dict(statuses.get("adaptive_worker_activation_orchestration_v1") or {})
         v3_issue = _issue(
             "shadow_exit_learning_active" if v3.get("enabled") else "shadow_exit_learning_unavailable",
             "adaptive_execution_exit_v3_tracks_profit_capture_horizon_and_peak_decay" if v3.get("enabled") else "adaptive_execution_exit_v3_not_available",
@@ -617,6 +618,14 @@ class LearningIssueAuditV1:
             "Use adaptive learning infrastructure diagnostics to route future background learning work; keep trading behavior unchanged.",
             _text(infrastructure.get("shadow_recommendation"), "No behavior change."),
         )
+        worker_activation_issue = _issue(
+            "adaptive_worker_activation_active" if worker_activation.get("enabled") else "adaptive_worker_activation_unavailable",
+            "premarket_open_trade_after_hours_replay_and_coverage_workers_cached_and_shadow_only" if worker_activation.get("enabled") else "adaptive_worker_activation_not_available",
+            "medium" if worker_activation.get("enabled") and _to_int(worker_activation.get("failed_jobs"), 0) > 0 else "low",
+            _to_int(worker_activation.get("completed_jobs"), 0),
+            "Use worker activation diagnostics to collect cached evidence without dashboard blocking or trading behavior changes.",
+            _text(worker_activation.get("shadow_recommendation"), "No behavior change."),
+        )
         issue_status = {
             "core_metric_source_regression": core_issue,
             "dataset_scope_mismatch": dataset_issue,
@@ -632,6 +641,7 @@ class LearningIssueAuditV1:
             "market_context_learning_suite_v1": market_context_issue,
             "learning_acceleration_retention_suite_v1": acceleration_issue,
             "adaptive_learning_infrastructure_suite_v1": infrastructure_issue,
+            "adaptive_worker_activation_orchestration_v1": worker_activation_issue,
         }
         medium_or_higher = [name for name, issue in issue_status.items() if issue.get("severity") in {"medium", "high"}]
         out = {
@@ -650,6 +660,7 @@ class LearningIssueAuditV1:
             "market_context_learning_status": market_context_issue,
             "learning_acceleration_retention_status": acceleration_issue,
             "adaptive_learning_infrastructure_status": infrastructure_issue,
+            "adaptive_worker_activation_status": worker_activation_issue,
             "execution_participation_display_status": exec_issue,
             "core_metric_source_diagnostics": core_diag,
             "dataset_scope_diagnostics": dataset_diag,
@@ -748,6 +759,27 @@ class LearningIssueAuditV1:
                 "workers_started_by_dashboard": bool(infrastructure.get("workers_started_by_dashboard", False)),
                 "dashboard_request_blocking": bool(infrastructure.get("dashboard_request_blocking", False)),
                 "behavior_safe_to_apply": bool(infrastructure.get("behavior_safe_to_apply", False)),
+            },
+            "adaptive_worker_activation_diagnostics": {
+                "orchestrator_status": worker_activation.get("orchestrator_status"),
+                "active_worker_count": worker_activation.get("active_worker_count"),
+                "completed_jobs": worker_activation.get("completed_jobs"),
+                "failed_jobs": worker_activation.get("failed_jobs"),
+                "skipped_jobs": worker_activation.get("skipped_jobs"),
+                "queue_depth": worker_activation.get("queue_depth"),
+                "worker_efficiency_score": worker_activation.get("worker_efficiency_score"),
+                "api_budget_score": worker_activation.get("api_budget_score"),
+                "cache_hit_rate": worker_activation.get("cache_hit_rate"),
+                "premarket_worker_status": worker_activation.get("premarket_worker_status"),
+                "open_trade_worker_status": worker_activation.get("open_trade_worker_status"),
+                "after_hours_worker_status": worker_activation.get("after_hours_worker_status"),
+                "replay_worker_status": worker_activation.get("replay_worker_status"),
+                "coverage_worker_status": worker_activation.get("coverage_worker_status"),
+                "recommended_next_worker_focus": worker_activation.get("recommended_next_worker_focus"),
+                "provider_calls_used": worker_activation.get("provider_calls_used"),
+                "llm_calls_used": worker_activation.get("llm_calls_used"),
+                "shadow_recommendation": worker_activation.get("shadow_recommendation"),
+                "behavior_safe_to_apply": bool(worker_activation.get("behavior_safe_to_apply", False)),
             },
             "likely_cause_summary": ", ".join(medium_or_higher) if medium_or_higher else "no_behavior_change_indicated",
             "recommended_action": "Apply display/source reconciliation and keep behavior changes shadow-only.",
