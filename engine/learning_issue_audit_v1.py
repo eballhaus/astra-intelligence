@@ -575,6 +575,7 @@ class LearningIssueAuditV1:
         v3 = dict(statuses.get("adaptive_execution_exit_intelligence_v3") or {})
         exit_learning = dict(statuses.get("exit_learning_expansion_suite_v1") or {})
         market_context = dict(statuses.get("market_context_learning_suite_v1") or {})
+        acceleration = dict(statuses.get("learning_acceleration_retention_suite_v1") or {})
         v3_issue = _issue(
             "shadow_exit_learning_active" if v3.get("enabled") else "shadow_exit_learning_unavailable",
             "adaptive_execution_exit_v3_tracks_profit_capture_horizon_and_peak_decay" if v3.get("enabled") else "adaptive_execution_exit_v3_not_available",
@@ -599,6 +600,14 @@ class LearningIssueAuditV1:
             "Use market context as shadow-only evidence for horizon and exit-learning interpretation.",
             _text(market_context.get("shadow_context_recommendation"), "No behavior change."),
         )
+        acceleration_issue = _issue(
+            "learning_acceleration_active" if acceleration.get("enabled") else "learning_acceleration_unavailable",
+            "priority_weighting_retention_coverage_agreement_conflict_meta_learning_active" if acceleration.get("enabled") else "learning_acceleration_not_available",
+            "medium" if acceleration.get("conflict_detected") else "low",
+            _to_int(acceleration.get("evidence_count"), 0),
+            "Use acceleration diagnostics to focus learning workers while preserving all execution behavior.",
+            _text(acceleration.get("shadow_learning_recommendation"), "No behavior change."),
+        )
         issue_status = {
             "core_metric_source_regression": core_issue,
             "dataset_scope_mismatch": dataset_issue,
@@ -612,6 +621,7 @@ class LearningIssueAuditV1:
             "adaptive_execution_exit_v3": v3_issue,
             "exit_learning_expansion_suite_v1": exit_learning_issue,
             "market_context_learning_suite_v1": market_context_issue,
+            "learning_acceleration_retention_suite_v1": acceleration_issue,
         }
         medium_or_higher = [name for name, issue in issue_status.items() if issue.get("severity") in {"medium", "high"}]
         out = {
@@ -628,6 +638,7 @@ class LearningIssueAuditV1:
             "adaptive_execution_exit_v3_status": v3_issue,
             "exit_learning_expansion_status": exit_learning_issue,
             "market_context_learning_status": market_context_issue,
+            "learning_acceleration_retention_status": acceleration_issue,
             "execution_participation_display_status": exec_issue,
             "core_metric_source_diagnostics": core_diag,
             "dataset_scope_diagnostics": dataset_diag,
@@ -687,6 +698,23 @@ class LearningIssueAuditV1:
                 "gap_and_fade_probability": market_context.get("gap_and_fade_probability"),
                 "shadow_context_recommendation": market_context.get("shadow_context_recommendation"),
                 "behavior_safe_to_apply": bool(market_context.get("behavior_safe_to_apply", False)),
+            },
+            "learning_acceleration_retention_diagnostics": {
+                "top_learning_priority": acceleration.get("top_learning_priority"),
+                "secondary_learning_priority": acceleration.get("secondary_learning_priority"),
+                "weighted_confidence_score": acceleration.get("weighted_confidence_score"),
+                "knowledge_retention_score": acceleration.get("knowledge_retention_score"),
+                "coverage_score": acceleration.get("coverage_score"),
+                "agreement_score": acceleration.get("agreement_score"),
+                "conflict_detected": bool(acceleration.get("conflict_detected", False)),
+                "conflict_type": acceleration.get("conflict_type"),
+                "meta_learning_score": acceleration.get("meta_learning_score"),
+                "strongest_new_lesson": acceleration.get("strongest_new_lesson"),
+                "weakest_coverage_area": acceleration.get("weakest_coverage_area"),
+                "most_predictive_learning_system": acceleration.get("most_predictive_learning_system"),
+                "recommended_worker_focus": acceleration.get("recommended_worker_focus"),
+                "shadow_learning_recommendation": acceleration.get("shadow_learning_recommendation"),
+                "behavior_safe_to_apply": bool(acceleration.get("behavior_safe_to_apply", False)),
             },
             "likely_cause_summary": ", ".join(medium_or_higher) if medium_or_higher else "no_behavior_change_indicated",
             "recommended_action": "Apply display/source reconciliation and keep behavior changes shadow-only.",

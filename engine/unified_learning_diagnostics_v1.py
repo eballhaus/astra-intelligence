@@ -284,6 +284,7 @@ class UnifiedLearningDiagnosticsV1:
         adaptive_execution_exit_v3 = self._adaptive_execution_exit_v3_summary(statuses.get("adaptive_execution_exit_intelligence_v3") or {})
         exit_learning_expansion = self._exit_learning_expansion_summary(statuses.get("exit_learning_expansion_suite_v1") or {})
         market_context_learning = self._market_context_learning_summary(statuses.get("market_context_learning_suite_v1") or {})
+        learning_acceleration_retention = self._learning_acceleration_retention_summary(statuses.get("learning_acceleration_retention_suite_v1") or {})
         trade_archetype_regime = self._trade_archetype_regime_summary(statuses.get("trade_archetype_regime") or {})
         replay_counterfactual_learning_v2 = self._replay_counterfactual_learning_v2_summary(statuses.get("replay_counterfactual_learning_v2") or {})
         opportunity_cost_learning = self._opportunity_cost_learning_summary(statuses.get("opportunity_cost_learning") or {})
@@ -316,6 +317,7 @@ class UnifiedLearningDiagnosticsV1:
             "adaptive_execution_exit_intelligence_v3": adaptive_execution_exit_v3,
             "exit_learning_expansion_suite_v1": exit_learning_expansion,
             "market_context_learning_suite_v1": market_context_learning,
+            "learning_acceleration_retention_suite_v1": learning_acceleration_retention,
             "trade_archetype_regime_intelligence": trade_archetype_regime,
             "replay_counterfactual_learning_v2": replay_counterfactual_learning_v2,
             "opportunity_cost_learning": opportunity_cost_learning,
@@ -1105,6 +1107,80 @@ class UnifiedLearningDiagnosticsV1:
             "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
         }
 
+    def _learning_acceleration_retention_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_learning_acceleration_retention"),
+            "evidence_count": _to_int(data.get("evidence_count"), 0),
+            "top_learning_priority": _text(data.get("top_learning_priority"), "insufficient_data"),
+            "secondary_learning_priority": _text(data.get("secondary_learning_priority"), "insufficient_data"),
+            "lowest_learning_priority": _text(data.get("lowest_learning_priority"), "insufficient_data"),
+            "priority_reason": _text(data.get("priority_reason"), "Learning priority evidence is warming up."),
+            "priority_confidence": _to_float(data.get("priority_confidence"), 0.0),
+            "recommended_worker_focus": _text(data.get("recommended_worker_focus"), "collect_more_lifecycle_evidence"),
+            "priority_scores": dict(data.get("priority_scores") or {}),
+            "weighted_confidence_score": _to_float(data.get("weighted_confidence_score"), 0.0),
+            "strongest_evidence_source": _text(data.get("strongest_evidence_source"), "insufficient_data"),
+            "weakest_evidence_source": _text(data.get("weakest_evidence_source"), "insufficient_data"),
+            "evidence_mix": dict(data.get("evidence_mix") or {}),
+            "evidence_quality_label": _text(data.get("evidence_quality_label"), "warming_up"),
+            "evidence_weighting_reason": _text(data.get("evidence_weighting_reason"), "Evidence weighting is warming up."),
+            "consolidated_lessons_count": _to_int(data.get("consolidated_lessons_count"), 0),
+            "promoted_lessons": list(data.get("promoted_lessons") or [])[:8],
+            "tentative_lessons": list(data.get("tentative_lessons") or [])[:8],
+            "retired_or_deprioritized_lessons": list(data.get("retired_or_deprioritized_lessons") or [])[:8],
+            "strongest_new_lesson": _text(data.get("strongest_new_lesson"), "insufficient_data"),
+            "overnight_consolidation_status": _text(data.get("overnight_consolidation_status"), "warming_up"),
+            "knowledge_retention_score": _to_float(data.get("knowledge_retention_score"), 0.0),
+            "strongest_coverage_area": _text(data.get("strongest_coverage_area"), "insufficient_data"),
+            "weakest_coverage_area": _text(data.get("weakest_coverage_area"), "insufficient_data"),
+            "underexplored_contexts": list(data.get("underexplored_contexts") or [])[:10],
+            "overrepresented_contexts": list(data.get("overrepresented_contexts") or [])[:10],
+            "coverage_score": _to_float(data.get("coverage_score"), 0.0),
+            "recommended_evidence_collection_focus": _text(data.get("recommended_evidence_collection_focus"), "collect_more_lifecycle_evidence"),
+            "strongest_cross_system_agreement": _text(data.get("strongest_cross_system_agreement"), "insufficient_data"),
+            "agreement_score": _to_float(data.get("agreement_score"), 0.0),
+            "agreeing_systems": list(data.get("agreeing_systems") or [])[:10],
+            "disagreement_systems": list(data.get("disagreement_systems") or [])[:10],
+            "confidence_boost_reason": _text(data.get("confidence_boost_reason"), "No strong cross-system agreement yet."),
+            "cross_learning_summary": _text(data.get("cross_learning_summary"), "Cross-learning agreement is warming up."),
+            "conflict_detected": bool(data.get("conflict_detected", False)),
+            "conflict_type": _text(data.get("conflict_type"), "none"),
+            "conflicting_systems": list(data.get("conflicting_systems") or [])[:10],
+            "conflict_severity": _text(data.get("conflict_severity"), "none"),
+            "likely_resolution": _text(data.get("likely_resolution"), "no_resolution_needed"),
+            "recommended_human_review": bool(data.get("recommended_human_review", False)),
+            "most_predictive_learning_system": _text(data.get("most_predictive_learning_system"), "insufficient_data"),
+            "least_predictive_learning_system": _text(data.get("least_predictive_learning_system"), "insufficient_data"),
+            "meta_learning_score": _to_float(data.get("meta_learning_score"), 0.0),
+            "system_reliability_map": dict(data.get("system_reliability_map") or {}),
+            "recommended_learning_weight_adjustments": dict(data.get("recommended_learning_weight_adjustments") or {}),
+            "meta_learning_confidence": _to_float(data.get("meta_learning_confidence"), 0.0),
+            "future_worker_contract": dict(data.get("future_worker_contract") or {}),
+            "shadow_learning_recommendation": _text(data.get("shadow_learning_recommendation"), "keep_learning_changes_shadow_only"),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+            "human_review_required": bool(data.get("human_review_required", True)),
+            "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "ranking_behavior_changed": bool(data.get("ranking_behavior_changed", False)),
+            "paper_execution_behavior_changed": bool(data.get("paper_execution_behavior_changed", False)),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "partial_sells_enabled": bool(data.get("partial_sells_enabled", False)),
+            "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+        }
+
     def _trade_archetype_regime_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -1727,7 +1803,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
             "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "adaptive_execution_exit_intelligence_v3", "trade_archetype_regime",
-            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
+            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
             "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
             "execution_participation_audit",
@@ -1769,6 +1845,7 @@ class UnifiedLearningDiagnosticsV1:
             "adaptive_execution_exit_intelligence_v3": "/api/adaptive_execution_exit_intelligence_v3",
             "exit_learning_expansion_suite_v1": "/api/exit_learning_expansion_suite_v1",
             "market_context_learning_suite_v1": "/api/market_context_learning_suite_v1",
+            "learning_acceleration_retention_suite_v1": "/api/learning_acceleration_retention_suite_v1",
             "trade_archetype_regime": "/api/trade_archetype_regime_status_v1",
             "replay_counterfactual_learning_v2": "/api/replay_counterfactual_learning_v2_status",
             "opportunity_cost_learning": "/api/opportunity_cost_learning_status_v1",

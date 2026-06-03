@@ -146,6 +146,7 @@ export default function LearningTab({ compact = false }) {
   const [showAdaptiveExitV3Details, setShowAdaptiveExitV3Details] = useState(false);
   const [showExitLearningExpansionDetails, setShowExitLearningExpansionDetails] = useState(false);
   const [showMarketContextLearningDetails, setShowMarketContextLearningDetails] = useState(false);
+  const [showLearningAccelerationDetails, setShowLearningAccelerationDetails] = useState(false);
   const [showTradeArchetypeRegimeDetails, setShowTradeArchetypeRegimeDetails] = useState(false);
   const [showReplayCounterfactualDetails, setShowReplayCounterfactualDetails] = useState(false);
   const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
@@ -1580,6 +1581,7 @@ export default function LearningTab({ compact = false }) {
   const adaptiveExecutionExitV3 = unified?.adaptive_execution_exit_intelligence_v3 || {};
   const exitLearningExpansion = unified?.exit_learning_expansion_suite_v1 || {};
   const marketContextLearning = unified?.market_context_learning_suite_v1 || {};
+  const learningAccelerationRetention = unified?.learning_acceleration_retention_suite_v1 || {};
   const tradeArchetypeRegime = unified?.trade_archetype_regime_intelligence || {};
   const replayCounterfactual = unified?.replay_counterfactual_learning_v2 || {};
   const opportunityCostLearning = unified?.opportunity_cost_learning || {};
@@ -1934,6 +1936,109 @@ export default function LearningTab({ compact = false }) {
             </ResponsiveContainer>
           </ChartShell>
         </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Learning Acceleration & Retention Suite V1</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is studying which lessons are most important, which evidence should be trusted most, where learning coverage is weak, and which learning systems agree or conflict. This helps Astra learn more from each trade without increasing trading risk.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowLearningAccelerationDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showLearningAccelerationDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Top priority", learningAccelerationRetention?.top_learning_priority],
+            ["Weighted confidence", safeNumber(learningAccelerationRetention?.weighted_confidence_score).toFixed(1)],
+            ["Knowledge retention", safeNumber(learningAccelerationRetention?.knowledge_retention_score).toFixed(1)],
+            ["Coverage score", safeNumber(learningAccelerationRetention?.coverage_score).toFixed(1)],
+            ["Agreement score", safeNumber(learningAccelerationRetention?.agreement_score).toFixed(1)],
+            ["Conflict status", learningAccelerationRetention?.conflict_detected ? String(learningAccelerationRetention?.conflict_type || "conflict detected") : "no conflict"],
+            ["Meta-learning score", safeNumber(learningAccelerationRetention?.meta_learning_score).toFixed(1)],
+            ["Strongest lesson", learningAccelerationRetention?.strongest_new_lesson],
+            ["Weakest coverage", learningAccelerationRetention?.weakest_coverage_area],
+            ["Worker focus", learningAccelerationRetention?.recommended_worker_focus],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(learningAccelerationRetention?.shadow_learning_recommendation || "Collecting meta-learning evidence.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showLearningAccelerationDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Priority Engine</div>
+              <div>Top: {String(learningAccelerationRetention?.top_learning_priority || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Secondary: {String(learningAccelerationRetention?.secondary_learning_priority || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Lowest: {String(learningAccelerationRetention?.lowest_learning_priority || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Confidence: {safeNumber(learningAccelerationRetention?.priority_confidence).toFixed(1)}</div>
+              <div>Reason: {String(learningAccelerationRetention?.priority_reason || "warming up").replaceAll("_", " ")}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Evidence Weighting</div>
+              <div>Strongest source: {String(learningAccelerationRetention?.strongest_evidence_source || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Weakest source: {String(learningAccelerationRetention?.weakest_evidence_source || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Quality: {String(learningAccelerationRetention?.evidence_quality_label || "warming up").replaceAll("_", " ")}</div>
+              {Object.entries(learningAccelerationRetention?.evidence_mix || {}).slice(0, 8).map(([name, count]) => (
+                <div key={name}>{String(name).replaceAll("_", " ")}: {safeNumber(count).toFixed(0)}</div>
+              ))}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Knowledge Retention</div>
+              <div>Consolidated lessons: {safeNumber(learningAccelerationRetention?.consolidated_lessons_count).toFixed(0)}</div>
+              <div>Status: {String(learningAccelerationRetention?.overnight_consolidation_status || "warming up").replaceAll("_", " ")}</div>
+              {(learningAccelerationRetention?.promoted_lessons || []).slice(0, 4).map((lesson) => (
+                <div key={lesson}>{String(lesson)}</div>
+              ))}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Coverage Monitor</div>
+              <div>Strongest area: {String(learningAccelerationRetention?.strongest_coverage_area || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Weakest area: {String(learningAccelerationRetention?.weakest_coverage_area || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Focus: {String(learningAccelerationRetention?.recommended_evidence_collection_focus || "collect more evidence").replaceAll("_", " ")}</div>
+              <div>Underexplored: {(learningAccelerationRetention?.underexplored_contexts || []).join(", ") || "warming up"}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Agreement & Conflict</div>
+              <div>Agreement: {String(learningAccelerationRetention?.strongest_cross_system_agreement || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Agreeing systems: {(learningAccelerationRetention?.agreeing_systems || []).join(", ") || "none"}</div>
+              <div>Disagreement systems: {(learningAccelerationRetention?.disagreement_systems || []).join(", ") || "none"}</div>
+              <div>Conflict: {learningAccelerationRetention?.conflict_detected ? "yes" : "no"}</div>
+              <div>Resolution: {String(learningAccelerationRetention?.likely_resolution || "no resolution needed").replaceAll("_", " ")}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Meta-Learning Safety</div>
+              <div>Most predictive: {String(learningAccelerationRetention?.most_predictive_learning_system || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Least predictive: {String(learningAccelerationRetention?.least_predictive_learning_system || "insufficient data").replaceAll("_", " ")}</div>
+              <div>Meta confidence: {safeNumber(learningAccelerationRetention?.meta_learning_confidence).toFixed(1)}</div>
+              <div>Behavior safe to apply: {learningAccelerationRetention?.behavior_safe_to_apply ? "yes" : "no"}</div>
+              <div>Ranking changed: {learningAccelerationRetention?.ranking_behavior_changed ? "yes" : "no"}</div>
+              <div>Paper execution changed: {learningAccelerationRetention?.paper_execution_behavior_changed ? "yes" : "no"}</div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div style={{ ...panelStyle }}>
