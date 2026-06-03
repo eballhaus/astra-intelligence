@@ -285,6 +285,7 @@ class UnifiedLearningDiagnosticsV1:
         exit_learning_expansion = self._exit_learning_expansion_summary(statuses.get("exit_learning_expansion_suite_v1") or {})
         market_context_learning = self._market_context_learning_summary(statuses.get("market_context_learning_suite_v1") or {})
         learning_acceleration_retention = self._learning_acceleration_retention_summary(statuses.get("learning_acceleration_retention_suite_v1") or {})
+        adaptive_learning_infrastructure_suite = self._adaptive_learning_infrastructure_suite_summary(statuses.get("adaptive_learning_infrastructure_suite_v1") or {})
         trade_archetype_regime = self._trade_archetype_regime_summary(statuses.get("trade_archetype_regime") or {})
         replay_counterfactual_learning_v2 = self._replay_counterfactual_learning_v2_summary(statuses.get("replay_counterfactual_learning_v2") or {})
         opportunity_cost_learning = self._opportunity_cost_learning_summary(statuses.get("opportunity_cost_learning") or {})
@@ -318,6 +319,7 @@ class UnifiedLearningDiagnosticsV1:
             "exit_learning_expansion_suite_v1": exit_learning_expansion,
             "market_context_learning_suite_v1": market_context_learning,
             "learning_acceleration_retention_suite_v1": learning_acceleration_retention,
+            "adaptive_learning_infrastructure_suite_v1": adaptive_learning_infrastructure_suite,
             "trade_archetype_regime_intelligence": trade_archetype_regime,
             "replay_counterfactual_learning_v2": replay_counterfactual_learning_v2,
             "opportunity_cost_learning": opportunity_cost_learning,
@@ -1181,6 +1183,75 @@ class UnifiedLearningDiagnosticsV1:
             "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
         }
 
+    def _adaptive_learning_infrastructure_suite_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_adaptive_learning_infrastructure"),
+            "active_workers": list(data.get("active_workers") or [])[:8],
+            "active_worker_count": _to_int(data.get("active_worker_count"), 0),
+            "completed_jobs": _to_int(data.get("completed_jobs"), 0),
+            "failed_jobs": _to_int(data.get("failed_jobs"), 0),
+            "avg_worker_runtime": _to_float(data.get("avg_worker_runtime"), 0.0),
+            "worker_efficiency_score": _to_float(data.get("worker_efficiency_score"), 0.0),
+            "worker_health_status": _text(data.get("worker_health_status"), "warming_up"),
+            "active_learning_priorities": list(data.get("active_learning_priorities") or [])[:8],
+            "worker_queue_depth": _to_int(data.get("worker_queue_depth"), 0),
+            "highest_priority_task": _text(data.get("highest_priority_task"), "collect_lifecycle_evidence"),
+            "lowest_priority_task": _text(data.get("lowest_priority_task"), "insufficient_data"),
+            "learning_load_score": _to_float(data.get("learning_load_score"), 0.0),
+            "orchestration_health": _text(data.get("orchestration_health"), "warming_up"),
+            "total_tasks": _to_int(data.get("total_tasks"), 0),
+            "queue_distribution": dict(data.get("queue_distribution") or {}),
+            "average_task_age": _to_float(data.get("average_task_age"), 0.0),
+            "stale_task_count": _to_int(data.get("stale_task_count"), 0),
+            "retry_count": _to_int(data.get("retry_count"), 0),
+            "targeted_learning_area": _text(data.get("targeted_learning_area"), "profit_capture"),
+            "evidence_gap_score": _to_float(data.get("evidence_gap_score"), 0.0),
+            "evidence_collection_focus": _text(data.get("evidence_collection_focus"), "collect_more_lifecycle_evidence"),
+            "collected_evidence_count": _to_int(data.get("collected_evidence_count"), 0),
+            "evidence_counts_by_area": dict(data.get("evidence_counts_by_area") or {}),
+            "api_budget_score": _to_float(data.get("api_budget_score"), 0.0),
+            "wasted_calls_estimate": _to_int(data.get("wasted_calls_estimate"), 0),
+            "highest_value_source": _text(data.get("highest_value_source"), "local_cached_learning"),
+            "lowest_value_source": _text(data.get("lowest_value_source"), "none"),
+            "cache_utilization": _to_float(data.get("cache_utilization"), 0.0),
+            "health_score": _to_float(data.get("health_score"), 0.0),
+            "timeout_count": _to_int(data.get("timeout_count"), 0),
+            "stuck_jobs": _to_int(data.get("stuck_jobs"), 0),
+            "cache_freshness": _to_float(data.get("cache_freshness"), 0.0),
+            "worker_alerts": list(data.get("worker_alerts") or [])[:8],
+            "strongest_coverage_area": _text(data.get("strongest_coverage_area"), "insufficient_data"),
+            "weakest_coverage_area": _text(data.get("weakest_coverage_area"), "insufficient_data"),
+            "underexplored_contexts": list(data.get("underexplored_contexts") or [])[:10],
+            "recommended_focus": _text(data.get("recommended_focus"), "collect_more_lifecycle_evidence"),
+            "coverage_breadth": dict(data.get("coverage_breadth") or {}),
+            "shadow_recommendation": _text(data.get("shadow_recommendation"), "keep_learning_infrastructure_shadow_only"),
+            "future_worker_contract": dict(data.get("future_worker_contract") or {}),
+            "workers_started_by_dashboard": bool(data.get("workers_started_by_dashboard", False)),
+            "dashboard_request_blocking": bool(data.get("dashboard_request_blocking", False)),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+            "human_review_required": bool(data.get("human_review_required", True)),
+            "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "ranking_behavior_changed": bool(data.get("ranking_behavior_changed", False)),
+            "paper_execution_behavior_changed": bool(data.get("paper_execution_behavior_changed", False)),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "partial_sells_enabled": bool(data.get("partial_sells_enabled", False)),
+            "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+        }
+
     def _trade_archetype_regime_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -1803,7 +1874,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
             "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "adaptive_execution_exit_intelligence_v3", "trade_archetype_regime",
-            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
+            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
             "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
             "execution_participation_audit",
@@ -1846,6 +1917,7 @@ class UnifiedLearningDiagnosticsV1:
             "exit_learning_expansion_suite_v1": "/api/exit_learning_expansion_suite_v1",
             "market_context_learning_suite_v1": "/api/market_context_learning_suite_v1",
             "learning_acceleration_retention_suite_v1": "/api/learning_acceleration_retention_suite_v1",
+            "adaptive_learning_infrastructure_suite_v1": "/api/adaptive_learning_infrastructure_suite_v1",
             "trade_archetype_regime": "/api/trade_archetype_regime_status_v1",
             "replay_counterfactual_learning_v2": "/api/replay_counterfactual_learning_v2_status",
             "opportunity_cost_learning": "/api/opportunity_cost_learning_status_v1",

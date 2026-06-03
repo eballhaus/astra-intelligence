@@ -147,6 +147,7 @@ export default function LearningTab({ compact = false }) {
   const [showExitLearningExpansionDetails, setShowExitLearningExpansionDetails] = useState(false);
   const [showMarketContextLearningDetails, setShowMarketContextLearningDetails] = useState(false);
   const [showLearningAccelerationDetails, setShowLearningAccelerationDetails] = useState(false);
+  const [showAdaptiveLearningInfrastructureDetails, setShowAdaptiveLearningInfrastructureDetails] = useState(false);
   const [showTradeArchetypeRegimeDetails, setShowTradeArchetypeRegimeDetails] = useState(false);
   const [showReplayCounterfactualDetails, setShowReplayCounterfactualDetails] = useState(false);
   const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
@@ -1582,6 +1583,7 @@ export default function LearningTab({ compact = false }) {
   const exitLearningExpansion = unified?.exit_learning_expansion_suite_v1 || {};
   const marketContextLearning = unified?.market_context_learning_suite_v1 || {};
   const learningAccelerationRetention = unified?.learning_acceleration_retention_suite_v1 || {};
+  const adaptiveLearningInfrastructureSuite = unified?.adaptive_learning_infrastructure_suite_v1 || {};
   const tradeArchetypeRegime = unified?.trade_archetype_regime_intelligence || {};
   const replayCounterfactual = unified?.replay_counterfactual_learning_v2 || {};
   const opportunityCostLearning = unified?.opportunity_cost_learning || {};
@@ -2036,6 +2038,96 @@ export default function LearningTab({ compact = false }) {
               <div>Behavior safe to apply: {learningAccelerationRetention?.behavior_safe_to_apply ? "yes" : "no"}</div>
               <div>Ranking changed: {learningAccelerationRetention?.ranking_behavior_changed ? "yes" : "no"}</div>
               <div>Paper execution changed: {learningAccelerationRetention?.paper_execution_behavior_changed ? "yes" : "no"}</div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Adaptive Learning Infrastructure Suite V1</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is coordinating background learning jobs, prioritizing evidence collection, reducing redundant work, and gathering information in areas where knowledge is limited. This improves learning efficiency without changing trading behavior.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAdaptiveLearningInfrastructureDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showAdaptiveLearningInfrastructureDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Active workers", safeNumber(adaptiveLearningInfrastructureSuite?.active_worker_count).toFixed(0)],
+            ["Learning load", safeNumber(adaptiveLearningInfrastructureSuite?.learning_load_score).toFixed(1)],
+            ["Worker efficiency", safeNumber(adaptiveLearningInfrastructureSuite?.worker_efficiency_score).toFixed(1)],
+            ["API budget", safeNumber(adaptiveLearningInfrastructureSuite?.api_budget_score).toFixed(1)],
+            ["Evidence gap", safeNumber(adaptiveLearningInfrastructureSuite?.evidence_gap_score).toFixed(1)],
+            ["Health score", safeNumber(adaptiveLearningInfrastructureSuite?.health_score).toFixed(1)],
+            ["Strongest coverage", adaptiveLearningInfrastructureSuite?.strongest_coverage_area],
+            ["Weakest coverage", adaptiveLearningInfrastructureSuite?.weakest_coverage_area],
+            ["Recommended focus", adaptiveLearningInfrastructureSuite?.recommended_focus],
+            ["Orchestration", adaptiveLearningInfrastructureSuite?.orchestration_health],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(adaptiveLearningInfrastructureSuite?.shadow_recommendation || "Preparing background learning infrastructure.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showAdaptiveLearningInfrastructureDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Background Workers</div>
+              {(adaptiveLearningInfrastructureSuite?.active_workers || []).slice(0, 4).map((worker) => (
+                <div key={worker?.worker_type || worker?.status}>
+                  {String(worker?.worker_type || "worker").replaceAll("_", " ")}: {String(worker?.status || "warming up").replaceAll("_", " ")}
+                </div>
+              ))}
+              <div>Completed jobs: {safeNumber(adaptiveLearningInfrastructureSuite?.completed_jobs).toFixed(0)}</div>
+              <div>Failed jobs: {safeNumber(adaptiveLearningInfrastructureSuite?.failed_jobs).toFixed(0)}</div>
+              <div>Dashboard blocking: {adaptiveLearningInfrastructureSuite?.dashboard_request_blocking ? "yes" : "no"}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Orchestrator & Queue</div>
+              <div>Highest priority: {String(adaptiveLearningInfrastructureSuite?.highest_priority_task || "warming up").replaceAll("_", " ")}</div>
+              <div>Lowest priority: {String(adaptiveLearningInfrastructureSuite?.lowest_priority_task || "warming up").replaceAll("_", " ")}</div>
+              <div>Queue depth: {safeNumber(adaptiveLearningInfrastructureSuite?.worker_queue_depth).toFixed(0)}</div>
+              <div>Total tasks: {safeNumber(adaptiveLearningInfrastructureSuite?.total_tasks).toFixed(0)}</div>
+              <div>Stale tasks: {safeNumber(adaptiveLearningInfrastructureSuite?.stale_task_count).toFixed(0)}</div>
+              <div>Retries: {safeNumber(adaptiveLearningInfrastructureSuite?.retry_count).toFixed(0)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Evidence Collection</div>
+              <div>Target area: {String(adaptiveLearningInfrastructureSuite?.targeted_learning_area || "warming up").replaceAll("_", " ")}</div>
+              <div>Focus: {String(adaptiveLearningInfrastructureSuite?.evidence_collection_focus || "collect more evidence").replaceAll("_", " ")}</div>
+              <div>Collected evidence: {safeNumber(adaptiveLearningInfrastructureSuite?.collected_evidence_count).toFixed(0)}</div>
+              <div>Underexplored: {(adaptiveLearningInfrastructureSuite?.underexplored_contexts || []).join(", ") || "warming up"}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Budget & Safety</div>
+              <div>Highest value source: {String(adaptiveLearningInfrastructureSuite?.highest_value_source || "local cached learning").replaceAll("_", " ")}</div>
+              <div>Lowest value source: {String(adaptiveLearningInfrastructureSuite?.lowest_value_source || "none").replaceAll("_", " ")}</div>
+              <div>Cache utilization: {safeNumber(adaptiveLearningInfrastructureSuite?.cache_utilization).toFixed(1)}%</div>
+              <div>Worker alerts: {(adaptiveLearningInfrastructureSuite?.worker_alerts || []).join(", ").replaceAll("_", " ") || "none"}</div>
+              <div>Behavior safe to apply: {adaptiveLearningInfrastructureSuite?.behavior_safe_to_apply ? "yes" : "no"}</div>
+              <div>Paper execution changed: {adaptiveLearningInfrastructureSuite?.paper_execution_behavior_changed ? "yes" : "no"}</div>
             </div>
           </div>
         ) : null}

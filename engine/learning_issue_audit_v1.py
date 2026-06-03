@@ -576,6 +576,7 @@ class LearningIssueAuditV1:
         exit_learning = dict(statuses.get("exit_learning_expansion_suite_v1") or {})
         market_context = dict(statuses.get("market_context_learning_suite_v1") or {})
         acceleration = dict(statuses.get("learning_acceleration_retention_suite_v1") or {})
+        infrastructure = dict(statuses.get("adaptive_learning_infrastructure_suite_v1") or {})
         v3_issue = _issue(
             "shadow_exit_learning_active" if v3.get("enabled") else "shadow_exit_learning_unavailable",
             "adaptive_execution_exit_v3_tracks_profit_capture_horizon_and_peak_decay" if v3.get("enabled") else "adaptive_execution_exit_v3_not_available",
@@ -608,6 +609,14 @@ class LearningIssueAuditV1:
             "Use acceleration diagnostics to focus learning workers while preserving all execution behavior.",
             _text(acceleration.get("shadow_learning_recommendation"), "No behavior change."),
         )
+        infrastructure_issue = _issue(
+            "adaptive_learning_infrastructure_active" if infrastructure.get("enabled") else "adaptive_learning_infrastructure_unavailable",
+            "worker_orchestration_queue_budget_health_and_coverage_diagnostics_active" if infrastructure.get("enabled") else "adaptive_learning_infrastructure_not_available",
+            "medium" if infrastructure.get("enabled") and _to_float(infrastructure.get("health_score"), 0.0) < 45.0 else "low",
+            _to_int(infrastructure.get("collected_evidence_count"), 0),
+            "Use adaptive learning infrastructure diagnostics to route future background learning work; keep trading behavior unchanged.",
+            _text(infrastructure.get("shadow_recommendation"), "No behavior change."),
+        )
         issue_status = {
             "core_metric_source_regression": core_issue,
             "dataset_scope_mismatch": dataset_issue,
@@ -622,6 +631,7 @@ class LearningIssueAuditV1:
             "exit_learning_expansion_suite_v1": exit_learning_issue,
             "market_context_learning_suite_v1": market_context_issue,
             "learning_acceleration_retention_suite_v1": acceleration_issue,
+            "adaptive_learning_infrastructure_suite_v1": infrastructure_issue,
         }
         medium_or_higher = [name for name, issue in issue_status.items() if issue.get("severity") in {"medium", "high"}]
         out = {
@@ -639,6 +649,7 @@ class LearningIssueAuditV1:
             "exit_learning_expansion_status": exit_learning_issue,
             "market_context_learning_status": market_context_issue,
             "learning_acceleration_retention_status": acceleration_issue,
+            "adaptive_learning_infrastructure_status": infrastructure_issue,
             "execution_participation_display_status": exec_issue,
             "core_metric_source_diagnostics": core_diag,
             "dataset_scope_diagnostics": dataset_diag,
@@ -715,6 +726,28 @@ class LearningIssueAuditV1:
                 "recommended_worker_focus": acceleration.get("recommended_worker_focus"),
                 "shadow_learning_recommendation": acceleration.get("shadow_learning_recommendation"),
                 "behavior_safe_to_apply": bool(acceleration.get("behavior_safe_to_apply", False)),
+            },
+            "adaptive_learning_infrastructure_diagnostics": {
+                "active_worker_count": infrastructure.get("active_worker_count"),
+                "completed_jobs": infrastructure.get("completed_jobs"),
+                "failed_jobs": infrastructure.get("failed_jobs"),
+                "learning_load_score": infrastructure.get("learning_load_score"),
+                "worker_efficiency_score": infrastructure.get("worker_efficiency_score"),
+                "api_budget_score": infrastructure.get("api_budget_score"),
+                "evidence_gap_score": infrastructure.get("evidence_gap_score"),
+                "health_score": infrastructure.get("health_score"),
+                "targeted_learning_area": infrastructure.get("targeted_learning_area"),
+                "highest_priority_task": infrastructure.get("highest_priority_task"),
+                "orchestration_health": infrastructure.get("orchestration_health"),
+                "worker_queue_depth": infrastructure.get("worker_queue_depth"),
+                "stale_task_count": infrastructure.get("stale_task_count"),
+                "strongest_coverage_area": infrastructure.get("strongest_coverage_area"),
+                "weakest_coverage_area": infrastructure.get("weakest_coverage_area"),
+                "recommended_focus": infrastructure.get("recommended_focus"),
+                "shadow_recommendation": infrastructure.get("shadow_recommendation"),
+                "workers_started_by_dashboard": bool(infrastructure.get("workers_started_by_dashboard", False)),
+                "dashboard_request_blocking": bool(infrastructure.get("dashboard_request_blocking", False)),
+                "behavior_safe_to_apply": bool(infrastructure.get("behavior_safe_to_apply", False)),
             },
             "likely_cause_summary": ", ".join(medium_or_higher) if medium_or_higher else "no_behavior_change_indicated",
             "recommended_action": "Apply display/source reconciliation and keep behavior changes shadow-only.",

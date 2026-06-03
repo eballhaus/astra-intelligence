@@ -833,6 +833,41 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.adaptive_learning_infrastructure_suite_v1 import AdaptiveLearningInfrastructureSuiteV1
+except Exception:
+    class AdaptiveLearningInfrastructureSuiteV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "paper_only_adaptive_learning_infrastructure",
+                "active_workers": [],
+                "learning_load_score": 0.0,
+                "worker_efficiency_score": 0.0,
+                "api_budget_score": 0.0,
+                "evidence_gap_score": 0.0,
+                "health_score": 0.0,
+                "strongest_coverage_area": "unavailable",
+                "weakest_coverage_area": "unavailable",
+                "recommended_focus": "collect_more_lifecycle_evidence",
+                "orchestration_health": "unavailable",
+                "shadow_recommendation": "unavailable",
+                "behavior_safe_to_apply": False,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "ranking_behavior_changed": False,
+                "paper_execution_behavior_changed": False,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_trades_enabled": False,
+                "forced_exits_enabled": False,
+            }
+try:
     from engine.trade_archetype_regime_intelligence_v1 import TradeArchetypeRegimeIntelligenceV1
 except Exception:
     class TradeArchetypeRegimeIntelligenceV1:  # type: ignore[override]
@@ -1514,6 +1549,7 @@ ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V3 = AdaptiveExecutionExitIntelligenceV3(st
 EXIT_LEARNING_EXPANSION_SUITE = ExitLearningExpansionSuiteV1(state_dir=STATE)
 MARKET_CONTEXT_LEARNING_SUITE = MarketContextLearningSuiteV1(state_dir=STATE)
 LEARNING_ACCELERATION_RETENTION_SUITE = LearningAccelerationRetentionSuiteV1(state_dir=STATE)
+ADAPTIVE_LEARNING_INFRASTRUCTURE_FOUNDATION_SUITE = AdaptiveLearningInfrastructureSuiteV1(state_dir=STATE)
 TRADE_ARCHETYPE_REGIME_INTELLIGENCE = TradeArchetypeRegimeIntelligenceV1(state_dir=STATE)
 REPLAY_COUNTERFACTUAL_LEARNING_V2 = ReplayCounterfactualLearningV2(state_dir=STATE)
 OPPORTUNITY_COST_LEARNING = OpportunityCostLearningV1(state_dir=STATE)
@@ -39863,71 +39899,6 @@ def exit_learning_expansion_suite_v1(force: bool = False):
             "human_review_required": True,
             "behavior_safe_to_apply": False,
         }
-
-
-@router.get("/api/market_context_learning_suite_v1")
-def market_context_learning_suite_v1(force: bool = False):
-    try:
-        out = dict(MARKET_CONTEXT_LEARNING_SUITE.status(force=bool(force)) or {})
-        out["market_context_learning_suite_v1"] = True
-        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
-        out["live_trading_changed"] = False
-        out["broker_behavior_changed"] = False
-        out["ranking_behavior_changed"] = False
-        out["paper_execution_behavior_changed"] = False
-        out["paper_only_preserved"] = True
-        out["alpaca_paper_only_preserved"] = True
-        out["natural_exit_preserved"] = True
-        out["forced_trades_enabled"] = False
-        out["forced_exits_enabled"] = False
-        out["partial_sells_enabled"] = False
-        out["thresholds_changed"] = False
-        out["position_sizing_changed"] = False
-        out["auto_apply_allowed"] = False
-        out["human_review_required"] = True
-        out["behavior_safe_to_apply"] = False
-        return out
-    except Exception as exc:
-        return {
-            "enabled": False,
-            "version": "1.0.0",
-            "mode": "paper_only_market_context_learning",
-            "market_context_learning_suite_v1": True,
-            "tracked_symbols": 0,
-            "tracked_trades": 0,
-            "context_records": 0,
-            "strongest_premarket_profile": "insufficient_data",
-            "weakest_premarket_profile": "insufficient_data",
-            "dominant_catalyst_type": "insufficient_data",
-            "strongest_catalyst_type": "insufficient_data",
-            "weakest_catalyst_type": "insufficient_data",
-            "strongest_after_hours_profile": "insufficient_data",
-            "highest_gap_fade_risk_profile": "insufficient_data",
-            "best_context_horizon": "insufficient_data",
-            "highest_giveback_context": "insufficient_data",
-            "context_confidence": 0.0,
-            "shadow_context_recommendation": "unavailable",
-            "degraded_reason": f"market_context_learning_suite_v1_unavailable:{str(exc)[:140]}",
-            "api_calls_used": 0,
-            "build_ms": 0.0,
-            "live_trading_changed": False,
-            "broker_behavior_changed": False,
-            "ranking_behavior_changed": False,
-            "paper_execution_behavior_changed": False,
-            "paper_only_preserved": True,
-            "alpaca_paper_only_preserved": True,
-            "natural_exit_preserved": True,
-            "forced_trades_enabled": False,
-            "forced_exits_enabled": False,
-            "partial_sells_enabled": False,
-            "thresholds_changed": False,
-            "position_sizing_changed": False,
-            "auto_apply_allowed": False,
-            "human_review_required": True,
-            "behavior_safe_to_apply": False,
-        }
-
-
 def _learning_acceleration_status_bundle() -> dict:
     statuses = {}
     for name, fn in (
@@ -39993,6 +39964,73 @@ def learning_acceleration_retention_suite_v1(force: bool = False):
             "recommended_worker_focus": "collect_more_lifecycle_evidence",
             "shadow_learning_recommendation": "unavailable",
             "degraded_reason": f"learning_acceleration_retention_suite_v1_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "build_ms": 0.0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "paper_execution_behavior_changed": False,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+            "partial_sells_enabled": False,
+            "automatic_trailing_stops_enabled": False,
+            "thresholds_changed": False,
+            "position_sizing_changed": False,
+            "auto_apply_allowed": False,
+            "human_review_required": True,
+            "behavior_safe_to_apply": False,
+        }
+
+
+@router.get("/api/adaptive_learning_infrastructure_suite_v1")
+def adaptive_learning_infrastructure_suite_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        try:
+            statuses["learning_acceleration_retention_suite_v1"] = LEARNING_ACCELERATION_RETENTION_SUITE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["learning_acceleration_retention_suite_v1"] = {}
+        out = dict(ADAPTIVE_LEARNING_INFRASTRUCTURE_FOUNDATION_SUITE.status(statuses=statuses, force=bool(force)) or {})
+        out["adaptive_learning_infrastructure_suite_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["ranking_behavior_changed"] = False
+        out["paper_execution_behavior_changed"] = False
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        out["partial_sells_enabled"] = False
+        out["automatic_trailing_stops_enabled"] = False
+        out["thresholds_changed"] = False
+        out["position_sizing_changed"] = False
+        out["auto_apply_allowed"] = False
+        out["human_review_required"] = True
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "paper_only_adaptive_learning_infrastructure",
+            "adaptive_learning_infrastructure_suite_v1": True,
+            "active_workers": [],
+            "learning_load_score": 0.0,
+            "worker_efficiency_score": 0.0,
+            "api_budget_score": 0.0,
+            "evidence_gap_score": 0.0,
+            "health_score": 0.0,
+            "strongest_coverage_area": "insufficient_data",
+            "weakest_coverage_area": "insufficient_data",
+            "recommended_focus": "collect_more_lifecycle_evidence",
+            "orchestration_health": "unavailable",
+            "shadow_recommendation": "unavailable",
+            "degraded_reason": f"adaptive_learning_infrastructure_suite_v1_unavailable:{str(exc)[:140]}",
             "api_calls_used": 0,
             "build_ms": 0.0,
             "live_trading_changed": False,
@@ -40267,6 +40305,10 @@ def learning_issue_audit_status_v1(force: bool = False):
             statuses["learning_acceleration_retention_suite_v1"] = LEARNING_ACCELERATION_RETENTION_SUITE.status(statuses=statuses, force=False)
         except Exception:
             statuses["learning_acceleration_retention_suite_v1"] = {}
+        try:
+            statuses["adaptive_learning_infrastructure_suite_v1"] = ADAPTIVE_LEARNING_INFRASTRUCTURE_FOUNDATION_SUITE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["adaptive_learning_infrastructure_suite_v1"] = {}
         try:
             statuses["opportunity_cost_learning"] = OPPORTUNITY_COST_LEARNING.status(force=False)
         except Exception:
@@ -48669,6 +48711,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("exit_learning_expansion_suite_v1", lambda: EXIT_LEARNING_EXPANSION_SUITE.status(force=False))
         _safe_status("market_context_learning_suite_v1", lambda: MARKET_CONTEXT_LEARNING_SUITE.status(force=False))
         _safe_status("learning_acceleration_retention_suite_v1", lambda: LEARNING_ACCELERATION_RETENTION_SUITE.status(statuses=statuses, force=False))
+        _safe_status("adaptive_learning_infrastructure_suite_v1", lambda: ADAPTIVE_LEARNING_INFRASTRUCTURE_FOUNDATION_SUITE.status(statuses=statuses, force=False))
         _safe_status("trade_archetype_regime", lambda: TRADE_ARCHETYPE_REGIME_INTELLIGENCE.status(force=False))
         _safe_status("replay_counterfactual_learning_v2", lambda: REPLAY_COUNTERFACTUAL_LEARNING_V2.status(force=False))
         _safe_status("opportunity_cost_learning", lambda: OPPORTUNITY_COST_LEARNING.status(force=False))
