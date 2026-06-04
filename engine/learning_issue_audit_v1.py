@@ -578,6 +578,7 @@ class LearningIssueAuditV1:
         acceleration = dict(statuses.get("learning_acceleration_retention_suite_v1") or {})
         infrastructure = dict(statuses.get("adaptive_learning_infrastructure_suite_v1") or {})
         worker_activation = dict(statuses.get("adaptive_worker_activation_orchestration_v1") or {})
+        confidence_attr = dict(statuses.get("confidence_calibration_performance_attribution_v1") or {})
         v3_issue = _issue(
             "shadow_exit_learning_active" if v3.get("enabled") else "shadow_exit_learning_unavailable",
             "adaptive_execution_exit_v3_tracks_profit_capture_horizon_and_peak_decay" if v3.get("enabled") else "adaptive_execution_exit_v3_not_available",
@@ -626,6 +627,18 @@ class LearningIssueAuditV1:
             "Use worker activation diagnostics to collect cached evidence without dashboard blocking or trading behavior changes.",
             _text(worker_activation.get("shadow_recommendation"), "No behavior change."),
         )
+        confidence_issue = _issue(
+            "confidence_calibration_active" if confidence_attr.get("enabled") else "confidence_calibration_unavailable",
+            "confidence_grade_horizon_attribution_and_daily_performance_tracking_active" if confidence_attr.get("enabled") else "confidence_calibration_not_available",
+            "medium"
+            if confidence_attr.get("enabled")
+            and _to_int(confidence_attr.get("evidence_count"), 0) >= 20
+            and _to_float(confidence_attr.get("confidence_predictive_power"), 0.0) < 45.0
+            else "low",
+            _to_int(confidence_attr.get("evidence_count"), 0),
+            "Use calibration diagnostics to decide whether confidence and grades predict outcomes; keep sizing changes disabled.",
+            _text(confidence_attr.get("shadow_recommendation"), "No behavior change."),
+        )
         issue_status = {
             "core_metric_source_regression": core_issue,
             "dataset_scope_mismatch": dataset_issue,
@@ -642,6 +655,7 @@ class LearningIssueAuditV1:
             "learning_acceleration_retention_suite_v1": acceleration_issue,
             "adaptive_learning_infrastructure_suite_v1": infrastructure_issue,
             "adaptive_worker_activation_orchestration_v1": worker_activation_issue,
+            "confidence_calibration_performance_attribution_v1": confidence_issue,
         }
         medium_or_higher = [name for name, issue in issue_status.items() if issue.get("severity") in {"medium", "high"}]
         out = {
@@ -661,6 +675,7 @@ class LearningIssueAuditV1:
             "learning_acceleration_retention_status": acceleration_issue,
             "adaptive_learning_infrastructure_status": infrastructure_issue,
             "adaptive_worker_activation_status": worker_activation_issue,
+            "confidence_calibration_performance_attribution_status": confidence_issue,
             "execution_participation_display_status": exec_issue,
             "core_metric_source_diagnostics": core_diag,
             "dataset_scope_diagnostics": dataset_diag,
@@ -780,6 +795,29 @@ class LearningIssueAuditV1:
                 "llm_calls_used": worker_activation.get("llm_calls_used"),
                 "shadow_recommendation": worker_activation.get("shadow_recommendation"),
                 "behavior_safe_to_apply": bool(worker_activation.get("behavior_safe_to_apply", False)),
+            },
+            "confidence_calibration_performance_attribution_diagnostics": {
+                "evidence_count": confidence_attr.get("evidence_count"),
+                "best_confidence_bucket": confidence_attr.get("best_confidence_bucket"),
+                "worst_confidence_bucket": confidence_attr.get("worst_confidence_bucket"),
+                "confidence_calibration_score": confidence_attr.get("confidence_calibration_score"),
+                "confidence_predictive_power": confidence_attr.get("confidence_predictive_power"),
+                "confidence_sizing_readiness": confidence_attr.get("confidence_sizing_readiness"),
+                "best_grade": confidence_attr.get("best_grade"),
+                "grade_predictive_power": confidence_attr.get("grade_predictive_power"),
+                "best_confidence_horizon_pair": confidence_attr.get("best_confidence_horizon_pair"),
+                "worst_confidence_horizon_pair": confidence_attr.get("worst_confidence_horizon_pair"),
+                "sizing_readiness_score": confidence_attr.get("sizing_readiness_score"),
+                "ready_for_confidence_weighted_sizing": bool(confidence_attr.get("ready_for_confidence_weighted_sizing", False)),
+                "reason_not_ready": confidence_attr.get("reason_not_ready"),
+                "top_profit_driver": confidence_attr.get("top_profit_driver"),
+                "top_loss_driver": confidence_attr.get("top_loss_driver"),
+                "daily_positive_rate": confidence_attr.get("daily_positive_rate"),
+                "current_day_return": confidence_attr.get("current_day_return"),
+                "current_day_status": confidence_attr.get("current_day_status"),
+                "shadow_recommendation": confidence_attr.get("shadow_recommendation"),
+                "behavior_safe_to_apply": bool(confidence_attr.get("behavior_safe_to_apply", False)),
+                "position_sizing_changed": bool(confidence_attr.get("position_sizing_changed", False)),
             },
             "likely_cause_summary": ", ".join(medium_or_higher) if medium_or_higher else "no_behavior_change_indicated",
             "recommended_action": "Apply display/source reconciliation and keep behavior changes shadow-only.",

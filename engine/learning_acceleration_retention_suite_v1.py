@@ -177,6 +177,7 @@ class LearningAccelerationRetentionSuiteV1:
         market_context = statuses.get("market_context_learning_suite_v1") or {}
         blind = statuses.get("blind_spot_detection") or {}
         portfolio = statuses.get("portfolio_diversification_correlation_v2") or {}
+        confidence_attr = statuses.get("confidence_calibration_performance_attribution_v1") or {}
         scores = {
             "profit_capture_and_giveback": max(_to_float(v3.get("protect_profit_score"), 0.0), 100.0 - _to_float(v3.get("avg_capture_ratio"), 0.5) * 100.0, _to_float(profit_capture.get("average_profit_giveback_pct"), 0.0) * 2.0),
             "exit_quality_and_hold_duration": max(_to_float(exit_learning.get("protect_profit_score"), 0.0), _to_float(exit_learning.get("hold_longer_score"), 0.0), _to_float(v3.get("hold_longer_score"), 0.0)),
@@ -185,6 +186,7 @@ class LearningAccelerationRetentionSuiteV1:
             "opportunity_cost_and_buy_purity": abs(_to_float((issue.get("opportunity_cost_diagnostics") or {}).get("average_opportunity_cost"), 0.0)) * 0.35,
             "blind_spot_coverage": _to_float(blind.get("blind_spot_score"), 0.0),
             "portfolio_risk_balance": max(_to_float(portfolio.get("average_correlation_pressure_score"), 0.0), _to_float(portfolio.get("average_concentration_pressure_score"), 0.0)),
+            "confidence_grade_attribution": max(0.0, 70.0 - _to_float(confidence_attr.get("confidence_predictive_power"), 45.0)) if _to_int(confidence_attr.get("evidence_count"), 0) else 25.0,
         }
         ordered = sorted(scores.items(), key=lambda item: item[1], reverse=True)
         top = ordered[0][0] if ordered else "insufficient_evidence"
@@ -198,6 +200,7 @@ class LearningAccelerationRetentionSuiteV1:
             "opportunity_cost_and_buy_purity": "selected_vs_rejected_candidate_outcomes",
             "blind_spot_coverage": "underexplored_context_evidence_collection",
             "portfolio_risk_balance": "portfolio_fit_correlation_concentration_learning",
+            "confidence_grade_attribution": "confidence_grade_horizon_attribution_validation",
         }
         return {
             "scores": {k: round(v, 4) for k, v in scores.items()},
@@ -297,6 +300,7 @@ class LearningAccelerationRetentionSuiteV1:
             "replay_counterfactual": _to_float((statuses.get("replay_counterfactual_learning_v2") or {}).get("replay_learning_score"), 0.0),
             "opportunity_cost_learning": _to_float((statuses.get("opportunity_cost_learning") or {}).get("selection_quality_score"), 0.0),
             "archetype_regime_learning": _to_float((statuses.get("trade_archetype_regime") or {}).get("current_archetype_regime_alignment_score"), 0.0),
+            "confidence_calibration_attribution": _to_float((statuses.get("confidence_calibration_performance_attribution_v1") or {}).get("confidence_calibration_score"), 0.0),
         }
         meaningful = {k: v for k, v in system_scores.items() if v > 0}
         most = max(meaningful.items(), key=lambda item: item[1], default=("insufficient_data", 0.0))[0]

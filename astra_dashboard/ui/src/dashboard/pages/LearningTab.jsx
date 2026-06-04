@@ -149,6 +149,7 @@ export default function LearningTab({ compact = false }) {
   const [showLearningAccelerationDetails, setShowLearningAccelerationDetails] = useState(false);
   const [showAdaptiveLearningInfrastructureDetails, setShowAdaptiveLearningInfrastructureDetails] = useState(false);
   const [showAdaptiveWorkerActivationDetails, setShowAdaptiveWorkerActivationDetails] = useState(false);
+  const [showConfidenceAttributionDetails, setShowConfidenceAttributionDetails] = useState(false);
   const [showTradeArchetypeRegimeDetails, setShowTradeArchetypeRegimeDetails] = useState(false);
   const [showReplayCounterfactualDetails, setShowReplayCounterfactualDetails] = useState(false);
   const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
@@ -1586,6 +1587,7 @@ export default function LearningTab({ compact = false }) {
   const learningAccelerationRetention = unified?.learning_acceleration_retention_suite_v1 || {};
   const adaptiveLearningInfrastructureSuite = unified?.adaptive_learning_infrastructure_suite_v1 || {};
   const adaptiveWorkerActivation = unified?.adaptive_worker_activation_orchestration_v1 || {};
+  const confidenceAttribution = unified?.confidence_calibration_performance_attribution_v1 || {};
   const tradeArchetypeRegime = unified?.trade_archetype_regime_intelligence || {};
   const replayCounterfactual = unified?.replay_counterfactual_learning_v2 || {};
   const opportunityCostLearning = unified?.opportunity_cost_learning || {};
@@ -1940,6 +1942,98 @@ export default function LearningTab({ compact = false }) {
             </ResponsiveContainer>
           </ChartShell>
         </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Confidence Calibration & Performance Attribution V1</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is studying whether higher-confidence trades actually perform better, which grades produce the best outcomes, where profits and losses come from, and whether confidence-weighted position sizing could eventually be justified. No sizing or trading behavior is changed yet.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowConfidenceAttributionDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showConfidenceAttributionDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Best confidence bucket", confidenceAttribution?.best_confidence_bucket],
+            ["Worst confidence bucket", confidenceAttribution?.worst_confidence_bucket],
+            ["Calibration score", safeNumber(confidenceAttribution?.confidence_calibration_score).toFixed(1)],
+            ["Predictive power", safeNumber(confidenceAttribution?.confidence_predictive_power).toFixed(1)],
+            ["Sizing readiness", safeNumber(confidenceAttribution?.sizing_readiness_score || confidenceAttribution?.confidence_sizing_readiness).toFixed(1)],
+            ["Best grade", confidenceAttribution?.best_grade],
+            ["Best confidence / horizon", confidenceAttribution?.best_confidence_horizon_pair],
+            ["Top profit driver", confidenceAttribution?.top_profit_driver],
+            ["Top loss driver", confidenceAttribution?.top_loss_driver],
+            ["Daily positive rate", `${safeNumber(confidenceAttribution?.daily_positive_rate).toFixed(1)}%`],
+            ["Current day return", `${safeNumber(confidenceAttribution?.current_day_return).toFixed(2)}%`],
+            ["Current day status", confidenceAttribution?.current_day_status],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(confidenceAttribution?.shadow_recommendation || "Keep confidence and sizing decisions shadow-only until evidence is stronger.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showConfidenceAttributionDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Confidence Buckets</div>
+              {Object.entries(confidenceAttribution?.confidence_bucket_stats || {}).slice(0, 7).map(([bucket, stats]) => (
+                <div key={bucket}>
+                  {String(bucket).replaceAll("_", " ")}: {safeNumber(stats?.trade_count).toFixed(0)} trades, {safeNumber(stats?.avg_return).toFixed(2)}% avg
+                </div>
+              ))}
+              <div>Return monotonicity: {safeNumber(confidenceAttribution?.return_monotonicity).toFixed(1)}</div>
+              <div>Risk monotonicity: {safeNumber(confidenceAttribution?.risk_adjusted_monotonicity).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Grade Calibration</div>
+              {Object.entries(confidenceAttribution?.grade_bucket_stats || {}).slice(0, 5).map(([grade, stats]) => (
+                <div key={grade}>
+                  {grade}: {safeNumber(stats?.trade_count).toFixed(0)} trades, {safeNumber(stats?.win_rate).toFixed(1)}% WR, {safeNumber(stats?.avg_return).toFixed(2)}% avg
+                </div>
+              ))}
+              <div>Weakest grade: {String(confidenceAttribution?.weakest_grade || "warming up").replaceAll("_", " ")}</div>
+              <div>Grade predictive power: {safeNumber(confidenceAttribution?.grade_predictive_power).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Attribution</div>
+              <div>Profit by horizon: {Object.entries(confidenceAttribution?.profit_by_horizon || {}).slice(0, 4).map(([k, v]) => `${String(k).replaceAll("_", " ")} ${safeNumber(v).toFixed(2)}%`).join(", ") || "warming up"}</div>
+              <div>Profit by grade: {Object.entries(confidenceAttribution?.profit_by_grade || {}).slice(0, 4).map(([k, v]) => `${k} ${safeNumber(v).toFixed(2)}%`).join(", ") || "warming up"}</div>
+              <div>Profit concentration: {safeNumber(confidenceAttribution?.concentration_of_profit).toFixed(1)}%</div>
+              <div>Warning: {String(confidenceAttribution?.concentration_warning || "warming up").replaceAll("_", " ")}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Sizing Readiness Safety</div>
+              <div>Ready for confidence-weighted sizing: {confidenceAttribution?.ready_for_confidence_weighted_sizing ? "yes" : "no"}</div>
+              <div>Reason: {String(confidenceAttribution?.reason_not_ready || "minimum evidence still required").replaceAll("_", " ")}</div>
+              <div>Minimum evidence: {String(confidenceAttribution?.minimum_evidence_needed || "more broker confirmed outcomes").replaceAll("_", " ")}</div>
+              <div>Position sizing changed: {confidenceAttribution?.position_sizing_changed ? "yes" : "no"}</div>
+              <div>Paper execution changed: {confidenceAttribution?.paper_execution_behavior_changed ? "yes" : "no"}</div>
+              <div>Behavior safe to apply: {confidenceAttribution?.behavior_safe_to_apply ? "yes" : "no"}</div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div style={{ ...panelStyle }}>

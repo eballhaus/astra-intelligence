@@ -205,6 +205,7 @@ class AdaptiveLearningInfrastructureSuiteV1:
         market_context = statuses.get("market_context_learning_suite_v1") or {}
         profit_capture = statuses.get("adaptive_profit_capture") or {}
         blind = statuses.get("blind_spot_detection") or {}
+        confidence_attr = statuses.get("confidence_calibration_performance_attribution_v1") or {}
         return {
             "profit_capture": max(
                 _to_float(v3.get("protect_profit_score"), 0.0),
@@ -218,6 +219,7 @@ class AdaptiveLearningInfrastructureSuiteV1:
             "exit_timing": max(_to_float(exit_learning.get("protect_profit_score"), 0.0), _to_float(v3.get("profit_capture_score"), 0.0)),
             "continuation_analysis": max(0.0, 70.0 - _to_float(v3.get("continuation_probability"), _to_float(exit_learning.get("continuation_after_profit_score"), 50.0))),
             "blind_spot_coverage": _to_float(blind.get("blind_spot_score"), 0.0),
+            "confidence_grade_attribution": max(0.0, 70.0 - _to_float(confidence_attr.get("confidence_predictive_power"), 45.0)) if _to_int(confidence_attr.get("evidence_count"), 0) else 25.0,
         }
 
     def _orchestrator(self, rows: dict[str, list[dict[str, Any]]], statuses: dict[str, dict[str, Any]]) -> dict[str, Any]:

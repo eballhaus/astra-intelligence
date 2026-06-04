@@ -907,6 +907,49 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.confidence_calibration_performance_attribution_v1 import ConfidenceCalibrationPerformanceAttributionV1
+except Exception:
+    class ConfidenceCalibrationPerformanceAttributionV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "paper_only_confidence_calibration_performance_attribution",
+                "evidence_count": 0,
+                "best_confidence_bucket": "unavailable",
+                "worst_confidence_bucket": "unavailable",
+                "confidence_calibration_score": 0.0,
+                "confidence_predictive_power": 0.0,
+                "confidence_sizing_readiness": 0.0,
+                "best_grade": "unavailable",
+                "grade_predictive_power": 0.0,
+                "best_confidence_horizon_pair": "unavailable",
+                "worst_confidence_horizon_pair": "unavailable",
+                "sizing_readiness_score": 0.0,
+                "ready_for_confidence_weighted_sizing": False,
+                "top_profit_driver": "unavailable",
+                "top_loss_driver": "unavailable",
+                "daily_positive_rate": 0.0,
+                "current_day_return": 0.0,
+                "current_day_status": "unavailable",
+                "shadow_recommendation": "unavailable",
+                "behavior_safe_to_apply": False,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "ranking_behavior_changed": False,
+                "paper_execution_behavior_changed": False,
+                "position_sizing_changed": False,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_trades_enabled": False,
+                "forced_exits_enabled": False,
+            }
+try:
     from engine.trade_archetype_regime_intelligence_v1 import TradeArchetypeRegimeIntelligenceV1
 except Exception:
     class TradeArchetypeRegimeIntelligenceV1:  # type: ignore[override]
@@ -1590,6 +1633,7 @@ MARKET_CONTEXT_LEARNING_SUITE = MarketContextLearningSuiteV1(state_dir=STATE)
 LEARNING_ACCELERATION_RETENTION_SUITE = LearningAccelerationRetentionSuiteV1(state_dir=STATE)
 ADAPTIVE_LEARNING_INFRASTRUCTURE_FOUNDATION_SUITE = AdaptiveLearningInfrastructureSuiteV1(state_dir=STATE)
 ADAPTIVE_WORKER_ACTIVATION_ORCHESTRATION = AdaptiveWorkerActivationOrchestrationV1(state_dir=STATE)
+CONFIDENCE_CALIBRATION_PERFORMANCE_ATTRIBUTION = ConfidenceCalibrationPerformanceAttributionV1(state_dir=STATE)
 TRADE_ARCHETYPE_REGIME_INTELLIGENCE = TradeArchetypeRegimeIntelligenceV1(state_dir=STATE)
 REPLAY_COUNTERFACTUAL_LEARNING_V2 = ReplayCounterfactualLearningV2(state_dir=STATE)
 OPPORTUNITY_COST_LEARNING = OpportunityCostLearningV1(state_dir=STATE)
@@ -39958,6 +40002,10 @@ def _learning_acceleration_status_bundle() -> dict:
             statuses[name] = fn()
         except Exception:
             statuses[name] = {}
+    try:
+        statuses["confidence_calibration_performance_attribution_v1"] = CONFIDENCE_CALIBRATION_PERFORMANCE_ATTRIBUTION.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["confidence_calibration_performance_attribution_v1"] = {}
     return statuses
 
 
@@ -40462,6 +40510,80 @@ def blind_spot_detection_status_v1(force: bool = False):
         }
 
 
+@router.get("/api/confidence_calibration_performance_attribution_v1")
+def confidence_calibration_performance_attribution_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        try:
+            statuses["alpaca_paper_broker"] = alpaca_paper_status_v1()
+        except Exception:
+            statuses["alpaca_paper_broker"] = {}
+        out = dict(CONFIDENCE_CALIBRATION_PERFORMANCE_ATTRIBUTION.status(statuses=statuses, force=bool(force)) or {})
+        out["confidence_calibration_performance_attribution_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["ranking_behavior_changed"] = False
+        out["paper_execution_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["thresholds_changed"] = False
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        out["partial_sells_enabled"] = False
+        out["automatic_trailing_stops_enabled"] = False
+        out["auto_apply_allowed"] = False
+        out["human_review_required"] = True
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "paper_only_confidence_calibration_performance_attribution",
+            "confidence_calibration_performance_attribution_v1": True,
+            "evidence_count": 0,
+            "best_confidence_bucket": "insufficient_data",
+            "worst_confidence_bucket": "insufficient_data",
+            "confidence_calibration_score": 0.0,
+            "confidence_predictive_power": 0.0,
+            "confidence_sizing_readiness": 0.0,
+            "best_grade": "insufficient_data",
+            "grade_predictive_power": 0.0,
+            "best_confidence_horizon_pair": "insufficient_data",
+            "worst_confidence_horizon_pair": "insufficient_data",
+            "sizing_readiness_score": 0.0,
+            "ready_for_confidence_weighted_sizing": False,
+            "top_profit_driver": "insufficient_data",
+            "top_loss_driver": "insufficient_data",
+            "daily_positive_rate": 0.0,
+            "current_day_return": 0.0,
+            "current_day_status": "unavailable",
+            "shadow_recommendation": "unavailable",
+            "degraded_reason": f"confidence_calibration_performance_attribution_v1_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "build_ms": 0.0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "paper_execution_behavior_changed": False,
+            "position_sizing_changed": False,
+            "thresholds_changed": False,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+            "partial_sells_enabled": False,
+            "automatic_trailing_stops_enabled": False,
+            "auto_apply_allowed": False,
+            "human_review_required": True,
+            "behavior_safe_to_apply": False,
+        }
+
+
 @router.get("/api/learning_issue_audit_status_v1")
 def learning_issue_audit_status_v1(force: bool = False):
     try:
@@ -40498,6 +40620,10 @@ def learning_issue_audit_status_v1(force: bool = False):
             statuses["adaptive_learning_infrastructure_suite_v1"] = ADAPTIVE_LEARNING_INFRASTRUCTURE_FOUNDATION_SUITE.status(statuses=statuses, force=False)
         except Exception:
             statuses["adaptive_learning_infrastructure_suite_v1"] = {}
+        try:
+            statuses["confidence_calibration_performance_attribution_v1"] = CONFIDENCE_CALIBRATION_PERFORMANCE_ATTRIBUTION.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["confidence_calibration_performance_attribution_v1"] = {}
         try:
             statuses["opportunity_cost_learning"] = OPPORTUNITY_COST_LEARNING.status(force=False)
         except Exception:
@@ -48902,6 +49028,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("learning_acceleration_retention_suite_v1", lambda: LEARNING_ACCELERATION_RETENTION_SUITE.status(statuses=statuses, force=False))
         _safe_status("adaptive_worker_activation_orchestration_v1", lambda: ADAPTIVE_WORKER_ACTIVATION_ORCHESTRATION.status(statuses=statuses, force=False))
         _safe_status("adaptive_learning_infrastructure_suite_v1", lambda: ADAPTIVE_LEARNING_INFRASTRUCTURE_FOUNDATION_SUITE.status(statuses=statuses, force=False))
+        _safe_status("confidence_calibration_performance_attribution_v1", lambda: CONFIDENCE_CALIBRATION_PERFORMANCE_ATTRIBUTION.status(statuses=statuses, force=False))
         _safe_status("trade_archetype_regime", lambda: TRADE_ARCHETYPE_REGIME_INTELLIGENCE.status(force=False))
         _safe_status("replay_counterfactual_learning_v2", lambda: REPLAY_COUNTERFACTUAL_LEARNING_V2.status(force=False))
         _safe_status("opportunity_cost_learning", lambda: OPPORTUNITY_COST_LEARNING.status(force=False))
