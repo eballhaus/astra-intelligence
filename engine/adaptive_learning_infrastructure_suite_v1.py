@@ -146,6 +146,7 @@ class AdaptiveLearningInfrastructureSuiteV1:
             "audit": self._rows("execution_suppression_audit_v1.jsonl", 420),
             "candidate": self._rows("candidate_decision_ledger_v1.jsonl", 320),
             "archetype_regime": self._rows("trade_archetype_regime_intelligence_v1.jsonl", 320),
+            "context_evidence_expansion": self._rows("context_evidence_expansion_suite_v1.jsonl", 320),
         }
 
     def _worker_foundation(self, rows: dict[str, list[dict[str, Any]]], statuses: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -206,6 +207,7 @@ class AdaptiveLearningInfrastructureSuiteV1:
         profit_capture = statuses.get("adaptive_profit_capture") or {}
         blind = statuses.get("blind_spot_detection") or {}
         confidence_attr = statuses.get("confidence_calibration_performance_attribution_v1") or {}
+        context_expansion = statuses.get("context_evidence_expansion_suite_v1") or {}
         return {
             "profit_capture": max(
                 _to_float(v3.get("protect_profit_score"), 0.0),
@@ -220,6 +222,7 @@ class AdaptiveLearningInfrastructureSuiteV1:
             "continuation_analysis": max(0.0, 70.0 - _to_float(v3.get("continuation_probability"), _to_float(exit_learning.get("continuation_after_profit_score"), 50.0))),
             "blind_spot_coverage": _to_float(blind.get("blind_spot_score"), 0.0),
             "confidence_grade_attribution": max(0.0, 70.0 - _to_float(confidence_attr.get("confidence_predictive_power"), 45.0)) if _to_int(confidence_attr.get("evidence_count"), 0) else 25.0,
+            "context_evidence_expansion": max(0.0, 100.0 - _to_float(context_expansion.get("catalyst_coverage_score"), 35.0)) if _to_int(context_expansion.get("evidence_count"), 0) else 35.0,
         }
 
     def _orchestrator(self, rows: dict[str, list[dict[str, Any]]], statuses: dict[str, dict[str, Any]]) -> dict[str, Any]:

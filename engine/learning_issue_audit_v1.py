@@ -579,6 +579,7 @@ class LearningIssueAuditV1:
         infrastructure = dict(statuses.get("adaptive_learning_infrastructure_suite_v1") or {})
         worker_activation = dict(statuses.get("adaptive_worker_activation_orchestration_v1") or {})
         confidence_attr = dict(statuses.get("confidence_calibration_performance_attribution_v1") or {})
+        context_expansion = dict(statuses.get("context_evidence_expansion_suite_v1") or {})
         v3_issue = _issue(
             "shadow_exit_learning_active" if v3.get("enabled") else "shadow_exit_learning_unavailable",
             "adaptive_execution_exit_v3_tracks_profit_capture_horizon_and_peak_decay" if v3.get("enabled") else "adaptive_execution_exit_v3_not_available",
@@ -639,6 +640,20 @@ class LearningIssueAuditV1:
             "Use calibration diagnostics to decide whether confidence and grades predict outcomes; keep sizing changes disabled.",
             _text(confidence_attr.get("shadow_recommendation"), "No behavior change."),
         )
+        context_expansion_issue = _issue(
+            "context_evidence_expansion_active" if context_expansion.get("enabled") else "context_evidence_expansion_unavailable",
+            "open_trade_rejected_candidate_and_catalyst_evidence_expansion_active" if context_expansion.get("enabled") else "context_evidence_expansion_not_available",
+            "medium"
+            if context_expansion.get("enabled")
+            and (
+                _to_float(context_expansion.get("unknown_catalyst_rate"), 0.0) >= 60.0
+                or _to_float(context_expansion.get("open_trade_learning_confidence"), 0.0) < 35.0
+            )
+            else "low",
+            _to_int(context_expansion.get("evidence_count"), 0),
+            "Use context expansion diagnostics to improve evidence coverage without changing rankings, gates, or exits.",
+            _text(context_expansion.get("shadow_recommendation"), "No behavior change."),
+        )
         issue_status = {
             "core_metric_source_regression": core_issue,
             "dataset_scope_mismatch": dataset_issue,
@@ -656,6 +671,7 @@ class LearningIssueAuditV1:
             "adaptive_learning_infrastructure_suite_v1": infrastructure_issue,
             "adaptive_worker_activation_orchestration_v1": worker_activation_issue,
             "confidence_calibration_performance_attribution_v1": confidence_issue,
+            "context_evidence_expansion_suite_v1": context_expansion_issue,
         }
         medium_or_higher = [name for name, issue in issue_status.items() if issue.get("severity") in {"medium", "high"}]
         out = {
@@ -676,6 +692,7 @@ class LearningIssueAuditV1:
             "adaptive_learning_infrastructure_status": infrastructure_issue,
             "adaptive_worker_activation_status": worker_activation_issue,
             "confidence_calibration_performance_attribution_status": confidence_issue,
+            "context_evidence_expansion_status": context_expansion_issue,
             "execution_participation_display_status": exec_issue,
             "core_metric_source_diagnostics": core_diag,
             "dataset_scope_diagnostics": dataset_diag,
@@ -818,6 +835,32 @@ class LearningIssueAuditV1:
                 "shadow_recommendation": confidence_attr.get("shadow_recommendation"),
                 "behavior_safe_to_apply": bool(confidence_attr.get("behavior_safe_to_apply", False)),
                 "position_sizing_changed": bool(confidence_attr.get("position_sizing_changed", False)),
+            },
+            "context_evidence_expansion_diagnostics": {
+                "evidence_count": context_expansion.get("evidence_count"),
+                "active_trades_tracked": context_expansion.get("active_trades_tracked"),
+                "strongest_open_trade": context_expansion.get("strongest_open_trade"),
+                "weakest_open_trade": context_expansion.get("weakest_open_trade"),
+                "highest_profit_decay_symbol": context_expansion.get("highest_profit_decay_symbol"),
+                "highest_giveback_symbol": context_expansion.get("highest_giveback_symbol"),
+                "open_trade_learning_confidence": context_expansion.get("open_trade_learning_confidence"),
+                "rejected_candidates_reviewed": context_expansion.get("rejected_candidates_reviewed"),
+                "rejection_accuracy": context_expansion.get("rejection_accuracy"),
+                "missed_winners": context_expansion.get("missed_winners"),
+                "avoided_losers": context_expansion.get("avoided_losers"),
+                "biggest_missed_symbol": context_expansion.get("biggest_missed_symbol"),
+                "rejected_candidate_learning_confidence": context_expansion.get("rejected_candidate_learning_confidence"),
+                "catalyst_records": context_expansion.get("catalyst_records"),
+                "dominant_catalyst_type": context_expansion.get("dominant_catalyst_type"),
+                "unknown_catalyst_rate": context_expansion.get("unknown_catalyst_rate"),
+                "catalyst_coverage_score": context_expansion.get("catalyst_coverage_score"),
+                "best_catalyst_horizon": context_expansion.get("best_catalyst_horizon"),
+                "catalyst_learning_confidence": context_expansion.get("catalyst_learning_confidence"),
+                "top_learning_gap": context_expansion.get("top_learning_gap"),
+                "shadow_recommendation": context_expansion.get("shadow_recommendation"),
+                "behavior_safe_to_apply": bool(context_expansion.get("behavior_safe_to_apply", False)),
+                "ranking_behavior_changed": bool(context_expansion.get("ranking_behavior_changed", False)),
+                "paper_execution_behavior_changed": bool(context_expansion.get("paper_execution_behavior_changed", False)),
             },
             "likely_cause_summary": ", ".join(medium_or_higher) if medium_or_higher else "no_behavior_change_indicated",
             "recommended_action": "Apply display/source reconciliation and keep behavior changes shadow-only.",

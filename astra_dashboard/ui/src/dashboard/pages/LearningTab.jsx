@@ -150,6 +150,7 @@ export default function LearningTab({ compact = false }) {
   const [showAdaptiveLearningInfrastructureDetails, setShowAdaptiveLearningInfrastructureDetails] = useState(false);
   const [showAdaptiveWorkerActivationDetails, setShowAdaptiveWorkerActivationDetails] = useState(false);
   const [showConfidenceAttributionDetails, setShowConfidenceAttributionDetails] = useState(false);
+  const [showContextEvidenceExpansionDetails, setShowContextEvidenceExpansionDetails] = useState(false);
   const [showTradeArchetypeRegimeDetails, setShowTradeArchetypeRegimeDetails] = useState(false);
   const [showReplayCounterfactualDetails, setShowReplayCounterfactualDetails] = useState(false);
   const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
@@ -1588,6 +1589,7 @@ export default function LearningTab({ compact = false }) {
   const adaptiveLearningInfrastructureSuite = unified?.adaptive_learning_infrastructure_suite_v1 || {};
   const adaptiveWorkerActivation = unified?.adaptive_worker_activation_orchestration_v1 || {};
   const confidenceAttribution = unified?.confidence_calibration_performance_attribution_v1 || {};
+  const contextEvidenceExpansion = unified?.context_evidence_expansion_suite_v1 || {};
   const tradeArchetypeRegime = unified?.trade_archetype_regime_intelligence || {};
   const replayCounterfactual = unified?.replay_counterfactual_learning_v2 || {};
   const opportunityCostLearning = unified?.opportunity_cost_learning || {};
@@ -1942,6 +1944,98 @@ export default function LearningTab({ compact = false }) {
             </ResponsiveContainer>
           </ChartShell>
         </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Context & Evidence Expansion Suite V1</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is learning from active trades before they close, from rejected candidates it did not select, and from catalysts that may explain why stocks are moving. This helps Astra learn faster without taking more trades or changing behavior.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowContextEvidenceExpansionDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showContextEvidenceExpansionDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Active trades tracked", safeNumber(contextEvidenceExpansion?.active_trades_tracked).toFixed(0)],
+            ["Strongest open trade", contextEvidenceExpansion?.strongest_open_trade],
+            ["Weakest open trade", contextEvidenceExpansion?.weakest_open_trade],
+            ["Highest giveback", contextEvidenceExpansion?.highest_giveback_symbol],
+            ["Rejected reviewed", safeNumber(contextEvidenceExpansion?.rejected_candidates_reviewed).toFixed(0)],
+            ["Rejection accuracy", `${safeNumber(contextEvidenceExpansion?.rejection_accuracy).toFixed(1)}%`],
+            ["Missed winners", safeNumber(contextEvidenceExpansion?.missed_winners).toFixed(0)],
+            ["Avoided losers", safeNumber(contextEvidenceExpansion?.avoided_losers).toFixed(0)],
+            ["Biggest missed", contextEvidenceExpansion?.biggest_missed_symbol],
+            ["Dominant catalyst", contextEvidenceExpansion?.dominant_catalyst_type],
+            ["Unknown catalyst rate", `${safeNumber(contextEvidenceExpansion?.unknown_catalyst_rate).toFixed(1)}%`],
+            ["Catalyst coverage", safeNumber(contextEvidenceExpansion?.catalyst_coverage_score).toFixed(1)],
+            ["Best catalyst horizon", contextEvidenceExpansion?.best_catalyst_horizon],
+            ["Top learning gap", contextEvidenceExpansion?.top_learning_gap],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(contextEvidenceExpansion?.shadow_recommendation || "Collecting open-trade, rejected-candidate, and catalyst evidence.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showContextEvidenceExpansionDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Open Trade Learning</div>
+              <div>Symbols: {(contextEvidenceExpansion?.active_trade_symbols || []).join(", ") || "warming up"}</div>
+              <div>Profit decay symbol: {String(contextEvidenceExpansion?.highest_profit_decay_symbol || "warming up")}</div>
+              <div>Best horizon: {String(contextEvidenceExpansion?.best_open_trade_horizon || "warming up").replaceAll("_", " ")}</div>
+              <div>Continuation score: {safeNumber(contextEvidenceExpansion?.open_trade_continuation_score).toFixed(1)}</div>
+              <div>Profit capture score: {safeNumber(contextEvidenceExpansion?.open_trade_profit_capture_score).toFixed(1)}</div>
+              <div>Confidence: {safeNumber(contextEvidenceExpansion?.open_trade_learning_confidence).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Rejected Candidate Learning</div>
+              <div>Correct rejections: {safeNumber(contextEvidenceExpansion?.correct_rejections).toFixed(0)}</div>
+              <div>Best correct rejection: {String(contextEvidenceExpansion?.best_correct_rejection || "warming up")}</div>
+              <div>Worst reason: {String(contextEvidenceExpansion?.worst_rejection_reason || "warming up").replaceAll("_", " ")}</div>
+              <div>Learning score: {safeNumber(contextEvidenceExpansion?.rejection_learning_score).toFixed(1)}</div>
+              <div>Confidence: {safeNumber(contextEvidenceExpansion?.rejected_candidate_learning_confidence).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Catalyst Expansion</div>
+              <div>Records: {safeNumber(contextEvidenceExpansion?.catalyst_records).toFixed(0)}</div>
+              <div>Strongest: {String(contextEvidenceExpansion?.strongest_catalyst_type || "warming up").replaceAll("_", " ")}</div>
+              <div>Weakest: {String(contextEvidenceExpansion?.weakest_catalyst_type || "warming up").replaceAll("_", " ")}</div>
+              <div>Highest giveback catalyst: {String(contextEvidenceExpansion?.highest_giveback_catalyst || "warming up").replaceAll("_", " ")}</div>
+              <div>Confidence: {safeNumber(contextEvidenceExpansion?.catalyst_learning_confidence).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Safety</div>
+              <div>Provider calls: {safeNumber(contextEvidenceExpansion?.provider_calls_used).toFixed(0)}</div>
+              <div>LLM calls: {safeNumber(contextEvidenceExpansion?.llm_calls_used).toFixed(0)}</div>
+              <div>Behavior safe to apply: {contextEvidenceExpansion?.behavior_safe_to_apply ? "yes" : "no"}</div>
+              <div>Ranking changed: {contextEvidenceExpansion?.ranking_behavior_changed ? "yes" : "no"}</div>
+              <div>Paper execution changed: {contextEvidenceExpansion?.paper_execution_behavior_changed ? "yes" : "no"}</div>
+              <div>Forced exits: {contextEvidenceExpansion?.forced_exits_enabled ? "yes" : "no"}</div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div style={{ ...panelStyle }}>

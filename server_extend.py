@@ -950,6 +950,51 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.context_evidence_expansion_suite_v1 import ContextEvidenceExpansionSuiteV1
+except Exception:
+    class ContextEvidenceExpansionSuiteV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "paper_only_context_evidence_expansion",
+                "evidence_count": 0,
+                "active_trades_tracked": 0,
+                "rejected_candidates_reviewed": 0,
+                "catalyst_records": 0,
+                "strongest_open_trade": "unavailable",
+                "weakest_open_trade": "unavailable",
+                "highest_profit_decay_symbol": "unavailable",
+                "rejection_accuracy": 0.0,
+                "missed_winners": 0,
+                "avoided_losers": 0,
+                "biggest_missed_symbol": "unavailable",
+                "dominant_catalyst_type": "unavailable",
+                "unknown_catalyst_rate": 100.0,
+                "catalyst_coverage_score": 0.0,
+                "best_catalyst_horizon": "unavailable",
+                "open_trade_learning_confidence": 0.0,
+                "rejected_candidate_learning_confidence": 0.0,
+                "catalyst_learning_confidence": 0.0,
+                "top_learning_gap": "unavailable",
+                "shadow_recommendation": "unavailable",
+                "behavior_safe_to_apply": False,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "ranking_behavior_changed": False,
+                "paper_execution_behavior_changed": False,
+                "position_sizing_changed": False,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_trades_enabled": False,
+                "forced_exits_enabled": False,
+            }
+try:
     from engine.trade_archetype_regime_intelligence_v1 import TradeArchetypeRegimeIntelligenceV1
 except Exception:
     class TradeArchetypeRegimeIntelligenceV1:  # type: ignore[override]
@@ -1634,6 +1679,7 @@ LEARNING_ACCELERATION_RETENTION_SUITE = LearningAccelerationRetentionSuiteV1(sta
 ADAPTIVE_LEARNING_INFRASTRUCTURE_FOUNDATION_SUITE = AdaptiveLearningInfrastructureSuiteV1(state_dir=STATE)
 ADAPTIVE_WORKER_ACTIVATION_ORCHESTRATION = AdaptiveWorkerActivationOrchestrationV1(state_dir=STATE)
 CONFIDENCE_CALIBRATION_PERFORMANCE_ATTRIBUTION = ConfidenceCalibrationPerformanceAttributionV1(state_dir=STATE)
+CONTEXT_EVIDENCE_EXPANSION_SUITE = ContextEvidenceExpansionSuiteV1(state_dir=STATE)
 TRADE_ARCHETYPE_REGIME_INTELLIGENCE = TradeArchetypeRegimeIntelligenceV1(state_dir=STATE)
 REPLAY_COUNTERFACTUAL_LEARNING_V2 = ReplayCounterfactualLearningV2(state_dir=STATE)
 OPPORTUNITY_COST_LEARNING = OpportunityCostLearningV1(state_dir=STATE)
@@ -40006,6 +40052,10 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["confidence_calibration_performance_attribution_v1"] = CONFIDENCE_CALIBRATION_PERFORMANCE_ATTRIBUTION.status(statuses=statuses, force=False)
     except Exception:
         statuses["confidence_calibration_performance_attribution_v1"] = {}
+    try:
+        statuses["context_evidence_expansion_suite_v1"] = CONTEXT_EVIDENCE_EXPANSION_SUITE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["context_evidence_expansion_suite_v1"] = {}
     return statuses
 
 
@@ -40584,6 +40634,78 @@ def confidence_calibration_performance_attribution_v1(force: bool = False):
         }
 
 
+@router.get("/api/context_evidence_expansion_suite_v1")
+def context_evidence_expansion_suite_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        out = dict(CONTEXT_EVIDENCE_EXPANSION_SUITE.status(statuses=statuses, force=bool(force)) or {})
+        out["context_evidence_expansion_suite_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["ranking_behavior_changed"] = False
+        out["paper_execution_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["thresholds_changed"] = False
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        out["partial_sells_enabled"] = False
+        out["automatic_trailing_stops_enabled"] = False
+        out["auto_apply_allowed"] = False
+        out["human_review_required"] = True
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "paper_only_context_evidence_expansion",
+            "context_evidence_expansion_suite_v1": True,
+            "evidence_count": 0,
+            "active_trades_tracked": 0,
+            "rejected_candidates_reviewed": 0,
+            "catalyst_records": 0,
+            "strongest_open_trade": "insufficient_data",
+            "weakest_open_trade": "insufficient_data",
+            "highest_profit_decay_symbol": "insufficient_data",
+            "rejection_accuracy": 0.0,
+            "missed_winners": 0,
+            "avoided_losers": 0,
+            "biggest_missed_symbol": "insufficient_data",
+            "dominant_catalyst_type": "insufficient_data",
+            "unknown_catalyst_rate": 100.0,
+            "catalyst_coverage_score": 0.0,
+            "best_catalyst_horizon": "insufficient_data",
+            "open_trade_learning_confidence": 0.0,
+            "rejected_candidate_learning_confidence": 0.0,
+            "catalyst_learning_confidence": 0.0,
+            "top_learning_gap": "unavailable",
+            "shadow_recommendation": "unavailable",
+            "degraded_reason": f"context_evidence_expansion_suite_v1_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "build_ms": 0.0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "paper_execution_behavior_changed": False,
+            "position_sizing_changed": False,
+            "thresholds_changed": False,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+            "partial_sells_enabled": False,
+            "automatic_trailing_stops_enabled": False,
+            "auto_apply_allowed": False,
+            "human_review_required": True,
+            "behavior_safe_to_apply": False,
+        }
+
+
 @router.get("/api/learning_issue_audit_status_v1")
 def learning_issue_audit_status_v1(force: bool = False):
     try:
@@ -40624,6 +40746,10 @@ def learning_issue_audit_status_v1(force: bool = False):
             statuses["confidence_calibration_performance_attribution_v1"] = CONFIDENCE_CALIBRATION_PERFORMANCE_ATTRIBUTION.status(statuses=statuses, force=False)
         except Exception:
             statuses["confidence_calibration_performance_attribution_v1"] = {}
+        try:
+            statuses["context_evidence_expansion_suite_v1"] = CONTEXT_EVIDENCE_EXPANSION_SUITE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["context_evidence_expansion_suite_v1"] = {}
         try:
             statuses["opportunity_cost_learning"] = OPPORTUNITY_COST_LEARNING.status(force=False)
         except Exception:
@@ -49029,6 +49155,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("adaptive_worker_activation_orchestration_v1", lambda: ADAPTIVE_WORKER_ACTIVATION_ORCHESTRATION.status(statuses=statuses, force=False))
         _safe_status("adaptive_learning_infrastructure_suite_v1", lambda: ADAPTIVE_LEARNING_INFRASTRUCTURE_FOUNDATION_SUITE.status(statuses=statuses, force=False))
         _safe_status("confidence_calibration_performance_attribution_v1", lambda: CONFIDENCE_CALIBRATION_PERFORMANCE_ATTRIBUTION.status(statuses=statuses, force=False))
+        _safe_status("context_evidence_expansion_suite_v1", lambda: CONTEXT_EVIDENCE_EXPANSION_SUITE.status(statuses=statuses, force=False))
         _safe_status("trade_archetype_regime", lambda: TRADE_ARCHETYPE_REGIME_INTELLIGENCE.status(force=False))
         _safe_status("replay_counterfactual_learning_v2", lambda: REPLAY_COUNTERFACTUAL_LEARNING_V2.status(force=False))
         _safe_status("opportunity_cost_learning", lambda: OPPORTUNITY_COST_LEARNING.status(force=False))

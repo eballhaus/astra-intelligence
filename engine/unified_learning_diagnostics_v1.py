@@ -288,6 +288,7 @@ class UnifiedLearningDiagnosticsV1:
         adaptive_learning_infrastructure_suite = self._adaptive_learning_infrastructure_suite_summary(statuses.get("adaptive_learning_infrastructure_suite_v1") or {})
         adaptive_worker_activation_orchestration = self._adaptive_worker_activation_orchestration_summary(statuses.get("adaptive_worker_activation_orchestration_v1") or {})
         confidence_calibration_performance_attribution = self._confidence_calibration_performance_attribution_summary(statuses.get("confidence_calibration_performance_attribution_v1") or {})
+        context_evidence_expansion = self._context_evidence_expansion_summary(statuses.get("context_evidence_expansion_suite_v1") or {})
         if adaptive_worker_activation_orchestration.get("enabled"):
             adaptive_learning_infrastructure_suite["adaptive_worker_activation_compatible"] = True
             adaptive_learning_infrastructure_suite["adaptive_worker_activation_status"] = adaptive_worker_activation_orchestration.get("orchestrator_status")
@@ -329,6 +330,7 @@ class UnifiedLearningDiagnosticsV1:
             "adaptive_learning_infrastructure_suite_v1": adaptive_learning_infrastructure_suite,
             "adaptive_worker_activation_orchestration_v1": adaptive_worker_activation_orchestration,
             "confidence_calibration_performance_attribution_v1": confidence_calibration_performance_attribution,
+            "context_evidence_expansion_suite_v1": context_evidence_expansion,
             "trade_archetype_regime_intelligence": trade_archetype_regime,
             "replay_counterfactual_learning_v2": replay_counterfactual_learning_v2,
             "opportunity_cost_learning": opportunity_cost_learning,
@@ -1416,6 +1418,80 @@ class UnifiedLearningDiagnosticsV1:
             "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
         }
 
+    def _context_evidence_expansion_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_context_evidence_expansion"),
+            "evidence_count": _to_int(data.get("evidence_count"), 0),
+            "active_trades_tracked": _to_int(data.get("active_trades_tracked"), 0),
+            "active_trade_symbols": list(data.get("active_trade_symbols") or [])[:12],
+            "strongest_open_trade": _text(data.get("strongest_open_trade"), "insufficient_data"),
+            "weakest_open_trade": _text(data.get("weakest_open_trade"), "insufficient_data"),
+            "highest_profit_decay_symbol": _text(data.get("highest_profit_decay_symbol"), "insufficient_data"),
+            "highest_giveback_symbol": _text(data.get("highest_giveback_symbol"), "insufficient_data"),
+            "best_open_trade_horizon": _text(data.get("best_open_trade_horizon"), "insufficient_data"),
+            "open_trade_continuation_score": _to_float(data.get("open_trade_continuation_score"), 0.0),
+            "open_trade_profit_capture_score": _to_float(data.get("open_trade_profit_capture_score"), 0.0),
+            "open_trade_learning_confidence": _to_float(data.get("open_trade_learning_confidence"), 0.0),
+            "open_trade_shadow_recommendation": _text(data.get("open_trade_shadow_recommendation"), "collect_open_trade_evidence"),
+            "rejected_candidates_reviewed": _to_int(data.get("rejected_candidates_reviewed"), 0),
+            "correct_rejections": _to_int(data.get("correct_rejections"), 0),
+            "missed_winners": _to_int(data.get("missed_winners"), 0),
+            "avoided_losers": _to_int(data.get("avoided_losers"), 0),
+            "rejection_accuracy": _to_float(data.get("rejection_accuracy"), 0.0),
+            "biggest_missed_symbol": _text(data.get("biggest_missed_symbol"), "insufficient_data"),
+            "best_correct_rejection": _text(data.get("best_correct_rejection"), "insufficient_data"),
+            "worst_rejection_reason": _text(data.get("worst_rejection_reason"), "insufficient_data"),
+            "rejection_reason_distribution": dict(data.get("rejection_reason_distribution") or {}),
+            "rejection_learning_score": _to_float(data.get("rejection_learning_score"), 0.0),
+            "rejected_candidate_learning_confidence": _to_float(data.get("rejected_candidate_learning_confidence"), 0.0),
+            "rejected_candidate_shadow_recommendation": _text(data.get("rejected_candidate_shadow_recommendation"), "study_rejections_shadow_only"),
+            "catalyst_records": _to_int(data.get("catalyst_records"), 0),
+            "dominant_catalyst_type": _text(data.get("dominant_catalyst_type"), "insufficient_data"),
+            "strongest_catalyst_type": _text(data.get("strongest_catalyst_type"), "insufficient_data"),
+            "weakest_catalyst_type": _text(data.get("weakest_catalyst_type"), "insufficient_data"),
+            "unknown_catalyst_rate": _to_float(data.get("unknown_catalyst_rate"), 100.0),
+            "catalyst_coverage_score": _to_float(data.get("catalyst_coverage_score"), 0.0),
+            "best_catalyst_horizon": _text(data.get("best_catalyst_horizon"), "insufficient_data"),
+            "highest_giveback_catalyst": _text(data.get("highest_giveback_catalyst"), "insufficient_data"),
+            "catalyst_distribution": dict(data.get("catalyst_distribution") or {}),
+            "best_horizon_by_catalyst": dict(data.get("best_horizon_by_catalyst") or {}),
+            "avg_giveback_by_catalyst": dict(data.get("avg_giveback_by_catalyst") or {}),
+            "continuation_probability_by_catalyst": dict(data.get("continuation_probability_by_catalyst") or {}),
+            "catalyst_learning_confidence": _to_float(data.get("catalyst_learning_confidence"), 0.0),
+            "catalyst_shadow_recommendation": _text(data.get("catalyst_shadow_recommendation"), "continue_catalyst_tracking_shadow_only"),
+            "top_learning_gap": _text(data.get("top_learning_gap"), "insufficient_data"),
+            "learning_gap_scores": dict(data.get("learning_gap_scores") or {}),
+            "shadow_recommendation": _text(data.get("shadow_recommendation"), "continue_context_evidence_collection_shadow_only"),
+            "summary": _text(
+                data.get("summary"),
+                "Astra is learning from open trades, rejected candidates, and catalysts without changing trading behavior.",
+            ),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+            "human_review_required": bool(data.get("human_review_required", True)),
+            "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "ranking_behavior_changed": bool(data.get("ranking_behavior_changed", False)),
+            "paper_execution_behavior_changed": bool(data.get("paper_execution_behavior_changed", False)),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "partial_sells_enabled": bool(data.get("partial_sells_enabled", False)),
+            "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+        }
+
     def _trade_archetype_regime_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -2038,7 +2114,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
             "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "adaptive_execution_exit_intelligence_v3", "trade_archetype_regime",
-            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
+            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
             "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
             "execution_participation_audit",
@@ -2084,6 +2160,7 @@ class UnifiedLearningDiagnosticsV1:
             "adaptive_learning_infrastructure_suite_v1": "/api/adaptive_learning_infrastructure_suite_v1",
             "adaptive_worker_activation_orchestration_v1": "/api/adaptive_worker_activation_orchestration_v1",
             "confidence_calibration_performance_attribution_v1": "/api/confidence_calibration_performance_attribution_v1",
+            "context_evidence_expansion_suite_v1": "/api/context_evidence_expansion_suite_v1",
             "trade_archetype_regime": "/api/trade_archetype_regime_status_v1",
             "replay_counterfactual_learning_v2": "/api/replay_counterfactual_learning_v2_status",
             "opportunity_cost_learning": "/api/opportunity_cost_learning_status_v1",
