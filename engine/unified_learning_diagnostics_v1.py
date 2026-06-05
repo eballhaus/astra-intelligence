@@ -290,6 +290,7 @@ class UnifiedLearningDiagnosticsV1:
         confidence_calibration_performance_attribution = self._confidence_calibration_performance_attribution_summary(statuses.get("confidence_calibration_performance_attribution_v1") or {})
         context_evidence_expansion = self._context_evidence_expansion_summary(statuses.get("context_evidence_expansion_suite_v1") or {})
         catalyst_theme_narrative_capital_flow_v2 = self._catalyst_theme_narrative_capital_flow_v2_summary(statuses.get("catalyst_theme_narrative_capital_flow_intelligence_v2") or {})
+        decision_optimization_trade_management = self._decision_optimization_trade_management_summary(statuses.get("decision_optimization_trade_management_suite_v1") or {})
         if adaptive_worker_activation_orchestration.get("enabled"):
             adaptive_learning_infrastructure_suite["adaptive_worker_activation_compatible"] = True
             adaptive_learning_infrastructure_suite["adaptive_worker_activation_status"] = adaptive_worker_activation_orchestration.get("orchestrator_status")
@@ -333,6 +334,7 @@ class UnifiedLearningDiagnosticsV1:
             "confidence_calibration_performance_attribution_v1": confidence_calibration_performance_attribution,
             "context_evidence_expansion_suite_v1": context_evidence_expansion,
             "catalyst_theme_narrative_capital_flow_intelligence_v2": catalyst_theme_narrative_capital_flow_v2,
+            "decision_optimization_trade_management_suite_v1": decision_optimization_trade_management,
             "trade_archetype_regime_intelligence": trade_archetype_regime,
             "replay_counterfactual_learning_v2": replay_counterfactual_learning_v2,
             "opportunity_cost_learning": opportunity_cost_learning,
@@ -1598,6 +1600,84 @@ class UnifiedLearningDiagnosticsV1:
             "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
         }
 
+    def _decision_optimization_trade_management_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_decision_optimization_trade_management"),
+            "evidence_count": _to_int(data.get("evidence_count"), 0),
+            "tracked_trades": _to_int(data.get("tracked_trades"), 0),
+            "opportunity_rows_reviewed": _to_int(data.get("opportunity_rows_reviewed"), 0),
+            "completed_lifecycles_reviewed": _to_int(data.get("completed_lifecycles_reviewed"), 0),
+            "actual_average_result": data.get("actual_average_result"),
+            "virtual_exit_policy_stats": dict(data.get("virtual_exit_policy_stats") or {}),
+            "best_virtual_exit_policy": _text(data.get("best_virtual_exit_policy"), "insufficient_data"),
+            "worst_virtual_exit_policy": _text(data.get("worst_virtual_exit_policy"), "insufficient_data"),
+            "highest_improvement_policy": _text(data.get("highest_improvement_policy"), "insufficient_data"),
+            "most_reliable_policy": _text(data.get("most_reliable_policy"), "insufficient_data"),
+            "continuation_failure_probability": _to_float(data.get("continuation_failure_probability"), 0.0),
+            "strongest_failure_signal": _text(data.get("strongest_failure_signal"), "insufficient_data"),
+            "weakest_failure_signal": _text(data.get("weakest_failure_signal"), "insufficient_data"),
+            "failure_signal_scores": dict(data.get("failure_signal_scores") or {}),
+            "average_failure_lead_time": _text(data.get("average_failure_lead_time"), "insufficient_data"),
+            "average_failure_lead_time_minutes": _to_float(data.get("average_failure_lead_time_minutes"), 0.0),
+            "continuation_quality_score": _to_float(data.get("continuation_quality_score"), 0.0),
+            "rejection_accuracy": _to_float(data.get("rejection_accuracy"), 0.0),
+            "missed_winner_rate": _to_float(data.get("missed_winner_rate"), 0.0),
+            "avoided_loser_rate": _to_float(data.get("avoided_loser_rate"), 0.0),
+            "decision_quality_score": _to_float(data.get("decision_quality_score"), 0.0),
+            "strongest_rejection_reason": _text(data.get("strongest_rejection_reason"), "insufficient_data"),
+            "weakest_rejection_reason": _text(data.get("weakest_rejection_reason"), "insufficient_data"),
+            "top_missed_opportunities": list(data.get("top_missed_opportunities") or [])[:8],
+            "recurring_rejection_mistakes": list(data.get("recurring_rejection_mistakes") or [])[:8],
+            "recurring_rejection_successes": list(data.get("recurring_rejection_successes") or [])[:8],
+            "average_opportunity_cost": data.get("average_opportunity_cost"),
+            "highest_opportunity_cost": data.get("highest_opportunity_cost"),
+            "confidence_truth_score": _to_float(data.get("confidence_truth_score"), 0.0),
+            "predictive_power": _to_float(data.get("predictive_power"), 0.0),
+            "sizing_readiness_score": _to_float(data.get("sizing_readiness_score"), 0.0),
+            "confidence_reliability": _text(data.get("confidence_reliability"), "insufficient_data"),
+            "best_confidence_bucket": _text(data.get("best_confidence_bucket"), "insufficient_data"),
+            "worst_confidence_bucket": _text(data.get("worst_confidence_bucket"), "insufficient_data"),
+            "confidence_bucket_outcomes": dict(data.get("confidence_bucket_outcomes") or {}),
+            "confidence_monotonicity": _to_float(data.get("confidence_monotonicity"), 0.0),
+            "higher_confidence_produces_better_outcomes": bool(data.get("higher_confidence_produces_better_outcomes", False)),
+            "confidence_weighted_sizing_may_eventually_be_justified": bool(data.get("confidence_weighted_sizing_may_eventually_be_justified", False)),
+            "biggest_decision_gap": _text(data.get("biggest_decision_gap"), "insufficient_data"),
+            "strongest_improvement_area": _text(data.get("strongest_improvement_area"), "insufficient_data"),
+            "top_exit_learning_focus": _text(data.get("top_exit_learning_focus"), "insufficient_data"),
+            "confidence_calibration_status": _text(data.get("confidence_calibration_status"), "insufficient_data"),
+            "decision_gap_scores": dict(data.get("decision_gap_scores") or {}),
+            "trade_management_intelligence_score": _to_float(data.get("trade_management_intelligence_score"), 0.0),
+            "shadow_recommendation": _text(data.get("shadow_recommendation"), "continue_decision_optimization_shadow_only"),
+            "summary": _text(
+                data.get("summary"),
+                "Astra is simulating trade-management decisions and confidence truth without changing execution.",
+            ),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+            "human_review_required": bool(data.get("human_review_required", True)),
+            "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "ranking_behavior_changed": bool(data.get("ranking_behavior_changed", False)),
+            "paper_execution_behavior_changed": bool(data.get("paper_execution_behavior_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "partial_sells_enabled": bool(data.get("partial_sells_enabled", False)),
+            "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
+        }
+
     def _trade_archetype_regime_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -2220,7 +2300,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
             "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "adaptive_execution_exit_intelligence_v3", "trade_archetype_regime",
-            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
+            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
             "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
             "execution_participation_audit",
@@ -2268,6 +2348,7 @@ class UnifiedLearningDiagnosticsV1:
             "confidence_calibration_performance_attribution_v1": "/api/confidence_calibration_performance_attribution_v1",
             "context_evidence_expansion_suite_v1": "/api/context_evidence_expansion_suite_v1",
             "catalyst_theme_narrative_capital_flow_intelligence_v2": "/api/catalyst_theme_narrative_capital_flow_intelligence_v2",
+            "decision_optimization_trade_management_suite_v1": "/api/decision_optimization_trade_management_suite_v1",
             "trade_archetype_regime": "/api/trade_archetype_regime_status_v1",
             "replay_counterfactual_learning_v2": "/api/replay_counterfactual_learning_v2_status",
             "opportunity_cost_learning": "/api/opportunity_cost_learning_status_v1",

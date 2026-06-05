@@ -581,6 +581,7 @@ class LearningIssueAuditV1:
         confidence_attr = dict(statuses.get("confidence_calibration_performance_attribution_v1") or {})
         context_expansion = dict(statuses.get("context_evidence_expansion_suite_v1") or {})
         catalyst_v2 = dict(statuses.get("catalyst_theme_narrative_capital_flow_intelligence_v2") or {})
+        decision_opt = dict(statuses.get("decision_optimization_trade_management_suite_v1") or {})
         v3_issue = _issue(
             "shadow_exit_learning_active" if v3.get("enabled") else "shadow_exit_learning_unavailable",
             "adaptive_execution_exit_v3_tracks_profit_capture_horizon_and_peak_decay" if v3.get("enabled") else "adaptive_execution_exit_v3_not_available",
@@ -670,6 +671,21 @@ class LearningIssueAuditV1:
             "Use V2 context intelligence to classify catalyst/theme/narrative/capital-flow gaps; keep ranking and execution unchanged.",
             _text(catalyst_v2.get("shadow_recommendation"), "No behavior change."),
         )
+        decision_opt_issue = _issue(
+            "decision_optimization_trade_management_active" if decision_opt.get("enabled") else "decision_optimization_trade_management_unavailable",
+            "shadow_exit_policy_continuation_opportunity_cost_confidence_truth_diagnostics_active" if decision_opt.get("enabled") else "decision_optimization_trade_management_not_available",
+            "medium"
+            if decision_opt.get("enabled")
+            and (
+                _to_float(decision_opt.get("continuation_failure_probability"), 0.0) >= 55.0
+                or _to_float(decision_opt.get("missed_winner_rate"), 0.0) >= 35.0
+                or _to_float(decision_opt.get("confidence_truth_score"), 100.0) < 50.0
+            )
+            else "low",
+            _to_int(decision_opt.get("evidence_count"), 0),
+            "Use decision optimization diagnostics for human-reviewed learning only; do not auto-apply exit, ranking, sizing, or threshold changes.",
+            _text(decision_opt.get("shadow_recommendation"), "No behavior change."),
+        )
         issue_status = {
             "core_metric_source_regression": core_issue,
             "dataset_scope_mismatch": dataset_issue,
@@ -689,6 +705,7 @@ class LearningIssueAuditV1:
             "confidence_calibration_performance_attribution_v1": confidence_issue,
             "context_evidence_expansion_suite_v1": context_expansion_issue,
             "catalyst_theme_narrative_capital_flow_intelligence_v2": catalyst_v2_issue,
+            "decision_optimization_trade_management_suite_v1": decision_opt_issue,
         }
         medium_or_higher = [name for name, issue in issue_status.items() if issue.get("severity") in {"medium", "high"}]
         out = {
@@ -711,6 +728,7 @@ class LearningIssueAuditV1:
             "confidence_calibration_performance_attribution_status": confidence_issue,
             "context_evidence_expansion_status": context_expansion_issue,
             "catalyst_theme_narrative_capital_flow_v2_status": catalyst_v2_issue,
+            "decision_optimization_trade_management_status": decision_opt_issue,
             "execution_participation_display_status": exec_issue,
             "core_metric_source_diagnostics": core_diag,
             "dataset_scope_diagnostics": dataset_diag,
@@ -906,6 +924,36 @@ class LearningIssueAuditV1:
                 "behavior_safe_to_apply": bool(catalyst_v2.get("behavior_safe_to_apply", False)),
                 "ranking_behavior_changed": bool(catalyst_v2.get("ranking_behavior_changed", False)),
                 "paper_execution_behavior_changed": bool(catalyst_v2.get("paper_execution_behavior_changed", False)),
+            },
+            "decision_optimization_trade_management_diagnostics": {
+                "evidence_count": decision_opt.get("evidence_count"),
+                "tracked_trades": decision_opt.get("tracked_trades"),
+                "best_virtual_exit_policy": decision_opt.get("best_virtual_exit_policy"),
+                "worst_virtual_exit_policy": decision_opt.get("worst_virtual_exit_policy"),
+                "highest_improvement_policy": decision_opt.get("highest_improvement_policy"),
+                "most_reliable_policy": decision_opt.get("most_reliable_policy"),
+                "continuation_failure_probability": decision_opt.get("continuation_failure_probability"),
+                "strongest_failure_signal": decision_opt.get("strongest_failure_signal"),
+                "continuation_quality_score": decision_opt.get("continuation_quality_score"),
+                "rejection_accuracy": decision_opt.get("rejection_accuracy"),
+                "missed_winner_rate": decision_opt.get("missed_winner_rate"),
+                "avoided_loser_rate": decision_opt.get("avoided_loser_rate"),
+                "decision_quality_score": decision_opt.get("decision_quality_score"),
+                "confidence_truth_score": decision_opt.get("confidence_truth_score"),
+                "predictive_power": decision_opt.get("predictive_power"),
+                "sizing_readiness_score": decision_opt.get("sizing_readiness_score"),
+                "confidence_reliability": decision_opt.get("confidence_reliability"),
+                "biggest_decision_gap": decision_opt.get("biggest_decision_gap"),
+                "strongest_improvement_area": decision_opt.get("strongest_improvement_area"),
+                "highest_opportunity_cost": decision_opt.get("highest_opportunity_cost"),
+                "top_exit_learning_focus": decision_opt.get("top_exit_learning_focus"),
+                "confidence_calibration_status": decision_opt.get("confidence_calibration_status"),
+                "shadow_recommendation": decision_opt.get("shadow_recommendation"),
+                "behavior_safe_to_apply": bool(decision_opt.get("behavior_safe_to_apply", False)),
+                "ranking_behavior_changed": bool(decision_opt.get("ranking_behavior_changed", False)),
+                "paper_execution_behavior_changed": bool(decision_opt.get("paper_execution_behavior_changed", False)),
+                "position_sizing_changed": bool(decision_opt.get("position_sizing_changed", False)),
+                "thresholds_changed": bool(decision_opt.get("thresholds_changed", False)),
             },
             "likely_cause_summary": ", ".join(medium_or_higher) if medium_or_higher else "no_behavior_change_indicated",
             "recommended_action": "Apply display/source reconciliation and keep behavior changes shadow-only.",

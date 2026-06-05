@@ -152,6 +152,7 @@ export default function LearningTab({ compact = false }) {
   const [showConfidenceAttributionDetails, setShowConfidenceAttributionDetails] = useState(false);
   const [showContextEvidenceExpansionDetails, setShowContextEvidenceExpansionDetails] = useState(false);
   const [showCatalystThemeNarrativeDetails, setShowCatalystThemeNarrativeDetails] = useState(false);
+  const [showDecisionOptimizationDetails, setShowDecisionOptimizationDetails] = useState(false);
   const [showTradeArchetypeRegimeDetails, setShowTradeArchetypeRegimeDetails] = useState(false);
   const [showReplayCounterfactualDetails, setShowReplayCounterfactualDetails] = useState(false);
   const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
@@ -1592,6 +1593,7 @@ export default function LearningTab({ compact = false }) {
   const confidenceAttribution = unified?.confidence_calibration_performance_attribution_v1 || {};
   const contextEvidenceExpansion = unified?.context_evidence_expansion_suite_v1 || {};
   const catalystThemeNarrative = unified?.catalyst_theme_narrative_capital_flow_intelligence_v2 || {};
+  const decisionOptimization = unified?.decision_optimization_trade_management_suite_v1 || {};
   const tradeArchetypeRegime = unified?.trade_archetype_regime_intelligence || {};
   const replayCounterfactual = unified?.replay_counterfactual_learning_v2 || {};
   const opportunityCostLearning = unified?.opportunity_cost_learning || {};
@@ -2891,6 +2893,114 @@ export default function LearningTab({ compact = false }) {
         {showReplayCounterfactualDetails ? (
           <div style={{ marginTop: 12, color: "#b8c7e6", fontSize: 12 }}>
             Human review required: {replayCounterfactual?.human_review_required ? "yes" : "no"} | Auto apply: {replayCounterfactual?.auto_apply_allowed ? "yes" : "no"} | API calls: {safeNumber(replayCounterfactual?.api_calls_used).toFixed(0)}
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Decision Optimization & Trade Management Suite V1</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is simulating exit policies, continuation failure signals, rejection quality, opportunity cost, and confidence truth. This is shadow-only learning and does not change entries, exits, sizing, ranking, broker behavior, or paper execution.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowDecisionOptimizationDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showDecisionOptimizationDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Evidence", safeNumber(decisionOptimization?.evidence_count).toFixed(0)],
+            ["Best exit policy", decisionOptimization?.best_virtual_exit_policy],
+            ["Highest improvement", decisionOptimization?.highest_improvement_policy],
+            ["Most reliable policy", decisionOptimization?.most_reliable_policy],
+            ["Failure probability", `${safeNumber(decisionOptimization?.continuation_failure_probability).toFixed(1)}%`],
+            ["Failure signal", decisionOptimization?.strongest_failure_signal],
+            ["Continuation quality", safeNumber(decisionOptimization?.continuation_quality_score).toFixed(1)],
+            ["Rejection accuracy", `${safeNumber(decisionOptimization?.rejection_accuracy).toFixed(1)}%`],
+            ["Missed winner rate", `${safeNumber(decisionOptimization?.missed_winner_rate).toFixed(1)}%`],
+            ["Decision quality", safeNumber(decisionOptimization?.decision_quality_score).toFixed(1)],
+            ["Confidence truth", safeNumber(decisionOptimization?.confidence_truth_score).toFixed(1)],
+            ["Sizing readiness", safeNumber(decisionOptimization?.sizing_readiness_score).toFixed(1)],
+            ["Biggest gap", decisionOptimization?.biggest_decision_gap],
+            ["Top exit focus", decisionOptimization?.top_exit_learning_focus],
+            ["Calibration status", decisionOptimization?.confidence_calibration_status],
+            ["Management score", safeNumber(decisionOptimization?.trade_management_intelligence_score).toFixed(1)],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(decisionOptimization?.shadow_recommendation || "Continue decision optimization diagnostics shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showDecisionOptimizationDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Adaptive Exit Policy</div>
+              <div>Completed lifecycles: {safeNumber(decisionOptimization?.completed_lifecycles_reviewed).toFixed(0)}</div>
+              <div>Actual average: {decisionOptimization?.actual_average_result === null || decisionOptimization?.actual_average_result === undefined ? "warming up" : `${safeNumber(decisionOptimization?.actual_average_result).toFixed(2)}%`}</div>
+              {Object.entries(decisionOptimization?.virtual_exit_policy_stats || {}).slice(0, 5).map(([policy, stats]) => (
+                <div key={policy}>
+                  {String(policy).replaceAll("_", " ")}: sim {safeNumber(stats?.average_simulated_result).toFixed(2)}%, delta {safeNumber(stats?.average_improvement_delta).toFixed(2)}%
+                </div>
+              ))}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Continuation Failure Intelligence</div>
+              <div>Weakest signal: {String(decisionOptimization?.weakest_failure_signal || "warming up").replaceAll("_", " ")}</div>
+              <div>Lead time: {safeNumber(decisionOptimization?.average_failure_lead_time_minutes).toFixed(1)} min</div>
+              {Object.entries(decisionOptimization?.failure_signal_scores || {}).slice(0, 6).map(([signal, score]) => (
+                <div key={signal}>{String(signal).replaceAll("_", " ")}: {safeNumber(score).toFixed(1)}</div>
+              ))}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Opportunity Cost Intelligence</div>
+              <div>Rejected reviewed: {safeNumber(decisionOptimization?.rejected_candidates_reviewed).toFixed(0)}</div>
+              <div>Avoided loser rate: {safeNumber(decisionOptimization?.avoided_loser_rate).toFixed(1)}%</div>
+              <div>Highest opportunity cost: {safeNumber(decisionOptimization?.highest_opportunity_cost).toFixed(2)}%</div>
+              <div>Strongest reason: {String(decisionOptimization?.strongest_rejection_reason || "warming up").replaceAll("_", " ")}</div>
+              <div>Weakest reason: {String(decisionOptimization?.weakest_rejection_reason || "warming up").replaceAll("_", " ")}</div>
+              {(decisionOptimization?.top_missed_opportunities || []).slice(0, 4).map((row) => (
+                <div key={`${row?.symbol}-${row?.selected_symbol}`}>{row?.symbol || "unknown"} missed gap {safeNumber(row?.opportunity_cost_pct).toFixed(2)}%</div>
+              ))}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Confidence Truth Expansion</div>
+              <div>Best bucket: {String(decisionOptimization?.best_confidence_bucket || "warming up").replaceAll("_", " ")}</div>
+              <div>Worst bucket: {String(decisionOptimization?.worst_confidence_bucket || "warming up").replaceAll("_", " ")}</div>
+              <div>Predictive power: {safeNumber(decisionOptimization?.predictive_power).toFixed(1)}</div>
+              <div>Monotonicity: {safeNumber(decisionOptimization?.confidence_monotonicity).toFixed(1)}</div>
+              <div>Higher confidence better: {decisionOptimization?.higher_confidence_produces_better_outcomes ? "yes" : "not proven"}</div>
+              <div>Future confidence sizing justified: {decisionOptimization?.confidence_weighted_sizing_may_eventually_be_justified ? "shadow maybe" : "no"}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Safety</div>
+              <div>Behavior safe to apply: {decisionOptimization?.behavior_safe_to_apply ? "yes" : "no"}</div>
+              <div>Auto apply: {decisionOptimization?.auto_apply_allowed ? "yes" : "no"}</div>
+              <div>Ranking changed: {decisionOptimization?.ranking_behavior_changed ? "yes" : "no"}</div>
+              <div>Paper execution changed: {decisionOptimization?.paper_execution_behavior_changed ? "yes" : "no"}</div>
+              <div>Position sizing changed: {decisionOptimization?.position_sizing_changed ? "yes" : "no"}</div>
+              <div>Thresholds changed: {decisionOptimization?.thresholds_changed ? "yes" : "no"}</div>
+              <div>Forced exits: {decisionOptimization?.forced_exits_enabled ? "enabled" : "disabled"}</div>
+            </div>
           </div>
         ) : null}
       </div>
