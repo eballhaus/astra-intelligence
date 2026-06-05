@@ -154,6 +154,7 @@ class LearningAccelerationRetentionSuiteV1:
             "audit": self._rows("execution_suppression_audit_v1.jsonl", 520),
             "candidate": self._rows("candidate_decision_ledger_v1.jsonl", 420),
             "context_evidence_expansion": self._rows("context_evidence_expansion_suite_v1.jsonl", 320),
+            "catalyst_theme_narrative_v2": self._rows("catalyst_theme_narrative_capital_flow_intelligence_v2.jsonl", 320),
         }
 
     def _evidence_mix(self, rows: dict[str, list[dict[str, Any]]], statuses: dict[str, dict[str, Any]]) -> dict[str, int]:
@@ -180,6 +181,7 @@ class LearningAccelerationRetentionSuiteV1:
         portfolio = statuses.get("portfolio_diversification_correlation_v2") or {}
         confidence_attr = statuses.get("confidence_calibration_performance_attribution_v1") or {}
         context_expansion = statuses.get("context_evidence_expansion_suite_v1") or {}
+        catalyst_v2 = statuses.get("catalyst_theme_narrative_capital_flow_intelligence_v2") or {}
         scores = {
             "profit_capture_and_giveback": max(_to_float(v3.get("protect_profit_score"), 0.0), 100.0 - _to_float(v3.get("avg_capture_ratio"), 0.5) * 100.0, _to_float(profit_capture.get("average_profit_giveback_pct"), 0.0) * 2.0),
             "exit_quality_and_hold_duration": max(_to_float(exit_learning.get("protect_profit_score"), 0.0), _to_float(exit_learning.get("hold_longer_score"), 0.0), _to_float(v3.get("hold_longer_score"), 0.0)),
@@ -197,6 +199,11 @@ class LearningAccelerationRetentionSuiteV1:
                     _to_float(context_expansion.get("catalyst_learning_confidence"), 35.0),
                 ),
             ) if _to_int(context_expansion.get("evidence_count"), 0) else 35.0,
+            "catalyst_theme_narrative_capital_flow": max(
+                _to_float(catalyst_v2.get("unknown_catalyst_rate"), 60.0),
+                100.0 - _to_float(catalyst_v2.get("catalyst_coverage_score"), 35.0),
+                100.0 - _to_float(catalyst_v2.get("capital_flow_confidence"), 35.0),
+            ) if _to_int(catalyst_v2.get("evidence_count"), 0) else 45.0,
         }
         ordered = sorted(scores.items(), key=lambda item: item[1], reverse=True)
         top = ordered[0][0] if ordered else "insufficient_evidence"
@@ -212,6 +219,7 @@ class LearningAccelerationRetentionSuiteV1:
             "portfolio_risk_balance": "portfolio_fit_correlation_concentration_learning",
             "confidence_grade_attribution": "confidence_grade_horizon_attribution_validation",
             "context_evidence_expansion": "open_trade_rejected_candidate_catalyst_evidence_collection",
+            "catalyst_theme_narrative_capital_flow": "catalyst_theme_narrative_capital_flow_coverage",
         }
         return {
             "scores": {k: round(v, 4) for k, v in scores.items()},
@@ -313,6 +321,7 @@ class LearningAccelerationRetentionSuiteV1:
             "archetype_regime_learning": _to_float((statuses.get("trade_archetype_regime") or {}).get("current_archetype_regime_alignment_score"), 0.0),
             "confidence_calibration_attribution": _to_float((statuses.get("confidence_calibration_performance_attribution_v1") or {}).get("confidence_calibration_score"), 0.0),
             "context_evidence_expansion": _to_float((statuses.get("context_evidence_expansion_suite_v1") or {}).get("catalyst_coverage_score"), 0.0),
+            "catalyst_theme_narrative_capital_flow": _to_float((statuses.get("catalyst_theme_narrative_capital_flow_intelligence_v2") or {}).get("catalyst_truth_score"), 0.0),
         }
         meaningful = {k: v for k, v in system_scores.items() if v > 0}
         most = max(meaningful.items(), key=lambda item: item[1], default=("insufficient_data", 0.0))[0]

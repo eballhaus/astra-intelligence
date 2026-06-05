@@ -164,6 +164,7 @@ class AdaptiveWorkerActivationOrchestrationV1:
             "candidate": self._rows("candidate_decision_ledger_v1.jsonl", 320),
             "audit": self._rows("execution_suppression_audit_v1.jsonl", 320),
             "context_evidence_expansion": self._rows("context_evidence_expansion_suite_v1.jsonl", 320),
+            "catalyst_theme_narrative_v2": self._rows("catalyst_theme_narrative_capital_flow_intelligence_v2.jsonl", 320),
         }
 
     def _premarket_worker(self, rows: dict[str, list[dict[str, Any]]], statuses: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -255,13 +256,16 @@ class AdaptiveWorkerActivationOrchestrationV1:
         infra = statuses.get("adaptive_learning_infrastructure_suite_v1") or {}
         accel = statuses.get("learning_acceleration_retention_suite_v1") or {}
         context_expansion = statuses.get("context_evidence_expansion_suite_v1") or {}
+        catalyst_v2 = statuses.get("catalyst_theme_narrative_capital_flow_intelligence_v2") or {}
         under = list(infra.get("underexplored_contexts") or accel.get("underexplored_contexts") or [])[:8]
+        if catalyst_v2.get("top_learning_gap"):
+            under = [str(catalyst_v2.get("top_learning_gap"))] + [item for item in under if item != catalyst_v2.get("top_learning_gap")]
         if context_expansion.get("top_learning_gap"):
             under = [str(context_expansion.get("top_learning_gap"))] + [item for item in under if item != context_expansion.get("top_learning_gap")]
         weakest = _text(infra.get("weakest_coverage_area") or accel.get("weakest_coverage_area"), "insufficient_data")
         if not under and weakest != "insufficient_data":
             under = [weakest]
-        collected = sum(len(rows[name]) for name in ("market_context", "lifecycle", "candidate", "opportunity_cost", "context_evidence_expansion"))
+        collected = sum(len(rows[name]) for name in ("market_context", "lifecycle", "candidate", "opportunity_cost", "context_evidence_expansion", "catalyst_theme_narrative_v2"))
         focus = under[:5] or ["after_hours_profile", "catalyst", "trade_personality"]
         return {
             "coverage_worker_status": "active_cached" if collected else "warming_up",
@@ -270,6 +274,8 @@ class AdaptiveWorkerActivationOrchestrationV1:
             "weakest_remaining_context": weakest,
             "context_evidence_top_gap": _text(context_expansion.get("top_learning_gap"), "insufficient_data"),
             "context_evidence_records": _to_int(context_expansion.get("evidence_count"), 0),
+            "catalyst_theme_top_gap": _text(catalyst_v2.get("top_learning_gap"), "insufficient_data"),
+            "catalyst_theme_records": _to_int(catalyst_v2.get("evidence_count"), 0),
             "coverage_worker_confidence": _round(_clamp(25.0 + min(60.0, collected / 35.0)), 2),
             "coverage_worker_api_calls_used": 0,
         }

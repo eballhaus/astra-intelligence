@@ -151,6 +151,7 @@ export default function LearningTab({ compact = false }) {
   const [showAdaptiveWorkerActivationDetails, setShowAdaptiveWorkerActivationDetails] = useState(false);
   const [showConfidenceAttributionDetails, setShowConfidenceAttributionDetails] = useState(false);
   const [showContextEvidenceExpansionDetails, setShowContextEvidenceExpansionDetails] = useState(false);
+  const [showCatalystThemeNarrativeDetails, setShowCatalystThemeNarrativeDetails] = useState(false);
   const [showTradeArchetypeRegimeDetails, setShowTradeArchetypeRegimeDetails] = useState(false);
   const [showReplayCounterfactualDetails, setShowReplayCounterfactualDetails] = useState(false);
   const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
@@ -1590,6 +1591,7 @@ export default function LearningTab({ compact = false }) {
   const adaptiveWorkerActivation = unified?.adaptive_worker_activation_orchestration_v1 || {};
   const confidenceAttribution = unified?.confidence_calibration_performance_attribution_v1 || {};
   const contextEvidenceExpansion = unified?.context_evidence_expansion_suite_v1 || {};
+  const catalystThemeNarrative = unified?.catalyst_theme_narrative_capital_flow_intelligence_v2 || {};
   const tradeArchetypeRegime = unified?.trade_archetype_regime_intelligence || {};
   const replayCounterfactual = unified?.replay_counterfactual_learning_v2 || {};
   const opportunityCostLearning = unified?.opportunity_cost_learning || {};
@@ -2125,6 +2127,121 @@ export default function LearningTab({ compact = false }) {
               <div>Position sizing changed: {confidenceAttribution?.position_sizing_changed ? "yes" : "no"}</div>
               <div>Paper execution changed: {confidenceAttribution?.paper_execution_behavior_changed ? "yes" : "no"}</div>
               <div>Behavior safe to apply: {confidenceAttribution?.behavior_safe_to_apply ? "yes" : "no"}</div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Catalyst, Theme, Narrative & Capital Flow Intelligence V2</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is studying why stocks move, which catalysts and themes are leading, how narratives spread, and where capital appears to be flowing. This is shadow-only and does not change trading behavior.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowCatalystThemeNarrativeDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showCatalystThemeNarrativeDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Evidence", safeNumber(catalystThemeNarrative?.evidence_count).toFixed(0)],
+            ["Catalyst records", safeNumber(catalystThemeNarrative?.catalyst_records).toFixed(0)],
+            ["Dominant catalyst", catalystThemeNarrative?.dominant_catalyst],
+            ["Strongest catalyst", catalystThemeNarrative?.strongest_catalyst_type],
+            ["Weakest catalyst", catalystThemeNarrative?.weakest_catalyst_type],
+            ["Coverage", `${safeNumber(catalystThemeNarrative?.catalyst_coverage_score).toFixed(1)}%`],
+            ["Unknown rate", `${safeNumber(catalystThemeNarrative?.unknown_catalyst_rate).toFixed(1)}%`],
+            ["Truth score", safeNumber(catalystThemeNarrative?.catalyst_truth_score).toFixed(1)],
+            ["Strongest theme", catalystThemeNarrative?.strongest_theme],
+            ["Dominant theme", catalystThemeNarrative?.dominant_theme],
+            ["Strongest sector", catalystThemeNarrative?.strongest_sector],
+            ["Weakest sector", catalystThemeNarrative?.weakest_sector],
+            ["Dominant industry", catalystThemeNarrative?.dominant_industry],
+            ["Capital flow", catalystThemeNarrative?.strongest_capital_flow],
+            ["Market leader", catalystThemeNarrative?.market_leader],
+            ["Learning gap", catalystThemeNarrative?.top_learning_gap],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(catalystThemeNarrative?.shadow_recommendation || "Continue catalyst, theme, narrative, and capital-flow learning shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showCatalystThemeNarrativeDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Multi-Catalyst Learning</div>
+              <div>Secondary catalyst: {String(catalystThemeNarrative?.secondary_catalyst || "none").replaceAll("_", " ")}</div>
+              <div>Supporting: {(catalystThemeNarrative?.supporting_catalysts || []).slice(0, 5).map((x) => String(x).replaceAll("_", " ")).join(", ") || "warming up"}</div>
+              <div>Confidence: {safeNumber(catalystThemeNarrative?.catalyst_confidence).toFixed(1)}</div>
+              <div>Agreement: {safeNumber(catalystThemeNarrative?.catalyst_agreement_score).toFixed(1)}</div>
+              <div>Multi-catalyst score: {safeNumber(catalystThemeNarrative?.multi_catalyst_score).toFixed(1)}</div>
+              <div>Most reliable: {String(catalystThemeNarrative?.most_reliable_catalyst || "warming up").replaceAll("_", " ")}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Catalyst Decay & Horizon</div>
+              <div>Decay score: {safeNumber(catalystThemeNarrative?.catalyst_decay_learning_score).toFixed(1)}</div>
+              <div>Longest lasting: {String(catalystThemeNarrative?.longest_lasting_catalyst || "warming up").replaceAll("_", " ")}</div>
+              <div>Fastest decay: {String(catalystThemeNarrative?.fastest_decay_catalyst || "warming up").replaceAll("_", " ")}</div>
+              <div>Horizon confidence: {safeNumber(catalystThemeNarrative?.catalyst_horizon_confidence).toFixed(1)}</div>
+              {Object.entries(catalystThemeNarrative?.best_horizon_by_catalyst || {}).slice(0, 6).map(([name, horizon]) => (
+                <div key={name}>{String(name).replaceAll("_", " ")}: {String(horizon).replaceAll("_", " ")}</div>
+              ))}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Theme & Rotation</div>
+              <div>Weakest theme: {String(catalystThemeNarrative?.weakest_theme || "warming up").replaceAll("_", " ")}</div>
+              <div>Emerging theme: {String(catalystThemeNarrative?.emerging_theme || "warming up").replaceAll("_", " ")}</div>
+              <div>Fading theme: {String(catalystThemeNarrative?.fading_theme || "warming up").replaceAll("_", " ")}</div>
+              <div>Theme persistence: {safeNumber(catalystThemeNarrative?.theme_persistence_score).toFixed(1)}</div>
+              <div>Theme confidence: {safeNumber(catalystThemeNarrative?.theme_confidence).toFixed(1)}</div>
+              <div>Sector rotation: {safeNumber(catalystThemeNarrative?.sector_rotation_score).toFixed(1)}</div>
+              <div>Industry rotation: {safeNumber(catalystThemeNarrative?.industry_rotation_score).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Narrative & Capital Flow</div>
+              <div>Strongest flow: {String(catalystThemeNarrative?.strongest_capital_flow || "warming up").replaceAll("_", " ")}</div>
+              <div>Weakest flow: {String(catalystThemeNarrative?.weakest_capital_flow || "warming up").replaceAll("_", " ")}</div>
+              <div>Flow confidence: {safeNumber(catalystThemeNarrative?.capital_flow_confidence).toFixed(1)}</div>
+              <div>Rotation signal: {String(catalystThemeNarrative?.institutional_rotation_signal || "warming up").replaceAll("_", " ")}</div>
+              <div>Narrative chain: {String(catalystThemeNarrative?.strongest_narrative_chain || "warming up").replaceAll("_", " ")}</div>
+              <div>Narrative score: {safeNumber(catalystThemeNarrative?.narrative_learning_score).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Archetype Pairing</div>
+              <div>Best pair: {String(catalystThemeNarrative?.best_catalyst_archetype_pair || "warming up").replaceAll("_", " ")}</div>
+              <div>Weakest pair: {String(catalystThemeNarrative?.weakest_catalyst_archetype_pair || "warming up").replaceAll("_", " ")}</div>
+              <div>Prediction accuracy: {safeNumber(catalystThemeNarrative?.catalyst_prediction_accuracy).toFixed(1)}</div>
+              <div>Confidence truth: {safeNumber(catalystThemeNarrative?.catalyst_confidence_truth).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Safety</div>
+              <div>Provider calls: {safeNumber(catalystThemeNarrative?.provider_calls_used).toFixed(0)}</div>
+              <div>LLM calls: {safeNumber(catalystThemeNarrative?.llm_calls_used).toFixed(0)}</div>
+              <div>Behavior safe to apply: {catalystThemeNarrative?.behavior_safe_to_apply ? "yes" : "no"}</div>
+              <div>Auto apply: {catalystThemeNarrative?.auto_apply_allowed ? "yes" : "no"}</div>
+              <div>Ranking changed: {catalystThemeNarrative?.ranking_behavior_changed ? "yes" : "no"}</div>
+              <div>Paper execution changed: {catalystThemeNarrative?.paper_execution_behavior_changed ? "yes" : "no"}</div>
+              <div>Forced exits: {catalystThemeNarrative?.forced_exits_enabled ? "enabled" : "disabled"}</div>
             </div>
           </div>
         ) : null}

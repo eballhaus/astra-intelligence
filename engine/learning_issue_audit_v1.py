@@ -580,6 +580,7 @@ class LearningIssueAuditV1:
         worker_activation = dict(statuses.get("adaptive_worker_activation_orchestration_v1") or {})
         confidence_attr = dict(statuses.get("confidence_calibration_performance_attribution_v1") or {})
         context_expansion = dict(statuses.get("context_evidence_expansion_suite_v1") or {})
+        catalyst_v2 = dict(statuses.get("catalyst_theme_narrative_capital_flow_intelligence_v2") or {})
         v3_issue = _issue(
             "shadow_exit_learning_active" if v3.get("enabled") else "shadow_exit_learning_unavailable",
             "adaptive_execution_exit_v3_tracks_profit_capture_horizon_and_peak_decay" if v3.get("enabled") else "adaptive_execution_exit_v3_not_available",
@@ -654,6 +655,21 @@ class LearningIssueAuditV1:
             "Use context expansion diagnostics to improve evidence coverage without changing rankings, gates, or exits.",
             _text(context_expansion.get("shadow_recommendation"), "No behavior change."),
         )
+        catalyst_v2_issue = _issue(
+            "catalyst_theme_narrative_capital_flow_v2_active" if catalyst_v2.get("enabled") else "catalyst_theme_narrative_capital_flow_v2_unavailable",
+            "multi_catalyst_theme_narrative_sector_industry_capital_flow_learning_active" if catalyst_v2.get("enabled") else "catalyst_theme_narrative_capital_flow_v2_not_available",
+            "medium"
+            if catalyst_v2.get("enabled")
+            and (
+                _to_float(catalyst_v2.get("unknown_catalyst_rate"), 100.0) >= 60.0
+                or _to_float(catalyst_v2.get("catalyst_coverage_score"), 0.0) < 35.0
+                or _to_float(catalyst_v2.get("capital_flow_confidence"), 0.0) < 35.0
+            )
+            else "low",
+            _to_int(catalyst_v2.get("evidence_count"), 0),
+            "Use V2 context intelligence to classify catalyst/theme/narrative/capital-flow gaps; keep ranking and execution unchanged.",
+            _text(catalyst_v2.get("shadow_recommendation"), "No behavior change."),
+        )
         issue_status = {
             "core_metric_source_regression": core_issue,
             "dataset_scope_mismatch": dataset_issue,
@@ -672,6 +688,7 @@ class LearningIssueAuditV1:
             "adaptive_worker_activation_orchestration_v1": worker_activation_issue,
             "confidence_calibration_performance_attribution_v1": confidence_issue,
             "context_evidence_expansion_suite_v1": context_expansion_issue,
+            "catalyst_theme_narrative_capital_flow_intelligence_v2": catalyst_v2_issue,
         }
         medium_or_higher = [name for name, issue in issue_status.items() if issue.get("severity") in {"medium", "high"}]
         out = {
@@ -693,6 +710,7 @@ class LearningIssueAuditV1:
             "adaptive_worker_activation_status": worker_activation_issue,
             "confidence_calibration_performance_attribution_status": confidence_issue,
             "context_evidence_expansion_status": context_expansion_issue,
+            "catalyst_theme_narrative_capital_flow_v2_status": catalyst_v2_issue,
             "execution_participation_display_status": exec_issue,
             "core_metric_source_diagnostics": core_diag,
             "dataset_scope_diagnostics": dataset_diag,
@@ -861,6 +879,33 @@ class LearningIssueAuditV1:
                 "behavior_safe_to_apply": bool(context_expansion.get("behavior_safe_to_apply", False)),
                 "ranking_behavior_changed": bool(context_expansion.get("ranking_behavior_changed", False)),
                 "paper_execution_behavior_changed": bool(context_expansion.get("paper_execution_behavior_changed", False)),
+            },
+            "catalyst_theme_narrative_capital_flow_v2_diagnostics": {
+                "evidence_count": catalyst_v2.get("evidence_count"),
+                "catalyst_records": catalyst_v2.get("catalyst_records"),
+                "dominant_catalyst": catalyst_v2.get("dominant_catalyst"),
+                "strongest_catalyst_type": catalyst_v2.get("strongest_catalyst_type"),
+                "weakest_catalyst_type": catalyst_v2.get("weakest_catalyst_type"),
+                "catalyst_coverage_score": catalyst_v2.get("catalyst_coverage_score"),
+                "unknown_catalyst_rate": catalyst_v2.get("unknown_catalyst_rate"),
+                "catalyst_truth_score": catalyst_v2.get("catalyst_truth_score"),
+                "catalyst_prediction_accuracy": catalyst_v2.get("catalyst_prediction_accuracy"),
+                "strongest_theme": catalyst_v2.get("strongest_theme"),
+                "weakest_theme": catalyst_v2.get("weakest_theme"),
+                "dominant_theme": catalyst_v2.get("dominant_theme"),
+                "strongest_sector": catalyst_v2.get("strongest_sector"),
+                "weakest_sector": catalyst_v2.get("weakest_sector"),
+                "dominant_industry": catalyst_v2.get("dominant_industry"),
+                "strongest_capital_flow": catalyst_v2.get("strongest_capital_flow"),
+                "market_leader": catalyst_v2.get("market_leader"),
+                "strongest_narrative_chain": catalyst_v2.get("strongest_narrative_chain"),
+                "catalyst_decay_learning_score": catalyst_v2.get("catalyst_decay_learning_score"),
+                "most_reliable_catalyst": catalyst_v2.get("most_reliable_catalyst"),
+                "top_learning_gap": catalyst_v2.get("top_learning_gap"),
+                "shadow_recommendation": catalyst_v2.get("shadow_recommendation"),
+                "behavior_safe_to_apply": bool(catalyst_v2.get("behavior_safe_to_apply", False)),
+                "ranking_behavior_changed": bool(catalyst_v2.get("ranking_behavior_changed", False)),
+                "paper_execution_behavior_changed": bool(catalyst_v2.get("paper_execution_behavior_changed", False)),
             },
             "likely_cause_summary": ", ".join(medium_or_higher) if medium_or_higher else "no_behavior_change_indicated",
             "recommended_action": "Apply display/source reconciliation and keep behavior changes shadow-only.",
