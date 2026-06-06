@@ -583,6 +583,7 @@ class LearningIssueAuditV1:
         catalyst_v2 = dict(statuses.get("catalyst_theme_narrative_capital_flow_intelligence_v2") or {})
         decision_opt = dict(statuses.get("decision_optimization_trade_management_suite_v1") or {})
         full_lifecycle = dict(statuses.get("full_opportunity_lifecycle_learning_suite_v1") or {})
+        long_memory = dict(statuses.get("long_term_memory_symbol_retrieval_suite_v1") or {})
         v3_issue = _issue(
             "shadow_exit_learning_active" if v3.get("enabled") else "shadow_exit_learning_unavailable",
             "adaptive_execution_exit_v3_tracks_profit_capture_horizon_and_peak_decay" if v3.get("enabled") else "adaptive_execution_exit_v3_not_available",
@@ -702,6 +703,21 @@ class LearningIssueAuditV1:
             "Use full opportunity lifecycle diagnostics to route evidence and monitor storage health; keep dashboard on compact cache and trading behavior unchanged.",
             _text(full_lifecycle.get("shadow_recommendation"), "No behavior change."),
         )
+        long_memory_issue = _issue(
+            "long_term_memory_symbol_retrieval_active" if long_memory.get("enabled") else "long_term_memory_symbol_retrieval_unavailable",
+            "storage_retention_symbol_behavior_profiles_and_indexed_retrieval_active" if long_memory.get("enabled") else "long_term_memory_symbol_retrieval_not_available",
+            "medium"
+            if long_memory.get("enabled")
+            and (
+                _to_float(long_memory.get("memory_pressure_score"), 0.0) >= 65.0
+                or _to_float(long_memory.get("retrieval_health_score"), 100.0) < 45.0
+                or _text(long_memory.get("cache_freshness"), "stale") == "stale"
+            )
+            else "low",
+            _to_int(long_memory.get("indexed_records"), 0),
+            "Use long-term memory diagnostics to preserve valuable summaries, monitor storage pressure, and retrieve symbol lessons quickly; keep trading behavior unchanged.",
+            _text(long_memory.get("shadow_recommendation"), "No behavior change."),
+        )
         issue_status = {
             "core_metric_source_regression": core_issue,
             "dataset_scope_mismatch": dataset_issue,
@@ -723,6 +739,7 @@ class LearningIssueAuditV1:
             "catalyst_theme_narrative_capital_flow_intelligence_v2": catalyst_v2_issue,
             "decision_optimization_trade_management_suite_v1": decision_opt_issue,
             "full_opportunity_lifecycle_learning_suite_v1": full_lifecycle_issue,
+            "long_term_memory_symbol_retrieval_suite_v1": long_memory_issue,
         }
         medium_or_higher = [name for name, issue in issue_status.items() if issue.get("severity") in {"medium", "high"}]
         out = {
@@ -747,6 +764,7 @@ class LearningIssueAuditV1:
             "catalyst_theme_narrative_capital_flow_v2_status": catalyst_v2_issue,
             "decision_optimization_trade_management_status": decision_opt_issue,
             "full_opportunity_lifecycle_learning_status": full_lifecycle_issue,
+            "long_term_memory_symbol_retrieval_status": long_memory_issue,
             "execution_participation_display_status": exec_issue,
             "core_metric_source_diagnostics": core_diag,
             "dataset_scope_diagnostics": dataset_diag,
@@ -1008,6 +1026,39 @@ class LearningIssueAuditV1:
                 "paper_execution_behavior_changed": bool(full_lifecycle.get("paper_execution_behavior_changed", False)),
                 "position_sizing_changed": bool(full_lifecycle.get("position_sizing_changed", False)),
                 "thresholds_changed": bool(full_lifecycle.get("thresholds_changed", False)),
+            },
+            "long_term_memory_symbol_retrieval_diagnostics": {
+                "storage_health_score": long_memory.get("storage_health_score"),
+                "memory_pressure_score": long_memory.get("memory_pressure_score"),
+                "cleanup_status": long_memory.get("cleanup_status"),
+                "estimated_days_until_storage_pressure": long_memory.get("estimated_days_until_storage_pressure"),
+                "symbol_profiles_tracked": long_memory.get("symbol_profiles_tracked"),
+                "strongest_symbol_profile": long_memory.get("strongest_symbol_profile"),
+                "weakest_symbol_profile": long_memory.get("weakest_symbol_profile"),
+                "best_behavioral_edge_symbol": long_memory.get("best_behavioral_edge_symbol"),
+                "highest_giveback_symbol": long_memory.get("highest_giveback_symbol"),
+                "most_reliable_symbol": long_memory.get("most_reliable_symbol"),
+                "symbol_memory_quality_score": long_memory.get("symbol_memory_quality_score"),
+                "indexed_records": long_memory.get("indexed_records"),
+                "retrieval_latency_ms": long_memory.get("retrieval_latency_ms"),
+                "retrieval_health_score": long_memory.get("retrieval_health_score"),
+                "strongest_index": long_memory.get("strongest_index"),
+                "weakest_index": long_memory.get("weakest_index"),
+                "recent_lookup_success_rate": long_memory.get("recent_lookup_success_rate"),
+                "full_scan_avoided_count": long_memory.get("full_scan_avoided_count"),
+                "dashboard_scan_rows": long_memory.get("dashboard_scan_rows"),
+                "cache_freshness": long_memory.get("cache_freshness"),
+                "cleanup_action_taken": long_memory.get("cleanup_action_taken"),
+                "raw_archive_scan_during_render": bool(long_memory.get("raw_archive_scan_during_render", False)),
+                "api_calls_used": long_memory.get("api_calls_used"),
+                "provider_calls_used": long_memory.get("provider_calls_used"),
+                "llm_calls_used": long_memory.get("llm_calls_used"),
+                "shadow_recommendation": long_memory.get("shadow_recommendation"),
+                "behavior_safe_to_apply": bool(long_memory.get("behavior_safe_to_apply", False)),
+                "ranking_behavior_changed": bool(long_memory.get("ranking_behavior_changed", False)),
+                "paper_execution_behavior_changed": bool(long_memory.get("paper_execution_behavior_changed", False)),
+                "position_sizing_changed": bool(long_memory.get("position_sizing_changed", False)),
+                "thresholds_changed": bool(long_memory.get("thresholds_changed", False)),
             },
             "likely_cause_summary": ", ".join(medium_or_higher) if medium_or_higher else "no_behavior_change_indicated",
             "recommended_action": "Apply display/source reconciliation and keep behavior changes shadow-only.",

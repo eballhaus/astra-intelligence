@@ -292,6 +292,7 @@ class UnifiedLearningDiagnosticsV1:
         catalyst_theme_narrative_capital_flow_v2 = self._catalyst_theme_narrative_capital_flow_v2_summary(statuses.get("catalyst_theme_narrative_capital_flow_intelligence_v2") or {})
         decision_optimization_trade_management = self._decision_optimization_trade_management_summary(statuses.get("decision_optimization_trade_management_suite_v1") or {})
         full_opportunity_lifecycle_learning = self._full_opportunity_lifecycle_learning_summary(statuses.get("full_opportunity_lifecycle_learning_suite_v1") or {})
+        long_term_memory_symbol_retrieval = self._long_term_memory_symbol_retrieval_summary(statuses.get("long_term_memory_symbol_retrieval_suite_v1") or {})
         if adaptive_worker_activation_orchestration.get("enabled"):
             adaptive_learning_infrastructure_suite["adaptive_worker_activation_compatible"] = True
             adaptive_learning_infrastructure_suite["adaptive_worker_activation_status"] = adaptive_worker_activation_orchestration.get("orchestrator_status")
@@ -337,6 +338,7 @@ class UnifiedLearningDiagnosticsV1:
             "catalyst_theme_narrative_capital_flow_intelligence_v2": catalyst_theme_narrative_capital_flow_v2,
             "decision_optimization_trade_management_suite_v1": decision_optimization_trade_management,
             "full_opportunity_lifecycle_learning_suite_v1": full_opportunity_lifecycle_learning,
+            "long_term_memory_symbol_retrieval_suite_v1": long_term_memory_symbol_retrieval,
             "trade_archetype_regime_intelligence": trade_archetype_regime,
             "replay_counterfactual_learning_v2": replay_counterfactual_learning_v2,
             "opportunity_cost_learning": opportunity_cost_learning,
@@ -1772,6 +1774,78 @@ class UnifiedLearningDiagnosticsV1:
             "automatic_trailing_stops_enabled": False,
         }
 
+    def _long_term_memory_symbol_retrieval_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_long_term_memory_symbol_retrieval"),
+            "storage_health_score": _to_float(data.get("storage_health_score"), 0.0),
+            "memory_pressure_score": _to_float(data.get("memory_pressure_score"), 0.0),
+            "cleanup_status": _text(data.get("cleanup_status"), "unavailable"),
+            "estimated_days_until_storage_pressure": _to_float(data.get("estimated_days_until_storage_pressure"), 0.0),
+            "storage_bytes_total": _to_int(data.get("storage_bytes_total"), 0),
+            "raw_event_size_bytes": _to_int(data.get("raw_event_size_bytes"), 0),
+            "summary_size_bytes": _to_int(data.get("summary_size_bytes"), 0),
+            "cache_size_bytes": _to_int(data.get("cache_size_bytes"), 0),
+            "archive_size_bytes": _to_int(data.get("archive_size_bytes"), 0),
+            "symbol_profiles_tracked": _to_int(data.get("symbol_profiles_tracked"), 0),
+            "strongest_symbol_profile": _text(data.get("strongest_symbol_profile"), "insufficient_data"),
+            "weakest_symbol_profile": _text(data.get("weakest_symbol_profile"), "insufficient_data"),
+            "best_behavioral_edge_symbol": _text(data.get("best_behavioral_edge_symbol"), "insufficient_data"),
+            "highest_giveback_symbol": _text(data.get("highest_giveback_symbol"), "insufficient_data"),
+            "most_reliable_symbol": _text(data.get("most_reliable_symbol"), "insufficient_data"),
+            "symbol_memory_quality_score": _to_float(data.get("symbol_memory_quality_score"), 0.0),
+            "symbol_profile_sample": list(data.get("symbol_profile_sample") or [])[:8],
+            "indexed_records": _to_int(data.get("indexed_records"), 0),
+            "retrieval_latency_ms": _to_float(data.get("retrieval_latency_ms"), 0.0),
+            "retrieval_health_score": _to_float(data.get("retrieval_health_score"), 0.0),
+            "strongest_index": _text(data.get("strongest_index"), "insufficient_data"),
+            "weakest_index": _text(data.get("weakest_index"), "insufficient_data"),
+            "recent_lookup_success_rate": _to_float(data.get("recent_lookup_success_rate"), 0.0),
+            "full_scan_avoided_count": _to_int(data.get("full_scan_avoided_count"), 0),
+            "dashboard_scan_rows": _to_int(data.get("dashboard_scan_rows"), 0),
+            "hot_rows_scanned_for_rebuild": _to_int(data.get("hot_rows_scanned_for_rebuild"), 0),
+            "cache_freshness": _text(data.get("cache_freshness"), "stale"),
+            "cache_status": _text(data.get("cache_status"), "unknown"),
+            "cache_age_seconds": data.get("cache_age_seconds"),
+            "last_updated": _text(data.get("last_updated") or data.get("generated_at"), ""),
+            "dashboard_fast_path": _text(data.get("dashboard_fast_path"), "cached_summary_only"),
+            "raw_archive_scan_during_render": bool(data.get("raw_archive_scan_during_render", False)),
+            "sqlite_archive_adapter_status": _text(data.get("sqlite_archive_adapter_status"), "prepared_optional_not_required"),
+            "cleanup_action_taken": _text(data.get("cleanup_action_taken"), "none_diagnostics_only"),
+            "retention_policy": dict(data.get("retention_policy") or {}),
+            "index_fields": list(data.get("index_fields") or []),
+            "shadow_recommendation": _text(data.get("shadow_recommendation"), "continue_long_term_memory_symbol_retrieval_shadow_only"),
+            "summary": _text(
+                data.get("summary"),
+                "Astra is organizing long-term memory, symbol behavior profiles, and indexed retrieval without changing trading behavior.",
+            ),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "bandwidth_saving_mode": bool(data.get("bandwidth_saving_mode", True)),
+            "api_budget_status": _text(data.get("api_budget_status"), "cached_local_only"),
+            "cache_hit": bool(data.get("cache_hit", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "paper_execution_behavior_changed": False,
+            "position_sizing_changed": False,
+            "thresholds_changed": False,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+            "partial_sells_enabled": False,
+            "automatic_trailing_stops_enabled": False,
+            "auto_apply_allowed": False,
+            "human_review_required": True,
+            "behavior_safe_to_apply": False,
+        }
+
     def _trade_archetype_regime_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -2394,7 +2468,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
             "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "adaptive_execution_exit_intelligence_v3", "trade_archetype_regime",
-            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
+            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "long_term_memory_symbol_retrieval_suite_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
             "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
             "execution_participation_audit",
@@ -2444,6 +2518,7 @@ class UnifiedLearningDiagnosticsV1:
             "catalyst_theme_narrative_capital_flow_intelligence_v2": "/api/catalyst_theme_narrative_capital_flow_intelligence_v2",
             "decision_optimization_trade_management_suite_v1": "/api/decision_optimization_trade_management_suite_v1",
             "full_opportunity_lifecycle_learning_suite_v1": "/api/full_opportunity_lifecycle_learning_suite_v1",
+            "long_term_memory_symbol_retrieval_suite_v1": "/api/long_term_memory_symbol_retrieval_suite_v1",
             "trade_archetype_regime": "/api/trade_archetype_regime_status_v1",
             "replay_counterfactual_learning_v2": "/api/replay_counterfactual_learning_v2_status",
             "opportunity_cost_learning": "/api/opportunity_cost_learning_status_v1",

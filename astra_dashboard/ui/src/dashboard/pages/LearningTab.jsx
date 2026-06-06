@@ -154,6 +154,7 @@ export default function LearningTab({ compact = false }) {
   const [showCatalystThemeNarrativeDetails, setShowCatalystThemeNarrativeDetails] = useState(false);
   const [showDecisionOptimizationDetails, setShowDecisionOptimizationDetails] = useState(false);
   const [showFullOpportunityLifecycleDetails, setShowFullOpportunityLifecycleDetails] = useState(false);
+  const [showLongTermMemoryDetails, setShowLongTermMemoryDetails] = useState(false);
   const [showTradeArchetypeRegimeDetails, setShowTradeArchetypeRegimeDetails] = useState(false);
   const [showReplayCounterfactualDetails, setShowReplayCounterfactualDetails] = useState(false);
   const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
@@ -1596,6 +1597,7 @@ export default function LearningTab({ compact = false }) {
   const catalystThemeNarrative = unified?.catalyst_theme_narrative_capital_flow_intelligence_v2 || {};
   const decisionOptimization = unified?.decision_optimization_trade_management_suite_v1 || {};
   const fullOpportunityLifecycle = unified?.full_opportunity_lifecycle_learning_suite_v1 || {};
+  const longTermMemorySymbolRetrieval = unified?.long_term_memory_symbol_retrieval_suite_v1 || {};
   const tradeArchetypeRegime = unified?.trade_archetype_regime_intelligence || {};
   const replayCounterfactual = unified?.replay_counterfactual_learning_v2 || {};
   const opportunityCostLearning = unified?.opportunity_cost_learning || {};
@@ -2039,6 +2041,105 @@ export default function LearningTab({ compact = false }) {
               <div>Ranking changed: {contextEvidenceExpansion?.ranking_behavior_changed ? "yes" : "no"}</div>
               <div>Paper execution changed: {contextEvidenceExpansion?.paper_execution_behavior_changed ? "yes" : "no"}</div>
               <div>Forced exits: {contextEvidenceExpansion?.forced_exits_enabled ? "yes" : "no"}</div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Long-Term Memory, Symbol Intelligence & Retrieval V1</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is organizing long-term memory, learning how individual symbols behave, cleaning up old low-value raw data, and indexing historical knowledge so it can retrieve useful lessons quickly without slowing the dashboard.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowLongTermMemoryDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showLongTermMemoryDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Storage health", safeNumber(longTermMemorySymbolRetrieval?.storage_health_score).toFixed(1)],
+            ["Memory pressure", safeNumber(longTermMemorySymbolRetrieval?.memory_pressure_score).toFixed(1)],
+            ["Cleanup status", longTermMemorySymbolRetrieval?.cleanup_status],
+            ["Days until pressure", safeNumber(longTermMemorySymbolRetrieval?.estimated_days_until_storage_pressure).toFixed(0)],
+            ["Symbol profiles", safeNumber(longTermMemorySymbolRetrieval?.symbol_profiles_tracked).toFixed(0)],
+            ["Strongest symbol", longTermMemorySymbolRetrieval?.strongest_symbol_profile],
+            ["Highest giveback", longTermMemorySymbolRetrieval?.highest_giveback_symbol],
+            ["Symbol memory", safeNumber(longTermMemorySymbolRetrieval?.symbol_memory_quality_score).toFixed(1)],
+            ["Indexed records", safeNumber(longTermMemorySymbolRetrieval?.indexed_records).toFixed(0)],
+            ["Retrieval latency", `${safeNumber(longTermMemorySymbolRetrieval?.retrieval_latency_ms).toFixed(2)}ms`],
+            ["Retrieval health", safeNumber(longTermMemorySymbolRetrieval?.retrieval_health_score).toFixed(1)],
+            ["Cache freshness", longTermMemorySymbolRetrieval?.cache_freshness],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(longTermMemorySymbolRetrieval?.shadow_recommendation || "Continue long-term memory and retrieval learning shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showLongTermMemoryDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Storage Retention</div>
+              <div>Raw event size: {safeNumber(longTermMemorySymbolRetrieval?.raw_event_size_bytes).toFixed(0)} bytes</div>
+              <div>Summary size: {safeNumber(longTermMemorySymbolRetrieval?.summary_size_bytes).toFixed(0)} bytes</div>
+              <div>Cache size: {safeNumber(longTermMemorySymbolRetrieval?.cache_size_bytes).toFixed(0)} bytes</div>
+              <div>Archive size: {safeNumber(longTermMemorySymbolRetrieval?.archive_size_bytes).toFixed(0)} bytes</div>
+              <div>Cleanup action taken: {String(longTermMemorySymbolRetrieval?.cleanup_action_taken || "none diagnostics only").replaceAll("_", " ")}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Symbol Intelligence</div>
+              <div>Weakest symbol: {String(longTermMemorySymbolRetrieval?.weakest_symbol_profile || "warming up").replaceAll("_", " ")}</div>
+              <div>Best behavioral edge: {String(longTermMemorySymbolRetrieval?.best_behavioral_edge_symbol || "warming up").replaceAll("_", " ")}</div>
+              <div>Most reliable symbol: {String(longTermMemorySymbolRetrieval?.most_reliable_symbol || "warming up").replaceAll("_", " ")}</div>
+              {(longTermMemorySymbolRetrieval?.symbol_profile_sample || []).slice(0, 4).map((profile) => (
+                <div key={profile?.symbol}>{profile?.symbol || "unknown"}: edge {safeNumber(profile?.behavioral_edge_score).toFixed(2)}, giveback {safeNumber(profile?.giveback_risk).toFixed(2)}</div>
+              ))}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Knowledge Retrieval</div>
+              <div>Strongest index: {String(longTermMemorySymbolRetrieval?.strongest_index || "warming up").replaceAll("_", " ")}</div>
+              <div>Weakest index: {String(longTermMemorySymbolRetrieval?.weakest_index || "warming up").replaceAll("_", " ")}</div>
+              <div>Lookup success: {safeNumber(longTermMemorySymbolRetrieval?.recent_lookup_success_rate).toFixed(1)}%</div>
+              <div>Full scans avoided: {safeNumber(longTermMemorySymbolRetrieval?.full_scan_avoided_count).toFixed(0)}</div>
+              <div>Index fields: {(longTermMemorySymbolRetrieval?.index_fields || []).slice(0, 6).join(", ") || "warming up"}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Dashboard Fast Path</div>
+              <div>Dashboard scan rows: {safeNumber(longTermMemorySymbolRetrieval?.dashboard_scan_rows).toFixed(0)}</div>
+              <div>Hot rows scanned on rebuild: {safeNumber(longTermMemorySymbolRetrieval?.hot_rows_scanned_for_rebuild).toFixed(0)}</div>
+              <div>Cache status: {String(longTermMemorySymbolRetrieval?.cache_status || "warming up").replaceAll("_", " ")}</div>
+              <div>Raw archive scanned during render: {longTermMemorySymbolRetrieval?.raw_archive_scan_during_render ? "yes" : "no"}</div>
+              <div>SQLite adapter: {String(longTermMemorySymbolRetrieval?.sqlite_archive_adapter_status || "prepared optional").replaceAll("_", " ")}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Safety</div>
+              <div>Behavior safe to apply: {longTermMemorySymbolRetrieval?.behavior_safe_to_apply ? "yes" : "no"}</div>
+              <div>Auto apply: {longTermMemorySymbolRetrieval?.auto_apply_allowed ? "yes" : "no"}</div>
+              <div>Ranking changed: {longTermMemorySymbolRetrieval?.ranking_behavior_changed ? "yes" : "no"}</div>
+              <div>Paper execution changed: {longTermMemorySymbolRetrieval?.paper_execution_behavior_changed ? "yes" : "no"}</div>
+              <div>Position sizing changed: {longTermMemorySymbolRetrieval?.position_sizing_changed ? "yes" : "no"}</div>
+              <div>Thresholds changed: {longTermMemorySymbolRetrieval?.thresholds_changed ? "yes" : "no"}</div>
+              <div>API/provider/LLM calls: {safeNumber(longTermMemorySymbolRetrieval?.api_calls_used).toFixed(0)}/{safeNumber(longTermMemorySymbolRetrieval?.provider_calls_used).toFixed(0)}/{safeNumber(longTermMemorySymbolRetrieval?.llm_calls_used).toFixed(0)}</div>
             </div>
           </div>
         ) : null}
