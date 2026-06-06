@@ -582,6 +582,7 @@ class LearningIssueAuditV1:
         context_expansion = dict(statuses.get("context_evidence_expansion_suite_v1") or {})
         catalyst_v2 = dict(statuses.get("catalyst_theme_narrative_capital_flow_intelligence_v2") or {})
         decision_opt = dict(statuses.get("decision_optimization_trade_management_suite_v1") or {})
+        full_lifecycle = dict(statuses.get("full_opportunity_lifecycle_learning_suite_v1") or {})
         v3_issue = _issue(
             "shadow_exit_learning_active" if v3.get("enabled") else "shadow_exit_learning_unavailable",
             "adaptive_execution_exit_v3_tracks_profit_capture_horizon_and_peak_decay" if v3.get("enabled") else "adaptive_execution_exit_v3_not_available",
@@ -686,6 +687,21 @@ class LearningIssueAuditV1:
             "Use decision optimization diagnostics for human-reviewed learning only; do not auto-apply exit, ranking, sizing, or threshold changes.",
             _text(decision_opt.get("shadow_recommendation"), "No behavior change."),
         )
+        full_lifecycle_issue = _issue(
+            "full_opportunity_lifecycle_learning_active" if full_lifecycle.get("enabled") else "full_opportunity_lifecycle_learning_unavailable",
+            "opportunity_lifecycle_graph_feature_attribution_and_memory_storage_diagnostics_active" if full_lifecycle.get("enabled") else "full_opportunity_lifecycle_learning_not_available",
+            "medium"
+            if full_lifecycle.get("enabled")
+            and (
+                _to_float(full_lifecycle.get("learning_completeness_score"), 0.0) < 45.0
+                or _to_float(full_lifecycle.get("memory_pressure_score"), 0.0) >= 65.0
+                or _text(full_lifecycle.get("cache_freshness"), "stale") == "stale"
+            )
+            else "low",
+            _to_int(full_lifecycle.get("opportunities_tracked"), 0),
+            "Use full opportunity lifecycle diagnostics to route evidence and monitor storage health; keep dashboard on compact cache and trading behavior unchanged.",
+            _text(full_lifecycle.get("shadow_recommendation"), "No behavior change."),
+        )
         issue_status = {
             "core_metric_source_regression": core_issue,
             "dataset_scope_mismatch": dataset_issue,
@@ -706,6 +722,7 @@ class LearningIssueAuditV1:
             "context_evidence_expansion_suite_v1": context_expansion_issue,
             "catalyst_theme_narrative_capital_flow_intelligence_v2": catalyst_v2_issue,
             "decision_optimization_trade_management_suite_v1": decision_opt_issue,
+            "full_opportunity_lifecycle_learning_suite_v1": full_lifecycle_issue,
         }
         medium_or_higher = [name for name, issue in issue_status.items() if issue.get("severity") in {"medium", "high"}]
         out = {
@@ -729,6 +746,7 @@ class LearningIssueAuditV1:
             "context_evidence_expansion_status": context_expansion_issue,
             "catalyst_theme_narrative_capital_flow_v2_status": catalyst_v2_issue,
             "decision_optimization_trade_management_status": decision_opt_issue,
+            "full_opportunity_lifecycle_learning_status": full_lifecycle_issue,
             "execution_participation_display_status": exec_issue,
             "core_metric_source_diagnostics": core_diag,
             "dataset_scope_diagnostics": dataset_diag,
@@ -954,6 +972,42 @@ class LearningIssueAuditV1:
                 "paper_execution_behavior_changed": bool(decision_opt.get("paper_execution_behavior_changed", False)),
                 "position_sizing_changed": bool(decision_opt.get("position_sizing_changed", False)),
                 "thresholds_changed": bool(decision_opt.get("thresholds_changed", False)),
+            },
+            "full_opportunity_lifecycle_learning_diagnostics": {
+                "opportunities_tracked": full_lifecycle.get("opportunities_tracked"),
+                "paper_trades_tracked": full_lifecycle.get("paper_trades_tracked"),
+                "virtual_trades_tracked": full_lifecycle.get("virtual_trades_tracked"),
+                "rejected_tracked": full_lifecycle.get("rejected_tracked"),
+                "skipped_tracked": full_lifecycle.get("skipped_tracked"),
+                "ignored_tracked": full_lifecycle.get("ignored_tracked"),
+                "blocked_tracked": full_lifecycle.get("blocked_tracked"),
+                "missed_winners": full_lifecycle.get("missed_winners"),
+                "avoided_losers": full_lifecycle.get("avoided_losers"),
+                "learning_completeness_score": full_lifecycle.get("learning_completeness_score"),
+                "strongest_learning_connection": full_lifecycle.get("strongest_learning_connection"),
+                "weakest_learning_connection": full_lifecycle.get("weakest_learning_connection"),
+                "cross_system_learning_score": full_lifecycle.get("cross_system_learning_score"),
+                "most_predictive_feature": full_lifecycle.get("most_predictive_feature"),
+                "least_predictive_feature": full_lifecycle.get("least_predictive_feature"),
+                "highest_value_learning_focus": full_lifecycle.get("highest_value_learning_focus"),
+                "recommended_worker_focus": full_lifecycle.get("recommended_worker_focus"),
+                "memory_quality_score": full_lifecycle.get("memory_quality_score"),
+                "storage_health_score": full_lifecycle.get("storage_health_score"),
+                "memory_pressure_score": full_lifecycle.get("memory_pressure_score"),
+                "cache_freshness": full_lifecycle.get("cache_freshness"),
+                "cache_status": full_lifecycle.get("cache_status"),
+                "dashboard_scan_rows": full_lifecycle.get("dashboard_scan_rows"),
+                "api_calls_used": full_lifecycle.get("api_calls_used"),
+                "provider_calls_used": full_lifecycle.get("provider_calls_used"),
+                "llm_calls_used": full_lifecycle.get("llm_calls_used"),
+                "bandwidth_saving_mode": bool(full_lifecycle.get("bandwidth_saving_mode", True)),
+                "api_budget_status": full_lifecycle.get("api_budget_status"),
+                "shadow_recommendation": full_lifecycle.get("shadow_recommendation"),
+                "behavior_safe_to_apply": bool(full_lifecycle.get("behavior_safe_to_apply", False)),
+                "ranking_behavior_changed": bool(full_lifecycle.get("ranking_behavior_changed", False)),
+                "paper_execution_behavior_changed": bool(full_lifecycle.get("paper_execution_behavior_changed", False)),
+                "position_sizing_changed": bool(full_lifecycle.get("position_sizing_changed", False)),
+                "thresholds_changed": bool(full_lifecycle.get("thresholds_changed", False)),
             },
             "likely_cause_summary": ", ".join(medium_or_higher) if medium_or_higher else "no_behavior_change_indicated",
             "recommended_action": "Apply display/source reconciliation and keep behavior changes shadow-only.",

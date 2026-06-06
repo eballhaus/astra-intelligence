@@ -153,6 +153,7 @@ export default function LearningTab({ compact = false }) {
   const [showContextEvidenceExpansionDetails, setShowContextEvidenceExpansionDetails] = useState(false);
   const [showCatalystThemeNarrativeDetails, setShowCatalystThemeNarrativeDetails] = useState(false);
   const [showDecisionOptimizationDetails, setShowDecisionOptimizationDetails] = useState(false);
+  const [showFullOpportunityLifecycleDetails, setShowFullOpportunityLifecycleDetails] = useState(false);
   const [showTradeArchetypeRegimeDetails, setShowTradeArchetypeRegimeDetails] = useState(false);
   const [showReplayCounterfactualDetails, setShowReplayCounterfactualDetails] = useState(false);
   const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
@@ -1594,6 +1595,7 @@ export default function LearningTab({ compact = false }) {
   const contextEvidenceExpansion = unified?.context_evidence_expansion_suite_v1 || {};
   const catalystThemeNarrative = unified?.catalyst_theme_narrative_capital_flow_intelligence_v2 || {};
   const decisionOptimization = unified?.decision_optimization_trade_management_suite_v1 || {};
+  const fullOpportunityLifecycle = unified?.full_opportunity_lifecycle_learning_suite_v1 || {};
   const tradeArchetypeRegime = unified?.trade_archetype_regime_intelligence || {};
   const replayCounterfactual = unified?.replay_counterfactual_learning_v2 || {};
   const opportunityCostLearning = unified?.opportunity_cost_learning || {};
@@ -2037,6 +2039,104 @@ export default function LearningTab({ compact = false }) {
               <div>Ranking changed: {contextEvidenceExpansion?.ranking_behavior_changed ? "yes" : "no"}</div>
               <div>Paper execution changed: {contextEvidenceExpansion?.paper_execution_behavior_changed ? "yes" : "no"}</div>
               <div>Forced exits: {contextEvidenceExpansion?.forced_exits_enabled ? "yes" : "no"}</div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Full Opportunity Lifecycle Learning Suite V1</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is learning from every opportunity it sees, including trades taken, rejected, skipped, ignored, blocked, virtual-only, winning, and losing opportunities. It routes each opportunity through relevant learning systems while keeping raw memory separate from fast dashboard summaries.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowFullOpportunityLifecycleDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showFullOpportunityLifecycleDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Opportunities tracked", safeNumber(fullOpportunityLifecycle?.opportunities_tracked).toFixed(0)],
+            ["Learning completeness", `${safeNumber(fullOpportunityLifecycle?.learning_completeness_score).toFixed(1)}%`],
+            ["Missed winners", safeNumber(fullOpportunityLifecycle?.missed_winners).toFixed(0)],
+            ["Avoided losers", safeNumber(fullOpportunityLifecycle?.avoided_losers).toFixed(0)],
+            ["Strongest connection", fullOpportunityLifecycle?.strongest_learning_connection],
+            ["Most predictive feature", fullOpportunityLifecycle?.most_predictive_feature],
+            ["Highest value focus", fullOpportunityLifecycle?.highest_value_learning_focus],
+            ["Memory quality", safeNumber(fullOpportunityLifecycle?.memory_quality_score).toFixed(1)],
+            ["Storage health", safeNumber(fullOpportunityLifecycle?.storage_health_score).toFixed(1)],
+            ["Memory pressure", safeNumber(fullOpportunityLifecycle?.memory_pressure_score).toFixed(1)],
+            ["Cache freshness", fullOpportunityLifecycle?.cache_freshness],
+            ["Dashboard scan rows", safeNumber(fullOpportunityLifecycle?.dashboard_scan_rows).toFixed(0)],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(fullOpportunityLifecycle?.shadow_recommendation || "Continue full opportunity lifecycle learning shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showFullOpportunityLifecycleDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Lifecycle Coverage</div>
+              <div>Paper trades: {safeNumber(fullOpportunityLifecycle?.paper_trades_tracked).toFixed(0)}</div>
+              <div>Virtual trades: {safeNumber(fullOpportunityLifecycle?.virtual_trades_tracked).toFixed(0)}</div>
+              <div>Rejected: {safeNumber(fullOpportunityLifecycle?.rejected_tracked).toFixed(0)}</div>
+              <div>Skipped: {safeNumber(fullOpportunityLifecycle?.skipped_tracked).toFixed(0)}</div>
+              <div>Ignored: {safeNumber(fullOpportunityLifecycle?.ignored_tracked).toFixed(0)}</div>
+              <div>Blocked: {safeNumber(fullOpportunityLifecycle?.blocked_tracked).toFixed(0)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Cross-System Learning Graph</div>
+              <div>Nodes: {safeNumber(fullOpportunityLifecycle?.graph_nodes).toFixed(0)}</div>
+              <div>Edges: {safeNumber(fullOpportunityLifecycle?.graph_edges).toFixed(0)}</div>
+              <div>Cross-system score: {safeNumber(fullOpportunityLifecycle?.cross_system_learning_score).toFixed(1)}</div>
+              <div>Weakest connection: {String(fullOpportunityLifecycle?.weakest_learning_connection || "warming up").replaceAll("_", " ")}</div>
+              <div>Systems receiving evidence: {Object.keys(fullOpportunityLifecycle?.systems_receiving_evidence || {}).length}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Predictive Feature Attribution</div>
+              <div>Least predictive feature: {String(fullOpportunityLifecycle?.least_predictive_feature || "warming up").replaceAll("_", " ")}</div>
+              <div>Attribution confidence: {safeNumber(fullOpportunityLifecycle?.feature_attribution_confidence).toFixed(1)}</div>
+              <div>Top profit features: {(fullOpportunityLifecycle?.top_profit_features || []).length ? fullOpportunityLifecycle.top_profit_features.slice(0, 3).join(", ") : "warming up"}</div>
+              <div>Top loss features: {(fullOpportunityLifecycle?.top_loss_features || []).length ? fullOpportunityLifecycle.top_loss_features.slice(0, 3).join(", ") : "warming up"}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Memory & Storage Optimization</div>
+              <div>Last updated: {String(fullOpportunityLifecycle?.last_updated || "warming up")}</div>
+              <div>Cache status: {String(fullOpportunityLifecycle?.cache_status || "warming up").replaceAll("_", " ")} | Age: {fullOpportunityLifecycle?.cache_age_seconds === null || fullOpportunityLifecycle?.cache_age_seconds === undefined ? "n/a" : `${safeNumber(fullOpportunityLifecycle?.cache_age_seconds).toFixed(1)}s`}</div>
+              <div>Raw events: {safeNumber(fullOpportunityLifecycle?.raw_event_count).toFixed(0)} | Summaries: {safeNumber(fullOpportunityLifecycle?.compact_summary_count).toFixed(0)} | Archives: {safeNumber(fullOpportunityLifecycle?.archive_count).toFixed(0)}</div>
+              <div>Compaction: {String(fullOpportunityLifecycle?.compaction_status || "warming up").replaceAll("_", " ")}</div>
+              <div>API calls: {safeNumber(fullOpportunityLifecycle?.api_calls_used).toFixed(0)} | Provider calls: {safeNumber(fullOpportunityLifecycle?.provider_calls_used).toFixed(0)} | LLM calls: {safeNumber(fullOpportunityLifecycle?.llm_calls_used).toFixed(0)}</div>
+              <div>Bandwidth saving: {fullOpportunityLifecycle?.bandwidth_saving_mode ? "enabled" : "review"} | API budget: {String(fullOpportunityLifecycle?.api_budget_status || "cached_local_only").replaceAll("_", " ")}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Safety</div>
+              <div>Behavior safe to apply: {fullOpportunityLifecycle?.behavior_safe_to_apply ? "yes" : "no"}</div>
+              <div>Auto apply: {fullOpportunityLifecycle?.auto_apply_allowed ? "yes" : "no"}</div>
+              <div>Ranking changed: {fullOpportunityLifecycle?.ranking_behavior_changed ? "yes" : "no"}</div>
+              <div>Paper execution changed: {fullOpportunityLifecycle?.paper_execution_behavior_changed ? "yes" : "no"}</div>
+              <div>Position sizing changed: {fullOpportunityLifecycle?.position_sizing_changed ? "yes" : "no"}</div>
+              <div>Thresholds changed: {fullOpportunityLifecycle?.thresholds_changed ? "yes" : "no"}</div>
             </div>
           </div>
         ) : null}
