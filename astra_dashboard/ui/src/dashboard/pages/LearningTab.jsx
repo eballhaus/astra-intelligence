@@ -155,6 +155,7 @@ export default function LearningTab({ compact = false }) {
   const [showDecisionOptimizationDetails, setShowDecisionOptimizationDetails] = useState(false);
   const [showFullOpportunityLifecycleDetails, setShowFullOpportunityLifecycleDetails] = useState(false);
   const [showLongTermMemoryDetails, setShowLongTermMemoryDetails] = useState(false);
+  const [showAdaptiveLearningPrioritizationDetails, setShowAdaptiveLearningPrioritizationDetails] = useState(false);
   const [showTradeArchetypeRegimeDetails, setShowTradeArchetypeRegimeDetails] = useState(false);
   const [showReplayCounterfactualDetails, setShowReplayCounterfactualDetails] = useState(false);
   const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
@@ -1598,6 +1599,7 @@ export default function LearningTab({ compact = false }) {
   const decisionOptimization = unified?.decision_optimization_trade_management_suite_v1 || {};
   const fullOpportunityLifecycle = unified?.full_opportunity_lifecycle_learning_suite_v1 || {};
   const longTermMemorySymbolRetrieval = unified?.long_term_memory_symbol_retrieval_suite_v1 || {};
+  const adaptiveLearningPrioritization = unified?.adaptive_learning_prioritization_resource_allocation_v1 || {};
   const tradeArchetypeRegime = unified?.trade_archetype_regime_intelligence || {};
   const replayCounterfactual = unified?.replay_counterfactual_learning_v2 || {};
   const opportunityCostLearning = unified?.opportunity_cost_learning || {};
@@ -1952,6 +1954,106 @@ export default function LearningTab({ compact = false }) {
             </ResponsiveContainer>
           </ChartShell>
         </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Adaptive Learning Prioritization & Resource Allocation V1</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is automatically identifying its highest-value weaknesses and safely shifting learning focus, replay analysis, worker attention, and memory priority toward the areas most likely to improve future performance. This does not change trades, rankings, exits, sizing, or broker behavior.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAdaptiveLearningPrioritizationDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showAdaptiveLearningPrioritizationDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Top weakness", adaptiveLearningPrioritization?.top_weakness],
+            ["Secondary weakness", adaptiveLearningPrioritization?.secondary_weakness],
+            ["Highest value focus", adaptiveLearningPrioritization?.highest_value_learning_focus],
+            ["Expected improvement", safeNumber(adaptiveLearningPrioritization?.expected_improvement_score).toFixed(1)],
+            ["Learning ROI", safeNumber(adaptiveLearningPrioritization?.learning_roi_score).toFixed(1)],
+            ["Weakness focus", `${safeNumber(adaptiveLearningPrioritization?.weakness_focus_allocation).toFixed(0)}%`],
+            ["Balanced learning", `${safeNumber(adaptiveLearningPrioritization?.balanced_learning_allocation).toFixed(0)}%`],
+            ["Strength validation", `${safeNumber(adaptiveLearningPrioritization?.strength_validation_allocation).toFixed(0)}%`],
+            ["System health", `${safeNumber(adaptiveLearningPrioritization?.system_health_allocation).toFixed(0)}%`],
+            ["Worker focus", adaptiveLearningPrioritization?.recommended_worker_focus],
+            ["Replay focus", adaptiveLearningPrioritization?.recommended_replay_focus],
+            ["Governance", adaptiveLearningPrioritization?.governance_status],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(adaptiveLearningPrioritization?.shadow_recommendation || "Continue adaptive learning prioritization shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showAdaptiveLearningPrioritizationDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Weakness Detection</div>
+              <div>Confidence: {safeNumber(adaptiveLearningPrioritization?.weakness_confidence).toFixed(1)}</div>
+              <div>Trend: {String(adaptiveLearningPrioritization?.weakness_trend || "warming up").replaceAll("_", " ")}</div>
+              <div>Persistence: {safeNumber(adaptiveLearningPrioritization?.weakness_persistence).toFixed(1)}</div>
+              <div>Real vs noise: {String(adaptiveLearningPrioritization?.weakness_is_real_vs_noise || "warming up").replaceAll("_", " ")}</div>
+              {(adaptiveLearningPrioritization?.weakness_rankings || []).slice(0, 5).map((row) => (
+                <div key={row?.weakness}>{String(row?.weakness || "unknown").replaceAll("_", " ")}: value {safeNumber(row?.expected_learning_value).toFixed(1)}, noise {safeNumber(row?.noise_risk_score).toFixed(1)}</div>
+              ))}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Allocation Guardrails</div>
+              <div>Allocation safe: {adaptiveLearningPrioritization?.allocation_safe ? "yes" : "no"}</div>
+              <div>Guardrail status: {String(adaptiveLearningPrioritization?.allocation_guardrail_status || "warming up").replaceAll("_", " ")}</div>
+              <div>Blocked reason: {String(adaptiveLearningPrioritization?.blocked_allocation_reason || "none").replaceAll("_", " ")}</div>
+              <div>Allocation confidence: {safeNumber(adaptiveLearningPrioritization?.allocation_confidence).toFixed(1)}</div>
+              <div>Active focus: {Object.entries(adaptiveLearningPrioritization?.active_focus_distribution || {}).map(([k, v]) => `${String(k).replaceAll("_", " ")} ${safeNumber(v).toFixed(0)}%`).join(", ") || "warming up"}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Worker, Replay & Memory Focus</div>
+              <div>Worker reason: {String(adaptiveLearningPrioritization?.worker_focus_reason || "warming up").replaceAll("_", " ")}</div>
+              <div>Worker change: {String(adaptiveLearningPrioritization?.worker_focus_change || "warming up").replaceAll("_", " ")}</div>
+              <div>Replay reason: {String(adaptiveLearningPrioritization?.replay_priority_reason || "warming up").replaceAll("_", " ")}</div>
+              <div>Memory focus: {String(adaptiveLearningPrioritization?.memory_focus || "warming up").replaceAll("_", " ")}</div>
+              <div>Memory weighting: {safeNumber(adaptiveLearningPrioritization?.memory_weighting_score).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Weakness Drift</div>
+              <div>Improving: {String(adaptiveLearningPrioritization?.improving_weakness || "none detected").replaceAll("_", " ")}</div>
+              <div>Worsening: {String(adaptiveLearningPrioritization?.worsening_weakness || "none detected").replaceAll("_", " ")}</div>
+              <div>Emerging: {String(adaptiveLearningPrioritization?.emerging_weakness || "none detected").replaceAll("_", " ")}</div>
+              <div>Resolved: {String(adaptiveLearningPrioritization?.resolved_weakness || "none detected").replaceAll("_", " ")}</div>
+              <div>Drift score: {safeNumber(adaptiveLearningPrioritization?.weakness_drift_score).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Governance & Safety</div>
+              <div>Policy readiness: {String(adaptiveLearningPrioritization?.policy_readiness_status || "not ready").replaceAll("_", " ")}</div>
+              <div>Behavior safe to apply: {adaptiveLearningPrioritization?.behavior_safe_to_apply ? "yes" : "no"}</div>
+              <div>Auto apply: {adaptiveLearningPrioritization?.auto_apply_allowed ? "yes" : "no"}</div>
+              <div>Ranking changed: {adaptiveLearningPrioritization?.ranking_behavior_changed ? "yes" : "no"}</div>
+              <div>Paper execution changed: {adaptiveLearningPrioritization?.paper_execution_behavior_changed ? "yes" : "no"}</div>
+              <div>Portfolio allocation changed: {adaptiveLearningPrioritization?.portfolio_allocation_changed ? "yes" : "no"}</div>
+              <div>API/provider/LLM calls: {safeNumber(adaptiveLearningPrioritization?.api_calls_used).toFixed(0)}/{safeNumber(adaptiveLearningPrioritization?.provider_calls_used).toFixed(0)}/{safeNumber(adaptiveLearningPrioritization?.llm_calls_used).toFixed(0)}</div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div style={{ ...panelStyle }}>

@@ -584,6 +584,7 @@ class LearningIssueAuditV1:
         decision_opt = dict(statuses.get("decision_optimization_trade_management_suite_v1") or {})
         full_lifecycle = dict(statuses.get("full_opportunity_lifecycle_learning_suite_v1") or {})
         long_memory = dict(statuses.get("long_term_memory_symbol_retrieval_suite_v1") or {})
+        learning_allocator = dict(statuses.get("adaptive_learning_prioritization_resource_allocation_v1") or {})
         v3_issue = _issue(
             "shadow_exit_learning_active" if v3.get("enabled") else "shadow_exit_learning_unavailable",
             "adaptive_execution_exit_v3_tracks_profit_capture_horizon_and_peak_decay" if v3.get("enabled") else "adaptive_execution_exit_v3_not_available",
@@ -718,6 +719,20 @@ class LearningIssueAuditV1:
             "Use long-term memory diagnostics to preserve valuable summaries, monitor storage pressure, and retrieve symbol lessons quickly; keep trading behavior unchanged.",
             _text(long_memory.get("shadow_recommendation"), "No behavior change."),
         )
+        learning_allocator_issue = _issue(
+            "adaptive_learning_prioritization_active" if learning_allocator.get("enabled") else "adaptive_learning_prioritization_unavailable",
+            "weakness_detection_learning_value_resource_allocation_worker_replay_memory_and_governance_diagnostics_active" if learning_allocator.get("enabled") else "adaptive_learning_prioritization_not_available",
+            "medium"
+            if learning_allocator.get("enabled")
+            and (
+                not bool(learning_allocator.get("allocation_safe", False))
+                or _text(learning_allocator.get("governance_status"), "") == "guardrailed_observation_only"
+            )
+            else "low",
+            len(learning_allocator.get("weakness_rankings") or []),
+            "Use prioritization diagnostics to focus learning resources only; keep policy application and trading behavior disabled.",
+            _text(learning_allocator.get("shadow_recommendation"), "No behavior change."),
+        )
         issue_status = {
             "core_metric_source_regression": core_issue,
             "dataset_scope_mismatch": dataset_issue,
@@ -740,6 +755,7 @@ class LearningIssueAuditV1:
             "decision_optimization_trade_management_suite_v1": decision_opt_issue,
             "full_opportunity_lifecycle_learning_suite_v1": full_lifecycle_issue,
             "long_term_memory_symbol_retrieval_suite_v1": long_memory_issue,
+            "adaptive_learning_prioritization_resource_allocation_v1": learning_allocator_issue,
         }
         medium_or_higher = [name for name, issue in issue_status.items() if issue.get("severity") in {"medium", "high"}]
         out = {
@@ -765,6 +781,7 @@ class LearningIssueAuditV1:
             "decision_optimization_trade_management_status": decision_opt_issue,
             "full_opportunity_lifecycle_learning_status": full_lifecycle_issue,
             "long_term_memory_symbol_retrieval_status": long_memory_issue,
+            "adaptive_learning_prioritization_resource_allocation_status": learning_allocator_issue,
             "execution_participation_display_status": exec_issue,
             "core_metric_source_diagnostics": core_diag,
             "dataset_scope_diagnostics": dataset_diag,
@@ -1059,6 +1076,40 @@ class LearningIssueAuditV1:
                 "paper_execution_behavior_changed": bool(long_memory.get("paper_execution_behavior_changed", False)),
                 "position_sizing_changed": bool(long_memory.get("position_sizing_changed", False)),
                 "thresholds_changed": bool(long_memory.get("thresholds_changed", False)),
+            },
+            "adaptive_learning_prioritization_resource_allocation_diagnostics": {
+                "top_weakness": learning_allocator.get("top_weakness"),
+                "secondary_weakness": learning_allocator.get("secondary_weakness"),
+                "weakness_rankings": list(learning_allocator.get("weakness_rankings") or [])[:10],
+                "weakness_confidence": learning_allocator.get("weakness_confidence"),
+                "weakness_is_real_vs_noise": learning_allocator.get("weakness_is_real_vs_noise"),
+                "highest_value_learning_focus": learning_allocator.get("highest_value_learning_focus"),
+                "expected_improvement_score": learning_allocator.get("expected_improvement_score"),
+                "learning_roi_score": learning_allocator.get("learning_roi_score"),
+                "weakness_focus_allocation": learning_allocator.get("weakness_focus_allocation"),
+                "balanced_learning_allocation": learning_allocator.get("balanced_learning_allocation"),
+                "strength_validation_allocation": learning_allocator.get("strength_validation_allocation"),
+                "system_health_allocation": learning_allocator.get("system_health_allocation"),
+                "active_focus_distribution": learning_allocator.get("active_focus_distribution"),
+                "recommended_worker_focus": learning_allocator.get("recommended_worker_focus"),
+                "recommended_replay_focus": learning_allocator.get("recommended_replay_focus"),
+                "memory_focus": learning_allocator.get("memory_focus"),
+                "emerging_weakness": learning_allocator.get("emerging_weakness"),
+                "resolved_weakness": learning_allocator.get("resolved_weakness"),
+                "governance_status": learning_allocator.get("governance_status"),
+                "allocation_safe": bool(learning_allocator.get("allocation_safe", False)),
+                "blocked_allocation_reason": learning_allocator.get("blocked_allocation_reason"),
+                "policy_readiness_status": learning_allocator.get("policy_readiness_status"),
+                "api_calls_used": learning_allocator.get("api_calls_used"),
+                "provider_calls_used": learning_allocator.get("provider_calls_used"),
+                "llm_calls_used": learning_allocator.get("llm_calls_used"),
+                "shadow_recommendation": learning_allocator.get("shadow_recommendation"),
+                "behavior_safe_to_apply": bool(learning_allocator.get("behavior_safe_to_apply", False)),
+                "ranking_behavior_changed": bool(learning_allocator.get("ranking_behavior_changed", False)),
+                "paper_execution_behavior_changed": bool(learning_allocator.get("paper_execution_behavior_changed", False)),
+                "position_sizing_changed": bool(learning_allocator.get("position_sizing_changed", False)),
+                "thresholds_changed": bool(learning_allocator.get("thresholds_changed", False)),
+                "portfolio_allocation_changed": bool(learning_allocator.get("portfolio_allocation_changed", False)),
             },
             "likely_cause_summary": ", ".join(medium_or_higher) if medium_or_higher else "no_behavior_change_indicated",
             "recommended_action": "Apply display/source reconciliation and keep behavior changes shadow-only.",
