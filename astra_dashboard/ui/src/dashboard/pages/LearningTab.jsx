@@ -156,6 +156,7 @@ export default function LearningTab({ compact = false }) {
   const [showFullOpportunityLifecycleDetails, setShowFullOpportunityLifecycleDetails] = useState(false);
   const [showLongTermMemoryDetails, setShowLongTermMemoryDetails] = useState(false);
   const [showAdaptiveLearningPrioritizationDetails, setShowAdaptiveLearningPrioritizationDetails] = useState(false);
+  const [showAutonomousGovernanceDetails, setShowAutonomousGovernanceDetails] = useState(false);
   const [showTradeArchetypeRegimeDetails, setShowTradeArchetypeRegimeDetails] = useState(false);
   const [showReplayCounterfactualDetails, setShowReplayCounterfactualDetails] = useState(false);
   const [showOpportunityCostDetails, setShowOpportunityCostDetails] = useState(false);
@@ -1600,6 +1601,7 @@ export default function LearningTab({ compact = false }) {
   const fullOpportunityLifecycle = unified?.full_opportunity_lifecycle_learning_suite_v1 || {};
   const longTermMemorySymbolRetrieval = unified?.long_term_memory_symbol_retrieval_suite_v1 || {};
   const adaptiveLearningPrioritization = unified?.adaptive_learning_prioritization_resource_allocation_v1 || {};
+  const autonomousGovernance = unified?.autonomous_intelligence_validation_governance_v1 || {};
   const tradeArchetypeRegime = unified?.trade_archetype_regime_intelligence || {};
   const replayCounterfactual = unified?.replay_counterfactual_learning_v2 || {};
   const opportunityCostLearning = unified?.opportunity_cost_learning || {};
@@ -2051,6 +2053,114 @@ export default function LearningTab({ compact = false }) {
               <div>Paper execution changed: {adaptiveLearningPrioritization?.paper_execution_behavior_changed ? "yes" : "no"}</div>
               <div>Portfolio allocation changed: {adaptiveLearningPrioritization?.portfolio_allocation_changed ? "yes" : "no"}</div>
               <div>API/provider/LLM calls: {safeNumber(adaptiveLearningPrioritization?.api_calls_used).toFixed(0)}/{safeNumber(adaptiveLearningPrioritization?.provider_calls_used).toFixed(0)}/{safeNumber(adaptiveLearningPrioritization?.llm_calls_used).toFixed(0)}</div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Autonomous Intelligence, Validation & Governance V1</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is validating whether its lessons are trustworthy, diagnosing why weaknesses are occurring, proposing safe virtual improvement tests, and monitoring platform safety, learning quality, storage, API use, workers, and performance. This does not change trades, exits, sizing, rankings, or broker behavior.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAutonomousGovernanceDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showAutonomousGovernanceDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Truth validation", safeNumber(autonomousGovernance?.truth_validation_score).toFixed(1)],
+            ["Lesson reliability", safeNumber(autonomousGovernance?.lesson_reliability_score).toFixed(1)],
+            ["Governance score", safeNumber(autonomousGovernance?.governance_score).toFixed(1)],
+            ["Warning level", autonomousGovernance?.warning_level],
+            ["Primary risk", autonomousGovernance?.primary_risk],
+            ["Secondary risk", autonomousGovernance?.secondary_risk],
+            ["Top root cause", autonomousGovernance?.top_root_cause],
+            ["Highest-value hypothesis", autonomousGovernance?.highest_value_hypothesis],
+            ["Recommended virtual test", autonomousGovernance?.recommended_virtual_test],
+            ["Closest policy", autonomousGovernance?.closest_policy_to_readiness],
+            ["Readiness blocker", autonomousGovernance?.readiness_blocker],
+            ["Policy readiness", safeNumber(autonomousGovernance?.policy_readiness_score).toFixed(1)],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(autonomousGovernance?.shadow_recommendation || "Continue autonomous validation and governance shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showAutonomousGovernanceDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Evidence Truth Validation</div>
+              <div>Evidence count: {safeNumber(autonomousGovernance?.evidence_count).toFixed(0)}</div>
+              <div>Sample quality: {safeNumber(autonomousGovernance?.sample_size_quality).toFixed(1)}</div>
+              <div>Evidence consistency: {safeNumber(autonomousGovernance?.evidence_consistency).toFixed(1)}</div>
+              <div>Conflict score: {safeNumber(autonomousGovernance?.conflicting_evidence_score).toFixed(1)}</div>
+              <div>Outlier risk: {safeNumber(autonomousGovernance?.outlier_risk_score).toFixed(1)}</div>
+              <div>Status: {String(autonomousGovernance?.truth_validation_status || "warming up").replaceAll("_", " ")}</div>
+              <div>Strongest lesson: {String(autonomousGovernance?.strongest_validated_lesson || "warming up").replaceAll("_", " ")}</div>
+              <div>Weakest lesson: {String(autonomousGovernance?.weakest_validated_lesson || "warming up").replaceAll("_", " ")}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Self-Healing Diagnostics</div>
+              <div>Likely systems: {(autonomousGovernance?.likely_contributing_systems || []).slice(0, 4).map((v) => String(v).replaceAll("_", " ")).join(", ") || "warming up"}</div>
+              <div>Hypothesis: {String(autonomousGovernance?.improvement_hypothesis || autonomousGovernance?.highest_value_hypothesis || "warming up").replaceAll("_", " ")}</div>
+              <div>Expected gain: {safeNumber(autonomousGovernance?.expected_gain).toFixed(1)}</div>
+              <div>Confidence: {safeNumber(autonomousGovernance?.confidence).toFixed(1)}</div>
+              <div>Virtual test: {String(autonomousGovernance?.virtual_test_recommended || autonomousGovernance?.recommended_virtual_test || "warming up").replaceAll("_", " ")}</div>
+              <div>Status: {String(autonomousGovernance?.self_healing_status || "shadow diagnostics only").replaceAll("_", " ")}</div>
+              <div>Repair readiness: {String(autonomousGovernance?.autonomous_repair_readiness || "not ready").replaceAll("_", " ")}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Governance Safety</div>
+              <div>Trading safety: {String(autonomousGovernance?.trading_safety_status || "warming up").replaceAll("_", " ")}</div>
+              <div>Learning safety: {String(autonomousGovernance?.learning_safety_status || "warming up").replaceAll("_", " ")}</div>
+              <div>Storage safety: {String(autonomousGovernance?.storage_safety_status || "warming up").replaceAll("_", " ")}</div>
+              <div>Performance safety: {String(autonomousGovernance?.performance_safety_status || "warming up").replaceAll("_", " ")}</div>
+              <div>API safety: {String(autonomousGovernance?.api_safety_status || "warming up").replaceAll("_", " ")}</div>
+              <div>Infrastructure safety: {String(autonomousGovernance?.infrastructure_safety_status || "warming up").replaceAll("_", " ")}</div>
+              <div>Knowledge safety: {String(autonomousGovernance?.knowledge_safety_status || "warming up").replaceAll("_", " ")}</div>
+              <div>Recommendation: {String(autonomousGovernance?.governance_recommendation || "continue shadow governance monitoring").replaceAll("_", " ")}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Policy Readiness</div>
+              <div>Ready policies: {(autonomousGovernance?.ready_policies || []).join(", ") || "none"}</div>
+              <div>Not ready count: {(autonomousGovernance?.not_ready_policies || []).length}</div>
+              <div>Human review required: {autonomousGovernance?.human_review_required === false ? "no" : "yes"}</div>
+              <div>Auto apply allowed: {autonomousGovernance?.auto_apply_allowed ? "yes" : "no"}</div>
+              <div>Behavior safe to apply: {autonomousGovernance?.behavior_safe_to_apply ? "yes" : "no"}</div>
+              <div>Paper execution changed: {autonomousGovernance?.paper_execution_behavior_changed ? "yes" : "no"}</div>
+              <div>Broker behavior changed: {autonomousGovernance?.broker_behavior_changed ? "yes" : "no"}</div>
+              <div>Ranking changed: {autonomousGovernance?.ranking_behavior_changed ? "yes" : "no"}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Fast Path & API Guardrails</div>
+              <div>Build time: {safeNumber(autonomousGovernance?.build_ms).toFixed(2)}ms</div>
+              <div>Dashboard scan rows: {safeNumber(autonomousGovernance?.dashboard_scan_rows).toFixed(0)}</div>
+              <div>Raw history scanned: {autonomousGovernance?.raw_history_scanned ? "yes" : "no"}</div>
+              <div>Raw archive scanned: {autonomousGovernance?.raw_archive_scanned ? "yes" : "no"}</div>
+              <div>Bandwidth saving: {autonomousGovernance?.bandwidth_saving_mode === false ? "no" : "yes"}</div>
+              <div>API/provider/LLM calls: {safeNumber(autonomousGovernance?.api_calls_used).toFixed(0)}/{safeNumber(autonomousGovernance?.provider_calls_used).toFixed(0)}/{safeNumber(autonomousGovernance?.llm_calls_used).toFixed(0)}</div>
             </div>
           </div>
         ) : null}

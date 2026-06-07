@@ -1218,6 +1218,39 @@ except Exception:
                 "portfolio_allocation_changed": False,
             }
 try:
+    from engine.autonomous_intelligence_validation_governance_v1 import AutonomousIntelligenceValidationGovernanceV1
+except Exception:
+    class AutonomousIntelligenceValidationGovernanceV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "paper_only_autonomous_intelligence_validation_governance",
+                "evidence_count": 0,
+                "truth_validation_score": 0.0,
+                "lesson_reliability_score": 0.0,
+                "strongest_validated_lesson": "unavailable",
+                "weakest_validated_lesson": "unavailable",
+                "top_root_cause": "unavailable",
+                "highest_value_hypothesis": "unavailable",
+                "recommended_virtual_test": "unavailable",
+                "governance_score": 0.0,
+                "warning_level": "red",
+                "primary_risk": "unavailable",
+                "secondary_risk": "unavailable",
+                "policy_readiness_score": 0.0,
+                "closest_policy_to_readiness": "unavailable",
+                "readiness_blocker": "unavailable",
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "shadow_recommendation": "unavailable",
+                "behavior_safe_to_apply": False,
+            }
+try:
     from engine.trade_archetype_regime_intelligence_v1 import TradeArchetypeRegimeIntelligenceV1
 except Exception:
     class TradeArchetypeRegimeIntelligenceV1:  # type: ignore[override]
@@ -1908,6 +1941,7 @@ DECISION_OPTIMIZATION_TRADE_MANAGEMENT_SUITE = DecisionOptimizationTradeManageme
 FULL_OPPORTUNITY_LIFECYCLE_LEARNING_SUITE = FullOpportunityLifecycleLearningSuiteV1(state_dir=STATE)
 LONG_TERM_MEMORY_SYMBOL_RETRIEVAL_SUITE = LongTermMemorySymbolRetrievalSuiteV1(state_dir=STATE)
 ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION = AdaptiveLearningPrioritizationResourceAllocationV1(state_dir=STATE)
+AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE = AutonomousIntelligenceValidationGovernanceV1(state_dir=STATE)
 TRADE_ARCHETYPE_REGIME_INTELLIGENCE = TradeArchetypeRegimeIntelligenceV1(state_dir=STATE)
 REPLAY_COUNTERFACTUAL_LEARNING_V2 = ReplayCounterfactualLearningV2(state_dir=STATE)
 OPPORTUNITY_COST_LEARNING = OpportunityCostLearningV1(state_dir=STATE)
@@ -40304,6 +40338,10 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["adaptive_learning_prioritization_resource_allocation_v1"] = ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False)
     except Exception:
         statuses["adaptive_learning_prioritization_resource_allocation_v1"] = {}
+    try:
+        statuses["autonomous_intelligence_validation_governance_v1"] = AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["autonomous_intelligence_validation_governance_v1"] = {}
     return statuses
 
 
@@ -41249,6 +41287,80 @@ def adaptive_learning_prioritization_resource_allocation_v1(force: bool = False)
         }
 
 
+@router.get("/api/autonomous_intelligence_validation_governance_v1")
+def autonomous_intelligence_validation_governance_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        out = dict(AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE.status(statuses=statuses, force=bool(force)) or {})
+        out["autonomous_intelligence_validation_governance_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["ranking_behavior_changed"] = False
+        out["paper_execution_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["thresholds_changed"] = False
+        out["portfolio_allocation_changed"] = False
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        out["partial_sells_enabled"] = False
+        out["automatic_trailing_stops_enabled"] = False
+        out["auto_apply_allowed"] = False
+        out["human_review_required"] = True
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "paper_only_autonomous_intelligence_validation_governance",
+            "autonomous_intelligence_validation_governance_v1": True,
+            "evidence_count": 0,
+            "truth_validation_score": 0.0,
+            "lesson_reliability_score": 0.0,
+            "strongest_validated_lesson": "unavailable",
+            "weakest_validated_lesson": "unavailable",
+            "top_root_cause": "unavailable",
+            "highest_value_hypothesis": "unavailable",
+            "recommended_virtual_test": "unavailable",
+            "governance_score": 0.0,
+            "warning_level": "red",
+            "primary_risk": "unavailable",
+            "secondary_risk": "unavailable",
+            "policy_readiness_score": 0.0,
+            "closest_policy_to_readiness": "unavailable",
+            "readiness_blocker": "unavailable",
+            "degraded_reason": f"autonomous_intelligence_validation_governance_v1_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "build_ms": 0.0,
+            "shadow_recommendation": "unavailable",
+            "behavior_safe_to_apply": False,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "paper_execution_behavior_changed": False,
+            "position_sizing_changed": False,
+            "thresholds_changed": False,
+            "portfolio_allocation_changed": False,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+            "partial_sells_enabled": False,
+            "automatic_trailing_stops_enabled": False,
+            "auto_apply_allowed": False,
+            "human_review_required": True,
+        }
+
+
 @router.get("/api/catalyst_theme_narrative_capital_flow_intelligence_v2")
 def catalyst_theme_narrative_capital_flow_intelligence_v2(force: bool = False):
     try:
@@ -41387,6 +41499,10 @@ def learning_issue_audit_status_v1(force: bool = False):
             statuses["adaptive_learning_prioritization_resource_allocation_v1"] = ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False)
         except Exception:
             statuses["adaptive_learning_prioritization_resource_allocation_v1"] = {}
+        try:
+            statuses["autonomous_intelligence_validation_governance_v1"] = AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["autonomous_intelligence_validation_governance_v1"] = {}
         try:
             statuses["opportunity_cost_learning"] = OPPORTUNITY_COST_LEARNING.status(force=False)
         except Exception:
@@ -49798,6 +49914,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("full_opportunity_lifecycle_learning_suite_v1", lambda: FULL_OPPORTUNITY_LIFECYCLE_LEARNING_SUITE.status(statuses=statuses, force=False))
         _safe_status("long_term_memory_symbol_retrieval_suite_v1", lambda: LONG_TERM_MEMORY_SYMBOL_RETRIEVAL_SUITE.status(statuses=statuses, force=False))
         _safe_status("adaptive_learning_prioritization_resource_allocation_v1", lambda: ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False))
+        _safe_status("autonomous_intelligence_validation_governance_v1", lambda: AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE.status(statuses=statuses, force=False))
         _safe_status("trade_archetype_regime", lambda: TRADE_ARCHETYPE_REGIME_INTELLIGENCE.status(force=False))
         _safe_status("replay_counterfactual_learning_v2", lambda: REPLAY_COUNTERFACTUAL_LEARNING_V2.status(force=False))
         _safe_status("opportunity_cost_learning", lambda: OPPORTUNITY_COST_LEARNING.status(force=False))

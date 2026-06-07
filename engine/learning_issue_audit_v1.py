@@ -585,6 +585,7 @@ class LearningIssueAuditV1:
         full_lifecycle = dict(statuses.get("full_opportunity_lifecycle_learning_suite_v1") or {})
         long_memory = dict(statuses.get("long_term_memory_symbol_retrieval_suite_v1") or {})
         learning_allocator = dict(statuses.get("adaptive_learning_prioritization_resource_allocation_v1") or {})
+        autonomous_governance = dict(statuses.get("autonomous_intelligence_validation_governance_v1") or {})
         v3_issue = _issue(
             "shadow_exit_learning_active" if v3.get("enabled") else "shadow_exit_learning_unavailable",
             "adaptive_execution_exit_v3_tracks_profit_capture_horizon_and_peak_decay" if v3.get("enabled") else "adaptive_execution_exit_v3_not_available",
@@ -733,6 +734,17 @@ class LearningIssueAuditV1:
             "Use prioritization diagnostics to focus learning resources only; keep policy application and trading behavior disabled.",
             _text(learning_allocator.get("shadow_recommendation"), "No behavior change."),
         )
+        autonomous_governance_issue = _issue(
+            "autonomous_intelligence_validation_governance_active" if autonomous_governance.get("enabled") else "autonomous_intelligence_validation_governance_unavailable",
+            "truth_validation_self_healing_governance_and_policy_readiness_diagnostics_active" if autonomous_governance.get("enabled") else "autonomous_intelligence_validation_governance_not_available",
+            "medium"
+            if autonomous_governance.get("enabled")
+            and _text(autonomous_governance.get("warning_level"), "green") in {"orange", "red"}
+            else "low",
+            _to_int(autonomous_governance.get("evidence_count"), 0),
+            "Use autonomous governance diagnostics for truth validation and virtual-test planning only; keep all policies unapplied.",
+            _text(autonomous_governance.get("shadow_recommendation"), "No behavior change."),
+        )
         issue_status = {
             "core_metric_source_regression": core_issue,
             "dataset_scope_mismatch": dataset_issue,
@@ -756,6 +768,7 @@ class LearningIssueAuditV1:
             "full_opportunity_lifecycle_learning_suite_v1": full_lifecycle_issue,
             "long_term_memory_symbol_retrieval_suite_v1": long_memory_issue,
             "adaptive_learning_prioritization_resource_allocation_v1": learning_allocator_issue,
+            "autonomous_intelligence_validation_governance_v1": autonomous_governance_issue,
         }
         medium_or_higher = [name for name, issue in issue_status.items() if issue.get("severity") in {"medium", "high"}]
         out = {
@@ -782,6 +795,7 @@ class LearningIssueAuditV1:
             "full_opportunity_lifecycle_learning_status": full_lifecycle_issue,
             "long_term_memory_symbol_retrieval_status": long_memory_issue,
             "adaptive_learning_prioritization_resource_allocation_status": learning_allocator_issue,
+            "autonomous_intelligence_validation_governance_status": autonomous_governance_issue,
             "execution_participation_display_status": exec_issue,
             "core_metric_source_diagnostics": core_diag,
             "dataset_scope_diagnostics": dataset_diag,
@@ -1110,6 +1124,43 @@ class LearningIssueAuditV1:
                 "position_sizing_changed": bool(learning_allocator.get("position_sizing_changed", False)),
                 "thresholds_changed": bool(learning_allocator.get("thresholds_changed", False)),
                 "portfolio_allocation_changed": bool(learning_allocator.get("portfolio_allocation_changed", False)),
+            },
+            "autonomous_intelligence_validation_governance_diagnostics": {
+                "evidence_count": autonomous_governance.get("evidence_count"),
+                "truth_validation_score": autonomous_governance.get("truth_validation_score"),
+                "lesson_reliability_score": autonomous_governance.get("lesson_reliability_score"),
+                "strongest_validated_lesson": autonomous_governance.get("strongest_validated_lesson"),
+                "weakest_validated_lesson": autonomous_governance.get("weakest_validated_lesson"),
+                "truth_validation_status": autonomous_governance.get("truth_validation_status"),
+                "top_root_cause": autonomous_governance.get("top_root_cause"),
+                "highest_value_hypothesis": autonomous_governance.get("highest_value_hypothesis"),
+                "recommended_virtual_test": autonomous_governance.get("recommended_virtual_test"),
+                "self_healing_status": autonomous_governance.get("self_healing_status"),
+                "autonomous_repair_readiness": autonomous_governance.get("autonomous_repair_readiness"),
+                "governance_score": autonomous_governance.get("governance_score"),
+                "warning_level": autonomous_governance.get("warning_level"),
+                "primary_risk": autonomous_governance.get("primary_risk"),
+                "secondary_risk": autonomous_governance.get("secondary_risk"),
+                "policy_readiness_score": autonomous_governance.get("policy_readiness_score"),
+                "closest_policy_to_readiness": autonomous_governance.get("closest_policy_to_readiness"),
+                "readiness_blocker": autonomous_governance.get("readiness_blocker"),
+                "trading_safety_status": autonomous_governance.get("trading_safety_status"),
+                "learning_safety_status": autonomous_governance.get("learning_safety_status"),
+                "storage_safety_status": autonomous_governance.get("storage_safety_status"),
+                "performance_safety_status": autonomous_governance.get("performance_safety_status"),
+                "api_safety_status": autonomous_governance.get("api_safety_status"),
+                "infrastructure_safety_status": autonomous_governance.get("infrastructure_safety_status"),
+                "knowledge_safety_status": autonomous_governance.get("knowledge_safety_status"),
+                "api_calls_used": autonomous_governance.get("api_calls_used"),
+                "provider_calls_used": autonomous_governance.get("provider_calls_used"),
+                "llm_calls_used": autonomous_governance.get("llm_calls_used"),
+                "shadow_recommendation": autonomous_governance.get("shadow_recommendation"),
+                "behavior_safe_to_apply": bool(autonomous_governance.get("behavior_safe_to_apply", False)),
+                "ranking_behavior_changed": bool(autonomous_governance.get("ranking_behavior_changed", False)),
+                "paper_execution_behavior_changed": bool(autonomous_governance.get("paper_execution_behavior_changed", False)),
+                "position_sizing_changed": bool(autonomous_governance.get("position_sizing_changed", False)),
+                "thresholds_changed": bool(autonomous_governance.get("thresholds_changed", False)),
+                "portfolio_allocation_changed": bool(autonomous_governance.get("portfolio_allocation_changed", False)),
             },
             "likely_cause_summary": ", ".join(medium_or_higher) if medium_or_higher else "no_behavior_change_indicated",
             "recommended_action": "Apply display/source reconciliation and keep behavior changes shadow-only.",
