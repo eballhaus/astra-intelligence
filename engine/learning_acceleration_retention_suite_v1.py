@@ -168,13 +168,14 @@ class LearningAccelerationRetentionSuiteV1:
             "opportunity_cost": len(rows["opportunity_cost"]),
             "rejected_candidate_tracking": len(rows["audit"]) + len(rows["candidate"]),
             "market_context_observation": len(rows["market_context"]) or _to_int((statuses.get("market_context_learning_suite_v1") or {}).get("context_records"), 0),
-            "simulation_only": len(rows["exit_learning"]) + len(rows["v3"]),
+            "simulation_only": len(rows["exit_learning"]) + len(rows["v3"]) + _to_int((statuses.get("profit_capture_peak_decay_exit_validation_suite_v1") or {}).get("tracked_trades"), 0),
         }
 
     def _priority(self, rows: dict[str, list[dict[str, Any]]], statuses: dict[str, dict[str, Any]]) -> dict[str, Any]:
         v3 = statuses.get("adaptive_execution_exit_intelligence_v3") or {}
         exit_learning = statuses.get("exit_learning_expansion_suite_v1") or {}
         profit_capture = statuses.get("adaptive_profit_capture") or {}
+        peak_decay = statuses.get("profit_capture_peak_decay_exit_validation_suite_v1") or {}
         issue = statuses.get("learning_issue_audit") or {}
         market_context = statuses.get("market_context_learning_suite_v1") or {}
         blind = statuses.get("blind_spot_detection") or {}
@@ -183,9 +184,26 @@ class LearningAccelerationRetentionSuiteV1:
         context_expansion = statuses.get("context_evidence_expansion_suite_v1") or {}
         catalyst_v2 = statuses.get("catalyst_theme_narrative_capital_flow_intelligence_v2") or {}
         scores = {
-            "profit_capture_and_giveback": max(_to_float(v3.get("protect_profit_score"), 0.0), 100.0 - _to_float(v3.get("avg_capture_ratio"), 0.5) * 100.0, _to_float(profit_capture.get("average_profit_giveback_pct"), 0.0) * 2.0),
-            "exit_quality_and_hold_duration": max(_to_float(exit_learning.get("protect_profit_score"), 0.0), _to_float(exit_learning.get("hold_longer_score"), 0.0), _to_float(v3.get("hold_longer_score"), 0.0)),
+            "profit_capture_and_giveback": max(
+                _to_float(v3.get("protect_profit_score"), 0.0),
+                100.0 - _to_float(v3.get("avg_capture_ratio"), 0.5) * 100.0,
+                _to_float(profit_capture.get("average_profit_giveback_pct"), 0.0) * 2.0,
+                100.0 - _to_float(peak_decay.get("capture_quality_score"), 50.0),
+            ),
+            "exit_quality_and_hold_duration": max(
+                _to_float(exit_learning.get("protect_profit_score"), 0.0),
+                _to_float(exit_learning.get("hold_longer_score"), 0.0),
+                _to_float(v3.get("hold_longer_score"), 0.0),
+                _to_float(peak_decay.get("hold_duration_quality_score"), 0.0),
+            ),
             "follow_through_continuation": max(0.0, 70.0 - _to_float(v3.get("continuation_probability"), _to_float(exit_learning.get("continuation_after_profit_score"), 50.0))),
+            "profit_capture_peak_decay_exit_validation": max(
+                0.0,
+                100.0 - _to_float(peak_decay.get("capture_quality_score"), 50.0),
+                100.0 - _to_float(peak_decay.get("hold_duration_quality_score"), 50.0),
+                _to_float(peak_decay.get("continuation_failure_probability"), 0.0),
+                100.0 - _to_float(peak_decay.get("policy_confidence"), 50.0),
+            ),
             "market_context_horizon_fit": max(0.0, 75.0 - _to_float(market_context.get("context_confidence"), 45.0)),
             "opportunity_cost_and_buy_purity": abs(_to_float((issue.get("opportunity_cost_diagnostics") or {}).get("average_opportunity_cost"), 0.0)) * 0.35,
             "blind_spot_coverage": _to_float(blind.get("blind_spot_score"), 0.0),
@@ -213,6 +231,7 @@ class LearningAccelerationRetentionSuiteV1:
             "profit_capture_and_giveback": "hold_duration_giveback_profit_protection_exit_quality",
             "exit_quality_and_hold_duration": "exit_quality_hold_time_peak_decay",
             "follow_through_continuation": "follow_through_continuation_after_entry",
+            "profit_capture_peak_decay_exit_validation": "profit_capture_peak_decay_exit_validation_by_horizon",
             "market_context_horizon_fit": "premarket_catalyst_after_hours_horizon_context",
             "opportunity_cost_and_buy_purity": "selected_vs_rejected_candidate_outcomes",
             "blind_spot_coverage": "underexplored_context_evidence_collection",
@@ -315,6 +334,7 @@ class LearningAccelerationRetentionSuiteV1:
             "profit_capture_intelligence": _to_float((statuses.get("adaptive_profit_capture") or {}).get("profit_capture_quality_score"), 0.0),
             "adaptive_execution_exit_v3": _to_float((statuses.get("adaptive_execution_exit_intelligence_v3") or {}).get("profit_capture_score"), 0.0),
             "exit_learning_expansion": max(_to_float((statuses.get("exit_learning_expansion_suite_v1") or {}).get("protect_profit_score"), 0.0), _to_float((statuses.get("exit_learning_expansion_suite_v1") or {}).get("hold_longer_score"), 0.0)),
+            "profit_capture_peak_decay_exit_validation": _to_float((statuses.get("profit_capture_peak_decay_exit_validation_suite_v1") or {}).get("capture_quality_score"), 0.0),
             "market_context_learning": _to_float((statuses.get("market_context_learning_suite_v1") or {}).get("context_confidence"), 0.0),
             "replay_counterfactual": _to_float((statuses.get("replay_counterfactual_learning_v2") or {}).get("replay_learning_score"), 0.0),
             "opportunity_cost_learning": _to_float((statuses.get("opportunity_cost_learning") or {}).get("selection_quality_score"), 0.0),

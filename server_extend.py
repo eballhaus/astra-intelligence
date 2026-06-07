@@ -716,6 +716,53 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.profit_capture_peak_decay_exit_validation_suite_v1 import ProfitCapturePeakDecayExitValidationSuiteV1
+except Exception:
+    class ProfitCapturePeakDecayExitValidationSuiteV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "paper_only_profit_capture_peak_decay_exit_validation",
+                "tracked_trades": 0,
+                "average_capture_ratio": 0.0,
+                "average_giveback_pct": 0.0,
+                "capture_quality_score": 0.0,
+                "highest_giveback_trade": "unavailable",
+                "best_capture_trade": "unavailable",
+                "strongest_profit_milestone": "unavailable",
+                "weakest_profit_milestone": "unavailable",
+                "continuation_failure_probability": 0.0,
+                "strongest_failure_signal": "unavailable",
+                "best_hold_duration_by_horizon": {},
+                "hold_duration_quality_score": 0.0,
+                "best_exit_policy": "unavailable",
+                "second_best_exit_policy": "unavailable",
+                "highest_improvement_policy": "unavailable",
+                "most_consistent_policy": "unavailable",
+                "weakest_policy": "unavailable",
+                "best_exit_policy_by_horizon": {},
+                "closest_exit_policy_to_readiness": "unavailable",
+                "readiness_score": 0.0,
+                "readiness_blocker": "unavailable",
+                "policy_confidence": 0.0,
+                "shadow_recommendation": "unavailable",
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "behavior_safe_to_apply": False,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_trades_enabled": False,
+                "forced_exits_enabled": False,
+            }
+try:
     from engine.adaptive_execution_exit_intelligence_v3 import AdaptiveExecutionExitIntelligenceV3
 except Exception:
     class AdaptiveExecutionExitIntelligenceV3:  # type: ignore[override]
@@ -1928,6 +1975,7 @@ BROAD_UNIVERSE_INTAKE_PROMOTION = BroadUniverseIntakePromotionV1(state_dir=STATE
 TRADE_LIFECYCLE_EXCURSION = TradeLifecycleExcursionV1(state_dir=STATE)
 TRADE_LIFECYCLE_EXCURSION_V2 = TradeLifecycleExcursionV2(state_dir=STATE)
 ADAPTIVE_PROFIT_CAPTURE_INTELLIGENCE = AdaptiveProfitCaptureIntelligenceV1(state_dir=STATE)
+PROFIT_CAPTURE_PEAK_DECAY_EXIT_VALIDATION_SUITE = ProfitCapturePeakDecayExitValidationSuiteV1(state_dir=STATE)
 ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V3 = AdaptiveExecutionExitIntelligenceV3(state_dir=STATE)
 EXIT_LEARNING_EXPANSION_SUITE = ExitLearningExpansionSuiteV1(state_dir=STATE)
 MARKET_CONTEXT_LEARNING_SUITE = MarketContextLearningSuiteV1(state_dir=STATE)
@@ -40191,6 +40239,86 @@ def adaptive_profit_capture_status_v1(force: bool = False):
         }
 
 
+@router.get("/api/profit_capture_peak_decay_exit_validation_suite_v1")
+def profit_capture_peak_decay_exit_validation_suite_v1(force: bool = False):
+    try:
+        out = dict(PROFIT_CAPTURE_PEAK_DECAY_EXIT_VALIDATION_SUITE.status(statuses=_learning_acceleration_status_bundle(), force=bool(force)) or {})
+        out["profit_capture_peak_decay_exit_validation_suite_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["ranking_behavior_changed"] = False
+        out["paper_execution_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["thresholds_changed"] = False
+        out["portfolio_allocation_changed"] = False
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        out["partial_sells_enabled"] = False
+        out["automatic_trailing_stops_enabled"] = False
+        out["auto_apply_allowed"] = False
+        out["human_review_required"] = True
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "paper_only_profit_capture_peak_decay_exit_validation",
+            "profit_capture_peak_decay_exit_validation_suite_v1": True,
+            "tracked_trades": 0,
+            "average_capture_ratio": 0.0,
+            "average_giveback_pct": 0.0,
+            "capture_quality_score": 0.0,
+            "highest_giveback_trade": "unavailable",
+            "best_capture_trade": "unavailable",
+            "strongest_profit_milestone": "unavailable",
+            "weakest_profit_milestone": "unavailable",
+            "continuation_failure_probability": 0.0,
+            "strongest_failure_signal": "unavailable",
+            "best_hold_duration_by_horizon": {},
+            "hold_duration_quality_score": 0.0,
+            "best_exit_policy": "unavailable",
+            "second_best_exit_policy": "unavailable",
+            "highest_improvement_policy": "unavailable",
+            "most_consistent_policy": "unavailable",
+            "weakest_policy": "unavailable",
+            "best_exit_policy_by_horizon": {},
+            "closest_exit_policy_to_readiness": "unavailable",
+            "readiness_score": 0.0,
+            "readiness_blocker": "unavailable",
+            "policy_confidence": 0.0,
+            "shadow_recommendation": "unavailable",
+            "degraded_reason": f"profit_capture_peak_decay_exit_validation_suite_v1_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "build_ms": 0.0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "paper_execution_behavior_changed": False,
+            "position_sizing_changed": False,
+            "thresholds_changed": False,
+            "portfolio_allocation_changed": False,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+            "partial_sells_enabled": False,
+            "automatic_trailing_stops_enabled": False,
+            "auto_apply_allowed": False,
+            "human_review_required": True,
+            "behavior_safe_to_apply": False,
+        }
+
+
 @router.get("/api/adaptive_execution_exit_intelligence_v3")
 def adaptive_execution_exit_intelligence_v3(force: bool = False):
     try:
@@ -40296,6 +40424,7 @@ def _learning_acceleration_status_bundle() -> dict:
     for name, fn in (
         ("advanced_learning_intelligence", lambda: ADVANCED_LEARNING_INTELLIGENCE.status(force=False)),
         ("adaptive_profit_capture", lambda: ADAPTIVE_PROFIT_CAPTURE_INTELLIGENCE.status(force=False)),
+        ("profit_capture_peak_decay_exit_validation_suite_v1", lambda: PROFIT_CAPTURE_PEAK_DECAY_EXIT_VALIDATION_SUITE.status(statuses=statuses, force=False)),
         ("adaptive_execution_exit_intelligence_v3", lambda: ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V3.status(force=False)),
         ("exit_learning_expansion_suite_v1", lambda: EXIT_LEARNING_EXPANSION_SUITE.status(force=False)),
         ("market_context_learning_suite_v1", lambda: MARKET_CONTEXT_LEARNING_SUITE.status(force=False)),
@@ -41459,6 +41588,10 @@ def learning_issue_audit_status_v1(force: bool = False):
             statuses["market_context_learning_suite_v1"] = MARKET_CONTEXT_LEARNING_SUITE.status(force=False)
         except Exception:
             statuses["market_context_learning_suite_v1"] = {}
+        try:
+            statuses["profit_capture_peak_decay_exit_validation_suite_v1"] = PROFIT_CAPTURE_PEAK_DECAY_EXIT_VALIDATION_SUITE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["profit_capture_peak_decay_exit_validation_suite_v1"] = {}
         try:
             statuses["learning_acceleration_retention_suite_v1"] = LEARNING_ACCELERATION_RETENTION_SUITE.status(statuses=statuses, force=False)
         except Exception:
@@ -49901,6 +50034,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("trade_lifecycle_excursion", lambda: TRADE_LIFECYCLE_EXCURSION.status(force=False))
         _safe_status("trade_lifecycle_excursion_v2", lambda: TRADE_LIFECYCLE_EXCURSION_V2.status(force=False))
         _safe_status("adaptive_profit_capture", lambda: ADAPTIVE_PROFIT_CAPTURE_INTELLIGENCE.status(force=False))
+        _safe_status("profit_capture_peak_decay_exit_validation_suite_v1", lambda: PROFIT_CAPTURE_PEAK_DECAY_EXIT_VALIDATION_SUITE.status(statuses=statuses, force=False))
         _safe_status("adaptive_execution_exit_intelligence_v3", lambda: ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V3.status(force=False))
         _safe_status("exit_learning_expansion_suite_v1", lambda: EXIT_LEARNING_EXPANSION_SUITE.status(force=False))
         _safe_status("market_context_learning_suite_v1", lambda: MARKET_CONTEXT_LEARNING_SUITE.status(force=False))

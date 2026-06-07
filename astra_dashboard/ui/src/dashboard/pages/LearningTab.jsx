@@ -143,6 +143,7 @@ export default function LearningTab({ compact = false }) {
   const [showBroadUniverseDetails, setShowBroadUniverseDetails] = useState(false);
   const [showTradeLifecycleExcursionDetails, setShowTradeLifecycleExcursionDetails] = useState(false);
   const [showAdaptiveProfitCaptureDetails, setShowAdaptiveProfitCaptureDetails] = useState(false);
+  const [showProfitCapturePeakDecayValidationDetails, setShowProfitCapturePeakDecayValidationDetails] = useState(false);
   const [showAdaptiveExitV3Details, setShowAdaptiveExitV3Details] = useState(false);
   const [showExitLearningExpansionDetails, setShowExitLearningExpansionDetails] = useState(false);
   const [showMarketContextLearningDetails, setShowMarketContextLearningDetails] = useState(false);
@@ -1588,6 +1589,7 @@ export default function LearningTab({ compact = false }) {
   const broadUniverseIntake = unified?.broad_universe_intake_promotion || {};
   const tradeLifecycleExcursion = unified?.trade_lifecycle_excursion_v2 || unified?.trade_lifecycle_excursion || {};
   const adaptiveProfitCapture = unified?.adaptive_profit_capture_intelligence || {};
+  const profitCapturePeakDecayExitValidation = unified?.profit_capture_peak_decay_exit_validation_suite_v1 || {};
   const adaptiveExecutionExitV3 = unified?.adaptive_execution_exit_intelligence_v3 || {};
   const exitLearningExpansion = unified?.exit_learning_expansion_suite_v1 || {};
   const marketContextLearning = unified?.market_context_learning_suite_v1 || {};
@@ -3880,6 +3882,85 @@ export default function LearningTab({ compact = false }) {
               {(!adaptiveProfitCapture?.open_position_watchlist || adaptiveProfitCapture.open_position_watchlist.length === 0) ? (
                 <div style={{ color: "#b8c7e6" }}>No active profit-capture watch items.</div>
               ) : null}
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Profit Capture, Peak Decay & Exit Validation V1</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is studying how profits are captured, where profits are being surrendered, when trades begin to weaken, and which virtual exit policies appear most effective. This does not change actual exits, rankings, sizing, or broker behavior.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowProfitCapturePeakDecayValidationDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showProfitCapturePeakDecayValidationDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Capture ratio", profitCapturePeakDecayExitValidation?.average_capture_ratio === null || profitCapturePeakDecayExitValidation?.average_capture_ratio === undefined ? "warming up" : `${(safeNumber(profitCapturePeakDecayExitValidation?.average_capture_ratio) * 100).toFixed(1)}%`],
+            ["Avg giveback", profitCapturePeakDecayExitValidation?.average_giveback_pct === null || profitCapturePeakDecayExitValidation?.average_giveback_pct === undefined ? "warming up" : `${safeNumber(profitCapturePeakDecayExitValidation?.average_giveback_pct).toFixed(2)}%`],
+            ["Highest giveback trade", profitCapturePeakDecayExitValidation?.highest_giveback_trade],
+            ["Best capture trade", profitCapturePeakDecayExitValidation?.best_capture_trade],
+            ["Strongest milestone", profitCapturePeakDecayExitValidation?.strongest_profit_milestone],
+            ["Weakest milestone", profitCapturePeakDecayExitValidation?.weakest_profit_milestone],
+            ["Failure probability", profitCapturePeakDecayExitValidation?.continuation_failure_probability === null || profitCapturePeakDecayExitValidation?.continuation_failure_probability === undefined ? "warming up" : `${safeNumber(profitCapturePeakDecayExitValidation?.continuation_failure_probability).toFixed(1)}%`],
+            ["Strongest failure signal", profitCapturePeakDecayExitValidation?.strongest_failure_signal],
+            ["Hold quality", profitCapturePeakDecayExitValidation?.hold_duration_quality_score === null || profitCapturePeakDecayExitValidation?.hold_duration_quality_score === undefined ? "warming up" : safeNumber(profitCapturePeakDecayExitValidation?.hold_duration_quality_score).toFixed(1)],
+            ["Best exit policy", profitCapturePeakDecayExitValidation?.best_exit_policy],
+            ["Highest improvement policy", profitCapturePeakDecayExitValidation?.highest_improvement_policy],
+            ["Best policy by horizon", profitCapturePeakDecayExitValidation?.best_exit_policy_by_horizon ? Object.entries(profitCapturePeakDecayExitValidation.best_exit_policy_by_horizon).slice(0, 1).map(([k, v]) => `${String(k).replaceAll("_", " ")} → ${String(v).replaceAll("_", " ")}`).join(", ") : "warming up"],
+            ["Closest to readiness", profitCapturePeakDecayExitValidation?.closest_exit_policy_to_readiness],
+            ["Readiness blocker", profitCapturePeakDecayExitValidation?.readiness_blocker],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {typeof value === "number" ? value.toFixed(0) : String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(profitCapturePeakDecayExitValidation?.shadow_recommendation || "Continue profit capture and exit validation shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showProfitCapturePeakDecayValidationDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Horizon Exit Policies</div>
+              <div style={{ color: "#b8c7e6" }}>{JSON.stringify(profitCapturePeakDecayExitValidation?.best_exit_policy_by_horizon || {})}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Hold Duration & Failure</div>
+              <div>Best hold by horizon: {JSON.stringify(profitCapturePeakDecayExitValidation?.best_hold_duration_by_horizon || {})}</div>
+              <div>Capture by horizon: {JSON.stringify(profitCapturePeakDecayExitValidation?.capture_ratio_by_horizon || {})}</div>
+              <div>Giveback by horizon: {JSON.stringify(profitCapturePeakDecayExitValidation?.giveback_by_horizon || {})}</div>
+              <div>Continuation by horizon: {JSON.stringify(profitCapturePeakDecayExitValidation?.continuation_by_horizon || {})}</div>
+              <div>Readiness score: {safeNumber(profitCapturePeakDecayExitValidation?.readiness_score).toFixed(1)}</div>
+              <div>Policy confidence: {safeNumber(profitCapturePeakDecayExitValidation?.policy_confidence).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Safety</div>
+              <div>Tracked trades: {safeNumber(profitCapturePeakDecayExitValidation?.tracked_trades).toFixed(0)}</div>
+              <div>API calls: {safeNumber(profitCapturePeakDecayExitValidation?.api_calls_used).toFixed(0)} | Provider calls: {safeNumber(profitCapturePeakDecayExitValidation?.provider_calls_used).toFixed(0)} | LLM calls: {safeNumber(profitCapturePeakDecayExitValidation?.llm_calls_used).toFixed(0)}</div>
+              <div>Behavior safe to apply: {profitCapturePeakDecayExitValidation?.behavior_safe_to_apply ? "yes" : "no"}</div>
+              <div>Human review: {profitCapturePeakDecayExitValidation?.human_review_required ? "yes" : "no"}</div>
+              <div>Auto apply: {profitCapturePeakDecayExitValidation?.auto_apply_allowed ? "yes" : "no"}</div>
             </div>
           </div>
         ) : null}

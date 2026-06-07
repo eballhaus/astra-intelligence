@@ -582,6 +582,7 @@ class LearningIssueAuditV1:
         context_expansion = dict(statuses.get("context_evidence_expansion_suite_v1") or {})
         catalyst_v2 = dict(statuses.get("catalyst_theme_narrative_capital_flow_intelligence_v2") or {})
         decision_opt = dict(statuses.get("decision_optimization_trade_management_suite_v1") or {})
+        profit_capture_validation = dict(statuses.get("profit_capture_peak_decay_exit_validation_suite_v1") or {})
         full_lifecycle = dict(statuses.get("full_opportunity_lifecycle_learning_suite_v1") or {})
         long_memory = dict(statuses.get("long_term_memory_symbol_retrieval_suite_v1") or {})
         learning_allocator = dict(statuses.get("adaptive_learning_prioritization_resource_allocation_v1") or {})
@@ -690,6 +691,21 @@ class LearningIssueAuditV1:
             "Use decision optimization diagnostics for human-reviewed learning only; do not auto-apply exit, ranking, sizing, or threshold changes.",
             _text(decision_opt.get("shadow_recommendation"), "No behavior change."),
         )
+        peak_decay_exit_validation_issue = _issue(
+            "profit_capture_peak_decay_exit_validation_active" if profit_capture_validation.get("enabled") else "profit_capture_peak_decay_exit_validation_unavailable",
+            "profit_capture_peak_decay_exit_validation_shadow_analysis_active" if profit_capture_validation.get("enabled") else "profit_capture_peak_decay_exit_validation_not_available",
+            "medium"
+            if profit_capture_validation.get("enabled")
+            and (
+                _to_float(profit_capture_validation.get("capture_quality_score"), 0.0) < 55.0
+                or _to_float(profit_capture_validation.get("hold_duration_quality_score"), 0.0) < 45.0
+                or _to_float(profit_capture_validation.get("continuation_failure_probability"), 0.0) >= 60.0
+            )
+            else "low",
+            _to_int(profit_capture_validation.get("tracked_trades"), 0),
+            "Use profit capture and peak-decay exit validation only for shadow learning; keep exits, thresholds, and sizing unchanged.",
+            _text(profit_capture_validation.get("shadow_recommendation"), "No behavior change."),
+        )
         full_lifecycle_issue = _issue(
             "full_opportunity_lifecycle_learning_active" if full_lifecycle.get("enabled") else "full_opportunity_lifecycle_learning_unavailable",
             "opportunity_lifecycle_graph_feature_attribution_and_memory_storage_diagnostics_active" if full_lifecycle.get("enabled") else "full_opportunity_lifecycle_learning_not_available",
@@ -765,6 +781,7 @@ class LearningIssueAuditV1:
             "context_evidence_expansion_suite_v1": context_expansion_issue,
             "catalyst_theme_narrative_capital_flow_intelligence_v2": catalyst_v2_issue,
             "decision_optimization_trade_management_suite_v1": decision_opt_issue,
+            "profit_capture_peak_decay_exit_validation_suite_v1": peak_decay_exit_validation_issue,
             "full_opportunity_lifecycle_learning_suite_v1": full_lifecycle_issue,
             "long_term_memory_symbol_retrieval_suite_v1": long_memory_issue,
             "adaptive_learning_prioritization_resource_allocation_v1": learning_allocator_issue,
@@ -792,6 +809,7 @@ class LearningIssueAuditV1:
             "context_evidence_expansion_status": context_expansion_issue,
             "catalyst_theme_narrative_capital_flow_v2_status": catalyst_v2_issue,
             "decision_optimization_trade_management_status": decision_opt_issue,
+            "profit_capture_peak_decay_exit_validation_status": peak_decay_exit_validation_issue,
             "full_opportunity_lifecycle_learning_status": full_lifecycle_issue,
             "long_term_memory_symbol_retrieval_status": long_memory_issue,
             "adaptive_learning_prioritization_resource_allocation_status": learning_allocator_issue,
@@ -1021,6 +1039,32 @@ class LearningIssueAuditV1:
                 "paper_execution_behavior_changed": bool(decision_opt.get("paper_execution_behavior_changed", False)),
                 "position_sizing_changed": bool(decision_opt.get("position_sizing_changed", False)),
                 "thresholds_changed": bool(decision_opt.get("thresholds_changed", False)),
+            },
+            "profit_capture_peak_decay_exit_validation_diagnostics": {
+                "tracked_trades": profit_capture_validation.get("tracked_trades"),
+                "average_capture_ratio": profit_capture_validation.get("average_capture_ratio"),
+                "average_giveback_pct": profit_capture_validation.get("average_giveback_pct"),
+                "capture_quality_score": profit_capture_validation.get("capture_quality_score"),
+                "highest_giveback_trade": profit_capture_validation.get("highest_giveback_trade"),
+                "best_capture_trade": profit_capture_validation.get("best_capture_trade"),
+                "strongest_profit_milestone": profit_capture_validation.get("strongest_profit_milestone"),
+                "weakest_profit_milestone": profit_capture_validation.get("weakest_profit_milestone"),
+                "continuation_failure_probability": profit_capture_validation.get("continuation_failure_probability"),
+                "strongest_failure_signal": profit_capture_validation.get("strongest_failure_signal"),
+                "best_hold_duration_by_horizon": profit_capture_validation.get("best_hold_duration_by_horizon"),
+                "hold_duration_quality_score": profit_capture_validation.get("hold_duration_quality_score"),
+                "best_exit_policy": profit_capture_validation.get("best_exit_policy"),
+                "second_best_exit_policy": profit_capture_validation.get("second_best_exit_policy"),
+                "highest_improvement_policy": profit_capture_validation.get("highest_improvement_policy"),
+                "most_consistent_policy": profit_capture_validation.get("most_consistent_policy"),
+                "weakest_policy": profit_capture_validation.get("weakest_policy"),
+                "best_exit_policy_by_horizon": profit_capture_validation.get("best_exit_policy_by_horizon"),
+                "closest_exit_policy_to_readiness": profit_capture_validation.get("closest_exit_policy_to_readiness"),
+                "readiness_score": profit_capture_validation.get("readiness_score"),
+                "readiness_blocker": profit_capture_validation.get("readiness_blocker"),
+                "policy_confidence": profit_capture_validation.get("policy_confidence"),
+                "shadow_recommendation": profit_capture_validation.get("shadow_recommendation"),
+                "behavior_safe_to_apply": bool(profit_capture_validation.get("behavior_safe_to_apply", False)),
             },
             "full_opportunity_lifecycle_learning_diagnostics": {
                 "opportunities_tracked": full_lifecycle.get("opportunities_tracked"),

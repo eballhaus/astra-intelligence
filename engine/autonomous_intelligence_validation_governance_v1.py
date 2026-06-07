@@ -116,6 +116,7 @@ class AutonomousIntelligenceValidationGovernanceV1:
         memory = self._s(statuses, "long_term_memory_symbol_retrieval_suite_v1")
         full = self._s(statuses, "full_opportunity_lifecycle_learning_suite_v1")
         decision = self._s(statuses, "decision_optimization_trade_management_suite_v1")
+        peak_decay = self._s(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
         allocator = self._s(statuses, "adaptive_learning_prioritization_resource_allocation_v1")
         accel = self._s(statuses, "learning_acceleration_retention_suite_v1")
 
@@ -128,12 +129,14 @@ class AutonomousIntelligenceValidationGovernanceV1:
             _to_float(memory.get("indexed_records"), 0),
             _to_float(full.get("opportunities_tracked"), 0),
             _to_float(decision.get("evidence_count"), 0),
+            _to_float(peak_decay.get("tracked_trades"), 0),
         ]
         evidence_count = int(sum(counts))
         sample_quality = _clamp(evidence_count / 1200.0 * 100.0)
         consistency_inputs = [
             _to_float(accel.get("agreement_score"), 55),
             _to_float(full.get("cross_system_learning_score"), 50),
+            _to_float(peak_decay.get("capture_quality_score"), 55),
             100 - _to_float(allocator.get("weakness_confidence"), 0) * 0.15,
         ]
         evidence_consistency = _clamp(_avg(consistency_inputs) or 50.0)
@@ -149,6 +152,7 @@ class AutonomousIntelligenceValidationGovernanceV1:
             ("full_opportunity_lifecycle_has_high_completeness", _to_float(full.get("learning_completeness_score"), 0)),
             ("confidence_truth_requires_more_validation", 100 - _to_float(decision.get("confidence_truth_score"), 50)),
             ("catalyst_decay_needs_context_validation", 100 - _to_float(catalyst.get("catalyst_decay_learning_score"), 50)),
+            ("profit_capture_peak_decay_exit_validation_is_shadow_validated", _to_float(peak_decay.get("capture_quality_score"), 0)),
         ]
         trusted = [name for name, score in lessons if score >= 65]
         questionable = [name for name, score in lessons if score < 50]
@@ -181,6 +185,7 @@ class AutonomousIntelligenceValidationGovernanceV1:
             "giveback": "profit_decay_after_mfe_not_yet_policy_actionable",
             "hold_duration": "horizon_hold_windows_need_more_counterfactual_validation",
             "continuation_quality": "continuation_failure_signals_are_incomplete_or_late",
+            "profit_capture_peak_decay_exit_validation": "profit_capture_peak_decay_and_exit_policies_need_horizon_validation",
             "catalyst_decay": "catalyst_half_life_and_context_persistence_need_more_evidence",
             "opportunity_cost": "rejected_candidate_outcomes_outperform_selected_candidates_in_some_contexts",
             "confidence_truth": "confidence_scores_not_yet_monotonic_enough_for_policy_use",
@@ -201,8 +206,9 @@ class AutonomousIntelligenceValidationGovernanceV1:
             "confidence_truth": "shadow_test_confidence_bucket_monotonicity_before_sizing",
             "horizon_classification": "shadow_test_horizon_label_truth_by_symbol_and_context",
             "symbol_memory": "shadow_prioritize_symbol_profiles_for_repeatedly_seen_symbols",
+            "profit_capture_peak_decay_exit_validation": "shadow_test_profit_capture_peak_decay_exit_validation_by_horizon",
         }
-        systems = ["adaptive_learning_prioritization", "decision_optimization", "replay_counterfactual", "full_opportunity_lifecycle"]
+        systems = ["adaptive_learning_prioritization", "decision_optimization", "replay_counterfactual", "full_opportunity_lifecycle", "profit_capture_peak_decay_exit_validation"]
         if top in {"symbol_memory", "retrieval_health", "storage_health"}:
             systems.append("long_term_memory_symbol_retrieval")
         expected_gain = _clamp(_to_float(allocator.get("expected_improvement_score"), 0) * 0.75 + _to_float(decision.get("trade_management_intelligence_score"), 0) * 0.15)
