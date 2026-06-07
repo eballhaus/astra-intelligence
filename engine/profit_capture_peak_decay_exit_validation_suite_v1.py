@@ -222,6 +222,7 @@ class ProfitCapturePeakDecayExitValidationSuiteV1:
         v3 = self._status(statuses, "adaptive_execution_exit_intelligence_v3")
         trade_archetype = self._status(statuses, "trade_archetype_regime")
         governance = self._status(statuses, "autonomous_intelligence_validation_governance_v1")
+        convergence = self._status(statuses, "virtual_paper_convergence_symbol_attribution_v1")
 
         tracked_trades = max(
             _to_int(lifecycle.get("total_tracked_lifecycles"), 0),
@@ -368,6 +369,9 @@ class ProfitCapturePeakDecayExitValidationSuiteV1:
             "exit_learning_protect_profit_score": _to_float(exit_learning.get("protect_profit_score"), 0.0),
             "exit_learning_shadow_recommendation": _text(exit_learning.get("shadow_exit_learning_recommendation"), "insufficient_data"),
             "decision_quality_score": _to_float(decision.get("decision_quality_score"), 0.0),
+            "virtual_paper_convergence_gap": _to_float(convergence.get("average_convergence_gap"), 0.0),
+            "virtual_paper_dominant_gap_cause": _text(convergence.get("dominant_gap_cause"), "insufficient_data"),
+            "virtual_paper_highest_gap_symbol": _text(convergence.get("highest_gap_symbol"), "insufficient_data"),
             "behavior_safe_to_apply": False,
             "human_review_required": True,
             "auto_apply_allowed": False,

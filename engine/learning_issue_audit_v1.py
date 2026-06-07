@@ -585,6 +585,7 @@ class LearningIssueAuditV1:
         profit_capture_validation = dict(statuses.get("profit_capture_peak_decay_exit_validation_suite_v1") or {})
         full_lifecycle = dict(statuses.get("full_opportunity_lifecycle_learning_suite_v1") or {})
         long_memory = dict(statuses.get("long_term_memory_symbol_retrieval_suite_v1") or {})
+        virtual_convergence = dict(statuses.get("virtual_paper_convergence_symbol_attribution_v1") or {})
         learning_allocator = dict(statuses.get("adaptive_learning_prioritization_resource_allocation_v1") or {})
         autonomous_governance = dict(statuses.get("autonomous_intelligence_validation_governance_v1") or {})
         v3_issue = _issue(
@@ -736,6 +737,20 @@ class LearningIssueAuditV1:
             "Use long-term memory diagnostics to preserve valuable summaries, monitor storage pressure, and retrieve symbol lessons quickly; keep trading behavior unchanged.",
             _text(long_memory.get("shadow_recommendation"), "No behavior change."),
         )
+        virtual_convergence_issue = _issue(
+            "virtual_paper_convergence_symbol_attribution_active" if virtual_convergence.get("enabled") else "virtual_paper_convergence_symbol_attribution_unavailable",
+            "virtual_to_paper_gap_symbol_horizon_exit_policy_attribution_active" if virtual_convergence.get("enabled") else "virtual_paper_convergence_symbol_attribution_not_available",
+            "medium"
+            if virtual_convergence.get("enabled")
+            and (
+                _to_float(virtual_convergence.get("average_convergence_gap"), 0.0) >= 3.0
+                or _to_float(virtual_convergence.get("convergence_quality_score"), 100.0) < 55.0
+            )
+            else "low",
+            _to_int(virtual_convergence.get("tracked_trades"), 0),
+            "Use virtual-to-paper convergence diagnostics to explain missed virtual performance; keep all policies and trading behavior unchanged.",
+            _text(virtual_convergence.get("shadow_recommendation"), "No behavior change."),
+        )
         learning_allocator_issue = _issue(
             "adaptive_learning_prioritization_active" if learning_allocator.get("enabled") else "adaptive_learning_prioritization_unavailable",
             "weakness_detection_learning_value_resource_allocation_worker_replay_memory_and_governance_diagnostics_active" if learning_allocator.get("enabled") else "adaptive_learning_prioritization_not_available",
@@ -784,6 +799,7 @@ class LearningIssueAuditV1:
             "profit_capture_peak_decay_exit_validation_suite_v1": peak_decay_exit_validation_issue,
             "full_opportunity_lifecycle_learning_suite_v1": full_lifecycle_issue,
             "long_term_memory_symbol_retrieval_suite_v1": long_memory_issue,
+            "virtual_paper_convergence_symbol_attribution_v1": virtual_convergence_issue,
             "adaptive_learning_prioritization_resource_allocation_v1": learning_allocator_issue,
             "autonomous_intelligence_validation_governance_v1": autonomous_governance_issue,
         }
@@ -812,6 +828,7 @@ class LearningIssueAuditV1:
             "profit_capture_peak_decay_exit_validation_status": peak_decay_exit_validation_issue,
             "full_opportunity_lifecycle_learning_status": full_lifecycle_issue,
             "long_term_memory_symbol_retrieval_status": long_memory_issue,
+            "virtual_paper_convergence_symbol_attribution_status": virtual_convergence_issue,
             "adaptive_learning_prioritization_resource_allocation_status": learning_allocator_issue,
             "autonomous_intelligence_validation_governance_status": autonomous_governance_issue,
             "execution_participation_display_status": exec_issue,
@@ -1134,6 +1151,43 @@ class LearningIssueAuditV1:
                 "paper_execution_behavior_changed": bool(long_memory.get("paper_execution_behavior_changed", False)),
                 "position_sizing_changed": bool(long_memory.get("position_sizing_changed", False)),
                 "thresholds_changed": bool(long_memory.get("thresholds_changed", False)),
+            },
+            "virtual_paper_convergence_symbol_attribution_diagnostics": {
+                "tracked_trades": virtual_convergence.get("tracked_trades"),
+                "symbol_profiles_reviewed": virtual_convergence.get("symbol_profiles_reviewed"),
+                "average_actual_return": virtual_convergence.get("average_actual_return"),
+                "average_virtual_return": virtual_convergence.get("average_virtual_return"),
+                "average_convergence_gap": virtual_convergence.get("average_convergence_gap"),
+                "convergence_quality_score": virtual_convergence.get("convergence_quality_score"),
+                "virtual_outperformance_rate": virtual_convergence.get("virtual_outperformance_rate"),
+                "dominant_gap_cause": virtual_convergence.get("dominant_gap_cause"),
+                "highest_value_gap_to_reduce": virtual_convergence.get("highest_value_gap_to_reduce"),
+                "largest_convergence_gap_symbol": virtual_convergence.get("largest_convergence_gap_symbol"),
+                "strongest_symbol_behavior_edge": virtual_convergence.get("strongest_symbol_behavior_edge"),
+                "weakest_symbol_behavior_edge": virtual_convergence.get("weakest_symbol_behavior_edge"),
+                "highest_gap_symbol": virtual_convergence.get("highest_gap_symbol"),
+                "most_reliable_symbol": virtual_convergence.get("most_reliable_symbol"),
+                "best_symbol_horizon_pair": virtual_convergence.get("best_symbol_horizon_pair"),
+                "worst_symbol_horizon_pair": virtual_convergence.get("worst_symbol_horizon_pair"),
+                "best_exit_style_by_symbol": dict(virtual_convergence.get("best_exit_style_by_symbol") or {}),
+                "symbols_needing_profit_lock": list(virtual_convergence.get("symbols_needing_profit_lock") or [])[:8],
+                "symbols_needing_continuation_exit": list(virtual_convergence.get("symbols_needing_continuation_exit") or [])[:8],
+                "best_regime_by_symbol": dict(virtual_convergence.get("best_regime_by_symbol") or {}),
+                "best_catalyst_by_symbol": dict(virtual_convergence.get("best_catalyst_by_symbol") or {}),
+                "top_missed_profit_driver": virtual_convergence.get("top_missed_profit_driver"),
+                "highest_value_profitability_lever": virtual_convergence.get("highest_value_profitability_lever"),
+                "strongest_virtual_policy": virtual_convergence.get("strongest_virtual_policy"),
+                "closest_policy_to_future_review": virtual_convergence.get("closest_policy_to_future_review"),
+                "policy_improvement_confidence": virtual_convergence.get("policy_improvement_confidence"),
+                "api_calls_used": virtual_convergence.get("api_calls_used"),
+                "provider_calls_used": virtual_convergence.get("provider_calls_used"),
+                "llm_calls_used": virtual_convergence.get("llm_calls_used"),
+                "shadow_recommendation": virtual_convergence.get("shadow_recommendation"),
+                "behavior_safe_to_apply": bool(virtual_convergence.get("behavior_safe_to_apply", False)),
+                "ranking_behavior_changed": bool(virtual_convergence.get("ranking_behavior_changed", False)),
+                "paper_execution_behavior_changed": bool(virtual_convergence.get("paper_execution_behavior_changed", False)),
+                "position_sizing_changed": bool(virtual_convergence.get("position_sizing_changed", False)),
+                "thresholds_changed": bool(virtual_convergence.get("thresholds_changed", False)),
             },
             "adaptive_learning_prioritization_resource_allocation_diagnostics": {
                 "top_weakness": learning_allocator.get("top_weakness"),

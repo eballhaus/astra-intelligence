@@ -144,6 +144,7 @@ export default function LearningTab({ compact = false }) {
   const [showTradeLifecycleExcursionDetails, setShowTradeLifecycleExcursionDetails] = useState(false);
   const [showAdaptiveProfitCaptureDetails, setShowAdaptiveProfitCaptureDetails] = useState(false);
   const [showProfitCapturePeakDecayValidationDetails, setShowProfitCapturePeakDecayValidationDetails] = useState(false);
+  const [showVirtualPaperConvergenceDetails, setShowVirtualPaperConvergenceDetails] = useState(false);
   const [showAdaptiveExitV3Details, setShowAdaptiveExitV3Details] = useState(false);
   const [showExitLearningExpansionDetails, setShowExitLearningExpansionDetails] = useState(false);
   const [showMarketContextLearningDetails, setShowMarketContextLearningDetails] = useState(false);
@@ -1590,6 +1591,7 @@ export default function LearningTab({ compact = false }) {
   const tradeLifecycleExcursion = unified?.trade_lifecycle_excursion_v2 || unified?.trade_lifecycle_excursion || {};
   const adaptiveProfitCapture = unified?.adaptive_profit_capture_intelligence || {};
   const profitCapturePeakDecayExitValidation = unified?.profit_capture_peak_decay_exit_validation_suite_v1 || {};
+  const virtualPaperConvergence = unified?.virtual_paper_convergence_symbol_attribution_v1 || {};
   const adaptiveExecutionExitV3 = unified?.adaptive_execution_exit_intelligence_v3 || {};
   const exitLearningExpansion = unified?.exit_learning_expansion_suite_v1 || {};
   const marketContextLearning = unified?.market_context_learning_suite_v1 || {};
@@ -1885,7 +1887,7 @@ export default function LearningTab({ compact = false }) {
               </LineChart>
             </ResponsiveContainer>
           </ChartShell>
-          <ChartShell title="Entry → Follow-Through → Exit" subtitle="Execution and trade-management improvement." empty={entryExitQualityChart.length === 0}>
+          <ChartShell title="Entry -> Follow-Through -> Exit" subtitle="Execution and trade-management improvement." empty={entryExitQualityChart.length === 0}>
             <ResponsiveContainer width="100%" height={190}>
               <LineChart data={entryExitQualityChart}>
                 <CartesianGrid stroke="#223047" strokeDasharray="2 2" />
@@ -3890,6 +3892,91 @@ export default function LearningTab({ compact = false }) {
       <div style={{ ...panelStyle }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
           <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Virtual-to-Paper Convergence & Symbol Attribution V1</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is comparing actual paper results against virtual and replay alternatives, then explaining why the paper result did not match the best virtual outcome. It links those gaps to symbol behavior, horizon, catalyst, regime, exit style, and profitability drivers. This does not change trading behavior.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowVirtualPaperConvergenceDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showVirtualPaperConvergenceDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Actual return", virtualPaperConvergence?.average_actual_return === null || virtualPaperConvergence?.average_actual_return === undefined ? "warming up" : `${safeNumber(virtualPaperConvergence?.average_actual_return).toFixed(2)}%`],
+            ["Virtual return", virtualPaperConvergence?.average_virtual_return === null || virtualPaperConvergence?.average_virtual_return === undefined ? "warming up" : `${safeNumber(virtualPaperConvergence?.average_virtual_return).toFixed(2)}%`],
+            ["Convergence gap", virtualPaperConvergence?.average_convergence_gap === null || virtualPaperConvergence?.average_convergence_gap === undefined ? "warming up" : `${safeNumber(virtualPaperConvergence?.average_convergence_gap).toFixed(2)}%`],
+            ["Virtual outperformance", `${safeNumber(virtualPaperConvergence?.virtual_outperformance_rate).toFixed(1)}%`],
+            ["Dominant gap cause", virtualPaperConvergence?.dominant_gap_cause],
+            ["Gap to reduce", virtualPaperConvergence?.highest_value_gap_to_reduce],
+            ["Largest gap symbol", virtualPaperConvergence?.largest_convergence_gap_symbol],
+            ["Strongest symbol edge", virtualPaperConvergence?.strongest_symbol_behavior_edge],
+            ["Weakest symbol edge", virtualPaperConvergence?.weakest_symbol_behavior_edge],
+            ["Most reliable symbol", virtualPaperConvergence?.most_reliable_symbol],
+            ["Best symbol / horizon", virtualPaperConvergence?.best_symbol_horizon_pair],
+            ["Worst symbol / horizon", virtualPaperConvergence?.worst_symbol_horizon_pair],
+            ["Best exit style", Object.entries(virtualPaperConvergence?.best_exit_style_by_symbol || {}).slice(0, 1).map(([k, v]) => `${k} -> ${String(v).replaceAll("_", " ")}`).join(", ") || "warming up"],
+            ["Profit lock symbols", (virtualPaperConvergence?.symbols_needing_profit_lock || []).join(", ") || "none"],
+            ["Continuation-exit symbols", (virtualPaperConvergence?.symbols_needing_continuation_exit || []).join(", ") || "none"],
+            ["Missed profit driver", virtualPaperConvergence?.top_missed_profit_driver],
+            ["Profitability lever", virtualPaperConvergence?.highest_value_profitability_lever],
+            ["Strongest virtual policy", virtualPaperConvergence?.strongest_virtual_policy],
+            ["Closest policy review", virtualPaperConvergence?.closest_policy_to_future_review],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {typeof value === "number" ? value.toFixed(0) : String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(virtualPaperConvergence?.shadow_recommendation || "Continue virtual-to-paper convergence learning shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showVirtualPaperConvergenceDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Symbol Horizon Fit</div>
+              <div>Best by symbol: {JSON.stringify(virtualPaperConvergence?.best_horizon_by_symbol || {})}</div>
+              <div>Worst by symbol: {JSON.stringify(virtualPaperConvergence?.worst_horizon_by_symbol || {})}</div>
+              <div>Horizon gap score: {safeNumber(virtualPaperConvergence?.horizon_gap_score).toFixed(1)}</div>
+              <div>Horizon confidence: {safeNumber(virtualPaperConvergence?.horizon_fit_confidence).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Regime & Catalyst Fit</div>
+              <div>Best regime: {JSON.stringify(virtualPaperConvergence?.best_regime_by_symbol || {})}</div>
+              <div>Best catalyst: {JSON.stringify(virtualPaperConvergence?.best_catalyst_by_symbol || {})}</div>
+              <div>Catalyst fit: {safeNumber(virtualPaperConvergence?.catalyst_symbol_fit_score).toFixed(1)}</div>
+              <div>Regime fit: {safeNumber(virtualPaperConvergence?.regime_symbol_fit_score).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Policy Attribution Safety</div>
+              <div>Policy confidence: {safeNumber(virtualPaperConvergence?.policy_improvement_confidence).toFixed(1)}</div>
+              <div>Attribution score: {safeNumber(virtualPaperConvergence?.policy_attribution_score).toFixed(1)}</div>
+              <div>API calls: {safeNumber(virtualPaperConvergence?.api_calls_used).toFixed(0)} | Provider calls: {safeNumber(virtualPaperConvergence?.provider_calls_used).toFixed(0)} | LLM calls: {safeNumber(virtualPaperConvergence?.llm_calls_used).toFixed(0)}</div>
+              <div>Behavior safe to apply: {virtualPaperConvergence?.behavior_safe_to_apply ? "yes" : "no"}</div>
+              <div>Auto apply: {virtualPaperConvergence?.auto_apply_allowed ? "yes" : "no"}</div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
             <h3 style={{ marginTop: 0, marginBottom: 4 }}>Profit Capture, Peak Decay & Exit Validation V1</h3>
             <div style={{ fontSize: 12, color: "#9fb1cc" }}>
               Astra is studying how profits are captured, where profits are being surrendered, when trades begin to weaken, and which virtual exit policies appear most effective. This does not change actual exits, rankings, sizing, or broker behavior.
@@ -3924,7 +4011,7 @@ export default function LearningTab({ compact = false }) {
             ["Hold quality", profitCapturePeakDecayExitValidation?.hold_duration_quality_score === null || profitCapturePeakDecayExitValidation?.hold_duration_quality_score === undefined ? "warming up" : safeNumber(profitCapturePeakDecayExitValidation?.hold_duration_quality_score).toFixed(1)],
             ["Best exit policy", profitCapturePeakDecayExitValidation?.best_exit_policy],
             ["Highest improvement policy", profitCapturePeakDecayExitValidation?.highest_improvement_policy],
-            ["Best policy by horizon", profitCapturePeakDecayExitValidation?.best_exit_policy_by_horizon ? Object.entries(profitCapturePeakDecayExitValidation.best_exit_policy_by_horizon).slice(0, 1).map(([k, v]) => `${String(k).replaceAll("_", " ")} → ${String(v).replaceAll("_", " ")}`).join(", ") : "warming up"],
+            ["Best policy by horizon", profitCapturePeakDecayExitValidation?.best_exit_policy_by_horizon ? Object.entries(profitCapturePeakDecayExitValidation.best_exit_policy_by_horizon).slice(0, 1).map(([k, v]) => `${String(k).replaceAll("_", " ")} -> ${String(v).replaceAll("_", " ")}`).join(", ") : "warming up"],
             ["Closest to readiness", profitCapturePeakDecayExitValidation?.closest_exit_policy_to_readiness],
             ["Readiness blocker", profitCapturePeakDecayExitValidation?.readiness_blocker],
           ].map(([label, value]) => (
@@ -3999,7 +4086,7 @@ export default function LearningTab({ compact = false }) {
             ["Unique reviewed", executionParticipationAudit?.unique_candidates_reviewed],
             ["Eligible", executionParticipationAudit?.eligible_candidates],
             ["Submitted", executionParticipationAudit?.candidates_submitted],
-            ["Eligible → Submitted", `${safeNumber(executionParticipationAudit?.eligible_to_submitted_rate).toFixed(1)}%`],
+            ["Eligible -> Submitted", `${safeNumber(executionParticipationAudit?.eligible_to_submitted_rate).toFixed(1)}%`],
             ["Missed pressure", `${safeNumber(executionParticipationAudit?.missed_opportunity_pressure).toFixed(1)}`],
             ["Overprotection", `${safeNumber(executionParticipationAudit?.overprotection_risk).toFixed(1)}`],
             ["Underparticipation", `${safeNumber(executionParticipationAudit?.underparticipation_risk).toFixed(1)}`],
