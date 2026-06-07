@@ -17,7 +17,7 @@ WEAKNESSES = (
     "profit_capture", "giveback", "hold_duration", "continuation_quality", "opportunity_cost",
     "missed_winners", "confidence_truth", "catalyst_decay", "after_hours_profile", "premarket_profile",
     "symbol_memory", "rejection_accuracy", "horizon_classification", "entry_quality", "exit_quality",
-    "profit_capture_peak_decay_validation", "virtual_paper_convergence", "portfolio_concentration", "correlation_risk", "storage_health", "retrieval_health", "worker_health",
+    "profit_capture_peak_decay_validation", "virtual_paper_convergence", "accelerated_symbol_intelligence", "portfolio_concentration", "correlation_risk", "storage_health", "retrieval_health", "worker_health",
     "API_budget", "evidence_quality", "evidence_gap",
 )
 
@@ -39,6 +39,7 @@ WEAKNESS_TO_WORKER = {
     "exit_quality": "exit_learning_worker",
     "profit_capture_peak_decay_validation": "profit_capture_peak_decay_exit_validation_worker",
     "virtual_paper_convergence": "virtual_to_paper_gap_attribution_worker",
+    "accelerated_symbol_intelligence": "accelerated_symbol_peer_learning_worker",
     "portfolio_concentration": "portfolio_risk_monitor_worker",
     "correlation_risk": "portfolio_correlation_monitor_worker",
     "storage_health": "memory_retention_worker",
@@ -62,6 +63,7 @@ WEAKNESS_TO_REPLAY = {
     "exit_quality": "exit_timing_efficiency_counterfactuals",
     "profit_capture_peak_decay_validation": "profit_capture_peak_decay_exit_validation_counterfactuals",
     "virtual_paper_convergence": "virtual_to_paper_gap_replay_by_symbol_horizon_exit_style",
+    "accelerated_symbol_intelligence": "symbol_peer_horizon_exit_drift_replay",
 }
 
 
@@ -173,6 +175,7 @@ class AdaptiveLearningPrioritizationResourceAllocationV1:
         replay = self._status(statuses, "replay_counterfactual_learning_v2")
         peak_decay = self._status(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
         convergence = self._status(statuses, "virtual_paper_convergence_symbol_attribution_v1")
+        accelerated_symbol = self._status(statuses, "accelerated_learning_symbol_intelligence_suite_v1")
         portfolio = self._status(statuses, "portfolio_diversification_correlation_v2")
         issue = self._status(statuses, "learning_issue_audit")
 
@@ -187,6 +190,9 @@ class AdaptiveLearningPrioritizationResourceAllocationV1:
         add("virtual_paper_convergence", abs(_to_float(convergence.get("average_convergence_gap"), 0.0)) * 4.0, "virtual_paper_convergence_symbol_attribution", convergence.get("tracked_trades"))
         add("virtual_paper_convergence", 100 - _to_float(convergence.get("convergence_quality_score"), 50.0), "virtual_paper_convergence_symbol_attribution", convergence.get("tracked_trades"))
         add("virtual_paper_convergence", 100 - _to_float(convergence.get("gap_attribution_score"), 50.0), "virtual_paper_convergence_symbol_attribution", convergence.get("tracked_trades"))
+        add("accelerated_symbol_intelligence", 100 - _to_float(accelerated_symbol.get("replay_acceleration_score"), 50.0), "accelerated_symbol_intelligence", accelerated_symbol.get("accelerated_learning_events"))
+        add("accelerated_symbol_intelligence", 100 - _to_float(accelerated_symbol.get("symbol_personality_quality_score"), 50.0), "accelerated_symbol_intelligence", accelerated_symbol.get("symbol_profiles_tracked"))
+        add("accelerated_symbol_intelligence", _to_float(accelerated_symbol.get("drift_score"), 0.0), "accelerated_symbol_intelligence", accelerated_symbol.get("indexed_learning_records"))
         add("continuation_quality", 100 - _to_float(decision.get("continuation_quality_score"), 50.0), "decision_optimization", decision.get("tracked_trades"))
         add("opportunity_cost", _to_float(decision.get("highest_opportunity_cost"), 0.0), "decision_optimization", decision.get("opportunity_rows_reviewed"))
         add("opportunity_cost", abs(_to_float(opportunity.get("average_opportunity_cost"), 0.0)), "opportunity_cost_learning", opportunity.get("rejected_candidates_reviewed"))
@@ -238,6 +244,7 @@ class AdaptiveLearningPrioritizationResourceAllocationV1:
             "hold_duration": 0.78, "rejection_accuracy": 0.76, "catalyst_decay": 0.68,
             "profit_capture_peak_decay_validation": 0.98,
             "virtual_paper_convergence": 0.96,
+            "accelerated_symbol_intelligence": 0.72,
             "symbol_memory": 0.55, "horizon_classification": 0.62, "worker_health": 0.72,
             "storage_health": 0.88, "retrieval_health": 0.74, "API_budget": 0.82,
         }

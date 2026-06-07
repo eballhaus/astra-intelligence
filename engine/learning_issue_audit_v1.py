@@ -586,6 +586,7 @@ class LearningIssueAuditV1:
         full_lifecycle = dict(statuses.get("full_opportunity_lifecycle_learning_suite_v1") or {})
         long_memory = dict(statuses.get("long_term_memory_symbol_retrieval_suite_v1") or {})
         virtual_convergence = dict(statuses.get("virtual_paper_convergence_symbol_attribution_v1") or {})
+        accelerated_symbol = dict(statuses.get("accelerated_learning_symbol_intelligence_suite_v1") or {})
         learning_allocator = dict(statuses.get("adaptive_learning_prioritization_resource_allocation_v1") or {})
         autonomous_governance = dict(statuses.get("autonomous_intelligence_validation_governance_v1") or {})
         v3_issue = _issue(
@@ -751,6 +752,20 @@ class LearningIssueAuditV1:
             "Use virtual-to-paper convergence diagnostics to explain missed virtual performance; keep all policies and trading behavior unchanged.",
             _text(virtual_convergence.get("shadow_recommendation"), "No behavior change."),
         )
+        accelerated_symbol_issue = _issue(
+            "accelerated_learning_symbol_intelligence_active" if accelerated_symbol.get("enabled") else "accelerated_learning_symbol_intelligence_unavailable",
+            "cached_history_symbol_peer_cluster_and_drift_learning_active" if accelerated_symbol.get("enabled") else "accelerated_learning_symbol_intelligence_not_available",
+            "medium"
+            if accelerated_symbol.get("enabled")
+            and (
+                _to_float(accelerated_symbol.get("average_convergence_gap"), 0.0) >= 3.0
+                or _to_float(accelerated_symbol.get("drift_score"), 0.0) >= 45.0
+            )
+            else "low",
+            _to_int(accelerated_symbol.get("accelerated_learning_events"), 0),
+            "Use accelerated symbol intelligence to mine cached history and peer evidence; keep all behavior unchanged.",
+            _text(accelerated_symbol.get("shadow_recommendation"), "No behavior change."),
+        )
         learning_allocator_issue = _issue(
             "adaptive_learning_prioritization_active" if learning_allocator.get("enabled") else "adaptive_learning_prioritization_unavailable",
             "weakness_detection_learning_value_resource_allocation_worker_replay_memory_and_governance_diagnostics_active" if learning_allocator.get("enabled") else "adaptive_learning_prioritization_not_available",
@@ -800,6 +815,7 @@ class LearningIssueAuditV1:
             "full_opportunity_lifecycle_learning_suite_v1": full_lifecycle_issue,
             "long_term_memory_symbol_retrieval_suite_v1": long_memory_issue,
             "virtual_paper_convergence_symbol_attribution_v1": virtual_convergence_issue,
+            "accelerated_learning_symbol_intelligence_suite_v1": accelerated_symbol_issue,
             "adaptive_learning_prioritization_resource_allocation_v1": learning_allocator_issue,
             "autonomous_intelligence_validation_governance_v1": autonomous_governance_issue,
         }
@@ -829,6 +845,7 @@ class LearningIssueAuditV1:
             "full_opportunity_lifecycle_learning_status": full_lifecycle_issue,
             "long_term_memory_symbol_retrieval_status": long_memory_issue,
             "virtual_paper_convergence_symbol_attribution_status": virtual_convergence_issue,
+            "accelerated_learning_symbol_intelligence_status": accelerated_symbol_issue,
             "adaptive_learning_prioritization_resource_allocation_status": learning_allocator_issue,
             "autonomous_intelligence_validation_governance_status": autonomous_governance_issue,
             "execution_participation_display_status": exec_issue,
@@ -1188,6 +1205,58 @@ class LearningIssueAuditV1:
                 "paper_execution_behavior_changed": bool(virtual_convergence.get("paper_execution_behavior_changed", False)),
                 "position_sizing_changed": bool(virtual_convergence.get("position_sizing_changed", False)),
                 "thresholds_changed": bool(virtual_convergence.get("thresholds_changed", False)),
+            },
+            "accelerated_learning_symbol_intelligence_diagnostics": {
+                "historical_records_reviewed": accelerated_symbol.get("historical_records_reviewed"),
+                "accelerated_learning_events": accelerated_symbol.get("accelerated_learning_events"),
+                "replay_acceleration_score": accelerated_symbol.get("replay_acceleration_score"),
+                "average_convergence_gap": accelerated_symbol.get("average_convergence_gap"),
+                "dominant_gap_cause": accelerated_symbol.get("dominant_gap_cause"),
+                "symbol_profiles_tracked": accelerated_symbol.get("symbol_profiles_tracked"),
+                "strongest_symbol_profile": accelerated_symbol.get("strongest_symbol_profile"),
+                "highest_giveback_symbol": accelerated_symbol.get("highest_giveback_symbol"),
+                "most_reliable_symbol": accelerated_symbol.get("most_reliable_symbol"),
+                "best_horizon_by_symbol": dict(accelerated_symbol.get("best_horizon_by_symbol") or {}),
+                "best_exit_style_by_symbol": dict(accelerated_symbol.get("best_exit_style_by_symbol") or {}),
+                "best_catalyst_by_symbol": dict(accelerated_symbol.get("best_catalyst_by_symbol") or {}),
+                "best_regime_by_symbol": dict(accelerated_symbol.get("best_regime_by_symbol") or {}),
+                "strongest_symbol_cluster": accelerated_symbol.get("strongest_symbol_cluster"),
+                "strongest_cross_symbol_pattern": accelerated_symbol.get("strongest_cross_symbol_pattern"),
+                "top_missed_profit_driver": accelerated_symbol.get("top_missed_profit_driver"),
+                "highest_value_profitability_lever": accelerated_symbol.get("highest_value_profitability_lever"),
+                "highest_roi_learning_area": accelerated_symbol.get("highest_roi_learning_area"),
+                "symbols_with_behavior_drift": list(accelerated_symbol.get("symbols_with_behavior_drift") or [])[:8],
+                "highest_drift_symbol": accelerated_symbol.get("highest_drift_symbol"),
+                "most_stable_symbol": accelerated_symbol.get("most_stable_symbol"),
+                "regime_override_count": accelerated_symbol.get("regime_override_count"),
+                "compressed_lessons": accelerated_symbol.get("compressed_lessons"),
+                "indexed_learning_records": accelerated_symbol.get("indexed_learning_records"),
+                "retrieval_latency_ms": accelerated_symbol.get("retrieval_latency_ms"),
+                "strongest_sector_behavior": accelerated_symbol.get("strongest_sector_behavior"),
+                "strongest_industry_behavior": accelerated_symbol.get("strongest_industry_behavior"),
+                "strongest_theme_behavior": accelerated_symbol.get("strongest_theme_behavior"),
+                "strongest_peer_group_behavior": accelerated_symbol.get("strongest_peer_group_behavior"),
+                "best_peer_group_horizon": dict(accelerated_symbol.get("best_peer_group_horizon") or {}),
+                "best_peer_group_exit_style": dict(accelerated_symbol.get("best_peer_group_exit_style") or {}),
+                "highest_giveback_peer_group": accelerated_symbol.get("highest_giveback_peer_group"),
+                "transferable_learning_confidence": accelerated_symbol.get("transferable_learning_confidence"),
+                "peer_group_learning_score": accelerated_symbol.get("peer_group_learning_score"),
+                "sector_drift_score": accelerated_symbol.get("sector_drift_score"),
+                "industry_drift_score": accelerated_symbol.get("industry_drift_score"),
+                "theme_drift_score": accelerated_symbol.get("theme_drift_score"),
+                "peer_group_drift_score": accelerated_symbol.get("peer_group_drift_score"),
+                "api_calls_used": accelerated_symbol.get("api_calls_used"),
+                "provider_calls_used": accelerated_symbol.get("provider_calls_used"),
+                "llm_calls_used": accelerated_symbol.get("llm_calls_used"),
+                "dashboard_scan_rows": accelerated_symbol.get("dashboard_scan_rows"),
+                "raw_history_scanned": bool(accelerated_symbol.get("raw_history_scanned", False)),
+                "raw_archive_scanned": bool(accelerated_symbol.get("raw_archive_scanned", False)),
+                "shadow_recommendation": accelerated_symbol.get("shadow_recommendation"),
+                "behavior_safe_to_apply": bool(accelerated_symbol.get("behavior_safe_to_apply", False)),
+                "ranking_behavior_changed": bool(accelerated_symbol.get("ranking_behavior_changed", False)),
+                "paper_execution_behavior_changed": bool(accelerated_symbol.get("paper_execution_behavior_changed", False)),
+                "position_sizing_changed": bool(accelerated_symbol.get("position_sizing_changed", False)),
+                "thresholds_changed": bool(accelerated_symbol.get("thresholds_changed", False)),
             },
             "adaptive_learning_prioritization_resource_allocation_diagnostics": {
                 "top_weakness": learning_allocator.get("top_weakness"),

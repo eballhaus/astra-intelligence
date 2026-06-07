@@ -118,6 +118,7 @@ class AutonomousIntelligenceValidationGovernanceV1:
         decision = self._s(statuses, "decision_optimization_trade_management_suite_v1")
         peak_decay = self._s(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
         convergence = self._s(statuses, "virtual_paper_convergence_symbol_attribution_v1")
+        accelerated_symbol = self._s(statuses, "accelerated_learning_symbol_intelligence_suite_v1")
         allocator = self._s(statuses, "adaptive_learning_prioritization_resource_allocation_v1")
         accel = self._s(statuses, "learning_acceleration_retention_suite_v1")
 
@@ -132,6 +133,7 @@ class AutonomousIntelligenceValidationGovernanceV1:
             _to_float(decision.get("evidence_count"), 0),
             _to_float(peak_decay.get("tracked_trades"), 0),
             _to_float(convergence.get("tracked_trades"), 0),
+            _to_float(accelerated_symbol.get("accelerated_learning_events"), 0),
         ]
         evidence_count = int(sum(counts))
         sample_quality = _clamp(evidence_count / 1200.0 * 100.0)
@@ -140,6 +142,8 @@ class AutonomousIntelligenceValidationGovernanceV1:
             _to_float(full.get("cross_system_learning_score"), 50),
             _to_float(peak_decay.get("capture_quality_score"), 55),
             _to_float(convergence.get("convergence_quality_score"), 55),
+            _to_float(accelerated_symbol.get("symbol_personality_quality_score"), 55),
+            _to_float(accelerated_symbol.get("peer_group_learning_score"), 55),
             100 - _to_float(allocator.get("weakness_confidence"), 0) * 0.15,
         ]
         evidence_consistency = _clamp(_avg(consistency_inputs) or 50.0)
@@ -157,6 +161,7 @@ class AutonomousIntelligenceValidationGovernanceV1:
             ("catalyst_decay_needs_context_validation", 100 - _to_float(catalyst.get("catalyst_decay_learning_score"), 50)),
             ("profit_capture_peak_decay_exit_validation_is_shadow_validated", _to_float(peak_decay.get("capture_quality_score"), 0)),
             ("virtual_to_paper_convergence_gap_is_explained", _to_float(convergence.get("gap_attribution_score"), 0)),
+            ("accelerated_symbol_peer_learning_is_available", _to_float(accelerated_symbol.get("replay_acceleration_score"), 0)),
         ]
         trusted = [name for name, score in lessons if score >= 65]
         questionable = [name for name, score in lessons if score < 50]
@@ -191,6 +196,7 @@ class AutonomousIntelligenceValidationGovernanceV1:
             "continuation_quality": "continuation_failure_signals_are_incomplete_or_late",
             "profit_capture_peak_decay_exit_validation": "profit_capture_peak_decay_and_exit_policies_need_horizon_validation",
             "virtual_paper_convergence": "paper_results_lag_best_virtual_paths_due_to_attributed_gap_drivers",
+            "accelerated_symbol_intelligence": "symbol_peer_horizon_exit_and_drift_patterns_need_more_cached_validation",
             "catalyst_decay": "catalyst_half_life_and_context_persistence_need_more_evidence",
             "opportunity_cost": "rejected_candidate_outcomes_outperform_selected_candidates_in_some_contexts",
             "confidence_truth": "confidence_scores_not_yet_monotonic_enough_for_policy_use",
@@ -213,8 +219,9 @@ class AutonomousIntelligenceValidationGovernanceV1:
             "symbol_memory": "shadow_prioritize_symbol_profiles_for_repeatedly_seen_symbols",
             "profit_capture_peak_decay_exit_validation": "shadow_test_profit_capture_peak_decay_exit_validation_by_horizon",
             "virtual_paper_convergence": "shadow_test_virtual_to_paper_gap_reduction_by_symbol_horizon_and_exit_style",
+            "accelerated_symbol_intelligence": "shadow_test_symbol_peer_group_transfer_learning_and_drift_validation",
         }
-        systems = ["adaptive_learning_prioritization", "decision_optimization", "replay_counterfactual", "full_opportunity_lifecycle", "profit_capture_peak_decay_exit_validation", "virtual_paper_convergence_symbol_attribution"]
+        systems = ["adaptive_learning_prioritization", "decision_optimization", "replay_counterfactual", "full_opportunity_lifecycle", "profit_capture_peak_decay_exit_validation", "virtual_paper_convergence_symbol_attribution", "accelerated_learning_symbol_intelligence"]
         if top in {"symbol_memory", "retrieval_health", "storage_health"}:
             systems.append("long_term_memory_symbol_retrieval")
         expected_gain = _clamp(_to_float(allocator.get("expected_improvement_score"), 0) * 0.75 + _to_float(decision.get("trade_management_intelligence_score"), 0) * 0.15)

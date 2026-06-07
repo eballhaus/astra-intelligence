@@ -145,6 +145,7 @@ export default function LearningTab({ compact = false }) {
   const [showAdaptiveProfitCaptureDetails, setShowAdaptiveProfitCaptureDetails] = useState(false);
   const [showProfitCapturePeakDecayValidationDetails, setShowProfitCapturePeakDecayValidationDetails] = useState(false);
   const [showVirtualPaperConvergenceDetails, setShowVirtualPaperConvergenceDetails] = useState(false);
+  const [showAcceleratedSymbolLearningDetails, setShowAcceleratedSymbolLearningDetails] = useState(false);
   const [showAdaptiveExitV3Details, setShowAdaptiveExitV3Details] = useState(false);
   const [showExitLearningExpansionDetails, setShowExitLearningExpansionDetails] = useState(false);
   const [showMarketContextLearningDetails, setShowMarketContextLearningDetails] = useState(false);
@@ -1592,6 +1593,7 @@ export default function LearningTab({ compact = false }) {
   const adaptiveProfitCapture = unified?.adaptive_profit_capture_intelligence || {};
   const profitCapturePeakDecayExitValidation = unified?.profit_capture_peak_decay_exit_validation_suite_v1 || {};
   const virtualPaperConvergence = unified?.virtual_paper_convergence_symbol_attribution_v1 || {};
+  const acceleratedSymbolLearning = unified?.accelerated_learning_symbol_intelligence_suite_v1 || {};
   const adaptiveExecutionExitV3 = unified?.adaptive_execution_exit_intelligence_v3 || {};
   const exitLearningExpansion = unified?.exit_learning_expansion_suite_v1 || {};
   const marketContextLearning = unified?.market_context_learning_suite_v1 || {};
@@ -1960,6 +1962,106 @@ export default function LearningTab({ compact = false }) {
             </ResponsiveContainer>
           </ChartShell>
         </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Accelerated Learning & Symbol Intelligence V1</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is accelerating learning by mining existing trade, replay, virtual, rejected, and opportunity history. It builds symbol-specific behavior profiles, learns best horizons and exits per stock, detects when symbol behavior changes, compresses lessons, and retrieves knowledge quickly. This does not change trading behavior.
+            </div>
+            <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 6 }}>
+              Astra is comparing similar stocks, sectors, industries, themes, and peer groups so it can learn faster from related symbols. This helps Astra recognize that stocks like NVDA/AMD/AVGO or QBTS/RGTI/IONQ may share trading behaviors while still treating each stock individually.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAcceleratedSymbolLearningDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showAcceleratedSymbolLearningDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Historical reviewed", acceleratedSymbolLearning?.historical_records_reviewed],
+            ["Learning events", acceleratedSymbolLearning?.accelerated_learning_events],
+            ["Replay acceleration", safeNumber(acceleratedSymbolLearning?.replay_acceleration_score).toFixed(1)],
+            ["Dominant gap cause", acceleratedSymbolLearning?.dominant_gap_cause],
+            ["Symbol profiles", acceleratedSymbolLearning?.symbol_profiles_tracked],
+            ["Strongest symbol", acceleratedSymbolLearning?.strongest_symbol_profile],
+            ["Highest giveback", acceleratedSymbolLearning?.highest_giveback_symbol],
+            ["Most reliable", acceleratedSymbolLearning?.most_reliable_symbol],
+            ["Best horizon", Object.entries(acceleratedSymbolLearning?.best_horizon_by_symbol || {}).slice(0, 1).map(([k, v]) => `${k} -> ${String(v).replaceAll("_", " ")}`).join(", ") || "warming up"],
+            ["Best exit", Object.entries(acceleratedSymbolLearning?.best_exit_style_by_symbol || {}).slice(0, 1).map(([k, v]) => `${k} -> ${String(v).replaceAll("_", " ")}`).join(", ") || "warming up"],
+            ["Best catalyst", Object.entries(acceleratedSymbolLearning?.best_catalyst_by_symbol || {}).slice(0, 1).map(([k, v]) => `${k} -> ${String(v).replaceAll("_", " ")}`).join(", ") || "warming up"],
+            ["Best regime", Object.entries(acceleratedSymbolLearning?.best_regime_by_symbol || {}).slice(0, 1).map(([k, v]) => `${k} -> ${String(v).replaceAll("_", " ")}`).join(", ") || "warming up"],
+            ["Strongest cluster", acceleratedSymbolLearning?.strongest_symbol_cluster],
+            ["Missed profit driver", acceleratedSymbolLearning?.top_missed_profit_driver],
+            ["Highest ROI area", acceleratedSymbolLearning?.highest_roi_learning_area],
+            ["Behavior drift", (acceleratedSymbolLearning?.symbols_with_behavior_drift || []).join(", ") || "none"],
+            ["Highest drift", acceleratedSymbolLearning?.highest_drift_symbol],
+            ["Most stable", acceleratedSymbolLearning?.most_stable_symbol],
+            ["Regime overrides", acceleratedSymbolLearning?.regime_override_count],
+            ["Compressed lessons", acceleratedSymbolLearning?.compressed_lessons],
+            ["Retrieval latency", `${safeNumber(acceleratedSymbolLearning?.retrieval_latency_ms).toFixed(2)}ms`],
+            ["Strongest sector", acceleratedSymbolLearning?.strongest_sector_behavior],
+            ["Strongest industry", acceleratedSymbolLearning?.strongest_industry_behavior],
+            ["Strongest theme", acceleratedSymbolLearning?.strongest_theme_behavior],
+            ["Strongest peer group", acceleratedSymbolLearning?.strongest_peer_group_behavior],
+            ["Best peer horizon", Object.entries(acceleratedSymbolLearning?.best_peer_group_horizon || {}).slice(0, 1).map(([k, v]) => `${String(k).replaceAll("_", " ")} -> ${String(v).replaceAll("_", " ")}`).join(", ") || "warming up"],
+            ["Best peer exit", Object.entries(acceleratedSymbolLearning?.best_peer_group_exit_style || {}).slice(0, 1).map(([k, v]) => `${String(k).replaceAll("_", " ")} -> ${String(v).replaceAll("_", " ")}`).join(", ") || "warming up"],
+            ["Giveback peer", acceleratedSymbolLearning?.highest_giveback_peer_group],
+            ["Transfer confidence", safeNumber(acceleratedSymbolLearning?.transferable_learning_confidence).toFixed(1)],
+            ["Peer learning", safeNumber(acceleratedSymbolLearning?.peer_group_learning_score).toFixed(1)],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {typeof value === "number" ? value.toFixed(0) : String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(acceleratedSymbolLearning?.shadow_recommendation || "Continue accelerated symbol learning shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showAcceleratedSymbolLearningDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Peer & Cluster Learning</div>
+              <div>Clusters: {JSON.stringify(acceleratedSymbolLearning?.symbol_clusters || {})}</div>
+              <div>Transferable lessons: {(acceleratedSymbolLearning?.transferable_lessons || []).join(", ") || "warming up"}</div>
+              <div>Cross-symbol pattern: {String(acceleratedSymbolLearning?.strongest_cross_symbol_pattern || "warming up").replaceAll("_", " ")}</div>
+              <div>Cluster score: {safeNumber(acceleratedSymbolLearning?.cluster_learning_score).toFixed(1)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Drift & Recency Guards</div>
+              <div>Drift warning: {String(acceleratedSymbolLearning?.symbol_drift_warning || "warming up").replaceAll("_", " ")}</div>
+              <div>Sector/theme/peer drift: {safeNumber(acceleratedSymbolLearning?.sector_drift_score).toFixed(1)} / {safeNumber(acceleratedSymbolLearning?.theme_drift_score).toFixed(1)} / {safeNumber(acceleratedSymbolLearning?.peer_group_drift_score).toFixed(1)}</div>
+              <div>Symbol stability: {safeNumber(acceleratedSymbolLearning?.symbol_stability_score).toFixed(1)}</div>
+              <div>Regime override count: {safeNumber(acceleratedSymbolLearning?.regime_override_count).toFixed(0)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Compression & Safety</div>
+              <div>Indexed records: {safeNumber(acceleratedSymbolLearning?.indexed_learning_records).toFixed(0)}</div>
+              <div>Full scans avoided: {safeNumber(acceleratedSymbolLearning?.full_scan_avoided_count).toFixed(0)}</div>
+              <div>Dashboard scan rows: {safeNumber(acceleratedSymbolLearning?.dashboard_scan_rows).toFixed(0)}</div>
+              <div>API/provider/LLM calls: {safeNumber(acceleratedSymbolLearning?.api_calls_used).toFixed(0)}/{safeNumber(acceleratedSymbolLearning?.provider_calls_used).toFixed(0)}/{safeNumber(acceleratedSymbolLearning?.llm_calls_used).toFixed(0)}</div>
+              <div>Behavior safe to apply: {acceleratedSymbolLearning?.behavior_safe_to_apply ? "yes" : "no"}</div>
+              <div>Ranking changed: {acceleratedSymbolLearning?.ranking_behavior_changed ? "yes" : "no"}</div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div style={{ ...panelStyle }}>

@@ -819,6 +819,67 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.accelerated_learning_symbol_intelligence_suite_v1 import AcceleratedLearningSymbolIntelligenceSuiteV1
+except Exception:
+    class AcceleratedLearningSymbolIntelligenceSuiteV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "paper_only_accelerated_learning_symbol_intelligence",
+                "historical_records_reviewed": 0,
+                "accelerated_learning_events": 0,
+                "replay_acceleration_score": 0.0,
+                "average_convergence_gap": 0.0,
+                "dominant_gap_cause": "unavailable",
+                "symbol_profiles_tracked": 0,
+                "strongest_symbol_profile": "unavailable",
+                "highest_giveback_symbol": "unavailable",
+                "most_reliable_symbol": "unavailable",
+                "best_horizon_by_symbol": {},
+                "best_exit_style_by_symbol": {},
+                "best_catalyst_by_symbol": {},
+                "best_regime_by_symbol": {},
+                "strongest_symbol_cluster": "unavailable",
+                "strongest_peer_group_behavior": "unavailable",
+                "best_peer_group_horizon": {},
+                "best_peer_group_exit_style": {},
+                "highest_giveback_peer_group": "unavailable",
+                "transferable_learning_confidence": 0.0,
+                "peer_group_learning_score": 0.0,
+                "strongest_cross_symbol_pattern": "unavailable",
+                "top_missed_profit_driver": "unavailable",
+                "highest_value_profitability_lever": "unavailable",
+                "highest_roi_learning_area": "unavailable",
+                "symbols_with_behavior_drift": [],
+                "highest_drift_symbol": "unavailable",
+                "most_stable_symbol": "unavailable",
+                "regime_override_count": 0,
+                "compressed_lessons": 0,
+                "indexed_learning_records": 0,
+                "retrieval_latency_ms": 0.0,
+                "shadow_recommendation": "unavailable",
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "behavior_safe_to_apply": False,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "ranking_behavior_changed": False,
+                "paper_execution_behavior_changed": False,
+                "position_sizing_changed": False,
+                "thresholds_changed": False,
+                "portfolio_allocation_changed": False,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_trades_enabled": False,
+                "forced_exits_enabled": False,
+            }
+try:
     from engine.adaptive_execution_exit_intelligence_v3 import AdaptiveExecutionExitIntelligenceV3
 except Exception:
     class AdaptiveExecutionExitIntelligenceV3:  # type: ignore[override]
@@ -2033,6 +2094,7 @@ TRADE_LIFECYCLE_EXCURSION_V2 = TradeLifecycleExcursionV2(state_dir=STATE)
 ADAPTIVE_PROFIT_CAPTURE_INTELLIGENCE = AdaptiveProfitCaptureIntelligenceV1(state_dir=STATE)
 PROFIT_CAPTURE_PEAK_DECAY_EXIT_VALIDATION_SUITE = ProfitCapturePeakDecayExitValidationSuiteV1(state_dir=STATE)
 VIRTUAL_PAPER_CONVERGENCE_SYMBOL_ATTRIBUTION = VirtualPaperConvergenceSymbolAttributionV1(state_dir=STATE)
+ACCELERATED_LEARNING_SYMBOL_INTELLIGENCE_SUITE = AcceleratedLearningSymbolIntelligenceSuiteV1(state_dir=STATE)
 ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V3 = AdaptiveExecutionExitIntelligenceV3(state_dir=STATE)
 EXIT_LEARNING_EXPANSION_SUITE = ExitLearningExpansionSuiteV1(state_dir=STATE)
 MARKET_CONTEXT_LEARNING_SUITE = MarketContextLearningSuiteV1(state_dir=STATE)
@@ -40558,6 +40620,99 @@ def virtual_paper_convergence_symbol_attribution_v1(force: bool = False):
             "human_review_required": True,
             "behavior_safe_to_apply": False,
         }
+
+
+@router.get("/api/accelerated_learning_symbol_intelligence_suite_v1")
+def accelerated_learning_symbol_intelligence_suite_v1(force: bool = False):
+    try:
+        out = dict(ACCELERATED_LEARNING_SYMBOL_INTELLIGENCE_SUITE.status(statuses=_learning_acceleration_status_bundle(), force=bool(force)) or {})
+        out["accelerated_learning_symbol_intelligence_suite_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["dashboard_scan_rows"] = int(_to_float(out.get("dashboard_scan_rows"), 0.0))
+        out["raw_history_scanned"] = False
+        out["raw_archive_scanned"] = False
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["ranking_behavior_changed"] = False
+        out["paper_execution_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["thresholds_changed"] = False
+        out["portfolio_allocation_changed"] = False
+        out["order_logic_changed"] = False
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        out["auto_apply_allowed"] = False
+        out["human_review_required"] = True
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "paper_only_accelerated_learning_symbol_intelligence",
+            "accelerated_learning_symbol_intelligence_suite_v1": True,
+            "historical_records_reviewed": 0,
+            "accelerated_learning_events": 0,
+            "replay_acceleration_score": 0.0,
+            "average_convergence_gap": 0.0,
+            "dominant_gap_cause": "unavailable",
+            "symbol_profiles_tracked": 0,
+            "strongest_symbol_profile": "unavailable",
+            "highest_giveback_symbol": "unavailable",
+            "most_reliable_symbol": "unavailable",
+            "best_horizon_by_symbol": {},
+            "best_exit_style_by_symbol": {},
+            "best_catalyst_by_symbol": {},
+            "best_regime_by_symbol": {},
+            "strongest_symbol_cluster": "unavailable",
+            "strongest_peer_group_behavior": "unavailable",
+            "best_peer_group_horizon": {},
+            "best_peer_group_exit_style": {},
+            "highest_giveback_peer_group": "unavailable",
+            "transferable_learning_confidence": 0.0,
+            "peer_group_learning_score": 0.0,
+            "strongest_cross_symbol_pattern": "unavailable",
+            "top_missed_profit_driver": "unavailable",
+            "highest_value_profitability_lever": "unavailable",
+            "highest_roi_learning_area": "unavailable",
+            "symbols_with_behavior_drift": [],
+            "highest_drift_symbol": "unavailable",
+            "most_stable_symbol": "unavailable",
+            "regime_override_count": 0,
+            "compressed_lessons": 0,
+            "indexed_learning_records": 0,
+            "retrieval_latency_ms": 0.0,
+            "shadow_recommendation": "unavailable",
+            "degraded_reason": f"accelerated_learning_symbol_intelligence_suite_v1_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "dashboard_scan_rows": 0,
+            "raw_history_scanned": False,
+            "raw_archive_scanned": False,
+            "build_ms": 0.0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "paper_execution_behavior_changed": False,
+            "position_sizing_changed": False,
+            "thresholds_changed": False,
+            "portfolio_allocation_changed": False,
+            "order_logic_changed": False,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+            "auto_apply_allowed": False,
+            "human_review_required": True,
+            "behavior_safe_to_apply": False,
+        }
 def _learning_acceleration_status_bundle() -> dict:
     statuses = {}
     for name, fn in (
@@ -40606,6 +40761,10 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["virtual_paper_convergence_symbol_attribution_v1"] = VIRTUAL_PAPER_CONVERGENCE_SYMBOL_ATTRIBUTION.status(statuses=statuses, force=False)
     except Exception:
         statuses["virtual_paper_convergence_symbol_attribution_v1"] = {}
+    try:
+        statuses["accelerated_learning_symbol_intelligence_suite_v1"] = ACCELERATED_LEARNING_SYMBOL_INTELLIGENCE_SUITE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["accelerated_learning_symbol_intelligence_suite_v1"] = {}
     try:
         statuses["adaptive_learning_prioritization_resource_allocation_v1"] = ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False)
     except Exception:
@@ -41775,6 +41934,10 @@ def learning_issue_audit_status_v1(force: bool = False):
             statuses["virtual_paper_convergence_symbol_attribution_v1"] = VIRTUAL_PAPER_CONVERGENCE_SYMBOL_ATTRIBUTION.status(statuses=statuses, force=False)
         except Exception:
             statuses["virtual_paper_convergence_symbol_attribution_v1"] = {}
+        try:
+            statuses["accelerated_learning_symbol_intelligence_suite_v1"] = ACCELERATED_LEARNING_SYMBOL_INTELLIGENCE_SUITE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["accelerated_learning_symbol_intelligence_suite_v1"] = {}
         try:
             statuses["adaptive_learning_prioritization_resource_allocation_v1"] = ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False)
         except Exception:
@@ -50195,6 +50358,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("full_opportunity_lifecycle_learning_suite_v1", lambda: FULL_OPPORTUNITY_LIFECYCLE_LEARNING_SUITE.status(statuses=statuses, force=False))
         _safe_status("long_term_memory_symbol_retrieval_suite_v1", lambda: LONG_TERM_MEMORY_SYMBOL_RETRIEVAL_SUITE.status(statuses=statuses, force=False))
         _safe_status("virtual_paper_convergence_symbol_attribution_v1", lambda: VIRTUAL_PAPER_CONVERGENCE_SYMBOL_ATTRIBUTION.status(statuses=statuses, force=False))
+        _safe_status("accelerated_learning_symbol_intelligence_suite_v1", lambda: ACCELERATED_LEARNING_SYMBOL_INTELLIGENCE_SUITE.status(statuses=statuses, force=False))
         _safe_status("adaptive_learning_prioritization_resource_allocation_v1", lambda: ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False))
         _safe_status("autonomous_intelligence_validation_governance_v1", lambda: AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE.status(statuses=statuses, force=False))
         _safe_status("trade_archetype_regime", lambda: TRADE_ARCHETYPE_REGIME_INTELLIGENCE.status(force=False))
