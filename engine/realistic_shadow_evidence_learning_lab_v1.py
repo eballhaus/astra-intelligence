@@ -10,7 +10,7 @@ from typing import Any
 VERSION = "1.0.0"
 CACHE_TTL_SECONDS = 12.0
 DASHBOARD_CACHE_MAX_AGE_SECONDS = 180.0
-TARGET_SHADOW_OPPORTUNITIES_PER_DAY = 75
+TARGET_SHADOW_OPPORTUNITIES_PER_DAY = 125
 HARD_MAX_SHADOW_OPPORTUNITIES_PER_DAY = 150
 TARGET_VIRTUAL_PATHS_PER_OPPORTUNITY = 8
 HARD_MAX_VIRTUAL_PATHS_PER_OPPORTUNITY = 20
@@ -294,6 +294,8 @@ class RealisticShadowEvidenceLearningLabV1:
         shadow_learning_events = virtual_paths + eligible + near_miss
         capacity_used = _round(shadow_opportunities / HARD_MAX_SHADOW_OPPORTUNITIES_PER_DAY * 100.0, 2)
         capacity_remaining = max(0, HARD_MAX_SHADOW_OPPORTUNITIES_PER_DAY - shadow_opportunities)
+        price_path_source = "cached_lifecycle_replay_counterfactual_summaries"
+        price_path_limitation = "no_raw_tick_tape;derived_from_cached_lifecycle_replay_summary_paths"
 
         portfolio_realism = _clamp(
             100.0
@@ -323,6 +325,26 @@ class RealisticShadowEvidenceLearningLabV1:
         adjusted_return = _round(raw_shadow_return - estimated_slippage, 4)
 
         quality_score = _round(_avg([avg_realism, signal_quality, data_fresh, context_complete]), 2)
+        price_path_realism = _round(
+            _avg(
+                [
+                    mirror_score,
+                    portfolio_realism,
+                    execution_realism,
+                    lifecycle_complete,
+                    data_fresh,
+                    signal_quality,
+                    _clamp(100.0 if completed_lifecycles > 0 else 55.0),
+                ]
+            ),
+            2,
+        )
+        if completed_lifecycles > 0 and abs(avg_mfe) > 0.0 and (abs(avg_mae) > 0.0 or abs(capture_ratio) > 0.0):
+            price_path_data_quality = "high"
+        elif eligible + near_miss > 0:
+            price_path_data_quality = "moderate"
+        else:
+            price_path_data_quality = "warming_up"
         high_value_lessons = int(round(realism_weighted_events * quality_score / 100.0 * 0.18))
         compressed_lessons = int(round(shadow_learning_events * 0.35))
         discarded_noise = int(round((virtual_paths + discarded) * max(0.0, 100.0 - quality_score) / 100.0))
@@ -380,6 +402,10 @@ class RealisticShadowEvidenceLearningLabV1:
             "hard_max_shadow_opportunities_per_day": HARD_MAX_SHADOW_OPPORTUNITIES_PER_DAY,
             "target_virtual_paths_per_opportunity": TARGET_VIRTUAL_PATHS_PER_OPPORTUNITY,
             "hard_max_virtual_paths_per_opportunity": HARD_MAX_VIRTUAL_PATHS_PER_OPPORTUNITY,
+            "price_path_realism_score": price_path_realism,
+            "price_path_source": price_path_source,
+            "price_path_data_quality": price_path_data_quality,
+            "price_path_limitation": price_path_limitation,
             "eligible_shadow_trades": eligible,
             "near_miss_shadow_trades": near_miss,
             "discarded_unrealistic_trades": discarded,
@@ -548,15 +574,23 @@ class RealisticShadowEvidenceLearningLabV1:
         now = time.time()
         if not force and self._cache and now - self._cache_ts <= self.ttl_seconds:
             out = dict(self._cache)
-            out["cache_hit"] = True
-            out["behavior_safe_to_apply"] = False
-            return out
+            if (
+                _to_int(out.get("target_shadow_opportunities_per_day"), 0) == TARGET_SHADOW_OPPORTUNITIES_PER_DAY
+                and str(out.get("price_path_source") or "").strip()
+            ):
+                out["cache_hit"] = True
+                out["behavior_safe_to_apply"] = False
+                return out
         if not force:
             cached = self._cached()
             if cached and _to_float(cached.get("cache_age_seconds"), 999999.0) <= DASHBOARD_CACHE_MAX_AGE_SECONDS:
-                self._cache = cached
-                self._cache_ts = now
-                return cached
+                if (
+                    _to_int(cached.get("target_shadow_opportunities_per_day"), 0) == TARGET_SHADOW_OPPORTUNITIES_PER_DAY
+                    and str(cached.get("price_path_source") or "").strip()
+                ):
+                    self._cache = cached
+                    self._cache_ts = now
+                    return cached
         try:
             out = self._build(statuses or {})
             out["cache_hit"] = False
@@ -582,6 +616,12 @@ class RealisticShadowEvidenceLearningLabV1:
                 "virtual_paths_created": 0,
                 "shadow_learning_events": 0,
                 "completed_shadow_lifecycles": 0,
+                "shadow_capacity_used": 0.0,
+                "shadow_capacity_remaining": 0,
+                "target_shadow_opportunities_per_day": TARGET_SHADOW_OPPORTUNITIES_PER_DAY,
+                "hard_max_shadow_opportunities_per_day": HARD_MAX_SHADOW_OPPORTUNITIES_PER_DAY,
+                "target_virtual_paths_per_opportunity": TARGET_VIRTUAL_PATHS_PER_OPPORTUNITY,
+                "hard_max_virtual_paths_per_opportunity": HARD_MAX_VIRTUAL_PATHS_PER_OPPORTUNITY,
                 "average_shadow_realism_score": 0.0,
                 "high_realism_shadow_trades": 0,
                 "paper_engine_mirror_score": 0.0,
@@ -600,12 +640,20 @@ class RealisticShadowEvidenceLearningLabV1:
                 "policy_confidence": 0.0,
                 "storage_pressure_score": 0.0,
                 "memory_pressure_score": 0.0,
+                "price_path_realism_score": 0.0,
+                "price_path_source": "unavailable",
+                "price_path_data_quality": "unavailable",
+                "price_path_limitation": "rebuild_failed_using_cached_shadow_defaults",
                 "fmp_status": "unavailable",
                 "fmp_smart_budget_enabled": False,
                 "fmp_rest_conserve_mode": True,
                 "fmp_refresh_allowed_now": False,
                 "fmp_refresh_block_reason": "fallback_unavailable",
                 "fmp_zero_usage_reason": "unknown_zero_usage",
+                "price_path_realism_score": 0.0,
+                "price_path_source": "unavailable",
+                "price_path_data_quality": "unavailable",
+                "price_path_limitation": "rebuild_failed_using_cached_shadow_defaults",
                 "fmp_last_successful_call": "unavailable",
                 "fmp_last_fresh_data_timestamp": "unavailable",
                 "fmp_cache_hit_rate": 0.0,

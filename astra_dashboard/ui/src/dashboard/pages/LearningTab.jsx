@@ -1992,16 +1992,24 @@ export default function LearningTab({ compact = false }) {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
           {[
+            ["Target shadow/day", realisticShadowLab?.target_shadow_opportunities_per_day],
             ["Shadow opportunities", realisticShadowLab?.shadow_opportunities_tracked],
+            ["Shadow capacity used", `${safeNumber(realisticShadowLab?.shadow_capacity_used).toFixed(1)}%`],
+            ["Shadow capacity remaining", realisticShadowLab?.shadow_capacity_remaining],
             ["Eligible shadow", realisticShadowLab?.eligible_shadow_trades],
             ["Near miss", realisticShadowLab?.near_miss_shadow_trades],
             ["Virtual paths", realisticShadowLab?.virtual_paths_created],
             ["Learning events", realisticShadowLab?.shadow_learning_events],
+            ["Realism-weighted events", realisticShadowLab?.realism_weighted_learning_events],
             ["Completed lifecycles", realisticShadowLab?.completed_shadow_lifecycles],
             ["Realism score", safeNumber(realisticShadowLab?.average_shadow_realism_score).toFixed(1)],
             ["Mirror score", safeNumber(realisticShadowLab?.paper_engine_mirror_score).toFixed(1)],
             ["Portfolio realism", safeNumber(realisticShadowLab?.shadow_portfolio_realism_score).toFixed(1)],
             ["Execution realism", safeNumber(realisticShadowLab?.execution_realism_score).toFixed(1)],
+            ["Price-path realism", safeNumber(realisticShadowLab?.price_path_realism_score).toFixed(1)],
+            ["Price-path source", realisticShadowLab?.price_path_source],
+            ["Price-path quality", realisticShadowLab?.price_path_data_quality],
+            ["Price-path limitation", realisticShadowLab?.price_path_limitation],
             ["Evidence quality", safeNumber(realisticShadowLab?.evidence_quality_score).toFixed(1)],
             ["High-value lessons", realisticShadowLab?.high_value_lessons],
             ["Discarded noise", realisticShadowLab?.discarded_noise_count],
@@ -2048,6 +2056,7 @@ export default function LearningTab({ compact = false }) {
               <div>Virtual path score: {safeNumber(realisticShadowLab?.virtual_path_quality_score).toFixed(1)}</div>
               <div>Shadow MFE/MAE: {safeNumber(realisticShadowLab?.shadow_avg_MFE).toFixed(2)} / {safeNumber(realisticShadowLab?.shadow_avg_MAE).toFixed(2)}</div>
               <div>Capture/giveback: {safeNumber(realisticShadowLab?.shadow_capture_ratio).toFixed(2)} / {safeNumber(realisticShadowLab?.shadow_giveback_pct).toFixed(2)}</div>
+              <div>Price-path source: {String(realisticShadowLab?.price_path_source || "cached_lifecycle_replay_counterfactual_summaries").replaceAll("_", " ")}</div>
             </div>
             <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
               <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Lesson Pipeline</div>
