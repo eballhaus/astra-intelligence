@@ -14,7 +14,12 @@ _LAST_CALL_TS = defaultdict(float)
 _WINDOW_CALL_TS = defaultdict(list)
 _COOLDOWN_UNTIL = defaultdict(float)
 _TEMP_STRATEGY_ENABLED = str(os.getenv("ASTRA_TEMP_PROVIDER_STRATEGY_V1", "1")).strip().lower() in {"1", "true", "yes", "on"}
-_TEMP_FMP_REST_DISABLED = str(os.getenv("ASTRA_TEMP_FMP_REST_DISABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+_FMP_SMART_BUDGET_ENABLED = str(os.getenv("ASTRA_FMP_SMART_BUDGET_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+_TEMP_FMP_REST_DISABLED_EXPLICIT = "ASTRA_TEMP_FMP_REST_DISABLED" in os.environ
+_TEMP_FMP_REST_DISABLED = (
+    str(os.getenv("ASTRA_TEMP_FMP_REST_DISABLED", "0" if _FMP_SMART_BUDGET_ENABLED else "1")).strip().lower()
+    in {"1", "true", "yes", "on"}
+)
 _DEFAULT_CAP_PER_MIN = int(float(os.getenv("ASTRA_PROVIDER_DEFAULT_CAP_PER_MIN", "120")))
 
 
@@ -62,7 +67,11 @@ def _provider_role(provider: str) -> str:
     if p == "POLYGON":
         return "backup_quote_feed"
     if p == "FMP":
-        return "rest_conserved_websocket_monitor_only"
+        if _TEMP_FMP_REST_DISABLED:
+            return "rest_conserved_websocket_monitor_only"
+        if _FMP_SMART_BUDGET_ENABLED:
+            return "smart_budget_cache_first_bounded_rest"
+        return "fmp_rest_standard_budgeted"
     if p == "FRED":
         return "macro_regime_low_frequency"
     if p == "MORALIS":
@@ -155,4 +164,6 @@ def get_usage_summary() -> dict:
             "total_rate_limits": int(sum(_RATE_LIMITS.values())),
             "temporary_provider_strategy_v1": bool(_TEMP_STRATEGY_ENABLED),
             "fmp_rest_temporarily_disabled": bool(_TEMP_STRATEGY_ENABLED and _TEMP_FMP_REST_DISABLED),
+            "fmp_rest_disable_explicit": bool(_TEMP_FMP_REST_DISABLED_EXPLICIT),
+            "fmp_smart_budget_enabled": bool(_FMP_SMART_BUDGET_ENABLED),
         }

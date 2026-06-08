@@ -90,6 +90,8 @@ _FMP_EFFICIENCY_LOCK = threading.Lock()
 _FMP_RECENT_CALLS: dict[tuple[str, str], float] = {}
 _FMP_RECENT_CALL_TTL_SECONDS = 90.0
 _FMP_LARGE_ENDPOINTS_ALLOW_FLAG = str(os.getenv("ASTRA_FMP_LARGE_ENDPOINTS_ALLOW", "0")).strip().lower() in {"1", "true", "yes", "on"}
+_FMP_SMART_BUDGET_ENABLED = str(os.getenv("ASTRA_FMP_SMART_BUDGET_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+_TEMP_FMP_REST_DISABLED_EXPLICIT = "ASTRA_TEMP_FMP_REST_DISABLED" in os.environ
 _FMP_ENDPOINT_POLICY = {
     "small_quote_profile": {"allowed_default": True, "family": "quote_profile"},
     "historical": {"allowed_default": False, "family": "historical"},
@@ -263,7 +265,12 @@ class ProviderRouter:
         self._provider_stats: dict[str, dict[str, Any]] = {}
         self._last_cycle_attempt_order: list[str] = []
         self._temp_strategy_enabled = str(os.getenv("ASTRA_TEMP_PROVIDER_STRATEGY_V1", "1")).strip().lower() in {"1", "true", "yes", "on"}
-        self._temp_fmp_rest_disabled = str(os.getenv("ASTRA_TEMP_FMP_REST_DISABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+        self._fmp_smart_budget_enabled = bool(_FMP_SMART_BUDGET_ENABLED)
+        self._temp_fmp_rest_disabled_explicit = bool(_TEMP_FMP_REST_DISABLED_EXPLICIT)
+        self._temp_fmp_rest_disabled = (
+            str(os.getenv("ASTRA_TEMP_FMP_REST_DISABLED", "0" if self._fmp_smart_budget_enabled else "1")).strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
         self._temp_fmp_ws_monitor_only = str(os.getenv("ASTRA_TEMP_FMP_WEBSOCKET_MONITOR_ONLY", "1")).strip().lower() in {"1", "true", "yes", "on"}
         self._temp_discovery_cache_age = max(
             10.0,
@@ -307,9 +314,11 @@ class ProviderRouter:
                     "mode": "active_backup",
                 },
                 "FMP": {
-                    "role": ["websocket_monitoring_only", "rest_discovery_disabled_temporarily"],
-                    "mode": "rest_conserved",
+                    "role": ["cache_first_context_refresh", "bounded_smart_budget_rest"],
+                    "mode": "smart_budget_rest" if self._fmp_smart_budget_enabled and not self._temp_fmp_rest_disabled else "rest_conserved",
                     "rest_disabled": bool(self._temp_strategy_enabled and self._temp_fmp_rest_disabled),
+                    "rest_disable_explicit": bool(self._temp_fmp_rest_disabled_explicit),
+                    "smart_budget_enabled": bool(self._fmp_smart_budget_enabled),
                     "websocket_monitor_only": bool(self._temp_fmp_ws_monitor_only),
                 },
                 "FRED": {
@@ -1159,6 +1168,8 @@ class ProviderRouter:
             "provider_role_matrix": self.provider_role_matrix(),
             "temporary_provider_strategy_v1": bool(self._temp_strategy_enabled),
             "fmp_rest_disabled_temporarily": bool(self._temp_strategy_enabled and self._temp_fmp_rest_disabled),
+            "fmp_rest_disable_explicit": bool(self._temp_fmp_rest_disabled_explicit),
+            "fmp_smart_budget_enabled": bool(self._fmp_smart_budget_enabled),
             "fmp_websocket_monitor_only": bool(self._temp_strategy_enabled and self._temp_fmp_ws_monitor_only),
             "temp_discovery_cache_max_age_seconds": float(self._temp_discovery_cache_age),
             "provider_backfill_max_probes": int(self._max_backfill_provider_probes),

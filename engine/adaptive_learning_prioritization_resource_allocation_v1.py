@@ -17,7 +17,7 @@ WEAKNESSES = (
     "profit_capture", "giveback", "hold_duration", "continuation_quality", "opportunity_cost",
     "missed_winners", "confidence_truth", "catalyst_decay", "after_hours_profile", "premarket_profile",
     "symbol_memory", "rejection_accuracy", "horizon_classification", "entry_quality", "exit_quality",
-    "profit_capture_peak_decay_validation", "virtual_paper_convergence", "accelerated_symbol_intelligence", "portfolio_concentration", "correlation_risk", "storage_health", "retrieval_health", "worker_health",
+    "profit_capture_peak_decay_validation", "virtual_paper_convergence", "accelerated_symbol_intelligence", "realistic_shadow_lab", "portfolio_concentration", "correlation_risk", "storage_health", "retrieval_health", "worker_health",
     "API_budget", "evidence_quality", "evidence_gap",
 )
 
@@ -40,6 +40,7 @@ WEAKNESS_TO_WORKER = {
     "profit_capture_peak_decay_validation": "profit_capture_peak_decay_exit_validation_worker",
     "virtual_paper_convergence": "virtual_to_paper_gap_attribution_worker",
     "accelerated_symbol_intelligence": "accelerated_symbol_peer_learning_worker",
+    "realistic_shadow_lab": "realistic_shadow_evidence_lab_worker",
     "portfolio_concentration": "portfolio_risk_monitor_worker",
     "correlation_risk": "portfolio_correlation_monitor_worker",
     "storage_health": "memory_retention_worker",
@@ -64,6 +65,7 @@ WEAKNESS_TO_REPLAY = {
     "profit_capture_peak_decay_validation": "profit_capture_peak_decay_exit_validation_counterfactuals",
     "virtual_paper_convergence": "virtual_to_paper_gap_replay_by_symbol_horizon_exit_style",
     "accelerated_symbol_intelligence": "symbol_peer_horizon_exit_drift_replay",
+    "realistic_shadow_lab": "realistic_shadow_policy_tournament_replay",
 }
 
 
@@ -176,6 +178,7 @@ class AdaptiveLearningPrioritizationResourceAllocationV1:
         peak_decay = self._status(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
         convergence = self._status(statuses, "virtual_paper_convergence_symbol_attribution_v1")
         accelerated_symbol = self._status(statuses, "accelerated_learning_symbol_intelligence_suite_v1")
+        shadow_lab = self._status(statuses, "realistic_shadow_evidence_learning_lab_v1")
         portfolio = self._status(statuses, "portfolio_diversification_correlation_v2")
         issue = self._status(statuses, "learning_issue_audit")
 
@@ -193,6 +196,11 @@ class AdaptiveLearningPrioritizationResourceAllocationV1:
         add("accelerated_symbol_intelligence", 100 - _to_float(accelerated_symbol.get("replay_acceleration_score"), 50.0), "accelerated_symbol_intelligence", accelerated_symbol.get("accelerated_learning_events"))
         add("accelerated_symbol_intelligence", 100 - _to_float(accelerated_symbol.get("symbol_personality_quality_score"), 50.0), "accelerated_symbol_intelligence", accelerated_symbol.get("symbol_profiles_tracked"))
         add("accelerated_symbol_intelligence", _to_float(accelerated_symbol.get("drift_score"), 0.0), "accelerated_symbol_intelligence", accelerated_symbol.get("indexed_learning_records"))
+        add("realistic_shadow_lab", 100 - _to_float(shadow_lab.get("average_shadow_realism_score"), 55.0), "realistic_shadow_lab", shadow_lab.get("shadow_learning_events"))
+        add("realistic_shadow_lab", 100 - _to_float(shadow_lab.get("evidence_quality_score"), 55.0), "realistic_shadow_lab", shadow_lab.get("shadow_learning_events"))
+        add("realistic_shadow_lab", _to_float(shadow_lab.get("bandwidth_pressure_score"), 0.0), "realistic_shadow_lab", shadow_lab.get("shadow_learning_events"))
+        if _text(shadow_lab.get("provider_warning"), "none") not in {"none", ""}:
+            add("realistic_shadow_lab", 65.0, "realistic_shadow_lab_provider_warning", shadow_lab.get("shadow_learning_events"))
         add("continuation_quality", 100 - _to_float(decision.get("continuation_quality_score"), 50.0), "decision_optimization", decision.get("tracked_trades"))
         add("opportunity_cost", _to_float(decision.get("highest_opportunity_cost"), 0.0), "decision_optimization", decision.get("opportunity_rows_reviewed"))
         add("opportunity_cost", abs(_to_float(opportunity.get("average_opportunity_cost"), 0.0)), "opportunity_cost_learning", opportunity.get("rejected_candidates_reviewed"))
@@ -245,6 +253,7 @@ class AdaptiveLearningPrioritizationResourceAllocationV1:
             "profit_capture_peak_decay_validation": 0.98,
             "virtual_paper_convergence": 0.96,
             "accelerated_symbol_intelligence": 0.72,
+            "realistic_shadow_lab": 0.70,
             "symbol_memory": 0.55, "horizon_classification": 0.62, "worker_health": 0.72,
             "storage_health": 0.88, "retrieval_health": 0.74, "API_budget": 0.82,
         }

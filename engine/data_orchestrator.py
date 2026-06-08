@@ -76,7 +76,12 @@ _broad_universe_intake_promotion_suite = (
     BroadUniverseIntakePromotionV1(state_dir="state") if BroadUniverseIntakePromotionV1 is not None else None
 )
 _TEMP_STRATEGY_ENABLED = str(os.getenv("ASTRA_TEMP_PROVIDER_STRATEGY_V1", "1")).strip().lower() in {"1", "true", "yes", "on"}
-_TEMP_FMP_REST_DISABLED = str(os.getenv("ASTRA_TEMP_FMP_REST_DISABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+_FMP_SMART_BUDGET_ENABLED = str(os.getenv("ASTRA_FMP_SMART_BUDGET_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+_TEMP_FMP_REST_DISABLED_EXPLICIT = "ASTRA_TEMP_FMP_REST_DISABLED" in os.environ
+_TEMP_FMP_REST_DISABLED = (
+    str(os.getenv("ASTRA_TEMP_FMP_REST_DISABLED", "0" if _FMP_SMART_BUDGET_ENABLED else "1")).strip().lower()
+    in {"1", "true", "yes", "on"}
+)
 _TEMP_FMP_WS_MONITOR_ONLY = str(os.getenv("ASTRA_TEMP_FMP_WEBSOCKET_MONITOR_ONLY", "1")).strip().lower() in {"1", "true", "yes", "on"}
 try:
     _TEMP_DISCOVERY_CACHE_AGE = max(10.0, float(os.getenv("ASTRA_TEMP_DISCOVERY_CACHE_MAX_AGE_SECONDS", "45")))
@@ -106,9 +111,11 @@ _RANKING_META = {
     "provider_success_rate_by_provider": {},
     "provider_attempt_count": 0,
     "provider_success_count": 0,
-    "fmp_operating_mode": "conserve_rest",
-    "fmp_conserve_mode_active": True,
-    "fmp_rest_hard_limit_enabled": True,
+    "fmp_operating_mode": "smart_budget_rest" if _FMP_SMART_BUDGET_ENABLED and not _TEMP_FMP_REST_DISABLED else "conserve_rest",
+    "fmp_conserve_mode_active": bool(_TEMP_FMP_REST_DISABLED),
+    "fmp_rest_hard_limit_enabled": bool(_TEMP_FMP_REST_DISABLED),
+    "fmp_smart_budget_enabled": bool(_FMP_SMART_BUDGET_ENABLED),
+    "fmp_rest_disable_explicit": bool(_TEMP_FMP_REST_DISABLED_EXPLICIT),
     "fmp_websocket_allowed": True,
     "fmp_websocket_shortlist_only": True,
     "broad_discovery_reduced_in_conserve_mode": True,
@@ -408,9 +415,19 @@ def fetch_live_data(symbols=None):
                 "rate_limited": bool("FMP" in rate_limited),
             },
             "provider_role_policy": role_policy,
-            "fmp_operating_mode": "temporary_conserve_rest" if (_TEMP_STRATEGY_ENABLED and _TEMP_FMP_REST_DISABLED) else "normal",
+            "fmp_operating_mode": (
+                "emergency_conserve_rest"
+                if (_TEMP_STRATEGY_ENABLED and _TEMP_FMP_REST_DISABLED and _TEMP_FMP_REST_DISABLED_EXPLICIT)
+                else "smart_budget_rest"
+                if (_FMP_SMART_BUDGET_ENABLED and not _TEMP_FMP_REST_DISABLED)
+                else "temporary_conserve_rest"
+                if (_TEMP_STRATEGY_ENABLED and _TEMP_FMP_REST_DISABLED)
+                else "normal"
+            ),
             "fmp_conserve_mode_active": bool(_TEMP_STRATEGY_ENABLED and _TEMP_FMP_REST_DISABLED),
             "fmp_rest_hard_limit_enabled": bool(_TEMP_STRATEGY_ENABLED and _TEMP_FMP_REST_DISABLED),
+            "fmp_smart_budget_enabled": bool(_FMP_SMART_BUDGET_ENABLED),
+            "fmp_rest_disable_explicit": bool(_TEMP_FMP_REST_DISABLED_EXPLICIT),
             "fmp_websocket_allowed": bool(_TEMP_STRATEGY_ENABLED and _TEMP_FMP_WS_MONITOR_ONLY),
             "fmp_websocket_shortlist_only": bool(_TEMP_STRATEGY_ENABLED and _TEMP_FMP_WS_MONITOR_ONLY),
             "broad_discovery_reduced_in_conserve_mode": bool(_TEMP_STRATEGY_ENABLED),

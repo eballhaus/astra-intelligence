@@ -880,6 +880,77 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.realistic_shadow_evidence_learning_lab_v1 import RealisticShadowEvidenceLearningLabV1
+except Exception:
+    class RealisticShadowEvidenceLearningLabV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "paper_only_realistic_shadow_evidence_learning_lab",
+                "shadow_opportunities_tracked": 0,
+                "eligible_shadow_trades": 0,
+                "near_miss_shadow_trades": 0,
+                "discarded_unrealistic_trades": 0,
+                "virtual_paths_created": 0,
+                "shadow_learning_events": 0,
+                "completed_shadow_lifecycles": 0,
+                "average_shadow_realism_score": 0.0,
+                "high_realism_shadow_trades": 0,
+                "paper_engine_mirror_score": 0.0,
+                "shadow_portfolio_realism_score": 0.0,
+                "execution_realism_score": 0.0,
+                "evidence_quality_score": 0.0,
+                "high_value_lessons": 0,
+                "compressed_lessons": 0,
+                "discarded_noise_count": 0,
+                "consensus_lesson_count": 0,
+                "strongest_consensus_lesson": "unavailable",
+                "active_weakness_focus": "unavailable",
+                "top_failure_pattern": "unavailable",
+                "winning_policy": "unavailable",
+                "policy_tournament_score": 0.0,
+                "policy_confidence": 0.0,
+                "storage_pressure_score": 0.0,
+                "memory_pressure_score": 0.0,
+                "fmp_status": "unavailable",
+                "fmp_zero_usage_reason": "unknown_zero_usage",
+                "fmp_last_successful_call": "unavailable",
+                "fmp_last_fresh_data_timestamp": "unavailable",
+                "fmp_cache_hit_rate": 0.0,
+                "fmp_calls_used_today": 0,
+                "fmp_bandwidth_used_today": 0.0,
+                "fmp_budget_status": "unavailable",
+                "bandwidth_pressure_score": 0.0,
+                "data_freshness_score": 0.0,
+                "live_data_confidence_score": 0.0,
+                "provider_warning": "unavailable",
+                "recommended_safe_fix": "unavailable",
+                "safe_fix_applied": False,
+                "shadow_recommendation": "unavailable",
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "behavior_safe_to_apply": False,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "ranking_behavior_changed": False,
+                "paper_execution_behavior_changed": False,
+                "position_sizing_changed": False,
+                "thresholds_changed": False,
+                "portfolio_allocation_changed": False,
+                "paper_orders_placed": False,
+                "alpaca_orders_placed": False,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "natural_exit_preserved": True,
+                "forced_trades_enabled": False,
+                "forced_exits_enabled": False,
+            }
+try:
     from engine.adaptive_execution_exit_intelligence_v3 import AdaptiveExecutionExitIntelligenceV3
 except Exception:
     class AdaptiveExecutionExitIntelligenceV3:  # type: ignore[override]
@@ -2095,6 +2166,7 @@ ADAPTIVE_PROFIT_CAPTURE_INTELLIGENCE = AdaptiveProfitCaptureIntelligenceV1(state
 PROFIT_CAPTURE_PEAK_DECAY_EXIT_VALIDATION_SUITE = ProfitCapturePeakDecayExitValidationSuiteV1(state_dir=STATE)
 VIRTUAL_PAPER_CONVERGENCE_SYMBOL_ATTRIBUTION = VirtualPaperConvergenceSymbolAttributionV1(state_dir=STATE)
 ACCELERATED_LEARNING_SYMBOL_INTELLIGENCE_SUITE = AcceleratedLearningSymbolIntelligenceSuiteV1(state_dir=STATE)
+REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB = RealisticShadowEvidenceLearningLabV1(state_dir=STATE)
 ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V3 = AdaptiveExecutionExitIntelligenceV3(state_dir=STATE)
 EXIT_LEARNING_EXPANSION_SUITE = ExitLearningExpansionSuiteV1(state_dir=STATE)
 MARKET_CONTEXT_LEARNING_SUITE = MarketContextLearningSuiteV1(state_dir=STATE)
@@ -33975,13 +34047,18 @@ def _fmp_endpoint_compatibility_snapshot():
 
 def _fmp_rest_activation_gate(usage_summary, hard_stop_active, emergency_stop_active, daily_remaining_gb):
     conservative = bool(FMP_CONSERVATIVE_MODE)
+    smart_budget_enabled = str(os.getenv("ASTRA_FMP_SMART_BUDGET_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+    env_disable_explicit = "ASTRA_TEMP_FMP_REST_DISABLED" in os.environ
     env_disabled = bool(
-        str(os.getenv("ASTRA_TEMP_FMP_REST_DISABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+        str(os.getenv("ASTRA_TEMP_FMP_REST_DISABLED", "0" if smart_budget_enabled else "1")).strip().lower()
+        in {"1", "true", "yes", "on"}
     )
     usage_disabled = bool((usage_summary or {}).get("fmp_rest_temporarily_disabled", False))
     budget_ok = bool(_to_float(daily_remaining_gb, 0.0) > 0.0)
     activation_allowed = bool(
         conservative
+        and smart_budget_enabled
+        and not (env_disable_explicit and env_disabled)
         and not bool(hard_stop_active)
         and not bool(emergency_stop_active)
         and budget_ok
@@ -33989,6 +34066,10 @@ def _fmp_rest_activation_gate(usage_summary, hard_stop_active, emergency_stop_ac
     )
     if activation_allowed:
         reason = "activation_allowed_conservative_governed_cached"
+    elif env_disable_explicit and env_disabled:
+        reason = "blocked_explicit_emergency_conserve_mode"
+    elif not bool(smart_budget_enabled):
+        reason = "blocked_smart_budget_disabled"
     elif not conservative:
         reason = "blocked_non_conservative_mode"
     elif bool(emergency_stop_active):
@@ -33999,7 +34080,7 @@ def _fmp_rest_activation_gate(usage_summary, hard_stop_active, emergency_stop_ac
         reason = "blocked_no_daily_budget_remaining"
     elif not bool(FMP_CACHE_ENABLED):
         reason = "blocked_cache_required"
-    elif env_disabled or usage_disabled:
+    elif usage_disabled and not smart_budget_enabled:
         reason = "blocked_temp_disabled"
     else:
         reason = "blocked_unknown"
@@ -34007,7 +34088,11 @@ def _fmp_rest_activation_gate(usage_summary, hard_stop_active, emergency_stop_ac
         "activation_allowed": bool(activation_allowed),
         "activation_reason": str(reason),
         "env_temp_disabled": bool(env_disabled),
+        "env_temp_disabled_explicit": bool(env_disable_explicit),
         "usage_temp_disabled": bool(usage_disabled),
+        "fmp_smart_budget_enabled": bool(smart_budget_enabled),
+        "fmp_refresh_allowed_now": bool(activation_allowed),
+        "fmp_refresh_block_reason": "none" if activation_allowed else str(reason),
     }
 
 
@@ -34529,6 +34614,9 @@ def _fmp_usage_governor_snapshot(update=False):
             "fmp_enabled": bool(fmp_enabled),
             "fmp_rest_temporarily_disabled": bool(fmp_temp_disabled),
             "fmp_rest_governor_allowed": bool(fmp_governor_allowed),
+            "fmp_smart_budget_enabled": bool(fmp_gate.get("fmp_smart_budget_enabled", False)),
+            "fmp_refresh_allowed_now": bool(fmp_gate.get("fmp_refresh_allowed_now", False)),
+            "fmp_refresh_block_reason": str(fmp_gate.get("fmp_refresh_block_reason") or ""),
         }
         decision_summary = _provider_decision_summary_snapshot(governor_snapshot=governor_seed)
         tier_counts = _tier_symbol_counts_snapshot()
@@ -34570,6 +34658,10 @@ def _fmp_usage_governor_snapshot(update=False):
             "fmp_cache_hit_rate": round(_to_float(state.get("fmp_cache_hit_rate"), 0.0), 2),
             "fmp_calls_today": int(_to_float(state.get("fmp_calls_today"), 0.0)),
             "fmp_blocked_calls_today": int(_to_float(state.get("fmp_blocked_calls_today"), 0.0)),
+            "fmp_smart_budget_enabled": bool(fmp_gate.get("fmp_smart_budget_enabled", False)),
+            "fmp_rest_conserve_mode": bool(fmp_temp_disabled),
+            "fmp_refresh_allowed_now": bool(fmp_gate.get("fmp_refresh_allowed_now", False)),
+            "fmp_refresh_block_reason": str(fmp_gate.get("fmp_refresh_block_reason") or ""),
             "alpaca_ws_active": bool(ws.get("running", False)),
             "alpaca_ws_symbols": int(_to_float(ws.get("active_symbol_count"), 0.0)),
             "alpaca_rest_calls_today": int(_to_float(state.get("alpaca_rest_calls_today"), 0.0)),
@@ -34584,6 +34676,7 @@ def _fmp_usage_governor_snapshot(update=False):
             "fmp_rest_governor_allowed": bool(fmp_governor_allowed),
             "fmp_rest_activation_allowed": bool(fmp_governor_allowed),
             "fmp_rest_activation_reason": str(fmp_gate.get("activation_reason") or ""),
+            "fmp_rest_disable_explicit": bool(fmp_gate.get("env_temp_disabled_explicit", False)),
             "fmp_ws_available": bool(str(os.getenv("ASTRA_FMP_WS_ENABLED", "0")).strip().lower() in {"1", "true", "yes", "on"}),
             "fmp_ws_enabled": bool(str(os.getenv("ASTRA_FMP_WS_ENABLED", "0")).strip().lower() in {"1", "true", "yes", "on"}),
             "fmp_ws_active_symbols": 0,
@@ -40713,6 +40806,121 @@ def accelerated_learning_symbol_intelligence_suite_v1(force: bool = False):
             "human_review_required": True,
             "behavior_safe_to_apply": False,
         }
+
+
+@router.get("/api/realistic_shadow_evidence_learning_lab_v1")
+def realistic_shadow_evidence_learning_lab_v1(force: bool = False):
+    try:
+        out = dict(REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB.status(statuses=_learning_acceleration_status_bundle(), force=bool(force)) or {})
+        out["realistic_shadow_evidence_learning_lab_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["dashboard_scan_rows"] = int(_to_float(out.get("dashboard_scan_rows"), 0.0))
+        out["raw_history_scanned"] = False
+        out["raw_archive_scanned"] = False
+        out["full_history_scanned"] = False
+        out["paper_orders_placed"] = False
+        out["alpaca_orders_placed"] = False
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["ranking_behavior_changed"] = False
+        out["paper_execution_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["thresholds_changed"] = False
+        out["portfolio_allocation_changed"] = False
+        out["order_logic_changed"] = False
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        out["auto_apply_allowed"] = False
+        out["human_review_required"] = True
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "paper_only_realistic_shadow_evidence_learning_lab",
+            "realistic_shadow_evidence_learning_lab_v1": True,
+            "shadow_opportunities_tracked": 0,
+            "eligible_shadow_trades": 0,
+            "near_miss_shadow_trades": 0,
+            "discarded_unrealistic_trades": 0,
+            "virtual_paths_created": 0,
+            "shadow_learning_events": 0,
+            "completed_shadow_lifecycles": 0,
+            "average_shadow_realism_score": 0.0,
+            "high_realism_shadow_trades": 0,
+            "paper_engine_mirror_score": 0.0,
+            "shadow_portfolio_realism_score": 0.0,
+            "execution_realism_score": 0.0,
+            "evidence_quality_score": 0.0,
+            "high_value_lessons": 0,
+            "compressed_lessons": 0,
+            "discarded_noise_count": 0,
+            "consensus_lesson_count": 0,
+            "strongest_consensus_lesson": "unavailable",
+            "active_weakness_focus": "unavailable",
+            "top_failure_pattern": "unavailable",
+            "winning_policy": "unavailable",
+            "policy_tournament_score": 0.0,
+            "policy_confidence": 0.0,
+            "storage_pressure_score": 0.0,
+            "memory_pressure_score": 0.0,
+            "fmp_status": "unavailable",
+            "fmp_smart_budget_enabled": False,
+            "fmp_rest_conserve_mode": True,
+            "fmp_refresh_allowed_now": False,
+            "fmp_refresh_block_reason": "fallback_unavailable",
+            "fmp_zero_usage_reason": "unknown_zero_usage",
+            "fmp_last_successful_call": "unavailable",
+            "fmp_last_fresh_data_timestamp": "unavailable",
+            "fmp_cache_hit_rate": 0.0,
+            "fmp_calls_used_today": 0,
+            "fmp_bandwidth_used_today": 0.0,
+            "fmp_daily_call_limit": "call_limit_unknown",
+            "fmp_daily_bandwidth_limit": "bandwidth_limit_unknown",
+            "fmp_remaining_calls_estimate": "call_limit_unknown",
+            "fmp_remaining_bandwidth_estimate": "bandwidth_limit_unknown",
+            "fmp_budget_status": "unavailable",
+            "bandwidth_pressure_score": 0.0,
+            "data_freshness_score": 0.0,
+            "live_data_confidence_score": 0.0,
+            "provider_warning": "unavailable",
+            "recommended_safe_fix": "unavailable",
+            "safe_fix_applied": False,
+            "shadow_recommendation": "unavailable",
+            "degraded_reason": f"realistic_shadow_evidence_learning_lab_v1_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "dashboard_scan_rows": 0,
+            "raw_history_scanned": False,
+            "raw_archive_scanned": False,
+            "full_history_scanned": False,
+            "build_ms": 0.0,
+            "paper_orders_placed": False,
+            "alpaca_orders_placed": False,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "paper_execution_behavior_changed": False,
+            "position_sizing_changed": False,
+            "thresholds_changed": False,
+            "portfolio_allocation_changed": False,
+            "order_logic_changed": False,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+            "auto_apply_allowed": False,
+            "human_review_required": True,
+            "behavior_safe_to_apply": False,
+        }
 def _learning_acceleration_status_bundle() -> dict:
     statuses = {}
     for name, fn in (
@@ -40765,6 +40973,10 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["accelerated_learning_symbol_intelligence_suite_v1"] = ACCELERATED_LEARNING_SYMBOL_INTELLIGENCE_SUITE.status(statuses=statuses, force=False)
     except Exception:
         statuses["accelerated_learning_symbol_intelligence_suite_v1"] = {}
+    try:
+        statuses["realistic_shadow_evidence_learning_lab_v1"] = REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["realistic_shadow_evidence_learning_lab_v1"] = {}
     try:
         statuses["adaptive_learning_prioritization_resource_allocation_v1"] = ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False)
     except Exception:
@@ -41938,6 +42150,10 @@ def learning_issue_audit_status_v1(force: bool = False):
             statuses["accelerated_learning_symbol_intelligence_suite_v1"] = ACCELERATED_LEARNING_SYMBOL_INTELLIGENCE_SUITE.status(statuses=statuses, force=False)
         except Exception:
             statuses["accelerated_learning_symbol_intelligence_suite_v1"] = {}
+        try:
+            statuses["realistic_shadow_evidence_learning_lab_v1"] = REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["realistic_shadow_evidence_learning_lab_v1"] = {}
         try:
             statuses["adaptive_learning_prioritization_resource_allocation_v1"] = ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False)
         except Exception:
@@ -50359,6 +50575,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("long_term_memory_symbol_retrieval_suite_v1", lambda: LONG_TERM_MEMORY_SYMBOL_RETRIEVAL_SUITE.status(statuses=statuses, force=False))
         _safe_status("virtual_paper_convergence_symbol_attribution_v1", lambda: VIRTUAL_PAPER_CONVERGENCE_SYMBOL_ATTRIBUTION.status(statuses=statuses, force=False))
         _safe_status("accelerated_learning_symbol_intelligence_suite_v1", lambda: ACCELERATED_LEARNING_SYMBOL_INTELLIGENCE_SUITE.status(statuses=statuses, force=False))
+        _safe_status("realistic_shadow_evidence_learning_lab_v1", lambda: REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB.status(statuses=statuses, force=False))
         _safe_status("adaptive_learning_prioritization_resource_allocation_v1", lambda: ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False))
         _safe_status("autonomous_intelligence_validation_governance_v1", lambda: AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE.status(statuses=statuses, force=False))
         _safe_status("trade_archetype_regime", lambda: TRADE_ARCHETYPE_REGIME_INTELLIGENCE.status(force=False))

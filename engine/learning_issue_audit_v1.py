@@ -587,6 +587,7 @@ class LearningIssueAuditV1:
         long_memory = dict(statuses.get("long_term_memory_symbol_retrieval_suite_v1") or {})
         virtual_convergence = dict(statuses.get("virtual_paper_convergence_symbol_attribution_v1") or {})
         accelerated_symbol = dict(statuses.get("accelerated_learning_symbol_intelligence_suite_v1") or {})
+        shadow_lab = dict(statuses.get("realistic_shadow_evidence_learning_lab_v1") or {})
         learning_allocator = dict(statuses.get("adaptive_learning_prioritization_resource_allocation_v1") or {})
         autonomous_governance = dict(statuses.get("autonomous_intelligence_validation_governance_v1") or {})
         v3_issue = _issue(
@@ -766,6 +767,22 @@ class LearningIssueAuditV1:
             "Use accelerated symbol intelligence to mine cached history and peer evidence; keep all behavior unchanged.",
             _text(accelerated_symbol.get("shadow_recommendation"), "No behavior change."),
         )
+        shadow_lab_issue = _issue(
+            "realistic_shadow_evidence_learning_lab_active" if shadow_lab.get("enabled") else "realistic_shadow_evidence_learning_lab_unavailable",
+            "shadow_only_realistic_paper_like_evidence_generation_active" if shadow_lab.get("enabled") else "realistic_shadow_evidence_learning_lab_not_available",
+            "medium"
+            if shadow_lab.get("enabled")
+            and (
+                _to_float(shadow_lab.get("average_shadow_realism_score"), 100.0) < 45.0
+                or _text(shadow_lab.get("provider_warning"), "none") not in {"none", ""}
+                or bool(shadow_lab.get("paper_orders_placed", False))
+                or bool(shadow_lab.get("alpaca_orders_placed", False))
+            )
+            else "low",
+            _to_int(shadow_lab.get("shadow_learning_events"), 0),
+            "Use realistic shadow lab evidence only for compressed shadow learning; keep broker and paper execution unchanged.",
+            _text(shadow_lab.get("shadow_recommendation"), "No behavior change."),
+        )
         learning_allocator_issue = _issue(
             "adaptive_learning_prioritization_active" if learning_allocator.get("enabled") else "adaptive_learning_prioritization_unavailable",
             "weakness_detection_learning_value_resource_allocation_worker_replay_memory_and_governance_diagnostics_active" if learning_allocator.get("enabled") else "adaptive_learning_prioritization_not_available",
@@ -816,6 +833,7 @@ class LearningIssueAuditV1:
             "long_term_memory_symbol_retrieval_suite_v1": long_memory_issue,
             "virtual_paper_convergence_symbol_attribution_v1": virtual_convergence_issue,
             "accelerated_learning_symbol_intelligence_suite_v1": accelerated_symbol_issue,
+            "realistic_shadow_evidence_learning_lab_v1": shadow_lab_issue,
             "adaptive_learning_prioritization_resource_allocation_v1": learning_allocator_issue,
             "autonomous_intelligence_validation_governance_v1": autonomous_governance_issue,
         }
@@ -846,6 +864,7 @@ class LearningIssueAuditV1:
             "long_term_memory_symbol_retrieval_status": long_memory_issue,
             "virtual_paper_convergence_symbol_attribution_status": virtual_convergence_issue,
             "accelerated_learning_symbol_intelligence_status": accelerated_symbol_issue,
+            "realistic_shadow_evidence_learning_lab_status": shadow_lab_issue,
             "adaptive_learning_prioritization_resource_allocation_status": learning_allocator_issue,
             "autonomous_intelligence_validation_governance_status": autonomous_governance_issue,
             "execution_participation_display_status": exec_issue,
@@ -1257,6 +1276,69 @@ class LearningIssueAuditV1:
                 "paper_execution_behavior_changed": bool(accelerated_symbol.get("paper_execution_behavior_changed", False)),
                 "position_sizing_changed": bool(accelerated_symbol.get("position_sizing_changed", False)),
                 "thresholds_changed": bool(accelerated_symbol.get("thresholds_changed", False)),
+            },
+            "realistic_shadow_evidence_learning_lab_diagnostics": {
+                "shadow_opportunities_tracked": shadow_lab.get("shadow_opportunities_tracked"),
+                "eligible_shadow_trades": shadow_lab.get("eligible_shadow_trades"),
+                "near_miss_shadow_trades": shadow_lab.get("near_miss_shadow_trades"),
+                "discarded_unrealistic_trades": shadow_lab.get("discarded_unrealistic_trades"),
+                "virtual_paths_created": shadow_lab.get("virtual_paths_created"),
+                "shadow_learning_events": shadow_lab.get("shadow_learning_events"),
+                "completed_shadow_lifecycles": shadow_lab.get("completed_shadow_lifecycles"),
+                "average_shadow_realism_score": shadow_lab.get("average_shadow_realism_score"),
+                "high_realism_shadow_trades": shadow_lab.get("high_realism_shadow_trades"),
+                "paper_engine_mirror_score": shadow_lab.get("paper_engine_mirror_score"),
+                "shadow_portfolio_realism_score": shadow_lab.get("shadow_portfolio_realism_score"),
+                "execution_realism_score": shadow_lab.get("execution_realism_score"),
+                "evidence_quality_score": shadow_lab.get("evidence_quality_score"),
+                "high_value_lessons": shadow_lab.get("high_value_lessons"),
+                "compressed_lessons": shadow_lab.get("compressed_lessons"),
+                "discarded_noise_count": shadow_lab.get("discarded_noise_count"),
+                "consensus_lesson_count": shadow_lab.get("consensus_lesson_count"),
+                "strongest_consensus_lesson": shadow_lab.get("strongest_consensus_lesson"),
+                "active_weakness_focus": shadow_lab.get("active_weakness_focus"),
+                "top_failure_pattern": shadow_lab.get("top_failure_pattern"),
+                "winning_policy": shadow_lab.get("winning_policy"),
+                "policy_tournament_score": shadow_lab.get("policy_tournament_score"),
+                "policy_confidence": shadow_lab.get("policy_confidence"),
+                "storage_pressure_score": shadow_lab.get("storage_pressure_score"),
+                "memory_pressure_score": shadow_lab.get("memory_pressure_score"),
+                "fmp_status": shadow_lab.get("fmp_status"),
+                "fmp_smart_budget_enabled": bool(shadow_lab.get("fmp_smart_budget_enabled", False)),
+                "fmp_rest_conserve_mode": bool(shadow_lab.get("fmp_rest_conserve_mode", False)),
+                "fmp_refresh_allowed_now": bool(shadow_lab.get("fmp_refresh_allowed_now", False)),
+                "fmp_refresh_block_reason": shadow_lab.get("fmp_refresh_block_reason"),
+                "fmp_zero_usage_reason": shadow_lab.get("fmp_zero_usage_reason"),
+                "fmp_last_successful_call": shadow_lab.get("fmp_last_successful_call"),
+                "fmp_last_fresh_data_timestamp": shadow_lab.get("fmp_last_fresh_data_timestamp"),
+                "fmp_cache_hit_rate": shadow_lab.get("fmp_cache_hit_rate"),
+                "fmp_calls_used_today": shadow_lab.get("fmp_calls_used_today"),
+                "fmp_bandwidth_used_today": shadow_lab.get("fmp_bandwidth_used_today"),
+                "fmp_daily_call_limit": shadow_lab.get("fmp_daily_call_limit"),
+                "fmp_daily_bandwidth_limit": shadow_lab.get("fmp_daily_bandwidth_limit"),
+                "fmp_remaining_calls_estimate": shadow_lab.get("fmp_remaining_calls_estimate"),
+                "fmp_remaining_bandwidth_estimate": shadow_lab.get("fmp_remaining_bandwidth_estimate"),
+                "fmp_budget_status": shadow_lab.get("fmp_budget_status"),
+                "bandwidth_pressure_score": shadow_lab.get("bandwidth_pressure_score"),
+                "data_freshness_score": shadow_lab.get("data_freshness_score"),
+                "live_data_confidence_score": shadow_lab.get("live_data_confidence_score"),
+                "provider_warning": shadow_lab.get("provider_warning"),
+                "recommended_safe_fix": shadow_lab.get("recommended_safe_fix"),
+                "safe_fix_applied": bool(shadow_lab.get("safe_fix_applied", False)),
+                "paper_orders_placed": bool(shadow_lab.get("paper_orders_placed", False)),
+                "alpaca_orders_placed": bool(shadow_lab.get("alpaca_orders_placed", False)),
+                "api_calls_used": shadow_lab.get("api_calls_used"),
+                "provider_calls_used": shadow_lab.get("provider_calls_used"),
+                "llm_calls_used": shadow_lab.get("llm_calls_used"),
+                "dashboard_scan_rows": shadow_lab.get("dashboard_scan_rows"),
+                "raw_history_scanned": bool(shadow_lab.get("raw_history_scanned", False)),
+                "raw_archive_scanned": bool(shadow_lab.get("raw_archive_scanned", False)),
+                "shadow_recommendation": shadow_lab.get("shadow_recommendation"),
+                "behavior_safe_to_apply": bool(shadow_lab.get("behavior_safe_to_apply", False)),
+                "ranking_behavior_changed": bool(shadow_lab.get("ranking_behavior_changed", False)),
+                "paper_execution_behavior_changed": bool(shadow_lab.get("paper_execution_behavior_changed", False)),
+                "position_sizing_changed": bool(shadow_lab.get("position_sizing_changed", False)),
+                "thresholds_changed": bool(shadow_lab.get("thresholds_changed", False)),
             },
             "adaptive_learning_prioritization_resource_allocation_diagnostics": {
                 "top_weakness": learning_allocator.get("top_weakness"),

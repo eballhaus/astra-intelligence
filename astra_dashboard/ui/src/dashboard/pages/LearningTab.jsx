@@ -146,6 +146,7 @@ export default function LearningTab({ compact = false }) {
   const [showProfitCapturePeakDecayValidationDetails, setShowProfitCapturePeakDecayValidationDetails] = useState(false);
   const [showVirtualPaperConvergenceDetails, setShowVirtualPaperConvergenceDetails] = useState(false);
   const [showAcceleratedSymbolLearningDetails, setShowAcceleratedSymbolLearningDetails] = useState(false);
+  const [showRealisticShadowLabDetails, setShowRealisticShadowLabDetails] = useState(false);
   const [showAdaptiveExitV3Details, setShowAdaptiveExitV3Details] = useState(false);
   const [showExitLearningExpansionDetails, setShowExitLearningExpansionDetails] = useState(false);
   const [showMarketContextLearningDetails, setShowMarketContextLearningDetails] = useState(false);
@@ -1594,6 +1595,7 @@ export default function LearningTab({ compact = false }) {
   const profitCapturePeakDecayExitValidation = unified?.profit_capture_peak_decay_exit_validation_suite_v1 || {};
   const virtualPaperConvergence = unified?.virtual_paper_convergence_symbol_attribution_v1 || {};
   const acceleratedSymbolLearning = unified?.accelerated_learning_symbol_intelligence_suite_v1 || {};
+  const realisticShadowLab = unified?.realistic_shadow_evidence_learning_lab_v1 || {};
   const adaptiveExecutionExitV3 = unified?.adaptive_execution_exit_intelligence_v3 || {};
   const exitLearningExpansion = unified?.exit_learning_expansion_suite_v1 || {};
   const marketContextLearning = unified?.market_context_learning_suite_v1 || {};
@@ -1962,6 +1964,110 @@ export default function LearningTab({ compact = false }) {
             </ResponsiveContainer>
           </ChartShell>
         </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Realistic Shadow Evidence Learning Lab V1</h3>
+            <div style={{ fontSize: 12, color: "#9fb1cc" }}>
+              Astra is generating realistic shadow-only paper-trade simulations without placing broker orders. Each shadow trade must resemble a real paper-trade candidate, pass eligibility and realism checks, follow a full lifecycle, account for execution friction, and only promote high-quality lessons. Astra also verifies FMP/API freshness and budget safety without increasing dashboard API use.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowRealisticShadowLabDetails((v) => !v)}
+            style={{
+              background: "linear-gradient(180deg, #1f3c64 0%, #163254 100%)",
+              color: "#dce7ff",
+              border: "1px solid #496a97",
+              borderRadius: "6px",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            {showRealisticShadowLabDetails ? "Hide Details" : "Show Details"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Shadow opportunities", realisticShadowLab?.shadow_opportunities_tracked],
+            ["Eligible shadow", realisticShadowLab?.eligible_shadow_trades],
+            ["Near miss", realisticShadowLab?.near_miss_shadow_trades],
+            ["Virtual paths", realisticShadowLab?.virtual_paths_created],
+            ["Learning events", realisticShadowLab?.shadow_learning_events],
+            ["Completed lifecycles", realisticShadowLab?.completed_shadow_lifecycles],
+            ["Realism score", safeNumber(realisticShadowLab?.average_shadow_realism_score).toFixed(1)],
+            ["Mirror score", safeNumber(realisticShadowLab?.paper_engine_mirror_score).toFixed(1)],
+            ["Portfolio realism", safeNumber(realisticShadowLab?.shadow_portfolio_realism_score).toFixed(1)],
+            ["Execution realism", safeNumber(realisticShadowLab?.execution_realism_score).toFixed(1)],
+            ["Evidence quality", safeNumber(realisticShadowLab?.evidence_quality_score).toFixed(1)],
+            ["High-value lessons", realisticShadowLab?.high_value_lessons],
+            ["Discarded noise", realisticShadowLab?.discarded_noise_count],
+            ["Consensus lesson", realisticShadowLab?.strongest_consensus_lesson],
+            ["Weakness focus", realisticShadowLab?.active_weakness_focus],
+            ["Failure pattern", realisticShadowLab?.top_failure_pattern],
+            ["Winning policy", realisticShadowLab?.winning_policy],
+            ["Policy confidence", safeNumber(realisticShadowLab?.policy_confidence).toFixed(1)],
+            ["Storage pressure", safeNumber(realisticShadowLab?.storage_pressure_score).toFixed(1)],
+            ["Memory pressure", safeNumber(realisticShadowLab?.memory_pressure_score).toFixed(1)],
+            ["FMP status", realisticShadowLab?.fmp_status],
+            ["Smart budget", realisticShadowLab?.fmp_smart_budget_enabled ? "enabled" : "disabled"],
+            ["Refresh allowed now", realisticShadowLab?.fmp_refresh_allowed_now ? "yes" : "no"],
+            ["Refresh block reason", realisticShadowLab?.fmp_refresh_block_reason],
+            ["Zero usage reason", realisticShadowLab?.fmp_zero_usage_reason],
+            ["Last fresh FMP", realisticShadowLab?.fmp_last_fresh_data_timestamp],
+            ["FMP cache hit", `${safeNumber(realisticShadowLab?.fmp_cache_hit_rate).toFixed(1)}%`],
+            ["FMP call limit", realisticShadowLab?.fmp_daily_call_limit],
+            ["FMP bandwidth limit", realisticShadowLab?.fmp_daily_bandwidth_limit],
+            ["FMP budget", realisticShadowLab?.fmp_budget_status],
+            ["Bandwidth pressure", safeNumber(realisticShadowLab?.bandwidth_pressure_score).toFixed(1)],
+            ["Data freshness", safeNumber(realisticShadowLab?.data_freshness_score).toFixed(1)],
+            ["Provider warning", realisticShadowLab?.provider_warning],
+            ["Recommended fix", realisticShadowLab?.recommended_safe_fix],
+            ["Safe fix applied", realisticShadowLab?.safe_fix_applied ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>
+                {typeof value === "number" ? value.toFixed(0) : String(value || "warming up").replaceAll("_", " ")}
+              </div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(realisticShadowLab?.shadow_recommendation || "Continue realistic shadow evidence learning with no broker actions.").replaceAll("_", " ")}
+          </div>
+        </div>
+        {showRealisticShadowLabDetails ? (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, fontSize: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Lifecycle & Path Quality</div>
+              <div>Best path: {String(realisticShadowLab?.best_virtual_path || "warming up").replaceAll("_", " ")}</div>
+              <div>Best exit style: {String(realisticShadowLab?.best_exit_style || "warming up").replaceAll("_", " ")}</div>
+              <div>Virtual path score: {safeNumber(realisticShadowLab?.virtual_path_quality_score).toFixed(1)}</div>
+              <div>Shadow MFE/MAE: {safeNumber(realisticShadowLab?.shadow_avg_MFE).toFixed(2)} / {safeNumber(realisticShadowLab?.shadow_avg_MAE).toFixed(2)}</div>
+              <div>Capture/giveback: {safeNumber(realisticShadowLab?.shadow_capture_ratio).toFixed(2)} / {safeNumber(realisticShadowLab?.shadow_giveback_pct).toFixed(2)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Lesson Pipeline</div>
+              <div>Raw observations: {safeNumber(realisticShadowLab?.raw_observations).toFixed(0)}</div>
+              <div>Candidate lessons: {safeNumber(realisticShadowLab?.candidate_lessons).toFixed(0)}</div>
+              <div>Validated lessons: {safeNumber(realisticShadowLab?.validated_lessons).toFixed(0)}</div>
+              <div>High-confidence lessons: {safeNumber(realisticShadowLab?.high_confidence_lessons).toFixed(0)}</div>
+              <div>Future policy candidates: {safeNumber(realisticShadowLab?.future_policy_candidates).toFixed(0)}</div>
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "9px 10px" }}>
+              <div style={{ color: "#dbeafe", fontWeight: 800, marginBottom: 6 }}>Governance Firewall</div>
+              <div>Shadow lab safe: {realisticShadowLab?.shadow_lab_safe ? "yes" : "no"}</div>
+              <div>Paper orders placed: {realisticShadowLab?.paper_orders_placed ? "yes" : "no"}</div>
+              <div>Alpaca orders placed: {realisticShadowLab?.alpaca_orders_placed ? "yes" : "no"}</div>
+              <div>API/provider/LLM calls: {safeNumber(realisticShadowLab?.api_calls_used).toFixed(0)}/{safeNumber(realisticShadowLab?.provider_calls_used).toFixed(0)}/{safeNumber(realisticShadowLab?.llm_calls_used).toFixed(0)}</div>
+              <div>Raw archive scanned: {realisticShadowLab?.raw_archive_scanned ? "yes" : "no"}</div>
+              <div>Behavior safe to apply: {realisticShadowLab?.behavior_safe_to_apply ? "yes" : "no"}</div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div style={{ ...panelStyle }}>

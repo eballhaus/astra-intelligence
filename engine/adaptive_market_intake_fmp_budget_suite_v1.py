@@ -135,6 +135,13 @@ class AdaptiveMarketIntakeFmpBudgetSuiteV1:
         governor = _read_json(self.api_governor_path)
         manifest = _read_json(self.fmp_efficiency_manifest_path)
         cache_index = _read_json(self.fmp_cache_index_path)
+        smart_budget_enabled = str(os.getenv("ASTRA_FMP_SMART_BUDGET_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+        emergency_disable_explicit = "ASTRA_TEMP_FMP_REST_DISABLED" in os.environ
+        emergency_conserve_active = bool(
+            str(os.getenv("ASTRA_TEMP_FMP_REST_DISABLED", "0" if smart_budget_enabled else "1")).strip().lower()
+            in {"1", "true", "yes", "on"}
+            and emergency_disable_explicit
+        )
         now = _now()
         _, days_in_month = calendar.monthrange(now.year, now.month)
         days_remaining = max(1, days_in_month - now.day + 1)
@@ -162,6 +169,8 @@ class AdaptiveMarketIntakeFmpBudgetSuiteV1:
         fmp_hard_stop = bool(governor.get("fmp_hard_stop_active") or governor.get("fmp_emergency_stop_active"))
         fmp_warning = bool(governor.get("fmp_warning_active"))
         fmp_allowed = bool(governor.get("fmp_rest_governor_allowed", True))
+        fmp_refresh_allowed_now = bool(governor.get("fmp_refresh_allowed_now", fmp_allowed))
+        fmp_refresh_block_reason = _safe_text(governor.get("fmp_refresh_block_reason"), "none" if fmp_refresh_allowed_now else "unknown")
         blocked_calls = _to_int(fmp_usage.get("fmp_blocked_calls_today"), _to_int(governor.get("fmp_blocked_calls_today"), 0))
         cache_hit_rate = _to_float(fmp_usage.get("fmp_cache_hit_rate"), _to_float(governor.get("fmp_cache_hit_rate"), 0.0))
         runtime = self._runtime_health()
@@ -207,6 +216,10 @@ class AdaptiveMarketIntakeFmpBudgetSuiteV1:
             "adaptive_market_intake_fmp_budget_status_v1": True,
             "generated_at": _now_iso(),
             "bandwidth_source": "local_estimate",
+            "fmp_smart_budget_enabled": bool(smart_budget_enabled),
+            "fmp_rest_conserve_mode": bool(emergency_conserve_active or not fmp_allowed),
+            "fmp_refresh_allowed_now": bool(fmp_refresh_allowed_now),
+            "fmp_refresh_block_reason": str(fmp_refresh_block_reason),
             "monthly_bandwidth_limit_gb": round(limit_gb, 3),
             "current_monthly_bandwidth_used_gb": round(used_gb, 6),
             "current_utilization_pct": round(current_utilization_pct, 4),
@@ -234,6 +247,9 @@ class AdaptiveMarketIntakeFmpBudgetSuiteV1:
                 "degraded_count": degraded_count,
                 "providers_seen": provider_seen,
                 "fmp_rest_governor_allowed": fmp_allowed,
+                "fmp_smart_budget_enabled": bool(smart_budget_enabled),
+                "fmp_refresh_allowed_now": bool(fmp_refresh_allowed_now),
+                "fmp_refresh_block_reason": str(fmp_refresh_block_reason),
                 "fmp_hard_stop_active": fmp_hard_stop,
                 "fmp_warning_active": fmp_warning,
                 "fmp_blocked_calls_today": blocked_calls,
