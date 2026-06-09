@@ -521,6 +521,7 @@ export default function LearningTab({ compact = false }) {
   const unifiedLearningDiagnostics = data.unifiedLearningDiagnostics || {};
   const paperStatus = data.paperStatus || {};
   const horizonCoverageSummary = unifiedLearningDiagnostics?.horizon_coverage_summary || {};
+  const multiHorizonAdaptiveLifecycle = unifiedLearningDiagnostics?.multi_horizon_intelligence_adaptive_lifecycle_suite_v1 || {};
   const workerStatus = {
     ...(paperStatus?.worker || {}),
     ...(data.workerStatus || {}),
@@ -5483,6 +5484,37 @@ export default function LearningTab({ compact = false }) {
           </div>
         </div>
       </div>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Multi-Horizon Intelligence & Adaptive Lifecycle Suite V1</summary>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12, marginTop: 12 }}>
+          <div>Suite status: {String(multiHorizonAdaptiveLifecycle?.suite_status || "waiting_for_data").replaceAll("_", " ")}</div>
+          <div>Horizons tested: {(Array.isArray(multiHorizonAdaptiveLifecycle?.horizons_tested) ? multiHorizonAdaptiveLifecycle.horizons_tested : []).join(", ").replaceAll("_", " ") || "waiting for data"}</div>
+          <div>Missing horizons: {Array.isArray(multiHorizonAdaptiveLifecycle?.missing_horizons)
+            ? multiHorizonAdaptiveLifecycle.missing_horizons.join(", ").replaceAll("_", " ") || "none"
+            : `fine ${(Array.isArray(multiHorizonAdaptiveLifecycle?.missing_horizons?.fine) ? multiHorizonAdaptiveLifecycle.missing_horizons.fine : []).slice(0, 6).join(", ").replaceAll("_", " ") || "none"}`}</div>
+          <div>Dominant paper horizon: {String(multiHorizonAdaptiveLifecycle?.dominant_paper_horizon || "insufficient_data").replaceAll("_", " ")}</div>
+          <div>Dominant shadow horizon: {String(multiHorizonAdaptiveLifecycle?.dominant_shadow_horizon || "insufficient_data").replaceAll("_", " ")}</div>
+          <div>Best horizon: {String(multiHorizonAdaptiveLifecycle?.best_horizon || "insufficient_data").replaceAll("_", " ")}</div>
+          <div>Weakest horizon: {String(multiHorizonAdaptiveLifecycle?.weakest_horizon || "insufficient_data").replaceAll("_", " ")}</div>
+          <div>Horizon mismatch risk: {safeNumber(multiHorizonAdaptiveLifecycle?.horizon_mismatch_risk_score).toFixed(1)}</div>
+          <div>Best symbol horizon: {String(multiHorizonAdaptiveLifecycle?.best_symbol_horizon || "insufficient_data").replaceAll("_", " ")}</div>
+          <div>Worst symbol horizon: {String(multiHorizonAdaptiveLifecycle?.worst_symbol_horizon || "insufficient_data").replaceAll("_", " ")}</div>
+          <div>Strongest setup horizon: {String(multiHorizonAdaptiveLifecycle?.strongest_setup_horizon || "insufficient_data").replaceAll("_", " ")}</div>
+          <div>Strongest catalyst horizon: {String(multiHorizonAdaptiveLifecycle?.strongest_catalyst_horizon || "insufficient_data").replaceAll("_", " ")}</div>
+          <div>Strongest peer pattern: {String(multiHorizonAdaptiveLifecycle?.strongest_peer_group_pattern || "insufficient_data").replaceAll("_", " ")}</div>
+          <div>Estimated profit lost to mismatch: {safeNumber(multiHorizonAdaptiveLifecycle?.estimated_profit_lost_to_horizon_mismatch).toFixed(2)}</div>
+          <div>Learned exits applied: {multiHorizonAdaptiveLifecycle?.learned_exits_applied ? "yes" : "no"}</div>
+          <div>Behavior safe to apply: {multiHorizonAdaptiveLifecycle?.behavior_safe_to_apply ? "yes" : "no"}</div>
+          <div>API/provider/LLM calls: {safeNumber(multiHorizonAdaptiveLifecycle?.api_calls_used).toFixed(0)} / {safeNumber(multiHorizonAdaptiveLifecycle?.provider_calls_used).toFixed(0)} / {safeNumber(multiHorizonAdaptiveLifecycle?.llm_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Next recommended test: {String(multiHorizonAdaptiveLifecycle?.next_recommended_test || "waiting for diagnostics").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Astra is learning whether each opportunity behaves best as a scalp, day trade, or swing by comparing horizon outcomes, lifecycle signals, and peer-group behavior. This remains shadow-only and does not change exits, entries, sizing, or broker behavior.
+          </div>
+        </div>
+      </details>
 
       <div style={{ ...panelStyle }}>
         <h3 style={{ marginTop: 0 }}>Multi-Horizon Paper Trading Learning</h3>

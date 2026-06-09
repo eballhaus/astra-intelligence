@@ -1411,6 +1411,46 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.multi_horizon_intelligence_adaptive_lifecycle_suite_v1 import MultiHorizonIntelligenceAdaptiveLifecycleSuiteV1
+except Exception:
+    class MultiHorizonIntelligenceAdaptiveLifecycleSuiteV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "paper_only_shadow_multi_horizon_adaptive_lifecycle",
+                "suite_status": "unavailable",
+                "horizons_tested": [],
+                "missing_horizons": {"fine": [], "coarse": ["scalp", "day_trade", "swing_trade"]},
+                "dominant_paper_horizon": "unavailable",
+                "dominant_shadow_horizon": "unavailable",
+                "best_horizon": "unavailable",
+                "weakest_horizon": "unavailable",
+                "horizon_mismatch_risk_score": 0.0,
+                "best_symbol_horizon": "unavailable",
+                "worst_symbol_horizon": "unavailable",
+                "strongest_setup_horizon": "unavailable",
+                "strongest_catalyst_horizon": "unavailable",
+                "strongest_peer_group_pattern": "unavailable",
+                "estimated_profit_lost_to_horizon_mismatch": 0.0,
+                "learned_exits_applied": False,
+                "behavior_safe_to_apply": False,
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "ranking_behavior_changed": False,
+                "paper_execution_behavior_changed": False,
+                "position_sizing_changed": False,
+                "thresholds_changed": False,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+            }
+try:
     from engine.adaptive_learning_prioritization_resource_allocation_v1 import AdaptiveLearningPrioritizationResourceAllocationV1
 except Exception:
     class AdaptiveLearningPrioritizationResourceAllocationV1:  # type: ignore[override]
@@ -2179,6 +2219,7 @@ CATALYST_THEME_NARRATIVE_CAPITAL_FLOW_INTELLIGENCE_V2 = CatalystThemeNarrativeCa
 DECISION_OPTIMIZATION_TRADE_MANAGEMENT_SUITE = DecisionOptimizationTradeManagementSuiteV1(state_dir=STATE)
 FULL_OPPORTUNITY_LIFECYCLE_LEARNING_SUITE = FullOpportunityLifecycleLearningSuiteV1(state_dir=STATE)
 LONG_TERM_MEMORY_SYMBOL_RETRIEVAL_SUITE = LongTermMemorySymbolRetrievalSuiteV1(state_dir=STATE)
+MULTI_HORIZON_INTELLIGENCE_ADAPTIVE_LIFECYCLE_SUITE = MultiHorizonIntelligenceAdaptiveLifecycleSuiteV1(state_dir=STATE)
 ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION = AdaptiveLearningPrioritizationResourceAllocationV1(state_dir=STATE)
 AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE = AutonomousIntelligenceValidationGovernanceV1(state_dir=STATE)
 TRADE_ARCHETYPE_REGIME_INTELLIGENCE = TradeArchetypeRegimeIntelligenceV1(state_dir=STATE)
@@ -41015,6 +41056,94 @@ def realistic_shadow_evidence_learning_lab_v1(force: bool = False):
             "human_review_required": True,
             "behavior_safe_to_apply": False,
         }
+
+
+@router.get("/api/multi_horizon_intelligence_adaptive_lifecycle_suite_v1")
+def multi_horizon_intelligence_adaptive_lifecycle_suite_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        try:
+            statuses["horizon_performance_dashboard"] = HORIZON_PERFORMANCE_DASHBOARD.status()
+        except Exception:
+            statuses["horizon_performance_dashboard"] = {}
+        try:
+            statuses["multi_horizon_paper_trading"] = MULTI_HORIZON_PAPER_TRADING_SUITE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["multi_horizon_paper_trading"] = {}
+        try:
+            statuses["horizon_coverage_summary"] = UNIFIED_LEARNING_DIAGNOSTICS.build({"statuses": statuses}, force=False).get("horizon_coverage_summary") or {}
+        except Exception:
+            statuses["horizon_coverage_summary"] = {}
+        out = dict(MULTI_HORIZON_INTELLIGENCE_ADAPTIVE_LIFECYCLE_SUITE.status(statuses=statuses, force=bool(force) or bool(statuses.get("horizon_coverage_summary"))) or {})
+        out["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["dashboard_scan_rows"] = int(_to_float(out.get("dashboard_scan_rows"), 0.0))
+        out["raw_history_scanned"] = False
+        out["raw_archive_scanned"] = False
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["ranking_behavior_changed"] = False
+        out["paper_execution_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["thresholds_changed"] = False
+        out["portfolio_allocation_changed"] = False
+        out["order_logic_changed"] = False
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_trades_enabled"] = False
+        out["forced_exits_enabled"] = False
+        out["auto_apply_allowed"] = False
+        out["human_review_required"] = True
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "paper_only_shadow_multi_horizon_adaptive_lifecycle",
+            "multi_horizon_intelligence_adaptive_lifecycle_suite_v1": True,
+            "suite_status": "unavailable",
+            "horizons_tested": [],
+            "missing_horizons": {"fine": [], "coarse": ["scalp", "day_trade", "swing_trade"]},
+            "dominant_paper_horizon": "unavailable",
+            "dominant_shadow_horizon": "unavailable",
+            "best_horizon": "unavailable",
+            "weakest_horizon": "unavailable",
+            "horizon_mismatch_risk_score": 0.0,
+            "best_symbol_horizon": "unavailable",
+            "worst_symbol_horizon": "unavailable",
+            "strongest_setup_horizon": "unavailable",
+            "strongest_catalyst_horizon": "unavailable",
+            "strongest_peer_group_pattern": "unavailable",
+            "estimated_profit_lost_to_horizon_mismatch": 0.0,
+            "learned_exits_applied": False,
+            "behavior_safe_to_apply": False,
+            "degraded_reason": f"multi_horizon_intelligence_adaptive_lifecycle_suite_v1_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "dashboard_scan_rows": 0,
+            "raw_history_scanned": False,
+            "raw_archive_scanned": False,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "paper_execution_behavior_changed": False,
+            "position_sizing_changed": False,
+            "thresholds_changed": False,
+            "portfolio_allocation_changed": False,
+            "order_logic_changed": False,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_trades_enabled": False,
+            "forced_exits_enabled": False,
+            "auto_apply_allowed": False,
+            "human_review_required": True,
+        }
 def _learning_acceleration_status_bundle() -> dict:
     statuses = {}
     for name, fn in (
@@ -41029,6 +41158,8 @@ def _learning_acceleration_status_bundle() -> dict:
         ("trade_archetype_regime", lambda: TRADE_ARCHETYPE_REGIME_INTELLIGENCE.status(force=False)),
         ("blind_spot_detection", lambda: BLIND_SPOT_DETECTION.status(force=False)),
         ("portfolio_diversification_correlation_v2", lambda: PORTFOLIO_DIVERSIFICATION_CORRELATION_V2.status(rows=[])),
+        ("horizon_performance_dashboard", lambda: HORIZON_PERFORMANCE_DASHBOARD.status()),
+        ("multi_horizon_paper_trading", lambda: MULTI_HORIZON_PAPER_TRADING_SUITE.status(statuses=statuses, force=False)),
         ("paper_execution_trace", lambda: _paper_execution_trace_payload()),
     ):
         try:
@@ -41071,6 +41202,10 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["realistic_shadow_evidence_learning_lab_v1"] = REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB.status(statuses=statuses, force=False)
     except Exception:
         statuses["realistic_shadow_evidence_learning_lab_v1"] = {}
+    try:
+        statuses["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = MULTI_HORIZON_INTELLIGENCE_ADAPTIVE_LIFECYCLE_SUITE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = {}
     try:
         statuses["adaptive_learning_prioritization_resource_allocation_v1"] = ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False)
     except Exception:
@@ -42256,6 +42391,10 @@ def learning_issue_audit_status_v1(force: bool = False):
             statuses["realistic_shadow_evidence_learning_lab_v1"] = REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB.status(statuses=statuses, force=False)
         except Exception:
             statuses["realistic_shadow_evidence_learning_lab_v1"] = {}
+        try:
+            statuses["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = MULTI_HORIZON_INTELLIGENCE_ADAPTIVE_LIFECYCLE_SUITE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = {}
         try:
             statuses["adaptive_learning_prioritization_resource_allocation_v1"] = ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False)
         except Exception:
@@ -50701,6 +50840,8 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("paper_opportunity_allocation", lambda: PAPER_OPPORTUNITY_ALLOCATION_ENGINE.status(rows=rows))
         _safe_status("portfolio_risk_intelligence", lambda: PORTFOLIO_RISK_INTELLIGENCE_SUITE.status(rows=rows))
         _safe_status("horizon_performance_dashboard", lambda: HORIZON_PERFORMANCE_DASHBOARD.status())
+        _safe_status("multi_horizon_paper_trading", lambda: MULTI_HORIZON_PAPER_TRADING_SUITE.status(statuses=statuses, force=False))
+        _safe_status("multi_horizon_intelligence_adaptive_lifecycle_suite_v1", lambda: MULTI_HORIZON_INTELLIGENCE_ADAPTIVE_LIFECYCLE_SUITE.status(statuses=statuses, force=False))
 
         statuses["alpaca_paper_broker"] = {
             "enabled": str(os.getenv("ASTRA_ENABLE_ALPACA_PAPER", "false")).strip().lower() == "true",

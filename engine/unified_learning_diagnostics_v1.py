@@ -329,6 +329,21 @@ class UnifiedLearningDiagnosticsV1:
         capacity_expansion_status = self._capacity_expansion_summary(statuses)
         paper_path_gating_status = self._paper_path_gating_summary(statuses)
         horizon_coverage = self._horizon_coverage_summary(statuses, history_rows, paper_path_gating_status)
+        multi_horizon_raw = dict(statuses.get("multi_horizon_intelligence_adaptive_lifecycle_suite_v1") or {})
+        if horizon_coverage:
+            multi_horizon_raw["horizon_mismatch_risk_score"] = max(
+                _to_float(multi_horizon_raw.get("horizon_mismatch_risk_score"), 0.0),
+                _to_float(horizon_coverage.get("horizon_mismatch_risk_score"), 0.0),
+            )
+            multi_horizon_raw.setdefault("missing_horizons", horizon_coverage.get("missing_horizons"))
+            multi_horizon_raw.setdefault("horizons_tested", horizon_coverage.get("tested_horizons"))
+            multi_horizon_raw.setdefault("dominant_paper_horizon", horizon_coverage.get("dominant_horizon"))
+            multi_horizon_raw.setdefault("best_horizon", horizon_coverage.get("best_horizon"))
+            multi_horizon_raw.setdefault("weakest_horizon", horizon_coverage.get("weakest_horizon"))
+            multi_horizon_raw.setdefault("learned_exits_applied", horizon_coverage.get("learned_exits_applied"))
+            multi_horizon_raw.setdefault("natural_exit_preserved", horizon_coverage.get("natural_exit_preserved"))
+            multi_horizon_raw.setdefault("next_recommended_test", horizon_coverage.get("next_recommended_horizon_test"))
+        multi_horizon_intelligence_adaptive_lifecycle = self._multi_horizon_intelligence_adaptive_lifecycle_summary(multi_horizon_raw)
         execution_participation_audit = self._execution_participation_audit_summary(statuses.get("execution_participation_audit") or {})
         stale = self._stale_status(sources, system)
         return {
@@ -366,6 +381,7 @@ class UnifiedLearningDiagnosticsV1:
             "virtual_paper_convergence_symbol_attribution_v1": virtual_paper_convergence_symbol_attribution,
             "accelerated_learning_symbol_intelligence_suite_v1": accelerated_learning_symbol_intelligence,
             "realistic_shadow_evidence_learning_lab_v1": realistic_shadow_evidence_learning_lab,
+            "multi_horizon_intelligence_adaptive_lifecycle_suite_v1": multi_horizon_intelligence_adaptive_lifecycle,
             "adaptive_learning_prioritization_resource_allocation_v1": adaptive_learning_prioritization_resource_allocation,
             "autonomous_intelligence_validation_governance_v1": autonomous_intelligence_validation_governance,
             "trade_archetype_regime_intelligence": trade_archetype_regime,
@@ -2338,6 +2354,76 @@ class UnifiedLearningDiagnosticsV1:
             "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
             "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
             "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
+            "human_review_required": bool(data.get("human_review_required", True)),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+        }
+
+    def _multi_horizon_intelligence_adaptive_lifecycle_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_shadow_multi_horizon_adaptive_lifecycle"),
+            "suite_status": _text(data.get("suite_status"), "unavailable"),
+            "horizons_tested": list(data.get("horizons_tested") or [])[:16],
+            "missing_horizons": dict(data.get("missing_horizons") or {}),
+            "horizon_outcomes": dict(data.get("horizon_outcomes") or {}),
+            "virtual_paths_per_horizon": dict(data.get("virtual_paths_per_horizon") or {}),
+            "learning_events_per_horizon": dict(data.get("learning_events_per_horizon") or {}),
+            "closed_trades_per_horizon": dict(data.get("closed_trades_per_horizon") or {}),
+            "paper_trades_per_horizon": dict(data.get("paper_trades_per_horizon") or {}),
+            "shadow_trades_per_horizon": dict(data.get("shadow_trades_per_horizon") or {}),
+            "dominant_paper_horizon": _text(data.get("dominant_paper_horizon"), "insufficient_data"),
+            "dominant_shadow_horizon": _text(data.get("dominant_shadow_horizon"), "insufficient_data"),
+            "best_horizon": _text(data.get("best_horizon"), "insufficient_data"),
+            "weakest_horizon": _text(data.get("weakest_horizon"), "insufficient_data"),
+            "predicted_horizon": _text(data.get("predicted_horizon"), "insufficient_data"),
+            "actual_best_horizon": _text(data.get("actual_best_horizon"), "insufficient_data"),
+            "horizon_mismatch_detected": bool(data.get("horizon_mismatch_detected", False)),
+            "horizon_mismatch_risk_score": _to_float(data.get("horizon_mismatch_risk_score"), 0.0),
+            "symbols_most_affected": list(data.get("symbols_most_affected") or [])[:8],
+            "setups_most_affected": list(data.get("setups_most_affected") or [])[:8],
+            "estimated_profit_lost_to_horizon_mismatch": _to_float(data.get("estimated_profit_lost_to_horizon_mismatch"), 0.0),
+            "estimated_giveback_from_wrong_horizon": _to_float(data.get("estimated_giveback_from_wrong_horizon"), 0.0),
+            "symbol_horizon_dna": dict(data.get("symbol_horizon_dna") or {}),
+            "best_symbol_horizon": _text(data.get("best_symbol_horizon"), "insufficient_data"),
+            "worst_symbol_horizon": _text(data.get("worst_symbol_horizon"), "insufficient_data"),
+            "strongest_setup_horizon": _text(data.get("strongest_setup_horizon"), "insufficient_data"),
+            "strongest_catalyst_horizon": _text(data.get("strongest_catalyst_horizon"), "insufficient_data"),
+            "strongest_regime_horizon": _text(data.get("strongest_regime_horizon"), "insufficient_data"),
+            "strongest_peer_group_pattern": _text(data.get("strongest_peer_group_pattern"), "insufficient_data"),
+            "peer_best_horizon": _text(data.get("peer_best_horizon"), "insufficient_data"),
+            "peer_exit_style": _text(data.get("peer_exit_style"), "insufficient_data"),
+            "transfer_confidence": _to_float(data.get("transfer_confidence"), 0.0),
+            "horizon_readiness": dict(data.get("horizon_readiness") or {}),
+            "lifecycle_flags": dict(data.get("lifecycle_flags") or {}),
+            "entry_timing": _text(data.get("entry_timing"), "tracked_shadow_only"),
+            "first_profit_milestone": _text(data.get("first_profit_milestone"), "insufficient_data"),
+            "peak_profit": _to_float(data.get("peak_profit"), 0.0),
+            "profit_decay": _to_float(data.get("profit_decay"), 0.0),
+            "hold_quality": _to_float(data.get("hold_quality"), 0.0),
+            "opportunity_cost": _to_float(data.get("opportunity_cost"), 0.0),
+            "learned_exits_applied": bool(data.get("learned_exits_applied", False)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "next_recommended_test": _text(data.get("next_recommended_test"), "continue_shadow_horizon_validation"),
+            "shadow_recommendation": _text(data.get("shadow_recommendation"), "continue_multi_horizon_lifecycle_learning_shadow_only"),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "dashboard_scan_rows": _to_int(data.get("dashboard_scan_rows"), 0),
+            "raw_history_scanned": bool(data.get("raw_history_scanned", False)),
+            "raw_archive_scanned": bool(data.get("raw_archive_scanned", False)),
+            "live_trading_changed": bool(data.get("live_trading_changed", False)),
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "ranking_behavior_changed": bool(data.get("ranking_behavior_changed", False)),
+            "paper_execution_behavior_changed": bool(data.get("paper_execution_behavior_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "portfolio_allocation_changed": bool(data.get("portfolio_allocation_changed", False)),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
             "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
             "human_review_required": bool(data.get("human_review_required", True)),
             "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),

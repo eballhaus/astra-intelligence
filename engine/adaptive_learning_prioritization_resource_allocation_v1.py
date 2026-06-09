@@ -179,6 +179,7 @@ class AdaptiveLearningPrioritizationResourceAllocationV1:
         convergence = self._status(statuses, "virtual_paper_convergence_symbol_attribution_v1")
         accelerated_symbol = self._status(statuses, "accelerated_learning_symbol_intelligence_suite_v1")
         shadow_lab = self._status(statuses, "realistic_shadow_evidence_learning_lab_v1")
+        multi_horizon_intelligence = self._status(statuses, "multi_horizon_intelligence_adaptive_lifecycle_suite_v1")
         portfolio = self._status(statuses, "portfolio_diversification_correlation_v2")
         issue = self._status(statuses, "learning_issue_audit")
 
@@ -214,6 +215,8 @@ class AdaptiveLearningPrioritizationResourceAllocationV1:
         add("symbol_memory", 100 - _to_float(memory.get("symbol_memory_quality_score"), 50.0), "long_term_memory", memory.get("symbol_profiles_tracked"))
         add("rejection_accuracy", 100 - _to_float(decision.get("rejection_accuracy"), 50.0), "decision_optimization", decision.get("opportunity_rows_reviewed"))
         add("horizon_classification", 100 - _to_float(confidence.get("confidence_sizing_readiness"), 50.0), "confidence_attribution", confidence.get("evidence_count"))
+        add("horizon_classification", _to_float(multi_horizon_intelligence.get("horizon_mismatch_risk_score"), 0.0), "multi_horizon_intelligence_adaptive_lifecycle", sum(_to_int(v, 0) for v in (multi_horizon_intelligence.get("closed_trades_per_horizon") or {}).values()) if isinstance(multi_horizon_intelligence.get("closed_trades_per_horizon"), dict) else 0)
+        add("hold_duration", _to_float(multi_horizon_intelligence.get("horizon_mismatch_risk_score"), 0.0) * 0.75, "multi_horizon_intelligence_adaptive_lifecycle", sum(_to_int(v, 0) for v in (multi_horizon_intelligence.get("learning_events_per_horizon") or {}).values()) if isinstance(multi_horizon_intelligence.get("learning_events_per_horizon"), dict) else 0)
         add("entry_quality", 100 - _to_float((issue.get("entry_quality_diagnostics") or {}).get("entry_quality_score"), 55.0), "learning_issue_audit", 1)
         add("exit_quality", 100 - _to_float((issue.get("exit_quality_diagnostics") or {}).get("exit_quality_score"), _to_float(lifecycle_v2.get("average_exit_quality"), 50.0)), "learning_issue_audit", lifecycle_v2.get("tracked_closed_trades"))
         add("portfolio_concentration", _to_float(portfolio.get("concentration_risk_score"), 40.0), "portfolio_diversification", 1)

@@ -120,6 +120,7 @@ class AutonomousIntelligenceValidationGovernanceV1:
         convergence = self._s(statuses, "virtual_paper_convergence_symbol_attribution_v1")
         accelerated_symbol = self._s(statuses, "accelerated_learning_symbol_intelligence_suite_v1")
         shadow_lab = self._s(statuses, "realistic_shadow_evidence_learning_lab_v1")
+        multi_horizon = self._s(statuses, "multi_horizon_intelligence_adaptive_lifecycle_suite_v1")
         allocator = self._s(statuses, "adaptive_learning_prioritization_resource_allocation_v1")
         accel = self._s(statuses, "learning_acceleration_retention_suite_v1")
 
@@ -136,6 +137,7 @@ class AutonomousIntelligenceValidationGovernanceV1:
             _to_float(convergence.get("tracked_trades"), 0),
             _to_float(accelerated_symbol.get("accelerated_learning_events"), 0),
             _to_float(shadow_lab.get("shadow_learning_events"), 0),
+            sum(_to_float(v, 0) for v in (multi_horizon.get("learning_events_per_horizon") or {}).values()) if isinstance(multi_horizon.get("learning_events_per_horizon"), dict) else 0,
         ]
         evidence_count = int(sum(counts))
         sample_quality = _clamp(evidence_count / 1200.0 * 100.0)
@@ -148,6 +150,7 @@ class AutonomousIntelligenceValidationGovernanceV1:
             _to_float(accelerated_symbol.get("peer_group_learning_score"), 55),
             _to_float(shadow_lab.get("average_shadow_realism_score"), 55),
             _to_float(shadow_lab.get("consensus_confidence_score"), 55),
+            100 - _to_float(multi_horizon.get("horizon_mismatch_risk_score"), 0) * 0.35,
             100 - _to_float(allocator.get("weakness_confidence"), 0) * 0.15,
         ]
         evidence_consistency = _clamp(_avg(consistency_inputs) or 50.0)
@@ -167,6 +170,7 @@ class AutonomousIntelligenceValidationGovernanceV1:
             ("virtual_to_paper_convergence_gap_is_explained", _to_float(convergence.get("gap_attribution_score"), 0)),
             ("accelerated_symbol_peer_learning_is_available", _to_float(accelerated_symbol.get("replay_acceleration_score"), 0)),
             ("realistic_shadow_lab_is_budget_safe", 100 - _to_float(shadow_lab.get("bandwidth_pressure_score"), 0)),
+            ("multi_horizon_lifecycle_learning_is_shadow_visible", 100 - _to_float(multi_horizon.get("horizon_mismatch_risk_score"), 0) * 0.35),
         ]
         trusted = [name for name, score in lessons if score >= 65]
         questionable = [name for name, score in lessons if score < 50]
@@ -207,6 +211,7 @@ class AutonomousIntelligenceValidationGovernanceV1:
             "opportunity_cost": "rejected_candidate_outcomes_outperform_selected_candidates_in_some_contexts",
             "confidence_truth": "confidence_scores_not_yet_monotonic_enough_for_policy_use",
             "horizon_classification": "horizon_labels_have_insufficient_truth_backtesting",
+            "multi_horizon_lifecycle": "paper_horizon_bias_and_hold_duration_windows_need_shadow_validation",
             "symbol_memory": "symbol_profiles_need_more_repeated_behavior_samples",
             "storage_health": "memory_pressure_or_cache_retention_needs_attention",
             "retrieval_health": "knowledge_indexes_need_more_complete_key_coverage",
@@ -227,8 +232,9 @@ class AutonomousIntelligenceValidationGovernanceV1:
             "virtual_paper_convergence": "shadow_test_virtual_to_paper_gap_reduction_by_symbol_horizon_and_exit_style",
             "accelerated_symbol_intelligence": "shadow_test_symbol_peer_group_transfer_learning_and_drift_validation",
             "realistic_shadow_lab": "shadow_test_realistic_virtual_paths_with_no_broker_orders",
+            "multi_horizon_lifecycle": "shadow_test_fine_horizon_buckets_symbol_dna_and_peer_horizon_patterns",
         }
-        systems = ["adaptive_learning_prioritization", "decision_optimization", "replay_counterfactual", "full_opportunity_lifecycle", "profit_capture_peak_decay_exit_validation", "virtual_paper_convergence_symbol_attribution", "accelerated_learning_symbol_intelligence", "realistic_shadow_evidence_learning_lab"]
+        systems = ["adaptive_learning_prioritization", "decision_optimization", "replay_counterfactual", "full_opportunity_lifecycle", "profit_capture_peak_decay_exit_validation", "virtual_paper_convergence_symbol_attribution", "accelerated_learning_symbol_intelligence", "realistic_shadow_evidence_learning_lab", "multi_horizon_intelligence_adaptive_lifecycle"]
         if top in {"symbol_memory", "retrieval_health", "storage_health"}:
             systems.append("long_term_memory_symbol_retrieval")
         expected_gain = _clamp(_to_float(allocator.get("expected_improvement_score"), 0) * 0.75 + _to_float(decision.get("trade_management_intelligence_score"), 0) * 0.15)
@@ -254,6 +260,7 @@ class AutonomousIntelligenceValidationGovernanceV1:
         worker = self._s(statuses, "adaptive_worker_activation_orchestration_v1")
         allocator = self._s(statuses, "adaptive_learning_prioritization_resource_allocation_v1")
         full = self._s(statuses, "full_opportunity_lifecycle_learning_suite_v1")
+        multi_horizon = self._s(statuses, "multi_horizon_intelligence_adaptive_lifecycle_suite_v1")
         risks = {
             "trading_safety": 0.0,
             "learning_safety": max(0.0, 100 - _to_float(truth.get("truth_validation_score"), 50)),
@@ -261,7 +268,7 @@ class AutonomousIntelligenceValidationGovernanceV1:
             "performance_safety": _to_float(full.get("dashboard_scan_rows"), 0) * 2.0 + _to_float(memory.get("dashboard_scan_rows"), 0) * 2.0,
             "api_safety": _to_float(allocator.get("api_calls_used"), 0) + _to_float(worker.get("api_calls_used"), 0),
             "infrastructure_safety": max(0.0, 100 - _to_float(worker.get("worker_efficiency_score"), 75)),
-            "knowledge_safety": max(0.0, 100 - _to_float(memory.get("retrieval_health_score"), 80)),
+            "knowledge_safety": max(0.0, 100 - _to_float(memory.get("retrieval_health_score"), 80), _to_float(multi_horizon.get("horizon_mismatch_risk_score"), 0.0) * 0.4),
         }
         primary = max(risks.items(), key=lambda kv: kv[1], default=("none", 0))[0]
         secondary = sorted(risks.items(), key=lambda kv: kv[1], reverse=True)[1][0] if len(risks) > 1 else "none"
@@ -291,11 +298,12 @@ class AutonomousIntelligenceValidationGovernanceV1:
         confidence = self._s(statuses, "confidence_calibration_performance_attribution_v1")
         allocator = self._s(statuses, "adaptive_learning_prioritization_resource_allocation_v1")
         replay = self._s(statuses, "replay_counterfactual_learning_v2")
+        multi_horizon = self._s(statuses, "multi_horizon_intelligence_adaptive_lifecycle_suite_v1")
         base = _to_float(truth.get("truth_validation_score"), 0)
         gov_ok = 1.0 if _text(gov.get("warning_level"), "red") in {"green", "yellow"} else 0.55
         scores = {
             "confidence_weighted_sizing": min(base, _to_float(confidence.get("sizing_readiness_score"), 0)) * gov_ok,
-            "horizon_specific_exits": min(base, _to_float(decision.get("sizing_readiness_score"), 0) + 5) * gov_ok,
+            "horizon_specific_exits": min(base, _to_float(decision.get("sizing_readiness_score"), 0) + 5, 100 - _to_float(multi_horizon.get("horizon_mismatch_risk_score"), 0) * 0.25) * gov_ok,
             "continuation_failure_exits": min(base, 100 - _to_float(decision.get("continuation_failure_probability"), 100) + 20) * gov_ok,
             "profit_lock_exits": min(base, _to_float(allocator.get("expected_improvement_score"), 0)) * gov_ok,
             "catalyst_aware_holding": min(base, 100 - _to_float(self._s(statuses, "catalyst_theme_narrative_capital_flow_intelligence_v2").get("unknown_catalyst_rate"), 100)) * gov_ok,

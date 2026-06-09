@@ -588,6 +588,7 @@ class LearningIssueAuditV1:
         virtual_convergence = dict(statuses.get("virtual_paper_convergence_symbol_attribution_v1") or {})
         accelerated_symbol = dict(statuses.get("accelerated_learning_symbol_intelligence_suite_v1") or {})
         shadow_lab = dict(statuses.get("realistic_shadow_evidence_learning_lab_v1") or {})
+        multi_horizon_intelligence = dict(statuses.get("multi_horizon_intelligence_adaptive_lifecycle_suite_v1") or {})
         learning_allocator = dict(statuses.get("adaptive_learning_prioritization_resource_allocation_v1") or {})
         autonomous_governance = dict(statuses.get("autonomous_intelligence_validation_governance_v1") or {})
         paper_trace = dict(statuses.get("paper_execution_trace") or {})
@@ -787,6 +788,19 @@ class LearningIssueAuditV1:
             _to_int(shadow_lab.get("shadow_learning_events"), 0),
             "Use realistic shadow lab evidence only for compressed shadow learning; keep broker and paper execution unchanged.",
             _text(shadow_lab.get("shadow_recommendation"), "No behavior change."),
+        )
+        multi_horizon_intelligence_issue = _issue(
+            "multi_horizon_intelligence_adaptive_lifecycle_active" if multi_horizon_intelligence.get("enabled") else "multi_horizon_intelligence_adaptive_lifecycle_unavailable",
+            "horizon_lifecycle_symbol_peer_pattern_diagnostics_active" if multi_horizon_intelligence.get("enabled") else "multi_horizon_intelligence_adaptive_lifecycle_not_available",
+            "medium"
+            if multi_horizon_intelligence.get("enabled")
+            and _to_float(multi_horizon_intelligence.get("horizon_mismatch_risk_score"), 0.0) >= 65.0
+            else "low",
+            sum(_to_int(v, 0) for v in (multi_horizon_intelligence.get("closed_trades_per_horizon") or {}).values())
+            if isinstance(multi_horizon_intelligence.get("closed_trades_per_horizon"), dict)
+            else 0,
+            "Use multi-horizon lifecycle diagnostics to target shadow validation; do not apply learned exits without human review.",
+            _text(multi_horizon_intelligence.get("shadow_recommendation"), "No behavior change."),
         )
         learning_allocator_issue = _issue(
             "adaptive_learning_prioritization_active" if learning_allocator.get("enabled") else "adaptive_learning_prioritization_unavailable",
@@ -999,6 +1013,7 @@ class LearningIssueAuditV1:
             "virtual_paper_convergence_symbol_attribution_v1": virtual_convergence_issue,
             "accelerated_learning_symbol_intelligence_suite_v1": accelerated_symbol_issue,
             "realistic_shadow_evidence_learning_lab_v1": shadow_lab_issue,
+            "multi_horizon_intelligence_adaptive_lifecycle_suite_v1": multi_horizon_intelligence_issue,
             "adaptive_learning_prioritization_resource_allocation_v1": learning_allocator_issue,
             "autonomous_intelligence_validation_governance_v1": autonomous_governance_issue,
             "paper_path_gating": paper_path_issue,
@@ -1031,6 +1046,7 @@ class LearningIssueAuditV1:
             "virtual_paper_convergence_symbol_attribution_status": virtual_convergence_issue,
             "accelerated_learning_symbol_intelligence_status": accelerated_symbol_issue,
             "realistic_shadow_evidence_learning_lab_status": shadow_lab_issue,
+            "multi_horizon_intelligence_adaptive_lifecycle_status": multi_horizon_intelligence_issue,
             "adaptive_learning_prioritization_resource_allocation_status": learning_allocator_issue,
             "autonomous_intelligence_validation_governance_status": autonomous_governance_issue,
             "paper_path_gating_status": paper_path_issue,
@@ -1506,6 +1522,31 @@ class LearningIssueAuditV1:
                 "paper_execution_behavior_changed": bool(shadow_lab.get("paper_execution_behavior_changed", False)),
                 "position_sizing_changed": bool(shadow_lab.get("position_sizing_changed", False)),
                 "thresholds_changed": bool(shadow_lab.get("thresholds_changed", False)),
+            },
+            "multi_horizon_intelligence_adaptive_lifecycle_diagnostics": {
+                "suite_status": multi_horizon_intelligence.get("suite_status"),
+                "horizons_tested": list(multi_horizon_intelligence.get("horizons_tested") or [])[:16],
+                "missing_horizons": dict(multi_horizon_intelligence.get("missing_horizons") or {}),
+                "dominant_paper_horizon": multi_horizon_intelligence.get("dominant_paper_horizon"),
+                "dominant_shadow_horizon": multi_horizon_intelligence.get("dominant_shadow_horizon"),
+                "best_horizon": multi_horizon_intelligence.get("best_horizon"),
+                "weakest_horizon": multi_horizon_intelligence.get("weakest_horizon"),
+                "horizon_mismatch_risk_score": multi_horizon_intelligence.get("horizon_mismatch_risk_score"),
+                "best_symbol_horizon": multi_horizon_intelligence.get("best_symbol_horizon"),
+                "worst_symbol_horizon": multi_horizon_intelligence.get("worst_symbol_horizon"),
+                "strongest_setup_horizon": multi_horizon_intelligence.get("strongest_setup_horizon"),
+                "strongest_catalyst_horizon": multi_horizon_intelligence.get("strongest_catalyst_horizon"),
+                "strongest_peer_group_pattern": multi_horizon_intelligence.get("strongest_peer_group_pattern"),
+                "estimated_profit_lost_to_horizon_mismatch": multi_horizon_intelligence.get("estimated_profit_lost_to_horizon_mismatch"),
+                "learned_exits_applied": bool(multi_horizon_intelligence.get("learned_exits_applied", False)),
+                "natural_exit_preserved": bool(multi_horizon_intelligence.get("natural_exit_preserved", True)),
+                "forced_exits_enabled": bool(multi_horizon_intelligence.get("forced_exits_enabled", False)),
+                "next_recommended_test": multi_horizon_intelligence.get("next_recommended_test"),
+                "api_calls_used": multi_horizon_intelligence.get("api_calls_used"),
+                "provider_calls_used": multi_horizon_intelligence.get("provider_calls_used"),
+                "llm_calls_used": multi_horizon_intelligence.get("llm_calls_used"),
+                "shadow_recommendation": multi_horizon_intelligence.get("shadow_recommendation"),
+                "behavior_safe_to_apply": bool(multi_horizon_intelligence.get("behavior_safe_to_apply", False)),
             },
             "adaptive_learning_prioritization_resource_allocation_diagnostics": {
                 "top_weakness": learning_allocator.get("top_weakness"),
