@@ -520,6 +520,7 @@ export default function LearningTab({ compact = false }) {
   const paper = data.paper || {};
   const unifiedLearningDiagnostics = data.unifiedLearningDiagnostics || {};
   const paperStatus = data.paperStatus || {};
+  const horizonCoverageSummary = unifiedLearningDiagnostics?.horizon_coverage_summary || {};
   const workerStatus = {
     ...(paperStatus?.worker || {}),
     ...(data.workerStatus || {}),
@@ -5437,6 +5438,48 @@ export default function LearningTab({ compact = false }) {
           <div>Best shadow hold window: {String(alpacaPaperBroker?.paper_path_gating_summary?.best_shadow_hold_window || "insufficient_data").replaceAll("_", " ")}</div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Recommended safe action: {String(alpacaPaperBroker?.paper_path_gating_summary?.recommended_safe_action || "Waiting for paper-path gating diagnostics.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Horizon Coverage Summary</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Scalp coverage: {safeNumber(horizonCoverageSummary?.scalp_coverage_pct).toFixed(1)}%</div>
+          <div>Day coverage: {safeNumber(horizonCoverageSummary?.day_coverage_pct).toFixed(1)}%</div>
+          <div>Swing coverage: {safeNumber(horizonCoverageSummary?.swing_coverage_pct).toFixed(1)}%</div>
+          <div>Dominant horizon: {String(horizonCoverageSummary?.dominant_horizon || "insufficient_data").replaceAll("_", " ")}</div>
+          <div>Best horizon: {String(horizonCoverageSummary?.best_horizon || "insufficient_data").replaceAll("_", " ")}</div>
+          <div>Weakest horizon: {String(horizonCoverageSummary?.weakest_horizon || "insufficient_data").replaceAll("_", " ")}</div>
+          <div>Paper horizon bias: {String(horizonCoverageSummary?.paper_horizon_bias || "balanced_mix").replaceAll("_", " ")}</div>
+          <div>Horizon mismatch risk: {safeNumber(horizonCoverageSummary?.horizon_mismatch_risk_score).toFixed(1)}</div>
+          <div>Shadow horizon balance: {safeNumber(horizonCoverageSummary?.shadow_horizon_balance).toFixed(1)}</div>
+          <div>Learned exits applied: {horizonCoverageSummary?.learned_exits_applied ? "yes" : "no"}</div>
+          <div>Learned horizon status: {String(horizonCoverageSummary?.learned_horizon_status || "shadow_only_not_applied").replaceAll("_", " ")}</div>
+          <div>Tested horizons: {(Array.isArray(horizonCoverageSummary?.tested_horizons) ? horizonCoverageSummary.tested_horizons : []).join(", ").replaceAll("_", " ") || "waiting for data"}</div>
+          <div>Missing horizons: {Array.isArray(horizonCoverageSummary?.missing_horizons)
+            ? horizonCoverageSummary.missing_horizons.slice(0, 5).join(", ").replaceAll("_", " ") || "none"
+            : `coarse ${(Array.isArray(horizonCoverageSummary?.missing_horizons?.coarse) ? horizonCoverageSummary.missing_horizons.coarse : []).join(", ").replaceAll("_", " ") || "none"}; fine ${(Array.isArray(horizonCoverageSummary?.missing_horizons?.fine) ? horizonCoverageSummary.missing_horizons.fine : []).slice(0, 5).join(", ").replaceAll("_", " ") || "none"}`}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Hold buckets: 15m {safeNumber((horizonCoverageSummary?.observed_hold_bucket_counts || {})["15m"]).toFixed(0)}
+            {" | "}30m {safeNumber((horizonCoverageSummary?.observed_hold_bucket_counts || {})["30m"]).toFixed(0)}
+            {" | "}45m {safeNumber((horizonCoverageSummary?.observed_hold_bucket_counts || {})["45m"]).toFixed(0)}
+            {" | "}60m {safeNumber((horizonCoverageSummary?.observed_hold_bucket_counts || {})["60m"]).toFixed(0)}
+            {" | "}2h {safeNumber((horizonCoverageSummary?.observed_hold_bucket_counts || {})["2h"]).toFixed(0)}
+            {" | "}4h {safeNumber((horizonCoverageSummary?.observed_hold_bucket_counts || {})["4h"]).toFixed(0)}
+            {" | "}EOD {safeNumber((horizonCoverageSummary?.observed_hold_bucket_counts || {})["eod"]).toFixed(0)}
+            {" | "}1d {safeNumber((horizonCoverageSummary?.observed_hold_bucket_counts || {})["1d"]).toFixed(0)}
+            {" | "}2d {safeNumber((horizonCoverageSummary?.observed_hold_bucket_counts || {})["2d"]).toFixed(0)}
+            {" | "}3d {safeNumber((horizonCoverageSummary?.observed_hold_bucket_counts || {})["3d"]).toFixed(0)}
+            {" | "}5d {safeNumber((horizonCoverageSummary?.observed_hold_bucket_counts || {})["5d"]).toFixed(0)}
+            {" | "}10d {safeNumber((horizonCoverageSummary?.observed_hold_bucket_counts || {})["10d"]).toFixed(0)}
+            {" | "}10d+ {safeNumber((horizonCoverageSummary?.observed_hold_bucket_counts || {})["10d_plus"]).toFixed(0)}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Next recommended horizon test: {String(horizonCoverageSummary?.next_recommended_horizon_test || "waiting for diagnostics").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Why long holds persist: {String(horizonCoverageSummary?.why_positions_hold_long || "waiting for diagnostics").replaceAll("_", " ")}
           </div>
         </div>
       </div>

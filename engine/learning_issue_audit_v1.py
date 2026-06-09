@@ -886,6 +886,85 @@ class LearningIssueAuditV1:
             "learned_exits_ready": False,
             "behavior_safe_to_apply": False,
         }
+        horizon_dashboard = dict(statuses.get("horizon_performance_dashboard") or {})
+        multi_horizon = dict(statuses.get("multi_horizon_paper_trading") or {})
+        shadow_lab = dict(statuses.get("realistic_shadow_evidence_learning_lab_v1") or {})
+        profit_capture_validation = dict(statuses.get("profit_capture_peak_decay_exit_validation_suite_v1") or {})
+        def _coarse_count(name: str) -> int:
+            horizon = dict(horizon_dashboard.get(name) or {})
+            return _to_int(
+                horizon.get("closed_sample_size"),
+                _to_int(
+                    horizon.get("sample_size"),
+                    _to_int(
+                        horizon.get("natural_exit_count"),
+                        _to_int(
+                            horizon.get("sample_count"),
+                            _to_int(
+                                horizon.get("closed_count"),
+                                _to_int(multi_horizon.get(f"{name}_closures_today") or multi_horizon.get(f"{name}_entries_today"), 0),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+
+        coarse_counts = {
+            "scalp": _coarse_count("scalp"),
+            "day_trade": _coarse_count("day_trade"),
+            "swing_trade": _coarse_count("swing_trade"),
+        }
+        paper_horizon_bias = "balanced_mix"
+        if coarse_counts["swing_trade"] >= max(coarse_counts["scalp"], coarse_counts["day_trade"]) and coarse_counts["swing_trade"] > 0:
+            paper_horizon_bias = "swing_trade_bias"
+        elif coarse_counts["day_trade"] >= max(coarse_counts["scalp"], coarse_counts["swing_trade"]) and coarse_counts["day_trade"] > 0:
+            paper_horizon_bias = "day_trade_bias"
+        elif coarse_counts["scalp"] > 0:
+            paper_horizon_bias = "scalp_bias"
+        horizon_mismatch_risk = 0.0
+        if paper_horizon_bias == "swing_trade_bias":
+            horizon_mismatch_risk += 20.0
+        if _text(horizon_dashboard.get("weakest_current_horizon"), "") == "day_trade":
+            horizon_mismatch_risk += 15.0
+        if not bool(paper_path_diag.get("learned_exits_applied", False)) and bool(paper_path_diag.get("natural_exit_preserved", True)):
+            horizon_mismatch_risk += 15.0
+        if _to_float(profit_capture_validation.get("hold_duration_quality_score"), 0.0) < 45.0:
+            horizon_mismatch_risk += 10.0
+        if _text(shadow_lab.get("best_horizon"), "") == "hold_duration":
+            horizon_mismatch_risk += 10.0
+        horizon_coverage_diag = {
+            "enabled": True,
+            "tested_horizons": ["scalp", "day_trade", "swing_trade"],
+            "missing_horizons": [],
+            "closed_trades_by_horizon": coarse_counts,
+            "paper_entries_today_by_horizon": {
+                "scalp": _to_int(multi_horizon.get("scalp_entries_today"), 0),
+                "day_trade": _to_int(multi_horizon.get("day_trade_entries_today"), 0),
+                "swing_trade": _to_int(multi_horizon.get("swing_trade_entries_today"), 0),
+            },
+            "paper_closures_today_by_horizon": {
+                "scalp": _to_int(multi_horizon.get("scalp_closures_today"), 0),
+                "day_trade": _to_int(multi_horizon.get("day_trade_closures_today"), 0),
+                "swing_trade": _to_int(multi_horizon.get("swing_trade_closures_today"), 0),
+            },
+            "best_horizon": _text(horizon_dashboard.get("best_current_horizon"), _text(multi_horizon.get("best_current_horizon"), "insufficient_data")),
+            "weakest_horizon": _text(horizon_dashboard.get("weakest_current_horizon"), _text(multi_horizon.get("weakest_current_horizon"), "insufficient_data")),
+            "dominant_horizon": paper_horizon_bias.replace("_bias", ""),
+            "paper_horizon_bias": paper_horizon_bias,
+            "shadow_horizon_balance": _to_float(multi_horizon.get("multi_horizon_learning_score"), 0.0),
+            "learned_exits_applied": False,
+            "learned_horizon_status": "shadow_only_not_applied",
+            "why_positions_hold_long": (
+                "Natural exits remain preserved and learned exits are still shadow-only, so paper positions can continue to hold longer than the learned shadow windows."
+            ),
+            "horizon_mismatch_risk_score": round(min(100.0, horizon_mismatch_risk), 2),
+            "next_recommended_horizon_test": (
+                "Expand 15m-60m scalp coverage before changing any paper exit behavior."
+                if coarse_counts["scalp"] <= coarse_counts["day_trade"] and coarse_counts["scalp"] <= coarse_counts["swing_trade"]
+                else "Compare 2h-EOD day-trade coverage against the current swing bias."
+            ),
+        }
+        paper_path_diag["horizon_coverage_summary"] = horizon_coverage_diag
         paper_path_issue = _issue(
             "paper_path_gating_transparent" if paper_path_candidates_seen > 0 else "paper_path_gating_warming_up",
             "session_gate_and_unique_position_capacity_diagnostics_active" if paper_path_candidates_seen > 0 else "insufficient_session_trace",
@@ -1500,6 +1579,7 @@ class LearningIssueAuditV1:
                 "portfolio_allocation_changed": bool(autonomous_governance.get("portfolio_allocation_changed", False)),
             },
             "paper_path_gating_diagnostics": paper_path_diag,
+            "horizon_coverage_summary": horizon_coverage_diag,
             "likely_cause_summary": ", ".join(medium_or_higher) if medium_or_higher else "no_behavior_change_indicated",
             "recommended_action": "Apply display/source reconciliation and keep behavior changes shadow-only.",
             "safe_to_change_behavior": False,

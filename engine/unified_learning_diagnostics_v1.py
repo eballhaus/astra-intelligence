@@ -121,6 +121,21 @@ def _return_pct(row: dict[str, Any]) -> float:
     )
 
 
+def _hold_minutes(row: dict[str, Any]) -> float:
+    minutes = _first_float(
+        row.get("hold_duration_minutes"),
+        row.get("actual_hold_duration_minutes"),
+        row.get("hold_time_minutes"),
+        default=0.0,
+    )
+    if minutes > 0:
+        return minutes
+    seconds = _first_float(row.get("hold_seconds"), row.get("duration_seconds"), default=0.0)
+    if seconds > 0:
+        return seconds / 60.0
+    return 0.0
+
+
 def _candidate_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     if not isinstance(payload, dict):
@@ -313,6 +328,7 @@ class UnifiedLearningDiagnosticsV1:
         remote_runtime_consistency = self._remote_runtime_consistency_summary(statuses.get("remote_runtime_consistency") or {})
         capacity_expansion_status = self._capacity_expansion_summary(statuses)
         paper_path_gating_status = self._paper_path_gating_summary(statuses)
+        horizon_coverage = self._horizon_coverage_summary(statuses, history_rows, paper_path_gating_status)
         execution_participation_audit = self._execution_participation_audit_summary(statuses.get("execution_participation_audit") or {})
         stale = self._stale_status(sources, system)
         return {
@@ -361,6 +377,7 @@ class UnifiedLearningDiagnosticsV1:
             "remote_runtime_consistency": remote_runtime_consistency,
             "capacity_expansion_status": capacity_expansion_status,
             "paper_path_gating_summary": paper_path_gating_status,
+            "horizon_coverage_summary": horizon_coverage,
             "execution_participation_audit": execution_participation_audit,
             "learning_maturity_summary": learning,
             "regime_context_summary": regime,
@@ -613,6 +630,176 @@ class UnifiedLearningDiagnosticsV1:
             "strongest_regime": _text(regime.get("strongest_regime"), "insufficient_data"),
             "weakest_regime": _text(regime.get("weakest_regime"), "insufficient_data"),
             "regime_behavior_summary": _text(regime.get("regime_behavior_summary"), "Waiting for regime evidence."),
+        }
+
+    def _horizon_coverage_summary(
+        self,
+        statuses: dict[str, dict[str, Any]],
+        history_rows: list[dict[str, Any]],
+        paper_path_gating_status: dict[str, Any],
+    ) -> dict[str, Any]:
+        horizon_dashboard = dict(statuses.get("horizon_performance_dashboard") or {})
+        multi_horizon = dict(statuses.get("multi_horizon_paper_trading") or {})
+        profit_capture_validation = dict(statuses.get("profit_capture_peak_decay_exit_validation_suite_v1") or {})
+        shadow_lab = dict(statuses.get("realistic_shadow_evidence_learning_lab_v1") or {})
+        paper_trace = dict(statuses.get("paper_execution_trace") or {})
+        paper_autopilot = dict(statuses.get("paper_autopilot_throughput") or {})
+
+        closed_rows = [
+            row for row in history_rows
+            if _return_pct(row) != 0 or _text(row.get("closed_at") or row.get("exit_timestamp") or row.get("exit_timestamp_utc"), "") != ""
+        ]
+        bucket_defs: list[tuple[str, float, float | None]] = [
+            ("15m", 0.0, 15.0),
+            ("30m", 15.0, 30.0),
+            ("45m", 30.0, 45.0),
+            ("60m", 45.0, 60.0),
+            ("2h", 60.0, 120.0),
+            ("4h", 120.0, 240.0),
+            ("eod", 240.0, 390.0),
+            ("1d", 390.0, 1440.0),
+            ("2d", 1440.0, 2880.0),
+            ("3d", 2880.0, 4320.0),
+            ("5d", 4320.0, 7200.0),
+            ("10d", 7200.0, 14400.0),
+            ("10d_plus", 14400.0, None),
+        ]
+        bucket_counts = {label: 0 for label, *_ in bucket_defs}
+        minute_values: list[float] = []
+        for row in closed_rows:
+            minutes = _hold_minutes(row)
+            if minutes <= 0:
+                continue
+            minute_values.append(minutes)
+            for label, lower, upper in bucket_defs:
+                if minutes > lower and (upper is None or minutes <= upper):
+                    bucket_counts[label] += 1
+                    break
+
+        total_bucketed = sum(bucket_counts.values())
+        scalp_count = sum(bucket_counts[label] for label in ("15m", "30m", "45m", "60m"))
+        day_count = sum(bucket_counts[label] for label in ("2h", "4h", "eod"))
+        swing_count = sum(bucket_counts[label] for label in ("1d", "2d", "3d", "5d", "10d", "10d_plus"))
+        scalp_pct = round((scalp_count / total_bucketed) * 100.0, 2) if total_bucketed else 0.0
+        day_pct = round((day_count / total_bucketed) * 100.0, 2) if total_bucketed else 0.0
+        swing_pct = round((swing_count / total_bucketed) * 100.0, 2) if total_bucketed else 0.0
+        coarse_counts = {
+            "scalp": _to_int((horizon_dashboard.get("scalp") or {}).get("closed_sample_size"), _to_int((horizon_dashboard.get("scalp") or {}).get("sample_size"), _to_int((horizon_dashboard.get("scalp") or {}).get("natural_exit_count"), _to_int((multi_horizon.get("scalp_closures_today") or multi_horizon.get("scalp_entries_today")), 0)))),
+            "day_trade": _to_int((horizon_dashboard.get("day_trade") or {}).get("closed_sample_size"), _to_int((horizon_dashboard.get("day_trade") or {}).get("sample_size"), _to_int((horizon_dashboard.get("day_trade") or {}).get("natural_exit_count"), _to_int((multi_horizon.get("day_trade_closures_today") or multi_horizon.get("day_trade_entries_today")), 0)))),
+            "swing_trade": _to_int((horizon_dashboard.get("swing_trade") or {}).get("closed_sample_size"), _to_int((horizon_dashboard.get("swing_trade") or {}).get("sample_size"), _to_int((horizon_dashboard.get("swing_trade") or {}).get("natural_exit_count"), _to_int((multi_horizon.get("swing_trade_closures_today") or multi_horizon.get("swing_trade_entries_today")), 0)))),
+        }
+        coarse_tested_horizons = [label for label, count in coarse_counts.items() if count > 0]
+        coarse_missing_horizons = [label for label, count in coarse_counts.items() if count <= 0]
+        fine_tested_horizons = [label for label, count in bucket_counts.items() if count > 0]
+        fine_missing_horizons = [label for label, count in bucket_counts.items() if count <= 0]
+        tested_horizons = coarse_tested_horizons + [label for label in fine_tested_horizons if label not in coarse_tested_horizons]
+        missing_horizons = {
+            "coarse": coarse_missing_horizons,
+            "fine": fine_missing_horizons,
+        }
+        dominant_horizon = max(coarse_counts.items(), key=lambda kv: kv[1])[0] if any(v > 0 for v in coarse_counts.values()) else _text(multi_horizon.get("best_current_horizon"), _text(horizon_dashboard.get("best_current_horizon"), "insufficient_data"))
+        best_horizon = _text(horizon_dashboard.get("best_current_horizon"), _text(multi_horizon.get("best_current_horizon"), dominant_horizon))
+        weakest_horizon = _text(horizon_dashboard.get("weakest_current_horizon"), _text(multi_horizon.get("weakest_current_horizon"), "insufficient_data"))
+
+        support_map = {
+            "scalp": bool((profit_capture_validation.get("best_hold_duration_by_horizon") or {}).get("scalp") or (profit_capture_validation.get("best_exit_policy_by_horizon") or {}).get("scalp")),
+            "day_trade": bool((profit_capture_validation.get("best_hold_duration_by_horizon") or {}).get("day_trade") or (profit_capture_validation.get("best_exit_policy_by_horizon") or {}).get("day_trade")),
+            "swing_trade": bool((profit_capture_validation.get("best_hold_duration_by_horizon") or {}).get("swing") or (profit_capture_validation.get("best_hold_duration_by_horizon") or {}).get("swing_trade") or (profit_capture_validation.get("best_exit_policy_by_horizon") or {}).get("swing") or (profit_capture_validation.get("best_exit_policy_by_horizon") or {}).get("swing_trade")),
+        }
+        shadow_horizon_balance = _to_float(multi_horizon.get("multi_horizon_learning_score"), _to_float(horizon_dashboard.get("multi_horizon_learning_score"), 0.0))
+        shadow_support_score = _clamp((shadow_horizon_balance * 0.6) + (100.0 if any(support_map.values()) else 35.0) * 0.4)
+
+        paper_horizon_bias = "balanced_mix"
+        if coarse_counts.get("swing_trade", 0) >= max(coarse_counts.get("scalp", 0), coarse_counts.get("day_trade", 0)) and coarse_counts.get("swing_trade", 0) > 0:
+            paper_horizon_bias = "swing_trade_bias"
+        elif coarse_counts.get("day_trade", 0) >= max(coarse_counts.get("scalp", 0), coarse_counts.get("swing_trade", 0)) and coarse_counts.get("day_trade", 0) > 0:
+            paper_horizon_bias = "day_trade_bias"
+        elif coarse_counts.get("scalp", 0) > 0:
+            paper_horizon_bias = "scalp_bias"
+
+        learned_exits_applied = bool(paper_path_gating_status.get("learned_exits_applied", False))
+        natural_exit_preserved = bool(
+            paper_path_gating_status.get("natural_exit_preserved", True)
+            and bool((statuses.get("alpaca_paper_broker") or {}).get("natural_exit_preserved", True))
+        )
+        horizon_mismatch_risk = 0.0
+        if paper_horizon_bias == "swing_trade_bias":
+            horizon_mismatch_risk += 20.0
+        if weakest_horizon == "day_trade":
+            horizon_mismatch_risk += 15.0
+        if scalp_pct < 10.0:
+            horizon_mismatch_risk += 10.0
+        if day_pct < 10.0:
+            horizon_mismatch_risk += 10.0
+        if swing_pct >= 60.0:
+            horizon_mismatch_risk += 10.0
+        if not learned_exits_applied and natural_exit_preserved:
+            horizon_mismatch_risk += 15.0
+        if _to_float(profit_capture_validation.get("hold_duration_quality_score"), 0.0) < 45.0:
+            horizon_mismatch_risk += 10.0
+        if _text(shadow_lab.get("best_horizon"), "") == "hold_duration":
+            horizon_mismatch_risk += 5.0
+        horizon_mismatch_risk = _clamp(horizon_mismatch_risk)
+
+        if paper_horizon_bias == "swing_trade_bias":
+            why_positions_hold_long = "Paper horizons are biased toward swing/long-hold observations, and learned exits remain shadow-only under natural_exit_preserved=true."
+        elif not learned_exits_applied:
+            why_positions_hold_long = "Learned exits are still shadow-only, so paper positions continue to follow natural exits rather than horizon-specific exit recommendations."
+        else:
+            why_positions_hold_long = "Paper exits are using the current natural-exit path; horizon-specific recommendations are not yet behavior-applied."
+
+        if scalp_pct < day_pct and scalp_pct < swing_pct:
+            next_test = "Expand 15m-60m scalp coverage and compare against current natural-exit holds."
+        elif day_pct < swing_pct:
+            next_test = "Expand 2h-EOD day-trade coverage and compare against the current swing bias."
+        else:
+            next_test = "Increase 1d-10d swing coverage and keep learned exits shadow-only."
+
+        return {
+            "enabled": True,
+            "horizon_coverage_status": "observed_and_shadow_compared",
+            "tested_horizons": tested_horizons,
+            "missing_horizons": missing_horizons,
+            "observed_hold_bucket_counts": bucket_counts,
+            "scalp_coverage_count": scalp_count,
+            "day_coverage_count": day_count,
+            "swing_coverage_count": swing_count,
+            "scalp_coverage_pct": scalp_pct,
+            "day_coverage_pct": day_pct,
+            "swing_coverage_pct": swing_pct,
+            "horizon_bucket_total": int(total_bucketed),
+            "median_hold_minutes": round(_to_float(sorted(minute_values)[len(minute_values) // 2] if minute_values else 0.0), 2) if minute_values else 0.0,
+            "mean_hold_minutes": round(_to_float(sum(minute_values) / len(minute_values) if minute_values else 0.0), 2) if minute_values else 0.0,
+            "coarse_horizon_counts": coarse_counts,
+            "coarse_tested_horizons": coarse_tested_horizons,
+            "coarse_missing_horizons": coarse_missing_horizons,
+            "fine_hold_buckets_tested": fine_tested_horizons,
+            "fine_hold_buckets_missing": fine_missing_horizons,
+            "paper_entries_today_by_horizon": {
+                "scalp": _to_int((multi_horizon.get("scalp_entries_today")), 0),
+                "day_trade": _to_int((multi_horizon.get("day_trade_entries_today")), 0),
+                "swing_trade": _to_int((multi_horizon.get("swing_trade_entries_today")), 0),
+            },
+            "paper_closures_today_by_horizon": {
+                "scalp": _to_int((multi_horizon.get("scalp_closures_today")), 0),
+                "day_trade": _to_int((multi_horizon.get("day_trade_closures_today")), 0),
+                "swing_trade": _to_int((multi_horizon.get("swing_trade_closures_today")), 0),
+            },
+            "shadow_horizon_support": support_map,
+            "shadow_horizon_balance": round(shadow_horizon_balance, 3),
+            "shadow_support_score": round(shadow_support_score, 2),
+            "paper_horizon_bias": paper_horizon_bias,
+            "dominant_horizon": dominant_horizon,
+            "best_horizon": best_horizon,
+            "weakest_horizon": weakest_horizon,
+            "horizon_mismatch_risk_score": round(horizon_mismatch_risk, 2),
+            "horizon_mismatch_risk_label": "high" if horizon_mismatch_risk >= 65 else "moderate" if horizon_mismatch_risk >= 35 else "low",
+            "learned_exits_applied": learned_exits_applied,
+            "learned_horizon_status": "shadow_only_not_applied" if not learned_exits_applied else "paper_ready_candidate",
+            "natural_exit_preserved": natural_exit_preserved,
+            "why_positions_hold_long": why_positions_hold_long,
+            "next_recommended_horizon_test": next_test,
+            "shadow_recommendation": "Keep horizon learning shadow-only while expanding missing minute buckets and comparing against the current swing bias.",
         }
 
     def _adaptive_execution_exit_summary(self, payload: dict[str, Any]) -> dict[str, Any]:

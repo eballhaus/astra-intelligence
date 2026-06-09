@@ -42197,6 +42197,14 @@ def learning_issue_audit_status_v1(force: bool = False):
         except Exception:
             statuses["market_context_learning_suite_v1"] = {}
         try:
+            statuses["horizon_performance_dashboard"] = HORIZON_PERFORMANCE_DASHBOARD.status()
+        except Exception:
+            statuses["horizon_performance_dashboard"] = {}
+        try:
+            statuses["multi_horizon_paper_trading"] = MULTI_HORIZON_PAPER_TRADING_LEARNING_SUITE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["multi_horizon_paper_trading"] = {}
+        try:
             statuses["profit_capture_peak_decay_exit_validation_suite_v1"] = PROFIT_CAPTURE_PEAK_DECAY_EXIT_VALIDATION_SUITE.status(statuses=statuses, force=False)
         except Exception:
             statuses["profit_capture_peak_decay_exit_validation_suite_v1"] = {}
