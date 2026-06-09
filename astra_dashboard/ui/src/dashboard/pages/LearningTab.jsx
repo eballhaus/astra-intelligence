@@ -5421,6 +5421,27 @@ export default function LearningTab({ compact = false }) {
       </div>
 
       <div style={{ ...panelStyle }}>
+        <h3 style={{ marginTop: 0 }}>Paper Path Gating Summary</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
+          <div>Paper path status: {String(alpacaPaperBroker?.paper_path_gating_summary?.paper_path_status || "unknown_blocker").replaceAll("_", " ")}</div>
+          <div>Top blocker: {String(alpacaPaperBroker?.paper_path_gating_summary?.top_blocker || "unknown_blocker").replaceAll("_", " ")}</div>
+          <div>Candidates reviewed: {safeNumber(alpacaPaperBroker?.paper_path_gating_summary?.candidates_reviewed_today).toFixed(0)}</div>
+          <div>Candidates blocked: {safeNumber(alpacaPaperBroker?.paper_path_gating_summary?.candidates_blocked).toFixed(0)}</div>
+          <div>Current open positions: {safeNumber(alpacaPaperBroker?.paper_path_gating_summary?.current_open_positions, paperStatus?.open_positions_count).toFixed(0)}</div>
+          <div>Open position rows: {safeNumber(alpacaPaperBroker?.paper_path_gating_summary?.open_position_rows_count).toFixed(0)}</div>
+          <div>Capacity available: {safeNumber(alpacaPaperBroker?.paper_path_gating_summary?.capacity_available).toFixed(0)}</div>
+          <div>Capacity blocked: {alpacaPaperBroker?.paper_path_gating_summary?.capacity_blocked ? "yes" : "no"}</div>
+          <div>Learned exits applied: {alpacaPaperBroker?.paper_path_gating_summary?.learned_exits_applied ? "yes" : "no"}</div>
+          <div>Learned exits readiness: {String(alpacaPaperBroker?.paper_path_gating_summary?.readiness_status || "not_ready").replaceAll("_", " ")}</div>
+          <div>Best shadow exit policy: {String(alpacaPaperBroker?.paper_path_gating_summary?.best_shadow_exit_policy || "insufficient_data").replaceAll("_", " ")}</div>
+          <div>Best shadow hold window: {String(alpacaPaperBroker?.paper_path_gating_summary?.best_shadow_hold_window || "insufficient_data").replaceAll("_", " ")}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Recommended safe action: {String(alpacaPaperBroker?.paper_path_gating_summary?.recommended_safe_action || "Waiting for paper-path gating diagnostics.")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle }}>
         <h3 style={{ marginTop: 0 }}>Multi-Horizon Paper Trading Learning</h3>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12 }}>
           <div>Current phase: {String(multiHorizonPaperTrading?.current_learning_phase || "phase_1_foundation").replaceAll("_", " ")}</div>

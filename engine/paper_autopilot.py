@@ -794,17 +794,27 @@ class PaperAutopilotEngine:
             rows = conn.execute(query, params).fetchall()
         return [dict(r or {}) for r in rows]
 
+    def _count_open_position_rows(self) -> int:
+        try:
+            return int(len(self._fetch_open_positions() or []))
+        except Exception:
+            return 0
+
     def _count_open_positions(self) -> dict[str, int]:
         rows = self._fetch_open_positions()
-        stock_n = 0
-        crypto_n = 0
+        stock_keys: set[str] = set()
+        crypto_keys: set[str] = set()
         for row in rows:
+            symbol = str((row or {}).get("symbol") or "").upper().strip()
             asset = _norm_asset((row or {}).get("asset_type") or "stock")
+            if not symbol:
+                continue
+            key = f"{asset}:{symbol}"
             if asset == "crypto":
-                crypto_n += 1
+                crypto_keys.add(key)
             else:
-                stock_n += 1
-        return {"stock": int(stock_n), "crypto": int(crypto_n)}
+                stock_keys.add(key)
+        return {"stock": int(len(stock_keys)), "crypto": int(len(crypto_keys))}
 
     def _cooldown_active(self, symbol: str) -> bool:
         sym = str(symbol or "").upper().strip()
@@ -1145,11 +1155,12 @@ class PaperAutopilotEngine:
     def _current_execution_capacities(self) -> dict[str, Any]:
         counts = self._count_open_positions()
         open_rows = self._fetch_open_positions()
-        open_syms = {str(r.get("symbol") or "").upper().strip() for r in open_rows}
+        open_syms = {str(r.get("symbol") or "").upper().strip() for r in open_rows if str(r.get("symbol") or "").strip()}
         stock_open = int(counts.get("stock", 0))
         crypto_open = int(counts.get("crypto", 0))
         return {
             "open_symbols": open_syms,
+            "open_position_rows_count": int(len(open_rows)),
             "open_positions_count": stock_open + crypto_open,
             "open_positions_stock": stock_open,
             "open_positions_crypto": crypto_open,
@@ -2210,6 +2221,8 @@ class PaperAutopilotEngine:
 
     def status(self):
         counts = self._count_open_positions()
+        open_position_rows_count = self._count_open_position_rows()
+        open_positions_count = int(counts.get("stock", 0) + counts.get("crypto", 0))
         total_closed = 0
         try:
             with self._connect() as conn:
@@ -2222,9 +2235,12 @@ class PaperAutopilotEngine:
             "ok": True,
             "autopilot_enabled": self._enabled,
             "paper_mode": self.paper_mode,
-            "open_positions_count": int(counts.get("stock", 0) + counts.get("crypto", 0)),
+            "open_positions_count": open_positions_count,
             "open_positions_stock": int(counts.get("stock", 0)),
             "open_positions_crypto": int(counts.get("crypto", 0)),
+            "open_position_rows_count": int(open_position_rows_count),
+            "open_positions_unique_count": int(open_positions_count),
+            "stale_internal_workflow_row_overhang": int(max(0, open_position_rows_count - open_positions_count)),
             "total_closed_trades": int(total_closed),
             "last_cycle_utc": str(self._runtime_state.get("last_cycle_utc") or ""),
             "last_cycle_summary": dict(self._runtime_state.get("last_cycle_summary") or {}),
@@ -2730,13 +2746,18 @@ class PaperAutopilotEngine:
                 "portfolio_risk_label_used": str(portfolio_risk_label_used),
                 "portfolio_risk_preflight_reason": str(portfolio_risk_preflight_reason),
                 "internal_open_positions_count": int(len([s for s in internal_open_syms if s])),
+                "open_position_rows_count": int(len(open_rows_initial)),
+                "open_positions_unique_count": int(len([s for s in internal_open_syms if s])),
                 "broker_open_positions_count": int(len([s for s in broker_open_syms if s])),
                 "effective_broker_capacity_count": int(len([s for s in broker_open_syms if s])),
                 "stale_internal_positions_count": stale_internal_positions_count,
+                "stale_internal_workflow_row_overhang": int(max(0, len(open_rows_initial) - len([s for s in internal_open_syms if s]))),
                 "stale_internal_positions": stale_internal_positions[:32],
                 "stale_internal_positions_skipped_for_exit_scan": int(stale_internal_positions_skipped_for_exit_scan),
                 "capacity_source": str(capacity_source),
                 "effective_capacity_count": int(effective_capacity_count),
+                "capacity_available": int(total_capacity),
+                "capacity_blocked": bool(total_capacity <= 0),
                 "stock_capacity_limit": int(self.max_stocks),
                 "paper_learning_capacity_expansion_v1": bool(self.paper_learning_capacity_expansion_v1),
                 "paper_learning_capacity_reason": "cautious_learning_acceleration_without_forced_trades",
@@ -2800,13 +2821,18 @@ class PaperAutopilotEngine:
                 "portfolio_risk_label_used": str(portfolio_risk_label_used),
                 "portfolio_risk_preflight_reason": str(portfolio_risk_preflight_reason),
                 "internal_open_positions_count": int(len([s for s in internal_open_syms if s])),
+                "open_position_rows_count": int(len(open_rows_initial)),
+                "open_positions_unique_count": int(len([s for s in internal_open_syms if s])),
                 "broker_open_positions_count": int(len([s for s in broker_open_syms if s])),
                 "effective_broker_capacity_count": int(len([s for s in broker_open_syms if s])),
                 "stale_internal_positions_count": stale_internal_positions_count,
+                "stale_internal_workflow_row_overhang": int(max(0, len(open_rows_initial) - len([s for s in internal_open_syms if s]))),
                 "stale_internal_positions": stale_internal_positions[:32],
                 "stale_internal_positions_skipped_for_exit_scan": int(stale_internal_positions_skipped_for_exit_scan),
                 "capacity_source": str(capacity_source),
                 "effective_capacity_count": int(effective_capacity_count),
+                "capacity_available": int(total_capacity),
+                "capacity_blocked": bool(total_capacity <= 0),
                 "stock_capacity_limit": int(self.max_stocks),
                 "stock_capacity_reason": str(stock_capacity_reason),
                 "stale_internal_positions_ignored_for_broker_capacity": bool(stale_internal_positions_ignored_for_broker_capacity),

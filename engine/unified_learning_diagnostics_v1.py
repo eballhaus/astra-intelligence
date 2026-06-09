@@ -312,6 +312,7 @@ class UnifiedLearningDiagnosticsV1:
         learning_issue_audit = self._learning_issue_audit_summary(statuses.get("learning_issue_audit") or {})
         remote_runtime_consistency = self._remote_runtime_consistency_summary(statuses.get("remote_runtime_consistency") or {})
         capacity_expansion_status = self._capacity_expansion_summary(statuses)
+        paper_path_gating_status = self._paper_path_gating_summary(statuses)
         execution_participation_audit = self._execution_participation_audit_summary(statuses.get("execution_participation_audit") or {})
         stale = self._stale_status(sources, system)
         return {
@@ -359,6 +360,7 @@ class UnifiedLearningDiagnosticsV1:
             "learning_issue_audit": learning_issue_audit,
             "remote_runtime_consistency": remote_runtime_consistency,
             "capacity_expansion_status": capacity_expansion_status,
+            "paper_path_gating_summary": paper_path_gating_status,
             "execution_participation_audit": execution_participation_audit,
             "learning_maturity_summary": learning,
             "regime_context_summary": regime,
@@ -2758,6 +2760,58 @@ class UnifiedLearningDiagnosticsV1:
             "live_trading_changed": False,
             "forced_trades_enabled": False,
             "forced_exits_enabled": False,
+        }
+
+    def _paper_path_gating_summary(self, statuses: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        trace = dict(statuses.get("paper_execution_trace") or {})
+        throughput = dict(statuses.get("paper_autopilot_throughput") or {})
+        broker = dict(statuses.get("alpaca_paper_broker") or {})
+        decision_opt = dict(statuses.get("decision_optimization_trade_management_suite_v1") or {})
+        exit_learning = dict(statuses.get("exit_learning_expansion_suite_v1") or {})
+        candidates_seen = _to_int(trace.get("candidates_seen"), 0)
+        eligible = _to_int(trace.get("eligible_candidates"), 0)
+        submitted = _to_int(trace.get("orders_submitted"), 0)
+        open_positions = _to_int(trace.get("broker_open_positions_count"), _to_int(trace.get("internal_open_positions_count"), 0))
+        raw_rows = _to_int(trace.get("open_position_rows_count"), _to_int(throughput.get("open_position_rows_count"), open_positions))
+        unique_positions = _to_int(trace.get("open_positions_unique_count"), open_positions)
+        capacity_available = _to_int(trace.get("capacity_available"), 0)
+        capacity_blocked = bool(trace.get("capacity_blocked", False))
+        blocker = _text(trace.get("final_blocker_reason") or trace.get("why_no_trade_today"), "unknown_blocker")
+        learned_exit_evidence = _to_int(decision_opt.get("evidence_count"), 0) + _to_int(exit_learning.get("tracked_trades"), 0)
+        return {
+            "paper_path_status": blocker if blocker not in {"", "awaiting_next_worker_cycle", "orders_submitted"} else "paper_path_open",
+            "top_blocker": blocker,
+            "candidates_reviewed_today": candidates_seen,
+            "candidates_passed_ranking": eligible,
+            "candidates_passed_risk": eligible,
+            "candidates_blocked": max(0, candidates_seen - eligible),
+            "high_confidence_candidates_blocked": max(0, candidates_seen - eligible),
+            "missed_evidence_estimate": max(0, candidates_seen - submitted),
+            "missed_opportunity_estimate": max(0, candidates_seen - submitted),
+            "available_buying_power_at_block": _to_float(broker.get("buying_power"), _to_float(broker.get("available_buying_power"), 0.0)),
+            "current_open_positions": unique_positions,
+            "broker_confirmed_open_positions": _to_int(trace.get("broker_open_positions_count"), 0),
+            "stale_internal_position_rows": max(0, raw_rows - unique_positions),
+            "open_position_rows_count": raw_rows,
+            "capacity_available": capacity_available,
+            "capacity_blocked": capacity_blocked,
+            "recommended_safe_action": (
+                "Keep market-session safety intact; count unique open positions for capacity, expose raw-row overhang, and leave learned exits shadow-only."
+            ),
+            "learned_exit_status": "shadow_only_not_applied",
+            "learned_hold_duration_status": "shadow_only_not_applied",
+            "best_shadow_exit_policy": _text(decision_opt.get("best_virtual_exit_policy"), "insufficient_data"),
+            "best_shadow_hold_window": _text(exit_learning.get("optimal_hold_window") or exit_learning.get("best_hold_window"), "insufficient_data"),
+            "evidence_supporting_learned_exits": learned_exit_evidence,
+            "readiness_status": "validation_ready_shadow_only" if learned_exit_evidence >= 40 else "not_ready",
+            "remaining_evidence_needed": (
+                "human_review_required_before_any_paper_exit_changes"
+                if not bool(decision_opt.get("behavior_safe_to_apply", False))
+                else "policy_governance_review_required"
+            ),
+            "learned_exits_applied": False,
+            "learned_exits_ready": False,
+            "behavior_safe_to_apply": False,
         }
 
     def _execution_participation_audit_summary(self, payload: dict[str, Any]) -> dict[str, Any]:

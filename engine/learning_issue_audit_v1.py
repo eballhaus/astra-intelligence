@@ -590,6 +590,9 @@ class LearningIssueAuditV1:
         shadow_lab = dict(statuses.get("realistic_shadow_evidence_learning_lab_v1") or {})
         learning_allocator = dict(statuses.get("adaptive_learning_prioritization_resource_allocation_v1") or {})
         autonomous_governance = dict(statuses.get("autonomous_intelligence_validation_governance_v1") or {})
+        paper_trace = dict(statuses.get("paper_execution_trace") or {})
+        paper_autopilot = dict(statuses.get("paper_autopilot_throughput") or {})
+        paper_broker = dict(statuses.get("alpaca_paper_broker") or {})
         v3_issue = _issue(
             "shadow_exit_learning_active" if v3.get("enabled") else "shadow_exit_learning_unavailable",
             "adaptive_execution_exit_v3_tracks_profit_capture_horizon_and_peak_decay" if v3.get("enabled") else "adaptive_execution_exit_v3_not_available",
@@ -808,6 +811,49 @@ class LearningIssueAuditV1:
             "Use autonomous governance diagnostics for truth validation and virtual-test planning only; keep all policies unapplied.",
             _text(autonomous_governance.get("shadow_recommendation"), "No behavior change."),
         )
+        paper_path_candidates_seen = _to_int(paper_trace.get("candidates_seen"), 0)
+        paper_path_eligible = _to_int(paper_trace.get("eligible_candidates"), 0)
+        paper_path_submitted = _to_int(paper_trace.get("orders_submitted"), 0)
+        paper_path_unique_open = _to_int(paper_trace.get("open_positions_unique_count"), _to_int(paper_trace.get("broker_open_positions_count"), 0))
+        paper_path_raw_rows = _to_int(paper_trace.get("open_position_rows_count"), paper_path_unique_open)
+        paper_path_evidence = _to_int(decision_opt.get("evidence_count"), 0) + _to_int(exit_learning.get("tracked_trades"), 0)
+        paper_path_diag = {
+            "paper_path_status": _text(paper_trace.get("final_blocker_reason") or paper_trace.get("why_no_trade_today"), "unknown_blocker"),
+            "top_blocker": _text(paper_trace.get("final_blocker_reason") or paper_trace.get("why_no_trade_today"), "unknown_blocker"),
+            "candidates_reviewed_today": paper_path_candidates_seen,
+            "candidates_passed_ranking": paper_path_eligible,
+            "candidates_passed_risk": paper_path_eligible,
+            "candidates_blocked": max(0, paper_path_candidates_seen - paper_path_eligible),
+            "high_confidence_candidates_blocked": max(0, paper_path_candidates_seen - paper_path_eligible),
+            "missed_evidence_estimate": max(0, paper_path_candidates_seen - paper_path_submitted),
+            "missed_opportunity_estimate": max(0, paper_path_candidates_seen - paper_path_submitted),
+            "available_buying_power_at_block": _to_float(paper_broker.get("buying_power"), _to_float(paper_broker.get("available_buying_power"), 0.0)),
+            "current_open_positions": paper_path_unique_open,
+            "broker_confirmed_open_positions": _to_int(paper_trace.get("broker_open_positions_count"), 0),
+            "stale_internal_position_rows": max(0, paper_path_raw_rows - paper_path_unique_open),
+            "open_position_rows_count": paper_path_raw_rows,
+            "capacity_available": _to_int(paper_trace.get("capacity_available"), 0),
+            "capacity_blocked": bool(paper_trace.get("capacity_blocked", False)),
+            "recommended_safe_action": "Keep market-session safety intact; count unique open positions for capacity and keep learned exits shadow-only.",
+            "learned_exit_status": "shadow_only_not_applied",
+            "learned_hold_duration_status": "shadow_only_not_applied",
+            "best_shadow_exit_policy": _text(decision_opt.get("best_virtual_exit_policy"), "insufficient_data"),
+            "best_shadow_hold_window": _text(exit_learning.get("optimal_hold_window") or exit_learning.get("best_hold_window"), "insufficient_data"),
+            "evidence_supporting_learned_exits": paper_path_evidence,
+            "readiness_status": "validation_ready_shadow_only" if paper_path_evidence >= 40 else "not_ready",
+            "remaining_evidence_needed": "human_review_required_before_any_paper_exit_changes",
+            "learned_exits_applied": False,
+            "learned_exits_ready": False,
+            "behavior_safe_to_apply": False,
+        }
+        paper_path_issue = _issue(
+            "paper_path_gating_transparent" if paper_path_candidates_seen > 0 else "paper_path_gating_warming_up",
+            "session_gate_and_unique_position_capacity_diagnostics_active" if paper_path_candidates_seen > 0 else "insufficient_session_trace",
+            "medium" if _text(paper_path_diag.get("top_blocker"), "") in {"session_order_submission_blocked", "open_confirmation_required", "max_new_positions_per_cycle_reached"} else "low",
+            paper_path_candidates_seen,
+            "Use the new paper-path gating summary to explain blockers and capacity without changing strategy gates.",
+            "Keep learned exits shadow-only and fix stale-row overcounting only for diagnostics/capacity truth.",
+        )
         issue_status = {
             "core_metric_source_regression": core_issue,
             "dataset_scope_mismatch": dataset_issue,
@@ -836,6 +882,7 @@ class LearningIssueAuditV1:
             "realistic_shadow_evidence_learning_lab_v1": shadow_lab_issue,
             "adaptive_learning_prioritization_resource_allocation_v1": learning_allocator_issue,
             "autonomous_intelligence_validation_governance_v1": autonomous_governance_issue,
+            "paper_path_gating": paper_path_issue,
         }
         medium_or_higher = [name for name, issue in issue_status.items() if issue.get("severity") in {"medium", "high"}]
         out = {
@@ -867,6 +914,7 @@ class LearningIssueAuditV1:
             "realistic_shadow_evidence_learning_lab_status": shadow_lab_issue,
             "adaptive_learning_prioritization_resource_allocation_status": learning_allocator_issue,
             "autonomous_intelligence_validation_governance_status": autonomous_governance_issue,
+            "paper_path_gating_status": paper_path_issue,
             "execution_participation_display_status": exec_issue,
             "core_metric_source_diagnostics": core_diag,
             "dataset_scope_diagnostics": dataset_diag,
@@ -1411,6 +1459,7 @@ class LearningIssueAuditV1:
                 "thresholds_changed": bool(autonomous_governance.get("thresholds_changed", False)),
                 "portfolio_allocation_changed": bool(autonomous_governance.get("portfolio_allocation_changed", False)),
             },
+            "paper_path_gating_diagnostics": paper_path_diag,
             "likely_cause_summary": ", ".join(medium_or_higher) if medium_or_higher else "no_behavior_change_indicated",
             "recommended_action": "Apply display/source reconciliation and keep behavior changes shadow-only.",
             "safe_to_change_behavior": False,

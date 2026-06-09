@@ -32178,6 +32178,66 @@ def alpaca_paper_status_v1():
     try:
         out = ALPACA_PAPER_BROKER.status()
         if isinstance(out, dict):
+            try:
+                autopilot_status = PAPER_AUTOPILOT.status()
+            except Exception:
+                autopilot_status = {}
+            try:
+                autopilot_trace = PAPER_AUTOPILOT.execution_trace() if hasattr(PAPER_AUTOPILOT, "execution_trace") else {}
+            except Exception:
+                autopilot_trace = {}
+            try:
+                decision_opt = dict(
+                    DECISION_OPTIMIZATION_TRADE_MANAGEMENT_SUITE.status(statuses=_learning_acceleration_status_bundle(), force=False) or {}
+                )
+            except Exception:
+                decision_opt = {}
+            try:
+                exit_learning = dict(EXIT_LEARNING_EXPANSION_SUITE.status(force=False) or {})
+            except Exception:
+                exit_learning = {}
+            paper_path_gating_summary = {
+                "paper_path_status": str(autopilot_trace.get("final_blocker_reason") or autopilot_trace.get("why_no_trade_today") or "unknown_blocker"),
+                "top_blocker": str(autopilot_trace.get("final_blocker_reason") or "unknown_blocker"),
+                "candidates_reviewed_today": int(_to_float(autopilot_trace.get("candidates_seen"), 0.0)),
+                "candidates_passed_ranking": int(_to_float(autopilot_trace.get("eligible_candidates"), 0.0)),
+                "candidates_passed_risk": int(_to_float(autopilot_trace.get("eligible_candidates"), 0.0)),
+                "candidates_blocked": int(max(0, _to_float(autopilot_trace.get("candidates_seen"), 0.0) - _to_float(autopilot_trace.get("eligible_candidates"), 0.0))),
+                "high_confidence_candidates_blocked": int(max(0, _to_float(autopilot_trace.get("candidates_seen"), 0.0) - _to_float(autopilot_trace.get("eligible_candidates"), 0.0))),
+                "missed_evidence_estimate": int(max(0, _to_float(autopilot_trace.get("candidates_seen"), 0.0) - _to_float(autopilot_trace.get("orders_submitted"), 0.0))),
+                "missed_opportunity_estimate": int(max(0, _to_float(autopilot_trace.get("candidates_seen"), 0.0) - _to_float(autopilot_trace.get("orders_submitted"), 0.0))),
+                "available_buying_power_at_block": _to_float(out.get("buying_power"), _to_float(out.get("available_buying_power"), 0.0)),
+                "current_open_positions": int(_to_float(autopilot_status.get("open_positions_count"), 0.0)),
+                "broker_confirmed_open_positions": int(_to_float(autopilot_trace.get("broker_open_positions_count"), 0.0)),
+                "stale_internal_position_rows": int(_to_float(autopilot_status.get("stale_internal_workflow_row_overhang"), 0.0)),
+                "open_position_rows_count": int(_to_float(autopilot_status.get("open_position_rows_count"), 0.0)),
+                "capacity_available": int(_to_float(autopilot_trace.get("capacity_available"), 0.0)),
+                "capacity_blocked": bool(autopilot_trace.get("capacity_blocked", False)),
+                "recommended_safe_action": (
+                    "Keep market-session safety intact; use unique-position counting and stale-row overhang diagnostics for evidence throughput."
+                ),
+                "learned_exit_status": "shadow_only_not_applied",
+                "learned_hold_duration_status": "shadow_only_not_applied",
+                "best_shadow_exit_policy": str(decision_opt.get("best_virtual_exit_policy") or "insufficient_data"),
+                "best_shadow_hold_window": str(exit_learning.get("optimal_hold_window") or exit_learning.get("best_hold_window") or "insufficient_data"),
+                "evidence_supporting_learned_exits": int(_to_float(decision_opt.get("evidence_count"), 0.0)) + int(_to_float(exit_learning.get("tracked_trades"), 0.0)),
+                "readiness_status": (
+                    "validation_ready_shadow_only"
+                    if int(_to_float(decision_opt.get("evidence_count"), 0.0)) >= 20 and int(_to_float(exit_learning.get("tracked_trades"), 0.0)) >= 20
+                    else "not_ready"
+                ),
+                "remaining_evidence_needed": (
+                    "human_review_required_before_any_paper_exit_changes"
+                    if not bool(decision_opt.get("behavior_safe_to_apply", False))
+                    else "shadow_only_until_policy_governance_changes"
+                ),
+                "learned_exits_applied": False,
+                "learned_exits_ready": False,
+                "behavior_safe_to_apply": False,
+            }
+            out["paper_path_gating_summary"] = paper_path_gating_summary
+            out["paper_autopilot_status"] = dict(autopilot_status or {})
+            out["paper_autopilot_trace"] = dict(autopilot_trace or {})
             out["alpaca_paper_status_v1"] = True
             out["live_trading_changed"] = False
             out["broker_live_endpoint_allowed"] = False
@@ -40093,6 +40153,7 @@ def paper_autopilot_throughput_status_v1():
         _ensure_paper_autopilot_started()
         control = PAPER_AUTOPILOT.control_status()
         status = PAPER_AUTOPILOT.status()
+        trace = PAPER_AUTOPILOT.execution_trace() if hasattr(PAPER_AUTOPILOT, "execution_trace") else {}
         try:
             obs = OBSERVATION_LEARNING_THROUGHPUT_SUITE.status()
         except Exception:
@@ -40140,13 +40201,19 @@ def paper_autopilot_throughput_status_v1():
                 "target_stock_positions_default": 12,
                 "target_stock_positions_upper_bound": 15,
                 "suggested_horizon_mix": {"scalp": 3, "day_trade": 5, "swing_short_swing_max": 7},
-                "paper_only": True,
-                "quality_candidates_required": True,
-                "duplicate_active_symbol_block_preserved": True,
-                "market_session_gate_preserved": True,
-                "broker_safeguards_preserved": True,
-            },
+            "paper_only": True,
+            "quality_candidates_required": True,
+            "duplicate_active_symbol_block_preserved": True,
+            "market_session_gate_preserved": True,
+            "broker_safeguards_preserved": True,
+        },
             "open_positions_count": int(_to_float(status.get("open_positions_count"), 0.0)),
+            "open_position_rows_count": int(_to_float(status.get("open_position_rows_count"), 0.0)),
+            "open_positions_unique_count": int(_to_float(status.get("open_positions_unique_count"), 0.0)),
+            "stale_internal_workflow_row_overhang": int(_to_float(status.get("stale_internal_workflow_row_overhang"), 0.0)),
+            "paper_path_status": str(trace.get("final_blocker_reason") or trace.get("why_no_trade_today") or ""),
+            "capacity_available": int(_to_float(trace.get("capacity_available"), 0.0)),
+            "capacity_blocked": bool(trace.get("capacity_blocked", False)),
             "projected_trades_opened_per_day": round(projected_opened, 3),
             "projected_trades_closed_per_day": round(projected_closed, 3),
             "projected_labels_created_per_day": round(projected_labels, 3),
