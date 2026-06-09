@@ -256,7 +256,7 @@ export default function LearningTab({ compact = false }) {
       const secondaryResults = [];
       try {
         const primaryBatch = await Promise.all([
-          fetchJson("unified_learning_diagnostics", "/api/unified_learning_diagnostics_v1", {}, { timeoutMs: 10000 }),
+          fetchJson("unified_learning_diagnostics", "/api/unified_learning_diagnostics_v1", {}, { timeoutMs: 30000 }),
         ]);
         fastResults.push(...primaryBatch);
 
