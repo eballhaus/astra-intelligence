@@ -8,7 +8,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5173,
-    allowedHosts: ['.ts.net', 'localhost', '127.0.0.1', 'erics-mac-mini.tailb8a048.ts.net'],
+    allowedHosts: true,
     open: true,
     strictPort: true,
     cors: true,
