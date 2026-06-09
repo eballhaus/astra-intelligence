@@ -166,6 +166,19 @@ def _parse_iso_dt(value: Any, tz: timezone | Any) -> datetime | None:
     return None
 
 
+def _parse_hhmm(value: Any, default: dtime) -> dtime:
+    text = _text(value)
+    if not text:
+        return default
+    try:
+        parts = text.split(":")
+        hh = max(0, min(23, int(parts[0])))
+        mm = max(0, min(59, int(parts[1]) if len(parts) > 1 else 0))
+        return dtime(hh, mm)
+    except Exception:
+        return default
+
+
 class MarketCalendarKnowledgeIntelligenceV1:
     """Cached market-calendar truth and local market-context intelligence.
 
@@ -191,6 +204,17 @@ class MarketCalendarKnowledgeIntelligenceV1:
     def _et_now(self, now_utc: datetime | None = None) -> datetime:
         now = now_utc or _now_utc()
         return now.astimezone(self._tz())
+
+    def _market_should_be_open_now(self, now_et: datetime) -> bool:
+        day = now_et.date()
+        if day.weekday() >= 5 or day in _holiday_map(day.year):
+            return False
+        local_row = self._local_market_day(day)
+        if local_row is None:
+            return False
+        open_time = _parse_hhmm(local_row.get("open"), dtime(9, 30))
+        close_time = _parse_hhmm(local_row.get("close"), dtime(16, 0))
+        return bool(open_time <= now_et.time() < close_time)
 
     def _env(self) -> dict[str, str]:
         base = _text(os.getenv("APCA_API_BASE_URL") or os.getenv("ALPACA_BASE_URL") or PAPER_BASE).rstrip("/")
@@ -708,6 +732,29 @@ class MarketCalendarKnowledgeIntelligenceV1:
         session = self._session_from_calendar(cal_rows, now_et)
         session["market_calendar_available"] = bool(cal_rows)
         session.update(meta)
+        session_now_utc = (now_utc or _now_utc()).astimezone(timezone.utc)
+        session_now_et = session_now_utc.astimezone(self._tz())
+        session_cache_age_seconds = _to_float(meta.get("market_calendar_cache_age_seconds"), 0.0)
+        session_is_stale = bool(meta.get("market_calendar_stale")) or bool(session_cache_age_seconds >= CALENDAR_CACHE_MAX_AGE_SECONDS)
+        market_should_be_open_now = bool(self._market_should_be_open_now(now_et))
+        if session_is_stale:
+            session["session_is_stale"] = True
+            session["session_cache_age_seconds"] = round(session_cache_age_seconds, 2)
+            session["session_now_utc"] = session_now_utc.isoformat().replace("+00:00", "Z")
+            session["session_now_et"] = session_now_et.isoformat()
+            session["session_source"] = _text(meta.get("market_calendar_source"), "local_estimate")
+            session["market_should_be_open_now"] = bool(market_should_be_open_now)
+            session["session_block_reason"] = "stale_session_cache"
+            session["session_block_validated"] = bool(session.get("paper_order_submission_allowed", False) == market_should_be_open_now)
+        else:
+            session["session_is_stale"] = False
+            session["session_cache_age_seconds"] = round(session_cache_age_seconds, 2)
+            session["session_now_utc"] = session_now_utc.isoformat().replace("+00:00", "Z")
+            session["session_now_et"] = session_now_et.isoformat()
+            session["session_source"] = _text(meta.get("market_calendar_source"), "local_estimate")
+            session["market_should_be_open_now"] = bool(market_should_be_open_now)
+            session["session_block_reason"] = "none" if session.get("paper_order_submission_allowed", False) else _text(session.get("session_reason"), "market_closed")
+            session["session_block_validated"] = bool(session.get("paper_order_submission_allowed", False) == market_should_be_open_now)
         behavior = self._session_behavior(session)
         knowledge = self._knowledge([dict(r) for r in (rows or []) if isinstance(r, dict)], session)
         exploration = self._exploration_context(session, knowledge)

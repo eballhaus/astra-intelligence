@@ -123,22 +123,53 @@ class MarketSessionExecutionTimingV1:
             try:
                 ctx = dict(self.market_calendar_knowledge_suite.status(allow_live_fetch=False, now_utc=now_utc) or {})
                 if ctx:
-                    return {
+                    now = now_utc or _now_utc()
+                    et_now = self._et_now(now)
+                    market_should_be_open_now = bool(ctx.get("market_should_be_open_now"))
+                    session_is_stale = bool(ctx.get("session_is_stale", False))
+                    paper_allowed = bool(ctx.get("broker_order_submission_allowed") or ctx.get("paper_order_submission_allowed"))
+                    session_reason = _safe_text(ctx.get("session_reason"), "Market calendar context available.")
+                    session_source = _safe_text(ctx.get("session_source"), "market_calendar_knowledge")
+                    if session_is_stale and market_should_be_open_now and not paper_allowed:
+                        paper_allowed = True
+                        session_reason = "Stale market-calendar cache rejected; local ET schedule confirms regular market hours."
+                        session_source = f"{session_source}:stale_rejected"
+                    elif session_is_stale and not market_should_be_open_now and paper_allowed:
+                        paper_allowed = False
+                        session_reason = "Stale market-calendar cache rejected; local ET schedule confirms the market is closed."
+                        session_source = f"{session_source}:stale_rejected"
+                    market_is_open = bool(paper_allowed and market_should_be_open_now)
+                    market_is_tradable = bool(paper_allowed and market_should_be_open_now)
+                    session_block_reason = "none" if paper_allowed else ("stale_session_cache_rejected" if session_is_stale else session_reason)
+                    session_block_validated = bool((paper_allowed and market_should_be_open_now) or ((not paper_allowed) and (not market_should_be_open_now)))
+                    out = {
                         "enabled": True,
                         "version": VERSION,
-                        "market_session_mode": _safe_text(ctx.get("current_session_type") or ctx.get("market_session_mode"), "unknown_closed"),
-                        "market_is_open": bool(ctx.get("session_tradable") or ctx.get("market_is_open")),
-                        "market_is_tradable": bool(ctx.get("session_tradable") or ctx.get("market_is_tradable")),
-                        "paper_order_submission_allowed": bool(ctx.get("broker_order_submission_allowed") or ctx.get("paper_order_submission_allowed")),
+                        **{k: v for k, v in ctx.items() if k not in {"enabled", "version", "api_calls_used"}},
+                        "market_session_mode": _safe_text(
+                            "regular_market" if paper_allowed and market_should_be_open_now else (ctx.get("current_session_type") or ctx.get("market_session_mode")),
+                            "unknown_closed",
+                        ),
+                        "market_is_open": bool(market_is_open),
+                        "market_is_tradable": bool(market_is_tradable),
+                        "paper_order_submission_allowed": bool(paper_allowed),
                         "order_queueing_allowed": False,
                         "execution_confirmation_required": True,
-                        "session_reason": _safe_text(ctx.get("session_reason"), "Market calendar context available."),
-                        "session_timestamp_et": _safe_text(ctx.get("session_timestamp_et")),
+                        "session_reason": session_reason,
+                        "session_timestamp_et": _safe_text(ctx.get("session_timestamp_et") or et_now.isoformat()),
+                        "session_now_utc": (now.astimezone(timezone.utc)).isoformat().replace("+00:00", "Z"),
+                        "session_now_et": et_now.isoformat(),
+                        "session_source": session_source,
+                        "session_cache_age_seconds": round(float(ctx.get("session_cache_age_seconds") or 0.0), 2),
+                        "session_is_stale": bool(session_is_stale),
+                        "market_should_be_open_now": bool(market_should_be_open_now),
+                        "session_block_reason": session_block_reason,
+                        "session_block_validated": bool(session_block_validated),
                         "live_trading_changed": False,
                         "alpaca_paper_only_preserved": True,
                         "natural_exit_preserved": True,
-                        **{k: v for k, v in ctx.items() if k not in {"enabled", "version", "api_calls_used"}},
                     }
+                    return out
             except Exception:
                 pass
         et = self._et_now(now_utc)

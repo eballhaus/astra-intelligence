@@ -593,6 +593,8 @@ class LearningIssueAuditV1:
         paper_trace = dict(statuses.get("paper_execution_trace") or {})
         paper_autopilot = dict(statuses.get("paper_autopilot_throughput") or {})
         paper_broker = dict(statuses.get("alpaca_paper_broker") or {})
+        paper_path_summary = dict(paper_broker.get("paper_path_gating_summary") or paper_broker.get("paper_path_gating_diagnostics") or {})
+        paper_session = dict(paper_autopilot.get("market_session_execution_timing") or paper_trace.get("market_session_execution_timing") or {})
         v3_issue = _issue(
             "shadow_exit_learning_active" if v3.get("enabled") else "shadow_exit_learning_unavailable",
             "adaptive_execution_exit_v3_tracks_profit_capture_horizon_and_peak_decay" if v3.get("enabled") else "adaptive_execution_exit_v3_not_available",
@@ -818,22 +820,60 @@ class LearningIssueAuditV1:
         paper_path_raw_rows = _to_int(paper_trace.get("open_position_rows_count"), paper_path_unique_open)
         paper_path_evidence = _to_int(decision_opt.get("evidence_count"), 0) + _to_int(exit_learning.get("tracked_trades"), 0)
         paper_path_diag = {
-            "paper_path_status": _text(paper_trace.get("final_blocker_reason") or paper_trace.get("why_no_trade_today"), "unknown_blocker"),
-            "top_blocker": _text(paper_trace.get("final_blocker_reason") or paper_trace.get("why_no_trade_today"), "unknown_blocker"),
-            "candidates_reviewed_today": paper_path_candidates_seen,
-            "candidates_passed_ranking": paper_path_eligible,
-            "candidates_passed_risk": paper_path_eligible,
-            "candidates_blocked": max(0, paper_path_candidates_seen - paper_path_eligible),
-            "high_confidence_candidates_blocked": max(0, paper_path_candidates_seen - paper_path_eligible),
-            "missed_evidence_estimate": max(0, paper_path_candidates_seen - paper_path_submitted),
-            "missed_opportunity_estimate": max(0, paper_path_candidates_seen - paper_path_submitted),
-            "available_buying_power_at_block": _to_float(paper_broker.get("buying_power"), _to_float(paper_broker.get("available_buying_power"), 0.0)),
-            "current_open_positions": paper_path_unique_open,
-            "broker_confirmed_open_positions": _to_int(paper_trace.get("broker_open_positions_count"), 0),
-            "stale_internal_position_rows": max(0, paper_path_raw_rows - paper_path_unique_open),
-            "open_position_rows_count": paper_path_raw_rows,
-            "capacity_available": _to_int(paper_trace.get("capacity_available"), 0),
-            "capacity_blocked": bool(paper_trace.get("capacity_blocked", False)),
+            "paper_path_status": _text(
+                paper_path_summary.get("paper_path_status")
+                or paper_session.get("session_block_reason")
+                or paper_trace.get("final_blocker_reason")
+                or paper_trace.get("why_no_trade_today"),
+                "unknown_blocker",
+            ),
+            "top_blocker": _text(
+                paper_path_summary.get("top_blocker")
+                or paper_trace.get("final_blocker_reason")
+                or paper_session.get("session_block_reason")
+                or paper_trace.get("why_no_trade_today"),
+                "unknown_blocker",
+            ),
+            "candidates_reviewed_today": _to_int(paper_path_summary.get("candidates_reviewed_today"), paper_path_candidates_seen),
+            "candidates_passed_ranking": _to_int(paper_path_summary.get("candidates_passed_ranking"), paper_path_eligible),
+            "candidates_passed_risk": _to_int(paper_path_summary.get("candidates_passed_risk"), paper_path_eligible),
+            "candidates_blocked": _to_int(paper_path_summary.get("candidates_blocked"), max(0, paper_path_candidates_seen - paper_path_eligible)),
+            "high_confidence_candidates_blocked": _to_int(paper_path_summary.get("high_confidence_candidates_blocked"), max(0, paper_path_candidates_seen - paper_path_eligible)),
+            "missed_evidence_estimate": _to_int(paper_path_summary.get("missed_evidence_estimate"), max(0, paper_path_candidates_seen - paper_path_submitted)),
+            "missed_opportunity_estimate": _to_int(paper_path_summary.get("missed_opportunity_estimate"), max(0, paper_path_candidates_seen - paper_path_submitted)),
+            "available_buying_power_at_block": _to_float(paper_path_summary.get("available_buying_power_at_block"), _to_float(paper_broker.get("buying_power"), _to_float(paper_broker.get("available_buying_power"), 0.0))),
+            "current_open_positions": _to_int(paper_path_summary.get("current_open_positions"), paper_path_unique_open),
+            "broker_confirmed_open_positions": _to_int(paper_path_summary.get("broker_confirmed_open_positions"), _to_int(paper_trace.get("broker_open_positions_count"), 0)),
+            "stale_internal_position_rows": _to_int(paper_path_summary.get("stale_internal_position_rows"), max(0, paper_path_raw_rows - paper_path_unique_open)),
+            "open_position_rows_count": _to_int(paper_path_summary.get("open_position_rows_count"), paper_path_raw_rows),
+            "capacity_available": _to_int(paper_path_summary.get("capacity_available"), _to_int(paper_trace.get("capacity_available"), 0)),
+            "capacity_blocked": bool(paper_path_summary.get("capacity_blocked", paper_trace.get("capacity_blocked", False))),
+            "session_now_utc": _text(paper_path_summary.get("session_now_utc"), _text(paper_session.get("session_now_utc"), "")),
+            "session_now_et": _text(paper_path_summary.get("session_now_et") or paper_path_summary.get("session_timestamp_et"), _text(paper_session.get("session_now_et") or paper_session.get("session_timestamp_et"), "")),
+            "session_source": _text(paper_path_summary.get("session_source"), _text(paper_session.get("session_source"), "market_calendar_knowledge")),
+            "session_cache_age_seconds": round(_to_float(paper_path_summary.get("session_cache_age_seconds"), _to_float(paper_session.get("session_cache_age_seconds"), 0.0)), 2),
+            "session_is_stale": bool(paper_path_summary.get("session_is_stale", paper_session.get("session_is_stale", False))),
+            "market_should_be_open_now": bool(paper_path_summary.get("market_should_be_open_now", paper_session.get("market_should_be_open_now", False))),
+            "session_block_reason": _text(paper_path_summary.get("session_block_reason"), _text(paper_session.get("session_block_reason"), "none")),
+            "session_block_validated": bool(paper_path_summary.get("session_block_validated", paper_session.get("session_block_validated", False))),
+            "candidates_blocked_by_session_gate_today": int(
+                max(
+                    0,
+                    _to_int(paper_path_summary.get("candidates_blocked_by_session_gate_today"), paper_path_candidates_seen)
+                    if _text(paper_path_summary.get("paper_path_status"), _text(paper_session.get("session_block_reason"), "")) == "session_order_submission_blocked"
+                    else 0,
+                )
+            ),
+            "likely_missed_evidence_from_session_bug": int(
+                max(
+                    0,
+                    _to_int(paper_path_summary.get("likely_missed_evidence_from_session_bug"), paper_path_candidates_seen)
+                    if bool(paper_path_summary.get("session_is_stale", paper_session.get("session_is_stale", False)))
+                    and bool(paper_path_summary.get("market_should_be_open_now", paper_session.get("market_should_be_open_now", False)))
+                    and not bool(paper_session.get("paper_order_submission_allowed", False))
+                    else 0,
+                )
+            ),
             "recommended_safe_action": "Keep market-session safety intact; count unique open positions for capacity and keep learned exits shadow-only.",
             "learned_exit_status": "shadow_only_not_applied",
             "learned_hold_duration_status": "shadow_only_not_applied",

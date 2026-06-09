@@ -32196,9 +32196,11 @@ def alpaca_paper_status_v1():
                 exit_learning = dict(EXIT_LEARNING_EXPANSION_SUITE.status(force=False) or {})
             except Exception:
                 exit_learning = {}
+            session_timing = dict(autopilot_status.get("market_session_execution_timing") or autopilot_trace.get("market_session_execution_timing") or {})
+            session_block_reason = str(session_timing.get("session_block_reason") or autopilot_trace.get("final_blocker_reason") or autopilot_trace.get("why_no_trade_today") or "unknown_blocker")
             paper_path_gating_summary = {
-                "paper_path_status": str(autopilot_trace.get("final_blocker_reason") or autopilot_trace.get("why_no_trade_today") or "unknown_blocker"),
-                "top_blocker": str(autopilot_trace.get("final_blocker_reason") or "unknown_blocker"),
+                "paper_path_status": session_block_reason,
+                "top_blocker": str(autopilot_trace.get("final_blocker_reason") or session_block_reason or "unknown_blocker"),
                 "candidates_reviewed_today": int(_to_float(autopilot_trace.get("candidates_seen"), 0.0)),
                 "candidates_passed_ranking": int(_to_float(autopilot_trace.get("eligible_candidates"), 0.0)),
                 "candidates_passed_risk": int(_to_float(autopilot_trace.get("eligible_candidates"), 0.0)),
@@ -32213,8 +32215,33 @@ def alpaca_paper_status_v1():
                 "open_position_rows_count": int(_to_float(autopilot_status.get("open_position_rows_count"), 0.0)),
                 "capacity_available": int(_to_float(autopilot_trace.get("capacity_available"), 0.0)),
                 "capacity_blocked": bool(autopilot_trace.get("capacity_blocked", False)),
+                "session_now_utc": str(session_timing.get("session_now_utc") or ""),
+                "session_now_et": str(session_timing.get("session_now_et") or session_timing.get("session_timestamp_et") or ""),
+                "session_source": str(session_timing.get("session_source") or "market_calendar_knowledge"),
+                "session_cache_age_seconds": round(_to_float(session_timing.get("session_cache_age_seconds"), 0.0), 2),
+                "session_is_stale": bool(session_timing.get("session_is_stale", False)),
+                "market_should_be_open_now": bool(session_timing.get("market_should_be_open_now", False)),
+                "session_block_reason": str(session_timing.get("session_block_reason") or session_block_reason),
+                "session_block_validated": bool(session_timing.get("session_block_validated", False)),
+                "candidates_blocked_by_session_gate_today": int(
+                    max(
+                        0,
+                        _to_float(autopilot_trace.get("candidates_seen"), 0.0)
+                        if str(session_block_reason) == "session_order_submission_blocked"
+                        else 0.0,
+                    )
+                ),
+                "likely_missed_evidence_from_session_bug": int(
+                    max(
+                        0,
+                        _to_float(autopilot_trace.get("candidates_seen"), 0.0)
+                        if bool(session_timing.get("session_is_stale", False)) and bool(session_timing.get("market_should_be_open_now", False))
+                        and not bool(session_timing.get("paper_order_submission_allowed", False))
+                        else 0.0,
+                    )
+                ),
                 "recommended_safe_action": (
-                    "Keep market-session safety intact; use unique-position counting and stale-row overhang diagnostics for evidence throughput."
+                    "Keep market-session safety intact; use unique-position counting, stale-row overhang diagnostics, and stale-session rejection for evidence throughput."
                 ),
                 "learned_exit_status": "shadow_only_not_applied",
                 "learned_hold_duration_status": "shadow_only_not_applied",
