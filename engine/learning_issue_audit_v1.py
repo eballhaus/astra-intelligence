@@ -591,6 +591,7 @@ class LearningIssueAuditV1:
         multi_horizon_intelligence = dict(statuses.get("multi_horizon_intelligence_adaptive_lifecycle_suite_v1") or {})
         paper_throughput_exit_catalyst = dict(statuses.get("paper_throughput_exit_validation_catalyst_intelligence_v1") or {})
         multi_horizon_capacity_exit = dict(statuses.get("multi_horizon_paper_capacity_exit_validation_v1") or {})
+        controlled_paper_learned_exit = dict(statuses.get("controlled_paper_learned_exit_validation_v1") or {})
         learning_allocator = dict(statuses.get("adaptive_learning_prioritization_resource_allocation_v1") or {})
         autonomous_governance = dict(statuses.get("autonomous_intelligence_validation_governance_v1") or {})
         paper_trace = dict(statuses.get("paper_execution_trace") or {})
@@ -820,6 +821,17 @@ class LearningIssueAuditV1:
             "Use horizon capacity pools to preserve scalp/day learning capacity; learned-exit bucket remains guarded and reversible.",
             _text(multi_horizon_capacity_exit.get("next_recommended_action"), "No behavior change."),
         )
+        controlled_paper_learned_exit_issue = _issue(
+            "controlled_paper_learned_exit_validation_active" if controlled_paper_learned_exit.get("enabled") else "controlled_paper_learned_exit_validation_unavailable",
+            "paper_exit_path_verification_bucket_limits_and_rollback_diagnostics_active" if controlled_paper_learned_exit.get("enabled") else "controlled_paper_learned_exit_validation_not_available",
+            "medium"
+            if controlled_paper_learned_exit.get("enabled")
+            and not bool(controlled_paper_learned_exit.get("paper_exit_path_verified", False))
+            else "low",
+            _to_int(controlled_paper_learned_exit.get("learned_exit_candidates_today"), 0),
+            "Enable learned-exit validation only after the Alpaca paper sell path, duplicate-exit prevention, and broker fill confirmation are verified.",
+            _text(controlled_paper_learned_exit.get("next_recommended_action"), "No behavior change."),
+        )
         learning_allocator_issue = _issue(
             "adaptive_learning_prioritization_active" if learning_allocator.get("enabled") else "adaptive_learning_prioritization_unavailable",
             "weakness_detection_learning_value_resource_allocation_worker_replay_memory_and_governance_diagnostics_active" if learning_allocator.get("enabled") else "adaptive_learning_prioritization_not_available",
@@ -1034,6 +1046,7 @@ class LearningIssueAuditV1:
             "multi_horizon_intelligence_adaptive_lifecycle_suite_v1": multi_horizon_intelligence_issue,
             "paper_throughput_exit_validation_catalyst_intelligence_v1": paper_throughput_exit_catalyst_issue,
             "multi_horizon_paper_capacity_exit_validation_v1": multi_horizon_capacity_exit_issue,
+            "controlled_paper_learned_exit_validation_v1": controlled_paper_learned_exit_issue,
             "adaptive_learning_prioritization_resource_allocation_v1": learning_allocator_issue,
             "autonomous_intelligence_validation_governance_v1": autonomous_governance_issue,
             "paper_path_gating": paper_path_issue,
@@ -1069,6 +1082,7 @@ class LearningIssueAuditV1:
             "multi_horizon_intelligence_adaptive_lifecycle_status": multi_horizon_intelligence_issue,
             "paper_throughput_exit_validation_catalyst_status": paper_throughput_exit_catalyst_issue,
             "multi_horizon_paper_capacity_exit_validation_status": multi_horizon_capacity_exit_issue,
+            "controlled_paper_learned_exit_validation_status": controlled_paper_learned_exit_issue,
             "adaptive_learning_prioritization_resource_allocation_status": learning_allocator_issue,
             "autonomous_intelligence_validation_governance_status": autonomous_governance_issue,
             "paper_path_gating_status": paper_path_issue,
@@ -1636,6 +1650,35 @@ class LearningIssueAuditV1:
                 "provider_calls_used": multi_horizon_capacity_exit.get("provider_calls_used"),
                 "llm_calls_used": multi_horizon_capacity_exit.get("llm_calls_used"),
                 "behavior_safe_to_apply": bool(multi_horizon_capacity_exit.get("behavior_safe_to_apply", False)),
+            },
+            "controlled_paper_learned_exit_validation_diagnostics": {
+                "learned_exit_bucket_enabled": bool(controlled_paper_learned_exit.get("learned_exit_bucket_enabled", False)),
+                "learned_exit_bucket_configured": bool(controlled_paper_learned_exit.get("learned_exit_bucket_configured", False)),
+                "paper_exit_path_verified": bool(controlled_paper_learned_exit.get("paper_exit_path_verified", False)),
+                "paper_exit_path_verification_status": controlled_paper_learned_exit.get("paper_exit_path_verification_status"),
+                "paper_exit_path_blockers": list(controlled_paper_learned_exit.get("paper_exit_path_blockers") or [])[:10],
+                "learned_exits_used_today": controlled_paper_learned_exit.get("learned_exits_used_today"),
+                "learned_exits_remaining_today": controlled_paper_learned_exit.get("learned_exits_remaining_today"),
+                "max_learning_corrected_exits_per_day": controlled_paper_learned_exit.get("max_learning_corrected_exits_per_day"),
+                "learned_exits_by_horizon": dict(controlled_paper_learned_exit.get("learned_exits_by_horizon") or {}),
+                "top_policy_used": controlled_paper_learned_exit.get("top_policy_used"),
+                "learned_exit_candidates_today": controlled_paper_learned_exit.get("learned_exit_candidates_today"),
+                "rejected_learned_exit_candidates": controlled_paper_learned_exit.get("rejected_learned_exit_candidates"),
+                "baseline_vs_learned_status": controlled_paper_learned_exit.get("baseline_vs_learned_status"),
+                "profit_factor_delta": controlled_paper_learned_exit.get("profit_factor_delta"),
+                "win_rate_delta": controlled_paper_learned_exit.get("win_rate_delta"),
+                "expectancy_delta": controlled_paper_learned_exit.get("expectancy_delta"),
+                "giveback_delta": controlled_paper_learned_exit.get("giveback_delta"),
+                "capacity_freed_by_learned_exits": controlled_paper_learned_exit.get("capacity_freed_by_learned_exits"),
+                "rollback_status": controlled_paper_learned_exit.get("rollback_status"),
+                "rollback_reason": controlled_paper_learned_exit.get("rollback_reason"),
+                "kill_switch_status": controlled_paper_learned_exit.get("kill_switch_status"),
+                "safety_status": controlled_paper_learned_exit.get("safety_status"),
+                "next_recommended_action": controlled_paper_learned_exit.get("next_recommended_action"),
+                "api_calls_used": controlled_paper_learned_exit.get("api_calls_used"),
+                "provider_calls_used": controlled_paper_learned_exit.get("provider_calls_used"),
+                "llm_calls_used": controlled_paper_learned_exit.get("llm_calls_used"),
+                "behavior_safe_to_apply": bool(controlled_paper_learned_exit.get("behavior_safe_to_apply", False)),
             },
             "adaptive_learning_prioritization_resource_allocation_diagnostics": {
                 "top_weakness": learning_allocator.get("top_weakness"),

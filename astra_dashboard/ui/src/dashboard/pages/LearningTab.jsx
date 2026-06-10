@@ -1623,6 +1623,7 @@ export default function LearningTab({ compact = false }) {
   const executionParticipationAudit = unified?.execution_participation_audit || {};
   const paperThroughputExitCatalyst = unified?.paper_throughput_exit_validation_catalyst_intelligence_v1 || {};
   const multiHorizonCapacityExitValidation = unified?.multi_horizon_paper_capacity_exit_validation_v1 || {};
+  const controlledPaperLearnedExit = unified?.controlled_paper_learned_exit_validation_v1 || {};
   const metricDisplay = (metric, suffix = "") => {
     if (!metric || typeof metric !== "object") return "n/a";
     if (metric.value === null || metric.value === undefined) {
@@ -4883,6 +4884,41 @@ export default function LearningTab({ compact = false }) {
           ) : null}
         </div>
       ) : null}
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Controlled Paper Learned-Exit Validation</summary>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12, marginTop: 12 }}>
+          <div>Bucket enabled: {controlledPaperLearnedExit?.learned_exit_bucket_enabled ? "yes" : "no"}</div>
+          <div>Paper exit path verified: {controlledPaperLearnedExit?.paper_exit_path_verified ? "yes" : "no"}</div>
+          <div>Used today / max: {safeNumber(controlledPaperLearnedExit?.learned_exits_used_today).toFixed(0)} / {safeNumber(controlledPaperLearnedExit?.max_learning_corrected_exits_per_day, 5).toFixed(0)}</div>
+          <div>Remaining today: {safeNumber(controlledPaperLearnedExit?.learned_exits_remaining_today, 5).toFixed(0)}</div>
+          <div>Scalp/day/swing coverage: {String(controlledPaperLearnedExit?.scalp_day_swing_coverage_status || "not_started").replaceAll("_", " ")}</div>
+          <div>Top policy used: {String(controlledPaperLearnedExit?.top_policy_used || "none").replaceAll("_", " ")}</div>
+          <div>Candidates reviewed: {safeNumber(controlledPaperLearnedExit?.learned_exit_candidates_today).toFixed(0)}</div>
+          <div>Exits applied: {safeNumber(controlledPaperLearnedExit?.learned_corrected_exits_today).toFixed(0)}</div>
+          <div>Rejected candidates: {safeNumber(controlledPaperLearnedExit?.rejected_learned_exit_candidates).toFixed(0)}</div>
+          <div>Baseline vs learned: {String(controlledPaperLearnedExit?.baseline_vs_learned_status || "controlled_bucket_disabled_until_exit_path_verified").replaceAll("_", " ")}</div>
+          <div>PF delta: {safeNumber(controlledPaperLearnedExit?.profit_factor_delta).toFixed(2)}</div>
+          <div>WR delta: {safeNumber(controlledPaperLearnedExit?.win_rate_delta).toFixed(2)}</div>
+          <div>Expectancy delta: {safeNumber(controlledPaperLearnedExit?.expectancy_delta).toFixed(2)}</div>
+          <div>Giveback delta: {safeNumber(controlledPaperLearnedExit?.giveback_delta).toFixed(2)}</div>
+          <div>Capacity freed: {safeNumber(controlledPaperLearnedExit?.capacity_freed_by_learned_exits).toFixed(0)}</div>
+          <div>Rollback status: {String(controlledPaperLearnedExit?.rollback_status || "auto_disabled").replaceAll("_", " ")}</div>
+          <div>Rollback reason: {String(controlledPaperLearnedExit?.rollback_reason || "none").replaceAll("_", " ")}</div>
+          <div>Kill switch: {String(controlledPaperLearnedExit?.kill_switch_status || "enabled").replaceAll("_", " ")}</div>
+          <div>Safety status: {String(controlledPaperLearnedExit?.safety_status || "safe_disabled").replaceAll("_", " ")}</div>
+          <div>API/provider/LLM calls: {safeNumber(controlledPaperLearnedExit?.api_calls_used).toFixed(0)} / {safeNumber(controlledPaperLearnedExit?.provider_calls_used).toFixed(0)} / {safeNumber(controlledPaperLearnedExit?.llm_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Path blockers: {(controlledPaperLearnedExit?.paper_exit_path_blockers || ["none"]).map((item) => String(item).replaceAll("_", " ")).join(", ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Next recommended action: {String(controlledPaperLearnedExit?.next_recommended_action || "keep_bucket_disabled_until_verified").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Astra is checking whether its learned exits can be safely tested on a tiny paper-only bucket. The bucket stays disabled unless the paper sell path, duplicate-exit protection, broker fill confirmation, evidence thresholds, and rollback controls are all verified.
+          </div>
+        </div>
+      </details>
     </div>
   );
 
@@ -5507,6 +5543,41 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Astra is separating paper capacity into swing, day-trade, and scalp pools so long holds cannot consume all learning slots. A tiny learned-exit validation bucket is visible and reversible, but remains guarded by paper-only mode, human review, evidence thresholds, and a kill switch.
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Controlled Paper Learned-Exit Validation</summary>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12, marginTop: 12 }}>
+          <div>Bucket enabled: {controlledPaperLearnedExit?.learned_exit_bucket_enabled ? "yes" : "no"}</div>
+          <div>Paper exit path verified: {controlledPaperLearnedExit?.paper_exit_path_verified ? "yes" : "no"}</div>
+          <div>Used today / max: {safeNumber(controlledPaperLearnedExit?.learned_exits_used_today).toFixed(0)} / {safeNumber(controlledPaperLearnedExit?.max_learning_corrected_exits_per_day, 5).toFixed(0)}</div>
+          <div>Remaining today: {safeNumber(controlledPaperLearnedExit?.learned_exits_remaining_today, 5).toFixed(0)}</div>
+          <div>Scalp/day/swing coverage: {String(controlledPaperLearnedExit?.scalp_day_swing_coverage_status || "not_started").replaceAll("_", " ")}</div>
+          <div>Top policy used: {String(controlledPaperLearnedExit?.top_policy_used || "none").replaceAll("_", " ")}</div>
+          <div>Candidates reviewed: {safeNumber(controlledPaperLearnedExit?.learned_exit_candidates_today).toFixed(0)}</div>
+          <div>Exits applied: {safeNumber(controlledPaperLearnedExit?.learned_corrected_exits_today).toFixed(0)}</div>
+          <div>Rejected candidates: {safeNumber(controlledPaperLearnedExit?.rejected_learned_exit_candidates).toFixed(0)}</div>
+          <div>Baseline vs learned: {String(controlledPaperLearnedExit?.baseline_vs_learned_status || "controlled_bucket_disabled_until_exit_path_verified").replaceAll("_", " ")}</div>
+          <div>PF delta: {safeNumber(controlledPaperLearnedExit?.profit_factor_delta).toFixed(2)}</div>
+          <div>WR delta: {safeNumber(controlledPaperLearnedExit?.win_rate_delta).toFixed(2)}</div>
+          <div>Expectancy delta: {safeNumber(controlledPaperLearnedExit?.expectancy_delta).toFixed(2)}</div>
+          <div>Giveback delta: {safeNumber(controlledPaperLearnedExit?.giveback_delta).toFixed(2)}</div>
+          <div>Capacity freed: {safeNumber(controlledPaperLearnedExit?.capacity_freed_by_learned_exits).toFixed(0)}</div>
+          <div>Rollback status: {String(controlledPaperLearnedExit?.rollback_status || "auto_disabled").replaceAll("_", " ")}</div>
+          <div>Rollback reason: {String(controlledPaperLearnedExit?.rollback_reason || "none").replaceAll("_", " ")}</div>
+          <div>Kill switch: {String(controlledPaperLearnedExit?.kill_switch_status || "enabled").replaceAll("_", " ")}</div>
+          <div>Safety status: {String(controlledPaperLearnedExit?.safety_status || "safe_disabled").replaceAll("_", " ")}</div>
+          <div>API/provider/LLM calls: {safeNumber(controlledPaperLearnedExit?.api_calls_used).toFixed(0)} / {safeNumber(controlledPaperLearnedExit?.provider_calls_used).toFixed(0)} / {safeNumber(controlledPaperLearnedExit?.llm_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Path blockers: {(controlledPaperLearnedExit?.paper_exit_path_blockers || ["none"]).map((item) => String(item).replaceAll("_", " ")).join(", ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Next recommended action: {String(controlledPaperLearnedExit?.next_recommended_action || "keep_bucket_disabled_until_verified").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Astra is checking whether its learned exits can be safely tested on a tiny paper-only bucket. The bucket stays disabled unless the paper sell path, duplicate-exit protection, broker fill confirmation, evidence thresholds, and rollback controls are all verified.
           </div>
         </div>
       </details>

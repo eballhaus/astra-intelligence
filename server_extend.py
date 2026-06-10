@@ -1600,6 +1600,39 @@ except Exception:
                 "behavior_safe_to_apply": False,
             }
 try:
+    from engine.controlled_paper_learned_exit_validation_v1 import ControlledPaperLearnedExitValidationV1
+except Exception:
+    class ControlledPaperLearnedExitValidationV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "controlled_paper_learned_exit_validation",
+                "learned_exit_bucket_enabled": False,
+                "paper_exit_path_verified": False,
+                "paper_exit_path_blockers": ["controlled_paper_learned_exit_validation_unavailable"],
+                "learned_exits_used_today": 0,
+                "learned_exits_remaining_today": 5,
+                "rollback_status": "auto_disabled",
+                "rollback_reason": "unavailable",
+                "kill_switch_status": "enabled",
+                "safety_status": "safe_disabled",
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "live_trading_changed": False,
+                "broker_live_endpoint_allowed": False,
+                "natural_exit_preserved": True,
+                "forced_exits_enabled": False,
+                "human_review_required": True,
+                "behavior_safe_to_apply": False,
+            }
+try:
     from engine.trade_archetype_regime_intelligence_v1 import TradeArchetypeRegimeIntelligenceV1
 except Exception:
     class TradeArchetypeRegimeIntelligenceV1:  # type: ignore[override]
@@ -2296,6 +2329,7 @@ LONG_TERM_MEMORY_SYMBOL_RETRIEVAL_SUITE = LongTermMemorySymbolRetrievalSuiteV1(s
 MULTI_HORIZON_INTELLIGENCE_ADAPTIVE_LIFECYCLE_SUITE = MultiHorizonIntelligenceAdaptiveLifecycleSuiteV1(state_dir=STATE)
 PAPER_THROUGHPUT_EXIT_VALIDATION_CATALYST_INTELLIGENCE = PaperThroughputExitValidationCatalystIntelligenceV1(state_dir=STATE)
 MULTI_HORIZON_PAPER_CAPACITY_EXIT_VALIDATION = MultiHorizonPaperCapacityExitValidationV1(state_dir=STATE)
+CONTROLLED_PAPER_LEARNED_EXIT_VALIDATION = ControlledPaperLearnedExitValidationV1(state_dir=STATE)
 ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION = AdaptiveLearningPrioritizationResourceAllocationV1(state_dir=STATE)
 AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE = AutonomousIntelligenceValidationGovernanceV1(state_dir=STATE)
 TRADE_ARCHETYPE_REGIME_INTELLIGENCE = TradeArchetypeRegimeIntelligenceV1(state_dir=STATE)
@@ -41383,6 +41417,70 @@ def multi_horizon_paper_capacity_exit_validation_v1(force: bool = False):
             "kill_switch_exists": True,
             "behavior_safe_to_apply": False,
         }
+
+
+@router.get("/api/controlled_paper_learned_exit_validation_v1")
+def controlled_paper_learned_exit_validation_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        try:
+            statuses["paper_autopilot_status"] = PAPER_AUTOPILOT.status()
+        except Exception:
+            statuses["paper_autopilot_status"] = {}
+        try:
+            statuses["alpaca_paper_broker"] = alpaca_paper_status_v1()
+        except Exception:
+            statuses["alpaca_paper_broker"] = {}
+        try:
+            statuses["multi_horizon_paper_capacity_exit_validation_v1"] = MULTI_HORIZON_PAPER_CAPACITY_EXIT_VALIDATION.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["multi_horizon_paper_capacity_exit_validation_v1"] = {}
+        out = dict(CONTROLLED_PAPER_LEARNED_EXIT_VALIDATION.status(statuses=statuses, force=bool(force)) or {})
+        out["controlled_paper_learned_exit_validation_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_live_endpoint_allowed"] = bool(out.get("broker_live_endpoint_allowed", False))
+        out["broad_ranking_behavior_changed"] = False
+        out["broad_entry_behavior_changed"] = False
+        out["broad_sizing_behavior_changed"] = False
+        out["thresholds_changed"] = False
+        out["fmp_budgets_changed"] = False
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["natural_exit_preserved"] = True
+        out["forced_exits_enabled"] = False
+        out["human_review_required"] = True
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "controlled_paper_learned_exit_validation",
+            "controlled_paper_learned_exit_validation_v1": True,
+            "learned_exit_bucket_enabled": False,
+            "paper_exit_path_verified": False,
+            "paper_exit_path_blockers": [f"controlled_paper_learned_exit_validation_unavailable:{str(exc)[:140]}"],
+            "learned_exits_used_today": 0,
+            "learned_exits_remaining_today": 5,
+            "rollback_status": "auto_disabled",
+            "rollback_reason": "diagnostic_unavailable",
+            "kill_switch_status": "enabled",
+            "safety_status": "safe_disabled",
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_live_endpoint_allowed": False,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "natural_exit_preserved": True,
+            "forced_exits_enabled": False,
+            "human_review_required": True,
+            "behavior_safe_to_apply": False,
+        }
 def _learning_acceleration_status_bundle() -> dict:
     statuses = {}
     for name, fn in (
@@ -41457,6 +41555,10 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["multi_horizon_paper_capacity_exit_validation_v1"] = MULTI_HORIZON_PAPER_CAPACITY_EXIT_VALIDATION.status(statuses=statuses, force=False)
     except Exception:
         statuses["multi_horizon_paper_capacity_exit_validation_v1"] = {}
+    try:
+        statuses["controlled_paper_learned_exit_validation_v1"] = CONTROLLED_PAPER_LEARNED_EXIT_VALIDATION.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["controlled_paper_learned_exit_validation_v1"] = {}
     try:
         statuses["adaptive_learning_prioritization_resource_allocation_v1"] = ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False)
     except Exception:
@@ -42659,6 +42761,19 @@ def learning_issue_audit_status_v1(force: bool = False):
         except Exception:
             statuses["multi_horizon_paper_capacity_exit_validation_v1"] = {}
         try:
+            statuses["alpaca_paper_broker"] = {
+                "enabled": str(os.getenv("ASTRA_ENABLE_ALPACA_PAPER", "false")).strip().lower() == "true",
+                "paper_mode_verified": str(os.getenv("ALPACA_TRADING_MODE", "paper")).strip().lower() == "paper"
+                and "paper-api.alpaca.markets" in str(os.getenv("APCA_API_BASE_URL", "")),
+                "broker_execution_enabled": False,
+                "safety_status": "summary_only_no_broker_fetch",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+            }
+            statuses["controlled_paper_learned_exit_validation_v1"] = CONTROLLED_PAPER_LEARNED_EXIT_VALIDATION.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["controlled_paper_learned_exit_validation_v1"] = {}
+        try:
             statuses["adaptive_learning_prioritization_resource_allocation_v1"] = ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False)
         except Exception:
             statuses["adaptive_learning_prioritization_resource_allocation_v1"] = {}
@@ -42678,6 +42793,19 @@ def learning_issue_audit_status_v1(force: bool = False):
             statuses["paper_throughput_exit_validation_catalyst_intelligence_v1"] = PAPER_THROUGHPUT_EXIT_VALIDATION_CATALYST_INTELLIGENCE.status(statuses=statuses, force=True)
         except Exception:
             statuses["paper_throughput_exit_validation_catalyst_intelligence_v1"] = {}
+        try:
+            statuses["alpaca_paper_broker"] = {
+                "enabled": str(os.getenv("ASTRA_ENABLE_ALPACA_PAPER", "false")).strip().lower() == "true",
+                "paper_mode_verified": str(os.getenv("ALPACA_TRADING_MODE", "paper")).strip().lower() == "paper"
+                and "paper-api.alpaca.markets" in str(os.getenv("APCA_API_BASE_URL", "")),
+                "broker_execution_enabled": False,
+                "safety_status": "summary_only_no_broker_fetch",
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+            }
+            statuses["controlled_paper_learned_exit_validation_v1"] = CONTROLLED_PAPER_LEARNED_EXIT_VALIDATION.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["controlled_paper_learned_exit_validation_v1"] = {}
         out = dict(LEARNING_ISSUE_AUDIT.status(sources={"statuses": statuses}, force=bool(force)) or {})
         out["learning_issue_audit_status_v1"] = True
         out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
@@ -51121,6 +51249,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             "api_calls_used": 0,
             "live_trading_changed": False,
         }
+        _safe_status("controlled_paper_learned_exit_validation_v1", lambda: CONTROLLED_PAPER_LEARNED_EXIT_VALIDATION.status(statuses=statuses, force=False))
 
         sources["statuses"] = statuses
         out = UNIFIED_LEARNING_DIAGNOSTICS.build(sources, force=bool(force))
