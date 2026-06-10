@@ -314,6 +314,7 @@ class UnifiedLearningDiagnosticsV1:
         realistic_shadow_evidence_learning_lab = self._realistic_shadow_evidence_learning_lab_summary(statuses.get("realistic_shadow_evidence_learning_lab_v1") or {})
         adaptive_learning_prioritization_resource_allocation = self._adaptive_learning_prioritization_resource_allocation_summary(statuses.get("adaptive_learning_prioritization_resource_allocation_v1") or {})
         autonomous_intelligence_validation_governance = self._autonomous_intelligence_validation_governance_summary(statuses.get("autonomous_intelligence_validation_governance_v1") or {})
+        paper_throughput_exit_validation_catalyst = self._paper_throughput_exit_validation_catalyst_summary(statuses.get("paper_throughput_exit_validation_catalyst_intelligence_v1") or {})
         if adaptive_worker_activation_orchestration.get("enabled"):
             adaptive_learning_infrastructure_suite["adaptive_worker_activation_compatible"] = True
             adaptive_learning_infrastructure_suite["adaptive_worker_activation_status"] = adaptive_worker_activation_orchestration.get("orchestrator_status")
@@ -382,6 +383,7 @@ class UnifiedLearningDiagnosticsV1:
             "accelerated_learning_symbol_intelligence_suite_v1": accelerated_learning_symbol_intelligence,
             "realistic_shadow_evidence_learning_lab_v1": realistic_shadow_evidence_learning_lab,
             "multi_horizon_intelligence_adaptive_lifecycle_suite_v1": multi_horizon_intelligence_adaptive_lifecycle,
+            "paper_throughput_exit_validation_catalyst_intelligence_v1": paper_throughput_exit_validation_catalyst,
             "adaptive_learning_prioritization_resource_allocation_v1": adaptive_learning_prioritization_resource_allocation,
             "autonomous_intelligence_validation_governance_v1": autonomous_intelligence_validation_governance,
             "trade_archetype_regime_intelligence": trade_archetype_regime,
@@ -2429,6 +2431,86 @@ class UnifiedLearningDiagnosticsV1:
             "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
         }
 
+    def _paper_throughput_exit_validation_catalyst_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_throughput_exit_validation_catalyst_intelligence"),
+            "paper_throughput_status": _text(data.get("paper_throughput_status"), "unavailable"),
+            "reviewed_today": _to_int(data.get("reviewed_today"), 0),
+            "eligible_today": _to_int(data.get("eligible_today"), 0),
+            "submitted_today": _to_int(data.get("submitted_today"), 0),
+            "blocked_today": _to_int(data.get("blocked_today"), 0),
+            "suppression_rate": _to_float(data.get("suppression_rate"), 0.0),
+            "top_blocker": _text(data.get("top_blocker"), "unknown_blocker"),
+            "top_blockers": dict(data.get("top_blockers") or {}),
+            "duplicate_blocks": _to_int(data.get("duplicate_blocks"), 0),
+            "confirmation_blocks": _to_int(data.get("confirmation_blocks"), 0),
+            "stale_row_blocks": _to_int(data.get("stale_row_blocks"), 0),
+            "broker_confirmed_positions": _to_int(data.get("broker_confirmed_positions"), 0),
+            "internal_active_rows": _to_int(data.get("internal_active_rows"), 0),
+            "stale_internal_rows": _to_int(data.get("stale_internal_rows"), 0),
+            "true_capacity_available": _to_int(data.get("true_capacity_available"), 0),
+            "safe_capacity_available": _to_int(data.get("safe_capacity_available"), 0),
+            "high_confidence_candidates_blocked": _to_int(data.get("high_confidence_candidates_blocked"), 0),
+            "missed_evidence_estimate": _to_int(data.get("missed_evidence_estimate"), 0),
+            "missed_profit_learning_estimate": _to_float(data.get("missed_profit_learning_estimate"), 0.0),
+            "recommended_safe_throughput_action": _text(data.get("recommended_safe_throughput_action"), "continue_current_paper_safety_gates"),
+            "learned_exit_outperforms_current": bool(data.get("learned_exit_outperforms_current", False)),
+            "best_shadow_exit_policy": _text(data.get("best_shadow_exit_policy"), "insufficient_data"),
+            "best_policy_profit_factor": _to_float(data.get("best_policy_profit_factor"), 0.0),
+            "current_policy_profit_factor": _to_float(data.get("current_policy_profit_factor"), 0.0),
+            "improvement_delta": _to_float(data.get("improvement_delta"), 0.0),
+            "evidence_count": _to_int(data.get("evidence_count"), 0),
+            "policy_confidence": _to_float(data.get("policy_confidence"), 0.0),
+            "readiness_status": _text(data.get("readiness_status"), "not_ready_more_evidence_required"),
+            "minimum_evidence_remaining": _to_int(data.get("minimum_evidence_remaining"), 0),
+            "symbols_where_learned_exit_helps": list(data.get("symbols_where_learned_exit_helps") or [])[:8],
+            "symbols_where_learned_exit_hurts": list(data.get("symbols_where_learned_exit_hurts") or [])[:8],
+            "horizons_where_learned_exit_helps": dict(data.get("horizons_where_learned_exit_helps") or {}),
+            "catalyst_decay_exit_value": _to_float(data.get("catalyst_decay_exit_value"), 0.0),
+            "learned_exit_validation_bucket_enabled": bool(data.get("learned_exit_validation_bucket_enabled", False)),
+            "learned_exit_validation_bucket_reason": _text(data.get("learned_exit_validation_bucket_reason"), "disabled_pending_human_review_and_policy_governance"),
+            "catalyst_coverage": _to_float(data.get("catalyst_coverage"), 0.0),
+            "unknown_catalyst_rate": _to_float(data.get("unknown_catalyst_rate"), 100.0),
+            "dominant_catalyst": _text(data.get("dominant_catalyst"), "unknown_catalyst"),
+            "catalyst_decay_score": _to_float(data.get("catalyst_decay_score"), 0.0),
+            "best_horizon_by_catalyst": dict(data.get("best_horizon_by_catalyst") or {}),
+            "best_exit_by_catalyst": dict(data.get("best_exit_by_catalyst") or {}),
+            "symbols_with_unknown_catalyst": list(data.get("symbols_with_unknown_catalyst") or [])[:10],
+            "cached_context_available": bool(data.get("cached_context_available", False)),
+            "recommended_safe_context_fix": _text(data.get("recommended_safe_context_fix"), "continue_cached_catalyst_learning"),
+            "recommended_next_action": _text(data.get("recommended_next_action"), "continue_collecting_paper_and_shadow_evidence"),
+            "shadow_recommendation": _text(data.get("shadow_recommendation"), "continue_collecting_paper_and_shadow_evidence"),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "dashboard_scan_rows": _to_int(data.get("dashboard_scan_rows"), 0),
+            "raw_history_scanned": bool(data.get("raw_history_scanned", False)),
+            "raw_archive_scanned": bool(data.get("raw_archive_scanned", False)),
+            "live_trading_changed": bool(data.get("live_trading_changed", False)),
+            "broker_live_endpoint_allowed": bool(data.get("broker_live_endpoint_allowed", False)),
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "ranking_behavior_changed": bool(data.get("ranking_behavior_changed", False)),
+            "entry_behavior_changed": bool(data.get("entry_behavior_changed", False)),
+            "exit_behavior_changed": bool(data.get("exit_behavior_changed", False)),
+            "paper_execution_behavior_changed": bool(data.get("paper_execution_behavior_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "portfolio_allocation_changed": bool(data.get("portfolio_allocation_changed", False)),
+            "fmp_budgets_changed": bool(data.get("fmp_budgets_changed", False)),
+            "paper_mode_verified": bool(data.get("paper_mode_verified", True)),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "learned_exits_applied": bool(data.get("learned_exits_applied", False)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
+            "human_review_required": bool(data.get("human_review_required", True)),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+        }
+
     def _realistic_shadow_evidence_learning_lab_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -3430,6 +3512,7 @@ class UnifiedLearningDiagnosticsV1:
             "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "long_term_memory_symbol_retrieval_suite_v1", "virtual_paper_convergence_symbol_attribution_v1", "accelerated_learning_symbol_intelligence_suite_v1", "realistic_shadow_evidence_learning_lab_v1", "adaptive_learning_prioritization_resource_allocation_v1", "autonomous_intelligence_validation_governance_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
             "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
+            "paper_throughput_exit_validation_catalyst_intelligence_v1",
             "execution_participation_audit",
             "alpaca_paper_broker", "horizon_performance_dashboard",
         ]
@@ -3492,6 +3575,7 @@ class UnifiedLearningDiagnosticsV1:
             "learning_issue_audit": "/api/learning_issue_audit_status_v1",
             "remote_runtime_consistency": "/api/remote_runtime_consistency_status_v1",
             "execution_participation_audit": "/api/execution_participation_audit_status_v1",
+            "paper_throughput_exit_validation_catalyst_intelligence_v1": "/api/paper_throughput_exit_validation_catalyst_intelligence_v1",
             "mobile_runtime_compaction": "/api/mobile_runtime_compaction_status_v1",
             "market_session_execution_timing": "/api/market_session_execution_timing_status_v1",
             "paper_opportunity_allocation": "/api/paper_opportunity_allocation_status_v1",

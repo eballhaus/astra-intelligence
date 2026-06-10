@@ -1621,6 +1621,7 @@ export default function LearningTab({ compact = false }) {
   const remoteRuntimeConsistency = unified?.remote_runtime_consistency || {};
   const capacityExpansionStatus = unified?.capacity_expansion_status || {};
   const executionParticipationAudit = unified?.execution_participation_audit || {};
+  const paperThroughputExitCatalyst = unified?.paper_throughput_exit_validation_catalyst_intelligence_v1 || {};
   const metricDisplay = (metric, suffix = "") => {
     if (!metric || typeof metric !== "object") return "n/a";
     if (metric.value === null || metric.value === undefined) {
@@ -5442,6 +5443,41 @@ export default function LearningTab({ compact = false }) {
           </div>
         </div>
       </div>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Paper Throughput, Exit Validation & Catalyst Intelligence V1</summary>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12, marginTop: 12 }}>
+          <div>Paper throughput status: {String(paperThroughputExitCatalyst?.paper_throughput_status || "waiting_for_data").replaceAll("_", " ")}</div>
+          <div>Top blocker: {String(paperThroughputExitCatalyst?.top_blocker || "unknown_blocker").replaceAll("_", " ")}</div>
+          <div>Reviewed / eligible / submitted: {safeNumber(paperThroughputExitCatalyst?.reviewed_today).toFixed(0)} / {safeNumber(paperThroughputExitCatalyst?.eligible_today).toFixed(0)} / {safeNumber(paperThroughputExitCatalyst?.submitted_today).toFixed(0)}</div>
+          <div>Blocked today: {safeNumber(paperThroughputExitCatalyst?.blocked_today).toFixed(0)}</div>
+          <div>Suppression rate: {safeNumber(paperThroughputExitCatalyst?.suppression_rate).toFixed(1)}%</div>
+          <div>Missed evidence estimate: {safeNumber(paperThroughputExitCatalyst?.missed_evidence_estimate).toFixed(0)}</div>
+          <div>True capacity available: {safeNumber(paperThroughputExitCatalyst?.true_capacity_available).toFixed(0)}</div>
+          <div>Safe capacity available: {safeNumber(paperThroughputExitCatalyst?.safe_capacity_available).toFixed(0)}</div>
+          <div>Duplicate / confirmation blocks: {safeNumber(paperThroughputExitCatalyst?.duplicate_blocks).toFixed(0)} / {safeNumber(paperThroughputExitCatalyst?.confirmation_blocks).toFixed(0)}</div>
+          <div>Stale row blocks: {safeNumber(paperThroughputExitCatalyst?.stale_row_blocks).toFixed(0)}</div>
+          <div>Learned exit validation status: {String(paperThroughputExitCatalyst?.readiness_status || "not_ready_more_evidence_required").replaceAll("_", " ")}</div>
+          <div>Best shadow exit policy: {String(paperThroughputExitCatalyst?.best_shadow_exit_policy || "insufficient_data").replaceAll("_", " ")}</div>
+          <div>Current vs learned PF: {safeNumber(paperThroughputExitCatalyst?.current_policy_profit_factor).toFixed(2)} / {safeNumber(paperThroughputExitCatalyst?.best_policy_profit_factor).toFixed(2)}</div>
+          <div>Improvement delta: {safeNumber(paperThroughputExitCatalyst?.improvement_delta).toFixed(2)}</div>
+          <div>Learned exit bucket enabled: {paperThroughputExitCatalyst?.learned_exit_validation_bucket_enabled ? "yes" : "no"}</div>
+          <div>Catalyst coverage: {safeNumber(paperThroughputExitCatalyst?.catalyst_coverage).toFixed(1)}</div>
+          <div>Unknown catalyst rate: {safeNumber(paperThroughputExitCatalyst?.unknown_catalyst_rate).toFixed(1)}%</div>
+          <div>Best catalyst horizon: {String(
+            typeof paperThroughputExitCatalyst?.best_horizon_by_catalyst === "object"
+              ? Object.entries(paperThroughputExitCatalyst.best_horizon_by_catalyst || {})[0]?.join(": ")
+              : paperThroughputExitCatalyst?.best_horizon_by_catalyst || "insufficient_data"
+          ).replaceAll("_", " ")}</div>
+          <div>API/provider/LLM calls: {safeNumber(paperThroughputExitCatalyst?.api_calls_used).toFixed(0)} / {safeNumber(paperThroughputExitCatalyst?.provider_calls_used).toFixed(0)} / {safeNumber(paperThroughputExitCatalyst?.llm_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Recommended next action: {String(paperThroughputExitCatalyst?.recommended_next_action || "continue_collecting_paper_and_shadow_evidence").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Astra is diagnosing paper-throughput blockers, comparing learned shadow exits against current paper exits, and improving catalyst visibility using cached evidence only. This does not enable live trading, learned exits, broker changes, sizing changes, or ranking changes.
+          </div>
+        </div>
+      </details>
 
       <div style={{ ...panelStyle }}>
         <h3 style={{ marginTop: 0 }}>Horizon Coverage Summary</h3>

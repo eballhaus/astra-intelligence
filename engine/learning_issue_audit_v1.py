@@ -589,6 +589,7 @@ class LearningIssueAuditV1:
         accelerated_symbol = dict(statuses.get("accelerated_learning_symbol_intelligence_suite_v1") or {})
         shadow_lab = dict(statuses.get("realistic_shadow_evidence_learning_lab_v1") or {})
         multi_horizon_intelligence = dict(statuses.get("multi_horizon_intelligence_adaptive_lifecycle_suite_v1") or {})
+        paper_throughput_exit_catalyst = dict(statuses.get("paper_throughput_exit_validation_catalyst_intelligence_v1") or {})
         learning_allocator = dict(statuses.get("adaptive_learning_prioritization_resource_allocation_v1") or {})
         autonomous_governance = dict(statuses.get("autonomous_intelligence_validation_governance_v1") or {})
         paper_trace = dict(statuses.get("paper_execution_trace") or {})
@@ -802,6 +803,14 @@ class LearningIssueAuditV1:
             "Use multi-horizon lifecycle diagnostics to target shadow validation; do not apply learned exits without human review.",
             _text(multi_horizon_intelligence.get("shadow_recommendation"), "No behavior change."),
         )
+        paper_throughput_exit_catalyst_issue = _issue(
+            "paper_throughput_exit_validation_catalyst_active" if paper_throughput_exit_catalyst.get("enabled") else "paper_throughput_exit_validation_catalyst_unavailable",
+            "paper_throughput_blockers_learned_exit_validation_and_catalyst_coverage_visible" if paper_throughput_exit_catalyst.get("enabled") else "paper_throughput_exit_validation_catalyst_not_available",
+            "medium" if _to_float(paper_throughput_exit_catalyst.get("suppression_rate"), 0.0) >= 95.0 or _to_float(paper_throughput_exit_catalyst.get("unknown_catalyst_rate"), 100.0) >= 60.0 else "low",
+            _to_int(paper_throughput_exit_catalyst.get("reviewed_today"), 0),
+            "Use this summary to inspect paper evidence bottlenecks, learned-exit readiness, and catalyst coverage without changing execution.",
+            _text(paper_throughput_exit_catalyst.get("recommended_next_action"), "No behavior change."),
+        )
         learning_allocator_issue = _issue(
             "adaptive_learning_prioritization_active" if learning_allocator.get("enabled") else "adaptive_learning_prioritization_unavailable",
             "weakness_detection_learning_value_resource_allocation_worker_replay_memory_and_governance_diagnostics_active" if learning_allocator.get("enabled") else "adaptive_learning_prioritization_not_available",
@@ -1014,6 +1023,7 @@ class LearningIssueAuditV1:
             "accelerated_learning_symbol_intelligence_suite_v1": accelerated_symbol_issue,
             "realistic_shadow_evidence_learning_lab_v1": shadow_lab_issue,
             "multi_horizon_intelligence_adaptive_lifecycle_suite_v1": multi_horizon_intelligence_issue,
+            "paper_throughput_exit_validation_catalyst_intelligence_v1": paper_throughput_exit_catalyst_issue,
             "adaptive_learning_prioritization_resource_allocation_v1": learning_allocator_issue,
             "autonomous_intelligence_validation_governance_v1": autonomous_governance_issue,
             "paper_path_gating": paper_path_issue,
@@ -1047,6 +1057,7 @@ class LearningIssueAuditV1:
             "accelerated_learning_symbol_intelligence_status": accelerated_symbol_issue,
             "realistic_shadow_evidence_learning_lab_status": shadow_lab_issue,
             "multi_horizon_intelligence_adaptive_lifecycle_status": multi_horizon_intelligence_issue,
+            "paper_throughput_exit_validation_catalyst_status": paper_throughput_exit_catalyst_issue,
             "adaptive_learning_prioritization_resource_allocation_status": learning_allocator_issue,
             "autonomous_intelligence_validation_governance_status": autonomous_governance_issue,
             "paper_path_gating_status": paper_path_issue,
@@ -1547,6 +1558,41 @@ class LearningIssueAuditV1:
                 "llm_calls_used": multi_horizon_intelligence.get("llm_calls_used"),
                 "shadow_recommendation": multi_horizon_intelligence.get("shadow_recommendation"),
                 "behavior_safe_to_apply": bool(multi_horizon_intelligence.get("behavior_safe_to_apply", False)),
+            },
+            "paper_throughput_exit_validation_catalyst_diagnostics": {
+                "paper_throughput_status": paper_throughput_exit_catalyst.get("paper_throughput_status"),
+                "reviewed_today": paper_throughput_exit_catalyst.get("reviewed_today"),
+                "eligible_today": paper_throughput_exit_catalyst.get("eligible_today"),
+                "submitted_today": paper_throughput_exit_catalyst.get("submitted_today"),
+                "blocked_today": paper_throughput_exit_catalyst.get("blocked_today"),
+                "suppression_rate": paper_throughput_exit_catalyst.get("suppression_rate"),
+                "top_blocker": paper_throughput_exit_catalyst.get("top_blocker"),
+                "duplicate_blocks": paper_throughput_exit_catalyst.get("duplicate_blocks"),
+                "confirmation_blocks": paper_throughput_exit_catalyst.get("confirmation_blocks"),
+                "stale_row_blocks": paper_throughput_exit_catalyst.get("stale_row_blocks"),
+                "broker_confirmed_positions": paper_throughput_exit_catalyst.get("broker_confirmed_positions"),
+                "internal_active_rows": paper_throughput_exit_catalyst.get("internal_active_rows"),
+                "stale_internal_rows": paper_throughput_exit_catalyst.get("stale_internal_rows"),
+                "true_capacity_available": paper_throughput_exit_catalyst.get("true_capacity_available"),
+                "safe_capacity_available": paper_throughput_exit_catalyst.get("safe_capacity_available"),
+                "missed_evidence_estimate": paper_throughput_exit_catalyst.get("missed_evidence_estimate"),
+                "recommended_safe_throughput_action": paper_throughput_exit_catalyst.get("recommended_safe_throughput_action"),
+                "learned_exit_outperforms_current": bool(paper_throughput_exit_catalyst.get("learned_exit_outperforms_current", False)),
+                "best_shadow_exit_policy": paper_throughput_exit_catalyst.get("best_shadow_exit_policy"),
+                "current_policy_profit_factor": paper_throughput_exit_catalyst.get("current_policy_profit_factor"),
+                "best_policy_profit_factor": paper_throughput_exit_catalyst.get("best_policy_profit_factor"),
+                "improvement_delta": paper_throughput_exit_catalyst.get("improvement_delta"),
+                "readiness_status": paper_throughput_exit_catalyst.get("readiness_status"),
+                "learned_exit_validation_bucket_enabled": bool(paper_throughput_exit_catalyst.get("learned_exit_validation_bucket_enabled", False)),
+                "catalyst_coverage": paper_throughput_exit_catalyst.get("catalyst_coverage"),
+                "unknown_catalyst_rate": paper_throughput_exit_catalyst.get("unknown_catalyst_rate"),
+                "dominant_catalyst": paper_throughput_exit_catalyst.get("dominant_catalyst"),
+                "best_horizon_by_catalyst": paper_throughput_exit_catalyst.get("best_horizon_by_catalyst"),
+                "recommended_next_action": paper_throughput_exit_catalyst.get("recommended_next_action"),
+                "api_calls_used": paper_throughput_exit_catalyst.get("api_calls_used"),
+                "provider_calls_used": paper_throughput_exit_catalyst.get("provider_calls_used"),
+                "llm_calls_used": paper_throughput_exit_catalyst.get("llm_calls_used"),
+                "behavior_safe_to_apply": bool(paper_throughput_exit_catalyst.get("behavior_safe_to_apply", False)),
             },
             "adaptive_learning_prioritization_resource_allocation_diagnostics": {
                 "top_weakness": learning_allocator.get("top_weakness"),
