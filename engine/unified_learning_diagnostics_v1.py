@@ -315,6 +315,7 @@ class UnifiedLearningDiagnosticsV1:
         adaptive_learning_prioritization_resource_allocation = self._adaptive_learning_prioritization_resource_allocation_summary(statuses.get("adaptive_learning_prioritization_resource_allocation_v1") or {})
         autonomous_intelligence_validation_governance = self._autonomous_intelligence_validation_governance_summary(statuses.get("autonomous_intelligence_validation_governance_v1") or {})
         paper_throughput_exit_validation_catalyst = self._paper_throughput_exit_validation_catalyst_summary(statuses.get("paper_throughput_exit_validation_catalyst_intelligence_v1") or {})
+        multi_horizon_capacity_exit_validation = self._multi_horizon_capacity_exit_validation_summary(statuses.get("multi_horizon_paper_capacity_exit_validation_v1") or {})
         if adaptive_worker_activation_orchestration.get("enabled"):
             adaptive_learning_infrastructure_suite["adaptive_worker_activation_compatible"] = True
             adaptive_learning_infrastructure_suite["adaptive_worker_activation_status"] = adaptive_worker_activation_orchestration.get("orchestrator_status")
@@ -384,6 +385,7 @@ class UnifiedLearningDiagnosticsV1:
             "realistic_shadow_evidence_learning_lab_v1": realistic_shadow_evidence_learning_lab,
             "multi_horizon_intelligence_adaptive_lifecycle_suite_v1": multi_horizon_intelligence_adaptive_lifecycle,
             "paper_throughput_exit_validation_catalyst_intelligence_v1": paper_throughput_exit_validation_catalyst,
+            "multi_horizon_paper_capacity_exit_validation_v1": multi_horizon_capacity_exit_validation,
             "adaptive_learning_prioritization_resource_allocation_v1": adaptive_learning_prioritization_resource_allocation,
             "autonomous_intelligence_validation_governance_v1": autonomous_intelligence_validation_governance,
             "trade_archetype_regime_intelligence": trade_archetype_regime,
@@ -2511,6 +2513,82 @@ class UnifiedLearningDiagnosticsV1:
             "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
         }
 
+    def _multi_horizon_capacity_exit_validation_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_multi_horizon_capacity_controlled_exit_validation"),
+            "total_capacity": _to_int(data.get("total_capacity"), 20),
+            "total_used": _to_int(data.get("total_used"), 0),
+            "total_available": _to_int(data.get("total_available"), 0),
+            "swing_capacity": _to_int(data.get("swing_capacity"), 8),
+            "swing_used": _to_int(data.get("swing_used"), 0),
+            "swing_available": _to_int(data.get("swing_available"), 0),
+            "day_capacity": _to_int(data.get("day_capacity"), 8),
+            "day_used": _to_int(data.get("day_used"), 0),
+            "day_available": _to_int(data.get("day_available"), 0),
+            "scalp_capacity": _to_int(data.get("scalp_capacity"), 4),
+            "scalp_used": _to_int(data.get("scalp_used"), 0),
+            "scalp_available": _to_int(data.get("scalp_available"), 0),
+            "unknown_horizon_positions": _to_int(data.get("unknown_horizon_positions"), 0),
+            "broker_confirmed_positions": _to_int(data.get("broker_confirmed_positions"), 0),
+            "stale_internal_rows": _to_int(data.get("stale_internal_rows"), 0),
+            "horizon_capacity_blockers": list(data.get("horizon_capacity_blockers") or [])[:10],
+            "top_capacity_blocker": _text(data.get("top_capacity_blocker"), "none"),
+            "capacity_freed_today": _to_int(data.get("capacity_freed_today"), 0),
+            "candidates_blocked_by_horizon_capacity": _to_int(data.get("candidates_blocked_by_horizon_capacity"), 0),
+            "high_confidence_candidates_blocked_by_capacity": _to_int(data.get("high_confidence_candidates_blocked_by_capacity"), 0),
+            "missed_evidence_due_to_capacity": _to_int(data.get("missed_evidence_due_to_capacity"), 0),
+            "recommended_capacity_action": _text(data.get("recommended_capacity_action"), "horizon_capacity_monitoring"),
+            "learned_exit_bucket_enabled": bool(data.get("learned_exit_bucket_enabled", False)),
+            "learned_exit_bucket_configured": bool(data.get("learned_exit_bucket_configured", False)),
+            "learned_exit_bucket_auto_disabled": bool(data.get("learned_exit_bucket_auto_disabled", True)),
+            "rollback_reason": _text(data.get("rollback_reason"), "validation_bucket_config_disabled"),
+            "rollback_triggered_at": _text(data.get("rollback_triggered_at"), ""),
+            "baseline_vs_learned_status": _text(data.get("baseline_vs_learned_status"), "learning_bucket_disabled_collecting_baseline"),
+            "safety_status": _text(data.get("safety_status"), "safe_disabled"),
+            "learned_exits_used_today": _to_int(data.get("learned_exits_used_today"), 0),
+            "best_learned_exit_policy": _text(data.get("best_learned_exit_policy"), "insufficient_data"),
+            "baseline_profit_factor": _to_float(data.get("baseline_profit_factor"), 0.0),
+            "learned_corrected_profit_factor": _to_float(data.get("learned_corrected_profit_factor"), 0.0),
+            "profit_factor_delta": _to_float(data.get("profit_factor_delta"), 0.0),
+            "baseline_expectancy": _to_float(data.get("baseline_expectancy"), 0.0),
+            "learned_corrected_expectancy": _to_float(data.get("learned_corrected_expectancy"), 0.0),
+            "expectancy_delta": _to_float(data.get("expectancy_delta"), 0.0),
+            "baseline_capture_ratio": _to_float(data.get("baseline_capture_ratio"), 0.0),
+            "learned_corrected_capture_ratio": _to_float(data.get("learned_corrected_capture_ratio"), 0.0),
+            "capture_ratio_delta": _to_float(data.get("capture_ratio_delta"), 0.0),
+            "baseline_giveback": _to_float(data.get("baseline_giveback"), 0.0),
+            "learned_corrected_giveback": _to_float(data.get("learned_corrected_giveback"), 0.0),
+            "giveback_delta": _to_float(data.get("giveback_delta"), 0.0),
+            "learned_exit_bucket_outperforming": bool(data.get("learned_exit_bucket_outperforming", False)),
+            "learned_exit_bucket_underperforming": bool(data.get("learned_exit_bucket_underperforming", False)),
+            "validation_confidence": _to_float(data.get("validation_confidence"), 0.0),
+            "remaining_evidence_needed": _to_int(data.get("remaining_evidence_needed"), 0),
+            "next_recommended_action": _text(data.get("next_recommended_action"), "continue_horizon_capacity_monitoring"),
+            "lesson_routing": list(data.get("lesson_routing") or [])[:10],
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "dashboard_scan_rows": _to_int(data.get("dashboard_scan_rows"), 0),
+            "paper_mode_verified": bool(data.get("paper_mode_verified", True)),
+            "broker_live_endpoint_allowed": bool(data.get("broker_live_endpoint_allowed", False)),
+            "live_trading_changed": bool(data.get("live_trading_changed", False)),
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "ranking_behavior_changed": bool(data.get("ranking_behavior_changed", False)),
+            "broad_entry_behavior_changed": bool(data.get("broad_entry_behavior_changed", False)),
+            "broad_exit_behavior_changed": bool(data.get("broad_exit_behavior_changed", False)),
+            "broad_sizing_behavior_changed": bool(data.get("broad_sizing_behavior_changed", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "fmp_budgets_changed": bool(data.get("fmp_budgets_changed", False)),
+            "natural_exit_preserved": bool(data.get("natural_exit_preserved", True)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "human_review_required": bool(data.get("human_review_required", True)),
+            "kill_switch_exists": bool(data.get("kill_switch_exists", True)),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+        }
+
     def _realistic_shadow_evidence_learning_lab_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -3512,7 +3590,7 @@ class UnifiedLearningDiagnosticsV1:
             "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "long_term_memory_symbol_retrieval_suite_v1", "virtual_paper_convergence_symbol_attribution_v1", "accelerated_learning_symbol_intelligence_suite_v1", "realistic_shadow_evidence_learning_lab_v1", "adaptive_learning_prioritization_resource_allocation_v1", "autonomous_intelligence_validation_governance_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
             "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
-            "paper_throughput_exit_validation_catalyst_intelligence_v1",
+            "paper_throughput_exit_validation_catalyst_intelligence_v1", "multi_horizon_paper_capacity_exit_validation_v1",
             "execution_participation_audit",
             "alpaca_paper_broker", "horizon_performance_dashboard",
         ]
@@ -3576,6 +3654,7 @@ class UnifiedLearningDiagnosticsV1:
             "remote_runtime_consistency": "/api/remote_runtime_consistency_status_v1",
             "execution_participation_audit": "/api/execution_participation_audit_status_v1",
             "paper_throughput_exit_validation_catalyst_intelligence_v1": "/api/paper_throughput_exit_validation_catalyst_intelligence_v1",
+            "multi_horizon_paper_capacity_exit_validation_v1": "/api/multi_horizon_paper_capacity_exit_validation_v1",
             "mobile_runtime_compaction": "/api/mobile_runtime_compaction_status_v1",
             "market_session_execution_timing": "/api/market_session_execution_timing_status_v1",
             "paper_opportunity_allocation": "/api/paper_opportunity_allocation_status_v1",

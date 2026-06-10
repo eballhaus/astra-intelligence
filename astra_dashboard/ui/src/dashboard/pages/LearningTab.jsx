@@ -1622,6 +1622,7 @@ export default function LearningTab({ compact = false }) {
   const capacityExpansionStatus = unified?.capacity_expansion_status || {};
   const executionParticipationAudit = unified?.execution_participation_audit || {};
   const paperThroughputExitCatalyst = unified?.paper_throughput_exit_validation_catalyst_intelligence_v1 || {};
+  const multiHorizonCapacityExitValidation = unified?.multi_horizon_paper_capacity_exit_validation_v1 || {};
   const metricDisplay = (metric, suffix = "") => {
     if (!metric || typeof metric !== "object") return "n/a";
     if (metric.value === null || metric.value === undefined) {
@@ -5475,6 +5476,37 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Astra is diagnosing paper-throughput blockers, comparing learned shadow exits against current paper exits, and improving catalyst visibility using cached evidence only. This does not enable live trading, learned exits, broker changes, sizing changes, or ranking changes.
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Multi-Horizon Capacity & Controlled Exit Validation V1</summary>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12, marginTop: 12 }}>
+          <div>Total capacity: {safeNumber(multiHorizonCapacityExitValidation?.total_capacity, 20).toFixed(0)}</div>
+          <div>Total used / available: {safeNumber(multiHorizonCapacityExitValidation?.total_used).toFixed(0)} / {safeNumber(multiHorizonCapacityExitValidation?.total_available).toFixed(0)}</div>
+          <div>Swing 8 used/available: {safeNumber(multiHorizonCapacityExitValidation?.swing_used).toFixed(0)} / {safeNumber(multiHorizonCapacityExitValidation?.swing_available).toFixed(0)}</div>
+          <div>Day 8 used/available: {safeNumber(multiHorizonCapacityExitValidation?.day_used).toFixed(0)} / {safeNumber(multiHorizonCapacityExitValidation?.day_available).toFixed(0)}</div>
+          <div>Scalp 4 used/available: {safeNumber(multiHorizonCapacityExitValidation?.scalp_used).toFixed(0)} / {safeNumber(multiHorizonCapacityExitValidation?.scalp_available).toFixed(0)}</div>
+          <div>Top capacity blocker: {String(multiHorizonCapacityExitValidation?.top_capacity_blocker || "none").replaceAll("_", " ")}</div>
+          <div>Blocked by capacity: {safeNumber(multiHorizonCapacityExitValidation?.candidates_blocked_by_horizon_capacity).toFixed(0)}</div>
+          <div>Missed evidence from capacity: {safeNumber(multiHorizonCapacityExitValidation?.missed_evidence_due_to_capacity).toFixed(0)}</div>
+          <div>Unknown horizon positions: {safeNumber(multiHorizonCapacityExitValidation?.unknown_horizon_positions).toFixed(0)}</div>
+          <div>Stale internal rows: {safeNumber(multiHorizonCapacityExitValidation?.stale_internal_rows).toFixed(0)}</div>
+          <div>Learning-corrected bucket enabled: {multiHorizonCapacityExitValidation?.learned_exit_bucket_enabled ? "yes" : "no"}</div>
+          <div>Learned exits used today: {safeNumber(multiHorizonCapacityExitValidation?.learned_exits_used_today).toFixed(0)}</div>
+          <div>Baseline vs learned: {String(multiHorizonCapacityExitValidation?.baseline_vs_learned_status || "learning_bucket_disabled_collecting_baseline").replaceAll("_", " ")}</div>
+          <div>Best learned exit policy: {String(multiHorizonCapacityExitValidation?.best_learned_exit_policy || "insufficient_data").replaceAll("_", " ")}</div>
+          <div>Learned exit PF delta: {safeNumber(multiHorizonCapacityExitValidation?.profit_factor_delta).toFixed(2)}</div>
+          <div>Rollback status: {multiHorizonCapacityExitValidation?.learned_exit_bucket_auto_disabled ? "auto-disabled" : "active"}</div>
+          <div>Rollback reason: {String(multiHorizonCapacityExitValidation?.rollback_reason || "none").replaceAll("_", " ")}</div>
+          <div>Safety status: {String(multiHorizonCapacityExitValidation?.safety_status || "safe_disabled").replaceAll("_", " ")}</div>
+          <div>API/provider/LLM calls: {safeNumber(multiHorizonCapacityExitValidation?.api_calls_used).toFixed(0)} / {safeNumber(multiHorizonCapacityExitValidation?.provider_calls_used).toFixed(0)} / {safeNumber(multiHorizonCapacityExitValidation?.llm_calls_used).toFixed(0)}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Next recommended action: {String(multiHorizonCapacityExitValidation?.next_recommended_action || "continue_horizon_capacity_monitoring").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Astra is separating paper capacity into swing, day-trade, and scalp pools so long holds cannot consume all learning slots. A tiny learned-exit validation bucket is visible and reversible, but remains guarded by paper-only mode, human review, evidence thresholds, and a kill switch.
           </div>
         </div>
       </details>

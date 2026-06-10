@@ -543,6 +543,17 @@ class PaperAutopilotEngine:
         self.paper_learning_capacity_expansion_v1 = bool(self.throughput_expansion_enabled and self.max_stocks >= 12)
         self.paper_learning_capacity_default_target = 12
         self.paper_learning_capacity_upper_bound = 15
+        self.horizon_capacity_enabled = str(os.getenv("ASTRA_PAPER_HORIZON_CAPACITY_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+        self.horizon_total_capacity = max(1, _to_int(os.getenv("ASTRA_PAPER_HORIZON_TOTAL_CAPACITY"), 20))
+        self.horizon_swing_capacity = max(0, _to_int(os.getenv("ASTRA_PAPER_HORIZON_SWING_CAPACITY"), 8))
+        self.horizon_day_capacity = max(0, _to_int(os.getenv("ASTRA_PAPER_HORIZON_DAY_CAPACITY"), 8))
+        self.horizon_scalp_capacity = max(0, _to_int(os.getenv("ASTRA_PAPER_HORIZON_SCALP_CAPACITY"), 4))
+        self.learned_exit_validation_bucket_configured = str(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_BUCKET_ENABLED", "0")).strip().lower() in {"1", "true", "yes", "on"}
+        self.learned_exit_validation_kill_switch = str(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_KILL_SWITCH", "1")).strip().lower() in {"1", "true", "yes", "on"}
+        self.learned_exit_validation_max_exits_per_day = max(0, min(5, _to_int(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_MAX_EXITS_PER_DAY"), 5)))
+        self.learned_exit_validation_max_exit_pct = max(0.0, min(25.0, _to_float(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_MAX_EXIT_PCT"), 25.0)))
+        self.learned_exit_validation_min_confidence = max(0.0, min(100.0, _to_float(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_MIN_CONFIDENCE"), 70.0)))
+        self.learned_exit_validation_min_evidence = max(1, _to_int(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_MIN_EVIDENCE"), 100))
 
         self.get_top_buys_fn = kwargs.get("get_top_buys_fn") if callable(kwargs.get("get_top_buys_fn")) else None
         self.get_latest_row_fn = kwargs.get("get_latest_row_fn") if callable(kwargs.get("get_latest_row_fn")) else None
@@ -1168,6 +1179,122 @@ class PaperAutopilotEngine:
             "crypto_capacity": max(0, self.max_crypto - crypto_open),
             "total_capacity": max(0, self.max_open_positions_total - (stock_open + crypto_open)),
         }
+
+    def _position_horizon_by_symbol(self, rows: list[dict[str, Any]]) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for row in rows:
+            symbol = str((row or {}).get("symbol") or "").upper().strip()
+            if not symbol or symbol in out:
+                continue
+            payload = _safe_json_load((row or {}).get("row_json"))
+            notes = _safe_json_load((row or {}).get("lifecycle_notes"))
+            horizon, _source, _inferred = _infer_horizon_style({**payload, **notes, **dict(row or {})})
+            out[symbol] = horizon if horizon in {"scalp", "day_trade", "swing_trade"} else "unknown"
+        return out
+
+    def _horizon_capacity_snapshot(
+        self,
+        *,
+        open_rows: list[dict[str, Any]],
+        broker_open_syms: set[str],
+        broker_reconciliation_active: bool,
+        broker_positions_fetch_ok: bool,
+    ) -> dict[str, Any]:
+        by_symbol = self._position_horizon_by_symbol(open_rows)
+        if broker_reconciliation_active and broker_positions_fetch_ok:
+            symbols = sorted(s for s in broker_open_syms if s)
+        else:
+            symbols = sorted(s for s in by_symbol if s)
+        usage = {"scalp": 0, "day_trade": 0, "swing_trade": 0, "unknown": 0}
+        unknown_symbols: list[str] = []
+        for symbol in symbols:
+            horizon = by_symbol.get(symbol, "unknown")
+            if horizon not in usage:
+                horizon = "unknown"
+            usage[horizon] += 1
+            if horizon == "unknown":
+                unknown_symbols.append(symbol)
+        total_used = len(symbols)
+        total_available = max(0, int(self.horizon_total_capacity) - total_used)
+        swing_used = usage["swing_trade"] + usage["unknown"]
+        swing_pool_used = min(int(self.horizon_swing_capacity), swing_used)
+        swing_available = max(0, min(int(self.horizon_swing_capacity) - swing_pool_used, total_available))
+        day_available = max(0, min(int(self.horizon_day_capacity) - usage["day_trade"], total_available))
+        scalp_available = max(0, min(int(self.horizon_scalp_capacity) - usage["scalp"], total_available))
+        blockers = []
+        if total_available <= 0:
+            blockers.append("total_horizon_capacity_reached")
+        if swing_available <= 0:
+            blockers.append("swing_trade_capacity_reached")
+        if day_available <= 0:
+            blockers.append("day_trade_capacity_reached")
+        if scalp_available <= 0:
+            blockers.append("scalp_capacity_reached")
+        if usage["unknown"] > 0:
+            blockers.append("unknown_horizon_positions_present")
+        return {
+            "enabled": bool(self.horizon_capacity_enabled),
+            "total_capacity": int(self.horizon_total_capacity),
+            "total_used": int(total_used),
+            "total_available": int(total_available),
+            "swing_capacity": int(self.horizon_swing_capacity),
+            "swing_used": int(swing_used),
+            "swing_available": int(swing_available),
+            "day_capacity": int(self.horizon_day_capacity),
+            "day_used": int(usage["day_trade"]),
+            "day_available": int(day_available),
+            "scalp_capacity": int(self.horizon_scalp_capacity),
+            "scalp_used": int(usage["scalp"]),
+            "scalp_available": int(scalp_available),
+            "unknown_horizon_positions": int(usage["unknown"]),
+            "unknown_horizon_symbols": unknown_symbols[:20],
+            "horizon_capacity_blockers": blockers,
+            "capacity_freed_today": 0,
+            "candidates_blocked_by_horizon_capacity": 0,
+            "high_confidence_candidates_blocked_by_capacity": 0,
+            "missed_evidence_due_to_capacity": 0,
+            "recommended_capacity_action": (
+                "classify_unknown_horizon_positions_and_preserve_reserved_scalp_day_capacity"
+                if usage["unknown"] > 0
+                else "horizon_capacity_available_for_qualified_candidates"
+                if total_available > 0
+                else "wait_for_natural_or_validated_paper_exits_to_free_capacity"
+            ),
+        }
+
+    def _horizon_has_capacity(self, horizon_capacity: dict[str, Any], horizon: str) -> tuple[bool, str]:
+        if not self.horizon_capacity_enabled:
+            return True, "horizon_capacity_disabled"
+        if _to_int(horizon_capacity.get("total_available"), 0) <= 0:
+            return False, "total_horizon_capacity_reached"
+        bucket = horizon if horizon in {"scalp", "day_trade", "swing_trade"} else "swing_trade"
+        if bucket == "scalp":
+            key = "scalp_available"
+        elif bucket == "day_trade":
+            key = "day_available"
+        else:
+            key = "swing_available"
+        if _to_int(horizon_capacity.get(key), 0) <= 0:
+            return False, f"{bucket}_capacity_reached"
+        return True, f"{bucket}_capacity_available"
+
+    def _consume_horizon_capacity(self, horizon_capacity: dict[str, Any], horizon: str) -> dict[str, Any]:
+        out = dict(horizon_capacity or {})
+        if not self.horizon_capacity_enabled:
+            return out
+        bucket = horizon if horizon in {"scalp", "day_trade", "swing_trade"} else "swing_trade"
+        out["total_used"] = _to_int(out.get("total_used"), 0) + 1
+        out["total_available"] = max(0, _to_int(out.get("total_available"), 0) - 1)
+        if bucket == "scalp":
+            out["scalp_used"] = _to_int(out.get("scalp_used"), 0) + 1
+            out["scalp_available"] = max(0, _to_int(out.get("scalp_available"), 0) - 1)
+        elif bucket == "day_trade":
+            out["day_used"] = _to_int(out.get("day_used"), 0) + 1
+            out["day_available"] = max(0, _to_int(out.get("day_available"), 0) - 1)
+        else:
+            out["swing_used"] = _to_int(out.get("swing_used"), 0) + 1
+            out["swing_available"] = max(0, _to_int(out.get("swing_available"), 0) - 1)
+        return out
 
     def _candidate_trace_row(
         self,
@@ -2223,6 +2350,15 @@ class PaperAutopilotEngine:
         counts = self._count_open_positions()
         open_position_rows_count = self._count_open_position_rows()
         open_positions_count = int(counts.get("stock", 0) + counts.get("crypto", 0))
+        open_rows = self._fetch_open_positions()
+        broker_snapshot = self._broker_open_symbols_snapshot()
+        broker_open_syms = set(broker_snapshot.get("broker_open_symbols") or set())
+        horizon_capacity = self._horizon_capacity_snapshot(
+            open_rows=open_rows,
+            broker_open_syms=broker_open_syms,
+            broker_reconciliation_active=bool(broker_snapshot.get("broker_reconciliation_active", False)),
+            broker_positions_fetch_ok=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
+        )
         total_closed = 0
         try:
             with self._connect() as conn:
@@ -2241,6 +2377,12 @@ class PaperAutopilotEngine:
             "open_position_rows_count": int(open_position_rows_count),
             "open_positions_unique_count": int(open_positions_count),
             "stale_internal_workflow_row_overhang": int(max(0, open_position_rows_count - open_positions_count)),
+            "horizon_capacity_summary": horizon_capacity,
+            "horizon_capacity_enabled": bool(self.horizon_capacity_enabled),
+            "horizon_total_capacity": int(self.horizon_total_capacity),
+            "learned_exit_validation_bucket_configured": bool(self.learned_exit_validation_bucket_configured),
+            "learned_exit_validation_bucket_enabled": False,
+            "learned_exit_validation_kill_switch": bool(self.learned_exit_validation_kill_switch),
             "total_closed_trades": int(total_closed),
             "last_cycle_utc": str(self._runtime_state.get("last_cycle_utc") or ""),
             "last_cycle_summary": dict(self._runtime_state.get("last_cycle_summary") or {}),
@@ -2260,6 +2402,18 @@ class PaperAutopilotEngine:
             "max_stocks": int(self.max_stocks),
             "max_crypto": int(self.max_crypto),
             "max_open_positions_total": int(self.max_open_positions_total),
+            "horizon_capacity_enabled": bool(self.horizon_capacity_enabled),
+            "horizon_total_capacity": int(self.horizon_total_capacity),
+            "horizon_swing_capacity": int(self.horizon_swing_capacity),
+            "horizon_day_capacity": int(self.horizon_day_capacity),
+            "horizon_scalp_capacity": int(self.horizon_scalp_capacity),
+            "learned_exit_validation_bucket_configured": bool(self.learned_exit_validation_bucket_configured),
+            "learned_exit_validation_bucket_enabled": False,
+            "learned_exit_validation_kill_switch": bool(self.learned_exit_validation_kill_switch),
+            "learned_exit_validation_max_exits_per_day": int(self.learned_exit_validation_max_exits_per_day),
+            "learned_exit_validation_max_exit_pct": round(float(self.learned_exit_validation_max_exit_pct), 3),
+            "learned_exit_validation_min_confidence": round(float(self.learned_exit_validation_min_confidence), 3),
+            "learned_exit_validation_min_evidence": int(self.learned_exit_validation_min_evidence),
             "cooldown_after_close_seconds": int(self.cooldown_after_close_seconds),
             "throughput_expansion_enabled": bool(self.throughput_expansion_enabled),
             "soft_candidate_expansion_enabled": bool(self.soft_candidate_expansion_enabled),
@@ -2423,7 +2577,18 @@ class PaperAutopilotEngine:
                 crypto_capacity = max(0, self.max_crypto - internal_crypto_open)
                 total_capacity = max(0, self.max_open_positions_total - effective_capacity_count)
                 stale_internal_positions_ignored_for_broker_capacity = False
+            horizon_capacity = self._horizon_capacity_snapshot(
+                open_rows=open_rows_initial,
+                broker_open_syms=broker_open_syms,
+                broker_reconciliation_active=broker_reconciliation_active,
+                broker_positions_fetch_ok=broker_positions_fetch_ok,
+            )
+            if self.horizon_capacity_enabled:
+                total_capacity = int(horizon_capacity.get("total_available", total_capacity))
+                stock_capacity = max(stock_capacity, total_capacity)
             stock_capacity_reason = "stock_capacity_available"
+            horizon_capacity_blocked = 0
+            high_confidence_horizon_capacity_blocked = 0
             candidates = self._collect_candidate_rows()
             candidate_source = "candidate_source_empty"
             if candidates:
@@ -2552,6 +2717,32 @@ class PaperAutopilotEngine:
                     })
                     final_blocker_reason = "cooldown_active"
                     continue
+                candidate_horizon, candidate_horizon_source, candidate_horizon_inferred = _infer_horizon_style(row)
+                if not candidate_horizon:
+                    candidate_horizon = "unknown"
+                    candidate_horizon_source = "missing_horizon"
+                    candidate_horizon_inferred = True
+                horizon_ok, horizon_capacity_reason = self._horizon_has_capacity(horizon_capacity, candidate_horizon)
+                if not horizon_ok:
+                    skipped += 1
+                    horizon_capacity_blocked += 1
+                    confidence_for_block = _to_float(row.get("confidence"), _to_float(row.get("predicted_win_probability"), 0.0))
+                    if confidence_for_block >= 80.0:
+                        high_confidence_horizon_capacity_blocked += 1
+                    decision_trace.append({
+                        "symbol": symbol,
+                        "asset_type": asset,
+                        "eligible": False,
+                        "selected": False,
+                        "decision_reason": horizon_capacity_reason,
+                        "trade_horizon_style": candidate_horizon,
+                        "paper_entry_horizon_source": candidate_horizon_source,
+                        "paper_entry_horizon_inferred": bool(candidate_horizon_inferred),
+                        "horizon_capacity": dict(horizon_capacity),
+                        "horizon_capacity_enabled": bool(self.horizon_capacity_enabled),
+                    })
+                    final_blocker_reason = horizon_capacity_reason
+                    continue
                 if asset == "stock" and stock_capacity <= 0:
                     final_blocker_reason = "stock_capacity_reached"
                     stock_capacity_reason = "stock_capacity_reached"
@@ -2571,6 +2762,9 @@ class PaperAutopilotEngine:
                     broker_open_syms=broker_open_syms,
                     broker_reconciliation_active=broker_reconciliation_active,
                 )
+                row_trace["horizon_capacity_enabled"] = bool(self.horizon_capacity_enabled)
+                row_trace["horizon_capacity_reason"] = str(horizon_capacity_reason)
+                row_trace["horizon_capacity_snapshot"] = dict(horizon_capacity)
                 if not allowed:
                     exploration_decision = {}
                     if (
@@ -2680,6 +2874,7 @@ class PaperAutopilotEngine:
                         stock_capacity = max(0, stock_capacity - 1)
                     else:
                         crypto_capacity = max(0, crypto_capacity - 1)
+                    horizon_capacity = self._consume_horizon_capacity(horizon_capacity, candidate_horizon)
                 else:
                     skipped += 1
                     orders_rejected += 1
@@ -2758,6 +2953,17 @@ class PaperAutopilotEngine:
                 "effective_capacity_count": int(effective_capacity_count),
                 "capacity_available": int(total_capacity),
                 "capacity_blocked": bool(total_capacity <= 0),
+                "horizon_capacity_summary": {
+                    **dict(horizon_capacity),
+                    "candidates_blocked_by_horizon_capacity": int(horizon_capacity_blocked),
+                    "high_confidence_candidates_blocked_by_capacity": int(high_confidence_horizon_capacity_blocked),
+                    "missed_evidence_due_to_capacity": int(horizon_capacity_blocked),
+                },
+                "horizon_capacity_enabled": bool(self.horizon_capacity_enabled),
+                "horizon_total_capacity": int(self.horizon_total_capacity),
+                "candidates_blocked_by_horizon_capacity": int(horizon_capacity_blocked),
+                "high_confidence_candidates_blocked_by_capacity": int(high_confidence_horizon_capacity_blocked),
+                "missed_evidence_due_to_capacity": int(horizon_capacity_blocked),
                 "stock_capacity_limit": int(self.max_stocks),
                 "paper_learning_capacity_expansion_v1": bool(self.paper_learning_capacity_expansion_v1),
                 "paper_learning_capacity_reason": "cautious_learning_acceleration_without_forced_trades",
@@ -2833,6 +3039,17 @@ class PaperAutopilotEngine:
                 "effective_capacity_count": int(effective_capacity_count),
                 "capacity_available": int(total_capacity),
                 "capacity_blocked": bool(total_capacity <= 0),
+                "horizon_capacity_summary": {
+                    **dict(horizon_capacity),
+                    "candidates_blocked_by_horizon_capacity": int(horizon_capacity_blocked),
+                    "high_confidence_candidates_blocked_by_capacity": int(high_confidence_horizon_capacity_blocked),
+                    "missed_evidence_due_to_capacity": int(horizon_capacity_blocked),
+                },
+                "horizon_capacity_enabled": bool(self.horizon_capacity_enabled),
+                "horizon_total_capacity": int(self.horizon_total_capacity),
+                "candidates_blocked_by_horizon_capacity": int(horizon_capacity_blocked),
+                "high_confidence_candidates_blocked_by_capacity": int(high_confidence_horizon_capacity_blocked),
+                "missed_evidence_due_to_capacity": int(horizon_capacity_blocked),
                 "stock_capacity_limit": int(self.max_stocks),
                 "stock_capacity_reason": str(stock_capacity_reason),
                 "stale_internal_positions_ignored_for_broker_capacity": bool(stale_internal_positions_ignored_for_broker_capacity),

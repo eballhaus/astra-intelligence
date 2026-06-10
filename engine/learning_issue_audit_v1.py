@@ -590,6 +590,7 @@ class LearningIssueAuditV1:
         shadow_lab = dict(statuses.get("realistic_shadow_evidence_learning_lab_v1") or {})
         multi_horizon_intelligence = dict(statuses.get("multi_horizon_intelligence_adaptive_lifecycle_suite_v1") or {})
         paper_throughput_exit_catalyst = dict(statuses.get("paper_throughput_exit_validation_catalyst_intelligence_v1") or {})
+        multi_horizon_capacity_exit = dict(statuses.get("multi_horizon_paper_capacity_exit_validation_v1") or {})
         learning_allocator = dict(statuses.get("adaptive_learning_prioritization_resource_allocation_v1") or {})
         autonomous_governance = dict(statuses.get("autonomous_intelligence_validation_governance_v1") or {})
         paper_trace = dict(statuses.get("paper_execution_trace") or {})
@@ -811,6 +812,14 @@ class LearningIssueAuditV1:
             "Use this summary to inspect paper evidence bottlenecks, learned-exit readiness, and catalyst coverage without changing execution.",
             _text(paper_throughput_exit_catalyst.get("recommended_next_action"), "No behavior change."),
         )
+        multi_horizon_capacity_exit_issue = _issue(
+            "multi_horizon_capacity_exit_validation_active" if multi_horizon_capacity_exit.get("enabled") else "multi_horizon_capacity_exit_validation_unavailable",
+            "horizon_capacity_pools_and_controlled_exit_bucket_diagnostics_active" if multi_horizon_capacity_exit.get("enabled") else "multi_horizon_capacity_exit_validation_not_available",
+            "medium" if _to_int(multi_horizon_capacity_exit.get("total_available"), 0) <= 0 or bool(multi_horizon_capacity_exit.get("learned_exit_bucket_auto_disabled", True)) else "low",
+            _to_int(multi_horizon_capacity_exit.get("total_used"), 0),
+            "Use horizon capacity pools to preserve scalp/day learning capacity; learned-exit bucket remains guarded and reversible.",
+            _text(multi_horizon_capacity_exit.get("next_recommended_action"), "No behavior change."),
+        )
         learning_allocator_issue = _issue(
             "adaptive_learning_prioritization_active" if learning_allocator.get("enabled") else "adaptive_learning_prioritization_unavailable",
             "weakness_detection_learning_value_resource_allocation_worker_replay_memory_and_governance_diagnostics_active" if learning_allocator.get("enabled") else "adaptive_learning_prioritization_not_available",
@@ -1024,6 +1033,7 @@ class LearningIssueAuditV1:
             "realistic_shadow_evidence_learning_lab_v1": shadow_lab_issue,
             "multi_horizon_intelligence_adaptive_lifecycle_suite_v1": multi_horizon_intelligence_issue,
             "paper_throughput_exit_validation_catalyst_intelligence_v1": paper_throughput_exit_catalyst_issue,
+            "multi_horizon_paper_capacity_exit_validation_v1": multi_horizon_capacity_exit_issue,
             "adaptive_learning_prioritization_resource_allocation_v1": learning_allocator_issue,
             "autonomous_intelligence_validation_governance_v1": autonomous_governance_issue,
             "paper_path_gating": paper_path_issue,
@@ -1058,6 +1068,7 @@ class LearningIssueAuditV1:
             "realistic_shadow_evidence_learning_lab_status": shadow_lab_issue,
             "multi_horizon_intelligence_adaptive_lifecycle_status": multi_horizon_intelligence_issue,
             "paper_throughput_exit_validation_catalyst_status": paper_throughput_exit_catalyst_issue,
+            "multi_horizon_paper_capacity_exit_validation_status": multi_horizon_capacity_exit_issue,
             "adaptive_learning_prioritization_resource_allocation_status": learning_allocator_issue,
             "autonomous_intelligence_validation_governance_status": autonomous_governance_issue,
             "paper_path_gating_status": paper_path_issue,
@@ -1593,6 +1604,38 @@ class LearningIssueAuditV1:
                 "provider_calls_used": paper_throughput_exit_catalyst.get("provider_calls_used"),
                 "llm_calls_used": paper_throughput_exit_catalyst.get("llm_calls_used"),
                 "behavior_safe_to_apply": bool(paper_throughput_exit_catalyst.get("behavior_safe_to_apply", False)),
+            },
+            "multi_horizon_paper_capacity_exit_validation_diagnostics": {
+                "total_capacity": multi_horizon_capacity_exit.get("total_capacity"),
+                "total_used": multi_horizon_capacity_exit.get("total_used"),
+                "total_available": multi_horizon_capacity_exit.get("total_available"),
+                "swing_capacity": multi_horizon_capacity_exit.get("swing_capacity"),
+                "swing_used": multi_horizon_capacity_exit.get("swing_used"),
+                "swing_available": multi_horizon_capacity_exit.get("swing_available"),
+                "day_capacity": multi_horizon_capacity_exit.get("day_capacity"),
+                "day_used": multi_horizon_capacity_exit.get("day_used"),
+                "day_available": multi_horizon_capacity_exit.get("day_available"),
+                "scalp_capacity": multi_horizon_capacity_exit.get("scalp_capacity"),
+                "scalp_used": multi_horizon_capacity_exit.get("scalp_used"),
+                "scalp_available": multi_horizon_capacity_exit.get("scalp_available"),
+                "unknown_horizon_positions": multi_horizon_capacity_exit.get("unknown_horizon_positions"),
+                "broker_confirmed_positions": multi_horizon_capacity_exit.get("broker_confirmed_positions"),
+                "stale_internal_rows": multi_horizon_capacity_exit.get("stale_internal_rows"),
+                "top_capacity_blocker": multi_horizon_capacity_exit.get("top_capacity_blocker"),
+                "candidates_blocked_by_horizon_capacity": multi_horizon_capacity_exit.get("candidates_blocked_by_horizon_capacity"),
+                "missed_evidence_due_to_capacity": multi_horizon_capacity_exit.get("missed_evidence_due_to_capacity"),
+                "learned_exit_bucket_enabled": bool(multi_horizon_capacity_exit.get("learned_exit_bucket_enabled", False)),
+                "learned_exits_used_today": multi_horizon_capacity_exit.get("learned_exits_used_today"),
+                "baseline_vs_learned_status": multi_horizon_capacity_exit.get("baseline_vs_learned_status"),
+                "best_learned_exit_policy": multi_horizon_capacity_exit.get("best_learned_exit_policy"),
+                "profit_factor_delta": multi_horizon_capacity_exit.get("profit_factor_delta"),
+                "rollback_reason": multi_horizon_capacity_exit.get("rollback_reason"),
+                "safety_status": multi_horizon_capacity_exit.get("safety_status"),
+                "next_recommended_action": multi_horizon_capacity_exit.get("next_recommended_action"),
+                "api_calls_used": multi_horizon_capacity_exit.get("api_calls_used"),
+                "provider_calls_used": multi_horizon_capacity_exit.get("provider_calls_used"),
+                "llm_calls_used": multi_horizon_capacity_exit.get("llm_calls_used"),
+                "behavior_safe_to_apply": bool(multi_horizon_capacity_exit.get("behavior_safe_to_apply", False)),
             },
             "adaptive_learning_prioritization_resource_allocation_diagnostics": {
                 "top_weakness": learning_allocator.get("top_weakness"),
