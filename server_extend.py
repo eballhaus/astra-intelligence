@@ -2187,6 +2187,46 @@ except Exception:
                 "behavior_safe_to_apply": False,
             }
 try:
+    from engine.catalyst_classification_historical_exit_maturation_suite_v1 import CatalystClassificationHistoricalExitMaturationSuiteV1
+except Exception:
+    class CatalystClassificationHistoricalExitMaturationSuiteV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only_catalyst_historical_exit_maturation",
+                "catalyst_coverage_score": 0.0,
+                "unknown_catalyst_rate": 100.0,
+                "classified_catalyst_count": 0,
+                "catalyst_memory_quality": 0.0,
+                "catalyst_confidence_score": 0.0,
+                "historical_memory_growth_score": 0.0,
+                "symbol_memory_growth_score": 0.0,
+                "sector_memory_growth_score": 0.0,
+                "regime_memory_growth_score": 0.0,
+                "historical_transfer_learning_score": 0.0,
+                "profit_lock_readiness_score": 0.0,
+                "catalyst_decay_learning_score": 0.0,
+                "continuation_failure_learning_score": 0.0,
+                "hold_duration_learning_score": 0.0,
+                "giveback_reduction_score": 0.0,
+                "exit_learning_maturity_score": 0.0,
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "ranking_behavior_changed": False,
+                "entry_behavior_changed": False,
+                "exit_behavior_changed": False,
+                "position_sizing_changed": False,
+                "thresholds_changed": False,
+                "behavior_safe_to_apply": False,
+            }
+try:
     from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
 except Exception:
     class _AlpacaWSMonitorFallback:
@@ -2386,6 +2426,7 @@ CONTROLLED_PAPER_LEARNED_EXIT_VALIDATION = ControlledPaperLearnedExitValidationV
 ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION = AdaptiveLearningPrioritizationResourceAllocationV1(state_dir=STATE)
 AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE = AutonomousIntelligenceValidationGovernanceV1(state_dir=STATE)
 HISTORICAL_INTELLIGENCE_MARKET_MEMORY_SUITE = HistoricalIntelligenceMarketMemorySuiteV1(state_dir=STATE)
+CATALYST_CLASSIFICATION_HISTORICAL_EXIT_MATURATION_SUITE = CatalystClassificationHistoricalExitMaturationSuiteV1(state_dir=STATE)
 TRADE_ARCHETYPE_REGIME_INTELLIGENCE = TradeArchetypeRegimeIntelligenceV1(state_dir=STATE)
 REPLAY_COUNTERFACTUAL_LEARNING_V2 = ReplayCounterfactualLearningV2(state_dir=STATE)
 OPPORTUNITY_COST_LEARNING = OpportunityCostLearningV1(state_dir=STATE)
@@ -32433,6 +32474,73 @@ def historical_intelligence_market_memory_suite_v1(force: bool = False):
         }
 
 
+@router.get("/api/catalyst_classification_historical_exit_maturation_suite_v1")
+def catalyst_classification_historical_exit_maturation_suite_v1(force: bool = False):
+    try:
+        statuses = {}
+        for key, fn in (
+            ("adaptive_market_intake_fmp_budget_status_v1", lambda: adaptive_market_intake_fmp_budget_status_v1()),
+            ("realistic_shadow_evidence_learning_lab_v1", lambda: REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB.status(statuses=statuses, force=False)),
+            ("accelerated_learning_symbol_intelligence_suite_v1", lambda: ACCELERATED_LEARNING_SYMBOL_INTELLIGENCE_SUITE.status(statuses=statuses, force=False)),
+            ("long_term_memory_symbol_retrieval_suite_v1", lambda: LONG_TERM_MEMORY_SYMBOL_RETRIEVAL_SUITE.status(statuses=statuses, force=False)),
+            ("catalyst_theme_narrative_capital_flow_intelligence_v2", lambda: CATALYST_THEME_NARRATIVE_CAPITAL_FLOW_INTELLIGENCE_V2.status(statuses=statuses, force=False)),
+            ("context_evidence_expansion_suite_v1", lambda: CONTEXT_EVIDENCE_EXPANSION_SUITE.status(statuses=statuses, force=False)),
+            ("market_context_learning_suite_v1", lambda: MARKET_CONTEXT_LEARNING_SUITE.status(force=False)),
+            ("profit_capture_peak_decay_exit_validation_suite_v1", lambda: PROFIT_CAPTURE_PEAK_DECAY_EXIT_VALIDATION_SUITE.status(statuses=statuses, force=False)),
+            ("adaptive_execution_exit_intelligence_v3", lambda: ADAPTIVE_EXECUTION_EXIT_INTELLIGENCE_V3.status(force=False)),
+            ("exit_learning_expansion_suite_v1", lambda: EXIT_LEARNING_EXPANSION_SUITE.status(force=False)),
+            ("trade_lifecycle_excursion_v2", lambda: TRADE_LIFECYCLE_EXCURSION_V2.status(force=False)),
+            ("multi_horizon_intelligence_adaptive_lifecycle_suite_v1", lambda: MULTI_HORIZON_INTELLIGENCE_ADAPTIVE_LIFECYCLE_SUITE.status(statuses=statuses, force=False)),
+            ("historical_intelligence_market_memory_suite_v1", lambda: HISTORICAL_INTELLIGENCE_MARKET_MEMORY_SUITE.status(statuses=statuses, force=False)),
+        ):
+            try:
+                statuses[key] = fn()
+            except Exception:
+                statuses[key] = {}
+        out = dict(CATALYST_CLASSIFICATION_HISTORICAL_EXIT_MATURATION_SUITE.status(statuses=statuses, force=bool(force)) or {})
+        out["catalyst_classification_historical_exit_maturation_suite_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["ranking_behavior_changed"] = False
+        out["entry_behavior_changed"] = False
+        out["exit_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["thresholds_changed"] = False
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only_catalyst_historical_exit_maturation",
+            "catalyst_classification_historical_exit_maturation_suite_v1": True,
+            "degraded_reason": f"catalyst_historical_exit_maturation_endpoint_unavailable:{str(exc)[:140]}",
+            "catalyst_coverage_score": 0.0,
+            "unknown_catalyst_rate": 100.0,
+            "classified_catalyst_count": 0,
+            "historical_memory_growth_score": 0.0,
+            "exit_learning_maturity_score": 0.0,
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "thresholds_changed": False,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "behavior_safe_to_apply": False,
+        }
+
+
 @router.get("/api/alpaca_paper_status_v1")
 def alpaca_paper_status_v1():
     try:
@@ -41669,6 +41777,10 @@ def _learning_acceleration_status_bundle() -> dict:
     except Exception:
         statuses["historical_intelligence_market_memory_suite_v1"] = {}
     try:
+        statuses["catalyst_classification_historical_exit_maturation_suite_v1"] = CATALYST_CLASSIFICATION_HISTORICAL_EXIT_MATURATION_SUITE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["catalyst_classification_historical_exit_maturation_suite_v1"] = {}
+    try:
         statuses["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = MULTI_HORIZON_INTELLIGENCE_ADAPTIVE_LIFECYCLE_SUITE.status(statuses=statuses, force=False)
     except Exception:
         statuses["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = {}
@@ -42877,6 +42989,10 @@ def learning_issue_audit_status_v1(force: bool = False):
             statuses["historical_intelligence_market_memory_suite_v1"] = HISTORICAL_INTELLIGENCE_MARKET_MEMORY_SUITE.status(statuses=statuses, force=False)
         except Exception:
             statuses["historical_intelligence_market_memory_suite_v1"] = {}
+        try:
+            statuses["catalyst_classification_historical_exit_maturation_suite_v1"] = CATALYST_CLASSIFICATION_HISTORICAL_EXIT_MATURATION_SUITE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["catalyst_classification_historical_exit_maturation_suite_v1"] = {}
         try:
             statuses["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = MULTI_HORIZON_INTELLIGENCE_ADAPTIVE_LIFECYCLE_SUITE.status(statuses=statuses, force=False)
         except Exception:
@@ -51346,6 +51462,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("accelerated_learning_symbol_intelligence_suite_v1", lambda: ACCELERATED_LEARNING_SYMBOL_INTELLIGENCE_SUITE.status(statuses=statuses, force=False))
         _safe_status("realistic_shadow_evidence_learning_lab_v1", lambda: REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB.status(statuses=statuses, force=False))
         _safe_status("historical_intelligence_market_memory_suite_v1", lambda: HISTORICAL_INTELLIGENCE_MARKET_MEMORY_SUITE.status(statuses=statuses, force=False))
+        _safe_status("catalyst_classification_historical_exit_maturation_suite_v1", lambda: CATALYST_CLASSIFICATION_HISTORICAL_EXIT_MATURATION_SUITE.status(statuses=statuses, force=False))
         _safe_status("adaptive_learning_prioritization_resource_allocation_v1", lambda: ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False))
         _safe_status("autonomous_intelligence_validation_governance_v1", lambda: AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE.status(statuses=statuses, force=False))
         _safe_status("trade_archetype_regime", lambda: TRADE_ARCHETYPE_REGIME_INTELLIGENCE.status(force=False))

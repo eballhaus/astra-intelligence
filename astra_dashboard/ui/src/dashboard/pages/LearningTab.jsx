@@ -1599,6 +1599,7 @@ export default function LearningTab({ compact = false }) {
   const acceleratedSymbolLearning = unified?.accelerated_learning_symbol_intelligence_suite_v1 || {};
   const realisticShadowLab = unified?.realistic_shadow_evidence_learning_lab_v1 || {};
   const historicalMarketMemory = unified?.historical_intelligence_market_memory_suite_v1 || {};
+  const catalystHistoricalExitMaturation = unified?.catalyst_classification_historical_exit_maturation_suite_v1 || {};
   const adaptiveExecutionExitV3 = unified?.adaptive_execution_exit_intelligence_v3 || {};
   const exitLearningExpansion = unified?.exit_learning_expansion_suite_v1 || {};
   const marketContextLearning = unified?.market_context_learning_suite_v1 || {};
@@ -2009,6 +2010,47 @@ export default function LearningTab({ compact = false }) {
           ))}
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Shadow recommendation: {String(historicalMarketMemory?.shadow_recommendation || "Continue cache-only historical diagnostics.").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Catalyst Classification, Historical Maturation & Exit Learning V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is classifying unknown catalysts from cached memory, maturing historical symbol/sector/regime learning, and scoring exit-learning readiness. This is shadow-only and does not change entries, exits, rankings, sizing, thresholds, broker behavior, or FMP budgets.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Catalyst coverage", `${safeNumber(catalystHistoricalExitMaturation?.catalyst_coverage_score).toFixed(1)}%`],
+            ["Unknown catalyst", `${safeNumber(catalystHistoricalExitMaturation?.unknown_catalyst_rate).toFixed(1)}%`],
+            ["Classified catalysts", safeNumber(catalystHistoricalExitMaturation?.classified_catalyst_count).toFixed(0)],
+            ["Catalyst memory", safeNumber(catalystHistoricalExitMaturation?.catalyst_memory_quality).toFixed(1)],
+            ["Catalyst confidence", safeNumber(catalystHistoricalExitMaturation?.catalyst_confidence_score).toFixed(1)],
+            ["Dominant catalyst", catalystHistoricalExitMaturation?.dominant_catalyst],
+            ["Historical growth", safeNumber(catalystHistoricalExitMaturation?.historical_memory_growth_score).toFixed(1)],
+            ["Symbol growth", safeNumber(catalystHistoricalExitMaturation?.symbol_memory_growth_score).toFixed(1)],
+            ["Sector growth", safeNumber(catalystHistoricalExitMaturation?.sector_memory_growth_score).toFixed(1)],
+            ["Regime growth", safeNumber(catalystHistoricalExitMaturation?.regime_memory_growth_score).toFixed(1)],
+            ["Transfer learning", safeNumber(catalystHistoricalExitMaturation?.historical_transfer_learning_score).toFixed(1)],
+            ["Profit lock readiness", safeNumber(catalystHistoricalExitMaturation?.profit_lock_readiness_score).toFixed(1)],
+            ["Catalyst decay learning", safeNumber(catalystHistoricalExitMaturation?.catalyst_decay_learning_score).toFixed(1)],
+            ["Continuation failure", safeNumber(catalystHistoricalExitMaturation?.continuation_failure_learning_score).toFixed(1)],
+            ["Hold duration", safeNumber(catalystHistoricalExitMaturation?.hold_duration_learning_score).toFixed(1)],
+            ["Giveback reduction", safeNumber(catalystHistoricalExitMaturation?.giveback_reduction_score).toFixed(1)],
+            ["Exit maturity", safeNumber(catalystHistoricalExitMaturation?.exit_learning_maturity_score).toFixed(1)],
+            ["API impact", catalystHistoricalExitMaturation?.api_impact_estimate],
+            ["Bandwidth impact", catalystHistoricalExitMaturation?.bandwidth_impact_estimate],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Categories: {(catalystHistoricalExitMaturation?.inferred_catalyst_categories || []).slice(0, 8).map((x) => String(x).replaceAll("_", " ")).join(", ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(catalystHistoricalExitMaturation?.shadow_recommendation || "Continue catalyst classification, historical maturation, and exit-learning diagnostics shadow-only.").replaceAll("_", " ")}
           </div>
         </div>
       </details>

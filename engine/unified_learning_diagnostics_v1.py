@@ -313,6 +313,7 @@ class UnifiedLearningDiagnosticsV1:
         accelerated_learning_symbol_intelligence = self._accelerated_learning_symbol_intelligence_summary(statuses.get("accelerated_learning_symbol_intelligence_suite_v1") or {})
         realistic_shadow_evidence_learning_lab = self._realistic_shadow_evidence_learning_lab_summary(statuses.get("realistic_shadow_evidence_learning_lab_v1") or {})
         historical_intelligence_market_memory = self._historical_intelligence_market_memory_summary(statuses.get("historical_intelligence_market_memory_suite_v1") or {})
+        catalyst_classification_historical_exit_maturation = self._catalyst_classification_historical_exit_maturation_summary(statuses.get("catalyst_classification_historical_exit_maturation_suite_v1") or {})
         adaptive_learning_prioritization_resource_allocation = self._adaptive_learning_prioritization_resource_allocation_summary(statuses.get("adaptive_learning_prioritization_resource_allocation_v1") or {})
         autonomous_intelligence_validation_governance = self._autonomous_intelligence_validation_governance_summary(statuses.get("autonomous_intelligence_validation_governance_v1") or {})
         paper_throughput_exit_validation_catalyst = self._paper_throughput_exit_validation_catalyst_summary(statuses.get("paper_throughput_exit_validation_catalyst_intelligence_v1") or {})
@@ -386,6 +387,7 @@ class UnifiedLearningDiagnosticsV1:
             "accelerated_learning_symbol_intelligence_suite_v1": accelerated_learning_symbol_intelligence,
             "realistic_shadow_evidence_learning_lab_v1": realistic_shadow_evidence_learning_lab,
             "historical_intelligence_market_memory_suite_v1": historical_intelligence_market_memory,
+            "catalyst_classification_historical_exit_maturation_suite_v1": catalyst_classification_historical_exit_maturation,
             "multi_horizon_intelligence_adaptive_lifecycle_suite_v1": multi_horizon_intelligence_adaptive_lifecycle,
             "paper_throughput_exit_validation_catalyst_intelligence_v1": paper_throughput_exit_validation_catalyst,
             "multi_horizon_paper_capacity_exit_validation_v1": multi_horizon_capacity_exit_validation,
@@ -425,12 +427,20 @@ class UnifiedLearningDiagnosticsV1:
             },
             "stale_cache": False,
             "degraded_reason": system.get("degraded_reason") or "",
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
             "live_trading_changed": False,
             "alpaca_paper_only_preserved": True,
             "natural_exit_preserved": True,
             "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "thresholds_changed": False,
             "forced_trades_enabled": False,
             "forced_exits_enabled": False,
+            "behavior_safe_to_apply": False,
         }
 
     def _evidence_maturity(self, evidence_count: int, statuses: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -2615,6 +2625,11 @@ class UnifiedLearningDiagnosticsV1:
             "historical_replay_score": _to_float(data.get("historical_replay_score"), 0.0),
             "market_memory_quality_score": _to_float(data.get("market_memory_quality_score"), 0.0),
             "historical_lesson_quality_score": _to_float(data.get("historical_lesson_quality_score"), 0.0),
+            "historical_memory_growth_score": _to_float(data.get("historical_memory_growth_score"), 0.0),
+            "symbol_memory_growth_score": _to_float(data.get("symbol_memory_growth_score"), 0.0),
+            "sector_memory_growth_score": _to_float(data.get("sector_memory_growth_score"), 0.0),
+            "regime_memory_growth_score": _to_float(data.get("regime_memory_growth_score"), 0.0),
+            "historical_transfer_learning_score": _to_float(data.get("historical_transfer_learning_score"), 0.0),
             "rotating_universe_size": _to_int(data.get("rotating_universe_size"), 0),
             "symbols_scanned_today": _to_int(data.get("symbols_scanned_today"), 0),
             "candidate_diversity_score": _to_float(data.get("candidate_diversity_score"), 0.0),
@@ -2640,6 +2655,56 @@ class UnifiedLearningDiagnosticsV1:
             "raw_archive_scanned": bool(data.get("raw_archive_scanned", False)),
             "raw_history_scanned": bool(data.get("raw_history_scanned", False)),
             "shadow_recommendation": _text(data.get("shadow_recommendation"), "Continue cache-only historical diagnostics."),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+        }
+
+    def _catalyst_classification_historical_exit_maturation_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "shadow_only_catalyst_historical_exit_maturation"),
+            "catalyst_coverage_score": _to_float(data.get("catalyst_coverage_score"), 0.0),
+            "unknown_catalyst_rate": _to_float(data.get("unknown_catalyst_rate"), 100.0),
+            "direct_unknown_catalyst_rate": _to_float(data.get("direct_unknown_catalyst_rate"), 100.0),
+            "classified_catalyst_count": _to_int(data.get("classified_catalyst_count"), 0),
+            "catalyst_memory_quality": _to_float(data.get("catalyst_memory_quality"), 0.0),
+            "catalyst_confidence_score": _to_float(data.get("catalyst_confidence_score"), 0.0),
+            "inferred_catalyst_categories": list(data.get("inferred_catalyst_categories") or [])[:12],
+            "dominant_catalyst": _text(data.get("dominant_catalyst"), "other_known_catalyst"),
+            "catalyst_classification_source": _text(data.get("catalyst_classification_source"), "cached_memory_theme_sector_context"),
+            "historical_memory_growth_score": _to_float(data.get("historical_memory_growth_score"), 0.0),
+            "symbol_memory_growth_score": _to_float(data.get("symbol_memory_growth_score"), 0.0),
+            "sector_memory_growth_score": _to_float(data.get("sector_memory_growth_score"), 0.0),
+            "regime_memory_growth_score": _to_float(data.get("regime_memory_growth_score"), 0.0),
+            "historical_transfer_learning_score": _to_float(data.get("historical_transfer_learning_score"), 0.0),
+            "profit_lock_readiness_score": _to_float(data.get("profit_lock_readiness_score"), 0.0),
+            "catalyst_decay_learning_score": _to_float(data.get("catalyst_decay_learning_score"), 0.0),
+            "continuation_failure_learning_score": _to_float(data.get("continuation_failure_learning_score"), 0.0),
+            "hold_duration_learning_score": _to_float(data.get("hold_duration_learning_score"), 0.0),
+            "giveback_reduction_score": _to_float(data.get("giveback_reduction_score"), 0.0),
+            "exit_learning_maturity_score": _to_float(data.get("exit_learning_maturity_score"), 0.0),
+            "exit_learning_sample_size": _to_int(data.get("exit_learning_sample_size"), 0),
+            "fmp_smart_budget_preserved": bool(data.get("fmp_smart_budget_preserved", True)),
+            "hard_safety_ceiling_controls_preserved": bool(data.get("hard_safety_ceiling_controls_preserved", True)),
+            "bandwidth_impact_estimate": _text(data.get("bandwidth_impact_estimate"), "zero_dashboard_provider_calls_cache_only"),
+            "api_impact_estimate": _text(data.get("api_impact_estimate"), "zero_additional_dashboard_api_provider_llm_calls"),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "dashboard_provider_calls": _to_int(data.get("dashboard_provider_calls"), 0),
+            "raw_archive_scanned": bool(data.get("raw_archive_scanned", False)),
+            "raw_history_scanned": bool(data.get("raw_history_scanned", False)),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "live_trading_changed": bool(data.get("live_trading_changed", False)),
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "ranking_behavior_changed": bool(data.get("ranking_behavior_changed", False)),
+            "entry_behavior_changed": bool(data.get("entry_behavior_changed", False)),
+            "exit_behavior_changed": bool(data.get("exit_behavior_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "shadow_recommendation": _text(data.get("shadow_recommendation"), "Continue catalyst, memory, and exit maturation shadow-only."),
             "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
         }
 

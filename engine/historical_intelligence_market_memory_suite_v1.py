@@ -234,6 +234,34 @@ class HistoricalIntelligenceMarketMemorySuiteV1:
             market.get("dominant_regime"),
             accelerated.get("best_regime_by_symbol"),
         ] if x])
+        symbol_memory_growth = _clamp(
+            _to_float(memory.get("symbol_memory_quality_score"), 0.0) * 0.45
+            + _to_float(accelerated.get("symbol_personality_quality_score"), 0.0) * 0.35
+            + min(100.0, _to_int(memory.get("symbol_profiles_tracked"), _to_int(accelerated.get("symbol_profiles_tracked"), 0)) * 2.0) * 0.20
+        )
+        sector_memory_growth = _clamp(
+            _to_float(catalyst.get("sector_rotation_score"), _to_float(fmp.get("sector_coverage_score"), 0.0)) * 0.55
+            + peer_group_score * 0.25
+            + _to_float(accelerated.get("transferable_learning_confidence"), 0.0) * 0.20
+        )
+        regime_memory_growth = _clamp(
+            _to_float(market.get("market_context_confidence"), _to_float(catalyst.get("theme_confidence"), 0.0)) * 0.45
+            + min(100.0, _to_int(accelerated.get("regime_override_count"), 0) * 8.0 + regimes_detected * 10.0) * 0.30
+            + _to_float(accelerated.get("regime_fit_score"), 0.0) * 0.25
+        )
+        historical_transfer_learning = _clamp(
+            _to_float(accelerated.get("transferable_pattern_confidence"), peer_group_score) * 0.35
+            + _to_float(accelerated.get("replay_acceleration_score"), _to_float(shadow.get("virtual_path_quality_score"), 0.0)) * 0.25
+            + _to_float(accelerated.get("cluster_learning_score"), 0.0) * 0.20
+            + _to_float(shadow.get("consensus_confidence_score"), 0.0) * 0.20
+        )
+        historical_memory_growth = _clamp(
+            symbol_memory_growth * 0.26
+            + sector_memory_growth * 0.20
+            + regime_memory_growth * 0.20
+            + historical_transfer_learning * 0.20
+            + lesson_quality * 0.14
+        )
         out = {
             "enabled": True,
             "version": VERSION,
@@ -277,6 +305,11 @@ class HistoricalIntelligenceMarketMemorySuiteV1:
             "worst_historical_failure_pattern": _text(shadow.get("top_failure_pattern")),
             "replay_transfer_confidence": _round(_to_float(accelerated.get("transferable_pattern_confidence"), peer_group_score), 3),
             "historical_lesson_quality_score": _round(lesson_quality, 3),
+            "historical_memory_growth_score": _round(historical_memory_growth, 3),
+            "symbol_memory_growth_score": _round(symbol_memory_growth, 3),
+            "sector_memory_growth_score": _round(sector_memory_growth, 3),
+            "regime_memory_growth_score": _round(regime_memory_growth, 3),
+            "historical_transfer_learning_score": _round(historical_transfer_learning, 3),
             "stale_lessons": _to_int(memory.get("stale_lessons"), 0),
             "decayed_lessons": _to_int(accelerated.get("stale_symbol_lessons"), 0),
             "reinforced_lessons": _to_int(memory.get("reinforced_lessons"), 0),
