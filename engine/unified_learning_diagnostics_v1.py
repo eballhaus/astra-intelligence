@@ -314,6 +314,8 @@ class UnifiedLearningDiagnosticsV1:
         realistic_shadow_evidence_learning_lab = self._realistic_shadow_evidence_learning_lab_summary(statuses.get("realistic_shadow_evidence_learning_lab_v1") or {})
         historical_intelligence_market_memory = self._historical_intelligence_market_memory_summary(statuses.get("historical_intelligence_market_memory_suite_v1") or {})
         catalyst_classification_historical_exit_maturation = self._catalyst_classification_historical_exit_maturation_summary(statuses.get("catalyst_classification_historical_exit_maturation_suite_v1") or {})
+        catalyst_persistence_decay_curves = self._catalyst_persistence_decay_curves_v2_summary(statuses.get("catalyst_persistence_decay_curves_v2") or {})
+        profit_lock_profit_capture_maturation = self._profit_lock_profit_capture_maturation_v2_summary(statuses.get("profit_lock_profit_capture_maturation_v2") or {})
         adaptive_learning_prioritization_resource_allocation = self._adaptive_learning_prioritization_resource_allocation_summary(statuses.get("adaptive_learning_prioritization_resource_allocation_v1") or {})
         autonomous_intelligence_validation_governance = self._autonomous_intelligence_validation_governance_summary(statuses.get("autonomous_intelligence_validation_governance_v1") or {})
         paper_throughput_exit_validation_catalyst = self._paper_throughput_exit_validation_catalyst_summary(statuses.get("paper_throughput_exit_validation_catalyst_intelligence_v1") or {})
@@ -388,6 +390,8 @@ class UnifiedLearningDiagnosticsV1:
             "realistic_shadow_evidence_learning_lab_v1": realistic_shadow_evidence_learning_lab,
             "historical_intelligence_market_memory_suite_v1": historical_intelligence_market_memory,
             "catalyst_classification_historical_exit_maturation_suite_v1": catalyst_classification_historical_exit_maturation,
+            "catalyst_persistence_decay_curves_v2": catalyst_persistence_decay_curves,
+            "profit_lock_profit_capture_maturation_v2": profit_lock_profit_capture_maturation,
             "multi_horizon_intelligence_adaptive_lifecycle_suite_v1": multi_horizon_intelligence_adaptive_lifecycle,
             "paper_throughput_exit_validation_catalyst_intelligence_v1": paper_throughput_exit_validation_catalyst,
             "multi_horizon_paper_capacity_exit_validation_v1": multi_horizon_capacity_exit_validation,
@@ -2708,6 +2712,84 @@ class UnifiedLearningDiagnosticsV1:
             "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
         }
 
+    def _catalyst_persistence_decay_curves_v2_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        curves = list(data.get("catalyst_curves") or [])[:18]
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "2.0.0"),
+            "mode": _text(data.get("mode"), "shadow_only_catalyst_persistence_decay_curves"),
+            "catalysts_tracked": _to_int(data.get("catalysts_tracked"), len(curves)),
+            "catalyst_curves": curves,
+            "catalyst_persistence_score": _to_float(data.get("catalyst_persistence_score"), 0.0),
+            "catalyst_decay_score": _to_float(data.get("catalyst_decay_score"), 0.0),
+            "catalyst_half_life_estimate": _to_float(data.get("catalyst_half_life_estimate"), 0.0),
+            "catalyst_continuation_probability": _to_float(data.get("catalyst_continuation_probability"), 0.0),
+            "catalyst_exhaustion_probability": _to_float(data.get("catalyst_exhaustion_probability"), 0.0),
+            "catalyst_memory_quality": _to_float(data.get("catalyst_memory_quality"), 0.0),
+            "strongest_persistence_catalyst": _text(data.get("strongest_persistence_catalyst"), "insufficient_data"),
+            "fastest_decay_catalyst": _text(data.get("fastest_decay_catalyst"), "insufficient_data"),
+            "cache_freshness": _text(data.get("cache_freshness"), "fresh"),
+            "dashboard_scan_rows": _to_int(data.get("dashboard_scan_rows"), 0),
+            "raw_archive_scanned": bool(data.get("raw_archive_scanned", False)),
+            "raw_history_scanned": bool(data.get("raw_history_scanned", False)),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "live_trading_changed": bool(data.get("live_trading_changed", False)),
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "ranking_behavior_changed": bool(data.get("ranking_behavior_changed", False)),
+            "entry_behavior_changed": bool(data.get("entry_behavior_changed", False)),
+            "exit_behavior_changed": bool(data.get("exit_behavior_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "shadow_recommendation": _text(data.get("shadow_recommendation"), "Continue catalyst persistence learning shadow-only."),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+        }
+
+    def _profit_lock_profit_capture_maturation_v2_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        scenarios = list(data.get("virtual_profit_lock_scenarios") or [])[:5]
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "2.0.0"),
+            "mode": _text(data.get("mode"), "shadow_only_profit_lock_profit_capture_maturation"),
+            "tracked_trades": _to_int(data.get("tracked_trades"), 0),
+            "average_capture_ratio": _to_float(data.get("average_capture_ratio"), 0.0),
+            "average_giveback_pct": _to_float(data.get("average_giveback_pct"), 0.0),
+            "average_MFE": _to_float(data.get("average_MFE"), 0.0),
+            "average_MAE": _to_float(data.get("average_MAE"), 0.0),
+            "virtual_profit_lock_scenarios": scenarios,
+            "profit_lock_readiness_score": _to_float(data.get("profit_lock_readiness_score"), 0.0),
+            "profit_capture_maturity_score": _to_float(data.get("profit_capture_maturity_score"), 0.0),
+            "giveback_reduction_score": _to_float(data.get("giveback_reduction_score"), 0.0),
+            "continuation_failure_learning_score": _to_float(data.get("continuation_failure_learning_score"), 0.0),
+            "hold_duration_learning_score": _to_float(data.get("hold_duration_learning_score"), 0.0),
+            "profit_capture_improvement_potential": _to_float(data.get("profit_capture_improvement_potential"), 0.0),
+            "best_virtual_profit_lock_model": _text(data.get("best_virtual_profit_lock_model"), "insufficient_data"),
+            "best_virtual_profit_capture_model": _text(data.get("best_virtual_profit_capture_model"), "insufficient_data"),
+            "cache_freshness": _text(data.get("cache_freshness"), "fresh"),
+            "dashboard_scan_rows": _to_int(data.get("dashboard_scan_rows"), 0),
+            "raw_archive_scanned": bool(data.get("raw_archive_scanned", False)),
+            "raw_history_scanned": bool(data.get("raw_history_scanned", False)),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "live_trading_changed": bool(data.get("live_trading_changed", False)),
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "ranking_behavior_changed": bool(data.get("ranking_behavior_changed", False)),
+            "entry_behavior_changed": bool(data.get("entry_behavior_changed", False)),
+            "exit_behavior_changed": bool(data.get("exit_behavior_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "shadow_recommendation": _text(data.get("shadow_recommendation"), "Continue virtual profit-lock maturation shadow-only."),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+        }
+
     def _controlled_paper_learned_exit_validation_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -3780,7 +3862,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
             "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "profit_capture_peak_decay_exit_validation_suite_v1", "adaptive_execution_exit_intelligence_v3", "trade_archetype_regime",
-            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "long_term_memory_symbol_retrieval_suite_v1", "virtual_paper_convergence_symbol_attribution_v1", "accelerated_learning_symbol_intelligence_suite_v1", "realistic_shadow_evidence_learning_lab_v1", "historical_intelligence_market_memory_suite_v1", "adaptive_learning_prioritization_resource_allocation_v1", "autonomous_intelligence_validation_governance_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
+            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "long_term_memory_symbol_retrieval_suite_v1", "virtual_paper_convergence_symbol_attribution_v1", "accelerated_learning_symbol_intelligence_suite_v1", "realistic_shadow_evidence_learning_lab_v1", "historical_intelligence_market_memory_suite_v1", "catalyst_persistence_decay_curves_v2", "profit_lock_profit_capture_maturation_v2", "adaptive_learning_prioritization_resource_allocation_v1", "autonomous_intelligence_validation_governance_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
             "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
             "paper_throughput_exit_validation_catalyst_intelligence_v1", "multi_horizon_paper_capacity_exit_validation_v1", "controlled_paper_learned_exit_validation_v1",
@@ -3837,6 +3919,8 @@ class UnifiedLearningDiagnosticsV1:
             "accelerated_learning_symbol_intelligence_suite_v1": "/api/accelerated_learning_symbol_intelligence_suite_v1",
             "realistic_shadow_evidence_learning_lab_v1": "/api/realistic_shadow_evidence_learning_lab_v1",
             "historical_intelligence_market_memory_suite_v1": "/api/historical_intelligence_market_memory_suite_v1",
+            "catalyst_persistence_decay_curves_v2": "/api/catalyst_persistence_decay_curves_v2",
+            "profit_lock_profit_capture_maturation_v2": "/api/profit_lock_profit_capture_maturation_v2",
             "adaptive_learning_prioritization_resource_allocation_v1": "/api/adaptive_learning_prioritization_resource_allocation_v1",
             "autonomous_intelligence_validation_governance_v1": "/api/autonomous_intelligence_validation_governance_v1",
             "trade_archetype_regime": "/api/trade_archetype_regime_status_v1",

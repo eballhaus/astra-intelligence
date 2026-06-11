@@ -1600,6 +1600,8 @@ export default function LearningTab({ compact = false }) {
   const realisticShadowLab = unified?.realistic_shadow_evidence_learning_lab_v1 || {};
   const historicalMarketMemory = unified?.historical_intelligence_market_memory_suite_v1 || {};
   const catalystHistoricalExitMaturation = unified?.catalyst_classification_historical_exit_maturation_suite_v1 || {};
+  const catalystPersistenceDecayCurves = unified?.catalyst_persistence_decay_curves_v2 || {};
+  const profitLockProfitCaptureMaturation = unified?.profit_lock_profit_capture_maturation_v2 || {};
   const adaptiveExecutionExitV3 = unified?.adaptive_execution_exit_intelligence_v3 || {};
   const exitLearningExpansion = unified?.exit_learning_expansion_suite_v1 || {};
   const marketContextLearning = unified?.market_context_learning_suite_v1 || {};
@@ -2051,6 +2053,76 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Shadow recommendation: {String(catalystHistoricalExitMaturation?.shadow_recommendation || "Continue catalyst classification, historical maturation, and exit-learning diagnostics shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Catalyst Persistence & Decay Curves V2</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is learning how long catalysts tend to persist, when continuation weakens, and when exhaustion or giveback risk rises. This is advisory memory only and does not change hold times, exits, entries, rankings, sizing, thresholds, or broker behavior.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Catalysts tracked", safeNumber(catalystPersistenceDecayCurves?.catalysts_tracked).toFixed(0)],
+            ["Persistence score", safeNumber(catalystPersistenceDecayCurves?.catalyst_persistence_score).toFixed(1)],
+            ["Decay score", safeNumber(catalystPersistenceDecayCurves?.catalyst_decay_score).toFixed(1)],
+            ["Half-life estimate", `${safeNumber(catalystPersistenceDecayCurves?.catalyst_half_life_estimate).toFixed(1)} min`],
+            ["Continuation probability", `${safeNumber(catalystPersistenceDecayCurves?.catalyst_continuation_probability).toFixed(1)}%`],
+            ["Exhaustion probability", `${safeNumber(catalystPersistenceDecayCurves?.catalyst_exhaustion_probability).toFixed(1)}%`],
+            ["Memory quality", safeNumber(catalystPersistenceDecayCurves?.catalyst_memory_quality).toFixed(1)],
+            ["Strongest catalyst", catalystPersistenceDecayCurves?.strongest_persistence_catalyst],
+            ["Fastest decay", catalystPersistenceDecayCurves?.fastest_decay_catalyst],
+            ["API calls", safeNumber(catalystPersistenceDecayCurves?.api_calls_used).toFixed(0)],
+            ["Provider calls", safeNumber(catalystPersistenceDecayCurves?.provider_calls_used).toFixed(0)],
+            ["LLM calls", safeNumber(catalystPersistenceDecayCurves?.llm_calls_used).toFixed(0)],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Top curves: {(catalystPersistenceDecayCurves?.catalyst_curves || []).slice(0, 3).map((row) => `${String(row?.catalyst_type || "unknown").replaceAll("_", " ")} half-life ${safeNumber(row?.catalyst_half_life_estimate_minutes).toFixed(0)}m`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(catalystPersistenceDecayCurves?.shadow_recommendation || "Continue catalyst persistence and decay learning shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Profit Lock & Profit Capture Maturation V2</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is comparing virtual profit-lock models against natural holds to understand profit giveback, continuation retention, and capture improvement potential. These are simulations only and do not change actual exits.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Tracked trades", safeNumber(profitLockProfitCaptureMaturation?.tracked_trades).toFixed(0)],
+            ["Capture ratio", `${(safeNumber(profitLockProfitCaptureMaturation?.average_capture_ratio) * 100).toFixed(1)}%`],
+            ["Average giveback", `${safeNumber(profitLockProfitCaptureMaturation?.average_giveback_pct).toFixed(2)}%`],
+            ["Average MFE", `${safeNumber(profitLockProfitCaptureMaturation?.average_MFE).toFixed(2)}%`],
+            ["Average MAE", `${safeNumber(profitLockProfitCaptureMaturation?.average_MAE).toFixed(2)}%`],
+            ["Profit lock readiness", safeNumber(profitLockProfitCaptureMaturation?.profit_lock_readiness_score).toFixed(1)],
+            ["Capture maturity", safeNumber(profitLockProfitCaptureMaturation?.profit_capture_maturity_score).toFixed(1)],
+            ["Giveback reduction", safeNumber(profitLockProfitCaptureMaturation?.giveback_reduction_score).toFixed(1)],
+            ["Continuation failure", safeNumber(profitLockProfitCaptureMaturation?.continuation_failure_learning_score).toFixed(1)],
+            ["Hold duration learning", safeNumber(profitLockProfitCaptureMaturation?.hold_duration_learning_score).toFixed(1)],
+            ["Improvement potential", safeNumber(profitLockProfitCaptureMaturation?.profit_capture_improvement_potential).toFixed(1)],
+            ["Best lock model", profitLockProfitCaptureMaturation?.best_virtual_profit_lock_model],
+            ["Best capture model", profitLockProfitCaptureMaturation?.best_virtual_profit_capture_model],
+            ["API/provider/LLM", `${safeNumber(profitLockProfitCaptureMaturation?.api_calls_used).toFixed(0)} / ${safeNumber(profitLockProfitCaptureMaturation?.provider_calls_used).toFixed(0)} / ${safeNumber(profitLockProfitCaptureMaturation?.llm_calls_used).toFixed(0)}`],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Virtual models: {(profitLockProfitCaptureMaturation?.virtual_profit_lock_scenarios || []).slice(0, 5).map((row) => `${String(row?.model || "model").replaceAll("_", " ")} impact ${safeNumber(row?.profitability_impact).toFixed(2)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(profitLockProfitCaptureMaturation?.shadow_recommendation || "Continue virtual profit-lock and capture maturation shadow-only.").replaceAll("_", " ")}
           </div>
         </div>
       </details>

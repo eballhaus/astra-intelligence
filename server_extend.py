@@ -2227,6 +2227,72 @@ except Exception:
                 "behavior_safe_to_apply": False,
             }
 try:
+    from engine.catalyst_persistence_decay_curves_v2 import CatalystPersistenceDecayCurvesV2
+except Exception:
+    class CatalystPersistenceDecayCurvesV2:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "2.0.0",
+                "mode": "shadow_only_catalyst_persistence_decay_curves",
+                "catalyst_persistence_score": 0.0,
+                "catalyst_decay_score": 0.0,
+                "catalyst_half_life_estimate": 0.0,
+                "catalyst_continuation_probability": 0.0,
+                "catalyst_exhaustion_probability": 0.0,
+                "catalyst_memory_quality": 0.0,
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "ranking_behavior_changed": False,
+                "entry_behavior_changed": False,
+                "exit_behavior_changed": False,
+                "position_sizing_changed": False,
+                "thresholds_changed": False,
+                "behavior_safe_to_apply": False,
+            }
+try:
+    from engine.profit_lock_profit_capture_maturation_v2 import ProfitLockProfitCaptureMaturationV2
+except Exception:
+    class ProfitLockProfitCaptureMaturationV2:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "2.0.0",
+                "mode": "shadow_only_profit_lock_profit_capture_maturation",
+                "profit_lock_readiness_score": 0.0,
+                "profit_capture_maturity_score": 0.0,
+                "giveback_reduction_score": 0.0,
+                "continuation_failure_learning_score": 0.0,
+                "hold_duration_learning_score": 0.0,
+                "profit_capture_improvement_potential": 0.0,
+                "best_virtual_profit_lock_model": "insufficient_data",
+                "best_virtual_profit_capture_model": "insufficient_data",
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "ranking_behavior_changed": False,
+                "entry_behavior_changed": False,
+                "exit_behavior_changed": False,
+                "position_sizing_changed": False,
+                "thresholds_changed": False,
+                "behavior_safe_to_apply": False,
+            }
+try:
     from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
 except Exception:
     class _AlpacaWSMonitorFallback:
@@ -2427,6 +2493,8 @@ ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION = AdaptiveLearningPrioritiz
 AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE = AutonomousIntelligenceValidationGovernanceV1(state_dir=STATE)
 HISTORICAL_INTELLIGENCE_MARKET_MEMORY_SUITE = HistoricalIntelligenceMarketMemorySuiteV1(state_dir=STATE)
 CATALYST_CLASSIFICATION_HISTORICAL_EXIT_MATURATION_SUITE = CatalystClassificationHistoricalExitMaturationSuiteV1(state_dir=STATE)
+CATALYST_PERSISTENCE_DECAY_CURVES_V2 = CatalystPersistenceDecayCurvesV2(state_dir=STATE)
+PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2 = ProfitLockProfitCaptureMaturationV2(state_dir=STATE)
 TRADE_ARCHETYPE_REGIME_INTELLIGENCE = TradeArchetypeRegimeIntelligenceV1(state_dir=STATE)
 REPLAY_COUNTERFACTUAL_LEARNING_V2 = ReplayCounterfactualLearningV2(state_dir=STATE)
 OPPORTUNITY_COST_LEARNING = OpportunityCostLearningV1(state_dir=STATE)
@@ -32541,6 +32609,110 @@ def catalyst_classification_historical_exit_maturation_suite_v1(force: bool = Fa
         }
 
 
+@router.get("/api/catalyst_persistence_decay_curves_v2")
+def catalyst_persistence_decay_curves_v2(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        try:
+            statuses["catalyst_classification_historical_exit_maturation_suite_v1"] = CATALYST_CLASSIFICATION_HISTORICAL_EXIT_MATURATION_SUITE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["catalyst_classification_historical_exit_maturation_suite_v1"] = {}
+        out = dict(CATALYST_PERSISTENCE_DECAY_CURVES_V2.status(statuses=statuses, force=bool(force)) or {})
+        out["catalyst_persistence_decay_curves_v2"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["ranking_behavior_changed"] = False
+        out["entry_behavior_changed"] = False
+        out["exit_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["thresholds_changed"] = False
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "2.0.0",
+            "mode": "shadow_only_catalyst_persistence_decay_curves",
+            "catalyst_persistence_decay_curves_v2": True,
+            "degraded_reason": f"catalyst_persistence_decay_curves_endpoint_unavailable:{str(exc)[:140]}",
+            "catalyst_persistence_score": 0.0,
+            "catalyst_decay_score": 0.0,
+            "catalyst_half_life_estimate": 0.0,
+            "catalyst_continuation_probability": 0.0,
+            "catalyst_exhaustion_probability": 0.0,
+            "catalyst_memory_quality": 0.0,
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "thresholds_changed": False,
+            "behavior_safe_to_apply": False,
+        }
+
+
+@router.get("/api/profit_lock_profit_capture_maturation_v2")
+def profit_lock_profit_capture_maturation_v2(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        out = dict(PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2.status(statuses=statuses, force=bool(force)) or {})
+        out["profit_lock_profit_capture_maturation_v2"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["ranking_behavior_changed"] = False
+        out["entry_behavior_changed"] = False
+        out["exit_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["thresholds_changed"] = False
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "2.0.0",
+            "mode": "shadow_only_profit_lock_profit_capture_maturation",
+            "profit_lock_profit_capture_maturation_v2": True,
+            "degraded_reason": f"profit_lock_profit_capture_maturation_endpoint_unavailable:{str(exc)[:140]}",
+            "profit_lock_readiness_score": 0.0,
+            "profit_capture_maturity_score": 0.0,
+            "giveback_reduction_score": 0.0,
+            "continuation_failure_learning_score": 0.0,
+            "hold_duration_learning_score": 0.0,
+            "profit_capture_improvement_potential": 0.0,
+            "best_virtual_profit_lock_model": "insufficient_data",
+            "best_virtual_profit_capture_model": "insufficient_data",
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "thresholds_changed": False,
+            "behavior_safe_to_apply": False,
+        }
+
+
 @router.get("/api/alpaca_paper_status_v1")
 def alpaca_paper_status_v1():
     try:
@@ -41781,6 +41953,14 @@ def _learning_acceleration_status_bundle() -> dict:
     except Exception:
         statuses["catalyst_classification_historical_exit_maturation_suite_v1"] = {}
     try:
+        statuses["catalyst_persistence_decay_curves_v2"] = CATALYST_PERSISTENCE_DECAY_CURVES_V2.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["catalyst_persistence_decay_curves_v2"] = {}
+    try:
+        statuses["profit_lock_profit_capture_maturation_v2"] = PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["profit_lock_profit_capture_maturation_v2"] = {}
+    try:
         statuses["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = MULTI_HORIZON_INTELLIGENCE_ADAPTIVE_LIFECYCLE_SUITE.status(statuses=statuses, force=False)
     except Exception:
         statuses["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = {}
@@ -42993,6 +43173,14 @@ def learning_issue_audit_status_v1(force: bool = False):
             statuses["catalyst_classification_historical_exit_maturation_suite_v1"] = CATALYST_CLASSIFICATION_HISTORICAL_EXIT_MATURATION_SUITE.status(statuses=statuses, force=False)
         except Exception:
             statuses["catalyst_classification_historical_exit_maturation_suite_v1"] = {}
+        try:
+            statuses["catalyst_persistence_decay_curves_v2"] = CATALYST_PERSISTENCE_DECAY_CURVES_V2.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["catalyst_persistence_decay_curves_v2"] = {}
+        try:
+            statuses["profit_lock_profit_capture_maturation_v2"] = PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["profit_lock_profit_capture_maturation_v2"] = {}
         try:
             statuses["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = MULTI_HORIZON_INTELLIGENCE_ADAPTIVE_LIFECYCLE_SUITE.status(statuses=statuses, force=False)
         except Exception:
@@ -51463,6 +51651,8 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("realistic_shadow_evidence_learning_lab_v1", lambda: REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB.status(statuses=statuses, force=False))
         _safe_status("historical_intelligence_market_memory_suite_v1", lambda: HISTORICAL_INTELLIGENCE_MARKET_MEMORY_SUITE.status(statuses=statuses, force=False))
         _safe_status("catalyst_classification_historical_exit_maturation_suite_v1", lambda: CATALYST_CLASSIFICATION_HISTORICAL_EXIT_MATURATION_SUITE.status(statuses=statuses, force=False))
+        _safe_status("catalyst_persistence_decay_curves_v2", lambda: CATALYST_PERSISTENCE_DECAY_CURVES_V2.status(statuses=statuses, force=False))
+        _safe_status("profit_lock_profit_capture_maturation_v2", lambda: PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2.status(statuses=statuses, force=False))
         _safe_status("adaptive_learning_prioritization_resource_allocation_v1", lambda: ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False))
         _safe_status("autonomous_intelligence_validation_governance_v1", lambda: AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE.status(statuses=statuses, force=False))
         _safe_status("trade_archetype_regime", lambda: TRADE_ARCHETYPE_REGIME_INTELLIGENCE.status(force=False))
