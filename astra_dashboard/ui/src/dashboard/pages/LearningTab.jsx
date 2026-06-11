@@ -1598,6 +1598,7 @@ export default function LearningTab({ compact = false }) {
   const virtualPaperConvergence = unified?.virtual_paper_convergence_symbol_attribution_v1 || {};
   const acceleratedSymbolLearning = unified?.accelerated_learning_symbol_intelligence_suite_v1 || {};
   const realisticShadowLab = unified?.realistic_shadow_evidence_learning_lab_v1 || {};
+  const historicalMarketMemory = unified?.historical_intelligence_market_memory_suite_v1 || {};
   const adaptiveExecutionExitV3 = unified?.adaptive_execution_exit_intelligence_v3 || {};
   const exitLearningExpansion = unified?.exit_learning_expansion_suite_v1 || {};
   const marketContextLearning = unified?.market_context_learning_suite_v1 || {};
@@ -1970,6 +1971,47 @@ export default function LearningTab({ compact = false }) {
           </ChartShell>
         </div>
       </div>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Historical Intelligence & Market Memory V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is gradually building long-term market memory from historical symbol, sector, regime, and catalyst behavior. It stores compressed lessons instead of raw history, uses FMP bandwidth only within strict monthly safety limits, and does not change trading behavior.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Historical phase", historicalMarketMemory?.historical_phase],
+            ["Symbols selected", safeNumber(historicalMarketMemory?.symbols_selected).toFixed(0)],
+            ["Symbols completed", safeNumber(historicalMarketMemory?.symbols_completed).toFixed(0)],
+            ["Compressed memory", safeNumber(historicalMarketMemory?.compressed_market_memory_records).toFixed(0)],
+            ["Profiles updated", safeNumber(historicalMarketMemory?.symbol_profiles_updated).toFixed(0)],
+            ["Peer groups", safeNumber(historicalMarketMemory?.peer_groups_created).toFixed(0)],
+            ["Regimes detected", safeNumber(historicalMarketMemory?.regimes_detected).toFixed(0)],
+            ["Catalyst records", safeNumber(historicalMarketMemory?.catalyst_records_created).toFixed(0)],
+            ["Catalyst coverage", safeNumber(historicalMarketMemory?.catalyst_coverage_score).toFixed(1)],
+            ["Unknown catalyst", `${safeNumber(historicalMarketMemory?.unknown_catalyst_rate).toFixed(1)}%`],
+            ["Historical replays", safeNumber(historicalMarketMemory?.historical_replays_completed).toFixed(0)],
+            ["Market memory", safeNumber(historicalMarketMemory?.market_memory_quality_score).toFixed(1)],
+            ["Candidate diversity", safeNumber(historicalMarketMemory?.candidate_diversity_score).toFixed(1)],
+            ["FMP usage", `${safeNumber(historicalMarketMemory?.fmp_usage_pct).toFixed(2)}%`],
+            ["Monthly used", `${safeNumber(historicalMarketMemory?.fmp_monthly_bandwidth_used_gb).toFixed(3)} GB`],
+            ["Remaining", `${safeNumber(historicalMarketMemory?.fmp_remaining_bandwidth_gb).toFixed(3)} GB`],
+            ["Daily safe budget", `${safeNumber(historicalMarketMemory?.fmp_daily_safe_budget_gb).toFixed(4)} GB`],
+            ["Projected month-end", `${safeNumber(historicalMarketMemory?.projected_month_end_usage_gb).toFixed(3)} GB`],
+            ["Expansion allowed", historicalMarketMemory?.fmp_expansion_allowed ? "yes" : "no"],
+            ["Expansion block", historicalMarketMemory?.fmp_expansion_block_reason],
+            ["Storage pressure", safeNumber(historicalMarketMemory?.storage_pressure_score).toFixed(1)],
+            ["Memory pressure", safeNumber(historicalMarketMemory?.memory_pressure_score).toFixed(1)],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(historicalMarketMemory?.shadow_recommendation || "Continue cache-only historical diagnostics.").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
 
       <div style={{ ...panelStyle }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -4886,7 +4928,7 @@ export default function LearningTab({ compact = false }) {
       ) : null}
 
       <details style={{ ...panelStyle }}>
-        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Controlled Paper Learned-Exit Validation</summary>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Learned Exit Validation Live</summary>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12, marginTop: 12 }}>
           <div>Bucket enabled: {controlledPaperLearnedExit?.learned_exit_bucket_enabled ? "yes" : "no"}</div>
           <div>Paper exit path verified: {controlledPaperLearnedExit?.paper_exit_path_verified ? "yes" : "no"}</div>
@@ -5548,7 +5590,7 @@ export default function LearningTab({ compact = false }) {
       </details>
 
       <details style={{ ...panelStyle }}>
-        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Controlled Paper Learned-Exit Validation</summary>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Learned Exit Validation Live</summary>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", fontSize: 12, marginTop: 12 }}>
           <div>Bucket enabled: {controlledPaperLearnedExit?.learned_exit_bucket_enabled ? "yes" : "no"}</div>
           <div>Paper exit path verified: {controlledPaperLearnedExit?.paper_exit_path_verified ? "yes" : "no"}</div>

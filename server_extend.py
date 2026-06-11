@@ -2134,6 +2134,59 @@ except Exception:
                 "intake_summary": "Inspect adaptive market intake FMP budget suite import.",
             }
 try:
+    from engine.historical_intelligence_market_memory_suite_v1 import HistoricalIntelligenceMarketMemorySuiteV1
+except Exception:
+    class HistoricalIntelligenceMarketMemorySuiteV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only_historical_intelligence_market_memory",
+                "historical_phase": "unavailable",
+                "symbols_selected": 0,
+                "symbols_completed": 0,
+                "symbols_deferred": 0,
+                "compressed_market_memory_records": 0,
+                "symbol_profiles_updated": 0,
+                "peer_groups_created": 0,
+                "regimes_detected": 0,
+                "catalyst_records_created": 0,
+                "catalyst_coverage_score": 0.0,
+                "unknown_catalyst_rate": 100.0,
+                "historical_replays_completed": 0,
+                "historical_replay_score": 0.0,
+                "market_memory_quality_score": 0.0,
+                "historical_lesson_quality_score": 0.0,
+                "rotating_universe_size": 0,
+                "symbols_scanned_today": 0,
+                "candidate_diversity_score": 0.0,
+                "sector_coverage_score": 0.0,
+                "fmp_monthly_bandwidth_limit_gb": 50.0,
+                "fmp_monthly_bandwidth_used_gb": 0.0,
+                "fmp_remaining_bandwidth_gb": 50.0,
+                "fmp_daily_safe_budget_gb": 0.0,
+                "fmp_usage_pct": 0.0,
+                "fmp_warning_level_active": False,
+                "fmp_hard_stop_active": True,
+                "fmp_expansion_allowed": False,
+                "fmp_expansion_block_reason": "historical_intelligence_market_memory_import_unavailable",
+                "projected_month_end_usage_gb": 0.0,
+                "actual_bandwidth_used_gb": 0.0,
+                "estimated_bandwidth_cost_gb": 0.0,
+                "storage_pressure_score": 0.0,
+                "memory_pressure_score": 0.0,
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "dashboard_scan_rows": 0,
+                "raw_archive_scanned": False,
+                "raw_history_scanned": False,
+                "behavior_safe_to_apply": False,
+            }
+try:
     from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
 except Exception:
     class _AlpacaWSMonitorFallback:
@@ -2332,6 +2385,7 @@ MULTI_HORIZON_PAPER_CAPACITY_EXIT_VALIDATION = MultiHorizonPaperCapacityExitVali
 CONTROLLED_PAPER_LEARNED_EXIT_VALIDATION = ControlledPaperLearnedExitValidationV1(state_dir=STATE)
 ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION = AdaptiveLearningPrioritizationResourceAllocationV1(state_dir=STATE)
 AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE = AutonomousIntelligenceValidationGovernanceV1(state_dir=STATE)
+HISTORICAL_INTELLIGENCE_MARKET_MEMORY_SUITE = HistoricalIntelligenceMarketMemorySuiteV1(state_dir=STATE)
 TRADE_ARCHETYPE_REGIME_INTELLIGENCE = TradeArchetypeRegimeIntelligenceV1(state_dir=STATE)
 REPLAY_COUNTERFACTUAL_LEARNING_V2 = ReplayCounterfactualLearningV2(state_dir=STATE)
 OPPORTUNITY_COST_LEARNING = OpportunityCostLearningV1(state_dir=STATE)
@@ -32324,6 +32378,61 @@ def adaptive_market_intake_fmp_budget_status_v1():
     }
 
 
+@router.get("/api/historical_intelligence_market_memory_suite_v1")
+def historical_intelligence_market_memory_suite_v1(force: bool = False):
+    try:
+        statuses = {}
+        try:
+            statuses["adaptive_market_intake_fmp_budget_status_v1"] = adaptive_market_intake_fmp_budget_status_v1()
+        except Exception:
+            statuses["adaptive_market_intake_fmp_budget_status_v1"] = {}
+        for key, fn in (
+            ("realistic_shadow_evidence_learning_lab_v1", lambda: REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB.status(statuses=statuses, force=False)),
+            ("accelerated_learning_symbol_intelligence_suite_v1", lambda: ACCELERATED_LEARNING_SYMBOL_INTELLIGENCE_SUITE.status(statuses=statuses, force=False)),
+            ("long_term_memory_symbol_retrieval_suite_v1", lambda: LONG_TERM_MEMORY_SYMBOL_RETRIEVAL_SUITE.status(statuses=statuses, force=False)),
+            ("full_opportunity_lifecycle_learning_suite_v1", lambda: FULL_OPPORTUNITY_LIFECYCLE_LEARNING_SUITE.status(statuses=statuses, force=False)),
+            ("catalyst_theme_narrative_capital_flow_intelligence_v2", lambda: CATALYST_THEME_NARRATIVE_CAPITAL_FLOW_INTELLIGENCE_V2.status(statuses=statuses, force=False)),
+            ("market_context_learning_suite_v1", lambda: MARKET_CONTEXT_LEARNING_SUITE.status(force=False)),
+        ):
+            try:
+                statuses[key] = fn()
+            except Exception:
+                statuses[key] = {}
+        out = dict(HISTORICAL_INTELLIGENCE_MARKET_MEMORY_SUITE.status(statuses=statuses, force=bool(force)) or {})
+        out["historical_intelligence_market_memory_suite_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["ranking_behavior_changed"] = False
+        out["entry_behavior_changed"] = False
+        out["exit_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["thresholds_changed"] = False
+        out["alpaca_paper_only_preserved"] = True
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only_historical_intelligence_market_memory",
+            "historical_intelligence_market_memory_suite_v1": True,
+            "historical_phase": "degraded",
+            "fmp_hard_stop_active": True,
+            "fmp_expansion_allowed": False,
+            "fmp_expansion_block_reason": f"historical_intelligence_endpoint_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "dashboard_scan_rows": 0,
+            "raw_archive_scanned": False,
+            "raw_history_scanned": False,
+            "behavior_safe_to_apply": False,
+        }
+
+
 @router.get("/api/alpaca_paper_status_v1")
 def alpaca_paper_status_v1():
     try:
@@ -41422,7 +41531,7 @@ def multi_horizon_paper_capacity_exit_validation_v1(force: bool = False):
 @router.get("/api/controlled_paper_learned_exit_validation_v1")
 def controlled_paper_learned_exit_validation_v1(force: bool = False):
     try:
-        statuses = _learning_acceleration_status_bundle()
+        statuses = {}
         try:
             statuses["paper_autopilot_status"] = PAPER_AUTOPILOT.status()
         except Exception:
@@ -41431,6 +41540,18 @@ def controlled_paper_learned_exit_validation_v1(force: bool = False):
             statuses["alpaca_paper_broker"] = alpaca_paper_status_v1()
         except Exception:
             statuses["alpaca_paper_broker"] = {}
+        try:
+            statuses["profit_capture_peak_decay_exit_validation_suite_v1"] = PROFIT_CAPTURE_PEAK_DECAY_EXIT_VALIDATION_SUITE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["profit_capture_peak_decay_exit_validation_suite_v1"] = {}
+        try:
+            statuses["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = MULTI_HORIZON_INTELLIGENCE_ADAPTIVE_LIFECYCLE_SUITE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = {}
+        try:
+            statuses["paper_throughput_exit_validation_catalyst_intelligence_v1"] = PAPER_THROUGHPUT_EXIT_VALIDATION_CATALYST_INTELLIGENCE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["paper_throughput_exit_validation_catalyst_intelligence_v1"] = {}
         try:
             statuses["multi_horizon_paper_capacity_exit_validation_v1"] = MULTI_HORIZON_PAPER_CAPACITY_EXIT_VALIDATION.status(statuses=statuses, force=False)
         except Exception:
@@ -41539,6 +41660,14 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["realistic_shadow_evidence_learning_lab_v1"] = REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB.status(statuses=statuses, force=False)
     except Exception:
         statuses["realistic_shadow_evidence_learning_lab_v1"] = {}
+    try:
+        statuses["adaptive_market_intake_fmp_budget_status_v1"] = ADAPTIVE_MARKET_INTAKE_FMP_BUDGET_SUITE.status()
+    except Exception:
+        statuses["adaptive_market_intake_fmp_budget_status_v1"] = {}
+    try:
+        statuses["historical_intelligence_market_memory_suite_v1"] = HISTORICAL_INTELLIGENCE_MARKET_MEMORY_SUITE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["historical_intelligence_market_memory_suite_v1"] = {}
     try:
         statuses["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = MULTI_HORIZON_INTELLIGENCE_ADAPTIVE_LIFECYCLE_SUITE.status(statuses=statuses, force=False)
     except Exception:
@@ -42744,6 +42873,10 @@ def learning_issue_audit_status_v1(force: bool = False):
             statuses["realistic_shadow_evidence_learning_lab_v1"] = REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB.status(statuses=statuses, force=False)
         except Exception:
             statuses["realistic_shadow_evidence_learning_lab_v1"] = {}
+        try:
+            statuses["historical_intelligence_market_memory_suite_v1"] = HISTORICAL_INTELLIGENCE_MARKET_MEMORY_SUITE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["historical_intelligence_market_memory_suite_v1"] = {}
         try:
             statuses["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = MULTI_HORIZON_INTELLIGENCE_ADAPTIVE_LIFECYCLE_SUITE.status(statuses=statuses, force=False)
         except Exception:
@@ -51212,6 +51345,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("virtual_paper_convergence_symbol_attribution_v1", lambda: VIRTUAL_PAPER_CONVERGENCE_SYMBOL_ATTRIBUTION.status(statuses=statuses, force=False))
         _safe_status("accelerated_learning_symbol_intelligence_suite_v1", lambda: ACCELERATED_LEARNING_SYMBOL_INTELLIGENCE_SUITE.status(statuses=statuses, force=False))
         _safe_status("realistic_shadow_evidence_learning_lab_v1", lambda: REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB.status(statuses=statuses, force=False))
+        _safe_status("historical_intelligence_market_memory_suite_v1", lambda: HISTORICAL_INTELLIGENCE_MARKET_MEMORY_SUITE.status(statuses=statuses, force=False))
         _safe_status("adaptive_learning_prioritization_resource_allocation_v1", lambda: ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False))
         _safe_status("autonomous_intelligence_validation_governance_v1", lambda: AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE.status(statuses=statuses, force=False))
         _safe_status("trade_archetype_regime", lambda: TRADE_ARCHETYPE_REGIME_INTELLIGENCE.status(force=False))
@@ -51240,12 +51374,24 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("paper_throughput_exit_validation_catalyst_intelligence_v1", lambda: PAPER_THROUGHPUT_EXIT_VALIDATION_CATALYST_INTELLIGENCE.status(statuses=statuses, force=False))
         _safe_status("multi_horizon_paper_capacity_exit_validation_v1", lambda: MULTI_HORIZON_PAPER_CAPACITY_EXIT_VALIDATION.status(statuses=statuses, force=False))
 
+        try:
+            statuses["paper_autopilot_status"] = PAPER_AUTOPILOT.control_status()
+        except Exception:
+            statuses["paper_autopilot_status"] = {}
+        try:
+            broker_safety = dict(ALPACA_PAPER_BROKER.safety_status() or {})
+        except Exception:
+            broker_safety = {}
         statuses["alpaca_paper_broker"] = {
-            "enabled": str(os.getenv("ASTRA_ENABLE_ALPACA_PAPER", "false")).strip().lower() == "true",
-            "paper_mode_verified": str(os.getenv("ALPACA_TRADING_MODE", "paper")).strip().lower() == "paper"
-            and "paper-api.alpaca.markets" in str(os.getenv("APCA_API_BASE_URL", "")),
-            "broker_execution_enabled": False,
+            "enabled": bool(broker_safety.get("enabled_requested")),
+            "paper_mode_verified": bool(broker_safety.get("paper_mode_verified")),
+            "broker_execution_enabled": bool(broker_safety.get("broker_execution_enabled")),
+            "broker_execution_ready": bool(broker_safety.get("broker_execution_enabled")),
             "safety_status": "summary_only_no_broker_fetch",
+            "safety_reasons": list(broker_safety.get("safety_reasons") or []),
+            "paper_endpoint_detected": bool(broker_safety.get("paper_endpoint_detected")),
+            "live_endpoint_detected": bool(broker_safety.get("live_endpoint_detected")),
+            "broker_live_endpoint_allowed": False,
             "api_calls_used": 0,
             "live_trading_changed": False,
         }
