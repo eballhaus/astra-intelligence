@@ -2293,6 +2293,43 @@ except Exception:
                 "behavior_safe_to_apply": False,
             }
 try:
+    from engine.shadow_correction_validation_attribution_v1 import ShadowCorrectionValidationAttributionV1
+except Exception:
+    class ShadowCorrectionValidationAttributionV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only_correction_validation_attribution",
+                "shadow_influence_enabled": False,
+                "shadow_influence_cap_pct": 3.0,
+                "candidate_ranking_influence_pct": 0.0,
+                "buy_purity_influence_pct": 0.0,
+                "opportunity_cost_influence_pct": 0.0,
+                "validated_improvement_score": 0.0,
+                "shadow_recommendations_reviewed": 0,
+                "validated_recommendations": 0,
+                "rejected_recommendations": 0,
+                "confidence_score": 0.0,
+                "readiness_score": 0.0,
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "entry_behavior_changed": False,
+                "exit_behavior_changed": False,
+                "position_sizing_changed": False,
+                "thresholds_changed": False,
+                "portfolio_allocation_changed": False,
+                "behavior_safe_to_apply": False,
+            }
+try:
     from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
 except Exception:
     class _AlpacaWSMonitorFallback:
@@ -2495,6 +2532,7 @@ HISTORICAL_INTELLIGENCE_MARKET_MEMORY_SUITE = HistoricalIntelligenceMarketMemory
 CATALYST_CLASSIFICATION_HISTORICAL_EXIT_MATURATION_SUITE = CatalystClassificationHistoricalExitMaturationSuiteV1(state_dir=STATE)
 CATALYST_PERSISTENCE_DECAY_CURVES_V2 = CatalystPersistenceDecayCurvesV2(state_dir=STATE)
 PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2 = ProfitLockProfitCaptureMaturationV2(state_dir=STATE)
+SHADOW_CORRECTION_VALIDATION_ATTRIBUTION = ShadowCorrectionValidationAttributionV1(state_dir=STATE)
 TRADE_ARCHETYPE_REGIME_INTELLIGENCE = TradeArchetypeRegimeIntelligenceV1(state_dir=STATE)
 REPLAY_COUNTERFACTUAL_LEARNING_V2 = ReplayCounterfactualLearningV2(state_dir=STATE)
 OPPORTUNITY_COST_LEARNING = OpportunityCostLearningV1(state_dir=STATE)
@@ -32713,6 +32751,72 @@ def profit_lock_profit_capture_maturation_v2(force: bool = False):
         }
 
 
+@router.get("/api/shadow_correction_validation_attribution_v1")
+def shadow_correction_validation_attribution_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        try:
+            statuses["catalyst_classification_historical_exit_maturation_suite_v1"] = CATALYST_CLASSIFICATION_HISTORICAL_EXIT_MATURATION_SUITE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["catalyst_classification_historical_exit_maturation_suite_v1"] = {}
+        try:
+            statuses["catalyst_persistence_decay_curves_v2"] = CATALYST_PERSISTENCE_DECAY_CURVES_V2.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["catalyst_persistence_decay_curves_v2"] = {}
+        try:
+            statuses["profit_lock_profit_capture_maturation_v2"] = PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["profit_lock_profit_capture_maturation_v2"] = {}
+        out = dict(SHADOW_CORRECTION_VALIDATION_ATTRIBUTION.status(statuses=statuses, force=bool(force)) or {})
+        out["shadow_correction_validation_attribution_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["entry_behavior_changed"] = False
+        out["exit_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["thresholds_changed"] = False
+        out["portfolio_allocation_changed"] = False
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only_correction_validation_attribution",
+            "shadow_correction_validation_attribution_v1": True,
+            "degraded_reason": f"shadow_correction_validation_endpoint_unavailable:{str(exc)[:140]}",
+            "shadow_influence_enabled": False,
+            "shadow_influence_cap_pct": 3.0,
+            "candidate_ranking_influence_pct": 0.0,
+            "buy_purity_influence_pct": 0.0,
+            "opportunity_cost_influence_pct": 0.0,
+            "validated_improvement_score": 0.0,
+            "shadow_recommendations_reviewed": 0,
+            "validated_recommendations": 0,
+            "rejected_recommendations": 0,
+            "confidence_score": 0.0,
+            "readiness_score": 0.0,
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "thresholds_changed": False,
+            "portfolio_allocation_changed": False,
+            "behavior_safe_to_apply": False,
+        }
+
+
 @router.get("/api/alpaca_paper_status_v1")
 def alpaca_paper_status_v1():
     try:
@@ -41961,6 +42065,10 @@ def _learning_acceleration_status_bundle() -> dict:
     except Exception:
         statuses["profit_lock_profit_capture_maturation_v2"] = {}
     try:
+        statuses["shadow_correction_validation_attribution_v1"] = SHADOW_CORRECTION_VALIDATION_ATTRIBUTION.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["shadow_correction_validation_attribution_v1"] = {}
+    try:
         statuses["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = MULTI_HORIZON_INTELLIGENCE_ADAPTIVE_LIFECYCLE_SUITE.status(statuses=statuses, force=False)
     except Exception:
         statuses["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = {}
@@ -43181,6 +43289,10 @@ def learning_issue_audit_status_v1(force: bool = False):
             statuses["profit_lock_profit_capture_maturation_v2"] = PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2.status(statuses=statuses, force=False)
         except Exception:
             statuses["profit_lock_profit_capture_maturation_v2"] = {}
+        try:
+            statuses["shadow_correction_validation_attribution_v1"] = SHADOW_CORRECTION_VALIDATION_ATTRIBUTION.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["shadow_correction_validation_attribution_v1"] = {}
         try:
             statuses["multi_horizon_intelligence_adaptive_lifecycle_suite_v1"] = MULTI_HORIZON_INTELLIGENCE_ADAPTIVE_LIFECYCLE_SUITE.status(statuses=statuses, force=False)
         except Exception:
@@ -51653,6 +51765,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("catalyst_classification_historical_exit_maturation_suite_v1", lambda: CATALYST_CLASSIFICATION_HISTORICAL_EXIT_MATURATION_SUITE.status(statuses=statuses, force=False))
         _safe_status("catalyst_persistence_decay_curves_v2", lambda: CATALYST_PERSISTENCE_DECAY_CURVES_V2.status(statuses=statuses, force=False))
         _safe_status("profit_lock_profit_capture_maturation_v2", lambda: PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2.status(statuses=statuses, force=False))
+        _safe_status("shadow_correction_validation_attribution_v1", lambda: SHADOW_CORRECTION_VALIDATION_ATTRIBUTION.status(statuses=statuses, force=False))
         _safe_status("adaptive_learning_prioritization_resource_allocation_v1", lambda: ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False))
         _safe_status("autonomous_intelligence_validation_governance_v1", lambda: AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE.status(statuses=statuses, force=False))
         _safe_status("trade_archetype_regime", lambda: TRADE_ARCHETYPE_REGIME_INTELLIGENCE.status(force=False))

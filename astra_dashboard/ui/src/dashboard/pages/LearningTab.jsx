@@ -1602,6 +1602,7 @@ export default function LearningTab({ compact = false }) {
   const catalystHistoricalExitMaturation = unified?.catalyst_classification_historical_exit_maturation_suite_v1 || {};
   const catalystPersistenceDecayCurves = unified?.catalyst_persistence_decay_curves_v2 || {};
   const profitLockProfitCaptureMaturation = unified?.profit_lock_profit_capture_maturation_v2 || {};
+  const shadowCorrectionValidation = unified?.shadow_correction_validation_attribution_v1 || {};
   const adaptiveExecutionExitV3 = unified?.adaptive_execution_exit_intelligence_v3 || {};
   const exitLearningExpansion = unified?.exit_learning_expansion_suite_v1 || {};
   const marketContextLearning = unified?.market_context_learning_suite_v1 || {};
@@ -2123,6 +2124,46 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Shadow recommendation: {String(profitLockProfitCaptureMaturation?.shadow_recommendation || "Continue virtual profit-lock and capture maturation shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Shadow Correction Validation & Attribution V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is validating whether shadow recommendations are actually improving paper outcomes over time. Phase 1 influence is capped at 3% and limited to candidate ranking, buy purity, and opportunity-cost confidence only; it cannot create trades, block trades, change exits, change sizing, alter broker behavior, or change capital allocation.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Influence enabled", shadowCorrectionValidation?.shadow_influence_enabled ? "yes" : "no"],
+            ["Influence cap", `${safeNumber(shadowCorrectionValidation?.shadow_influence_cap_pct).toFixed(1)}%`],
+            ["Ranking influence", `${safeNumber(shadowCorrectionValidation?.candidate_ranking_influence_pct).toFixed(2)}%`],
+            ["Buy purity influence", `${safeNumber(shadowCorrectionValidation?.buy_purity_influence_pct).toFixed(2)}%`],
+            ["Opportunity cost influence", `${safeNumber(shadowCorrectionValidation?.opportunity_cost_influence_pct).toFixed(2)}%`],
+            ["Reviewed", safeNumber(shadowCorrectionValidation?.shadow_recommendations_reviewed).toFixed(0)],
+            ["Validated", safeNumber(shadowCorrectionValidation?.validated_recommendations).toFixed(0)],
+            ["Rejected", safeNumber(shadowCorrectionValidation?.rejected_recommendations).toFixed(0)],
+            ["Validated recs", safeNumber(shadowCorrectionValidation?.total_validated_recommendations).toFixed(0)],
+            ["Failed recs", safeNumber(shadowCorrectionValidation?.total_failed_recommendations).toFixed(0)],
+            ["Improvement score", safeNumber(shadowCorrectionValidation?.validated_improvement_score).toFixed(1)],
+            ["Avg improvement", safeNumber(shadowCorrectionValidation?.average_improvement_score).toFixed(1)],
+            ["Confidence", safeNumber(shadowCorrectionValidation?.confidence_score).toFixed(1)],
+            ["Readiness", safeNumber(shadowCorrectionValidation?.readiness_score).toFixed(1)],
+            ["Strongest", shadowCorrectionValidation?.strongest_validated_improvement],
+            ["Weakest", shadowCorrectionValidation?.weakest_validated_improvement],
+            ["API/provider/LLM", `${safeNumber(shadowCorrectionValidation?.api_calls_used).toFixed(0)} / ${safeNumber(shadowCorrectionValidation?.provider_calls_used).toFixed(0)} / ${safeNumber(shadowCorrectionValidation?.llm_calls_used).toFixed(0)}`],
+            ["Behavior safe", shadowCorrectionValidation?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Categories: {(shadowCorrectionValidation?.validation_categories || []).slice(0, 4).map((row) => `${String(row?.category || "unknown").replaceAll("_", " ")} ${String(row?.validated_status || "warming_up").replaceAll("_", " ")}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(shadowCorrectionValidation?.shadow_recommendation || "Continue shadow correction validation before broader influence.").replaceAll("_", " ")}
           </div>
         </div>
       </details>
