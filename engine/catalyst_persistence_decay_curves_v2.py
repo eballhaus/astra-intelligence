@@ -229,6 +229,12 @@ class CatalystPersistenceDecayCurvesV2:
             giveback_minutes = max(5.0, peak_minutes + avg_decay_minutes * 0.55)
             half_life = max(5.0, avg_cont_minutes * (0.42 + (100.0 - decay) / 260.0))
             confidence = _clamp(memory_quality * 0.50 + min(100.0, per_count * 3.0) * 0.25 + coverage * 0.25)
+            acceleration = _clamp(continuation * 0.46 + persistence * 0.34 + max(0.0, 100.0 - exhaustion) * 0.20)
+            peak_detection = _clamp(decay * 0.35 + persistence * 0.20 + confidence * 0.45)
+            profit_capture_before_decay = _clamp(persistence * 0.42 + hold_quality * 0.24 + memory_quality * 0.20 + max(0.0, 100.0 - decay) * 0.14)
+            profit_capture_after_decay = _clamp(profit_capture_before_decay - decay * 0.34 - exhaustion * 0.18)
+            continuation_after_weakening = _clamp(continuation * 0.42 + max(0.0, 100.0 - decay) * 0.34 + memory_quality * 0.24)
+            giveback_after_weakening = _clamp(decay * 0.50 + exhaustion * 0.35 + max(0.0, 100.0 - hold_quality) * 0.15)
             curves.append({
                 "catalyst_type": name,
                 "occurrence_count": int(per_count),
@@ -243,10 +249,25 @@ class CatalystPersistenceDecayCurvesV2:
                 "catalyst_half_life_estimate_minutes": _round(half_life, 2),
                 "catalyst_continuation_probability": _round(continuation, 3),
                 "catalyst_exhaustion_probability": _round(exhaustion, 3),
+                "persistence_curve_score": _round(persistence, 3),
+                "acceleration_curve_score": _round(acceleration, 3),
+                "decay_curve_score": _round(decay, 3),
+                "continuation_probability_curve": _round(continuation, 3),
+                "peak_detection_confidence": _round(peak_detection, 3),
+                "catalyst_exhaustion_confidence": _round(exhaustion * 0.55 + confidence * 0.45, 3),
+                "profit_capture_before_decay": _round(profit_capture_before_decay, 3),
+                "profit_capture_after_decay": _round(profit_capture_after_decay, 3),
+                "continuation_after_catalyst_weakening": _round(continuation_after_weakening, 3),
+                "giveback_after_catalyst_weakening": _round(giveback_after_weakening, 3),
                 "best_horizon_hint": horizon,
             })
         strongest = max(curves, key=lambda row: row["catalyst_persistence_score"], default={})
         weakest = max(curves, key=lambda row: row["catalyst_decay_score"], default={})
+        best_half = max(curves, key=lambda row: row["catalyst_half_life_estimate_minutes"], default={})
+        worst_half = min(curves, key=lambda row: row["catalyst_half_life_estimate_minutes"], default={})
+        strongest_decay = max(curves, key=lambda row: row["decay_curve_score"], default={})
+        readiness = _clamp(memory_quality * 0.32 + coverage * 0.22 + decay_pressure * 0.24 + min(100.0, total_records * 1.1) * 0.22)
+        decay_confidence = _clamp(memory_quality * 0.42 + coverage * 0.28 + min(100.0, total_records * 1.5) * 0.30)
         aggregate = {
             "catalyst_persistence_score": _round(sum(r["catalyst_persistence_score"] for r in curves) / max(1, len(curves)), 3),
             "catalyst_decay_score": _round(sum(r["catalyst_decay_score"] for r in curves) / max(1, len(curves)), 3),
@@ -256,6 +277,18 @@ class CatalystPersistenceDecayCurvesV2:
             "catalyst_memory_quality": _round(memory_quality, 3),
             "strongest_persistence_catalyst": _text(strongest.get("catalyst_type")),
             "fastest_decay_catalyst": _text(weakest.get("catalyst_type")),
+            "strongest_persistence_pattern": _text(strongest.get("catalyst_type")),
+            "strongest_decay_pattern": _text(strongest_decay.get("catalyst_type")),
+            "best_catalyst_half_life": _round(best_half.get("catalyst_half_life_estimate_minutes"), 2),
+            "worst_catalyst_half_life": _round(worst_half.get("catalyst_half_life_estimate_minutes"), 2),
+            "best_catalyst_half_life_type": _text(best_half.get("catalyst_type")),
+            "worst_catalyst_half_life_type": _text(worst_half.get("catalyst_type")),
+            "catalyst_decay_readiness": _round(readiness, 3),
+            "catalyst_decay_confidence": _round(decay_confidence, 3),
+            "profit_capture_before_decay": _round(sum(r["profit_capture_before_decay"] for r in curves) / max(1, len(curves)), 3),
+            "profit_capture_after_decay": _round(sum(r["profit_capture_after_decay"] for r in curves) / max(1, len(curves)), 3),
+            "continuation_after_catalyst_weakening": _round(sum(r["continuation_after_catalyst_weakening"] for r in curves) / max(1, len(curves)), 3),
+            "giveback_after_catalyst_weakening": _round(sum(r["giveback_after_catalyst_weakening"] for r in curves) / max(1, len(curves)), 3),
         }
         return curves, aggregate
 

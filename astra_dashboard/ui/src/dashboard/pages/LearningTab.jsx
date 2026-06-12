@@ -1601,6 +1601,8 @@ export default function LearningTab({ compact = false }) {
   const historicalMarketMemory = unified?.historical_intelligence_market_memory_suite_v1 || {};
   const catalystHistoricalExitMaturation = unified?.catalyst_classification_historical_exit_maturation_suite_v1 || {};
   const catalystPersistenceDecayCurves = unified?.catalyst_persistence_decay_curves_v2 || {};
+  const catalystLifecycleIntelligence = unified?.catalyst_lifecycle_intelligence_v1 || {};
+  const crossSectorCapitalFlowMemory = unified?.cross_sector_capital_flow_memory_v1 || {};
   const profitLockProfitCaptureMaturation = unified?.profit_lock_profit_capture_maturation_v2 || {};
   const shadowCorrectionValidation = unified?.shadow_correction_validation_attribution_v1 || {};
   const controlledPaperProfitProtection = unified?.controlled_paper_profit_protection_pilot_v1 || {};
@@ -2075,6 +2077,16 @@ export default function LearningTab({ compact = false }) {
             ["Memory quality", safeNumber(catalystPersistenceDecayCurves?.catalyst_memory_quality).toFixed(1)],
             ["Strongest catalyst", catalystPersistenceDecayCurves?.strongest_persistence_catalyst],
             ["Fastest decay", catalystPersistenceDecayCurves?.fastest_decay_catalyst],
+            ["Strongest pattern", catalystPersistenceDecayCurves?.strongest_persistence_pattern],
+            ["Decay pattern", catalystPersistenceDecayCurves?.strongest_decay_pattern],
+            ["Best half-life", `${safeNumber(catalystPersistenceDecayCurves?.best_catalyst_half_life).toFixed(1)} min`],
+            ["Worst half-life", `${safeNumber(catalystPersistenceDecayCurves?.worst_catalyst_half_life).toFixed(1)} min`],
+            ["Decay readiness", safeNumber(catalystPersistenceDecayCurves?.catalyst_decay_readiness).toFixed(1)],
+            ["Decay confidence", safeNumber(catalystPersistenceDecayCurves?.catalyst_decay_confidence).toFixed(1)],
+            ["Capture before decay", safeNumber(catalystPersistenceDecayCurves?.profit_capture_before_decay).toFixed(1)],
+            ["Capture after decay", safeNumber(catalystPersistenceDecayCurves?.profit_capture_after_decay).toFixed(1)],
+            ["Continuation after weakening", safeNumber(catalystPersistenceDecayCurves?.continuation_after_catalyst_weakening).toFixed(1)],
+            ["Giveback after weakening", safeNumber(catalystPersistenceDecayCurves?.giveback_after_catalyst_weakening).toFixed(1)],
             ["API calls", safeNumber(catalystPersistenceDecayCurves?.api_calls_used).toFixed(0)],
             ["Provider calls", safeNumber(catalystPersistenceDecayCurves?.provider_calls_used).toFixed(0)],
             ["LLM calls", safeNumber(catalystPersistenceDecayCurves?.llm_calls_used).toFixed(0)],
@@ -2089,6 +2101,79 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Shadow recommendation: {String(catalystPersistenceDecayCurves?.shadow_recommendation || "Continue catalyst persistence and decay learning shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Catalyst Lifecycle Intelligence V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is mapping catalysts through emerging, accelerating, mature, peaking, decaying, and exhausted stages to estimate continuation, giveback, hold quality, and exit quality. This is shadow-only learning and does not change entries or exits.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Evidence", safeNumber(catalystLifecycleIntelligence?.evidence_count).toFixed(0)],
+            ["Strongest stage", catalystLifecycleIntelligence?.strongest_catalyst_stage],
+            ["Weakest stage", catalystLifecycleIntelligence?.weakest_catalyst_stage],
+            ["Best lifecycle", catalystLifecycleIntelligence?.best_catalyst_lifecycle],
+            ["Worst lifecycle", catalystLifecycleIntelligence?.worst_catalyst_lifecycle],
+            ["Lifecycle confidence", safeNumber(catalystLifecycleIntelligence?.catalyst_lifecycle_confidence).toFixed(1)],
+            ["Persistence", safeNumber(catalystLifecycleIntelligence?.average_persistence_score).toFixed(1)],
+            ["Decay probability", safeNumber(catalystLifecycleIntelligence?.average_decay_probability).toFixed(1)],
+            ["Continuation probability", safeNumber(catalystLifecycleIntelligence?.average_continuation_probability).toFixed(1)],
+            ["Average lifespan", `${safeNumber(catalystLifecycleIntelligence?.average_lifespan_minutes).toFixed(1)} min`],
+            ["Best stage profitability", safeNumber(catalystLifecycleIntelligence?.best_stage_profitability_score).toFixed(1)],
+            ["Worst stage giveback", `${safeNumber(catalystLifecycleIntelligence?.worst_stage_giveback_pct).toFixed(2)}%`],
+            ["API/provider/LLM", `${safeNumber(catalystLifecycleIntelligence?.api_calls_used).toFixed(0)} / ${safeNumber(catalystLifecycleIntelligence?.provider_calls_used).toFixed(0)} / ${safeNumber(catalystLifecycleIntelligence?.llm_calls_used).toFixed(0)}`],
+            ["Behavior safe", catalystLifecycleIntelligence?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Stages: {(catalystLifecycleIntelligence?.lifecycle_stages || []).slice(0, 6).map((row) => `${String(row?.stage || "stage").replaceAll("_", " ")} cont ${safeNumber(row?.continuation_probability).toFixed(0)}%`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(catalystLifecycleIntelligence?.shadow_recommendation || "Continue catalyst lifecycle learning shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Cross-Sector Capital Flow Memory V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is building memory for sector inflows, outflows, rotations, theme transitions, and leadership changes using cached evidence only. This supports catalyst context without changing rankings, entries, exits, sizing, or broker behavior.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Evidence", safeNumber(crossSectorCapitalFlowMemory?.evidence_count).toFixed(0)],
+            ["Strongest inflow", crossSectorCapitalFlowMemory?.strongest_inflow_sector],
+            ["Strongest outflow", crossSectorCapitalFlowMemory?.strongest_outflow_sector],
+            ["Flow persistence", safeNumber(crossSectorCapitalFlowMemory?.flow_persistence).toFixed(1)],
+            ["Rotation speed", safeNumber(crossSectorCapitalFlowMemory?.rotation_speed).toFixed(1)],
+            ["Continuation after inflow", safeNumber(crossSectorCapitalFlowMemory?.continuation_after_inflow).toFixed(1)],
+            ["Continuation after outflow", safeNumber(crossSectorCapitalFlowMemory?.continuation_after_outflow).toFixed(1)],
+            ["Strongest capital flow", crossSectorCapitalFlowMemory?.strongest_capital_flow],
+            ["Weakest capital flow", crossSectorCapitalFlowMemory?.weakest_capital_flow],
+            ["Sector rotation", crossSectorCapitalFlowMemory?.strongest_sector_rotation],
+            ["Theme rotation", crossSectorCapitalFlowMemory?.strongest_theme_rotation],
+            ["Flow confidence", safeNumber(crossSectorCapitalFlowMemory?.sector_flow_confidence).toFixed(1)],
+            ["Rotation confidence", safeNumber(crossSectorCapitalFlowMemory?.rotation_confidence).toFixed(1)],
+            ["API/provider/LLM", `${safeNumber(crossSectorCapitalFlowMemory?.api_calls_used).toFixed(0)} / ${safeNumber(crossSectorCapitalFlowMemory?.provider_calls_used).toFixed(0)} / ${safeNumber(crossSectorCapitalFlowMemory?.llm_calls_used).toFixed(0)}`],
+            ["Behavior safe", crossSectorCapitalFlowMemory?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Sector rows: {(crossSectorCapitalFlowMemory?.sector_flow_rows || []).slice(0, 4).map((row) => `${String(row?.sector || "sector")} inflow ${safeNumber(row?.inflow_score).toFixed(0)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(crossSectorCapitalFlowMemory?.shadow_recommendation || "Continue cross-sector capital-flow memory shadow-only.").replaceAll("_", " ")}
           </div>
         </div>
       </details>

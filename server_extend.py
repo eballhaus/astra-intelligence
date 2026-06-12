@@ -2259,6 +2259,79 @@ except Exception:
                 "behavior_safe_to_apply": False,
             }
 try:
+    from engine.catalyst_lifecycle_intelligence_v1 import CatalystLifecycleIntelligenceV1
+except Exception:
+    class CatalystLifecycleIntelligenceV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only_catalyst_lifecycle_intelligence",
+                "evidence_count": 0,
+                "strongest_catalyst_stage": "insufficient_data",
+                "weakest_catalyst_stage": "insufficient_data",
+                "best_catalyst_lifecycle": "insufficient_data",
+                "worst_catalyst_lifecycle": "insufficient_data",
+                "catalyst_lifecycle_confidence": 0.0,
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "forced_exits_enabled": False,
+                "forced_trades_enabled": False,
+                "partial_sells_enabled": False,
+                "automatic_trailing_stops_enabled": False,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "entry_behavior_changed": False,
+                "exit_behavior_changed": False,
+                "position_sizing_changed": False,
+                "portfolio_allocation_changed": False,
+                "thresholds_changed": False,
+                "behavior_safe_to_apply": False,
+            }
+try:
+    from engine.cross_sector_capital_flow_memory_v1 import CrossSectorCapitalFlowMemoryV1
+except Exception:
+    class CrossSectorCapitalFlowMemoryV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only_cross_sector_capital_flow_memory",
+                "evidence_count": 0,
+                "strongest_capital_flow": "insufficient_data",
+                "weakest_capital_flow": "insufficient_data",
+                "strongest_sector_rotation": "insufficient_data",
+                "strongest_theme_rotation": "insufficient_data",
+                "sector_flow_confidence": 0.0,
+                "rotation_confidence": 0.0,
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "forced_exits_enabled": False,
+                "forced_trades_enabled": False,
+                "partial_sells_enabled": False,
+                "automatic_trailing_stops_enabled": False,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "entry_behavior_changed": False,
+                "exit_behavior_changed": False,
+                "position_sizing_changed": False,
+                "portfolio_allocation_changed": False,
+                "thresholds_changed": False,
+                "behavior_safe_to_apply": False,
+            }
+try:
     from engine.profit_lock_profit_capture_maturation_v2 import ProfitLockProfitCaptureMaturationV2
 except Exception:
     class ProfitLockProfitCaptureMaturationV2:  # type: ignore[override]
@@ -2575,6 +2648,8 @@ AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE = AutonomousIntelligenceValidation
 HISTORICAL_INTELLIGENCE_MARKET_MEMORY_SUITE = HistoricalIntelligenceMarketMemorySuiteV1(state_dir=STATE)
 CATALYST_CLASSIFICATION_HISTORICAL_EXIT_MATURATION_SUITE = CatalystClassificationHistoricalExitMaturationSuiteV1(state_dir=STATE)
 CATALYST_PERSISTENCE_DECAY_CURVES_V2 = CatalystPersistenceDecayCurvesV2(state_dir=STATE)
+CATALYST_LIFECYCLE_INTELLIGENCE = CatalystLifecycleIntelligenceV1(state_dir=STATE)
+CROSS_SECTOR_CAPITAL_FLOW_MEMORY = CrossSectorCapitalFlowMemoryV1(state_dir=STATE)
 PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2 = ProfitLockProfitCaptureMaturationV2(state_dir=STATE)
 SHADOW_CORRECTION_VALIDATION_ATTRIBUTION = ShadowCorrectionValidationAttributionV1(state_dir=STATE)
 CONTROLLED_PAPER_PROFIT_PROTECTION_PILOT = ControlledPaperProfitProtectionPilotV1(state_dir=STATE)
@@ -32745,6 +32820,121 @@ def catalyst_persistence_decay_curves_v2(force: bool = False):
         }
 
 
+@router.get("/api/catalyst_lifecycle_intelligence_v1")
+def catalyst_lifecycle_intelligence_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        out = dict(CATALYST_LIFECYCLE_INTELLIGENCE.status(statuses=statuses, force=bool(force)) or {})
+        out["catalyst_lifecycle_intelligence_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["forced_exits_enabled"] = False
+        out["forced_trades_enabled"] = False
+        out["partial_sells_enabled"] = False
+        out["automatic_trailing_stops_enabled"] = False
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["entry_behavior_changed"] = False
+        out["exit_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["portfolio_allocation_changed"] = False
+        out["thresholds_changed"] = False
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only_catalyst_lifecycle_intelligence",
+            "catalyst_lifecycle_intelligence_v1": True,
+            "degraded_reason": f"catalyst_lifecycle_intelligence_endpoint_unavailable:{str(exc)[:140]}",
+            "evidence_count": 0,
+            "strongest_catalyst_stage": "insufficient_data",
+            "weakest_catalyst_stage": "insufficient_data",
+            "best_catalyst_lifecycle": "insufficient_data",
+            "worst_catalyst_lifecycle": "insufficient_data",
+            "catalyst_lifecycle_confidence": 0.0,
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "forced_exits_enabled": False,
+            "forced_trades_enabled": False,
+            "partial_sells_enabled": False,
+            "automatic_trailing_stops_enabled": False,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "portfolio_allocation_changed": False,
+            "thresholds_changed": False,
+            "behavior_safe_to_apply": False,
+        }
+
+
+@router.get("/api/cross_sector_capital_flow_memory_v1")
+def cross_sector_capital_flow_memory_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        out = dict(CROSS_SECTOR_CAPITAL_FLOW_MEMORY.status(statuses=statuses, force=bool(force)) or {})
+        out["cross_sector_capital_flow_memory_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["forced_exits_enabled"] = False
+        out["forced_trades_enabled"] = False
+        out["partial_sells_enabled"] = False
+        out["automatic_trailing_stops_enabled"] = False
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["entry_behavior_changed"] = False
+        out["exit_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["portfolio_allocation_changed"] = False
+        out["thresholds_changed"] = False
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only_cross_sector_capital_flow_memory",
+            "cross_sector_capital_flow_memory_v1": True,
+            "degraded_reason": f"cross_sector_capital_flow_endpoint_unavailable:{str(exc)[:140]}",
+            "evidence_count": 0,
+            "strongest_capital_flow": "insufficient_data",
+            "weakest_capital_flow": "insufficient_data",
+            "strongest_sector_rotation": "insufficient_data",
+            "strongest_theme_rotation": "insufficient_data",
+            "sector_flow_confidence": 0.0,
+            "rotation_confidence": 0.0,
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "forced_exits_enabled": False,
+            "forced_trades_enabled": False,
+            "partial_sells_enabled": False,
+            "automatic_trailing_stops_enabled": False,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "portfolio_allocation_changed": False,
+            "thresholds_changed": False,
+            "behavior_safe_to_apply": False,
+        }
+
+
 @router.get("/api/profit_lock_profit_capture_maturation_v2")
 def profit_lock_profit_capture_maturation_v2(force: bool = False):
     try:
@@ -32808,6 +32998,14 @@ def shadow_correction_validation_attribution_v1(force: bool = False):
             statuses["catalyst_persistence_decay_curves_v2"] = CATALYST_PERSISTENCE_DECAY_CURVES_V2.status(statuses=statuses, force=False)
         except Exception:
             statuses["catalyst_persistence_decay_curves_v2"] = {}
+        try:
+            statuses["catalyst_lifecycle_intelligence_v1"] = CATALYST_LIFECYCLE_INTELLIGENCE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["catalyst_lifecycle_intelligence_v1"] = {}
+        try:
+            statuses["cross_sector_capital_flow_memory_v1"] = CROSS_SECTOR_CAPITAL_FLOW_MEMORY.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["cross_sector_capital_flow_memory_v1"] = {}
         try:
             statuses["profit_lock_profit_capture_maturation_v2"] = PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2.status(statuses=statuses, force=False)
         except Exception:
@@ -42197,6 +42395,14 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["catalyst_persistence_decay_curves_v2"] = CATALYST_PERSISTENCE_DECAY_CURVES_V2.status(statuses=statuses, force=False)
     except Exception:
         statuses["catalyst_persistence_decay_curves_v2"] = {}
+    try:
+        statuses["catalyst_lifecycle_intelligence_v1"] = CATALYST_LIFECYCLE_INTELLIGENCE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["catalyst_lifecycle_intelligence_v1"] = {}
+    try:
+        statuses["cross_sector_capital_flow_memory_v1"] = CROSS_SECTOR_CAPITAL_FLOW_MEMORY.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["cross_sector_capital_flow_memory_v1"] = {}
     try:
         statuses["profit_lock_profit_capture_maturation_v2"] = PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2.status(statuses=statuses, force=False)
     except Exception:
@@ -51909,6 +52115,8 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("historical_intelligence_market_memory_suite_v1", lambda: HISTORICAL_INTELLIGENCE_MARKET_MEMORY_SUITE.status(statuses=statuses, force=False))
         _safe_status("catalyst_classification_historical_exit_maturation_suite_v1", lambda: CATALYST_CLASSIFICATION_HISTORICAL_EXIT_MATURATION_SUITE.status(statuses=statuses, force=False))
         _safe_status("catalyst_persistence_decay_curves_v2", lambda: CATALYST_PERSISTENCE_DECAY_CURVES_V2.status(statuses=statuses, force=False))
+        _safe_status("catalyst_lifecycle_intelligence_v1", lambda: CATALYST_LIFECYCLE_INTELLIGENCE.status(statuses=statuses, force=False))
+        _safe_status("cross_sector_capital_flow_memory_v1", lambda: CROSS_SECTOR_CAPITAL_FLOW_MEMORY.status(statuses=statuses, force=False))
         _safe_status("profit_lock_profit_capture_maturation_v2", lambda: PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2.status(statuses=statuses, force=False))
         _safe_status("shadow_correction_validation_attribution_v1", lambda: SHADOW_CORRECTION_VALIDATION_ATTRIBUTION.status(statuses=statuses, force=False))
         _safe_status("controlled_paper_profit_protection_pilot_v1", lambda: CONTROLLED_PAPER_PROFIT_PROTECTION_PILOT.status(statuses=statuses, force=False))
