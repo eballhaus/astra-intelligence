@@ -317,6 +317,7 @@ class UnifiedLearningDiagnosticsV1:
         catalyst_persistence_decay_curves = self._catalyst_persistence_decay_curves_v2_summary(statuses.get("catalyst_persistence_decay_curves_v2") or {})
         catalyst_lifecycle_intelligence = self._catalyst_lifecycle_intelligence_v1_summary(statuses.get("catalyst_lifecycle_intelligence_v1") or {})
         cross_sector_capital_flow_memory = self._cross_sector_capital_flow_memory_v1_summary(statuses.get("cross_sector_capital_flow_memory_v1") or {})
+        shadow_vs_paper_performance_attribution = self._shadow_vs_paper_performance_attribution_v1_summary(statuses.get("shadow_vs_paper_performance_attribution_v1") or {})
         profit_lock_profit_capture_maturation = self._profit_lock_profit_capture_maturation_v2_summary(statuses.get("profit_lock_profit_capture_maturation_v2") or {})
         shadow_correction_validation_attribution = self._shadow_correction_validation_attribution_v1_summary(statuses.get("shadow_correction_validation_attribution_v1") or {})
         controlled_paper_profit_protection_pilot = self._controlled_paper_profit_protection_pilot_v1_summary(statuses.get("controlled_paper_profit_protection_pilot_v1") or {})
@@ -397,6 +398,7 @@ class UnifiedLearningDiagnosticsV1:
             "catalyst_persistence_decay_curves_v2": catalyst_persistence_decay_curves,
             "catalyst_lifecycle_intelligence_v1": catalyst_lifecycle_intelligence,
             "cross_sector_capital_flow_memory_v1": cross_sector_capital_flow_memory,
+            "shadow_vs_paper_performance_attribution_v1": shadow_vs_paper_performance_attribution,
             "profit_lock_profit_capture_maturation_v2": profit_lock_profit_capture_maturation,
             "shadow_correction_validation_attribution_v1": shadow_correction_validation_attribution,
             "controlled_paper_profit_protection_pilot_v1": controlled_paper_profit_protection_pilot,
@@ -3000,6 +3002,73 @@ class UnifiedLearningDiagnosticsV1:
             "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
         }
 
+    def _shadow_vs_paper_performance_attribution_v1_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "shadow_only_vs_paper_performance_attribution"),
+            "trade_count": _to_int(data.get("trade_count"), 0),
+            "recommendations_reviewed": _to_int(data.get("recommendations_reviewed"), 0),
+            "paper_profit_factor": _to_float(data.get("paper_profit_factor"), 0.0),
+            "paper_win_rate": _to_float(data.get("paper_win_rate"), 0.0),
+            "paper_avg_return": _to_float(data.get("paper_avg_return"), 0.0),
+            "paper_avg_mfe": _to_float(data.get("paper_avg_mfe"), 0.0),
+            "paper_avg_mae": _to_float(data.get("paper_avg_mae"), 0.0),
+            "paper_profit_capture": _to_float(data.get("paper_profit_capture"), 0.0),
+            "paper_exit_quality": _to_float(data.get("paper_exit_quality"), 0.0),
+            "shadow_profit_factor": _to_float(data.get("shadow_profit_factor"), 0.0),
+            "shadow_win_rate": _to_float(data.get("shadow_win_rate"), 0.0),
+            "shadow_avg_return": _to_float(data.get("shadow_avg_return"), 0.0),
+            "shadow_avg_mfe": _to_float(data.get("shadow_avg_mfe"), 0.0),
+            "shadow_avg_mae": _to_float(data.get("shadow_avg_mae"), 0.0),
+            "shadow_profit_capture": _to_float(data.get("shadow_profit_capture"), 0.0),
+            "shadow_exit_quality": _to_float(data.get("shadow_exit_quality"), 0.0),
+            "shadow_outperformance_pct": _to_float(data.get("shadow_outperformance_pct"), 0.0),
+            "shadow_underperformance_pct": _to_float(data.get("shadow_underperformance_pct"), 0.0),
+            "profit_factor_delta": _to_float(data.get("profit_factor_delta"), 0.0),
+            "win_rate_delta": _to_float(data.get("win_rate_delta"), 0.0),
+            "avg_return_delta": _to_float(data.get("avg_return_delta"), 0.0),
+            "profit_capture_delta": _to_float(data.get("profit_capture_delta"), 0.0),
+            "exit_quality_delta": _to_float(data.get("exit_quality_delta"), 0.0),
+            "rolling_20_shadow_pf": _to_float(data.get("rolling_20_shadow_pf"), 0.0),
+            "rolling_20_paper_pf": _to_float(data.get("rolling_20_paper_pf"), 0.0),
+            "rolling_50_shadow_pf": _to_float(data.get("rolling_50_shadow_pf"), 0.0),
+            "rolling_50_paper_pf": _to_float(data.get("rolling_50_paper_pf"), 0.0),
+            "rolling_100_shadow_pf": _to_float(data.get("rolling_100_shadow_pf"), 0.0),
+            "rolling_100_paper_pf": _to_float(data.get("rolling_100_paper_pf"), 0.0),
+            "lifetime_shadow_pf": _to_float(data.get("lifetime_shadow_pf"), 0.0),
+            "lifetime_paper_pf": _to_float(data.get("lifetime_paper_pf"), 0.0),
+            "shadow_alpha_score": _to_float(data.get("shadow_alpha_score"), 0.0),
+            "shadow_alpha_confidence": _to_float(data.get("shadow_alpha_confidence"), 0.0),
+            "source_attribution": list(data.get("source_attribution") or [])[:7],
+            "build_cohort_comparison": list(data.get("build_cohort_comparison") or [])[:5],
+            "cohort_profit_factor": dict(data.get("cohort_profit_factor") or {}),
+            "cohort_avg_return": dict(data.get("cohort_avg_return") or {}),
+            "cohort_profit_capture": dict(data.get("cohort_profit_capture") or {}),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "dashboard_scan_rows": _to_int(data.get("dashboard_scan_rows"), 0),
+            "raw_archive_scanned": bool(data.get("raw_archive_scanned", False)),
+            "raw_history_scanned": bool(data.get("raw_history_scanned", False)),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "partial_sells_enabled": bool(data.get("partial_sells_enabled", False)),
+            "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
+            "live_trading_changed": bool(data.get("live_trading_changed", False)),
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "entry_behavior_changed": bool(data.get("entry_behavior_changed", False)),
+            "exit_behavior_changed": bool(data.get("exit_behavior_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+            "portfolio_allocation_changed": bool(data.get("portfolio_allocation_changed", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "shadow_recommendation": _text(data.get("shadow_recommendation"), "Continue shadow-vs-paper attribution observation-only."),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+        }
+
     def _controlled_paper_learned_exit_validation_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -4072,7 +4141,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
             "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "profit_capture_peak_decay_exit_validation_suite_v1", "adaptive_execution_exit_intelligence_v3", "trade_archetype_regime",
-            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "long_term_memory_symbol_retrieval_suite_v1", "virtual_paper_convergence_symbol_attribution_v1", "accelerated_learning_symbol_intelligence_suite_v1", "realistic_shadow_evidence_learning_lab_v1", "historical_intelligence_market_memory_suite_v1", "catalyst_persistence_decay_curves_v2", "catalyst_lifecycle_intelligence_v1", "cross_sector_capital_flow_memory_v1", "profit_lock_profit_capture_maturation_v2", "shadow_correction_validation_attribution_v1", "controlled_paper_profit_protection_pilot_v1", "adaptive_learning_prioritization_resource_allocation_v1", "autonomous_intelligence_validation_governance_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
+            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "long_term_memory_symbol_retrieval_suite_v1", "virtual_paper_convergence_symbol_attribution_v1", "accelerated_learning_symbol_intelligence_suite_v1", "realistic_shadow_evidence_learning_lab_v1", "historical_intelligence_market_memory_suite_v1", "catalyst_persistence_decay_curves_v2", "catalyst_lifecycle_intelligence_v1", "cross_sector_capital_flow_memory_v1", "shadow_vs_paper_performance_attribution_v1", "profit_lock_profit_capture_maturation_v2", "shadow_correction_validation_attribution_v1", "controlled_paper_profit_protection_pilot_v1", "adaptive_learning_prioritization_resource_allocation_v1", "autonomous_intelligence_validation_governance_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
             "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
             "paper_throughput_exit_validation_catalyst_intelligence_v1", "multi_horizon_paper_capacity_exit_validation_v1", "controlled_paper_learned_exit_validation_v1",
@@ -4132,6 +4201,7 @@ class UnifiedLearningDiagnosticsV1:
             "catalyst_persistence_decay_curves_v2": "/api/catalyst_persistence_decay_curves_v2",
             "catalyst_lifecycle_intelligence_v1": "/api/catalyst_lifecycle_intelligence_v1",
             "cross_sector_capital_flow_memory_v1": "/api/cross_sector_capital_flow_memory_v1",
+            "shadow_vs_paper_performance_attribution_v1": "/api/shadow_vs_paper_performance_attribution_v1",
             "profit_lock_profit_capture_maturation_v2": "/api/profit_lock_profit_capture_maturation_v2",
             "shadow_correction_validation_attribution_v1": "/api/shadow_correction_validation_attribution_v1",
             "controlled_paper_profit_protection_pilot_v1": "/api/controlled_paper_profit_protection_pilot_v1",

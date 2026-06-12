@@ -1603,6 +1603,7 @@ export default function LearningTab({ compact = false }) {
   const catalystPersistenceDecayCurves = unified?.catalyst_persistence_decay_curves_v2 || {};
   const catalystLifecycleIntelligence = unified?.catalyst_lifecycle_intelligence_v1 || {};
   const crossSectorCapitalFlowMemory = unified?.cross_sector_capital_flow_memory_v1 || {};
+  const shadowVsPaperPerformanceAttribution = unified?.shadow_vs_paper_performance_attribution_v1 || {};
   const profitLockProfitCaptureMaturation = unified?.profit_lock_profit_capture_maturation_v2 || {};
   const shadowCorrectionValidation = unified?.shadow_correction_validation_attribution_v1 || {};
   const controlledPaperProfitProtection = unified?.controlled_paper_profit_protection_pilot_v1 || {};
@@ -2174,6 +2175,54 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Shadow recommendation: {String(crossSectorCapitalFlowMemory?.shadow_recommendation || "Continue cross-sector capital-flow memory shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Shadow vs Paper Performance Attribution V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is comparing actual paper outcomes against shadow, virtual, replay, and shadow-influenced alternatives to measure whether Shadow intelligence is adding real value. This is attribution-only and does not change broker behavior, rankings, sizing, entries, exits, or policy application.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Paper PF", safeNumber(shadowVsPaperPerformanceAttribution?.paper_profit_factor).toFixed(2)],
+            ["Shadow PF", safeNumber(shadowVsPaperPerformanceAttribution?.shadow_profit_factor).toFixed(2)],
+            ["PF delta", safeNumber(shadowVsPaperPerformanceAttribution?.profit_factor_delta).toFixed(2)],
+            ["Paper WR", `${safeNumber(shadowVsPaperPerformanceAttribution?.paper_win_rate).toFixed(1)}%`],
+            ["Shadow WR", `${safeNumber(shadowVsPaperPerformanceAttribution?.shadow_win_rate).toFixed(1)}%`],
+            ["WR delta", safeNumber(shadowVsPaperPerformanceAttribution?.win_rate_delta).toFixed(2)],
+            ["Paper avg return", safeNumber(shadowVsPaperPerformanceAttribution?.paper_avg_return).toFixed(3)],
+            ["Shadow avg return", safeNumber(shadowVsPaperPerformanceAttribution?.shadow_avg_return).toFixed(3)],
+            ["Return delta", safeNumber(shadowVsPaperPerformanceAttribution?.avg_return_delta).toFixed(3)],
+            ["Capture delta", safeNumber(shadowVsPaperPerformanceAttribution?.profit_capture_delta).toFixed(2)],
+            ["Exit quality delta", safeNumber(shadowVsPaperPerformanceAttribution?.exit_quality_delta).toFixed(2)],
+            ["Shadow alpha", safeNumber(shadowVsPaperPerformanceAttribution?.shadow_alpha_score).toFixed(1)],
+            ["Alpha confidence", safeNumber(shadowVsPaperPerformanceAttribution?.shadow_alpha_confidence).toFixed(1)],
+            ["20 trade PF", `${safeNumber(shadowVsPaperPerformanceAttribution?.rolling_20_paper_pf).toFixed(2)} / ${safeNumber(shadowVsPaperPerformanceAttribution?.rolling_20_shadow_pf).toFixed(2)}`],
+            ["50 trade PF", `${safeNumber(shadowVsPaperPerformanceAttribution?.rolling_50_paper_pf).toFixed(2)} / ${safeNumber(shadowVsPaperPerformanceAttribution?.rolling_50_shadow_pf).toFixed(2)}`],
+            ["100 trade PF", `${safeNumber(shadowVsPaperPerformanceAttribution?.rolling_100_paper_pf).toFixed(2)} / ${safeNumber(shadowVsPaperPerformanceAttribution?.rolling_100_shadow_pf).toFixed(2)}`],
+            ["Lifetime PF", `${safeNumber(shadowVsPaperPerformanceAttribution?.lifetime_paper_pf).toFixed(2)} / ${safeNumber(shadowVsPaperPerformanceAttribution?.lifetime_shadow_pf).toFixed(2)}`],
+            ["Reviewed", safeNumber(shadowVsPaperPerformanceAttribution?.recommendations_reviewed).toFixed(0)],
+            ["Trade count", safeNumber(shadowVsPaperPerformanceAttribution?.trade_count).toFixed(0)],
+            ["Outperformance", `${safeNumber(shadowVsPaperPerformanceAttribution?.shadow_outperformance_pct).toFixed(1)}%`],
+            ["Underperformance", `${safeNumber(shadowVsPaperPerformanceAttribution?.shadow_underperformance_pct).toFixed(1)}%`],
+            ["API/provider/LLM", `${safeNumber(shadowVsPaperPerformanceAttribution?.api_calls_used).toFixed(0)} / ${safeNumber(shadowVsPaperPerformanceAttribution?.provider_calls_used).toFixed(0)} / ${safeNumber(shadowVsPaperPerformanceAttribution?.llm_calls_used).toFixed(0)}`],
+            ["Behavior safe", shadowVsPaperPerformanceAttribution?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Cohorts: {(shadowVsPaperPerformanceAttribution?.build_cohort_comparison || []).map((row) => `${String(row?.cohort || "cohort").replaceAll("_", " ")} PF ${safeNumber(row?.cohort_profit_factor).toFixed(2)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Attribution: {(shadowVsPaperPerformanceAttribution?.source_attribution || []).slice(0, 4).map((row) => `${String(row?.source || "source").replaceAll("_", " ")} dPF ${safeNumber(row?.estimated_profit_factor_delta).toFixed(2)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(shadowVsPaperPerformanceAttribution?.shadow_recommendation || "Continue shadow-vs-paper attribution observation-only.").replaceAll("_", " ")}
           </div>
         </div>
       </details>
