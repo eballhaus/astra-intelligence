@@ -1603,6 +1603,7 @@ export default function LearningTab({ compact = false }) {
   const catalystPersistenceDecayCurves = unified?.catalyst_persistence_decay_curves_v2 || {};
   const profitLockProfitCaptureMaturation = unified?.profit_lock_profit_capture_maturation_v2 || {};
   const shadowCorrectionValidation = unified?.shadow_correction_validation_attribution_v1 || {};
+  const controlledPaperProfitProtection = unified?.controlled_paper_profit_protection_pilot_v1 || {};
   const adaptiveExecutionExitV3 = unified?.adaptive_execution_exit_intelligence_v3 || {};
   const exitLearningExpansion = unified?.exit_learning_expansion_suite_v1 || {};
   const marketContextLearning = unified?.market_context_learning_suite_v1 || {};
@@ -2164,6 +2165,53 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Shadow recommendation: {String(shadowCorrectionValidation?.shadow_recommendation || "Continue shadow correction validation before broader influence.").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Controlled Paper Profit Protection Pilot V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is evaluating evidence-backed profit-protection guidance for paper trades only. The pilot can inform profit-lock, exit-review, hold-review, and continuation-review scores within a 3% cap, but it cannot force exits, sell, place orders, change sizing, change allocations, or alter broker behavior.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Active", controlledPaperProfitProtection?.profit_protection_active ? "yes" : "no"],
+            ["Influence cap", `${safeNumber(controlledPaperProfitProtection?.profit_protection_influence_cap_pct).toFixed(1)}%`],
+            ["Closed evidence", safeNumber(controlledPaperProfitProtection?.closed_trade_evidence).toFixed(0)],
+            ["Profit capture score", safeNumber(controlledPaperProfitProtection?.profit_capture_score).toFixed(1)],
+            ["Giveback rate", `${safeNumber(controlledPaperProfitProtection?.giveback_rate).toFixed(2)}%`],
+            ["Profit lock readiness", safeNumber(controlledPaperProfitProtection?.profit_lock_readiness).toFixed(1)],
+            ["Giveback risk", safeNumber(controlledPaperProfitProtection?.giveback_risk_score).toFixed(1)],
+            ["Catalyst decay risk", safeNumber(controlledPaperProfitProtection?.catalyst_decay_risk).toFixed(1)],
+            ["Continuation failure", safeNumber(controlledPaperProfitProtection?.continuation_failure_probability).toFixed(1)],
+            ["Hold efficiency", safeNumber(controlledPaperProfitProtection?.hold_duration_efficiency).toFixed(1)],
+            ["Giveback reduction", safeNumber(controlledPaperProfitProtection?.estimated_giveback_reduction).toFixed(1)],
+            ["Capture improvement", safeNumber(controlledPaperProfitProtection?.estimated_profit_capture_improvement).toFixed(1)],
+            ["Expectancy improvement", safeNumber(controlledPaperProfitProtection?.estimated_expectancy_improvement).toFixed(1)],
+            ["Recommendations", safeNumber(controlledPaperProfitProtection?.recommendation_count).toFixed(0)],
+            ["Validated lock events", safeNumber(controlledPaperProfitProtection?.validated_profit_lock_events).toFixed(0)],
+            ["Confidence", safeNumber(controlledPaperProfitProtection?.confidence_score).toFixed(1)],
+            ["Readiness", safeNumber(controlledPaperProfitProtection?.readiness_score).toFixed(1)],
+            ["Human review", controlledPaperProfitProtection?.human_review_required ? "yes" : "no"],
+            ["Auto apply", controlledPaperProfitProtection?.auto_apply_allowed ? "yes" : "no"],
+            ["Forced exits", controlledPaperProfitProtection?.forced_exits_enabled ? "yes" : "no"],
+            ["API/provider/LLM", `${safeNumber(controlledPaperProfitProtection?.api_calls_used).toFixed(0)} / ${safeNumber(controlledPaperProfitProtection?.provider_calls_used).toFixed(0)} / ${safeNumber(controlledPaperProfitProtection?.llm_calls_used).toFixed(0)}`],
+            ["Behavior safe", controlledPaperProfitProtection?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Patterns: strongest {String(controlledPaperProfitProtection?.strongest_profit_protection_pattern || "warming up").replaceAll("_", " ")} | weakest {String(controlledPaperProfitProtection?.weakest_profit_protection_pattern || "warming up").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Blockers: {(controlledPaperProfitProtection?.activation_blockers || []).map((item) => String(item).replaceAll("_", " ")).join(" | ") || "none"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(controlledPaperProfitProtection?.shadow_recommendation || "Keep profit-protection pilot advisory and paper-only.").replaceAll("_", " ")}
           </div>
         </div>
       </details>

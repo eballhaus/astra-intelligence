@@ -317,6 +317,7 @@ class UnifiedLearningDiagnosticsV1:
         catalyst_persistence_decay_curves = self._catalyst_persistence_decay_curves_v2_summary(statuses.get("catalyst_persistence_decay_curves_v2") or {})
         profit_lock_profit_capture_maturation = self._profit_lock_profit_capture_maturation_v2_summary(statuses.get("profit_lock_profit_capture_maturation_v2") or {})
         shadow_correction_validation_attribution = self._shadow_correction_validation_attribution_v1_summary(statuses.get("shadow_correction_validation_attribution_v1") or {})
+        controlled_paper_profit_protection_pilot = self._controlled_paper_profit_protection_pilot_v1_summary(statuses.get("controlled_paper_profit_protection_pilot_v1") or {})
         adaptive_learning_prioritization_resource_allocation = self._adaptive_learning_prioritization_resource_allocation_summary(statuses.get("adaptive_learning_prioritization_resource_allocation_v1") or {})
         autonomous_intelligence_validation_governance = self._autonomous_intelligence_validation_governance_summary(statuses.get("autonomous_intelligence_validation_governance_v1") or {})
         paper_throughput_exit_validation_catalyst = self._paper_throughput_exit_validation_catalyst_summary(statuses.get("paper_throughput_exit_validation_catalyst_intelligence_v1") or {})
@@ -394,6 +395,7 @@ class UnifiedLearningDiagnosticsV1:
             "catalyst_persistence_decay_curves_v2": catalyst_persistence_decay_curves,
             "profit_lock_profit_capture_maturation_v2": profit_lock_profit_capture_maturation,
             "shadow_correction_validation_attribution_v1": shadow_correction_validation_attribution,
+            "controlled_paper_profit_protection_pilot_v1": controlled_paper_profit_protection_pilot,
             "multi_horizon_intelligence_adaptive_lifecycle_suite_v1": multi_horizon_intelligence_adaptive_lifecycle,
             "paper_throughput_exit_validation_catalyst_intelligence_v1": paper_throughput_exit_validation_catalyst,
             "multi_horizon_paper_capacity_exit_validation_v1": multi_horizon_capacity_exit_validation,
@@ -2839,6 +2841,67 @@ class UnifiedLearningDiagnosticsV1:
             "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
         }
 
+    def _controlled_paper_profit_protection_pilot_v1_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "paper_only_profit_protection_pilot_shadow_validated"),
+            "profit_protection_active": bool(data.get("profit_protection_active", False)),
+            "activation_blockers": list(data.get("activation_blockers") or [])[:8],
+            "minimum_closed_trade_evidence": _to_int(data.get("minimum_closed_trade_evidence"), 50),
+            "closed_trade_evidence": _to_int(data.get("closed_trade_evidence"), 0),
+            "profit_capture_score": _to_float(data.get("profit_capture_score"), 0.0),
+            "giveback_rate": _to_float(data.get("giveback_rate"), 0.0),
+            "shadow_validation_confidence": _to_float(data.get("shadow_validation_confidence"), 0.0),
+            "policy_readiness": _to_float(data.get("policy_readiness"), 0.0),
+            "profit_protection_influence_cap_pct": _to_float(data.get("profit_protection_influence_cap_pct"), 3.0),
+            "profit_lock_guidance_influence_pct": _to_float(data.get("profit_lock_guidance_influence_pct"), 0.0),
+            "exit_review_influence_pct": _to_float(data.get("exit_review_influence_pct"), 0.0),
+            "hold_review_influence_pct": _to_float(data.get("hold_review_influence_pct"), 0.0),
+            "continuation_review_influence_pct": _to_float(data.get("continuation_review_influence_pct"), 0.0),
+            "profit_lock_readiness": _to_float(data.get("profit_lock_readiness"), 0.0),
+            "giveback_risk_score": _to_float(data.get("giveback_risk_score"), 0.0),
+            "catalyst_decay_risk": _to_float(data.get("catalyst_decay_risk"), 0.0),
+            "continuation_failure_probability": _to_float(data.get("continuation_failure_probability"), 0.0),
+            "peak_decay_risk": _to_float(data.get("peak_decay_risk"), 0.0),
+            "hold_duration_efficiency": _to_float(data.get("hold_duration_efficiency"), 0.0),
+            "estimated_giveback_reduction": _to_float(data.get("estimated_giveback_reduction"), 0.0),
+            "estimated_profit_capture_improvement": _to_float(data.get("estimated_profit_capture_improvement"), 0.0),
+            "estimated_expectancy_improvement": _to_float(data.get("estimated_expectancy_improvement"), 0.0),
+            "recommendation_count": _to_int(data.get("recommendation_count"), 0),
+            "validated_profit_lock_events": _to_int(data.get("validated_profit_lock_events"), 0),
+            "validated_hold_improvements": _to_int(data.get("validated_hold_improvements"), 0),
+            "validated_continuation_failures": _to_int(data.get("validated_continuation_failures"), 0),
+            "strongest_profit_protection_pattern": _text(data.get("strongest_profit_protection_pattern"), "insufficient_data"),
+            "weakest_profit_protection_pattern": _text(data.get("weakest_profit_protection_pattern"), "insufficient_data"),
+            "most_improved_symbol": _text(data.get("most_improved_symbol"), "insufficient_data"),
+            "most_improved_archetype": _text(data.get("most_improved_archetype"), "insufficient_data"),
+            "confidence_score": _to_float(data.get("confidence_score"), 0.0),
+            "readiness_score": _to_float(data.get("readiness_score"), 0.0),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "dashboard_scan_rows": _to_int(data.get("dashboard_scan_rows"), 0),
+            "raw_archive_scanned": bool(data.get("raw_archive_scanned", False)),
+            "raw_history_scanned": bool(data.get("raw_history_scanned", False)),
+            "human_review_required": bool(data.get("human_review_required", True)),
+            "auto_apply_allowed": bool(data.get("auto_apply_allowed", False)),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "partial_sells_enabled": bool(data.get("partial_sells_enabled", False)),
+            "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
+            "live_trading_changed": bool(data.get("live_trading_changed", False)),
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+            "portfolio_allocation_changed": bool(data.get("portfolio_allocation_changed", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "shadow_recommendation": _text(data.get("shadow_recommendation"), "Keep profit-protection pilot advisory and paper-only."),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+        }
+
     def _controlled_paper_learned_exit_validation_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -3911,7 +3974,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
             "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "profit_capture_peak_decay_exit_validation_suite_v1", "adaptive_execution_exit_intelligence_v3", "trade_archetype_regime",
-            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "long_term_memory_symbol_retrieval_suite_v1", "virtual_paper_convergence_symbol_attribution_v1", "accelerated_learning_symbol_intelligence_suite_v1", "realistic_shadow_evidence_learning_lab_v1", "historical_intelligence_market_memory_suite_v1", "catalyst_persistence_decay_curves_v2", "profit_lock_profit_capture_maturation_v2", "shadow_correction_validation_attribution_v1", "adaptive_learning_prioritization_resource_allocation_v1", "autonomous_intelligence_validation_governance_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
+            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "long_term_memory_symbol_retrieval_suite_v1", "virtual_paper_convergence_symbol_attribution_v1", "accelerated_learning_symbol_intelligence_suite_v1", "realistic_shadow_evidence_learning_lab_v1", "historical_intelligence_market_memory_suite_v1", "catalyst_persistence_decay_curves_v2", "profit_lock_profit_capture_maturation_v2", "shadow_correction_validation_attribution_v1", "controlled_paper_profit_protection_pilot_v1", "adaptive_learning_prioritization_resource_allocation_v1", "autonomous_intelligence_validation_governance_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
             "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
             "paper_throughput_exit_validation_catalyst_intelligence_v1", "multi_horizon_paper_capacity_exit_validation_v1", "controlled_paper_learned_exit_validation_v1",
@@ -3971,6 +4034,7 @@ class UnifiedLearningDiagnosticsV1:
             "catalyst_persistence_decay_curves_v2": "/api/catalyst_persistence_decay_curves_v2",
             "profit_lock_profit_capture_maturation_v2": "/api/profit_lock_profit_capture_maturation_v2",
             "shadow_correction_validation_attribution_v1": "/api/shadow_correction_validation_attribution_v1",
+            "controlled_paper_profit_protection_pilot_v1": "/api/controlled_paper_profit_protection_pilot_v1",
             "adaptive_learning_prioritization_resource_allocation_v1": "/api/adaptive_learning_prioritization_resource_allocation_v1",
             "autonomous_intelligence_validation_governance_v1": "/api/autonomous_intelligence_validation_governance_v1",
             "trade_archetype_regime": "/api/trade_archetype_regime_status_v1",
