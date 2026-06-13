@@ -181,6 +181,7 @@ export default function LearningTab({ compact = false }) {
   const [showLearningIssueAuditDetails, setShowLearningIssueAuditDetails] = useState(false);
   const [showRemoteRuntimeDetails, setShowRemoteRuntimeDetails] = useState(false);
   const [showExecutionParticipationDetails, setShowExecutionParticipationDetails] = useState(false);
+  const [copyStatus, setCopyStatus] = useState("");
   const [endpointStatus, setEndpointStatus] = useState({});
   const [timeline, setTimeline] = useState([]);
   const [data, setData] = useState({
@@ -1728,6 +1729,72 @@ export default function LearningTab({ compact = false }) {
       ["Refresh Integrity", "learning_refresh_integrity", ""],
     ]],
   ];
+  const reportCardMetrics = [
+    ["Profit Factor", metricDisplay((executive?.core_performance || {}).profit_factor)],
+    ["Win Rate", metricDisplay((executive?.core_performance || {}).released_win_rate, true, 1, "%")],
+    ["Average Return", metricDisplay((executive?.core_performance || {}).average_return, true, 2, "%")],
+    ["Buy Purity", metricDisplay((executive?.core_performance || {}).buy_list_purity)],
+    ["Entry Quality", metricDisplay((executive?.execution_quality || {}).entry_quality)],
+    ["Exit Quality", metricDisplay((executive?.execution_quality || {}).exit_quality)],
+    ["Profit Capture", metricDisplay(profitCapturePeakDecayExitValidation?.shadow_capture_ratio ?? profitCapturePeakDecayExitValidation?.capture_ratio, true, 1)],
+    ["Avg Giveback", metricDisplay(profitCapturePeakDecayExitValidation?.shadow_giveback_pct ?? profitCapturePeakDecayExitValidation?.giveback_pct, true, 1, "%")],
+    ["Ranking Quality", metricDisplay(candidateRankingAttributionPromotion?.ranking_quality_score, true, 1)],
+    ["Evidence Count", safeNumber(evidenceStatus?.evidence_count ?? performanceSummary?.evidence_count ?? candidateRankingAttributionPromotion?.evidence_count).toFixed(0)],
+    ["System Health", statusLabel((executive?.system_health || {}).runtime_integrity?.label || (unified?.ok ? "healthy" : "needs_attention"), "healthy")],
+    ["Failed Sources", safeNumber(unified?.failed_sources_count).toFixed(0)],
+  ];
+  const learningSummaryText = snapshotInsufficientEvidence
+    ? "Astra is waiting for enough clean evidence to produce a confident learning summary. The Learning Center is showing cached diagnostics and last-known-good safeguards where available."
+    : `Astra is finding opportunities with buy purity around ${buyPurityScore.toFixed(1)} and current entry quality near ${entryQualityScore.toFixed(1)}. Profit capture and exit quality remain the areas to watch, especially giveback reduction and natural exit timing validation.`;
+  const copyText = async (label, text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyStatus(`${label} copied`);
+      window.setTimeout(() => setCopyStatus(""), 2400);
+    } catch (_err) {
+      setCopyStatus("Copy unavailable in this browser");
+      window.setTimeout(() => setCopyStatus(""), 2400);
+    }
+  };
+  const executiveSnapshotText = () => [
+    "ASTRA EXECUTIVE SNAPSHOT",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    `Evidence: ${String(executive?.evidence_label || evidenceStatus?.label || "warming_up").replaceAll("_", " ")}`,
+    `Confidence: ${String(executive?.confidence_label || "low").replaceAll("_", " ")}`,
+    "",
+    ...reportCardMetrics.map(([label, value]) => `${label}: ${value}`),
+    "",
+    "Plain-English Summary:",
+    learningSummaryText,
+    "",
+    "What Needs Attention:",
+    ...whatNeedsAttention.map((line) => `- ${line}`),
+  ].join("\n");
+  const fullDiagnosticSnapshotText = () => [
+    "ASTRA FULL DIAGNOSTIC SNAPSHOT",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    `Failed sources: ${safeNumber(unified?.failed_sources_count).toFixed(0)}`,
+    `Initial Learning Center endpoint count: ${safeNumber((unified?.frontend_endpoint_policy || {}).initial_learning_tab_endpoint_count, 1).toFixed(0)}`,
+    "",
+    "Report Card:",
+    ...reportCardMetrics.map(([label, value]) => `${label}: ${value}`),
+    "",
+    "Suite Details:",
+    JSON.stringify({
+      executive_snapshot: executive,
+      performance_summary: performanceSummary,
+      intelligence_quality_learning_efficiency_suite_v1: intelligenceQualityLearningEfficiency,
+      candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
+      profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
+      realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
+      advanced_panel_statuses: advancedStatuses,
+    }, null, 2),
+  ].join("\n");
+  const advancedDiagnosticSnapshotText = () => [
+    "ASTRA ADVANCED DIAGNOSTICS",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(advancedStatuses || {}, null, 2),
+  ].join("\n");
   const ChartShell = ({ title, subtitle, children, empty }) => (
     <div style={{ background: "rgba(12,24,42,0.35)", border: "1px solid #2f4a72", borderRadius: 12, padding: 10, minHeight: 240 }}>
       <div style={{ fontSize: 13, color: "#dbeafe", fontWeight: 700 }}>{title}</div>
@@ -1804,6 +1871,69 @@ export default function LearningTab({ compact = false }) {
 
   return (
     <div style={{ display: "grid", gap: "12px" }}>
+      <section
+        style={{
+          borderRadius: 28,
+          padding: "22px",
+          background: "#ffffff",
+          border: "1px solid #d8e3f2",
+          boxShadow: "0 18px 45px rgba(25, 47, 78, 0.10)",
+          color: "#13243a",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ color: "#246bfe", fontSize: 12, fontWeight: 900, letterSpacing: "0.12em", textTransform: "uppercase" }}>Learning Center V2</div>
+            <h2 style={{ margin: "4px 0 6px", fontSize: "clamp(1.55rem, 3vw, 2.25rem)", color: "#13243a", letterSpacing: "-0.04em" }}>Astra Report Card</h2>
+            <p style={{ margin: 0, maxWidth: 820, color: "#667994", lineHeight: 1.55 }}>{learningSummaryText}</p>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <button type="button" onClick={() => copyText("Executive snapshot", executiveSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>
+              Copy Executive Snapshot
+            </button>
+            <button type="button" onClick={() => copyText("Full diagnostics", fullDiagnosticSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>
+              Copy Full Diagnostic Snapshot
+            </button>
+            <button type="button" onClick={() => copyText("Advanced diagnostics", advancedDiagnosticSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>
+              Copy Advanced Diagnostics
+            </button>
+          </div>
+        </div>
+        {copyStatus ? <div style={{ marginTop: 10, color: "#1c9b63", fontWeight: 800, fontSize: 12 }}>{copyStatus}</div> : null}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginTop: 16 }}>
+          {reportCardMetrics.map(([label, value]) => (
+            <div key={label} style={{ border: "1px solid #dce6f3", borderRadius: 16, background: "#f7fbff", padding: "11px 12px" }}>
+              <div style={{ color: "#667994", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 900 }}>{label}</div>
+              <div style={{ color: "#13243a", fontSize: 18, fontWeight: 900, marginTop: 3 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+        <div style={{ background: "#ffffff", border: "1px solid #d8e3f2", borderRadius: 22, boxShadow: "0 18px 45px rgba(25, 47, 78, 0.10)", padding: 16, color: "#13243a" }}>
+          <h3 style={{ margin: 0, color: "#13243a" }}>What Needs Attention</h3>
+          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+            {whatNeedsAttention.map((item) => (
+              <div key={item} style={{ border: "1px solid #e0e8f4", borderRadius: 14, background: "#f7fbff", padding: "9px 10px", color: "#314965", fontSize: 13 }}>
+                {item}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={{ background: "#ffffff", border: "1px solid #d8e3f2", borderRadius: 22, boxShadow: "0 18px 45px rgba(25, 47, 78, 0.10)", padding: 16, color: "#13243a" }}>
+          <h3 style={{ margin: 0, color: "#13243a" }}>Advanced Diagnostics</h3>
+          <p style={{ margin: "8px 0 0", color: "#667994", fontSize: 13 }}>
+            Full suite panels remain available below and collapsed by default. They are grouped by the existing diagnostic sections and continue to use the cached unified payload.
+          </p>
+          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {["Performance & Selection", "Exit & Profit Capture", "Opportunity Cost & Ranking", "Catalyst & Market Context", "Shadow Learning", "Portfolio Risk", "System Health", "Governance", "Infrastructure / Runtime", "Experimental / Paper-only Validation"].map((label) => (
+              <span key={label} style={{ borderRadius: 999, border: "1px solid #d5e1ef", background: "#f7fbff", padding: "6px 9px", color: "#31506f", fontSize: 11, fontWeight: 800 }}>{label}</span>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <div style={{ ...panelStyle, padding: "16px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
           <div>

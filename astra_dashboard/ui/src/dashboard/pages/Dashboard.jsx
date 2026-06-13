@@ -13,21 +13,23 @@ const API_BASE = resolveApiBase();
 
 const shellStyle = {
   display: "grid",
-  gap: "12px",
+  gap: "16px",
 };
 
 const panelStyle = {
-  background: "rgba(13, 30, 53, 0.64)",
-  border: "1px solid rgba(117, 153, 204, 0.42)",
-  borderRadius: "12px",
-  padding: "10px 12px",
+  background: "#ffffff",
+  border: "1px solid #d8e3f2",
+  borderRadius: "22px",
+  padding: "16px",
+  boxShadow: "0 18px 45px rgba(25, 47, 78, 0.10)",
+  color: "#13243a",
 };
 
 const panelTitleStyle = {
   margin: 0,
-  fontSize: "0.94rem",
-  color: "#dbe8ff",
-  fontWeight: 700,
+  fontSize: "1rem",
+  color: "#13243a",
+  fontWeight: 900,
 };
 
 const stripGridStyle = {
@@ -37,10 +39,10 @@ const stripGridStyle = {
 };
 
 const statusPillStyle = {
-  borderRadius: "9px",
+  borderRadius: "14px",
   border: "1px solid #d7e1ef",
-  background: "#ffffff",
-  padding: "0.44rem 0.55rem",
+  background: "#f7fbff",
+  padding: "0.62rem 0.72rem",
   display: "grid",
   gap: "0.2rem",
 };
@@ -52,9 +54,15 @@ const positionsGridStyle = {
 };
 
 const emptyStyle = {
-  color: "#9db2d3",
+  color: "#667994",
   fontSize: "0.83rem",
   padding: "8px 0",
+};
+
+const insightGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+  gap: "14px",
 };
 
 function safeNumber(v, fallback = 0) {
@@ -68,6 +76,23 @@ function formatTimestamp(v) {
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return s;
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function labelize(value, fallback = "warming up") {
+  const raw = String(value || fallback).trim();
+  return (raw || fallback).replaceAll("_", " ");
+}
+
+function formatMoney(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "not available";
+  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+}
+
+function formatSignedPct(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "0.00%";
+  return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
 }
 
 function normalizeTopBuys(raw) {
@@ -188,7 +213,7 @@ function normalizeMarketSummary(systemStatus = {}) {
   return hasReal ? rows : [];
 }
 
-export default function Dashboard({ remoteSection = "dashboard", remoteMode = false }) {
+export default function Dashboard({ remoteSection = "dashboard", remoteMode = false, onNavigate }) {
   const [resolvedApiBase, setResolvedApiBase] = useState(getInitialApiBase());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -325,6 +350,47 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
   const topSection = remoteMode
     ? (remoteSection === "positions" ? "positions" : "buys")
     : "dashboard";
+  const highConfidenceCount = stocks.filter((row) => safeNumber(row?.confidence) >= 70).length;
+  const bestOpportunity = stocks[0] || {};
+  const strongestTheme = labelize(
+    bestOpportunity?.theme
+      || bestOpportunity?.catalyst
+      || bestOpportunity?.sector
+      || systemStatus?.leadership_theme
+      || "technology and quality momentum",
+  );
+  const marketTone = runtimeIntegrity && highConfidenceCount >= 2
+    ? "Constructive"
+    : runtimeIntegrity
+    ? "Neutral"
+    : "Cautious";
+  const volatilityStatus = safeNumber(systemStatus?.vix, 0) > 25
+    ? "elevated"
+    : labelize(systemStatus?.volatility_status || "controlled");
+  const breadthStatus = labelize(systemStatus?.breadth_status || (validQuotes > 0 ? "active coverage" : "warming up"));
+  const riskMode = marketTone === "Cautious" ? "risk-off / selective" : "risk-on / selective";
+  const astraBrief = `Markets look ${marketTone.toLowerCase()} from Astra's cached dashboard view. ${strongestTheme} is the current leadership context, volatility is ${volatilityStatus}, and Astra sees ${highConfidenceCount} high-confidence opportunity${highConfidenceCount === 1 ? "" : "ies"} while portfolio risk remains ${brokerActiveCount > 8 ? "elevated" : "moderate"}.`;
+  const portfolioValue = formatMoney(positionsMeta?.portfolio_value ?? positionsMeta?.total_value ?? systemStatus?.portfolio_value);
+  const cashValue = formatMoney(positionsMeta?.cash ?? positionsMeta?.buying_power ?? systemStatus?.cash);
+  const sortedByPnl = [...positions].sort((a, b) => safeNumber(b?.pnl_percent) - safeNumber(a?.pnl_percent));
+  const biggestWinner = sortedByPnl[0];
+  const biggestLoser = sortedByPnl[sortedByPnl.length - 1];
+  const avgPositionPnl = positions.length
+    ? positions.reduce((sum, row) => sum + safeNumber(row?.pnl_percent), 0) / positions.length
+    : 0;
+  const performanceHealth = runtimeIntegrity && highConfidenceCount > 0 ? "healthy" : runtimeIntegrity ? "warming up" : "needs attention";
+  const actionItems = [
+    `${highConfidenceCount} high-confidence cached opportunit${highConfidenceCount === 1 ? "y" : "ies"} visible.`,
+    `Primary market risk: ${runtimeIntegrity ? "watch volatility, breadth, and failed follow-through" : "runtime integrity is degraded"}.`,
+    brokerActiveCount > 0 ? `Portfolio: ${brokerActiveCount} broker-confirmed active position${brokerActiveCount === 1 ? "" : "s"}.` : "Portfolio: no broker-confirmed active positions.",
+    `Next review focus: ${highConfidenceCount > 0 ? "validate why Astra likes the top opportunities" : "wait for cleaner opportunity evidence"}.`,
+  ];
+  const watchingItems = [
+    strongestTheme,
+    `Sector/breadth context: ${breadthStatus}`,
+    `Volatility: ${volatilityStatus}`,
+    `Symbols: ${stocks.slice(0, 5).map((row) => row.symbol).filter(Boolean).join(", ") || "warming up"}`,
+  ];
 
   const refreshPositions = async () => {
     const result = await fetchJsonWithFallback("/api/positions", {
@@ -407,14 +473,128 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     <div style={shellStyle}>
       <section style={panelStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", gap: "8px", flexWrap: "wrap" }}>
-          <h2 style={{ ...panelTitleStyle, fontSize: "1rem" }}>Astra Dashboard Snapshot</h2>
-          <span style={{ color: "#9cb3d6", fontSize: "0.74rem" }}>As of {asOf}</span>
+          <h2 style={{ ...panelTitleStyle, fontSize: "1rem" }}>Market Ticker Strip</h2>
+          <span style={{ color: "#667994", fontSize: "0.78rem" }}>Last updated {asOf}</span>
         </div>
         <MarketSummary markets={marketSummary} />
       </section>
 
+      {topSection === "dashboard" && (
+        <>
+          <section
+            style={{
+              borderRadius: 28,
+              padding: "22px",
+              background:
+                "radial-gradient(420px 220px at 88% 10%, rgba(71, 139, 255, 0.30), transparent 70%), linear-gradient(135deg, #071a33 0%, #0d2c54 62%, #123e78 100%)",
+              color: "#ffffff",
+              boxShadow: "0 24px 60px rgba(6, 24, 48, 0.20)",
+              display: "grid",
+              gap: 10,
+            }}
+          >
+            <div style={{ color: "#84b7ff", fontSize: 12, fontWeight: 900, letterSpacing: "0.12em", textTransform: "uppercase" }}>Astra Brief</div>
+            <h2 style={{ margin: 0, fontSize: "clamp(1.45rem, 3vw, 2.35rem)", letterSpacing: "-0.04em" }}>What is happening now</h2>
+            <p style={{ margin: 0, color: "#d6e5fb", maxWidth: 900, lineHeight: 1.55 }}>{astraBrief}</p>
+          </section>
+
+          <section style={insightGridStyle}>
+            <div style={panelStyle}>
+              <h2 style={panelTitleStyle}>Market Environment</h2>
+              <div style={stripGridStyle}>
+                {[
+                  ["Tone", marketTone],
+                  ["Confidence", runtimeIntegrity ? "moderate" : "low"],
+                  ["Risk mode", riskMode],
+                  ["Volatility", volatilityStatus],
+                  ["Breadth", breadthStatus],
+                  ["Leadership", strongestTheme],
+                ].map(([label, value]) => (
+                  <div key={label} style={statusPillStyle}>
+                    <span style={{ color: "#667994", fontSize: "0.72rem" }}>{label}</span>
+                    <strong style={{ color: "#14263e", fontSize: "0.86rem" }}>{value}</strong>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={panelStyle}>
+              <h2 style={panelTitleStyle}>Astra Action Center</h2>
+              <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                {actionItems.map((item) => (
+                  <div key={item} style={{ border: "1px solid #dce6f3", borderRadius: 14, background: "#f7fbff", padding: "10px 11px", color: "#314965", fontSize: "0.88rem" }}>
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section style={insightGridStyle}>
+            <div style={panelStyle}>
+              <h2 style={panelTitleStyle}>Portfolio Overview</h2>
+              <div style={stripGridStyle}>
+                {[
+                  ["Total value", portfolioValue],
+                  ["Avg position P/L", formatSignedPct(avgPositionPnl)],
+                  ["Active positions", brokerTruthKnown ? `${brokerActiveCount} broker-confirmed` : `${positions.length} workflow`],
+                  ["Cash", cashValue],
+                  ["Biggest winner", biggestWinner?.symbol ? `${biggestWinner.symbol} ${formatSignedPct(biggestWinner.pnl_percent)}` : "not available"],
+                  ["Biggest loser", biggestLoser?.symbol ? `${biggestLoser.symbol} ${formatSignedPct(biggestLoser.pnl_percent)}` : "not available"],
+                ].map(([label, value]) => (
+                  <div key={label} style={statusPillStyle}>
+                    <span style={{ color: "#667994", fontSize: "0.72rem" }}>{label}</span>
+                    <strong style={{ color: "#14263e", fontSize: "0.86rem" }}>{value}</strong>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={panelStyle}>
+              <h2 style={panelTitleStyle}>Astra Performance</h2>
+              <div style={stripGridStyle}>
+                {[
+                  ["Profit Factor", labelize(systemStatus?.profit_factor || "warming up")],
+                  ["Buy Purity", labelize(systemStatus?.buy_purity || "warming up")],
+                  ["Ranking Quality", labelize(systemStatus?.ranking_quality || readiness)],
+                  ["Profit Capture", labelize(systemStatus?.profit_capture || "needs attention")],
+                  ["Learning Confidence", labelize(systemStatus?.learning_confidence || "warming up")],
+                  ["Status", performanceHealth],
+                ].map(([label, value]) => (
+                  <div key={label} style={statusPillStyle}>
+                    <span style={{ color: "#667994", fontSize: "0.72rem" }}>{label}</span>
+                    <strong style={{ color: label === "Status" && value === "needs attention" ? "#c43d4b" : "#14263e", fontSize: "0.86rem" }}>{value}</strong>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section style={panelStyle}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <h2 style={panelTitleStyle}>What Astra Is Watching</h2>
+              <button
+                type="button"
+                onClick={() => (typeof onNavigate === "function" ? onNavigate("watchlists") : null)}
+                style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}
+              >
+                Open Watchlists
+              </button>
+            </div>
+            <div style={{ ...stripGridStyle, marginTop: 12 }}>
+              {watchingItems.map((item, idx) => (
+                <div key={`${item}-${idx}`} style={statusPillStyle}>
+                  <span style={{ color: "#667994", fontSize: "0.72rem" }}>{idx === 0 ? "Theme" : idx === 1 ? "Market" : idx === 2 ? "Risk" : "Symbols"}</span>
+                  <strong style={{ color: "#14263e", fontSize: "0.86rem" }}>{item}</strong>
+                </div>
+              ))}
+            </div>
+          </section>
+        </>
+      )}
+
       <section style={panelStyle}>
-        <div style={{ ...panelTitleStyle, marginBottom: "8px" }}>Astra Runtime Status</div>
+        <div style={{ ...panelTitleStyle, marginBottom: "8px" }}>Runtime Status</div>
         <div style={stripGridStyle}>
           <div style={statusPillStyle}>
             <span style={{ color: "#5f738f", fontSize: "0.72rem" }}>Backend</span>
@@ -441,9 +621,26 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
       {(topSection === "dashboard" || topSection === "buys") && (
         <>
           <section style={panelStyle}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+              <div>
+                <h2 style={panelTitleStyle}>Astra Opportunities</h2>
+                <div style={{ color: "#667994", fontSize: "0.84rem", marginTop: 3 }}>
+                  Top cached opportunities with technical details kept inside each card. Ranking logic is unchanged.
+                </div>
+              </div>
+              {topSection === "dashboard" ? (
+                <button
+                  type="button"
+                  onClick={() => (typeof onNavigate === "function" ? onNavigate("opportunities") : null)}
+                  style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}
+                >
+                  View All Opportunities
+                </button>
+              ) : null}
+            </div>
             <TickerGrid
               stocks={stocks}
-              stockTitle="Top 6 Stock Opportunities"
+              stockTitle={topSection === "dashboard" ? "Top 6" : "Ranked Opportunity Detail"}
               showCryptoColumn={false}
               emptyText={loading ? "Loading stock opportunities…" : "No stock signals found"}
               cardContext="top-buy"

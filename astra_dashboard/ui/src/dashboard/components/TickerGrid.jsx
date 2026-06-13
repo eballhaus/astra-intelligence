@@ -8,19 +8,19 @@ const wrapperBaseStyle = {
 };
 
 const columnStyle = {
-  background: "rgba(255, 255, 255, 0.08)",
-  border: "1px solid rgba(215, 227, 244, 0.35)",
-  borderRadius: "12px",
-  padding: "10px",
+  background: "#f7fbff",
+  border: "1px solid #d8e3f2",
+  borderRadius: "18px",
+  padding: "12px",
   display: "grid",
   gap: "9px",
 };
 
 const headingStyle = {
   margin: 0,
-  color: "#e7f0ff",
+  color: "#13243a",
   fontSize: "0.9rem",
-  fontWeight: 700,
+  fontWeight: 900,
 };
 
 const listStyle = {
@@ -31,7 +31,7 @@ const listStyle = {
 };
 
 const emptyStyle = {
-  color: "#b9c8de",
+  color: "#667994",
   fontSize: "0.86rem",
   padding: "8px 0",
 };

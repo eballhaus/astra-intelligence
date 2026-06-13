@@ -1,9 +1,10 @@
-import React, { Component, useState } from "react";
+import React, { Component, useMemo, useState } from "react";
 import Dashboard from "./dashboard/pages/Dashboard";
 import LearningTab from "./dashboard/pages/LearningTab";
 import { API_BASE_STORAGE_KEY, getInitialApiBase } from "./apiBase";
+import "./App.css";
 
-console.log("🔥 APP FILE ACTIVE:", import.meta.url);
+console.log("ASTRA APP FILE ACTIVE:", import.meta.url);
 
 class AppErrorBoundary extends Component {
   constructor(props) {
@@ -31,107 +32,195 @@ class AppErrorBoundary extends Component {
   render() {
     if (!this.state.error) return this.props.children;
     return (
-      <div style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        padding: 20,
-        color: "#e6f0ff",
-        background: "linear-gradient(135deg, #071426 0%, #102742 100%)",
-      }}>
-        <div style={{
-          maxWidth: 560,
-          border: "1px solid #31577f",
-          borderRadius: 14,
-          background: "rgba(9,24,44,0.92)",
-          padding: 18,
-          boxShadow: "0 18px 44px rgba(0,0,0,0.28)",
-        }}>
-          <h1 style={{ margin: "0 0 8px", fontSize: 22 }}>Astra Dashboard Recovered</h1>
-          <p style={{ margin: "0 0 12px", color: "#b7c9e6", lineHeight: 1.45 }}>
-            The frontend hit a recoverable render issue. This can happen on mobile after a cached dashboard bundle or API base becomes stale.
+      <div className="astra-recovery">
+        <div className="astra-recovery-card">
+          <h1>Astra Dashboard Recovered</h1>
+          <p>
+            The frontend hit a recoverable render issue. This can happen after a cached dashboard bundle or API base becomes stale.
           </p>
-          <div style={{ fontSize: 12, color: "#91aad0", marginBottom: 12 }}>
-            Current API base: {getInitialApiBase()}
-          </div>
-          <button
-            type="button"
-            onClick={this.handleReconnect}
-            style={{
-              border: "1px solid #5ea0ff",
-              background: "linear-gradient(180deg, #2f7cf5 0%, #1f62cb 100%)",
-              color: "#fff",
-              borderRadius: 8,
-              padding: "8px 12px",
-              fontWeight: 700,
-            }}
-          >
-            Reconnect Backend
-          </button>
+          <div className="astra-recovery-base">Current API base: {getInitialApiBase()}</div>
+          <button type="button" onClick={this.handleReconnect}>Reconnect Backend</button>
         </div>
       </div>
     );
   }
 }
 
+const primaryTabs = [
+  { id: "dashboard", label: "Dashboard", icon: "D" },
+  { id: "opportunities", label: "Opportunities", icon: "O" },
+  { id: "portfolio", label: "Portfolio", icon: "P" },
+  { id: "ask", label: "Ask Astra", icon: "A" },
+  { id: "watchlists", label: "Watchlists", icon: "W" },
+  { id: "learning", label: "Learning Center", icon: "L" },
+  { id: "more", label: "More", icon: "M" },
+];
+
+const moreLinks = [
+  { title: "Settings", copy: "Configuration and environment controls remain available through existing backend/admin paths." },
+  { title: "Reports", copy: "Performance and diagnostic exports are consolidated in Learning Center copy tools." },
+  { title: "Alerts", copy: "Risk, market, and portfolio alerts remain read-only in dashboard diagnostics." },
+  { title: "Raw Diagnostics", copy: "Advanced panels stay collapsed inside Learning Center to avoid endpoint storms." },
+  { title: "Admin / Dev Utilities", copy: "Operational utilities remain behind existing routes and are not invoked on page load." },
+];
+
+function ShellCard({ title, eyebrow, children, tone = "light" }) {
+  return (
+    <section className={`astra-card astra-card-${tone}`}>
+      {eyebrow ? <div className="astra-card-eyebrow">{eyebrow}</div> : null}
+      <h2>{title}</h2>
+      <div>{children}</div>
+    </section>
+  );
+}
+
+function AskAstraPage() {
+  const [question, setQuestion] = useState("");
+  return (
+    <div className="astra-page-grid">
+      <section className="astra-ai-panel">
+        <div>
+          <span className="astra-ai-kicker">Premium AI Panel</span>
+          <h1>Ask Astra</h1>
+          <p>
+            Ask Astra remains user-triggered only. This panel does not call an LLM, provider, broker, or dashboard endpoint until an existing submit path is connected.
+          </p>
+        </div>
+        <div className="astra-ai-input-row">
+          <input
+            value={question}
+            onChange={(event) => setQuestion(event.target.value)}
+            placeholder="Ask about opportunities, risk, learning progress, or portfolio context..."
+          />
+          <button type="button" disabled title="Existing Ask Astra submit path not wired in this shell">
+            Submit
+          </button>
+        </div>
+      </section>
+      <ShellCard title="Safe Interaction Model" eyebrow="No automatic AI calls">
+        <p>
+          Astra will only contact an AI/provider service when an explicit existing Ask Astra submit flow is available and the user submits a question.
+        </p>
+      </ShellCard>
+    </div>
+  );
+}
+
+function WatchlistsPage() {
+  const watchlists = [
+    ["Astra Watchlist", "Symbols Astra is monitoring from cached opportunities."],
+    ["My Watchlist", "Frontend-safe placeholder until user watchlist storage is available."],
+    ["High Conviction", "Candidates with strong confidence or quality when cached data is available."],
+    ["Earnings Watchlist", "Graceful empty state; no provider calls are made here."],
+    ["Theme Watchlist", "AI, quantum, semis, sector rotation, and other cached themes."],
+  ];
+  return (
+    <div className="astra-page-grid astra-watchlist-grid">
+      {watchlists.map(([title, copy]) => (
+        <ShellCard key={title} title={title} eyebrow="Watchlist">
+          <p>{copy}</p>
+          <div className="astra-empty-state">Warming up from cached dashboard context.</div>
+        </ShellCard>
+      ))}
+    </div>
+  );
+}
+
+function MorePage({ setActiveTab }) {
+  return (
+    <div className="astra-page-grid">
+      <ShellCard title="More" eyebrow="Lower-use workspace">
+        <p>
+          Lower-use destinations are grouped here so the main sidebar stays focused on daily decision flow.
+        </p>
+        <div className="astra-more-grid">
+          {moreLinks.map((item) => (
+            <div className="astra-more-tile" key={item.title}>
+              <strong>{item.title}</strong>
+              <span>{item.copy}</span>
+            </div>
+          ))}
+        </div>
+      </ShellCard>
+      <ShellCard title="Fast Links" eyebrow="Backwards-compatible">
+        <div className="astra-button-row">
+          <button type="button" onClick={() => setActiveTab("dashboard")}>Dashboard</button>
+          <button type="button" onClick={() => setActiveTab("learning")}>Learning Center</button>
+          <button type="button" onClick={() => setActiveTab("opportunities")}>Opportunities</button>
+        </div>
+      </ShellCard>
+    </div>
+  );
+}
+
+function PageHeading({ activeTab }) {
+  const copy = useMemo(() => ({
+    dashboard: ["Command Dashboard", "What is happening, why it matters, and what Astra is watching."],
+    opportunities: ["Astra Opportunities", "A focused deep dive into cached ranked opportunities. Ranking logic is unchanged."],
+    portfolio: ["Portfolio", "Broker-confirmed and internal position context, displayed without changing Alpaca behavior."],
+    ask: ["Ask Astra", "A premium AI workspace that stays idle until you explicitly submit a question."],
+    watchlists: ["Watchlists", "Safe watchlist shells using cached context and graceful empty states."],
+    learning: ["Learning Center", "Astra’s report card, trend diagnostics, and full advanced learning panels."],
+    more: ["More", "Settings, reports, raw diagnostics, alerts, and admin/dev utilities."],
+  }), []);
+  const [title, subtitle] = copy[activeTab] || copy.dashboard;
+  return (
+    <header className="astra-page-heading">
+      <div>
+        <div className="astra-overline">Astra Intelligence</div>
+        <h1>{title}</h1>
+        <p>{subtitle}</p>
+      </div>
+      <div className="astra-safe-pill">Paper-safe UI redesign · no behavior changes</div>
+    </header>
+  );
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
 
-  const isDashboard = activeTab === "dashboard";
-  const isLearning = activeTab === "learning";
-
-  const shellStyle = {
-    width: "100%",
-    minHeight: "100vh",
-    padding: "16px 18px 20px",
-    color: "#e6f0ff",
-    display: "grid",
-    alignContent: "start",
-    gap: "12px",
+  const renderTab = () => {
+    if (activeTab === "dashboard") return <Dashboard onNavigate={setActiveTab} />;
+    if (activeTab === "opportunities") return <Dashboard remoteMode remoteSection="buys" onNavigate={setActiveTab} />;
+    if (activeTab === "portfolio") return <Dashboard remoteMode remoteSection="positions" onNavigate={setActiveTab} />;
+    if (activeTab === "ask") return <AskAstraPage />;
+    if (activeTab === "watchlists") return <WatchlistsPage />;
+    if (activeTab === "learning") return <LearningTab />;
+    return <MorePage setActiveTab={setActiveTab} />;
   };
-
-  const tabRailStyle = {
-    display: "inline-flex",
-    gap: "8px",
-    padding: "6px",
-    borderRadius: "11px",
-    border: "1px solid #2d4a74",
-    background: "rgba(10, 24, 44, 0.78)",
-    width: "fit-content",
-  };
-
-  const tabButtonStyle = (active) => ({
-    padding: "8px 14px",
-    background: active
-      ? "linear-gradient(180deg, #2f7cf5 0%, #1f62cb 100%)"
-      : "rgba(17, 37, 64, 0.82)",
-    color: active ? "#ffffff" : "#cfe1ff",
-    border: "1px solid " + (active ? "#5ea0ff" : "#2b496f"),
-    borderRadius: "8px",
-    cursor: "pointer",
-    fontWeight: 700,
-    letterSpacing: "0.01em",
-  });
 
   return (
-    <div style={shellStyle}>
-      <div style={tabRailStyle}>
-        <button
-          onClick={() => setActiveTab("dashboard")}
-          style={tabButtonStyle(isDashboard)}
-        >
-          Dashboard
-        </button>
-        <button
-          onClick={() => setActiveTab("learning")}
-          style={tabButtonStyle(isLearning)}
-        >
-          Learning
-        </button>
-      </div>
-
-      {isDashboard && <Dashboard />}
-      {isLearning && <LearningTab />}
+    <div className="astra-desktop-shell">
+      <aside className="astra-sidebar">
+        <div className="astra-brand">
+          <div className="astra-brand-mark">A</div>
+          <div>
+            <strong>Astra</strong>
+            <span>Investment Intelligence</span>
+          </div>
+        </div>
+        <nav className="astra-nav" aria-label="Primary">
+          {primaryTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`astra-nav-item ${activeTab === tab.id ? "active" : ""}`}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              <span>{tab.icon}</span>
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+        <div className="astra-sidebar-footer">
+          <span>API base</span>
+          <strong>{getInitialApiBase().replace(/^https?:\/\//, "")}</strong>
+        </div>
+      </aside>
+      <main className="astra-main">
+        <PageHeading activeTab={activeTab} />
+        {renderTab()}
+      </main>
     </div>
   );
 }
