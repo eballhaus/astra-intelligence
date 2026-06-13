@@ -2410,6 +2410,57 @@ except Exception:
                 "behavior_safe_to_apply": False,
             }
 try:
+    from engine.learning_roi_engine_v1 import LearningRoiEngineV1
+    from engine.evidence_quality_scoring_v1 import EvidenceQualityScoringV1
+    from engine.confidence_decomposition_engine_v1 import ConfidenceDecompositionEngineV1
+    from engine.learning_drift_detection_v1 import LearningDriftDetectionV1
+    from engine.market_regime_similarity_engine_v1 import MarketRegimeSimilarityEngineV1
+    from engine.ranking_tournament_engine_v1 import RankingTournamentEngineV1
+    from engine.exit_tournament_engine_v1 import ExitTournamentEngineV1
+    from engine.conviction_calibration_engine_v1 import ConvictionCalibrationEngineV1
+    from engine.intelligence_quality_learning_efficiency_suite_v1 import IntelligenceQualityLearningEfficiencySuiteV1
+except Exception:
+    class _IntelligenceQualityUnavailable:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "status": "insufficient_evidence",
+                "mode": "shadow_analysis_intelligence_quality_unavailable",
+                "degraded_reason": "intelligence_quality_import_unavailable",
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "behavior_safe_to_apply": False,
+                "shadow_analysis_mode": True,
+                "advisory_only": True,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "ranking_behavior_changed": False,
+                "promotion_logic_changed": False,
+                "entry_behavior_changed": False,
+                "exit_behavior_changed": False,
+                "position_sizing_changed": False,
+                "portfolio_allocation_changed": False,
+                "thresholds_changed": False,
+                "paper_execution_changed": False,
+            }
+
+    LearningRoiEngineV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    EvidenceQualityScoringV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    ConfidenceDecompositionEngineV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    LearningDriftDetectionV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    MarketRegimeSimilarityEngineV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    RankingTournamentEngineV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    ExitTournamentEngineV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    ConvictionCalibrationEngineV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    IntelligenceQualityLearningEfficiencySuiteV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+try:
     from engine.trade_thesis_validation_v1 import TradeThesisValidationV1
 except Exception:
     class TradeThesisValidationV1:  # type: ignore[override]
@@ -3032,6 +3083,25 @@ CATALYST_LIFECYCLE_INTELLIGENCE = CatalystLifecycleIntelligenceV1(state_dir=STAT
 CROSS_SECTOR_CAPITAL_FLOW_MEMORY = CrossSectorCapitalFlowMemoryV1(state_dir=STATE)
 SHADOW_VS_PAPER_PERFORMANCE_ATTRIBUTION = ShadowVsPaperPerformanceAttributionV1(state_dir=STATE)
 CANDIDATE_RANKING_ATTRIBUTION_PROMOTION_INTELLIGENCE = CandidateRankingAttributionPromotionIntelligenceV1(state_dir=STATE)
+LEARNING_ROI_ENGINE = LearningRoiEngineV1(state_dir=STATE)
+EVIDENCE_QUALITY_SCORING = EvidenceQualityScoringV1(state_dir=STATE)
+CONFIDENCE_DECOMPOSITION_ENGINE = ConfidenceDecompositionEngineV1(state_dir=STATE)
+LEARNING_DRIFT_DETECTION = LearningDriftDetectionV1(state_dir=STATE)
+MARKET_REGIME_SIMILARITY_ENGINE = MarketRegimeSimilarityEngineV1(state_dir=STATE)
+RANKING_TOURNAMENT_ENGINE = RankingTournamentEngineV1(state_dir=STATE)
+EXIT_TOURNAMENT_ENGINE = ExitTournamentEngineV1(state_dir=STATE)
+CONVICTION_CALIBRATION_ENGINE = ConvictionCalibrationEngineV1(state_dir=STATE)
+INTELLIGENCE_QUALITY_LEARNING_EFFICIENCY_SUITE = IntelligenceQualityLearningEfficiencySuiteV1(
+    state_dir=STATE,
+    learning_roi_engine=LEARNING_ROI_ENGINE,
+    evidence_quality_scoring=EVIDENCE_QUALITY_SCORING,
+    confidence_decomposition_engine=CONFIDENCE_DECOMPOSITION_ENGINE,
+    learning_drift_detection=LEARNING_DRIFT_DETECTION,
+    market_regime_similarity_engine=MARKET_REGIME_SIMILARITY_ENGINE,
+    ranking_tournament_engine=RANKING_TOURNAMENT_ENGINE,
+    exit_tournament_engine=EXIT_TOURNAMENT_ENGINE,
+    conviction_calibration_engine=CONVICTION_CALIBRATION_ENGINE,
+)
 TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
 MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
 TRADE_FAMILY_INTELLIGENCE = TradeFamilyIntelligenceV1(state_dir=STATE)
@@ -33443,6 +33513,104 @@ def candidate_ranking_attribution_promotion_intelligence_v1(force: bool = False)
         }
 
 
+def _intelligence_quality_endpoint(module_obj, marker: str, force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        out = dict(module_obj.status(statuses=statuses, force=bool(force)) or {})
+        out[marker] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["behavior_safe_to_apply"] = False
+        out["shadow_analysis_mode"] = True
+        out["advisory_only"] = True
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["ranking_behavior_changed"] = False
+        out["promotion_logic_changed"] = False
+        out["entry_behavior_changed"] = False
+        out["exit_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["portfolio_allocation_changed"] = False
+        out["thresholds_changed"] = False
+        out["paper_execution_changed"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "status": "insufficient_evidence",
+            "mode": "shadow_analysis_intelligence_quality_endpoint",
+            marker: True,
+            "degraded_reason": f"{marker}_endpoint_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "behavior_safe_to_apply": False,
+            "shadow_analysis_mode": True,
+            "advisory_only": True,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "promotion_logic_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "portfolio_allocation_changed": False,
+            "thresholds_changed": False,
+            "paper_execution_changed": False,
+        }
+
+
+@router.get("/api/intelligence_quality_learning_efficiency_suite_v1")
+def intelligence_quality_learning_efficiency_suite_v1(force: bool = False):
+    return _intelligence_quality_endpoint(INTELLIGENCE_QUALITY_LEARNING_EFFICIENCY_SUITE, "intelligence_quality_learning_efficiency_suite_v1", force=force)
+
+
+@router.get("/api/learning_roi_engine_v1")
+def learning_roi_engine_v1(force: bool = False):
+    return _intelligence_quality_endpoint(LEARNING_ROI_ENGINE, "learning_roi_engine_v1", force=force)
+
+
+@router.get("/api/evidence_quality_scoring_v1")
+def evidence_quality_scoring_v1(force: bool = False):
+    return _intelligence_quality_endpoint(EVIDENCE_QUALITY_SCORING, "evidence_quality_scoring_v1", force=force)
+
+
+@router.get("/api/confidence_decomposition_engine_v1")
+def confidence_decomposition_engine_v1(force: bool = False):
+    return _intelligence_quality_endpoint(CONFIDENCE_DECOMPOSITION_ENGINE, "confidence_decomposition_engine_v1", force=force)
+
+
+@router.get("/api/learning_drift_detection_v1")
+def learning_drift_detection_v1(force: bool = False):
+    return _intelligence_quality_endpoint(LEARNING_DRIFT_DETECTION, "learning_drift_detection_v1", force=force)
+
+
+@router.get("/api/market_regime_similarity_engine_v1")
+def market_regime_similarity_engine_v1(force: bool = False):
+    return _intelligence_quality_endpoint(MARKET_REGIME_SIMILARITY_ENGINE, "market_regime_similarity_engine_v1", force=force)
+
+
+@router.get("/api/ranking_tournament_engine_v1")
+def ranking_tournament_engine_v1(force: bool = False):
+    return _intelligence_quality_endpoint(RANKING_TOURNAMENT_ENGINE, "ranking_tournament_engine_v1", force=force)
+
+
+@router.get("/api/exit_tournament_engine_v1")
+def exit_tournament_engine_v1(force: bool = False):
+    return _intelligence_quality_endpoint(EXIT_TOURNAMENT_ENGINE, "exit_tournament_engine_v1", force=force)
+
+
+@router.get("/api/conviction_calibration_engine_v1")
+def conviction_calibration_engine_v1(force: bool = False):
+    return _intelligence_quality_endpoint(CONVICTION_CALIBRATION_ENGINE, "conviction_calibration_engine_v1", force=force)
+
+
 @router.get("/api/trade_thesis_validation_v1")
 def trade_thesis_validation_v1(force: bool = False):
     try:
@@ -43353,6 +43521,24 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["candidate_ranking_attribution_promotion_intelligence_v1"] = CANDIDATE_RANKING_ATTRIBUTION_PROMOTION_INTELLIGENCE.status(statuses=statuses, force=False)
     except Exception:
         statuses["candidate_ranking_attribution_promotion_intelligence_v1"] = {}
+    for _iq_key, _iq_module in (
+        ("learning_roi_engine_v1", LEARNING_ROI_ENGINE),
+        ("evidence_quality_scoring_v1", EVIDENCE_QUALITY_SCORING),
+        ("confidence_decomposition_engine_v1", CONFIDENCE_DECOMPOSITION_ENGINE),
+        ("learning_drift_detection_v1", LEARNING_DRIFT_DETECTION),
+        ("market_regime_similarity_engine_v1", MARKET_REGIME_SIMILARITY_ENGINE),
+        ("ranking_tournament_engine_v1", RANKING_TOURNAMENT_ENGINE),
+        ("exit_tournament_engine_v1", EXIT_TOURNAMENT_ENGINE),
+        ("conviction_calibration_engine_v1", CONVICTION_CALIBRATION_ENGINE),
+    ):
+        try:
+            statuses[_iq_key] = _iq_module.status(statuses=statuses, force=False)
+        except Exception:
+            statuses[_iq_key] = {}
+    try:
+        statuses["intelligence_quality_learning_efficiency_suite_v1"] = INTELLIGENCE_QUALITY_LEARNING_EFFICIENCY_SUITE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["intelligence_quality_learning_efficiency_suite_v1"] = {}
     try:
         statuses["paper_throughput_exit_validation_catalyst_intelligence_v1"] = PAPER_THROUGHPUT_EXIT_VALIDATION_CATALYST_INTELLIGENCE.status(statuses=statuses, force=False)
     except Exception:
@@ -53078,6 +53264,15 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("remote_runtime_consistency", lambda: _remote_runtime_consistency_payload())
         _safe_status("execution_participation_audit", lambda: EXECUTION_PARTICIPATION_AUDIT.status(paper_trace=_paper_execution_trace_payload(), force=False))
         _safe_status("candidate_ranking_attribution_promotion_intelligence_v1", lambda: CANDIDATE_RANKING_ATTRIBUTION_PROMOTION_INTELLIGENCE.status(statuses=statuses, force=False))
+        _safe_status("learning_roi_engine_v1", lambda: LEARNING_ROI_ENGINE.status(statuses=statuses, force=False))
+        _safe_status("evidence_quality_scoring_v1", lambda: EVIDENCE_QUALITY_SCORING.status(statuses=statuses, force=False))
+        _safe_status("confidence_decomposition_engine_v1", lambda: CONFIDENCE_DECOMPOSITION_ENGINE.status(statuses=statuses, force=False))
+        _safe_status("learning_drift_detection_v1", lambda: LEARNING_DRIFT_DETECTION.status(statuses=statuses, force=False))
+        _safe_status("market_regime_similarity_engine_v1", lambda: MARKET_REGIME_SIMILARITY_ENGINE.status(statuses=statuses, force=False))
+        _safe_status("ranking_tournament_engine_v1", lambda: RANKING_TOURNAMENT_ENGINE.status(statuses=statuses, force=False))
+        _safe_status("exit_tournament_engine_v1", lambda: EXIT_TOURNAMENT_ENGINE.status(statuses=statuses, force=False))
+        _safe_status("conviction_calibration_engine_v1", lambda: CONVICTION_CALIBRATION_ENGINE.status(statuses=statuses, force=False))
+        _safe_status("intelligence_quality_learning_efficiency_suite_v1", lambda: INTELLIGENCE_QUALITY_LEARNING_EFFICIENCY_SUITE.status(statuses=statuses, force=False))
         _safe_status("mobile_runtime_compaction", lambda: _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))
         _safe_status("paper_opportunity_allocation", lambda: PAPER_OPPORTUNITY_ALLOCATION_ENGINE.status(rows=rows))

@@ -1617,6 +1617,7 @@ export default function LearningTab({ compact = false }) {
   const crossSectorCapitalFlowMemory = unified?.cross_sector_capital_flow_memory_v1 || {};
   const shadowVsPaperPerformanceAttribution = unified?.shadow_vs_paper_performance_attribution_v1 || {};
   const candidateRankingAttributionPromotion = unified?.candidate_ranking_attribution_promotion_intelligence_v1 || {};
+  const intelligenceQualityLearningEfficiency = unified?.intelligence_quality_learning_efficiency_suite_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
   const tradeFamilyIntelligence = unified?.trade_family_intelligence_v1 || {};
@@ -2308,6 +2309,39 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Shadow recommendation: {String(candidateRankingAttributionPromotion?.shadow_recommendation || "Continue candidate ranking audit before any ranking influence.").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Intelligence Quality & Learning Efficiency Suite V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is measuring which learning systems produce the most value, where confidence is weakest, and where ranking or exit tournaments show regret. This suite is advisory-only, shadow-analysis only, and does not change rankings, entries, exits, sizing, thresholds, paper execution, or broker behavior.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Suite status", intelligenceQualityLearningEfficiency?.status],
+            ["Highest value system", intelligenceQualityLearningEfficiency?.highest_value_learning_system],
+            ["Weighted evidence", safeNumber(intelligenceQualityLearningEfficiency?.weighted_evidence_count).toFixed(0)],
+            ["Weakest confidence", intelligenceQualityLearningEfficiency?.weakest_confidence_component],
+            ["Drift warning", intelligenceQualityLearningEfficiency?.drift_warning],
+            ["Most similar regime", intelligenceQualityLearningEfficiency?.most_similar_regime],
+            ["Ranking regret", safeNumber(intelligenceQualityLearningEfficiency?.ranking_tournament_regret).toFixed(1)],
+            ["Exit capture gap", safeNumber(intelligenceQualityLearningEfficiency?.exit_tournament_capture_gap).toFixed(1)],
+            ["Conviction calibration", safeNumber(intelligenceQualityLearningEfficiency?.conviction_calibration_score).toFixed(1)],
+            ["Recommended focus", intelligenceQualityLearningEfficiency?.recommended_next_focus],
+            ["Ranking tournaments", safeNumber(intelligenceQualityLearningEfficiency?.ranking_tournament_count).toFixed(0)],
+            ["Exit tournaments", safeNumber(intelligenceQualityLearningEfficiency?.exit_tournament_count).toFixed(0)],
+            ["API/provider/LLM", `${safeNumber(intelligenceQualityLearningEfficiency?.api_calls_used).toFixed(0)} / ${safeNumber(intelligenceQualityLearningEfficiency?.provider_calls_used).toFixed(0)} / ${safeNumber(intelligenceQualityLearningEfficiency?.llm_calls_used).toFixed(0)}`],
+            ["Behavior safe", intelligenceQualityLearningEfficiency?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Insufficient evidence modules: {(intelligenceQualityLearningEfficiency?.modules_reporting_insufficient_evidence || []).join(" | ").replaceAll("_", " ") || "none"}
           </div>
         </div>
       </details>
