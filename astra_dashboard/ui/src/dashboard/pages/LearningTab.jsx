@@ -58,6 +58,18 @@ function clampValue(value, min = 0, max = 100) {
   return Math.max(min, Math.min(max, Number(value) || 0));
 }
 
+function statusLabel(value, fallback = "INSUFFICIENT EVIDENCE") {
+  const text = String(value || fallback).replaceAll("_", " ").toUpperCase();
+  return text;
+}
+
+function metricDisplay(value, available = true, digits = 2, suffix = "") {
+  if (!available || value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return "insufficient evidence";
+  }
+  return `${safeNumber(value).toFixed(digits)}${suffix}`;
+}
+
 function fmtPct(v) {
   return `${safeNumber(v).toFixed(2)}%`;
 }
@@ -2186,27 +2198,35 @@ export default function LearningTab({ compact = false }) {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
           {[
-            ["Paper PF", safeNumber(shadowVsPaperPerformanceAttribution?.paper_profit_factor).toFixed(2)],
-            ["Shadow PF", safeNumber(shadowVsPaperPerformanceAttribution?.shadow_profit_factor).toFixed(2)],
-            ["PF delta", safeNumber(shadowVsPaperPerformanceAttribution?.profit_factor_delta).toFixed(2)],
-            ["Paper WR", `${safeNumber(shadowVsPaperPerformanceAttribution?.paper_win_rate).toFixed(1)}%`],
-            ["Shadow WR", `${safeNumber(shadowVsPaperPerformanceAttribution?.shadow_win_rate).toFixed(1)}%`],
-            ["WR delta", safeNumber(shadowVsPaperPerformanceAttribution?.win_rate_delta).toFixed(2)],
-            ["Paper avg return", safeNumber(shadowVsPaperPerformanceAttribution?.paper_avg_return).toFixed(3)],
-            ["Shadow avg return", safeNumber(shadowVsPaperPerformanceAttribution?.shadow_avg_return).toFixed(3)],
-            ["Return delta", safeNumber(shadowVsPaperPerformanceAttribution?.avg_return_delta).toFixed(3)],
-            ["Capture delta", safeNumber(shadowVsPaperPerformanceAttribution?.profit_capture_delta).toFixed(2)],
-            ["Exit quality delta", safeNumber(shadowVsPaperPerformanceAttribution?.exit_quality_delta).toFixed(2)],
-            ["Shadow alpha", safeNumber(shadowVsPaperPerformanceAttribution?.shadow_alpha_score).toFixed(1)],
+            ["Reconciliation", statusLabel(shadowVsPaperPerformanceAttribution?.overall_reconciliation_status)],
+            ["Canonical source", String(shadowVsPaperPerformanceAttribution?.canonical_performance_source || "unavailable").replaceAll("_", " ")],
+            ["Canonical evidence", safeNumber(shadowVsPaperPerformanceAttribution?.canonical_closed_trade_count).toFixed(0)],
+            ["Paper PF", metricDisplay(shadowVsPaperPerformanceAttribution?.paper_profit_factor_verified, shadowVsPaperPerformanceAttribution?.paper_profit_factor_available, 2)],
+            ["Shadow PF", metricDisplay(shadowVsPaperPerformanceAttribution?.shadow_profit_factor_verified, shadowVsPaperPerformanceAttribution?.shadow_profit_factor_available, 2)],
+            ["PF delta", metricDisplay(shadowVsPaperPerformanceAttribution?.profit_factor_delta, shadowVsPaperPerformanceAttribution?.paper_profit_factor_available && shadowVsPaperPerformanceAttribution?.shadow_profit_factor_available, 2)],
+            ["Paper PF status", statusLabel(shadowVsPaperPerformanceAttribution?.paper_profit_factor_status)],
+            ["Shadow PF status", statusLabel(shadowVsPaperPerformanceAttribution?.shadow_profit_factor_status)],
+            ["Shadow PF blocker", String(shadowVsPaperPerformanceAttribution?.shadow_pf_blocker || "none").replaceAll("_", " ")],
+            ["Paper WR", metricDisplay(shadowVsPaperPerformanceAttribution?.paper_win_rate, shadowVsPaperPerformanceAttribution?.paper_trade_count > 0, 1, "%")],
+            ["Shadow WR", metricDisplay(shadowVsPaperPerformanceAttribution?.shadow_win_rate, shadowVsPaperPerformanceAttribution?.shadow_trade_count > 0, 1, "%")],
+            ["Paper avg return", metricDisplay(shadowVsPaperPerformanceAttribution?.paper_avg_return, shadowVsPaperPerformanceAttribution?.paper_trade_count > 0, 3)],
+            ["Shadow avg return", metricDisplay(shadowVsPaperPerformanceAttribution?.shadow_avg_return, shadowVsPaperPerformanceAttribution?.shadow_trade_count > 0, 3)],
+            ["Paper gross P/L", `${safeNumber(shadowVsPaperPerformanceAttribution?.paper_gross_profit).toFixed(2)} / ${safeNumber(shadowVsPaperPerformanceAttribution?.paper_gross_loss).toFixed(2)}`],
+            ["Shadow gross P/L", `${safeNumber(shadowVsPaperPerformanceAttribution?.shadow_gross_profit).toFixed(2)} / ${safeNumber(shadowVsPaperPerformanceAttribution?.shadow_gross_loss).toFixed(2)}`],
+            ["Return delta", metricDisplay(shadowVsPaperPerformanceAttribution?.avg_return_delta, shadowVsPaperPerformanceAttribution?.paper_profit_factor_available && shadowVsPaperPerformanceAttribution?.shadow_profit_factor_available, 3)],
+            ["Capture delta", metricDisplay(shadowVsPaperPerformanceAttribution?.profit_capture_delta, shadowVsPaperPerformanceAttribution?.paper_trade_count > 0 && shadowVsPaperPerformanceAttribution?.shadow_trade_count > 0, 2)],
+            ["Exit quality delta", metricDisplay(shadowVsPaperPerformanceAttribution?.exit_quality_delta, shadowVsPaperPerformanceAttribution?.paper_trade_count > 0 && shadowVsPaperPerformanceAttribution?.shadow_trade_count > 0, 2)],
+            ["Shadow alpha", metricDisplay(shadowVsPaperPerformanceAttribution?.shadow_alpha_score, shadowVsPaperPerformanceAttribution?.shadow_alpha_available, 1)],
             ["Alpha confidence", safeNumber(shadowVsPaperPerformanceAttribution?.shadow_alpha_confidence).toFixed(1)],
-            ["20 trade PF", `${safeNumber(shadowVsPaperPerformanceAttribution?.rolling_20_paper_pf).toFixed(2)} / ${safeNumber(shadowVsPaperPerformanceAttribution?.rolling_20_shadow_pf).toFixed(2)}`],
-            ["50 trade PF", `${safeNumber(shadowVsPaperPerformanceAttribution?.rolling_50_paper_pf).toFixed(2)} / ${safeNumber(shadowVsPaperPerformanceAttribution?.rolling_50_shadow_pf).toFixed(2)}`],
-            ["100 trade PF", `${safeNumber(shadowVsPaperPerformanceAttribution?.rolling_100_paper_pf).toFixed(2)} / ${safeNumber(shadowVsPaperPerformanceAttribution?.rolling_100_shadow_pf).toFixed(2)}`],
-            ["Lifetime PF", `${safeNumber(shadowVsPaperPerformanceAttribution?.lifetime_paper_pf).toFixed(2)} / ${safeNumber(shadowVsPaperPerformanceAttribution?.lifetime_shadow_pf).toFixed(2)}`],
+            ["20 trade PF", `${metricDisplay(shadowVsPaperPerformanceAttribution?.rolling_20_paper_pf, shadowVsPaperPerformanceAttribution?.rolling_20_paper_pf_status === "PASS", 2)} / ${metricDisplay(shadowVsPaperPerformanceAttribution?.rolling_20_shadow_pf, shadowVsPaperPerformanceAttribution?.rolling_20_shadow_pf_status === "PASS", 2)}`],
+            ["50 trade PF", `${metricDisplay(shadowVsPaperPerformanceAttribution?.rolling_50_paper_pf, shadowVsPaperPerformanceAttribution?.rolling_50_paper_pf_status === "PASS", 2)} / ${metricDisplay(shadowVsPaperPerformanceAttribution?.rolling_50_shadow_pf, shadowVsPaperPerformanceAttribution?.rolling_50_shadow_pf_status === "PASS", 2)}`],
+            ["100 trade PF", `${metricDisplay(shadowVsPaperPerformanceAttribution?.rolling_100_paper_pf, shadowVsPaperPerformanceAttribution?.rolling_100_paper_pf_status === "PASS", 2)} / ${metricDisplay(shadowVsPaperPerformanceAttribution?.rolling_100_shadow_pf, shadowVsPaperPerformanceAttribution?.rolling_100_shadow_pf_status === "PASS", 2)}`],
+            ["Lifetime PF", `${metricDisplay(shadowVsPaperPerformanceAttribution?.lifetime_paper_pf, shadowVsPaperPerformanceAttribution?.lifetime_paper_pf_status === "PASS", 2)} / ${metricDisplay(shadowVsPaperPerformanceAttribution?.lifetime_shadow_pf, shadowVsPaperPerformanceAttribution?.lifetime_shadow_pf_status === "PASS", 2)}`],
             ["Reviewed", safeNumber(shadowVsPaperPerformanceAttribution?.recommendations_reviewed).toFixed(0)],
             ["Trade count", safeNumber(shadowVsPaperPerformanceAttribution?.trade_count).toFixed(0)],
-            ["Outperformance", `${safeNumber(shadowVsPaperPerformanceAttribution?.shadow_outperformance_pct).toFixed(1)}%`],
-            ["Underperformance", `${safeNumber(shadowVsPaperPerformanceAttribution?.shadow_underperformance_pct).toFixed(1)}%`],
+            ["Shadow trades", safeNumber(shadowVsPaperPerformanceAttribution?.shadow_trade_count).toFixed(0)],
+            ["Outperformance", metricDisplay(shadowVsPaperPerformanceAttribution?.shadow_outperformance_pct, shadowVsPaperPerformanceAttribution?.paper_profit_factor_available && shadowVsPaperPerformanceAttribution?.shadow_profit_factor_available, 1, "%")],
+            ["Underperformance", metricDisplay(shadowVsPaperPerformanceAttribution?.shadow_underperformance_pct, shadowVsPaperPerformanceAttribution?.paper_profit_factor_available && shadowVsPaperPerformanceAttribution?.shadow_profit_factor_available, 1, "%")],
             ["API/provider/LLM", `${safeNumber(shadowVsPaperPerformanceAttribution?.api_calls_used).toFixed(0)} / ${safeNumber(shadowVsPaperPerformanceAttribution?.provider_calls_used).toFixed(0)} / ${safeNumber(shadowVsPaperPerformanceAttribution?.llm_calls_used).toFixed(0)}`],
             ["Behavior safe", shadowVsPaperPerformanceAttribution?.behavior_safe_to_apply ? "yes" : "no"],
           ].map(([label, value]) => (
@@ -2216,10 +2236,13 @@ export default function LearningTab({ compact = false }) {
             </div>
           ))}
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
-            Cohorts: {(shadowVsPaperPerformanceAttribution?.build_cohort_comparison || []).map((row) => `${String(row?.cohort || "cohort").replaceAll("_", " ")} PF ${safeNumber(row?.cohort_profit_factor).toFixed(2)}`).join(" | ") || "warming up"}
+            Cohorts: {(shadowVsPaperPerformanceAttribution?.build_cohort_comparison || []).map((row) => `${String(row?.cohort || "cohort").replaceAll("_", " ")} ${row?.cohort_status === "PASS" ? `PF ${metricDisplay(row?.cohort_profit_factor_verified, true, 2)}` : "insufficient evidence"}`).join(" | ") || "warming up"}
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Attribution: {(shadowVsPaperPerformanceAttribution?.source_attribution || []).slice(0, 4).map((row) => `${String(row?.source || "source").replaceAll("_", " ")} dPF ${safeNumber(row?.estimated_profit_factor_delta).toFixed(2)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Reconciliation checks: paper PF {shadowVsPaperPerformanceAttribution?.paper_pf_matches_unified ? "match" : "warning"} | returns {shadowVsPaperPerformanceAttribution?.paper_returns_match_unified ? "match" : "warning"} | evidence {shadowVsPaperPerformanceAttribution?.evidence_matches_unified ? "match" : "warning"} | cohort {shadowVsPaperPerformanceAttribution?.cohort_matches_unified ? "match" : "warning"}
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Shadow recommendation: {String(shadowVsPaperPerformanceAttribution?.shadow_recommendation || "Continue shadow-vs-paper attribution observation-only.").replaceAll("_", " ")}
