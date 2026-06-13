@@ -318,6 +318,10 @@ class UnifiedLearningDiagnosticsV1:
         catalyst_lifecycle_intelligence = self._catalyst_lifecycle_intelligence_v1_summary(statuses.get("catalyst_lifecycle_intelligence_v1") or {})
         cross_sector_capital_flow_memory = self._cross_sector_capital_flow_memory_v1_summary(statuses.get("cross_sector_capital_flow_memory_v1") or {})
         shadow_vs_paper_performance_attribution = self._shadow_vs_paper_performance_attribution_v1_summary(statuses.get("shadow_vs_paper_performance_attribution_v1") or {})
+        trade_thesis_validation = self._trade_thesis_validation_v1_summary(statuses.get("trade_thesis_validation_v1") or {})
+        market_transition_detection = self._market_transition_detection_v1_summary(statuses.get("market_transition_detection_v1") or {})
+        trade_family_intelligence = self._trade_family_intelligence_v1_summary(statuses.get("trade_family_intelligence_v1") or {})
+        market_condition_attribution = self._market_condition_attribution_v1_summary(statuses.get("market_condition_attribution_v1") or {})
         profit_lock_profit_capture_maturation = self._profit_lock_profit_capture_maturation_v2_summary(statuses.get("profit_lock_profit_capture_maturation_v2") or {})
         shadow_correction_validation_attribution = self._shadow_correction_validation_attribution_v1_summary(statuses.get("shadow_correction_validation_attribution_v1") or {})
         controlled_paper_profit_protection_pilot = self._controlled_paper_profit_protection_pilot_v1_summary(statuses.get("controlled_paper_profit_protection_pilot_v1") or {})
@@ -399,6 +403,10 @@ class UnifiedLearningDiagnosticsV1:
             "catalyst_lifecycle_intelligence_v1": catalyst_lifecycle_intelligence,
             "cross_sector_capital_flow_memory_v1": cross_sector_capital_flow_memory,
             "shadow_vs_paper_performance_attribution_v1": shadow_vs_paper_performance_attribution,
+            "trade_thesis_validation_v1": trade_thesis_validation,
+            "market_transition_detection_v1": market_transition_detection,
+            "trade_family_intelligence_v1": trade_family_intelligence,
+            "market_condition_attribution_v1": market_condition_attribution,
             "profit_lock_profit_capture_maturation_v2": profit_lock_profit_capture_maturation,
             "shadow_correction_validation_attribution_v1": shadow_correction_validation_attribution,
             "controlled_paper_profit_protection_pilot_v1": controlled_paper_profit_protection_pilot,
@@ -2853,6 +2861,156 @@ class UnifiedLearningDiagnosticsV1:
             "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
         }
 
+    def _trade_thesis_validation_v1_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "shadow_only_trade_thesis_validation"),
+            "evidence_count": _to_int(data.get("evidence_count"), 0),
+            "thesis_rows": list(data.get("thesis_rows") or [])[:8],
+            "thesis_accuracy_score": _to_float(data.get("thesis_accuracy_score"), 0.0),
+            "thesis_failure_rate": _to_float(data.get("thesis_failure_rate"), 0.0),
+            "strongest_thesis_type": _text(data.get("strongest_thesis_type"), "insufficient_data"),
+            "weakest_thesis_type": _text(data.get("weakest_thesis_type"), "insufficient_data"),
+            "thesis_confidence": _to_float(data.get("thesis_confidence"), 0.0),
+            "top_failed_thesis_reason": _text(data.get("top_failed_thesis_reason"), "insufficient_data"),
+            "top_successful_thesis_reason": _text(data.get("top_successful_thesis_reason"), "insufficient_data"),
+            "dashboard_scan_rows": _to_int(data.get("dashboard_scan_rows"), 0),
+            "raw_archive_scanned": bool(data.get("raw_archive_scanned", False)),
+            "raw_history_scanned": bool(data.get("raw_history_scanned", False)),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "partial_sells_enabled": bool(data.get("partial_sells_enabled", False)),
+            "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
+            "live_trading_changed": bool(data.get("live_trading_changed", False)),
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "entry_behavior_changed": bool(data.get("entry_behavior_changed", False)),
+            "exit_behavior_changed": bool(data.get("exit_behavior_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+            "portfolio_allocation_changed": bool(data.get("portfolio_allocation_changed", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "shadow_recommendation": _text(data.get("shadow_recommendation"), "Continue trade thesis validation shadow-only."),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+        }
+
+    def _market_transition_detection_v1_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "shadow_only_market_transition_detection"),
+            "evidence_count": _to_int(data.get("evidence_count"), 0),
+            "regime_stability_score": _to_float(data.get("regime_stability_score"), 0.0),
+            "transition_risk_score": _to_float(data.get("transition_risk_score"), 0.0),
+            "transition_confidence": _to_float(data.get("transition_confidence"), 0.0),
+            "strongest_transition_warning": _text(data.get("strongest_transition_warning"), "insufficient_data"),
+            "current_market_phase": _text(data.get("current_market_phase"), "insufficient_data"),
+            "likely_next_market_phase": _text(data.get("likely_next_market_phase"), "insufficient_data"),
+            "transition_warning_rows": list(data.get("transition_warning_rows") or [])[:8],
+            "dashboard_scan_rows": _to_int(data.get("dashboard_scan_rows"), 0),
+            "raw_archive_scanned": bool(data.get("raw_archive_scanned", False)),
+            "raw_history_scanned": bool(data.get("raw_history_scanned", False)),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "partial_sells_enabled": bool(data.get("partial_sells_enabled", False)),
+            "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
+            "live_trading_changed": bool(data.get("live_trading_changed", False)),
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "entry_behavior_changed": bool(data.get("entry_behavior_changed", False)),
+            "exit_behavior_changed": bool(data.get("exit_behavior_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+            "portfolio_allocation_changed": bool(data.get("portfolio_allocation_changed", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "shadow_recommendation": _text(data.get("shadow_recommendation"), "Continue market transition detection shadow-only."),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+        }
+
+    def _trade_family_intelligence_v1_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "shadow_only_trade_family_intelligence"),
+            "evidence_count": _to_int(data.get("evidence_count"), 0),
+            "family_rows": list(data.get("family_rows") or [])[:8],
+            "strongest_trade_family": _text(data.get("strongest_trade_family"), "insufficient_data"),
+            "weakest_trade_family": _text(data.get("weakest_trade_family"), "insufficient_data"),
+            "best_family_horizon": _text(data.get("best_family_horizon"), "insufficient_data"),
+            "best_family_exit_style": _text(data.get("best_family_exit_style"), "insufficient_data"),
+            "family_transfer_confidence": _to_float(data.get("family_transfer_confidence"), 0.0),
+            "family_learning_score": _to_float(data.get("family_learning_score"), 0.0),
+            "dashboard_scan_rows": _to_int(data.get("dashboard_scan_rows"), 0),
+            "raw_archive_scanned": bool(data.get("raw_archive_scanned", False)),
+            "raw_history_scanned": bool(data.get("raw_history_scanned", False)),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "partial_sells_enabled": bool(data.get("partial_sells_enabled", False)),
+            "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
+            "live_trading_changed": bool(data.get("live_trading_changed", False)),
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "entry_behavior_changed": bool(data.get("entry_behavior_changed", False)),
+            "exit_behavior_changed": bool(data.get("exit_behavior_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+            "portfolio_allocation_changed": bool(data.get("portfolio_allocation_changed", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "shadow_recommendation": _text(data.get("shadow_recommendation"), "Continue trade-family intelligence shadow-only."),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+        }
+
+    def _market_condition_attribution_v1_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "shadow_only_market_condition_attribution"),
+            "evidence_count": _to_int(data.get("evidence_count"), 0),
+            "condition_rows": list(data.get("condition_rows") or [])[:9],
+            "best_condition": _text(data.get("best_condition"), "insufficient_data"),
+            "weakest_condition": _text(data.get("weakest_condition"), "insufficient_data"),
+            "best_horizon_by_condition": dict(data.get("best_horizon_by_condition") or {}),
+            "weakest_horizon_by_condition": dict(data.get("weakest_horizon_by_condition") or {}),
+            "profit_capture_by_condition": dict(data.get("profit_capture_by_condition") or {}),
+            "exit_quality_by_condition": dict(data.get("exit_quality_by_condition") or {}),
+            "condition_confidence_score": _to_float(data.get("condition_confidence_score"), 0.0),
+            "dashboard_scan_rows": _to_int(data.get("dashboard_scan_rows"), 0),
+            "raw_archive_scanned": bool(data.get("raw_archive_scanned", False)),
+            "raw_history_scanned": bool(data.get("raw_history_scanned", False)),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "partial_sells_enabled": bool(data.get("partial_sells_enabled", False)),
+            "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
+            "live_trading_changed": bool(data.get("live_trading_changed", False)),
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "entry_behavior_changed": bool(data.get("entry_behavior_changed", False)),
+            "exit_behavior_changed": bool(data.get("exit_behavior_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+            "portfolio_allocation_changed": bool(data.get("portfolio_allocation_changed", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "shadow_recommendation": _text(data.get("shadow_recommendation"), "Continue market-condition attribution shadow-only."),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+        }
+
     def _profit_lock_profit_capture_maturation_v2_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         scenarios = list(data.get("virtual_profit_lock_scenarios") or [])[:5]
@@ -4190,7 +4348,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
             "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "profit_capture_peak_decay_exit_validation_suite_v1", "adaptive_execution_exit_intelligence_v3", "trade_archetype_regime",
-            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "long_term_memory_symbol_retrieval_suite_v1", "virtual_paper_convergence_symbol_attribution_v1", "accelerated_learning_symbol_intelligence_suite_v1", "realistic_shadow_evidence_learning_lab_v1", "historical_intelligence_market_memory_suite_v1", "catalyst_persistence_decay_curves_v2", "catalyst_lifecycle_intelligence_v1", "cross_sector_capital_flow_memory_v1", "shadow_vs_paper_performance_attribution_v1", "profit_lock_profit_capture_maturation_v2", "shadow_correction_validation_attribution_v1", "controlled_paper_profit_protection_pilot_v1", "adaptive_learning_prioritization_resource_allocation_v1", "autonomous_intelligence_validation_governance_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
+            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "long_term_memory_symbol_retrieval_suite_v1", "virtual_paper_convergence_symbol_attribution_v1", "accelerated_learning_symbol_intelligence_suite_v1", "realistic_shadow_evidence_learning_lab_v1", "historical_intelligence_market_memory_suite_v1", "catalyst_persistence_decay_curves_v2", "catalyst_lifecycle_intelligence_v1", "cross_sector_capital_flow_memory_v1", "shadow_vs_paper_performance_attribution_v1", "trade_thesis_validation_v1", "market_transition_detection_v1", "trade_family_intelligence_v1", "market_condition_attribution_v1", "profit_lock_profit_capture_maturation_v2", "shadow_correction_validation_attribution_v1", "controlled_paper_profit_protection_pilot_v1", "adaptive_learning_prioritization_resource_allocation_v1", "autonomous_intelligence_validation_governance_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
             "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
             "paper_throughput_exit_validation_catalyst_intelligence_v1", "multi_horizon_paper_capacity_exit_validation_v1", "controlled_paper_learned_exit_validation_v1",
@@ -4251,6 +4409,10 @@ class UnifiedLearningDiagnosticsV1:
             "catalyst_lifecycle_intelligence_v1": "/api/catalyst_lifecycle_intelligence_v1",
             "cross_sector_capital_flow_memory_v1": "/api/cross_sector_capital_flow_memory_v1",
             "shadow_vs_paper_performance_attribution_v1": "/api/shadow_vs_paper_performance_attribution_v1",
+            "trade_thesis_validation_v1": "/api/trade_thesis_validation_v1",
+            "market_transition_detection_v1": "/api/market_transition_detection_v1",
+            "trade_family_intelligence_v1": "/api/trade_family_intelligence_v1",
+            "market_condition_attribution_v1": "/api/market_condition_attribution_v1",
             "profit_lock_profit_capture_maturation_v2": "/api/profit_lock_profit_capture_maturation_v2",
             "shadow_correction_validation_attribution_v1": "/api/shadow_correction_validation_attribution_v1",
             "controlled_paper_profit_protection_pilot_v1": "/api/controlled_paper_profit_protection_pilot_v1",

@@ -1616,6 +1616,10 @@ export default function LearningTab({ compact = false }) {
   const catalystLifecycleIntelligence = unified?.catalyst_lifecycle_intelligence_v1 || {};
   const crossSectorCapitalFlowMemory = unified?.cross_sector_capital_flow_memory_v1 || {};
   const shadowVsPaperPerformanceAttribution = unified?.shadow_vs_paper_performance_attribution_v1 || {};
+  const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
+  const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
+  const tradeFamilyIntelligence = unified?.trade_family_intelligence_v1 || {};
+  const marketConditionAttribution = unified?.market_condition_attribution_v1 || {};
   const profitLockProfitCaptureMaturation = unified?.profit_lock_profit_capture_maturation_v2 || {};
   const shadowCorrectionValidation = unified?.shadow_correction_validation_attribution_v1 || {};
   const controlledPaperProfitProtection = unified?.controlled_paper_profit_protection_pilot_v1 || {};
@@ -2246,6 +2250,131 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Shadow recommendation: {String(shadowVsPaperPerformanceAttribution?.shadow_recommendation || "Continue shadow-vs-paper attribution observation-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Trade Thesis Validation V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is checking whether the original trade thesis actually matched what happened in the market across catalyst, symbol, sector, regime, horizon, entry, and exit reasoning. This remains learning-only and does not change entries, exits, sizing, thresholds, or broker behavior.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Evidence", safeNumber(tradeThesisValidation?.evidence_count).toFixed(0)],
+            ["Accuracy score", safeNumber(tradeThesisValidation?.thesis_accuracy_score).toFixed(1)],
+            ["Failure rate", safeNumber(tradeThesisValidation?.thesis_failure_rate).toFixed(1)],
+            ["Strongest thesis", tradeThesisValidation?.strongest_thesis_type],
+            ["Weakest thesis", tradeThesisValidation?.weakest_thesis_type],
+            ["Thesis confidence", safeNumber(tradeThesisValidation?.thesis_confidence).toFixed(1)],
+            ["Top failed reason", tradeThesisValidation?.top_failed_thesis_reason],
+            ["Top success reason", tradeThesisValidation?.top_successful_thesis_reason],
+            ["API/provider/LLM", `${safeNumber(tradeThesisValidation?.api_calls_used).toFixed(0)} / ${safeNumber(tradeThesisValidation?.provider_calls_used).toFixed(0)} / ${safeNumber(tradeThesisValidation?.llm_calls_used).toFixed(0)}`],
+            ["Behavior safe", tradeThesisValidation?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Thesis rows: {(tradeThesisValidation?.thesis_rows || []).slice(0, 4).map((row) => `${String(row?.thesis_type || "thesis").replaceAll("_", " ")} ${safeNumber(row?.accuracy_score).toFixed(0)}%`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(tradeThesisValidation?.shadow_recommendation || "Continue trade thesis validation shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Market Transition Detection V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is watching for early transition signals such as leadership weakening, sector rotation acceleration, continuation deterioration, and volatility regime shifts. This is advisory monitoring only and does not change trading behavior.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Evidence", safeNumber(marketTransitionDetection?.evidence_count).toFixed(0)],
+            ["Regime stability", safeNumber(marketTransitionDetection?.regime_stability_score).toFixed(1)],
+            ["Transition risk", safeNumber(marketTransitionDetection?.transition_risk_score).toFixed(1)],
+            ["Transition confidence", safeNumber(marketTransitionDetection?.transition_confidence).toFixed(1)],
+            ["Strongest warning", marketTransitionDetection?.strongest_transition_warning],
+            ["Current phase", marketTransitionDetection?.current_market_phase],
+            ["Likely next phase", marketTransitionDetection?.likely_next_market_phase],
+            ["API/provider/LLM", `${safeNumber(marketTransitionDetection?.api_calls_used).toFixed(0)} / ${safeNumber(marketTransitionDetection?.provider_calls_used).toFixed(0)} / ${safeNumber(marketTransitionDetection?.llm_calls_used).toFixed(0)}`],
+            ["Behavior safe", marketTransitionDetection?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Warnings: {(marketTransitionDetection?.transition_warning_rows || []).slice(0, 4).map((row) => `${String(row?.warning || "warning").replaceAll("_", " ")} ${safeNumber(row?.score).toFixed(0)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(marketTransitionDetection?.shadow_recommendation || "Continue market transition detection shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Trade Family Intelligence V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is grouping related symbols into behavior families so it can transfer lessons faster across AI leaders, semiconductors, quantum names, airlines, biotech, energy, meme names, and other peer clusters. This is transfer-learning only and does not alter rankings or execution.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Evidence", safeNumber(tradeFamilyIntelligence?.evidence_count).toFixed(0)],
+            ["Strongest family", tradeFamilyIntelligence?.strongest_trade_family],
+            ["Weakest family", tradeFamilyIntelligence?.weakest_trade_family],
+            ["Best family horizon", tradeFamilyIntelligence?.best_family_horizon],
+            ["Best family exit", tradeFamilyIntelligence?.best_family_exit_style],
+            ["Transfer confidence", safeNumber(tradeFamilyIntelligence?.family_transfer_confidence).toFixed(1)],
+            ["Learning score", safeNumber(tradeFamilyIntelligence?.family_learning_score).toFixed(1)],
+            ["API/provider/LLM", `${safeNumber(tradeFamilyIntelligence?.api_calls_used).toFixed(0)} / ${safeNumber(tradeFamilyIntelligence?.provider_calls_used).toFixed(0)} / ${safeNumber(tradeFamilyIntelligence?.llm_calls_used).toFixed(0)}`],
+            ["Behavior safe", tradeFamilyIntelligence?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Families: {(tradeFamilyIntelligence?.family_rows || []).slice(0, 4).map((row) => `${String(row?.trade_family || "family").replaceAll("_", " ")} PF ${safeNumber(row?.family_profit_factor).toFixed(2)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(tradeFamilyIntelligence?.shadow_recommendation || "Continue trade-family intelligence shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Market Condition Attribution V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is attributing performance to specific market conditions so conflicting horizon and exit readings can be separated by volatility, risk tone, continuation, chop, sector rotation, and catalyst density. This remains cached, shadow-only attribution.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Evidence", safeNumber(marketConditionAttribution?.evidence_count).toFixed(0)],
+            ["Best condition", marketConditionAttribution?.best_condition],
+            ["Weakest condition", marketConditionAttribution?.weakest_condition],
+            ["Condition confidence", safeNumber(marketConditionAttribution?.condition_confidence_score).toFixed(1)],
+            ["API/provider/LLM", `${safeNumber(marketConditionAttribution?.api_calls_used).toFixed(0)} / ${safeNumber(marketConditionAttribution?.provider_calls_used).toFixed(0)} / ${safeNumber(marketConditionAttribution?.llm_calls_used).toFixed(0)}`],
+            ["Behavior safe", marketConditionAttribution?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Condition rows: {(marketConditionAttribution?.condition_rows || []).slice(0, 4).map((row) => `${String(row?.market_condition || "condition").replaceAll("_", " ")} ${safeNumber(row?.condition_score).toFixed(0)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Best horizons: {Object.entries(marketConditionAttribution?.best_horizon_by_condition || {}).slice(0, 4).map(([condition, horizon]) => `${String(condition).replaceAll("_", " ")} → ${String(horizon).replaceAll("_", " ")}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(marketConditionAttribution?.shadow_recommendation || "Continue market-condition attribution shadow-only.").replaceAll("_", " ")}
           </div>
         </div>
       </details>

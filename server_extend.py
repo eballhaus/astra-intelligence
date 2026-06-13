@@ -2367,6 +2367,156 @@ except Exception:
                 "behavior_safe_to_apply": False,
             }
 try:
+    from engine.trade_thesis_validation_v1 import TradeThesisValidationV1
+except Exception:
+    class TradeThesisValidationV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only_trade_thesis_validation",
+                "evidence_count": 0,
+                "thesis_accuracy_score": 0.0,
+                "thesis_failure_rate": 0.0,
+                "strongest_thesis_type": "insufficient_data",
+                "weakest_thesis_type": "insufficient_data",
+                "thesis_confidence": 0.0,
+                "top_failed_thesis_reason": "insufficient_data",
+                "top_successful_thesis_reason": "insufficient_data",
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "forced_exits_enabled": False,
+                "forced_trades_enabled": False,
+                "partial_sells_enabled": False,
+                "automatic_trailing_stops_enabled": False,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "entry_behavior_changed": False,
+                "exit_behavior_changed": False,
+                "position_sizing_changed": False,
+                "portfolio_allocation_changed": False,
+                "thresholds_changed": False,
+                "behavior_safe_to_apply": False,
+            }
+try:
+    from engine.market_transition_detection_v1 import MarketTransitionDetectionV1
+except Exception:
+    class MarketTransitionDetectionV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only_market_transition_detection",
+                "evidence_count": 0,
+                "regime_stability_score": 0.0,
+                "transition_risk_score": 0.0,
+                "transition_confidence": 0.0,
+                "strongest_transition_warning": "insufficient_data",
+                "current_market_phase": "insufficient_data",
+                "likely_next_market_phase": "insufficient_data",
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "forced_exits_enabled": False,
+                "forced_trades_enabled": False,
+                "partial_sells_enabled": False,
+                "automatic_trailing_stops_enabled": False,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "entry_behavior_changed": False,
+                "exit_behavior_changed": False,
+                "position_sizing_changed": False,
+                "portfolio_allocation_changed": False,
+                "thresholds_changed": False,
+                "behavior_safe_to_apply": False,
+            }
+try:
+    from engine.trade_family_intelligence_v1 import TradeFamilyIntelligenceV1
+except Exception:
+    class TradeFamilyIntelligenceV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only_trade_family_intelligence",
+                "evidence_count": 0,
+                "strongest_trade_family": "insufficient_data",
+                "weakest_trade_family": "insufficient_data",
+                "best_family_horizon": "insufficient_data",
+                "best_family_exit_style": "insufficient_data",
+                "family_transfer_confidence": 0.0,
+                "family_learning_score": 0.0,
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "forced_exits_enabled": False,
+                "forced_trades_enabled": False,
+                "partial_sells_enabled": False,
+                "automatic_trailing_stops_enabled": False,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "entry_behavior_changed": False,
+                "exit_behavior_changed": False,
+                "position_sizing_changed": False,
+                "portfolio_allocation_changed": False,
+                "thresholds_changed": False,
+                "behavior_safe_to_apply": False,
+            }
+try:
+    from engine.market_condition_attribution_v1 import MarketConditionAttributionV1
+except Exception:
+    class MarketConditionAttributionV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only_market_condition_attribution",
+                "evidence_count": 0,
+                "best_condition": "insufficient_data",
+                "weakest_condition": "insufficient_data",
+                "best_horizon_by_condition": {},
+                "weakest_horizon_by_condition": {},
+                "profit_capture_by_condition": {},
+                "exit_quality_by_condition": {},
+                "condition_confidence_score": 0.0,
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "forced_exits_enabled": False,
+                "forced_trades_enabled": False,
+                "partial_sells_enabled": False,
+                "automatic_trailing_stops_enabled": False,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "entry_behavior_changed": False,
+                "exit_behavior_changed": False,
+                "position_sizing_changed": False,
+                "portfolio_allocation_changed": False,
+                "thresholds_changed": False,
+                "behavior_safe_to_apply": False,
+            }
+try:
     from engine.profit_lock_profit_capture_maturation_v2 import ProfitLockProfitCaptureMaturationV2
 except Exception:
     class ProfitLockProfitCaptureMaturationV2:  # type: ignore[override]
@@ -2686,6 +2836,10 @@ CATALYST_PERSISTENCE_DECAY_CURVES_V2 = CatalystPersistenceDecayCurvesV2(state_di
 CATALYST_LIFECYCLE_INTELLIGENCE = CatalystLifecycleIntelligenceV1(state_dir=STATE)
 CROSS_SECTOR_CAPITAL_FLOW_MEMORY = CrossSectorCapitalFlowMemoryV1(state_dir=STATE)
 SHADOW_VS_PAPER_PERFORMANCE_ATTRIBUTION = ShadowVsPaperPerformanceAttributionV1(state_dir=STATE)
+TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
+MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
+TRADE_FAMILY_INTELLIGENCE = TradeFamilyIntelligenceV1(state_dir=STATE)
+MARKET_CONDITION_ATTRIBUTION = MarketConditionAttributionV1(state_dir=STATE)
 PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2 = ProfitLockProfitCaptureMaturationV2(state_dir=STATE)
 SHADOW_CORRECTION_VALIDATION_ATTRIBUTION = ShadowCorrectionValidationAttributionV1(state_dir=STATE)
 CONTROLLED_PAPER_PROFIT_PROTECTION_PILOT = ControlledPaperProfitProtectionPilotV1(state_dir=STATE)
@@ -33027,6 +33181,240 @@ def shadow_vs_paper_performance_attribution_v1(force: bool = False):
         }
 
 
+@router.get("/api/trade_thesis_validation_v1")
+def trade_thesis_validation_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        out = dict(TRADE_THESIS_VALIDATION.status(statuses=statuses, force=bool(force)) or {})
+        out["trade_thesis_validation_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["forced_exits_enabled"] = False
+        out["forced_trades_enabled"] = False
+        out["partial_sells_enabled"] = False
+        out["automatic_trailing_stops_enabled"] = False
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["entry_behavior_changed"] = False
+        out["exit_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["portfolio_allocation_changed"] = False
+        out["thresholds_changed"] = False
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only_trade_thesis_validation",
+            "trade_thesis_validation_v1": True,
+            "degraded_reason": f"trade_thesis_validation_endpoint_unavailable:{str(exc)[:140]}",
+            "evidence_count": 0,
+            "thesis_accuracy_score": 0.0,
+            "thesis_failure_rate": 0.0,
+            "strongest_thesis_type": "insufficient_data",
+            "weakest_thesis_type": "insufficient_data",
+            "thesis_confidence": 0.0,
+            "top_failed_thesis_reason": "insufficient_data",
+            "top_successful_thesis_reason": "insufficient_data",
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "forced_exits_enabled": False,
+            "forced_trades_enabled": False,
+            "partial_sells_enabled": False,
+            "automatic_trailing_stops_enabled": False,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "portfolio_allocation_changed": False,
+            "thresholds_changed": False,
+            "behavior_safe_to_apply": False,
+        }
+
+
+@router.get("/api/market_transition_detection_v1")
+def market_transition_detection_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        out = dict(MARKET_TRANSITION_DETECTION.status(statuses=statuses, force=bool(force)) or {})
+        out["market_transition_detection_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["forced_exits_enabled"] = False
+        out["forced_trades_enabled"] = False
+        out["partial_sells_enabled"] = False
+        out["automatic_trailing_stops_enabled"] = False
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["entry_behavior_changed"] = False
+        out["exit_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["portfolio_allocation_changed"] = False
+        out["thresholds_changed"] = False
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only_market_transition_detection",
+            "market_transition_detection_v1": True,
+            "degraded_reason": f"market_transition_detection_endpoint_unavailable:{str(exc)[:140]}",
+            "evidence_count": 0,
+            "regime_stability_score": 0.0,
+            "transition_risk_score": 0.0,
+            "transition_confidence": 0.0,
+            "strongest_transition_warning": "insufficient_data",
+            "current_market_phase": "insufficient_data",
+            "likely_next_market_phase": "insufficient_data",
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "forced_exits_enabled": False,
+            "forced_trades_enabled": False,
+            "partial_sells_enabled": False,
+            "automatic_trailing_stops_enabled": False,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "portfolio_allocation_changed": False,
+            "thresholds_changed": False,
+            "behavior_safe_to_apply": False,
+        }
+
+
+@router.get("/api/trade_family_intelligence_v1")
+def trade_family_intelligence_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        out = dict(TRADE_FAMILY_INTELLIGENCE.status(statuses=statuses, force=bool(force)) or {})
+        out["trade_family_intelligence_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["forced_exits_enabled"] = False
+        out["forced_trades_enabled"] = False
+        out["partial_sells_enabled"] = False
+        out["automatic_trailing_stops_enabled"] = False
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["entry_behavior_changed"] = False
+        out["exit_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["portfolio_allocation_changed"] = False
+        out["thresholds_changed"] = False
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only_trade_family_intelligence",
+            "trade_family_intelligence_v1": True,
+            "degraded_reason": f"trade_family_intelligence_endpoint_unavailable:{str(exc)[:140]}",
+            "evidence_count": 0,
+            "strongest_trade_family": "insufficient_data",
+            "weakest_trade_family": "insufficient_data",
+            "best_family_horizon": "insufficient_data",
+            "best_family_exit_style": "insufficient_data",
+            "family_transfer_confidence": 0.0,
+            "family_learning_score": 0.0,
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "forced_exits_enabled": False,
+            "forced_trades_enabled": False,
+            "partial_sells_enabled": False,
+            "automatic_trailing_stops_enabled": False,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "portfolio_allocation_changed": False,
+            "thresholds_changed": False,
+            "behavior_safe_to_apply": False,
+        }
+
+
+@router.get("/api/market_condition_attribution_v1")
+def market_condition_attribution_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        out = dict(MARKET_CONDITION_ATTRIBUTION.status(statuses=statuses, force=bool(force)) or {})
+        out["market_condition_attribution_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["forced_exits_enabled"] = False
+        out["forced_trades_enabled"] = False
+        out["partial_sells_enabled"] = False
+        out["automatic_trailing_stops_enabled"] = False
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["entry_behavior_changed"] = False
+        out["exit_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["portfolio_allocation_changed"] = False
+        out["thresholds_changed"] = False
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only_market_condition_attribution",
+            "market_condition_attribution_v1": True,
+            "degraded_reason": f"market_condition_attribution_endpoint_unavailable:{str(exc)[:140]}",
+            "evidence_count": 0,
+            "best_condition": "insufficient_data",
+            "weakest_condition": "insufficient_data",
+            "best_horizon_by_condition": {},
+            "weakest_horizon_by_condition": {},
+            "profit_capture_by_condition": {},
+            "exit_quality_by_condition": {},
+            "condition_confidence_score": 0.0,
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "forced_exits_enabled": False,
+            "forced_trades_enabled": False,
+            "partial_sells_enabled": False,
+            "automatic_trailing_stops_enabled": False,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "portfolio_allocation_changed": False,
+            "thresholds_changed": False,
+            "behavior_safe_to_apply": False,
+        }
+
+
 @router.get("/api/profit_lock_profit_capture_maturation_v2")
 def profit_lock_profit_capture_maturation_v2(force: bool = False):
     try:
@@ -33102,6 +33490,22 @@ def shadow_correction_validation_attribution_v1(force: bool = False):
             statuses["shadow_vs_paper_performance_attribution_v1"] = SHADOW_VS_PAPER_PERFORMANCE_ATTRIBUTION.status(statuses=statuses, force=False)
         except Exception:
             statuses["shadow_vs_paper_performance_attribution_v1"] = {}
+        try:
+            statuses["trade_thesis_validation_v1"] = TRADE_THESIS_VALIDATION.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["trade_thesis_validation_v1"] = {}
+        try:
+            statuses["market_transition_detection_v1"] = MARKET_TRANSITION_DETECTION.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["market_transition_detection_v1"] = {}
+        try:
+            statuses["trade_family_intelligence_v1"] = TRADE_FAMILY_INTELLIGENCE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["trade_family_intelligence_v1"] = {}
+        try:
+            statuses["market_condition_attribution_v1"] = MARKET_CONDITION_ATTRIBUTION.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["market_condition_attribution_v1"] = {}
         try:
             statuses["profit_lock_profit_capture_maturation_v2"] = PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2.status(statuses=statuses, force=False)
         except Exception:
@@ -42503,6 +42907,22 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["shadow_vs_paper_performance_attribution_v1"] = SHADOW_VS_PAPER_PERFORMANCE_ATTRIBUTION.status(statuses=statuses, force=False)
     except Exception:
         statuses["shadow_vs_paper_performance_attribution_v1"] = {}
+    try:
+        statuses["trade_thesis_validation_v1"] = TRADE_THESIS_VALIDATION.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["trade_thesis_validation_v1"] = {}
+    try:
+        statuses["market_transition_detection_v1"] = MARKET_TRANSITION_DETECTION.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["market_transition_detection_v1"] = {}
+    try:
+        statuses["trade_family_intelligence_v1"] = TRADE_FAMILY_INTELLIGENCE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["trade_family_intelligence_v1"] = {}
+    try:
+        statuses["market_condition_attribution_v1"] = MARKET_CONDITION_ATTRIBUTION.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["market_condition_attribution_v1"] = {}
     try:
         statuses["profit_lock_profit_capture_maturation_v2"] = PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2.status(statuses=statuses, force=False)
     except Exception:
@@ -52218,6 +52638,10 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("catalyst_lifecycle_intelligence_v1", lambda: CATALYST_LIFECYCLE_INTELLIGENCE.status(statuses=statuses, force=False))
         _safe_status("cross_sector_capital_flow_memory_v1", lambda: CROSS_SECTOR_CAPITAL_FLOW_MEMORY.status(statuses=statuses, force=False))
         _safe_status("shadow_vs_paper_performance_attribution_v1", lambda: SHADOW_VS_PAPER_PERFORMANCE_ATTRIBUTION.status(statuses=statuses, force=False))
+        _safe_status("trade_thesis_validation_v1", lambda: TRADE_THESIS_VALIDATION.status(statuses=statuses, force=False))
+        _safe_status("market_transition_detection_v1", lambda: MARKET_TRANSITION_DETECTION.status(statuses=statuses, force=False))
+        _safe_status("trade_family_intelligence_v1", lambda: TRADE_FAMILY_INTELLIGENCE.status(statuses=statuses, force=False))
+        _safe_status("market_condition_attribution_v1", lambda: MARKET_CONDITION_ATTRIBUTION.status(statuses=statuses, force=False))
         _safe_status("profit_lock_profit_capture_maturation_v2", lambda: PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2.status(statuses=statuses, force=False))
         _safe_status("shadow_correction_validation_attribution_v1", lambda: SHADOW_CORRECTION_VALIDATION_ATTRIBUTION.status(statuses=statuses, force=False))
         _safe_status("controlled_paper_profit_protection_pilot_v1", lambda: CONTROLLED_PAPER_PROFIT_PROTECTION_PILOT.status(statuses=statuses, force=False))
