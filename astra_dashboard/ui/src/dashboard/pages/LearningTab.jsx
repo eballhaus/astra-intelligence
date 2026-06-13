@@ -1616,6 +1616,7 @@ export default function LearningTab({ compact = false }) {
   const catalystLifecycleIntelligence = unified?.catalyst_lifecycle_intelligence_v1 || {};
   const crossSectorCapitalFlowMemory = unified?.cross_sector_capital_flow_memory_v1 || {};
   const shadowVsPaperPerformanceAttribution = unified?.shadow_vs_paper_performance_attribution_v1 || {};
+  const candidateRankingAttributionPromotion = unified?.candidate_ranking_attribution_promotion_intelligence_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
   const tradeFamilyIntelligence = unified?.trade_family_intelligence_v1 || {};
@@ -2254,6 +2255,59 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Shadow recommendation: {String(shadowVsPaperPerformanceAttribution?.shadow_recommendation || "Continue shadow-vs-paper attribution observation-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Candidate Ranking Attribution & Promotion Intelligence V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is auditing why candidates were promoted, rejected, or missed so ranking quality can be improved safely later. This suite is attribution-only, shadow-only, and does not change ranking, promotion logic, entries, exits, sizing, thresholds, or broker behavior.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Evidence", safeNumber(candidateRankingAttributionPromotion?.evidence_count).toFixed(0)],
+            ["Promoted", safeNumber(candidateRankingAttributionPromotion?.promoted_candidates).toFixed(0)],
+            ["Rejected", safeNumber(candidateRankingAttributionPromotion?.rejected_candidates).toFixed(0)],
+            ["Selected", safeNumber(candidateRankingAttributionPromotion?.selected_candidates).toFixed(0)],
+            ["Missed", safeNumber(candidateRankingAttributionPromotion?.missed_candidates).toFixed(0)],
+            ["Ranking quality", safeNumber(candidateRankingAttributionPromotion?.ranking_quality_score).toFixed(1)],
+            ["Promotion accuracy", safeNumber(candidateRankingAttributionPromotion?.promotion_accuracy).toFixed(1)],
+            ["Rejection accuracy", safeNumber(candidateRankingAttributionPromotion?.rejection_accuracy).toFixed(1)],
+            ["Predictive power", safeNumber(candidateRankingAttributionPromotion?.ranking_predictive_power).toFixed(1)],
+            ["Reliability", safeNumber(candidateRankingAttributionPromotion?.ranking_reliability).toFixed(1)],
+            ["Consistency", safeNumber(candidateRankingAttributionPromotion?.ranking_consistency).toFixed(1)],
+            ["Overconfidence", safeNumber(candidateRankingAttributionPromotion?.ranking_overconfidence).toFixed(1)],
+            ["Underconfidence", safeNumber(candidateRankingAttributionPromotion?.ranking_underconfidence).toFixed(1)],
+            ["Strongest factor", candidateRankingAttributionPromotion?.most_predictive_ranking_factor],
+            ["Weakest factor", candidateRankingAttributionPromotion?.least_predictive_ranking_factor],
+            ["Most overvalued", candidateRankingAttributionPromotion?.most_overvalued_factor],
+            ["Most undervalued", candidateRankingAttributionPromotion?.most_undervalued_factor],
+            ["Missed promotion", candidateRankingAttributionPromotion?.biggest_missed_promotion],
+            ["False promotion", candidateRankingAttributionPromotion?.biggest_false_promotion],
+            ["Dominant mistake", candidateRankingAttributionPromotion?.dominant_ranking_mistake],
+            ["Blind spot", candidateRankingAttributionPromotion?.dominant_ranking_blind_spot],
+            ["Next focus", candidateRankingAttributionPromotion?.next_ranking_focus],
+            ["Readiness", candidateRankingAttributionPromotion?.candidate_ranking_influence_readiness],
+            ["Influence ready", candidateRankingAttributionPromotion?.influence_ready ? "yes" : "no"],
+            ["Confidence", safeNumber(candidateRankingAttributionPromotion?.confidence_score).toFixed(1)],
+            ["Truth score", safeNumber(candidateRankingAttributionPromotion?.ranking_truth_score).toFixed(1)],
+            ["API/provider/LLM", `${safeNumber(candidateRankingAttributionPromotion?.api_calls_used).toFixed(0)} / ${safeNumber(candidateRankingAttributionPromotion?.provider_calls_used).toFixed(0)} / ${safeNumber(candidateRankingAttributionPromotion?.llm_calls_used).toFixed(0)}`],
+            ["Behavior safe", candidateRankingAttributionPromotion?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Factor audit: {(candidateRankingAttributionPromotion?.ranking_factor_rows || []).slice(0, 4).map((row) => `${String(row?.factor || "unknown").replaceAll("_", " ")} ${safeNumber(row?.predictive_score).toFixed(1)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Lessons: {String(candidateRankingAttributionPromotion?.strongest_ranking_lesson || "Continue candidate ranking audit shadow-only.").replaceAll("_", " ")} | {String(candidateRankingAttributionPromotion?.strongest_rejection_lesson || "Continue rejection audit shadow-only.").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(candidateRankingAttributionPromotion?.shadow_recommendation || "Continue candidate ranking audit before any ranking influence.").replaceAll("_", " ")}
           </div>
         </div>
       </details>

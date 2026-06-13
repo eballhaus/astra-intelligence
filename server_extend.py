@@ -2367,6 +2367,49 @@ except Exception:
                 "behavior_safe_to_apply": False,
             }
 try:
+    from engine.candidate_ranking_attribution_promotion_intelligence_v1 import CandidateRankingAttributionPromotionIntelligenceV1
+except Exception:
+    class CandidateRankingAttributionPromotionIntelligenceV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only_candidate_ranking_audit",
+                "evidence_count": 0,
+                "ranking_quality_score": 0.0,
+                "promotion_accuracy": 0.0,
+                "rejection_accuracy": 0.0,
+                "ranking_predictive_power": 0.0,
+                "strongest_positive_ranking_factor": "insufficient_data",
+                "least_predictive_ranking_factor": "insufficient_data",
+                "biggest_missed_promotion": "insufficient_data",
+                "dominant_ranking_mistake": "insufficient_data",
+                "candidate_ranking_influence_readiness": "insufficient_evidence",
+                "confidence_score": 0.0,
+                "influence_ready": False,
+                "influence_confidence": 0.0,
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "forced_exits_enabled": False,
+                "forced_trades_enabled": False,
+                "partial_sells_enabled": False,
+                "automatic_trailing_stops_enabled": False,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "entry_behavior_changed": False,
+                "exit_behavior_changed": False,
+                "position_sizing_changed": False,
+                "portfolio_allocation_changed": False,
+                "thresholds_changed": False,
+                "behavior_safe_to_apply": False,
+            }
+try:
     from engine.trade_thesis_validation_v1 import TradeThesisValidationV1
 except Exception:
     class TradeThesisValidationV1:  # type: ignore[override]
@@ -2988,6 +3031,7 @@ CATALYST_PERSISTENCE_DECAY_CURVES_V2 = CatalystPersistenceDecayCurvesV2(state_di
 CATALYST_LIFECYCLE_INTELLIGENCE = CatalystLifecycleIntelligenceV1(state_dir=STATE)
 CROSS_SECTOR_CAPITAL_FLOW_MEMORY = CrossSectorCapitalFlowMemoryV1(state_dir=STATE)
 SHADOW_VS_PAPER_PERFORMANCE_ATTRIBUTION = ShadowVsPaperPerformanceAttributionV1(state_dir=STATE)
+CANDIDATE_RANKING_ATTRIBUTION_PROMOTION_INTELLIGENCE = CandidateRankingAttributionPromotionIntelligenceV1(state_dir=STATE)
 TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
 MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
 TRADE_FAMILY_INTELLIGENCE = TradeFamilyIntelligenceV1(state_dir=STATE)
@@ -33337,6 +33381,68 @@ def shadow_vs_paper_performance_attribution_v1(force: bool = False):
         }
 
 
+@router.get("/api/candidate_ranking_attribution_promotion_intelligence_v1")
+def candidate_ranking_attribution_promotion_intelligence_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        out = dict(CANDIDATE_RANKING_ATTRIBUTION_PROMOTION_INTELLIGENCE.status(statuses=statuses, force=bool(force)) or {})
+        out["candidate_ranking_attribution_promotion_intelligence_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["forced_exits_enabled"] = False
+        out["forced_trades_enabled"] = False
+        out["partial_sells_enabled"] = False
+        out["automatic_trailing_stops_enabled"] = False
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["entry_behavior_changed"] = False
+        out["exit_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["portfolio_allocation_changed"] = False
+        out["thresholds_changed"] = False
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only_candidate_ranking_audit",
+            "candidate_ranking_attribution_promotion_intelligence_v1": True,
+            "degraded_reason": f"candidate_ranking_attribution_endpoint_unavailable:{str(exc)[:140]}",
+            "evidence_count": 0,
+            "ranking_quality_score": 0.0,
+            "promotion_accuracy": 0.0,
+            "rejection_accuracy": 0.0,
+            "ranking_predictive_power": 0.0,
+            "strongest_positive_ranking_factor": "insufficient_data",
+            "least_predictive_ranking_factor": "insufficient_data",
+            "biggest_missed_promotion": "insufficient_data",
+            "dominant_ranking_mistake": "insufficient_data",
+            "candidate_ranking_influence_readiness": "insufficient_evidence",
+            "confidence_score": 0.0,
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "forced_exits_enabled": False,
+            "forced_trades_enabled": False,
+            "partial_sells_enabled": False,
+            "automatic_trailing_stops_enabled": False,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "portfolio_allocation_changed": False,
+            "thresholds_changed": False,
+            "behavior_safe_to_apply": False,
+        }
+
+
 @router.get("/api/trade_thesis_validation_v1")
 def trade_thesis_validation_v1(force: bool = False):
     try:
@@ -43244,6 +43350,10 @@ def _learning_acceleration_status_bundle() -> dict:
     except Exception:
         statuses["execution_participation_audit"] = {}
     try:
+        statuses["candidate_ranking_attribution_promotion_intelligence_v1"] = CANDIDATE_RANKING_ATTRIBUTION_PROMOTION_INTELLIGENCE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["candidate_ranking_attribution_promotion_intelligence_v1"] = {}
+    try:
         statuses["paper_throughput_exit_validation_catalyst_intelligence_v1"] = PAPER_THROUGHPUT_EXIT_VALIDATION_CATALYST_INTELLIGENCE.status(statuses=statuses, force=False)
     except Exception:
         statuses["paper_throughput_exit_validation_catalyst_intelligence_v1"] = {}
@@ -52967,6 +53077,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         })
         _safe_status("remote_runtime_consistency", lambda: _remote_runtime_consistency_payload())
         _safe_status("execution_participation_audit", lambda: EXECUTION_PARTICIPATION_AUDIT.status(paper_trace=_paper_execution_trace_payload(), force=False))
+        _safe_status("candidate_ranking_attribution_promotion_intelligence_v1", lambda: CANDIDATE_RANKING_ATTRIBUTION_PROMOTION_INTELLIGENCE.status(statuses=statuses, force=False))
         _safe_status("mobile_runtime_compaction", lambda: _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))
         _safe_status("paper_opportunity_allocation", lambda: PAPER_OPPORTUNITY_ALLOCATION_ENGINE.status(rows=rows))
