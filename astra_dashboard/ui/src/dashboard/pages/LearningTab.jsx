@@ -1620,6 +1620,10 @@ export default function LearningTab({ compact = false }) {
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
   const tradeFamilyIntelligence = unified?.trade_family_intelligence_v1 || {};
   const marketConditionAttribution = unified?.market_condition_attribution_v1 || {};
+  const marketBreadthIndexIntelligence = unified?.market_breadth_index_intelligence_v1 || {};
+  const etfSectorRotationIntelligence = unified?.etf_sector_rotation_intelligence_v1 || {};
+  const cryptoShadowLearning = unified?.crypto_shadow_learning_v1 || {};
+  const crossMarketAttributionTransfer = unified?.cross_market_attribution_transfer_learning_v1 || {};
   const profitLockProfitCaptureMaturation = unified?.profit_lock_profit_capture_maturation_v2 || {};
   const shadowCorrectionValidation = unified?.shadow_correction_validation_attribution_v1 || {};
   const controlledPaperProfitProtection = unified?.controlled_paper_profit_protection_pilot_v1 || {};
@@ -2375,6 +2379,171 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Shadow recommendation: {String(marketConditionAttribution?.shadow_recommendation || "Continue market-condition attribution shadow-only.").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Market Breadth & Index Intelligence V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is tracking broad market support through index and breadth proxies for context only. Index and ETF trading remain disabled, and this panel does not change stock entries, exits, sizing, allocation, or broker behavior.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Indexes tracked", (marketBreadthIndexIntelligence?.index_symbols_tracked || []).join(", ")],
+            ["Market health", safeNumber(marketBreadthIndexIntelligence?.overall_market_health).toFixed(1)],
+            ["Risk on", safeNumber(marketBreadthIndexIntelligence?.risk_on_score).toFixed(1)],
+            ["Risk off", safeNumber(marketBreadthIndexIntelligence?.risk_off_score).toFixed(1)],
+            ["Trend strength", safeNumber(marketBreadthIndexIntelligence?.index_trend_strength).toFixed(1)],
+            ["Momentum", safeNumber(marketBreadthIndexIntelligence?.index_momentum_score).toFixed(1)],
+            ["Breadth proxy", safeNumber(marketBreadthIndexIntelligence?.breadth_proxy_score).toFixed(1)],
+            ["Vol pressure", safeNumber(marketBreadthIndexIntelligence?.volatility_pressure_score).toFixed(1)],
+            ["Transition risk", safeNumber(marketBreadthIndexIntelligence?.market_transition_risk).toFixed(1)],
+            ["Equity support", safeNumber(marketBreadthIndexIntelligence?.market_support_for_equity_trades).toFixed(1)],
+            ["Momentum support", safeNumber(marketBreadthIndexIntelligence?.market_support_for_momentum_trades).toFixed(1)],
+            ["Small-cap support", safeNumber(marketBreadthIndexIntelligence?.market_support_for_small_caps).toFixed(1)],
+            ["Growth support", safeNumber(marketBreadthIndexIntelligence?.market_support_for_growth_trades).toFixed(1)],
+            ["Strongest index", marketBreadthIndexIntelligence?.strongest_index_signal],
+            ["Weakest index", marketBreadthIndexIntelligence?.weakest_index_signal],
+            ["Index regime", marketBreadthIndexIntelligence?.current_index_regime],
+            ["Confidence", safeNumber(marketBreadthIndexIntelligence?.index_confidence_score).toFixed(1)],
+            ["API/provider/LLM", `${safeNumber(marketBreadthIndexIntelligence?.api_calls_used).toFixed(0)} / ${safeNumber(marketBreadthIndexIntelligence?.provider_calls_used).toFixed(0)} / ${safeNumber(marketBreadthIndexIntelligence?.llm_calls_used).toFixed(0)}`],
+            ["Index trading", marketBreadthIndexIntelligence?.index_trading_enabled ? "enabled" : "disabled"],
+            ["Behavior safe", marketBreadthIndexIntelligence?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Signals: {(marketBreadthIndexIntelligence?.index_signal_rows || []).slice(0, 5).map((row) => `${String(row?.symbol || "idx")} ${safeNumber(row?.signal).toFixed(0)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Summary: {String(marketBreadthIndexIntelligence?.market_breadth_summary || "warming up").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>ETF Intelligence & Sector Rotation V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is learning ETF leadership and sector rotation context without trading ETFs. These signals support diagnostics and attribution only, with no changes to rankings, execution, sizing, thresholds, or broker behavior.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["ETFs tracked", safeNumber((etfSectorRotationIntelligence?.etf_symbols_tracked || []).length).toFixed(0)],
+            ["Strongest sector", etfSectorRotationIntelligence?.strongest_sector],
+            ["Weakest sector", etfSectorRotationIntelligence?.weakest_sector],
+            ["Inflow score", safeNumber(etfSectorRotationIntelligence?.sector_inflow_score).toFixed(1)],
+            ["Outflow score", safeNumber(etfSectorRotationIntelligence?.sector_outflow_score).toFixed(1)],
+            ["Rotation speed", safeNumber(etfSectorRotationIntelligence?.rotation_speed).toFixed(1)],
+            ["Persistence", safeNumber(etfSectorRotationIntelligence?.sector_momentum_persistence).toFixed(1)],
+            ["Decay risk", safeNumber(etfSectorRotationIntelligence?.sector_decay_risk).toFixed(1)],
+            ["Position support", safeNumber(etfSectorRotationIntelligence?.sector_support_for_current_positions).toFixed(1)],
+            ["Leadership score", safeNumber(etfSectorRotationIntelligence?.etf_leadership_score).toFixed(1)],
+            ["Rotation confidence", safeNumber(etfSectorRotationIntelligence?.sector_rotation_confidence).toFixed(1)],
+            ["Strongest rotation", etfSectorRotationIntelligence?.strongest_sector_rotation],
+            ["Weakest rotation", etfSectorRotationIntelligence?.weakest_sector_rotation],
+            ["Stock selection context", etfSectorRotationIntelligence?.sector_context_for_stock_selection],
+            ["Profit capture context", etfSectorRotationIntelligence?.sector_context_for_profit_capture],
+            ["API/provider/LLM", `${safeNumber(etfSectorRotationIntelligence?.api_calls_used).toFixed(0)} / ${safeNumber(etfSectorRotationIntelligence?.provider_calls_used).toFixed(0)} / ${safeNumber(etfSectorRotationIntelligence?.llm_calls_used).toFixed(0)}`],
+            ["ETF trading", etfSectorRotationIntelligence?.etf_trading_enabled ? "enabled" : "disabled"],
+            ["Behavior safe", etfSectorRotationIntelligence?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Sector rows: {(etfSectorRotationIntelligence?.sector_rows || []).slice(0, 5).map((row) => `${String(row?.sector || "sector")} ${safeNumber(row?.leadership_score).toFixed(0)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Summary: {String(etfSectorRotationIntelligence?.sector_rotation_summary || "warming up").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Crypto Shadow Learning V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is learning crypto volatility, momentum, risk appetite, horizons, and families in a separate shadow engine. Crypto paper trading, live trading, and stock-trade influence are disabled.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Core symbols", (cryptoShadowLearning?.crypto_core_symbols_tracked || []).join(", ")],
+            ["Rotating symbols", safeNumber((cryptoShadowLearning?.crypto_rotating_symbols_today || []).length).toFixed(0)],
+            ["Scan symbols today", safeNumber(cryptoShadowLearning?.crypto_scan_symbols_today).toFixed(0)],
+            ["Shadow opportunities", safeNumber(cryptoShadowLearning?.crypto_shadow_opportunities).toFixed(0)],
+            ["Virtual paths", safeNumber(cryptoShadowLearning?.crypto_virtual_paths).toFixed(0)],
+            ["Completed lifecycles", safeNumber(cryptoShadowLearning?.crypto_completed_lifecycles).toFixed(0)],
+            ["Replay score", safeNumber(cryptoShadowLearning?.crypto_replay_score).toFixed(1)],
+            ["Crypto PF status", cryptoShadowLearning?.crypto_profit_factor_status],
+            ["Win rate", `${safeNumber(cryptoShadowLearning?.crypto_win_rate).toFixed(1)}%`],
+            ["Avg return", safeNumber(cryptoShadowLearning?.crypto_avg_return).toFixed(3)],
+            ["Avg MFE", safeNumber(cryptoShadowLearning?.crypto_avg_mfe).toFixed(3)],
+            ["Avg MAE", safeNumber(cryptoShadowLearning?.crypto_avg_mae).toFixed(3)],
+            ["Profit capture", safeNumber(cryptoShadowLearning?.crypto_profit_capture).toFixed(1)],
+            ["Giveback", safeNumber(cryptoShadowLearning?.crypto_giveback).toFixed(1)],
+            ["Best horizon", cryptoShadowLearning?.crypto_best_horizon],
+            ["Weakest horizon", cryptoShadowLearning?.crypto_weakest_horizon],
+            ["Best family", cryptoShadowLearning?.crypto_best_family],
+            ["Weakest family", cryptoShadowLearning?.crypto_weakest_family],
+            ["Best regime", cryptoShadowLearning?.crypto_best_regime],
+            ["Transition score", safeNumber(cryptoShadowLearning?.crypto_transition_score).toFixed(1)],
+            ["Vol learning", safeNumber(cryptoShadowLearning?.crypto_volatility_learning_score).toFixed(1)],
+            ["Momentum learning", safeNumber(cryptoShadowLearning?.crypto_momentum_learning_score).toFixed(1)],
+            ["Risk appetite", safeNumber(cryptoShadowLearning?.crypto_risk_appetite_score).toFixed(1)],
+            ["API/provider/LLM", `${safeNumber(cryptoShadowLearning?.api_calls_used).toFixed(0)} / ${safeNumber(cryptoShadowLearning?.provider_calls_used).toFixed(0)} / ${safeNumber(cryptoShadowLearning?.llm_calls_used).toFixed(0)}`],
+            ["Crypto paper/live", `${cryptoShadowLearning?.crypto_paper_trading_enabled ? "on" : "off"} / ${cryptoShadowLearning?.crypto_live_trading_enabled ? "on" : "off"}`],
+            ["Behavior safe", cryptoShadowLearning?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Rotating pool: {(cryptoShadowLearning?.crypto_rotating_symbols_today || []).slice(0, 12).join(", ") || "warming up"}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Cross-Market Attribution & Transfer Learning V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is measuring whether index, ETF, and crypto context helps explain stock outcomes. Cross-market influence remains attribution-only and cannot change stock behavior.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Transfer confidence", safeNumber(crossMarketAttributionTransfer?.cross_market_transfer_confidence).toFixed(1)],
+            ["Crypto to stock", safeNumber(crossMarketAttributionTransfer?.crypto_to_stock_signal_score).toFixed(1)],
+            ["Index to stock", safeNumber(crossMarketAttributionTransfer?.index_to_stock_signal_score).toFixed(1)],
+            ["ETF to stock", safeNumber(crossMarketAttributionTransfer?.etf_to_stock_signal_score).toFixed(1)],
+            ["Risk appetite", safeNumber(crossMarketAttributionTransfer?.risk_appetite_transfer_score).toFixed(1)],
+            ["Market psychology", safeNumber(crossMarketAttributionTransfer?.market_psychology_score).toFixed(1)],
+            ["Speculation score", safeNumber(crossMarketAttributionTransfer?.speculation_score).toFixed(1)],
+            ["Alpha available", crossMarketAttributionTransfer?.cross_market_alpha_available ? "yes" : "no"],
+            ["Alpha confidence", safeNumber(crossMarketAttributionTransfer?.cross_market_alpha_confidence).toFixed(1)],
+            ["Strongest relationship", crossMarketAttributionTransfer?.strongest_cross_market_relationship],
+            ["Weakest relationship", crossMarketAttributionTransfer?.weakest_cross_market_relationship],
+            ["Recommended use", crossMarketAttributionTransfer?.recommended_cross_market_use],
+            ["Bandwidth", `${safeNumber(crossMarketAttributionTransfer?.bandwidth_used_gb).toFixed(3)} GB`],
+            ["Budget status", crossMarketAttributionTransfer?.bandwidth_budget_status],
+            ["API/provider/LLM", `${safeNumber(crossMarketAttributionTransfer?.api_calls_used).toFixed(0)} / ${safeNumber(crossMarketAttributionTransfer?.provider_calls_used).toFixed(0)} / ${safeNumber(crossMarketAttributionTransfer?.llm_calls_used).toFixed(0)}`],
+            ["Behavior safe", crossMarketAttributionTransfer?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Relationships: {(crossMarketAttributionTransfer?.relationship_rows || []).slice(0, 5).map((row) => `${String(row?.relationship || "relationship").replaceAll("_", " ")} ${safeNumber(row?.score).toFixed(0)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow recommendation: {String(crossMarketAttributionTransfer?.shadow_recommendation || "Keep cross-market attribution shadow-only.").replaceAll("_", " ")}
           </div>
         </div>
       </details>

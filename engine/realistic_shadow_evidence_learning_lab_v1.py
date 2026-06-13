@@ -10,8 +10,9 @@ from typing import Any
 VERSION = "1.0.0"
 CACHE_TTL_SECONDS = 12.0
 DASHBOARD_CACHE_MAX_AGE_SECONDS = 180.0
-TARGET_SHADOW_OPPORTUNITIES_PER_DAY = 125
-HARD_MAX_SHADOW_OPPORTUNITIES_PER_DAY = 150
+PREVIOUS_SHADOW_TARGET_OPPORTUNITIES_PER_DAY = 125
+TARGET_SHADOW_OPPORTUNITIES_PER_DAY = 175
+HARD_MAX_SHADOW_OPPORTUNITIES_PER_DAY = 200
 TARGET_VIRTUAL_PATHS_PER_OPPORTUNITY = 8
 HARD_MAX_VIRTUAL_PATHS_PER_OPPORTUNITY = 20
 
@@ -398,8 +399,17 @@ class RealisticShadowEvidenceLearningLabV1:
             "shadow_learning_events": shadow_learning_events,
             "shadow_capacity_used": capacity_used,
             "shadow_capacity_remaining": capacity_remaining,
+            "previous_shadow_target": PREVIOUS_SHADOW_TARGET_OPPORTUNITIES_PER_DAY,
             "target_shadow_opportunities_per_day": TARGET_SHADOW_OPPORTUNITIES_PER_DAY,
             "hard_max_shadow_opportunities_per_day": HARD_MAX_SHADOW_OPPORTUNITIES_PER_DAY,
+            "shadow_capacity_increase": TARGET_SHADOW_OPPORTUNITIES_PER_DAY - PREVIOUS_SHADOW_TARGET_OPPORTUNITIES_PER_DAY,
+            "estimated_learning_acceleration_pct": _round(
+                (TARGET_SHADOW_OPPORTUNITIES_PER_DAY - PREVIOUS_SHADOW_TARGET_OPPORTUNITIES_PER_DAY)
+                / max(1, PREVIOUS_SHADOW_TARGET_OPPORTUNITIES_PER_DAY)
+                * 100.0,
+                2,
+            ),
+            "shadow_capacity_safe": TARGET_SHADOW_OPPORTUNITIES_PER_DAY <= HARD_MAX_SHADOW_OPPORTUNITIES_PER_DAY and storage_pressure < 75.0,
             "target_virtual_paths_per_opportunity": TARGET_VIRTUAL_PATHS_PER_OPPORTUNITY,
             "hard_max_virtual_paths_per_opportunity": HARD_MAX_VIRTUAL_PATHS_PER_OPPORTUNITY,
             "price_path_realism_score": price_path_realism,
@@ -618,8 +628,17 @@ class RealisticShadowEvidenceLearningLabV1:
                 "completed_shadow_lifecycles": 0,
                 "shadow_capacity_used": 0.0,
                 "shadow_capacity_remaining": 0,
+                "previous_shadow_target": PREVIOUS_SHADOW_TARGET_OPPORTUNITIES_PER_DAY,
                 "target_shadow_opportunities_per_day": TARGET_SHADOW_OPPORTUNITIES_PER_DAY,
                 "hard_max_shadow_opportunities_per_day": HARD_MAX_SHADOW_OPPORTUNITIES_PER_DAY,
+                "shadow_capacity_increase": TARGET_SHADOW_OPPORTUNITIES_PER_DAY - PREVIOUS_SHADOW_TARGET_OPPORTUNITIES_PER_DAY,
+                "estimated_learning_acceleration_pct": _round(
+                    (TARGET_SHADOW_OPPORTUNITIES_PER_DAY - PREVIOUS_SHADOW_TARGET_OPPORTUNITIES_PER_DAY)
+                    / max(1, PREVIOUS_SHADOW_TARGET_OPPORTUNITIES_PER_DAY)
+                    * 100.0,
+                    2,
+                ),
+                "shadow_capacity_safe": False,
                 "target_virtual_paths_per_opportunity": TARGET_VIRTUAL_PATHS_PER_OPPORTUNITY,
                 "hard_max_virtual_paths_per_opportunity": HARD_MAX_VIRTUAL_PATHS_PER_OPPORTUNITY,
                 "average_shadow_realism_score": 0.0,

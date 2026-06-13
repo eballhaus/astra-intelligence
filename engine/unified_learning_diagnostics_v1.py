@@ -322,6 +322,10 @@ class UnifiedLearningDiagnosticsV1:
         market_transition_detection = self._market_transition_detection_v1_summary(statuses.get("market_transition_detection_v1") or {})
         trade_family_intelligence = self._trade_family_intelligence_v1_summary(statuses.get("trade_family_intelligence_v1") or {})
         market_condition_attribution = self._market_condition_attribution_v1_summary(statuses.get("market_condition_attribution_v1") or {})
+        market_breadth_index_intelligence = self._market_breadth_index_intelligence_v1_summary(statuses.get("market_breadth_index_intelligence_v1") or {})
+        etf_sector_rotation_intelligence = self._etf_sector_rotation_intelligence_v1_summary(statuses.get("etf_sector_rotation_intelligence_v1") or {})
+        crypto_shadow_learning = self._crypto_shadow_learning_v1_summary(statuses.get("crypto_shadow_learning_v1") or {})
+        cross_market_attribution_transfer_learning = self._cross_market_attribution_transfer_learning_v1_summary(statuses.get("cross_market_attribution_transfer_learning_v1") or {})
         profit_lock_profit_capture_maturation = self._profit_lock_profit_capture_maturation_v2_summary(statuses.get("profit_lock_profit_capture_maturation_v2") or {})
         shadow_correction_validation_attribution = self._shadow_correction_validation_attribution_v1_summary(statuses.get("shadow_correction_validation_attribution_v1") or {})
         controlled_paper_profit_protection_pilot = self._controlled_paper_profit_protection_pilot_v1_summary(statuses.get("controlled_paper_profit_protection_pilot_v1") or {})
@@ -407,6 +411,10 @@ class UnifiedLearningDiagnosticsV1:
             "market_transition_detection_v1": market_transition_detection,
             "trade_family_intelligence_v1": trade_family_intelligence,
             "market_condition_attribution_v1": market_condition_attribution,
+            "market_breadth_index_intelligence_v1": market_breadth_index_intelligence,
+            "etf_sector_rotation_intelligence_v1": etf_sector_rotation_intelligence,
+            "crypto_shadow_learning_v1": crypto_shadow_learning,
+            "cross_market_attribution_transfer_learning_v1": cross_market_attribution_transfer_learning,
             "profit_lock_profit_capture_maturation_v2": profit_lock_profit_capture_maturation,
             "shadow_correction_validation_attribution_v1": shadow_correction_validation_attribution,
             "controlled_paper_profit_protection_pilot_v1": controlled_paper_profit_protection_pilot,
@@ -3011,6 +3019,152 @@ class UnifiedLearningDiagnosticsV1:
             "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
         }
 
+    def _market_breadth_index_intelligence_v1_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "context_only_market_breadth_index_intelligence"),
+            "index_symbols_tracked": list(data.get("index_symbols_tracked") or [])[:12],
+            "index_signal_rows": list(data.get("index_signal_rows") or [])[:8],
+            "overall_market_health": _to_float(data.get("overall_market_health"), 0.0),
+            "risk_on_score": _to_float(data.get("risk_on_score"), 0.0),
+            "risk_off_score": _to_float(data.get("risk_off_score"), 0.0),
+            "index_trend_strength": _to_float(data.get("index_trend_strength"), 0.0),
+            "index_momentum_score": _to_float(data.get("index_momentum_score"), 0.0),
+            "breadth_proxy_score": _to_float(data.get("breadth_proxy_score"), 0.0),
+            "volatility_pressure_score": _to_float(data.get("volatility_pressure_score"), 0.0),
+            "market_transition_risk": _to_float(data.get("market_transition_risk"), 0.0),
+            "market_support_for_equity_trades": _to_float(data.get("market_support_for_equity_trades"), 0.0),
+            "market_support_for_momentum_trades": _to_float(data.get("market_support_for_momentum_trades"), 0.0),
+            "market_support_for_small_caps": _to_float(data.get("market_support_for_small_caps"), 0.0),
+            "market_support_for_growth_trades": _to_float(data.get("market_support_for_growth_trades"), 0.0),
+            "strongest_index_signal": _text(data.get("strongest_index_signal"), "insufficient_data"),
+            "weakest_index_signal": _text(data.get("weakest_index_signal"), "insufficient_data"),
+            "current_index_regime": _text(data.get("current_index_regime"), "insufficient_data"),
+            "index_confidence_score": _to_float(data.get("index_confidence_score"), 0.0),
+            "market_breadth_summary": _text(data.get("market_breadth_summary"), "warming up"),
+            **self._context_only_market_safety_summary(data),
+        }
+
+    def _etf_sector_rotation_intelligence_v1_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "context_only_etf_sector_rotation_intelligence"),
+            "etf_symbols_tracked": list(data.get("etf_symbols_tracked") or [])[:24],
+            "sector_rows": list(data.get("sector_rows") or [])[:10],
+            "strongest_sector": _text(data.get("strongest_sector"), "insufficient_data"),
+            "weakest_sector": _text(data.get("weakest_sector"), "insufficient_data"),
+            "sector_inflow_score": _to_float(data.get("sector_inflow_score"), 0.0),
+            "sector_outflow_score": _to_float(data.get("sector_outflow_score"), 0.0),
+            "rotation_speed": _to_float(data.get("rotation_speed"), 0.0),
+            "sector_momentum_persistence": _to_float(data.get("sector_momentum_persistence"), 0.0),
+            "sector_decay_risk": _to_float(data.get("sector_decay_risk"), 0.0),
+            "sector_support_for_current_positions": _to_float(data.get("sector_support_for_current_positions"), 0.0),
+            "etf_leadership_score": _to_float(data.get("etf_leadership_score"), 0.0),
+            "sector_rotation_confidence": _to_float(data.get("sector_rotation_confidence"), 0.0),
+            "strongest_sector_rotation": _text(data.get("strongest_sector_rotation"), "insufficient_data"),
+            "weakest_sector_rotation": _text(data.get("weakest_sector_rotation"), "insufficient_data"),
+            "sector_leadership_map": dict(data.get("sector_leadership_map") or {}),
+            "sector_rotation_summary": _text(data.get("sector_rotation_summary"), "warming up"),
+            "sector_context_for_stock_selection": _text(data.get("sector_context_for_stock_selection"), "observation_only"),
+            "sector_context_for_profit_capture": _text(data.get("sector_context_for_profit_capture"), "observation_only"),
+            **self._context_only_market_safety_summary(data),
+        }
+
+    def _crypto_shadow_learning_v1_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "separate_crypto_shadow_learning_no_trading"),
+            "crypto_core_symbols_tracked": list(data.get("crypto_core_symbols_tracked") or [])[:16],
+            "crypto_rotating_symbols_today": list(data.get("crypto_rotating_symbols_today") or [])[:20],
+            "crypto_scan_symbols_today": _to_int(data.get("crypto_scan_symbols_today"), 0),
+            "crypto_families": list(data.get("crypto_families") or [])[:12],
+            "crypto_horizons": list(data.get("crypto_horizons") or [])[:8],
+            "crypto_shadow_opportunities": _to_int(data.get("crypto_shadow_opportunities"), 0),
+            "crypto_virtual_paths": _to_int(data.get("crypto_virtual_paths"), 0),
+            "crypto_completed_lifecycles": _to_int(data.get("crypto_completed_lifecycles"), 0),
+            "crypto_replay_score": _to_float(data.get("crypto_replay_score"), 0.0),
+            "crypto_profit_factor": data.get("crypto_profit_factor"),
+            "crypto_profit_factor_status": _text(data.get("crypto_profit_factor_status"), "INSUFFICIENT_EVIDENCE"),
+            "crypto_win_rate": _to_float(data.get("crypto_win_rate"), 0.0),
+            "crypto_avg_return": _to_float(data.get("crypto_avg_return"), 0.0),
+            "crypto_avg_mfe": _to_float(data.get("crypto_avg_mfe"), 0.0),
+            "crypto_avg_mae": _to_float(data.get("crypto_avg_mae"), 0.0),
+            "crypto_profit_capture": _to_float(data.get("crypto_profit_capture"), 0.0),
+            "crypto_giveback": _to_float(data.get("crypto_giveback"), 0.0),
+            "crypto_best_horizon": _text(data.get("crypto_best_horizon"), "insufficient_data"),
+            "crypto_weakest_horizon": _text(data.get("crypto_weakest_horizon"), "insufficient_data"),
+            "crypto_best_family": _text(data.get("crypto_best_family"), "insufficient_data"),
+            "crypto_weakest_family": _text(data.get("crypto_weakest_family"), "insufficient_data"),
+            "crypto_best_regime": _text(data.get("crypto_best_regime"), "insufficient_data"),
+            "crypto_transition_score": _to_float(data.get("crypto_transition_score"), 0.0),
+            "crypto_volatility_learning_score": _to_float(data.get("crypto_volatility_learning_score"), 0.0),
+            "crypto_momentum_learning_score": _to_float(data.get("crypto_momentum_learning_score"), 0.0),
+            "crypto_risk_appetite_score": _to_float(data.get("crypto_risk_appetite_score"), 0.0),
+            **self._context_only_market_safety_summary(data),
+        }
+
+    def _cross_market_attribution_transfer_learning_v1_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "version": _text(data.get("version"), "1.0.0"),
+            "mode": _text(data.get("mode"), "shadow_only_cross_market_attribution_transfer_learning"),
+            "relationship_rows": list(data.get("relationship_rows") or [])[:8],
+            "cross_market_transfer_confidence": _to_float(data.get("cross_market_transfer_confidence"), 0.0),
+            "crypto_to_stock_signal_score": _to_float(data.get("crypto_to_stock_signal_score"), 0.0),
+            "index_to_stock_signal_score": _to_float(data.get("index_to_stock_signal_score"), 0.0),
+            "etf_to_stock_signal_score": _to_float(data.get("etf_to_stock_signal_score"), 0.0),
+            "risk_appetite_transfer_score": _to_float(data.get("risk_appetite_transfer_score"), 0.0),
+            "market_psychology_score": _to_float(data.get("market_psychology_score"), 0.0),
+            "speculation_score": _to_float(data.get("speculation_score"), 0.0),
+            "cross_market_alpha_available": bool(data.get("cross_market_alpha_available", False)),
+            "cross_market_alpha_confidence": _to_float(data.get("cross_market_alpha_confidence"), 0.0),
+            "strongest_cross_market_relationship": _text(data.get("strongest_cross_market_relationship"), "insufficient_data"),
+            "weakest_cross_market_relationship": _text(data.get("weakest_cross_market_relationship"), "insufficient_data"),
+            "recommended_cross_market_use": _text(data.get("recommended_cross_market_use"), "attribution_only"),
+            **self._context_only_market_safety_summary(data),
+        }
+
+    def _context_only_market_safety_summary(self, data: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "bandwidth_used_gb": _to_float(data.get("bandwidth_used_gb"), 0.0),
+            "bandwidth_budget_status": _text(data.get("bandwidth_budget_status"), "cache_only_safe"),
+            "crypto_scan_symbols_today": _to_int(data.get("crypto_scan_symbols_today"), 0),
+            "crypto_rotating_symbols_today": list(data.get("crypto_rotating_symbols_today") or [])[:20],
+            "etf_symbols_tracked": list(data.get("etf_symbols_tracked") or [])[:24],
+            "index_symbols_tracked": list(data.get("index_symbols_tracked") or [])[:12],
+            "cache_hit_rate": _to_float(data.get("cache_hit_rate"), 100.0),
+            "provider_budget_safe": bool(data.get("provider_budget_safe", True)),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "partial_sells_enabled": bool(data.get("partial_sells_enabled", False)),
+            "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
+            "live_trading_changed": bool(data.get("live_trading_changed", False)),
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "entry_behavior_changed": bool(data.get("entry_behavior_changed", False)),
+            "exit_behavior_changed": bool(data.get("exit_behavior_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+            "portfolio_allocation_changed": bool(data.get("portfolio_allocation_changed", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "crypto_paper_trading_enabled": bool(data.get("crypto_paper_trading_enabled", False)),
+            "crypto_live_trading_enabled": bool(data.get("crypto_live_trading_enabled", False)),
+            "etf_trading_enabled": bool(data.get("etf_trading_enabled", False)),
+            "index_trading_enabled": bool(data.get("index_trading_enabled", False)),
+            "shadow_recommendation": _text(data.get("shadow_recommendation"), "Keep context learning shadow-only."),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+        }
+
     def _profit_lock_profit_capture_maturation_v2_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         scenarios = list(data.get("virtual_profit_lock_scenarios") or [])[:5]
@@ -3361,7 +3515,12 @@ class UnifiedLearningDiagnosticsV1:
             "shadow_learning_events": _to_int(data.get("shadow_learning_events"), 0),
             "shadow_capacity_used": _to_float(data.get("shadow_capacity_used"), 0.0),
             "shadow_capacity_remaining": _to_int(data.get("shadow_capacity_remaining"), 0),
-            "target_shadow_opportunities_per_day": _to_int(data.get("target_shadow_opportunities_per_day"), 125),
+            "previous_shadow_target": _to_int(data.get("previous_shadow_target"), 125),
+            "target_shadow_opportunities_per_day": _to_int(data.get("target_shadow_opportunities_per_day"), 175),
+            "hard_max_shadow_opportunities_per_day": _to_int(data.get("hard_max_shadow_opportunities_per_day"), 200),
+            "shadow_capacity_increase": _to_int(data.get("shadow_capacity_increase"), 50),
+            "estimated_learning_acceleration_pct": _to_float(data.get("estimated_learning_acceleration_pct"), 40.0),
+            "shadow_capacity_safe": bool(data.get("shadow_capacity_safe", True)),
             "price_path_realism_score": _to_float(data.get("price_path_realism_score"), 0.0),
             "price_path_source": _text(data.get("price_path_source"), "cached_lifecycle_replay_counterfactual_summaries"),
             "price_path_data_quality": _text(data.get("price_path_data_quality"), "insufficient_data"),
@@ -4348,7 +4507,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
             "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "profit_capture_peak_decay_exit_validation_suite_v1", "adaptive_execution_exit_intelligence_v3", "trade_archetype_regime",
-            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "long_term_memory_symbol_retrieval_suite_v1", "virtual_paper_convergence_symbol_attribution_v1", "accelerated_learning_symbol_intelligence_suite_v1", "realistic_shadow_evidence_learning_lab_v1", "historical_intelligence_market_memory_suite_v1", "catalyst_persistence_decay_curves_v2", "catalyst_lifecycle_intelligence_v1", "cross_sector_capital_flow_memory_v1", "shadow_vs_paper_performance_attribution_v1", "trade_thesis_validation_v1", "market_transition_detection_v1", "trade_family_intelligence_v1", "market_condition_attribution_v1", "profit_lock_profit_capture_maturation_v2", "shadow_correction_validation_attribution_v1", "controlled_paper_profit_protection_pilot_v1", "adaptive_learning_prioritization_resource_allocation_v1", "autonomous_intelligence_validation_governance_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
+            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "long_term_memory_symbol_retrieval_suite_v1", "virtual_paper_convergence_symbol_attribution_v1", "accelerated_learning_symbol_intelligence_suite_v1", "realistic_shadow_evidence_learning_lab_v1", "historical_intelligence_market_memory_suite_v1", "catalyst_persistence_decay_curves_v2", "catalyst_lifecycle_intelligence_v1", "cross_sector_capital_flow_memory_v1", "shadow_vs_paper_performance_attribution_v1", "trade_thesis_validation_v1", "market_transition_detection_v1", "trade_family_intelligence_v1", "market_condition_attribution_v1", "market_breadth_index_intelligence_v1", "etf_sector_rotation_intelligence_v1", "crypto_shadow_learning_v1", "cross_market_attribution_transfer_learning_v1", "profit_lock_profit_capture_maturation_v2", "shadow_correction_validation_attribution_v1", "controlled_paper_profit_protection_pilot_v1", "adaptive_learning_prioritization_resource_allocation_v1", "autonomous_intelligence_validation_governance_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
             "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
             "paper_throughput_exit_validation_catalyst_intelligence_v1", "multi_horizon_paper_capacity_exit_validation_v1", "controlled_paper_learned_exit_validation_v1",
@@ -4413,6 +4572,10 @@ class UnifiedLearningDiagnosticsV1:
             "market_transition_detection_v1": "/api/market_transition_detection_v1",
             "trade_family_intelligence_v1": "/api/trade_family_intelligence_v1",
             "market_condition_attribution_v1": "/api/market_condition_attribution_v1",
+            "market_breadth_index_intelligence_v1": "/api/market_breadth_index_intelligence_v1",
+            "etf_sector_rotation_intelligence_v1": "/api/etf_sector_rotation_intelligence_v1",
+            "crypto_shadow_learning_v1": "/api/crypto_shadow_learning_v1",
+            "cross_market_attribution_transfer_learning_v1": "/api/cross_market_attribution_transfer_learning_v1",
             "profit_lock_profit_capture_maturation_v2": "/api/profit_lock_profit_capture_maturation_v2",
             "shadow_correction_validation_attribution_v1": "/api/shadow_correction_validation_attribution_v1",
             "controlled_paper_profit_protection_pilot_v1": "/api/controlled_paper_profit_protection_pilot_v1",
@@ -4459,6 +4622,13 @@ class UnifiedLearningDiagnosticsV1:
             "advanced_panels_lazy_load": True,
             "required_summary_fields": ["status", "maturity", "primary_metric", "blocker", "api_calls_used", "stale"],
             "endpoint_policy": "new endpoints allowed for debugging, but Learning tab should prefer unified snapshot",
+            "future_roadmap_later_stage_only": [
+                "Options Intelligence & Learning Suite",
+                "Futures Intelligence & Learning Suite",
+                "News LLM Engine",
+                "Real-Time Sentiment Engine",
+                "Massive Headline Ingestion Engine",
+            ],
         }
 
     def _fallback(self, reason: str) -> dict[str, Any]:

@@ -2517,6 +2517,158 @@ except Exception:
                 "behavior_safe_to_apply": False,
             }
 try:
+    from engine.market_breadth_index_intelligence_v1 import MarketBreadthIndexIntelligenceV1
+except Exception:
+    class MarketBreadthIndexIntelligenceV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "context_only_market_breadth_index_intelligence",
+                "index_symbols_tracked": [],
+                "overall_market_health": 0.0,
+                "current_index_regime": "insufficient_data",
+                "index_confidence_score": 0.0,
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "forced_exits_enabled": False,
+                "forced_trades_enabled": False,
+                "partial_sells_enabled": False,
+                "automatic_trailing_stops_enabled": False,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "entry_behavior_changed": False,
+                "exit_behavior_changed": False,
+                "position_sizing_changed": False,
+                "portfolio_allocation_changed": False,
+                "thresholds_changed": False,
+                "crypto_paper_trading_enabled": False,
+                "crypto_live_trading_enabled": False,
+                "etf_trading_enabled": False,
+                "index_trading_enabled": False,
+                "behavior_safe_to_apply": False,
+            }
+try:
+    from engine.etf_sector_rotation_intelligence_v1 import EtfSectorRotationIntelligenceV1
+except Exception:
+    class EtfSectorRotationIntelligenceV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "context_only_etf_sector_rotation_intelligence",
+                "etf_symbols_tracked": [],
+                "strongest_sector": "insufficient_data",
+                "weakest_sector": "insufficient_data",
+                "sector_rotation_confidence": 0.0,
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "forced_exits_enabled": False,
+                "forced_trades_enabled": False,
+                "partial_sells_enabled": False,
+                "automatic_trailing_stops_enabled": False,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "entry_behavior_changed": False,
+                "exit_behavior_changed": False,
+                "position_sizing_changed": False,
+                "portfolio_allocation_changed": False,
+                "thresholds_changed": False,
+                "crypto_paper_trading_enabled": False,
+                "crypto_live_trading_enabled": False,
+                "etf_trading_enabled": False,
+                "index_trading_enabled": False,
+                "behavior_safe_to_apply": False,
+            }
+try:
+    from engine.crypto_shadow_learning_v1 import CryptoShadowLearningV1
+except Exception:
+    class CryptoShadowLearningV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "separate_crypto_shadow_learning_no_trading",
+                "crypto_core_symbols_tracked": [],
+                "crypto_rotating_symbols_today": [],
+                "crypto_profit_factor_status": "INSUFFICIENT_EVIDENCE",
+                "crypto_risk_appetite_score": 0.0,
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "forced_exits_enabled": False,
+                "forced_trades_enabled": False,
+                "partial_sells_enabled": False,
+                "automatic_trailing_stops_enabled": False,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "entry_behavior_changed": False,
+                "exit_behavior_changed": False,
+                "position_sizing_changed": False,
+                "portfolio_allocation_changed": False,
+                "thresholds_changed": False,
+                "crypto_paper_trading_enabled": False,
+                "crypto_live_trading_enabled": False,
+                "etf_trading_enabled": False,
+                "index_trading_enabled": False,
+                "behavior_safe_to_apply": False,
+            }
+try:
+    from engine.cross_market_attribution_transfer_learning_v1 import CrossMarketAttributionTransferLearningV1
+except Exception:
+    class CrossMarketAttributionTransferLearningV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "enabled": False,
+                "version": "1.0.0",
+                "mode": "shadow_only_cross_market_attribution_transfer_learning",
+                "cross_market_transfer_confidence": 0.0,
+                "cross_market_alpha_available": False,
+                "strongest_cross_market_relationship": "insufficient_data",
+                "weakest_cross_market_relationship": "insufficient_data",
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "forced_exits_enabled": False,
+                "forced_trades_enabled": False,
+                "partial_sells_enabled": False,
+                "automatic_trailing_stops_enabled": False,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "entry_behavior_changed": False,
+                "exit_behavior_changed": False,
+                "position_sizing_changed": False,
+                "portfolio_allocation_changed": False,
+                "thresholds_changed": False,
+                "crypto_paper_trading_enabled": False,
+                "crypto_live_trading_enabled": False,
+                "etf_trading_enabled": False,
+                "index_trading_enabled": False,
+                "behavior_safe_to_apply": False,
+            }
+try:
     from engine.profit_lock_profit_capture_maturation_v2 import ProfitLockProfitCaptureMaturationV2
 except Exception:
     class ProfitLockProfitCaptureMaturationV2:  # type: ignore[override]
@@ -2840,6 +2992,10 @@ TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
 MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
 TRADE_FAMILY_INTELLIGENCE = TradeFamilyIntelligenceV1(state_dir=STATE)
 MARKET_CONDITION_ATTRIBUTION = MarketConditionAttributionV1(state_dir=STATE)
+MARKET_BREADTH_INDEX_INTELLIGENCE = MarketBreadthIndexIntelligenceV1(state_dir=STATE)
+ETF_SECTOR_ROTATION_INTELLIGENCE = EtfSectorRotationIntelligenceV1(state_dir=STATE)
+CRYPTO_SHADOW_LEARNING = CryptoShadowLearningV1(state_dir=STATE)
+CROSS_MARKET_ATTRIBUTION_TRANSFER_LEARNING = CrossMarketAttributionTransferLearningV1(state_dir=STATE)
 PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2 = ProfitLockProfitCaptureMaturationV2(state_dir=STATE)
 SHADOW_CORRECTION_VALIDATION_ATTRIBUTION = ShadowCorrectionValidationAttributionV1(state_dir=STATE)
 CONTROLLED_PAPER_PROFIT_PROTECTION_PILOT = ControlledPaperProfitProtectionPilotV1(state_dir=STATE)
@@ -33415,6 +33571,118 @@ def market_condition_attribution_v1(force: bool = False):
         }
 
 
+def _context_only_market_safety(out: dict) -> dict:
+    out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+    out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+    out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+    out["bandwidth_used_gb"] = _to_float(out.get("bandwidth_used_gb"), 0.0)
+    out["bandwidth_budget_status"] = out.get("bandwidth_budget_status") or "cache_only_safe"
+    out["provider_budget_safe"] = bool(out.get("provider_budget_safe", True))
+    out["paper_only_preserved"] = True
+    out["alpaca_paper_only_preserved"] = True
+    out["forced_exits_enabled"] = False
+    out["forced_trades_enabled"] = False
+    out["partial_sells_enabled"] = False
+    out["automatic_trailing_stops_enabled"] = False
+    out["live_trading_changed"] = False
+    out["broker_behavior_changed"] = False
+    out["entry_behavior_changed"] = False
+    out["exit_behavior_changed"] = False
+    out["position_sizing_changed"] = False
+    out["portfolio_allocation_changed"] = False
+    out["thresholds_changed"] = False
+    out["crypto_paper_trading_enabled"] = False
+    out["crypto_live_trading_enabled"] = False
+    out["etf_trading_enabled"] = False
+    out["index_trading_enabled"] = False
+    out["behavior_safe_to_apply"] = False
+    return out
+
+
+@router.get("/api/market_breadth_index_intelligence_v1")
+def market_breadth_index_intelligence_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        out = dict(MARKET_BREADTH_INDEX_INTELLIGENCE.status(statuses=statuses, force=bool(force)) or {})
+        out["market_breadth_index_intelligence_v1"] = True
+        return _context_only_market_safety(out)
+    except Exception as exc:
+        return _context_only_market_safety({
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "context_only_market_breadth_index_intelligence",
+            "market_breadth_index_intelligence_v1": True,
+            "degraded_reason": f"market_breadth_index_endpoint_unavailable:{str(exc)[:140]}",
+            "index_symbols_tracked": [],
+            "overall_market_health": 0.0,
+            "current_index_regime": "insufficient_data",
+            "index_confidence_score": 0.0,
+        })
+
+
+@router.get("/api/etf_sector_rotation_intelligence_v1")
+def etf_sector_rotation_intelligence_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        out = dict(ETF_SECTOR_ROTATION_INTELLIGENCE.status(statuses=statuses, force=bool(force)) or {})
+        out["etf_sector_rotation_intelligence_v1"] = True
+        return _context_only_market_safety(out)
+    except Exception as exc:
+        return _context_only_market_safety({
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "context_only_etf_sector_rotation_intelligence",
+            "etf_sector_rotation_intelligence_v1": True,
+            "degraded_reason": f"etf_sector_rotation_endpoint_unavailable:{str(exc)[:140]}",
+            "etf_symbols_tracked": [],
+            "strongest_sector": "insufficient_data",
+            "weakest_sector": "insufficient_data",
+            "sector_rotation_confidence": 0.0,
+        })
+
+
+@router.get("/api/crypto_shadow_learning_v1")
+def crypto_shadow_learning_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        out = dict(CRYPTO_SHADOW_LEARNING.status(statuses=statuses, force=bool(force)) or {})
+        out["crypto_shadow_learning_v1"] = True
+        return _context_only_market_safety(out)
+    except Exception as exc:
+        return _context_only_market_safety({
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "separate_crypto_shadow_learning_no_trading",
+            "crypto_shadow_learning_v1": True,
+            "degraded_reason": f"crypto_shadow_learning_endpoint_unavailable:{str(exc)[:140]}",
+            "crypto_core_symbols_tracked": [],
+            "crypto_rotating_symbols_today": [],
+            "crypto_profit_factor_status": "INSUFFICIENT_EVIDENCE",
+            "crypto_risk_appetite_score": 0.0,
+        })
+
+
+@router.get("/api/cross_market_attribution_transfer_learning_v1")
+def cross_market_attribution_transfer_learning_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        out = dict(CROSS_MARKET_ATTRIBUTION_TRANSFER_LEARNING.status(statuses=statuses, force=bool(force)) or {})
+        out["cross_market_attribution_transfer_learning_v1"] = True
+        return _context_only_market_safety(out)
+    except Exception as exc:
+        return _context_only_market_safety({
+            "enabled": False,
+            "version": "1.0.0",
+            "mode": "shadow_only_cross_market_attribution_transfer_learning",
+            "cross_market_attribution_transfer_learning_v1": True,
+            "degraded_reason": f"cross_market_attribution_endpoint_unavailable:{str(exc)[:140]}",
+            "cross_market_transfer_confidence": 0.0,
+            "cross_market_alpha_available": False,
+            "strongest_cross_market_relationship": "insufficient_data",
+            "weakest_cross_market_relationship": "insufficient_data",
+        })
+
+
 @router.get("/api/profit_lock_profit_capture_maturation_v2")
 def profit_lock_profit_capture_maturation_v2(force: bool = False):
     try:
@@ -33506,6 +33774,22 @@ def shadow_correction_validation_attribution_v1(force: bool = False):
             statuses["market_condition_attribution_v1"] = MARKET_CONDITION_ATTRIBUTION.status(statuses=statuses, force=False)
         except Exception:
             statuses["market_condition_attribution_v1"] = {}
+        try:
+            statuses["market_breadth_index_intelligence_v1"] = MARKET_BREADTH_INDEX_INTELLIGENCE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["market_breadth_index_intelligence_v1"] = {}
+        try:
+            statuses["etf_sector_rotation_intelligence_v1"] = ETF_SECTOR_ROTATION_INTELLIGENCE.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["etf_sector_rotation_intelligence_v1"] = {}
+        try:
+            statuses["crypto_shadow_learning_v1"] = CRYPTO_SHADOW_LEARNING.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["crypto_shadow_learning_v1"] = {}
+        try:
+            statuses["cross_market_attribution_transfer_learning_v1"] = CROSS_MARKET_ATTRIBUTION_TRANSFER_LEARNING.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["cross_market_attribution_transfer_learning_v1"] = {}
         try:
             statuses["profit_lock_profit_capture_maturation_v2"] = PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2.status(statuses=statuses, force=False)
         except Exception:
@@ -42923,6 +43207,22 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["market_condition_attribution_v1"] = MARKET_CONDITION_ATTRIBUTION.status(statuses=statuses, force=False)
     except Exception:
         statuses["market_condition_attribution_v1"] = {}
+    try:
+        statuses["market_breadth_index_intelligence_v1"] = MARKET_BREADTH_INDEX_INTELLIGENCE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["market_breadth_index_intelligence_v1"] = {}
+    try:
+        statuses["etf_sector_rotation_intelligence_v1"] = ETF_SECTOR_ROTATION_INTELLIGENCE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["etf_sector_rotation_intelligence_v1"] = {}
+    try:
+        statuses["crypto_shadow_learning_v1"] = CRYPTO_SHADOW_LEARNING.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["crypto_shadow_learning_v1"] = {}
+    try:
+        statuses["cross_market_attribution_transfer_learning_v1"] = CROSS_MARKET_ATTRIBUTION_TRANSFER_LEARNING.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["cross_market_attribution_transfer_learning_v1"] = {}
     try:
         statuses["profit_lock_profit_capture_maturation_v2"] = PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2.status(statuses=statuses, force=False)
     except Exception:
@@ -52642,6 +52942,10 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("market_transition_detection_v1", lambda: MARKET_TRANSITION_DETECTION.status(statuses=statuses, force=False))
         _safe_status("trade_family_intelligence_v1", lambda: TRADE_FAMILY_INTELLIGENCE.status(statuses=statuses, force=False))
         _safe_status("market_condition_attribution_v1", lambda: MARKET_CONDITION_ATTRIBUTION.status(statuses=statuses, force=False))
+        _safe_status("market_breadth_index_intelligence_v1", lambda: MARKET_BREADTH_INDEX_INTELLIGENCE.status(statuses=statuses, force=False))
+        _safe_status("etf_sector_rotation_intelligence_v1", lambda: ETF_SECTOR_ROTATION_INTELLIGENCE.status(statuses=statuses, force=False))
+        _safe_status("crypto_shadow_learning_v1", lambda: CRYPTO_SHADOW_LEARNING.status(statuses=statuses, force=False))
+        _safe_status("cross_market_attribution_transfer_learning_v1", lambda: CROSS_MARKET_ATTRIBUTION_TRANSFER_LEARNING.status(statuses=statuses, force=False))
         _safe_status("profit_lock_profit_capture_maturation_v2", lambda: PROFIT_LOCK_PROFIT_CAPTURE_MATURATION_V2.status(statuses=statuses, force=False))
         _safe_status("shadow_correction_validation_attribution_v1", lambda: SHADOW_CORRECTION_VALIDATION_ATTRIBUTION.status(statuses=statuses, force=False))
         _safe_status("controlled_paper_profit_protection_pilot_v1", lambda: CONTROLLED_PAPER_PROFIT_PROTECTION_PILOT.status(statuses=statuses, force=False))
