@@ -1619,6 +1619,7 @@ export default function LearningTab({ compact = false }) {
   const shadowVsPaperPerformanceAttribution = unified?.shadow_vs_paper_performance_attribution_v1 || {};
   const candidateRankingAttributionPromotion = unified?.candidate_ranking_attribution_promotion_intelligence_v1 || {};
   const intelligenceQualityLearningEfficiency = unified?.intelligence_quality_learning_efficiency_suite_v1 || {};
+  const advancedAttributionControlledExitLearningRoi = unified?.advanced_attribution_controlled_exit_learning_roi_suite_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
   const tradeFamilyIntelligence = unified?.trade_family_intelligence_v1 || {};
@@ -1784,6 +1785,7 @@ export default function LearningTab({ compact = false }) {
       executive_snapshot: executive,
       performance_summary: performanceSummary,
       intelligence_quality_learning_efficiency_suite_v1: intelligenceQualityLearningEfficiency,
+      advanced_attribution_controlled_exit_learning_roi_suite_v1: advancedAttributionControlledExitLearningRoi,
       candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
       profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
       realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
@@ -2472,6 +2474,56 @@ export default function LearningTab({ compact = false }) {
           ))}
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Insufficient evidence modules: {(intelligenceQualityLearningEfficiency?.modules_reporting_insufficient_evidence || []).join(" | ").replaceAll("_", " ") || "none"}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Advanced Attribution, Controlled Exit Validation & Learning ROI Suite V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is synthesizing attribution, profit-capture leakage, controlled exit candidates, catalyst/sector/regime context, and learning ROI into one shadow-only diagnostic layer. This suite is learning-only and does not change rankings, entries, exits, sizing, allocations, paper execution, broker behavior, or Alpaca behavior.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Status", advancedAttributionControlledExitLearningRoi?.status],
+            ["Evidence", safeNumber(advancedAttributionControlledExitLearningRoi?.evidence_count).toFixed(0)],
+            ["Profit loss driver", advancedAttributionControlledExitLearningRoi?.why_profits_are_being_lost],
+            ["Buy purity leak", advancedAttributionControlledExitLearningRoi?.why_buy_purity_is_below_target],
+            ["Exit underperformance", advancedAttributionControlledExitLearningRoi?.why_exits_underperform],
+            ["Best exit candidate", advancedAttributionControlledExitLearningRoi?.best_exit_candidate],
+            ["Exit validation", safeNumber(advancedAttributionControlledExitLearningRoi?.exit_validation_score).toFixed(1)],
+            ["Policy readiness", safeNumber(advancedAttributionControlledExitLearningRoi?.policy_readiness_score).toFixed(1)],
+            ["Highest ROI area", advancedAttributionControlledExitLearningRoi?.highest_roi_improvement_area],
+            ["Estimated PF gain", safeNumber(advancedAttributionControlledExitLearningRoi?.estimated_pf_gain).toFixed(3)],
+            ["Profit lost estimate", safeNumber(advancedAttributionControlledExitLearningRoi?.profit_lost_estimate).toFixed(1)],
+            ["Lifecycle quality", safeNumber(advancedAttributionControlledExitLearningRoi?.lifecycle_quality_score).toFixed(1)],
+            ["Catalyst coverage", safeNumber(advancedAttributionControlledExitLearningRoi?.catalyst_coverage).toFixed(1)],
+            ["Unknown catalyst", safeNumber(advancedAttributionControlledExitLearningRoi?.unknown_catalyst_rate).toFixed(1)],
+            ["Strongest sector", advancedAttributionControlledExitLearningRoi?.strongest_sector],
+            ["Weakest sector", advancedAttributionControlledExitLearningRoi?.weakest_sector],
+            ["Best regime", advancedAttributionControlledExitLearningRoi?.best_regime],
+            ["Best sector/regime", advancedAttributionControlledExitLearningRoi?.best_sector_regime_pair],
+            ["Policy candidate", advancedAttributionControlledExitLearningRoi?.future_policy_candidate_closest_to_readiness],
+            ["API/provider/LLM", `${safeNumber(advancedAttributionControlledExitLearningRoi?.api_calls_used).toFixed(0)} / ${safeNumber(advancedAttributionControlledExitLearningRoi?.provider_calls_used).toFixed(0)} / ${safeNumber(advancedAttributionControlledExitLearningRoi?.llm_calls_used).toFixed(0)}`],
+            ["Auto apply", advancedAttributionControlledExitLearningRoi?.auto_apply_allowed ? "yes" : "no"],
+            ["Behavior safe", advancedAttributionControlledExitLearningRoi?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Top loss drivers: {(advancedAttributionControlledExitLearningRoi?.top_loss_drivers || []).slice(0, 4).map((row) => `${String(row?.factor || "unknown").replaceAll("_", " ")} pressure ${safeNumber(row?.loss_pressure).toFixed(1)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Exit candidates: {(advancedAttributionControlledExitLearningRoi?.exit_candidate_rows || []).slice(0, 4).map((row) => `${String(row?.exit_style || "exit").replaceAll("_", " ")} score ${safeNumber(row?.validation_score).toFixed(1)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            ROI ranking: {(advancedAttributionControlledExitLearningRoi?.highest_roi_improvement_areas || []).slice(0, 4).map((row) => `${String(row?.area || "area").replaceAll("_", " ")} PF +${safeNumber(row?.potential_pf_improvement).toFixed(3)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Recommended focus: {String(advancedAttributionControlledExitLearningRoi?.recommended_next_focus || "continue shadow attribution").replaceAll("_", " ")}
           </div>
         </div>
       </details>
