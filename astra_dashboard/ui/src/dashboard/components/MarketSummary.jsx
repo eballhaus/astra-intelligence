@@ -1,11 +1,11 @@
 import React from "react";
 
-const fallbackMarkets = [
-  { id: "sp500", symbol: "SPX", name: "S&P 500", value: 4927.35, change: 0.83, type: "index" },
-  { id: "nasdaq", symbol: "NDX", name: "Nasdaq", value: 15312.77, change: 1.12, type: "index" },
-  { id: "dow", symbol: "DJI", name: "Dow", value: 38121.27, change: -0.25, type: "index" },
-  { id: "vix", symbol: "VIX", name: "VIX", value: 13.24, change: -2.31, type: "index" },
-  { id: "bitcoin", symbol: "BTC", name: "Bitcoin", value: 47805.22, change: 0.58, type: "crypto" },
+const requiredMarkets = [
+  { id: "sp500", symbol: "SPX", name: "S&P 500" },
+  { id: "nasdaq", symbol: "NDX", name: "Nasdaq" },
+  { id: "dow", symbol: "DJI", name: "Dow" },
+  { id: "vix", symbol: "VIX", name: "VIX" },
+  { id: "bitcoin", symbol: "BTC", name: "Bitcoin" },
 ];
 
 function safeNumber(value, fallback = 0) {
@@ -14,7 +14,8 @@ function safeNumber(value, fallback = 0) {
 }
 
 function formatValue(item) {
-  const value = safeNumber(item?.value, 0);
+  const value = Number(item?.value);
+  if (!Number.isFinite(value) || value <= 0) return "Data Not Available";
   const digits = item?.symbol === "VIX" ? 2 : 2;
   return value.toLocaleString(undefined, {
     minimumFractionDigits: digits,
@@ -30,7 +31,11 @@ function sparkPath(change) {
 }
 
 export default function MarketSummary({ markets = [], asOf = "n/a", marketSession = "market context" }) {
-  const rows = Array.isArray(markets) && markets.length ? markets.slice(0, 5) : fallbackMarkets;
+  const incoming = Array.isArray(markets) ? markets : [];
+  const rows = requiredMarkets.map((required) => {
+    const found = incoming.find((row) => row?.id === required.id || row?.symbol === required.symbol);
+    return found ? { ...required, ...found } : { ...required, value: null, change: null, unavailable: true };
+  });
 
   return (
     <div
@@ -78,7 +83,9 @@ export default function MarketSummary({ markets = [], asOf = "n/a", marketSessio
         }}
       >
         {rows.map((market) => {
-          const change = safeNumber(market?.change, 0);
+          const hasValue = Number.isFinite(Number(market?.value)) && Number(market.value) > 0;
+          const hasChange = Number.isFinite(Number(market?.change));
+          const change = hasChange ? safeNumber(market?.change, 0) : 0;
           const positive = change >= 0;
           return (
             <div
@@ -102,14 +109,22 @@ export default function MarketSummary({ markets = [], asOf = "n/a", marketSessio
                     {formatValue(market)}
                   </div>
                 </div>
-                <svg viewBox="0 0 48 28" width="48" height="28" aria-hidden="true">
-                  <path d={sparkPath(change)} fill="none" stroke={positive ? "#149455" : "#d14b57"} strokeWidth="2.4" strokeLinecap="round" />
-                </svg>
+                {hasValue && hasChange ? (
+                  <svg viewBox="0 0 48 28" width="48" height="28" aria-hidden="true">
+                    <path d={sparkPath(change)} fill="none" stroke={positive ? "#149455" : "#d14b57"} strokeWidth="2.4" strokeLinecap="round" />
+                  </svg>
+                ) : (
+                  <span style={{ color: "#92a3b8", fontSize: 11, fontWeight: 800 }}>Unavailable</span>
+                )}
               </div>
               <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                <span style={{ color: positive ? "#149455" : "#d14b57", fontWeight: 900, fontSize: 13 }}>
-                  {positive ? "+" : ""}{change.toFixed(2)}%
-                </span>
+                {hasValue && hasChange ? (
+                  <span style={{ color: positive ? "#149455" : "#d14b57", fontWeight: 900, fontSize: 13 }}>
+                    {positive ? "+" : ""}{change.toFixed(2)}%
+                  </span>
+                ) : (
+                  <span style={{ color: "#9aa9ba", fontWeight: 900, fontSize: 13 }}>Stale / unavailable</span>
+                )}
                 <span style={{ color: "#92a3b8", fontSize: 11 }}>{market.symbol}</span>
               </div>
             </div>

@@ -85,8 +85,47 @@ function labelize(value, fallback = "warming up") {
 
 function formatMoney(value) {
   const n = Number(value);
-  if (!Number.isFinite(n)) return "not available";
+  if (!Number.isFinite(n)) return "Data Not Available";
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+}
+
+function metricOrUnavailable(value, suffix = "") {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "Data Not Available";
+  return `${n.toFixed(1)}${suffix}`;
+}
+
+function normalizeAllocationRows(positionsMeta = {}, systemStatus = {}) {
+  const source =
+    positionsMeta?.allocation_summary
+    || positionsMeta?.asset_allocation
+    || positionsMeta?.portfolio_allocation
+    || systemStatus?.allocation_summary
+    || systemStatus?.asset_allocation
+    || systemStatus?.portfolio_allocation;
+
+  if (Array.isArray(source)) {
+    return source
+      .map((row) => {
+        const label = labelize(row?.label || row?.name || row?.asset_class || row?.category || "");
+        const pct = Number(row?.percent ?? row?.pct ?? row?.weight ?? row?.allocation_pct);
+        if (!label || !Number.isFinite(pct)) return null;
+        return [label, `${pct.toFixed(1)}%`];
+      })
+      .filter(Boolean);
+  }
+
+  if (source && typeof source === "object") {
+    return Object.entries(source)
+      .map(([label, value]) => {
+        const pct = Number(value?.percent ?? value?.pct ?? value?.weight ?? value);
+        if (!Number.isFinite(pct)) return null;
+        return [labelize(label), `${pct.toFixed(1)}%`];
+      })
+      .filter(Boolean);
+  }
+
+  return [];
 }
 
 function formatSignedPct(value) {
@@ -353,28 +392,50 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     : "dashboard";
   const highConfidenceCount = stocks.filter((row) => safeNumber(row?.confidence) >= 70).length;
   const bestOpportunity = stocks[0] || {};
+  const stockThemes = stocks
+    .map((row) => row?.theme || row?.catalyst || row?.sector)
+    .filter(Boolean)
+    .map((theme) => labelize(theme));
   const strongestTheme = labelize(
     bestOpportunity?.theme
       || bestOpportunity?.catalyst
       || bestOpportunity?.sector
       || systemStatus?.leadership_theme
-      || "technology and quality momentum",
+      || "theme data unavailable",
   );
   const marketTone = runtimeIntegrity && highConfidenceCount >= 2
     ? "Bullish"
     : runtimeIntegrity
     ? "Neutral"
     : "Bearish";
+  const volatilityKnown = systemStatus?.vix !== undefined || systemStatus?.volatility_status;
   const volatilityStatus = safeNumber(systemStatus?.vix, 0) > 25
     ? "elevated"
-    : labelize(systemStatus?.volatility_status || "controlled");
+    : labelize(systemStatus?.volatility_status || (volatilityKnown ? "controlled" : "Data Not Available"));
   const breadthStatus = labelize(systemStatus?.breadth_status || (validQuotes > 0 ? "active coverage" : "warming up"));
   const riskMode = marketTone === "Bearish" ? "Risk-Off" : "Risk-On";
-  const marketConfidence = Math.max(52, Math.min(92, Math.round((runtimeIntegrity ? 62 : 42) + highConfidenceCount * 5 + (validQuotes > 0 ? 6 : 0))));
-  const astraBrief = `Markets remain ${marketTone.toLowerCase()} with ${strongestTheme} leadership in focus. Breadth is ${breadthStatus} and volatility remains ${volatilityStatus}. Astra currently identifies ${highConfidenceCount || "several"} high-confidence opportunit${highConfidenceCount === 1 ? "y" : "ies"} while portfolio risk remains ${brokerActiveCount > 8 ? "elevated" : "moderate"}.`;
+  const marketConfidenceRaw = systemStatus?.market_confidence
+    ?? systemStatus?.market_confidence_pct
+    ?? systemStatus?.environment_confidence
+    ?? systemStatus?.market_environment_confidence;
+  const marketConfidence = Number.isFinite(Number(marketConfidenceRaw)) ? Number(marketConfidenceRaw) : null;
+  const portfolioRiskText = positionsMeta?.portfolio_risk_label || systemStatus?.portfolio_risk_label || (brokerTruthKnown ? `${brokerActiveCount} broker-confirmed positions` : "Data Not Available");
+  const astraBrief = `Markets remain ${marketTone.toLowerCase()} with ${strongestTheme} in focus. Breadth is ${breadthStatus} and volatility is ${volatilityStatus}. Astra currently identifies ${highConfidenceCount} high-confidence opportunit${highConfidenceCount === 1 ? "y" : "ies"} while portfolio risk is ${portfolioRiskText}.`;
   const portfolioValue = formatMoney(positionsMeta?.portfolio_value ?? positionsMeta?.total_value ?? systemStatus?.portfolio_value);
   const cashValue = formatMoney(positionsMeta?.cash ?? positionsMeta?.buying_power ?? systemStatus?.cash);
   const buyingPowerValue = formatMoney(positionsMeta?.buying_power ?? positionsMeta?.cash ?? systemStatus?.buying_power ?? systemStatus?.cash);
+  const allocationRows = normalizeAllocationRows(positionsMeta, systemStatus).slice(0, 4);
+  const riskLines = [
+    [
+      "Portfolio risk",
+      positionsMeta?.portfolio_risk_label
+        || systemStatus?.portfolio_risk_label
+        || (brokerTruthKnown ? `Position count ${brokerActiveCount}` : "Data Not Available"),
+    ],
+    ["Concentration", positionsMeta?.concentration_status || systemStatus?.concentration_status || "Data Not Available"],
+    ["Correlation", positionsMeta?.correlation_status || systemStatus?.correlation_status || "Data Not Available"],
+    ["Allocation", allocationRows.length ? allocationRows.map(([label, pct]) => `${label} ${pct}`).join(" / ") : "Data Not Available"],
+  ];
   const sortedByPnl = [...positions].sort((a, b) => safeNumber(b?.pnl_percent) - safeNumber(a?.pnl_percent));
   const biggestWinner = sortedByPnl[0];
   const biggestLoser = sortedByPnl[sortedByPnl.length - 1];
@@ -390,11 +451,11 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
       || "market context",
   );
   const watchingItems = [
-    `${bestOpportunity?.symbol || "NVDA"} leadership / follow-through`,
-    `${strongestTheme} theme persistence`,
+    bestOpportunity?.symbol ? `${bestOpportunity.symbol} leadership / follow-through` : "Opportunity watchlist warming up",
+    strongestTheme === "theme data unavailable" ? "Theme context data unavailable" : `${strongestTheme} theme persistence`,
     `Breadth ${breadthStatus}`,
     `Volatility ${volatilityStatus}`,
-    `Symbols: ${stocks.slice(0, 4).map((row) => row.symbol).filter(Boolean).join(", ") || "warming up"}`,
+    `Symbols: ${stocks.slice(0, 4).map((row) => row.symbol).filter(Boolean).join(", ") || "Warming Up"}`,
   ];
   const opportunityRows = stocks.slice(0, 5).map((row, idx) => ({
     rank: idx + 1,
@@ -403,29 +464,36 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     confidence: safeNumber(row.confidence ?? row.buy_confidence ?? row.predicted_win_probability, 0),
     horizon: labelize(row.best_horizon_style || row.best_profit_horizon || row.horizon || row.trade_horizon_style || "intraday"),
     why: String(row.why_this_is_a_buy || row.why_made_list || row.buy_reason || row.rationale || row.ranked_universe_action_explanation || "Astra sees favorable quality, confidence, and setup context.").slice(0, 88),
-    trendBias: safeNumber(row.change_percent ?? row.expected_move_pct ?? row.predicted_return_pct, 0),
-    risk: labelize(row.portfolio_risk_label || row.risk_label || "moderate"),
+    trendBias: Number.isFinite(Number(row.change_percent ?? row.expected_move_pct ?? row.predicted_return_pct))
+      ? Number(row.change_percent ?? row.expected_move_pct ?? row.predicted_return_pct)
+      : null,
+    risk: labelize(row.portfolio_risk_label || row.risk_label || "Risk Data Not Available"),
     consistency: safeNumber(row.rolling_conviction_10r ?? row.conviction_display_score ?? row.buy_quality_score, 0),
   }));
-  const leadingThemes = [
-    strongestTheme,
-    "Semiconductors",
-    "Quantum Computing",
-  ];
-  const topSectors = [
-    ["Technology", "+1.24%", true],
-    ["Comm. Services", "+0.92%", true],
-    ["Industrials", "+0.48%", true],
-    ["Energy", "-0.45%", false],
-    ["Utilities", "-0.08%", false],
-  ];
-  const calendarItems = [
-    ["10:00 AM", "Fed Chair Powell Speaks"],
-    ["1:30 PM", "Retail Sales"],
-    ["2:15 PM", "Industrial Production"],
-    ["4:00 PM", "Earnings watch"],
-  ];
-  const modelConfidence = highConfidenceCount > 0 ? Math.min(95, 78 + highConfidenceCount * 3) : 68;
+  const leadingThemes = Array.isArray(systemStatus?.current_themes)
+    ? systemStatus.current_themes.slice(0, 3).map((theme) => labelize(theme))
+    : Array.from(new Set(stockThemes)).slice(0, 3);
+  const topSectors = Array.isArray(systemStatus?.top_sectors)
+    ? systemStatus.top_sectors.slice(0, 5).map((row) => [
+      labelize(row?.sector || row?.name || "Sector"),
+      Number.isFinite(Number(row?.change_pct ?? row?.change_percent))
+        ? formatSignedPct(row?.change_pct ?? row?.change_percent)
+        : "Data Not Available",
+      safeNumber(row?.change_pct ?? row?.change_percent, 0) >= 0,
+    ])
+    : [];
+  const calendarItems = Array.isArray(systemStatus?.calendar_items)
+    ? systemStatus.calendar_items.slice(0, 4).map((row) => [
+      String(row?.time || row?.timestamp || "TBD"),
+      String(row?.event || row?.title || "Calendar item"),
+    ])
+    : [];
+  const modelConfidenceRaw = systemStatus?.model_confidence
+    ?? systemStatus?.learning_confidence
+    ?? systemStatus?.confidence_score
+    ?? systemStatus?.adaptive_confidence;
+  const modelConfidence = Number.isFinite(Number(modelConfidenceRaw)) ? Number(modelConfidenceRaw) : null;
+  const modelConfidenceLabel = modelConfidence == null ? "Data Not Available" : `${modelConfidence.toFixed(0)}%`;
   const paperReadyCount = stocks.filter((row) => String(row?.grade || row?.buy_eligibility || "").toLowerCase().includes("paper")).length;
   const opportunitySummary = [
     ["High confidence", `${highConfidenceCount}`],
@@ -434,15 +502,15 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     ["Market bias", marketTone],
   ];
   const actionCenterItems = [
-    `Best opportunity: ${bestOpportunity?.symbol || "warming up"}`,
+    `Best opportunity: ${bestOpportunity?.symbol || "Warming Up"}`,
     `High-confidence opportunities: ${highConfidenceCount || 0}`,
-    `Risk warning: ${brokerActiveCount > 8 ? "portfolio concentration elevated" : "portfolio risk moderate"}`,
-    `Next review: validate ${bestOpportunity?.symbol || "top opportunities"} and profit capture`,
+    `Risk warning: ${portfolioRiskText}`,
+    `Next review: ${bestOpportunity?.symbol ? `validate ${bestOpportunity.symbol} and profit capture` : "wait for fresh opportunity evidence"}`,
   ];
   const decisionSummary = [
-    `Best opportunity ${bestOpportunity?.symbol || "warming up"}`,
+    `Best opportunity ${bestOpportunity?.symbol || "Warming Up"}`,
     `Market tone ${marketTone}`,
-    `Main weakness profit capture`,
+    `Main weakness ${labelize(systemStatus?.main_weakness || systemStatus?.primary_weakness || systemStatus?.weakness_focus || "Data Not Available")}`,
     `Next review ${highConfidenceCount > 0 ? "top ranked candidates" : "wait for fresh opportunity evidence"}`,
   ];
 
@@ -531,7 +599,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
 
       {topSection === "dashboard" && (
         <>
-          <section style={{ display: "grid", gridTemplateColumns: "0.92fr 1.22fr 2.18fr 1.08fr", gap: 14, alignItems: "stretch" }}>
+          <section style={{ display: "grid", gridTemplateColumns: "0.95fr 1.55fr 1.05fr", gap: 14, alignItems: "stretch" }}>
             <div style={{ ...panelStyle, minHeight: 246, display: "grid", alignContent: "start", gap: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                 <h2 style={panelTitleStyle}>Market Environment</h2>
@@ -539,7 +607,9 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               </div>
               <div>
                 <div style={{ color: marketTone === "Bearish" ? "#c43d4b" : marketTone === "Neutral" ? "#d88a19" : "#079246", fontSize: 28, fontWeight: 950, letterSpacing: "-0.04em" }}>{marketTone}</div>
-                <div style={{ color: "#13243a", fontWeight: 900, marginTop: 2 }}>{marketConfidence}% <span style={{ color: "#667994", fontWeight: 700 }}>Confidence</span></div>
+                <div style={{ color: "#13243a", fontWeight: 900, marginTop: 2 }}>
+                  {marketConfidence == null ? "Data Not Available" : `${marketConfidence.toFixed(0)}%`} <span style={{ color: "#667994", fontWeight: 700 }}>Confidence</span>
+                </div>
               </div>
               <div style={{ height: 1, background: "#e3ebf5" }} />
               {[
@@ -563,10 +633,10 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               <p style={{ margin: 0, color: "#273d5a", fontSize: 13, lineHeight: 1.62 }}>{astraBrief}</p>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, marginTop: "auto" }}>
                 {[
-                  ["Opportunities", `${highConfidenceCount || 3}`, "> 90% Confidence"],
+                  ["Opportunities", `${highConfidenceCount}`, "> 70% Confidence"],
                   ["Market Bias", marketTone, ""],
                   ["Portfolio Risk", brokerActiveCount > 8 ? "Elevated" : "Moderate", ""],
-                  ["Astra Confidence", modelConfidence >= 80 ? "High" : "Moderate", ""],
+                  ["Astra Confidence", modelConfidence == null ? "Data Not Available" : modelConfidence >= 80 ? "High" : "Moderate", ""],
                 ].map(([label, value, sub]) => (
                   <div key={label} style={{ borderRadius: 16, background: "#f5f9fe", border: "1px solid #dfe8f4", padding: "9px 10px", display: "grid", gap: 3 }}>
                     <div style={{ color: "#526982", fontSize: 10, fontWeight: 900 }}>{label}</div>
@@ -580,42 +650,6 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               </button>
             </div>
 
-            <div style={{ ...panelStyle, minHeight: 246, overflow: "hidden", display: "grid", alignContent: "start" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                <h2 style={panelTitleStyle}>Astra Opportunities</h2>
-                <button type="button" onClick={() => (typeof onNavigate === "function" ? onNavigate("opportunities") : null)} style={{ border: 0, background: "transparent", color: "#004fe0", fontWeight: 900, cursor: "pointer" }}>
-                  View All Opportunities
-                </button>
-              </div>
-              <div style={{ display: "grid", gap: 0 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "30px minmax(58px, .7fr) minmax(72px, .8fr) minmax(88px, .95fr) minmax(0, 2.4fr) 44px", gap: 8, padding: "8px 0", color: "#667994", fontSize: 10, fontWeight: 950, textTransform: "uppercase", borderBottom: "1px solid #e5edf6" }}>
-                  <span>#</span><span>Symbol</span><span>Confidence</span><span>Best Hold</span><span>Why Astra Likes It</span><span>Trend</span>
-                </div>
-                {opportunityRows.length === 0 ? (
-                  <div style={{ border: "1px dashed #cfdced", borderRadius: 14, color: "#667994", background: "#f7fbff", padding: 16, marginTop: 12, fontSize: 13, lineHeight: 1.45 }}>
-                    Opportunity cache is warming up. Ranked opportunities will appear here when cached data is available.
-                  </div>
-                ) : opportunityRows.map((row) => (
-                  <div key={`${row.rank}-${row.symbol}`} style={{ display: "grid", gridTemplateColumns: "30px minmax(58px, .7fr) minmax(72px, .8fr) minmax(88px, .95fr) minmax(0, 2.4fr) 44px", gap: 8, padding: "10px 0", alignItems: "center", borderBottom: "1px solid #edf2f8" }}>
-                    <strong style={{ color: "#13243a", fontSize: 12 }}>{row.rank}</strong>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ color: "#13243a", fontWeight: 950, fontSize: 13 }}>{row.symbol}</div>
-                      <div style={{ color: "#667994", fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.company || row.risk}</div>
-                    </div>
-                    <strong style={{ color: "#079246", fontSize: 15 }}>{row.confidence.toFixed(0)}%</strong>
-                    <div style={{ display: "grid", gap: 2 }}>
-                      <strong style={{ color: "#078943", fontSize: 11.5 }}>{row.horizon}</strong>
-                      <span style={{ color: "#7a8da7", fontSize: 9.5 }}>Consistency {row.consistency ? row.consistency.toFixed(0) : "warming up"}</span>
-                    </div>
-                    <span style={{ color: "#273d5a", fontSize: 11, lineHeight: 1.35, minWidth: 0 }}>{row.why}</span>
-                    <svg viewBox="0 0 38 20" width="38" height="20" aria-hidden="true">
-                      <path d={`M1 17 C 8 ${row.trendBias >= 0 ? 13 : 16}, 14 ${row.trendBias >= 0 ? 9 : 15}, 20 ${row.trendBias >= 0 ? 10 : 13} S 30 ${row.trendBias >= 0 ? 6 : 14}, 37 ${row.trendBias >= 0 ? 4 : 12}`} fill="none" stroke={row.trendBias >= 0 ? "#149455" : "#d14b57"} strokeWidth="2.2" strokeLinecap="round" />
-                    </svg>
-                  </div>
-                ))}
-              </div>
-            </div>
-
             <div style={{ borderRadius: 22, padding: 16, background: "radial-gradient(260px 150px at 80% 0%, rgba(45, 119, 255, 0.36), transparent 70%), linear-gradient(135deg, #071a33, #08244b)", boxShadow: "0 18px 45px rgba(25, 47, 78, 0.18)", color: "#ffffff", minHeight: 246, display: "grid", gap: 12 }}>
               <h2 style={{ margin: 0, fontSize: "1rem", color: "#ffffff" }}>Ask Astra</h2>
               <p style={{ margin: 0, color: "#c8d8ef", fontSize: 13 }}>Your AI market analyst. Ask anything about markets, opportunities, or your portfolio.</p>
@@ -626,6 +660,46 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               <div style={{ color: "#8fb1df", fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Popular Questions</div>
               {["Why is my top opportunity ranked highest?", "What sectors are showing strength?", "How should I position my portfolio?", "Which stocks have unusual activity?"].map((q) => (
                 <button key={q} type="button" style={{ textAlign: "left", border: 0, borderRadius: 10, background: "rgba(255,255,255,0.08)", color: "#eaf3ff", padding: "8px 10px", cursor: "pointer" }}>{q}</button>
+              ))}
+            </div>
+          </section>
+
+          <section style={{ ...panelStyle, overflow: "hidden", display: "grid", alignContent: "start" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <h2 style={panelTitleStyle}>Astra Opportunities</h2>
+              <button type="button" onClick={() => (typeof onNavigate === "function" ? onNavigate("opportunities") : null)} style={{ border: 0, background: "transparent", color: "#004fe0", fontWeight: 900, cursor: "pointer" }}>
+                View All Opportunities
+              </button>
+            </div>
+            <div style={{ display: "grid", gap: 0 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "36px minmax(90px, .85fr) minmax(94px, .8fr) minmax(120px, .9fr) minmax(0, 3fr) 54px", gap: 10, padding: "8px 0", color: "#667994", fontSize: 10, fontWeight: 950, textTransform: "uppercase", borderBottom: "1px solid #e5edf6" }}>
+                <span>#</span><span>Symbol</span><span>Confidence</span><span>Best Horizon</span><span>Why Astra Likes It</span><span>Trend</span>
+              </div>
+              {opportunityRows.length === 0 ? (
+                <div style={{ border: "1px dashed #cfdced", borderRadius: 14, color: "#667994", background: "#f7fbff", padding: 16, marginTop: 12, fontSize: 13, lineHeight: 1.45 }}>
+                  Opportunity cache is warming up. Ranked opportunities will appear here when cached data is available.
+                </div>
+              ) : opportunityRows.map((row) => (
+                <div key={`${row.rank}-${row.symbol}`} style={{ display: "grid", gridTemplateColumns: "36px minmax(90px, .85fr) minmax(94px, .8fr) minmax(120px, .9fr) minmax(0, 3fr) 54px", gap: 10, padding: "10px 0", alignItems: "center", borderBottom: "1px solid #edf2f8" }}>
+                  <strong style={{ color: "#13243a", fontSize: 12 }}>{row.rank}</strong>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ color: "#13243a", fontWeight: 950, fontSize: 13 }}>{row.symbol}</div>
+                    <div style={{ color: "#667994", fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.company || row.risk}</div>
+                  </div>
+                  <strong style={{ color: "#079246", fontSize: 15 }}>{row.confidence.toFixed(0)}%</strong>
+                  <div style={{ display: "grid", gap: 2 }}>
+                    <strong style={{ color: "#078943", fontSize: 11.5 }}>{row.horizon}</strong>
+                    <span style={{ color: "#7a8da7", fontSize: 9.5 }}>Consistency {row.consistency ? row.consistency.toFixed(0) : "Warming Up"}</span>
+                  </div>
+                  <span style={{ color: "#273d5a", fontSize: 11.5, lineHeight: 1.35, minWidth: 0 }}>{row.why}</span>
+                  {Number.isFinite(Number(row.trendBias)) ? (
+                    <svg viewBox="0 0 38 20" width="38" height="20" aria-hidden="true">
+                      <path d={`M1 17 C 8 ${row.trendBias >= 0 ? 13 : 16}, 14 ${row.trendBias >= 0 ? 9 : 15}, 20 ${row.trendBias >= 0 ? 10 : 13} S 30 ${row.trendBias >= 0 ? 6 : 14}, 37 ${row.trendBias >= 0 ? 4 : 12}`} fill="none" stroke={row.trendBias >= 0 ? "#149455" : "#d14b57"} strokeWidth="2.2" strokeLinecap="round" />
+                    </svg>
+                  ) : (
+                    <span style={{ color: "#8ea0b5", fontSize: 10 }}>N/A</span>
+                  )}
+                </div>
               ))}
             </div>
           </section>
@@ -645,17 +719,18 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                 ))}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "122px 1fr", gap: 16, alignItems: "center", marginTop: 16 }}>
-                <div style={{ width: 114, height: 114, borderRadius: "50%", background: "conic-gradient(#0b5bd3 0 72%, #19a9b5 72% 88%, #7457d9 88% 96%, #b9c7db 96% 100%)", display: "grid", placeItems: "center", margin: "0 auto" }}>
+                <div style={{ width: 114, height: 114, borderRadius: "50%", background: "#eef4fa", border: "10px solid #dce8f5", display: "grid", placeItems: "center", margin: "0 auto" }}>
                   <div style={{ width: 70, height: 70, borderRadius: "50%", background: "#ffffff", display: "grid", placeItems: "center", color: "#13243a", fontWeight: 950 }}>{brokerActiveCount}<br /><span style={{ fontSize: 10, color: "#667994" }}>Open</span></div>
                 </div>
                 <div style={{ display: "grid", gap: 8, fontSize: 12 }}>
-                  {[
-                    `Risk ${brokerActiveCount > 8 ? "Elevated" : "Moderate"}`,
-                    "Equities 72.1%",
-                    "Cash 19.6%",
-                    "ETFs 6.3%",
-                    "Other 2.0%",
-                  ].map((row) => <div key={row} style={{ color: "#273d5a", fontWeight: 800 }}>{row}</div>)}
+                  <div style={{ color: "#273d5a", fontWeight: 800 }}>
+                    Risk {positionsMeta?.portfolio_risk_label || systemStatus?.portfolio_risk_label || (brokerTruthKnown ? `${brokerActiveCount} broker-confirmed positions` : "Data Not Available")}
+                  </div>
+                  {allocationRows.length === 0 ? (
+                    <div style={{ color: "#667994", fontWeight: 800 }}>Allocation Data Not Available</div>
+                  ) : allocationRows.map(([label, pct]) => (
+                    <div key={`${label}-${pct}`} style={{ color: "#273d5a", fontWeight: 800 }}>{label} {pct}</div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -687,7 +762,12 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               <h2 style={panelTitleStyle}>Astra Performance</h2>
               <p style={{ margin: "8px 0 12px", color: "#273d5a", fontSize: 13 }}>Astra's models are {performanceHealth === "healthy" ? "performing well." : performanceHealth === "warming up" ? "still warming up." : "showing areas that need attention."}</p>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-                {[["Win Rate", "64%"], ["Profit Factor", labelize(systemStatus?.profit_factor || "2.12")], ["Model Confidence", `${modelConfidence}%`], ["Buy Purity", labelize(systemStatus?.buy_purity || "warming up")]].map(([label, value]) => (
+                {[
+                  ["Win Rate", metricOrUnavailable(systemStatus?.win_rate ?? systemStatus?.released_win_rate, "%")],
+                  ["Profit Factor", systemStatus?.profit_factor == null ? "Data Not Available" : labelize(systemStatus.profit_factor)],
+                  ["Model Confidence", modelConfidenceLabel],
+                  ["Buy Purity", systemStatus?.buy_purity == null ? "Data Not Available" : labelize(systemStatus.buy_purity)],
+                ].map(([label, value]) => (
                   <div key={label} style={{ border: "1px solid #e1e9f4", borderRadius: 14, padding: "10px 11px", background: "#f9fbff" }}>
                     <div style={{ color: "#079246", fontSize: 21, fontWeight: 950 }}>{value}</div>
                     <div style={{ color: "#667994", fontSize: 11, fontWeight: 900 }}>{label}</div>
@@ -701,12 +781,18 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
             <div style={panelStyle}>
               <h2 style={panelTitleStyle}>Market Themes & Sectors</h2>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
-                {leadingThemes.map((theme) => (
+                {leadingThemes.length === 0 ? (
+                  <span style={{ background: "#f7fbff", color: "#667994", border: "1px dashed #cfdced", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 900 }}>Theme Data Not Available</span>
+                ) : leadingThemes.map((theme) => (
                   <span key={theme} style={{ background: "#e8f7ec", color: "#087a41", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 900 }}>{theme}</span>
                 ))}
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8, marginTop: 14 }}>
-                {topSectors.map(([sector, change, positive]) => (
+              <div style={{ display: "grid", gridTemplateColumns: topSectors.length ? "repeat(5, 1fr)" : "1fr", gap: 8, marginTop: 14 }}>
+                {topSectors.length === 0 ? (
+                  <div style={{ border: "1px dashed #cfdced", borderRadius: 12, background: "#f7fbff", color: "#667994", padding: "12px 13px", fontSize: 13 }}>
+                    Sector movement data is not available in the cached dashboard payload.
+                  </div>
+                ) : topSectors.map(([sector, change, positive]) => (
                   <div key={sector} style={{ background: positive ? "#e9f8ee" : "#fdebed", color: positive ? "#087a41" : "#b7283a", borderRadius: 10, padding: 10 }}>
                     <div style={{ color: "#273d5a", fontSize: 11, fontWeight: 900 }}>{sector}</div>
                     <div style={{ fontWeight: 950 }}>{change}</div>
@@ -729,7 +815,11 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
             <div style={panelStyle}>
               <h2 style={panelTitleStyle}>Today's Calendar</h2>
               <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-                {calendarItems.map(([time, event]) => (
+                {calendarItems.length === 0 ? (
+                  <div style={{ border: "1px dashed #cfdced", borderRadius: 12, background: "#f7fbff", color: "#667994", padding: "12px 13px", fontSize: 13 }}>
+                    Calendar data is not available in the cached dashboard payload.
+                  </div>
+                ) : calendarItems.map(([time, event]) => (
                   <div key={`${time}-${event}`} style={{ display: "grid", gridTemplateColumns: "74px 1fr", gap: 10, color: "#273d5a", fontSize: 13 }}>
                     <strong style={{ color: "#004fe0" }}>{time}</strong>
                     <span>{event}</span>
@@ -765,10 +855,10 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
 
           <section style={{ ...panelStyle, display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 0, padding: 0, overflow: "hidden" }}>
             {[
-              ["Learning Status", `Evidence ${safeNumber(systemStatus?.evidence_count || 0).toFixed(0) || "warming up"}`, `Learning Confidence ${modelConfidence}%`],
-              ["Model Quality", "Quality Rating High", "Models performing well"],
-              ["Risk Summary", `Risk Score ${brokerActiveCount > 8 ? "Elevated" : "Moderate"}`, "Portfolio risk is moderate"],
-              ["Watching", watchingItems.slice(0, 3).join(" · "), "Potential impact: Moderate"],
+              ["Learning Status", systemStatus?.evidence_count == null ? "Evidence Data Not Available" : `Evidence ${safeNumber(systemStatus.evidence_count).toFixed(0)}`, `Learning Confidence ${modelConfidenceLabel}`],
+              ["Model Quality", labelize(performanceHealth), `Status ${labelize(performanceHealth)}`],
+              ["Risk Summary", portfolioRiskText, "Source-aware portfolio risk"],
+              ["Watching", watchingItems.slice(0, 3).join(" · "), "Potential impact: Data Not Available"],
               ["Go to Learning Center", "Deep dive into Astra intelligence", "Open diagnostics and latest insights"],
             ].map(([title, main, sub], idx) => (
               <button
@@ -903,14 +993,9 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
             <div style={panelStyle}>
               <h2 style={panelTitleStyle}>Risk & Allocation</h2>
               <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-                {[
-                  `Portfolio risk ${brokerActiveCount > 8 ? "Elevated" : "Moderate"}`,
-                  "Concentration balanced",
-                  "Correlation controlled",
-                  "Allocation equities / cash / ETF / other",
-                ].map((line) => (
-                  <div key={line} style={{ borderRadius: 12, border: "1px solid #dce6f3", background: "#f9fbff", padding: "10px 11px", color: "#28405e", fontSize: 12.5, fontWeight: 800 }}>
-                    {line}
+                {riskLines.map(([label, value]) => (
+                  <div key={label} style={{ borderRadius: 12, border: "1px solid #dce6f3", background: "#f9fbff", padding: "10px 11px", color: "#28405e", fontSize: 12.5, fontWeight: 800 }}>
+                    <span style={{ color: "#667994" }}>{label}: </span>{value}
                   </div>
                 ))}
               </div>
@@ -923,13 +1008,13 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
                 <div style={{ borderRadius: 14, border: "1px solid #deebf6", background: "#f7fbff", padding: "11px 12px" }}>
                   <div style={{ color: "#667994", fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Biggest winner</div>
-                  <div style={{ color: "#13243a", fontWeight: 950, marginTop: 4 }}>{biggestWinner?.symbol || "not available"}</div>
-                  <div style={{ color: "#079246", fontSize: 13, marginTop: 2 }}>{biggestWinner?.symbol ? formatSignedPct(biggestWinner?.pnl_percent) : "warming up"}</div>
+                  <div style={{ color: "#13243a", fontWeight: 950, marginTop: 4 }}>{biggestWinner?.symbol || "Data Not Available"}</div>
+                  <div style={{ color: "#079246", fontSize: 13, marginTop: 2 }}>{biggestWinner?.symbol ? formatSignedPct(biggestWinner?.pnl_percent) : "Warming Up"}</div>
                 </div>
                 <div style={{ borderRadius: 14, border: "1px solid #deebf6", background: "#f7fbff", padding: "11px 12px" }}>
                   <div style={{ color: "#667994", fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Biggest loser</div>
-                  <div style={{ color: "#13243a", fontWeight: 950, marginTop: 4 }}>{biggestLoser?.symbol || "not available"}</div>
-                  <div style={{ color: "#c43d4b", fontSize: 13, marginTop: 2 }}>{biggestLoser?.symbol ? formatSignedPct(biggestLoser?.pnl_percent) : "warming up"}</div>
+                  <div style={{ color: "#13243a", fontWeight: 950, marginTop: 4 }}>{biggestLoser?.symbol || "Data Not Available"}</div>
+                  <div style={{ color: "#c43d4b", fontSize: 13, marginTop: 2 }}>{biggestLoser?.symbol ? formatSignedPct(biggestLoser?.pnl_percent) : "Warming Up"}</div>
                 </div>
               </div>
             </div>
@@ -937,7 +1022,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
             <div style={panelStyle}>
               <h2 style={panelTitleStyle}>Largest Position</h2>
               <div style={{ marginTop: 12, borderRadius: 16, border: "1px solid #dce6f3", background: "#f7fbff", padding: "14px 14px" }}>
-                <div style={{ color: "#13243a", fontSize: 20, fontWeight: 950 }}>{largestPosition?.symbol || "not available"}</div>
+                <div style={{ color: "#13243a", fontSize: 20, fontWeight: 950 }}>{largestPosition?.symbol || "Data Not Available"}</div>
                 <div style={{ color: "#667994", fontSize: 12, marginTop: 4 }}>Broker-confirmed label remains source-aware.</div>
                 <div style={{ color: "#28405e", fontSize: 12.5, marginTop: 10 }}>{largestPosition ? `Current ${formatMoney(largestPosition?.current_price ?? largestPosition?.price)}` : "Warming up from cached portfolio context."}</div>
               </div>
