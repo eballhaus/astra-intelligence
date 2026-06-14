@@ -1,19 +1,17 @@
 import React from "react";
 
-const requiredMarkets = [
-  { id: "sp500", symbol: "SPX", name: "S&P 500" },
-  { id: "nasdaq", symbol: "NDX", name: "Nasdaq" },
-  { id: "dow", symbol: "DJI", name: "Dow" },
-  { id: "vix", symbol: "VIX", name: "VIX" },
-  { id: "bitcoin", symbol: "BTC", name: "Bitcoin" },
-];
-
 function safeNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function formatValue(item) {
+  if (item?.displayValue) return item.displayValue;
+  if (item?.valueKind === "score") {
+    const score = Number(item?.value);
+    if (!Number.isFinite(score)) return "Score unavailable";
+    return `${score.toFixed(1)}`;
+  }
   const value = Number(item?.value);
   if (!Number.isFinite(value) || value <= 0) return "Data Not Available";
   const digits = item?.symbol === "VIX" ? 2 : 2;
@@ -32,10 +30,8 @@ function sparkPath(change) {
 
 export default function MarketSummary({ markets = [], asOf = "n/a", marketSession = "market context" }) {
   const incoming = Array.isArray(markets) ? markets : [];
-  const rows = requiredMarkets.map((required) => {
-    const found = incoming.find((row) => row?.id === required.id || row?.symbol === required.symbol);
-    return found ? { ...required, ...found } : { ...required, value: null, change: null, unavailable: true };
-  });
+  const rows = incoming.filter(Boolean).slice(0, 6);
+  const unavailable = rows.length === 0;
 
   return (
     <div
@@ -75,15 +71,20 @@ export default function MarketSummary({ markets = [], asOf = "n/a", marketSessio
         <span style={{ color: "#6c8098", fontSize: 12 }}>Last updated {asOf}</span>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))",
-          gap: 10,
-        }}
-      >
+      {unavailable ? (
+        <div style={{ border: "1px dashed #cbd8e8", borderRadius: 16, background: "#f7fbff", color: "#536a85", padding: "12px 14px", fontSize: 13, fontWeight: 800 }}>
+          Market data source unavailable. Astra will show cached index, breadth, and sector context when available.
+        </div>
+      ) : (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))",
+            gap: 10,
+          }}
+        >
         {rows.map((market) => {
-          const hasValue = Number.isFinite(Number(market?.value)) && Number(market.value) > 0;
+          const hasValue = Boolean(market?.displayValue) || market?.valueKind === "score" || (Number.isFinite(Number(market?.value)) && Number(market.value) > 0);
           const hasChange = Number.isFinite(Number(market?.change));
           const change = hasChange ? safeNumber(market?.change, 0) : 0;
           const positive = change >= 0;
@@ -108,13 +109,16 @@ export default function MarketSummary({ markets = [], asOf = "n/a", marketSessio
                   <div style={{ color: "#11243c", fontSize: 12, fontWeight: 900, marginTop: 2 }}>
                     {formatValue(market)}
                   </div>
+                  {market?.detail ? (
+                    <div style={{ color: "#6c8098", fontSize: 10.5, fontWeight: 750, marginTop: 2 }}>{market.detail}</div>
+                  ) : null}
                 </div>
                 {hasValue && hasChange ? (
                   <svg viewBox="0 0 48 28" width="48" height="28" aria-hidden="true">
                     <path d={sparkPath(change)} fill="none" stroke={positive ? "#149455" : "#d14b57"} strokeWidth="2.4" strokeLinecap="round" />
                   </svg>
                 ) : (
-                  <span style={{ color: "#92a3b8", fontSize: 11, fontWeight: 800 }}>Unavailable</span>
+                  <span style={{ color: "#92a3b8", fontSize: 11, fontWeight: 800 }}>{market?.valueKind === "score" ? "Score" : "Unavailable"}</span>
                 )}
               </div>
               <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
@@ -123,14 +127,15 @@ export default function MarketSummary({ markets = [], asOf = "n/a", marketSessio
                     {positive ? "+" : ""}{change.toFixed(2)}%
                   </span>
                 ) : (
-                  <span style={{ color: "#9aa9ba", fontWeight: 900, fontSize: 13 }}>Stale / unavailable</span>
+                  <span style={{ color: "#52718f", fontWeight: 900, fontSize: 13 }}>{market?.sourceLabel || "Cached context"}</span>
                 )}
                 <span style={{ color: "#92a3b8", fontSize: 11 }}>{market.symbol}</span>
               </div>
             </div>
           );
         })}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

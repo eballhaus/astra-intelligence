@@ -91,8 +91,39 @@ function formatMoney(value) {
 
 function metricOrUnavailable(value, suffix = "") {
   const n = Number(value);
-  if (!Number.isFinite(n)) return "Data Not Available";
+  if (!Number.isFinite(n)) return "Warming Up";
   return `${n.toFixed(1)}${suffix}`;
+}
+
+function metricObjectValue(metric, fallback = null) {
+  if (metric && typeof metric === "object" && Number.isFinite(Number(metric.value))) return Number(metric.value);
+  if (Number.isFinite(Number(metric))) return Number(metric);
+  return fallback;
+}
+
+function metricObjectLabel(metric, fallback = "Warming Up") {
+  if (metric && typeof metric === "object" && metric.label) return labelize(metric.label);
+  return fallback;
+}
+
+function formatScore(score, suffix = "") {
+  const n = Number(score);
+  if (!Number.isFinite(n)) return "Warming Up";
+  return `${n.toFixed(1)}${suffix}`;
+}
+
+function formatPctFromRatio(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "Warming Up";
+  return `${(n <= 1 ? n * 100 : n).toFixed(1)}%`;
+}
+
+function qualitativeScore(score) {
+  const n = Number(score);
+  if (!Number.isFinite(n)) return "Warming Up";
+  if (n >= 65) return "Strong";
+  if (n >= 45) return "Neutral";
+  return "Weak";
 }
 
 function normalizeAllocationRows(positionsMeta = {}, systemStatus = {}) {
@@ -222,7 +253,7 @@ function normalizePositions(raw) {
   }));
 }
 
-function normalizeMarketSummary(systemStatus = {}) {
+function normalizeMarketSummary(systemStatus = {}, unifiedDiagnostics = {}) {
   const markets = systemStatus?.market_summary || systemStatus?.market_overview || systemStatus?.indices || {};
   const get = (keys = []) => {
     for (const key of keys) {
@@ -250,7 +281,37 @@ function normalizeMarketSummary(systemStatus = {}) {
     map("bitcoin", "BTC", "Bitcoin", ["bitcoin", "btc"]),
   ];
   const hasReal = rows.some((r) => Number.isFinite(Number(r.value)) && Number(r.value) > 0);
-  return hasReal ? rows : [];
+  if (hasReal) return rows.filter((r) => Number.isFinite(Number(r.value)) && Number(r.value) > 0);
+
+  const marketBreadth = unifiedDiagnostics?.market_breadth_index_intelligence_v1 || {};
+  const proxyRows = Array.isArray(marketBreadth?.index_signal_rows) ? marketBreadth.index_signal_rows : [];
+  const proxyLabels = {
+    SPY: ["sp500_proxy", "S&P Proxy", "SPY"],
+    QQQ: ["nasdaq_proxy", "Nasdaq Proxy", "QQQ"],
+    DIA: ["dow_proxy", "Dow Proxy", "DIA"],
+    IWM: ["small_cap_proxy", "Small Cap Proxy", "IWM"],
+    VIX: ["vix_pressure", "VIX Pressure", "VIX"],
+  };
+  const mapped = proxyRows
+    .filter((row) => proxyLabels[String(row?.symbol || "").toUpperCase()])
+    .slice(0, 5)
+    .map((row) => {
+      const symbol = String(row.symbol || "").toUpperCase();
+      const [id, name, displaySymbol] = proxyLabels[symbol];
+      const signal = Number(row.signal);
+      return {
+        id,
+        symbol: displaySymbol,
+        name,
+        value: signal,
+        valueKind: "score",
+        displayValue: Number.isFinite(signal) ? `${signal.toFixed(1)}` : "Score unavailable",
+        detail: labelize(row.role || "context proxy"),
+        sourceLabel: "Cached proxy score",
+        type: "context",
+      };
+    });
+  return mapped;
 }
 
 export default function Dashboard({ remoteSection = "dashboard", remoteMode = false, onNavigate }) {
@@ -260,6 +321,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
   const [endpointStatus, setEndpointStatus] = useState({});
   const [topBuys, setTopBuys] = useState({});
   const [systemStatus, setSystemStatus] = useState({});
+  const [unifiedDiagnostics, setUnifiedDiagnostics] = useState({});
   const [positions, setPositions] = useState([]);
   const [positionsMeta, setPositionsMeta] = useState({});
   const [isMobileView, setIsMobileView] = useState(false);
@@ -336,6 +398,36 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     };
   }, [resolvedApiBase]);
 
+  useEffect(() => {
+    let mounted = true;
+    let busy = false;
+
+    const refreshUnifiedDiagnostics = async () => {
+      if (busy) return;
+      busy = true;
+      const result = await fetchJsonWithFallback("/api/unified_learning_diagnostics_v1", {
+        preferredBase: resolvedApiBase || API_BASE,
+        fallbackValue: {},
+        timeoutMs: 45000,
+      });
+      if (mounted && result.ok && result.parsed) {
+        setUnifiedDiagnostics(result.parsed || {});
+        setEndpointStatus((prev) => ({
+          ...(prev || {}),
+          unified_diagnostics: { ok: result.ok, status: result.httpStatus, error: result.error || "" },
+        }));
+      }
+      busy = false;
+    };
+
+    refreshUnifiedDiagnostics();
+    const timer = setInterval(refreshUnifiedDiagnostics, 120000);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
+  }, [resolvedApiBase]);
+
   const { stocks } = useMemo(() => normalizeTopBuys(topBuys), [topBuys]);
   const openPositionSymbols = useMemo(
     () => new Set((positions || []).map((p) => String(p?.symbol || "").toUpperCase()).filter(Boolean)),
@@ -348,7 +440,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     });
     return out;
   }, [positionActionState, openPositionSymbols]);
-  const marketSummary = useMemo(() => normalizeMarketSummary(systemStatus), [systemStatus]);
+  const marketSummary = useMemo(() => normalizeMarketSummary(systemStatus, unifiedDiagnostics), [systemStatus, unifiedDiagnostics]);
   const runtimeIntegrity = Boolean(
     systemStatus?.runtime_integrity_ok
     ?? systemStatus?.runtime_integrity_status?.runtime_integrity_ok
@@ -390,6 +482,56 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
   const topSection = remoteMode
     ? (remoteSection === "positions" ? "positions" : "buys")
     : "dashboard";
+  const performanceSummary = unifiedDiagnostics?.performance_summary || {};
+  const executiveSnapshot = unifiedDiagnostics?.executive_snapshot || {};
+  const executionQuality = unifiedDiagnostics?.execution_quality_summary || executiveSnapshot?.execution_quality || {};
+  const portfolioHealth = unifiedDiagnostics?.portfolio_health_summary || executiveSnapshot?.portfolio_health || {};
+  const learningMaturity = unifiedDiagnostics?.learning_maturity_summary || executiveSnapshot?.learning_status || {};
+  const systemHealth = unifiedDiagnostics?.system_health_summary || executiveSnapshot?.system_health || {};
+  const marketBreadth = unifiedDiagnostics?.market_breadth_index_intelligence_v1 || {};
+  const sectorRotation = unifiedDiagnostics?.etf_sector_rotation_intelligence_v1 || {};
+  const marketTransition = unifiedDiagnostics?.market_transition_detection_v1 || {};
+  const iqSuite = unifiedDiagnostics?.intelligence_quality_learning_efficiency_suite_v1 || {};
+  const profitCapture = unifiedDiagnostics?.profit_capture_peak_decay_exit_validation_suite_v1 || {};
+  const rankingAttribution = unifiedDiagnostics?.candidate_ranking_attribution_promotion_intelligence_v1 || {};
+  const marketIntelligence = executiveSnapshot?.market_intelligence || {};
+  const portfolioHeatScore = metricObjectValue(portfolioHealth?.portfolio_heat);
+  const concentrationRiskScore = metricObjectValue(portfolioHealth?.concentration_risk);
+  const correlationRiskScore = metricObjectValue(portfolioHealth?.correlation_risk);
+  const portfolioRiskMetric = [portfolioHeatScore, concentrationRiskScore, correlationRiskScore]
+    .filter((n) => Number.isFinite(Number(n)));
+  const portfolioRiskScore = portfolioRiskMetric.length
+    ? portfolioRiskMetric.reduce((sum, n) => sum + Number(n), 0) / portfolioRiskMetric.length
+    : null;
+  const portfolioRiskLabel = portfolioRiskScore == null
+    ? "Warming Up"
+    : portfolioRiskScore >= 70
+    ? "Elevated"
+    : portfolioRiskScore >= 45
+    ? "Moderate"
+    : "Controlled";
+  const mainWeakness = labelize(
+    iqSuite?.weakest_confidence_component
+      || iqSuite?.summary?.weakest_confidence_component
+      || profitCapture?.readiness_blocker
+      || "Warming Up",
+  );
+  const nextFocus = labelize(
+    iqSuite?.recommended_next_focus
+      || iqSuite?.summary?.recommended_next_focus
+      || profitCapture?.closest_exit_policy_to_readiness
+      || "Review top ranked candidates",
+  );
+  const learningConfidenceScore = metricObjectValue(learningMaturity?.adaptive_confidence)
+    ?? Number(iqSuite?.conviction_calibration_score);
+  const learningConfidenceLabel = Number.isFinite(Number(learningConfidenceScore))
+    ? `${Number(learningConfidenceScore).toFixed(0)}%`
+    : "Warming Up";
+  const evidenceCount = Number(unifiedDiagnostics?.evidence_maturity_status?.evidence_count ?? performanceSummary?.closed_trade_count ?? unifiedDiagnostics?.evidence_count);
+  const marketSupportScore = Number(marketBreadth?.market_support_for_equity_trades ?? marketBreadth?.overall_market_health);
+  const marketBiasSource = marketTransition?.current_market_phase
+    || marketIntelligence?.current_regime
+    || marketBreadth?.current_index_regime;
   const highConfidenceCount = stocks.filter((row) => safeNumber(row?.confidence) >= 70).length;
   const bestOpportunity = stocks[0] || {};
   const stockThemes = stocks
@@ -400,10 +542,14 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     bestOpportunity?.theme
       || bestOpportunity?.catalyst
       || bestOpportunity?.sector
+      || sectorRotation?.strongest_sector
+      || marketIntelligence?.best_archetype
       || systemStatus?.leadership_theme
       || "theme data unavailable",
   );
-  const marketTone = runtimeIntegrity && highConfidenceCount >= 2
+  const marketTone = Number.isFinite(marketSupportScore)
+    ? (marketSupportScore >= 60 ? "Bullish" : marketSupportScore >= 42 ? "Neutral" : "Bearish")
+    : runtimeIntegrity && highConfidenceCount >= 2
     ? "Bullish"
     : runtimeIntegrity
     ? "Neutral"
@@ -411,16 +557,27 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
   const volatilityKnown = systemStatus?.vix !== undefined || systemStatus?.volatility_status;
   const volatilityStatus = safeNumber(systemStatus?.vix, 0) > 25
     ? "elevated"
-    : labelize(systemStatus?.volatility_status || (volatilityKnown ? "controlled" : "Data Not Available"));
-  const breadthStatus = labelize(systemStatus?.breadth_status || (validQuotes > 0 ? "active coverage" : "warming up"));
-  const riskMode = marketTone === "Bearish" ? "Risk-Off" : "Risk-On";
+    : labelize(systemStatus?.volatility_status || (Number.isFinite(Number(marketBreadth?.volatility_pressure_score)) ? `${qualitativeScore(100 - Number(marketBreadth.volatility_pressure_score))} volatility pressure` : (volatilityKnown ? "controlled" : "Warming Up")));
+  const breadthStatus = labelize(systemStatus?.breadth_status || (Number.isFinite(Number(marketBreadth?.breadth_proxy_score)) ? `${formatScore(marketBreadth.breadth_proxy_score)} breadth proxy` : (validQuotes > 0 ? "active coverage" : "warming up")));
+  const riskMode = Number.isFinite(Number(marketBreadth?.risk_on_score)) && Number.isFinite(Number(marketBreadth?.risk_off_score))
+    ? (Number(marketBreadth.risk_on_score) >= Number(marketBreadth.risk_off_score) ? "Risk-On" : "Risk-Off")
+    : marketTone === "Bearish" ? "Risk-Off" : "Risk-On";
   const marketConfidenceRaw = systemStatus?.market_confidence
     ?? systemStatus?.market_confidence_pct
     ?? systemStatus?.environment_confidence
-    ?? systemStatus?.market_environment_confidence;
+    ?? systemStatus?.market_environment_confidence
+    ?? marketBreadth?.index_confidence_score
+    ?? marketTransition?.transition_confidence;
   const marketConfidence = Number.isFinite(Number(marketConfidenceRaw)) ? Number(marketConfidenceRaw) : null;
-  const portfolioRiskText = positionsMeta?.portfolio_risk_label || systemStatus?.portfolio_risk_label || (brokerTruthKnown ? `${brokerActiveCount} broker-confirmed positions` : "Data Not Available");
-  const astraBrief = `Markets remain ${marketTone.toLowerCase()} with ${strongestTheme} in focus. Breadth is ${breadthStatus} and volatility is ${volatilityStatus}. Astra currently identifies ${highConfidenceCount} high-confidence opportunit${highConfidenceCount === 1 ? "y" : "ies"} while portfolio risk is ${portfolioRiskText}.`;
+  const portfolioRiskText = portfolioRiskScore == null
+    ? "portfolio risk diagnostics are warming up"
+    : `${portfolioRiskLabel} risk: heat ${formatScore(portfolioHeatScore)}, concentration ${formatScore(concentrationRiskScore)}, correlation ${formatScore(correlationRiskScore)}`;
+  const astraBrief = [
+    `Astra's cached market context is ${marketTone.toLowerCase()}${marketBiasSource ? ` (${labelize(marketBiasSource)})` : ""}.`,
+    `Breadth reads ${breadthStatus}, with ${strongestTheme} as the strongest current leadership clue.`,
+    `Astra has ${highConfidenceCount} high-confidence opportunit${highConfidenceCount === 1 ? "y" : "ies"} and ${portfolioRiskText}.`,
+    `Next focus: ${nextFocus}.`,
+  ].join(" ");
   const portfolioValue = formatMoney(positionsMeta?.portfolio_value ?? positionsMeta?.total_value ?? systemStatus?.portfolio_value);
   const cashValue = formatMoney(positionsMeta?.cash ?? positionsMeta?.buying_power ?? systemStatus?.cash);
   const buyingPowerValue = formatMoney(positionsMeta?.buying_power ?? positionsMeta?.cash ?? systemStatus?.buying_power ?? systemStatus?.cash);
@@ -428,13 +585,12 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
   const riskLines = [
     [
       "Portfolio risk",
-      positionsMeta?.portfolio_risk_label
-        || systemStatus?.portfolio_risk_label
-        || (brokerTruthKnown ? `Position count ${brokerActiveCount}` : "Data Not Available"),
+      portfolioRiskScore == null ? "Warming Up" : `${portfolioRiskLabel} (${formatScore(portfolioRiskScore)})`,
     ],
-    ["Concentration", positionsMeta?.concentration_status || systemStatus?.concentration_status || "Data Not Available"],
-    ["Correlation", positionsMeta?.correlation_status || systemStatus?.correlation_status || "Data Not Available"],
-    ["Allocation", allocationRows.length ? allocationRows.map(([label, pct]) => `${label} ${pct}`).join(" / ") : "Data Not Available"],
+    ["Concentration", Number.isFinite(Number(concentrationRiskScore)) ? `${formatScore(concentrationRiskScore)} ${metricObjectLabel(portfolioHealth?.concentration_risk, "")}` : "Warming Up"],
+    ["Correlation", Number.isFinite(Number(correlationRiskScore)) ? `${formatScore(correlationRiskScore)} ${metricObjectLabel(portfolioHealth?.correlation_risk, "")}` : "Warming Up"],
+    ["Portfolio heat", Number.isFinite(Number(portfolioHeatScore)) ? `${formatScore(portfolioHeatScore)} ${metricObjectLabel(portfolioHealth?.portfolio_heat, "")}` : "Warming Up"],
+    ["Allocation", allocationRows.length ? allocationRows.map(([label, pct]) => `${label} ${pct}`).join(" / ") : "Warming Up"],
   ];
   const sortedByPnl = [...positions].sort((a, b) => safeNumber(b?.pnl_percent) - safeNumber(a?.pnl_percent));
   const biggestWinner = sortedByPnl[0];
@@ -467,19 +623,31 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     trendBias: Number.isFinite(Number(row.change_percent ?? row.expected_move_pct ?? row.predicted_return_pct))
       ? Number(row.change_percent ?? row.expected_move_pct ?? row.predicted_return_pct)
       : null,
-    risk: labelize(row.portfolio_risk_label || row.risk_label || "Risk Data Not Available"),
+    risk: labelize(row.portfolio_risk_label || row.risk_label || "Risk Warming Up"),
     consistency: safeNumber(row.rolling_conviction_10r ?? row.conviction_display_score ?? row.buy_quality_score, 0),
   }));
   const leadingThemes = Array.isArray(systemStatus?.current_themes)
     ? systemStatus.current_themes.slice(0, 3).map((theme) => labelize(theme))
-    : Array.from(new Set(stockThemes)).slice(0, 3);
+    : Array.from(new Set([
+      strongestTheme,
+      sectorRotation?.strongest_sector,
+      marketIntelligence?.best_archetype,
+      ...stockThemes,
+    ].filter(Boolean).map((theme) => labelize(theme)))).slice(0, 3);
   const topSectors = Array.isArray(systemStatus?.top_sectors)
     ? systemStatus.top_sectors.slice(0, 5).map((row) => [
       labelize(row?.sector || row?.name || "Sector"),
       Number.isFinite(Number(row?.change_pct ?? row?.change_percent))
         ? formatSignedPct(row?.change_pct ?? row?.change_percent)
-        : "Data Not Available",
+        : "Warming Up",
       safeNumber(row?.change_pct ?? row?.change_percent, 0) >= 0,
+    ])
+    : Array.isArray(sectorRotation?.sector_rows)
+    ? sectorRotation.sector_rows.slice(0, 6).map((row) => [
+      labelize(row?.sector || "Sector"),
+      `${formatScore(row?.leadership_score)}`,
+      Number(row?.leadership_score) >= 45,
+      qualitativeScore(row?.leadership_score),
     ])
     : [];
   const calendarItems = Array.isArray(systemStatus?.calendar_items)
@@ -491,9 +659,11 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
   const modelConfidenceRaw = systemStatus?.model_confidence
     ?? systemStatus?.learning_confidence
     ?? systemStatus?.confidence_score
-    ?? systemStatus?.adaptive_confidence;
+    ?? systemStatus?.adaptive_confidence
+    ?? learningMaturity?.adaptive_confidence?.value
+    ?? iqSuite?.conviction_calibration_score;
   const modelConfidence = Number.isFinite(Number(modelConfidenceRaw)) ? Number(modelConfidenceRaw) : null;
-  const modelConfidenceLabel = modelConfidence == null ? "Data Not Available" : `${modelConfidence.toFixed(0)}%`;
+  const modelConfidenceLabel = modelConfidence == null ? "Warming Up" : `${modelConfidence.toFixed(0)}%`;
   const paperReadyCount = stocks.filter((row) => String(row?.grade || row?.buy_eligibility || "").toLowerCase().includes("paper")).length;
   const opportunitySummary = [
     ["High confidence", `${highConfidenceCount}`],
@@ -505,12 +675,12 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     `Best opportunity: ${bestOpportunity?.symbol || "Warming Up"}`,
     `High-confidence opportunities: ${highConfidenceCount || 0}`,
     `Risk warning: ${portfolioRiskText}`,
-    `Next review: ${bestOpportunity?.symbol ? `validate ${bestOpportunity.symbol} and profit capture` : "wait for fresh opportunity evidence"}`,
+    `Next review: ${nextFocus}`,
   ];
   const decisionSummary = [
     `Best opportunity ${bestOpportunity?.symbol || "Warming Up"}`,
-    `Market tone ${marketTone}`,
-    `Main weakness ${labelize(systemStatus?.main_weakness || systemStatus?.primary_weakness || systemStatus?.weakness_focus || "Data Not Available")}`,
+    `Market tone ${marketTone}${marketBiasSource ? ` · ${labelize(marketBiasSource)}` : ""}`,
+    `Main weakness ${mainWeakness}`,
     `Next review ${highConfidenceCount > 0 ? "top ranked candidates" : "wait for fresh opportunity evidence"}`,
   ];
 
@@ -608,7 +778,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               <div>
                 <div style={{ color: marketTone === "Bearish" ? "#c43d4b" : marketTone === "Neutral" ? "#d88a19" : "#079246", fontSize: 28, fontWeight: 950, letterSpacing: "-0.04em" }}>{marketTone}</div>
                 <div style={{ color: "#13243a", fontWeight: 900, marginTop: 2 }}>
-                  {marketConfidence == null ? "Data Not Available" : `${marketConfidence.toFixed(0)}%`} <span style={{ color: "#667994", fontWeight: 700 }}>Confidence</span>
+                  {marketConfidence == null ? "Warming Up" : `${marketConfidence.toFixed(0)}%`} <span style={{ color: "#667994", fontWeight: 700 }}>Confidence</span>
                 </div>
               </div>
               <div style={{ height: 1, background: "#e3ebf5" }} />
@@ -623,7 +793,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                   <strong style={{ color: String(value).toLowerCase().includes("risk-off") ? "#c43d4b" : "#078943", fontSize: 12.5, textAlign: "right" }}>{value}</strong>
                 </div>
               ))}
-              <button type="button" style={{ marginTop: "auto", border: "1px solid #cfdced", background: "#f7fbff", color: "#004fe0", borderRadius: 12, padding: "9px 11px", fontWeight: 900, cursor: "pointer" }}>
+              <button type="button" onClick={() => (typeof onNavigate === "function" ? onNavigate("more") : null)} style={{ marginTop: "auto", border: "1px solid #cfdced", background: "#f7fbff", color: "#004fe0", borderRadius: 12, padding: "9px 11px", fontWeight: 900, cursor: "pointer" }}>
                 View Market Details →
               </button>
             </div>
@@ -635,8 +805,8 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                 {[
                   ["Opportunities", `${highConfidenceCount}`, "> 70% Confidence"],
                   ["Market Bias", marketTone, ""],
-                  ["Portfolio Risk", brokerActiveCount > 8 ? "Elevated" : "Moderate", ""],
-                  ["Astra Confidence", modelConfidence == null ? "Data Not Available" : modelConfidence >= 80 ? "High" : "Moderate", ""],
+                  ["Portfolio Risk", portfolioRiskLabel, portfolioRiskScore == null ? "warming up" : `${formatScore(portfolioRiskScore)} score`],
+                  ["Astra Confidence", modelConfidence == null ? "Warming Up" : modelConfidence >= 80 ? "High" : modelConfidence >= 55 ? "Moderate" : "Developing", modelConfidenceLabel],
                 ].map(([label, value, sub]) => (
                   <div key={label} style={{ borderRadius: 16, background: "#f5f9fe", border: "1px solid #dfe8f4", padding: "9px 10px", display: "grid", gap: 3 }}>
                     <div style={{ color: "#526982", fontSize: 10, fontWeight: 900 }}>{label}</div>
@@ -645,21 +815,21 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                   </div>
                 ))}
               </div>
-              <button type="button" style={{ border: "1px solid #cfdced", background: "#f7fbff", color: "#004fe0", borderRadius: 12, padding: "9px 11px", fontWeight: 900, cursor: "pointer" }}>
+              <button type="button" onClick={() => (typeof onNavigate === "function" ? onNavigate("learning") : null)} style={{ border: "1px solid #cfdced", background: "#f7fbff", color: "#004fe0", borderRadius: 12, padding: "9px 11px", fontWeight: 900, cursor: "pointer" }}>
                 Read Full Analysis →
               </button>
             </div>
 
-            <div style={{ borderRadius: 22, padding: 16, background: "radial-gradient(260px 150px at 80% 0%, rgba(45, 119, 255, 0.36), transparent 70%), linear-gradient(135deg, #071a33, #08244b)", boxShadow: "0 18px 45px rgba(25, 47, 78, 0.18)", color: "#ffffff", minHeight: 246, display: "grid", gap: 12 }}>
+            <div onClick={() => (typeof onNavigate === "function" ? onNavigate("ask") : null)} style={{ borderRadius: 22, padding: 16, background: "radial-gradient(260px 150px at 80% 0%, rgba(45, 119, 255, 0.36), transparent 70%), linear-gradient(135deg, #071a33, #08244b)", boxShadow: "0 18px 45px rgba(25, 47, 78, 0.18)", color: "#ffffff", minHeight: 246, display: "grid", gap: 12, cursor: "pointer" }}>
               <h2 style={{ margin: 0, fontSize: "1rem", color: "#ffffff" }}>Ask Astra</h2>
               <p style={{ margin: 0, color: "#c8d8ef", fontSize: 13 }}>Your AI market analyst. Ask anything about markets, opportunities, or your portfolio.</p>
               <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, border: "1px solid rgba(180, 209, 255, 0.22)", borderRadius: 14, background: "rgba(255,255,255,0.08)", padding: 10, color: "#f5f9ff", marginTop: 2, alignItems: "center" }}>
                 <span style={{ color: "#d9e7fa", fontSize: 13 }}>What are the best short-term opportunities today?</span>
-                <button type="button" style={{ border: 0, borderRadius: 12, background: "#2b76ff", color: "#fff", width: 34, height: 34, fontWeight: 900, cursor: "pointer" }}>→</button>
+                <button type="button" onClick={(event) => { event.stopPropagation(); if (typeof onNavigate === "function") onNavigate("ask"); }} style={{ border: 0, borderRadius: 12, background: "#2b76ff", color: "#fff", width: 34, height: 34, fontWeight: 900, cursor: "pointer" }}>→</button>
               </div>
               <div style={{ color: "#8fb1df", fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Popular Questions</div>
               {["Why is my top opportunity ranked highest?", "What sectors are showing strength?", "How should I position my portfolio?", "Which stocks have unusual activity?"].map((q) => (
-                <button key={q} type="button" style={{ textAlign: "left", border: 0, borderRadius: 10, background: "rgba(255,255,255,0.08)", color: "#eaf3ff", padding: "8px 10px", cursor: "pointer" }}>{q}</button>
+                <button key={q} type="button" onClick={(event) => { event.stopPropagation(); if (typeof onNavigate === "function") onNavigate("ask"); }} style={{ textAlign: "left", border: 0, borderRadius: 10, background: "rgba(255,255,255,0.08)", color: "#eaf3ff", padding: "8px 10px", cursor: "pointer" }}>{q}</button>
               ))}
             </div>
           </section>
@@ -724,10 +894,10 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                 </div>
                 <div style={{ display: "grid", gap: 8, fontSize: 12 }}>
                   <div style={{ color: "#273d5a", fontWeight: 800 }}>
-                    Risk {positionsMeta?.portfolio_risk_label || systemStatus?.portfolio_risk_label || (brokerTruthKnown ? `${brokerActiveCount} broker-confirmed positions` : "Data Not Available")}
+                    Risk {portfolioRiskScore == null ? "Warming Up" : `${portfolioRiskLabel} (${formatScore(portfolioRiskScore)})`}
                   </div>
                   {allocationRows.length === 0 ? (
-                    <div style={{ color: "#667994", fontWeight: 800 }}>Allocation Data Not Available</div>
+                    <div style={{ color: "#667994", fontWeight: 800 }}>Allocation Warming Up</div>
                   ) : allocationRows.map(([label, pct]) => (
                     <div key={`${label}-${pct}`} style={{ color: "#273d5a", fontWeight: 800 }}>{label} {pct}</div>
                   ))}
@@ -736,41 +906,42 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
             </div>
 
             <div style={panelStyle}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                <h2 style={panelTitleStyle}>Portfolio Performance</h2>
-                <div style={{ display: "flex", gap: 6 }}>
-                  {["7D", "30D"].map((label, idx) => (
-                    <button key={label} type="button" style={{ border: "1px solid #d6e2ef", background: idx === 0 ? "#eef4ff" : "#fff", color: idx === 0 ? "#1855c8" : "#5e7491", borderRadius: 10, padding: "5px 9px", fontSize: 11, fontWeight: 900, cursor: "pointer" }}>{label}</button>
-                  ))}
-                </div>
+              <h2 style={panelTitleStyle}>Astra Performance</h2>
+              <p style={{ margin: "8px 0 12px", color: "#273d5a", fontSize: 13 }}>Verified learning metrics from unified diagnostics.</p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                {[
+                  ["Win Rate", metricOrUnavailable(performanceSummary?.released_win_rate?.value ?? systemStatus?.win_rate ?? systemStatus?.released_win_rate, "%")],
+                  ["Profit Factor", metricOrUnavailable(performanceSummary?.profit_factor?.value ?? systemStatus?.profit_factor)],
+                  ["Avg Return", metricOrUnavailable(performanceSummary?.average_return?.value, "%")],
+                  ["Buy Purity", metricOrUnavailable(performanceSummary?.buy_list_purity?.value ?? systemStatus?.buy_purity, "%")],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ border: "1px solid #e1e9f4", borderRadius: 14, padding: "10px 11px", background: "#f9fbff" }}>
+                    <div style={{ color: "#079246", fontSize: 20, fontWeight: 950 }}>{value}</div>
+                    <div style={{ color: "#667994", fontSize: 11, fontWeight: 900 }}>{label}</div>
+                  </div>
+                ))}
               </div>
-              <div style={{ color: avgPositionPnl >= 0 ? "#079246" : "#c43d4b", fontSize: 28, fontWeight: 950, marginTop: 6 }}>{formatSignedPct(avgPositionPnl)}</div>
-              <svg viewBox="0 0 520 180" width="100%" height="180" role="img" aria-label="Portfolio performance trend">
-                <defs>
-                  <linearGradient id="astraPerfFill" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#17a465" stopOpacity="0.32" />
-                    <stop offset="100%" stopColor="#17a465" stopOpacity="0.02" />
-                  </linearGradient>
-                </defs>
-                <path d="M0 130 C 60 142, 78 96, 128 102 S 210 72, 260 78 S 335 45, 390 52 S 455 22, 520 28 L520 180 L0 180 Z" fill="url(#astraPerfFill)" />
-                <path d="M0 130 C 60 142, 78 96, 128 102 S 210 72, 260 78 S 335 45, 390 52 S 455 22, 520 28" fill="none" stroke="#0b914f" strokeWidth="4" />
-                <line x1="0" y1="130" x2="520" y2="130" stroke="#dfe8f3" strokeWidth="2" />
-              </svg>
             </div>
 
             <div style={panelStyle}>
-              <h2 style={panelTitleStyle}>Astra Performance</h2>
-              <p style={{ margin: "8px 0 12px", color: "#273d5a", fontSize: 13 }}>Astra's models are {performanceHealth === "healthy" ? "performing well." : performanceHealth === "warming up" ? "still warming up." : "showing areas that need attention."}</p>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-                {[
-                  ["Win Rate", metricOrUnavailable(systemStatus?.win_rate ?? systemStatus?.released_win_rate, "%")],
-                  ["Profit Factor", systemStatus?.profit_factor == null ? "Data Not Available" : labelize(systemStatus.profit_factor)],
-                  ["Model Confidence", modelConfidenceLabel],
-                  ["Buy Purity", systemStatus?.buy_purity == null ? "Data Not Available" : labelize(systemStatus.buy_purity)],
-                ].map(([label, value]) => (
-                  <div key={label} style={{ border: "1px solid #e1e9f4", borderRadius: 14, padding: "10px 11px", background: "#f9fbff" }}>
-                    <div style={{ color: "#079246", fontSize: 21, fontWeight: 950 }}>{value}</div>
-                    <div style={{ color: "#667994", fontSize: 11, fontWeight: 900 }}>{label}</div>
+              <h2 style={panelTitleStyle}>Market Themes & Sector Heat</h2>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                {leadingThemes.length === 0 ? (
+                  <span style={{ background: "#f7fbff", color: "#667994", border: "1px dashed #cfdced", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 900 }}>Theme Data Warming Up</span>
+                ) : leadingThemes.map((theme) => (
+                  <span key={theme} style={{ background: "#e8f7ec", color: "#087a41", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 900 }}>{theme}</span>
+                ))}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: topSectors.length ? "repeat(3, 1fr)" : "1fr", gap: 8, marginTop: 14 }}>
+                {topSectors.length === 0 ? (
+                  <div style={{ border: "1px dashed #cfdced", borderRadius: 12, background: "#f7fbff", color: "#667994", padding: "12px 13px", fontSize: 13 }}>
+                    Sector intelligence is warming up from cached diagnostics.
+                  </div>
+                ) : topSectors.slice(0, 6).map(([sector, change, positive, qualitative]) => (
+                  <div key={sector} style={{ background: positive ? "#e9f8ee" : "#fdebed", color: positive ? "#087a41" : "#b7283a", borderRadius: 10, padding: 10 }}>
+                    <div style={{ color: "#273d5a", fontSize: 11, fontWeight: 900 }}>{sector}</div>
+                    <div style={{ fontWeight: 950 }}>{change}</div>
+                    {qualitative ? <div style={{ color: "#667994", fontSize: 10, fontWeight: 800, marginTop: 2 }}>{qualitative}</div> : null}
                   </div>
                 ))}
               </div>
@@ -779,23 +950,17 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
 
           <section style={{ display: "grid", gridTemplateColumns: "1.18fr 1.1fr 0.92fr", gap: 14 }}>
             <div style={panelStyle}>
-              <h2 style={panelTitleStyle}>Market Themes & Sectors</h2>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
-                {leadingThemes.length === 0 ? (
-                  <span style={{ background: "#f7fbff", color: "#667994", border: "1px dashed #cfdced", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 900 }}>Theme Data Not Available</span>
-                ) : leadingThemes.map((theme) => (
-                  <span key={theme} style={{ background: "#e8f7ec", color: "#087a41", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 900 }}>{theme}</span>
-                ))}
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: topSectors.length ? "repeat(5, 1fr)" : "1fr", gap: 8, marginTop: 14 }}>
-                {topSectors.length === 0 ? (
-                  <div style={{ border: "1px dashed #cfdced", borderRadius: 12, background: "#f7fbff", color: "#667994", padding: "12px 13px", fontSize: 13 }}>
-                    Sector movement data is not available in the cached dashboard payload.
-                  </div>
-                ) : topSectors.map(([sector, change, positive]) => (
-                  <div key={sector} style={{ background: positive ? "#e9f8ee" : "#fdebed", color: positive ? "#087a41" : "#b7283a", borderRadius: 10, padding: 10 }}>
-                    <div style={{ color: "#273d5a", fontSize: 11, fontWeight: 900 }}>{sector}</div>
-                    <div style={{ fontWeight: 950 }}>{change}</div>
+              <h2 style={panelTitleStyle}>Learning / Risk Summary</h2>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, marginTop: 12 }}>
+                {[
+                  ["Learning", learningConfidenceLabel],
+                  ["Ranking", formatScore(rankingAttribution?.ranking_quality_score)],
+                  ["Exit Quality", formatScore(executionQuality?.exit_quality?.value)],
+                  ["Capture", formatPctFromRatio(profitCapture?.average_capture_ratio)],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ border: "1px solid #e0e8f3", borderRadius: 12, background: "#f8fbff", padding: "10px 11px" }}>
+                    <div style={{ color: "#667994", fontSize: 10, fontWeight: 900 }}>{label}</div>
+                    <div style={{ color: "#13243a", fontWeight: 950, marginTop: 4 }}>{value}</div>
                   </div>
                 ))}
               </div>
@@ -813,11 +978,11 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
             </div>
 
             <div style={panelStyle}>
-              <h2 style={panelTitleStyle}>Today's Calendar</h2>
+              <h2 style={panelTitleStyle}>Market Calendar</h2>
               <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
                 {calendarItems.length === 0 ? (
                   <div style={{ border: "1px dashed #cfdced", borderRadius: 12, background: "#f7fbff", color: "#667994", padding: "12px 13px", fontSize: 13 }}>
-                    Calendar data is not available in the cached dashboard payload.
+                    Source-backed event calendar is not connected in the cached dashboard payload.
                   </div>
                 ) : calendarItems.map(([time, event]) => (
                   <div key={`${time}-${event}`} style={{ display: "grid", gridTemplateColumns: "74px 1fr", gap: 10, color: "#273d5a", fontSize: 13 }}>
@@ -826,8 +991,8 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                   </div>
                 ))}
               </div>
-              <button type="button" style={{ marginTop: 14, width: "100%", border: "1px solid #cfdced", background: "#f7fbff", color: "#004fe0", borderRadius: 12, padding: "10px 12px", fontWeight: 900, cursor: "pointer" }}>
-                See Full Economic Calendar →
+              <button type="button" disabled={calendarItems.length === 0} style={{ marginTop: 14, width: "100%", border: "1px solid #cfdced", background: calendarItems.length ? "#f7fbff" : "#f1f5fa", color: calendarItems.length ? "#004fe0" : "#7f91a8", borderRadius: 12, padding: "10px 12px", fontWeight: 900, cursor: calendarItems.length ? "pointer" : "not-allowed" }}>
+                {calendarItems.length ? "See Full Economic Calendar →" : "Calendar Feed Unavailable"}
               </button>
             </div>
           </section>
@@ -855,10 +1020,10 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
 
           <section style={{ ...panelStyle, display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 0, padding: 0, overflow: "hidden" }}>
             {[
-              ["Learning Status", systemStatus?.evidence_count == null ? "Evidence Data Not Available" : `Evidence ${safeNumber(systemStatus.evidence_count).toFixed(0)}`, `Learning Confidence ${modelConfidenceLabel}`],
+              ["Learning Status", Number.isFinite(evidenceCount) ? `Evidence ${evidenceCount.toFixed(0)}` : "Evidence Warming Up", `Learning Confidence ${modelConfidenceLabel}`],
               ["Model Quality", labelize(performanceHealth), `Status ${labelize(performanceHealth)}`],
               ["Risk Summary", portfolioRiskText, "Source-aware portfolio risk"],
-              ["Watching", watchingItems.slice(0, 3).join(" · "), "Potential impact: Data Not Available"],
+              ["Watching", watchingItems.slice(0, 3).join(" · "), "Observation-only context"],
               ["Go to Learning Center", "Deep dive into Astra intelligence", "Open diagnostics and latest insights"],
             ].map(([title, main, sub], idx) => (
               <button
