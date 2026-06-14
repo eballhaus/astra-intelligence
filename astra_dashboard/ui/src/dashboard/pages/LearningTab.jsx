@@ -1620,6 +1620,7 @@ export default function LearningTab({ compact = false }) {
   const candidateRankingAttributionPromotion = unified?.candidate_ranking_attribution_promotion_intelligence_v1 || {};
   const intelligenceQualityLearningEfficiency = unified?.intelligence_quality_learning_efficiency_suite_v1 || {};
   const advancedAttributionControlledExitLearningRoi = unified?.advanced_attribution_controlled_exit_learning_roi_suite_v1 || {};
+  const profitOptimizationContextIntelligence = unified?.profit_optimization_context_intelligence_suite_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
   const tradeFamilyIntelligence = unified?.trade_family_intelligence_v1 || {};
@@ -1786,6 +1787,7 @@ export default function LearningTab({ compact = false }) {
       performance_summary: performanceSummary,
       intelligence_quality_learning_efficiency_suite_v1: intelligenceQualityLearningEfficiency,
       advanced_attribution_controlled_exit_learning_roi_suite_v1: advancedAttributionControlledExitLearningRoi,
+      profit_optimization_context_intelligence_suite_v1: profitOptimizationContextIntelligence,
       candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
       profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
       realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
@@ -2524,6 +2526,52 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Recommended focus: {String(advancedAttributionControlledExitLearningRoi?.recommended_next_focus || "continue shadow attribution").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Profit Optimization & Context Intelligence Suite V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is comparing exit candidates, catalyst quality, buy-purity leakage, symbol/sector/regime profiles, opportunity cost, and interaction effects to decide what should be validated next. This is shadow-only, advisory-only, and does not change ranking, entries, exits, sizing, allocations, broker behavior, Alpaca behavior, or paper execution.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Status", profitOptimizationContextIntelligence?.status],
+            ["Evidence", safeNumber(profitOptimizationContextIntelligence?.evidence_count).toFixed(0)],
+            ["Best exit candidate", profitOptimizationContextIntelligence?.best_exit_candidate],
+            ["Highest ROI area", profitOptimizationContextIntelligence?.highest_roi_improvement_area],
+            ["Expected PF impact", safeNumber(profitOptimizationContextIntelligence?.expected_pf_impact ?? profitOptimizationContextIntelligence?.expected_pf_improvement).toFixed(3)],
+            ["Avg return impact", safeNumber(profitOptimizationContextIntelligence?.expected_avg_return_impact ?? profitOptimizationContextIntelligence?.expected_avg_return_improvement).toFixed(3)],
+            ["Giveback reduction", safeNumber(profitOptimizationContextIntelligence?.expected_giveback_reduction).toFixed(3)],
+            ["Buy purity leak", profitOptimizationContextIntelligence?.highest_roi_purity_fix],
+            ["Unknown catalyst trend", profitOptimizationContextIntelligence?.unknown_catalyst_trend],
+            ["Catalyst reliability", safeNumber(profitOptimizationContextIntelligence?.catalyst_reliability_score).toFixed(1)],
+            ["Best interaction", profitOptimizationContextIntelligence?.best_interaction_combo],
+            ["Validate next", profitOptimizationContextIntelligence?.best_improvement_to_validate_next],
+            ["Readiness", profitOptimizationContextIntelligence?.readiness_level],
+            ["Confidence", safeNumber(profitOptimizationContextIntelligence?.confidence).toFixed(1)],
+            ["Auto apply", profitOptimizationContextIntelligence?.auto_apply ? "yes" : "no"],
+            ["API/provider/LLM", `${safeNumber(profitOptimizationContextIntelligence?.api_calls_used).toFixed(0)} / ${safeNumber(profitOptimizationContextIntelligence?.provider_calls_used).toFixed(0)} / ${safeNumber(profitOptimizationContextIntelligence?.llm_calls_used).toFixed(0)}`],
+            ["Behavior safe", profitOptimizationContextIntelligence?.behavior_safe_to_apply ? "yes" : "no"],
+            ["Paper execution changed", profitOptimizationContextIntelligence?.paper_execution_changed ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Exit candidates: {(profitOptimizationContextIntelligence?.exit_candidate_rows || []).slice(0, 5).map((row) => `${String(row?.exit_style || "exit").replaceAll("_", " ")} confidence ${safeNumber(row?.confidence).toFixed(1)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Purity leakage: {(profitOptimizationContextIntelligence?.purity_leakage_ranking || []).slice(0, 5).map((row) => `${String(row?.source || "source").replaceAll("_", " ")} ${safeNumber(row?.leakage_pct).toFixed(1)}%`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Interactions: {(profitOptimizationContextIntelligence?.interaction_rows || []).slice(0, 3).map((row) => `${String(row?.combo || "combo").replaceAll("_", " ")} PF ${safeNumber(row?.pf).toFixed(2)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Reasoning: {String(profitOptimizationContextIntelligence?.reasoning_summary || "Continue shadow-only profit optimization diagnostics.").replaceAll("_", " ")}
           </div>
         </div>
       </details>
