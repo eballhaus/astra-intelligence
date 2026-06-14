@@ -18,9 +18,10 @@
 .astra-desktop-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
+  grid-template-columns: 272px minmax(0, 1fr);
   background:
-    radial-gradient(900px 480px at 30% -10%, rgba(78, 142, 255, 0.18), transparent 60%),
+    radial-gradient(1050px 520px at 30% -10%, rgba(78, 142, 255, 0.16), transparent 60%),
+    radial-gradient(760px 420px at 100% 0%, rgba(31, 107, 255, 0.08), transparent 64%),
     linear-gradient(135deg, var(--astra-bg), var(--astra-bg-2));
   color: var(--astra-text);
 }
@@ -29,144 +30,191 @@
   position: sticky;
   top: 0;
   height: 100vh;
-  padding: 22px 16px;
+  padding: 20px 16px 18px;
   background:
-    radial-gradient(300px 180px at 35% 0%, rgba(44, 113, 255, 0.28), transparent 70%),
-    linear-gradient(180deg, #061a34 0%, #0a2343 54%, #07182e 100%);
+    radial-gradient(340px 200px at 36% 0%, rgba(44, 113, 255, 0.32), transparent 70%),
+    radial-gradient(280px 180px at 100% 100%, rgba(50, 97, 193, 0.18), transparent 75%),
+    linear-gradient(180deg, #05162c 0%, #082142 48%, #07172d 100%);
   color: #eef6ff;
   display: grid;
   grid-template-rows: auto 1fr auto;
-  gap: 22px;
+  gap: 18px;
   box-shadow: 14px 0 36px rgba(5, 22, 42, 0.18);
 }
 
 .astra-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 8px 16px;
+  gap: 14px;
+  padding: 8px 8px 18px;
   border-bottom: 1px solid rgba(190, 215, 255, 0.18);
 }
 
 .astra-brand-mark {
-  width: 42px;
-  height: 42px;
-  border-radius: 14px;
+  width: 54px;
+  height: 54px;
+  border-radius: 18px;
   display: grid;
   place-items: center;
-  background: linear-gradient(145deg, #63a2ff, #195de2);
-  box-shadow: 0 0 28px rgba(79, 145, 255, 0.46);
-  color: white;
-  font-weight: 900;
-  letter-spacing: -0.04em;
+  background: linear-gradient(145deg, rgba(82, 145, 255, 0.18), rgba(11, 42, 97, 0.9));
+  box-shadow: 0 10px 26px rgba(28, 91, 202, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(164, 198, 255, 0.18);
 }
 
-.astra-brand strong {
-  display: block;
-  font-size: 1.1rem;
-  letter-spacing: 0.01em;
+.astra-brand-mark-svg {
+  width: 38px;
+  height: 38px;
 }
 
-.astra-brand span {
+.astra-brand-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.astra-brand-copy strong {
   display: block;
-  color: #9fb8d9;
-  font-size: 0.72rem;
-  margin-top: 1px;
+  font-size: 1.38rem;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+.astra-brand-copy span {
+  display: block;
+  color: #dbe9fb;
+  font-size: 0.68rem;
+  letter-spacing: 0.34em;
+  line-height: 1.1;
+}
+
+.astra-brand-copy em {
+  display: block;
+  color: #85a6cf;
+  font-size: 0.7rem;
+  font-style: normal;
+  margin-top: 5px;
 }
 
 .astra-nav {
   display: grid;
-  gap: 8px;
+  gap: 9px;
   align-content: start;
 }
 
 .astra-nav-item {
-  border: 1px solid transparent;
-  border-radius: 14px;
-  padding: 11px 12px;
-  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.02);
+  border-radius: 16px;
+  padding: 12px 13px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.01));
   color: #c9d9ef;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   font-weight: 800;
   letter-spacing: 0.005em;
   cursor: pointer;
   text-align: left;
-  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
 }
 
-.astra-nav-item span {
-  width: 25px;
-  height: 25px;
-  border-radius: 9px;
+.astra-nav-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 11px;
   display: grid;
   place-items: center;
-  background: rgba(220, 235, 255, 0.10);
+  background: rgba(220, 235, 255, 0.08);
   color: #dcecff;
-  font-size: 0.75rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .astra-nav-item:hover {
-  background: rgba(255, 255, 255, 0.07);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.04));
+  border-color: rgba(168, 199, 255, 0.12);
   transform: translateX(2px);
+  box-shadow: 0 10px 24px rgba(2, 11, 24, 0.18);
 }
 
 .astra-nav-item.active {
   background: linear-gradient(135deg, rgba(50, 121, 255, 0.95), rgba(33, 89, 196, 0.92));
   border-color: rgba(160, 199, 255, 0.46);
   color: white;
-  box-shadow: 0 12px 28px rgba(28, 91, 202, 0.28);
+  box-shadow: 0 14px 34px rgba(28, 91, 202, 0.34);
+}
+
+.astra-nav-item.active .astra-nav-icon {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
 }
 
 .astra-sidebar-footer {
   border: 1px solid rgba(188, 215, 255, 0.18);
-  border-radius: 14px;
-  padding: 11px;
-  background: rgba(255, 255, 255, 0.07);
+  border-radius: 18px;
+  padding: 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.04));
+  display: grid;
+  gap: 6px;
+}
+
+.astra-sidebar-footer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.astra-sidebar-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #2ac174;
+  box-shadow: 0 0 0 6px rgba(42, 193, 116, 0.14);
 }
 
 .astra-sidebar-footer span {
   display: block;
   color: #90aacb;
-  font-size: 0.7rem;
+  font-size: 0.74rem;
 }
 
 .astra-sidebar-footer strong {
   display: block;
   color: #edf6ff;
-  font-size: 0.78rem;
-  margin-top: 2px;
+  font-size: 0.82rem;
+}
+
+.astra-sidebar-footer small {
+  display: block;
+  color: #6d89ac;
+  font-size: 0.68rem;
   word-break: break-word;
 }
 
 .astra-main {
   min-width: 0;
-  padding: 26px clamp(18px, 3vw, 38px) 40px;
+  padding: 22px clamp(18px, 2.2vw, 34px) 30px;
   display: grid;
   align-content: start;
-  gap: 18px;
+  gap: 14px;
 }
 
 .astra-page-heading {
   display: flex;
   justify-content: space-between;
   gap: 18px;
-  align-items: flex-start;
+  align-items: center;
 }
 
 .astra-page-heading h1 {
   margin: 0;
-  font-size: clamp(1.85rem, 3vw, 2.7rem);
+  font-size: clamp(1.9rem, 2.7vw, 2.65rem);
   letter-spacing: -0.04em;
   color: #0f223a;
 }
 
 .astra-page-heading p {
-  margin: 6px 0 0;
-  max-width: 760px;
+  margin: 4px 0 0;
+  max-width: 980px;
   color: var(--astra-muted);
-  font-size: 0.96rem;
+  font-size: 0.92rem;
 }
 
 .astra-overline,
@@ -205,7 +253,7 @@
   border: 1px solid var(--astra-border);
   border-radius: 22px;
   box-shadow: var(--astra-shadow);
-  padding: 18px;
+  padding: 16px;
   color: var(--astra-text);
 }
 
@@ -230,6 +278,10 @@
   box-shadow: 0 24px 60px rgba(5, 23, 46, 0.23);
   display: grid;
   gap: 22px;
+}
+
+.astra-ai-panel-page {
+  min-height: 340px;
 }
 
 .astra-ai-panel h1 {

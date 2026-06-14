@@ -47,13 +47,13 @@ class AppErrorBoundary extends Component {
 }
 
 const primaryTabs = [
-  { id: "dashboard", label: "Dashboard", icon: "D" },
-  { id: "opportunities", label: "Opportunities", icon: "O" },
-  { id: "portfolio", label: "Portfolio", icon: "P" },
-  { id: "ask", label: "Ask Astra", icon: "A" },
-  { id: "watchlists", label: "Watchlists", icon: "W" },
-  { id: "learning", label: "Learning Center", icon: "L" },
-  { id: "more", label: "More", icon: "M" },
+  { id: "dashboard", label: "Dashboard", icon: "dashboard" },
+  { id: "opportunities", label: "Opportunities", icon: "opportunities" },
+  { id: "portfolio", label: "Portfolio", icon: "portfolio" },
+  { id: "ask", label: "Ask Astra", icon: "ask" },
+  { id: "watchlists", label: "Watchlists", icon: "watchlists" },
+  { id: "learning", label: "Learning Center", icon: "learning" },
+  { id: "more", label: "More", icon: "more" },
 ];
 
 const moreLinks = [
@@ -74,11 +74,63 @@ function ShellCard({ title, eyebrow, children, tone = "light" }) {
   );
 }
 
+function AstraMark() {
+  return (
+    <svg viewBox="0 0 88 88" aria-hidden="true" className="astra-brand-mark-svg">
+      <defs>
+        <linearGradient id="astraMarkPrimary" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#6db2ff" />
+          <stop offset="100%" stopColor="#1e64ea" />
+        </linearGradient>
+        <linearGradient id="astraMarkSecondary" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#1b4dbf" />
+          <stop offset="100%" stopColor="#0d2f73" />
+        </linearGradient>
+      </defs>
+      <path d="M13 66 34 18c1.6-3.8 7-3.8 8.7 0L64 66c1.1 2.4-.6 5-3.2 5H45.8c-1.6 0-3-.9-3.7-2.3l-3.6-7.4h-11l5.7-12.7h-3.5l-7.9 17.8c-.6 1.4-2 2.3-3.6 2.3H16c-2.7 0-4.4-2.7-3-5.7Z" fill="url(#astraMarkPrimary)" />
+      <path d="M51 71c-1.6 0-3-.9-3.7-2.3L33.2 39.4c-1.3-2.7.7-5.9 3.7-5.9h8.4c1.6 0 3 .9 3.7 2.3L65.7 68c1.3 2.7-.7 6-3.8 6H51Z" fill="url(#astraMarkSecondary)" />
+    </svg>
+  );
+}
+
+function NavIcon({ kind }) {
+  const common = {
+    width: 16,
+    height: 16,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "1.8",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": "true",
+  };
+  if (kind === "dashboard") {
+    return <svg {...common}><path d="M4 13h7V4H4zM13 20h7v-9h-7zM13 4h7v7h-7zM4 20h7v-5H4z" /></svg>;
+  }
+  if (kind === "opportunities") {
+    return <svg {...common}><path d="m4 15 5-5 4 4 7-8" /><path d="M20 10V4h-6" /></svg>;
+  }
+  if (kind === "portfolio") {
+    return <svg {...common}><path d="M3 7h18v12H3z" /><path d="M8 7V5h8v2" /><path d="M3 12h18" /></svg>;
+  }
+  if (kind === "ask") {
+    return <svg {...common}><path d="M12 3c4.4 0 8 3 8 6.8 0 3.7-3.6 6.7-8 6.7-.8 0-1.6-.1-2.4-.3L5 19l1.2-3.7C4.8 14 4 11.9 4 9.8 4 6 7.6 3 12 3Z" /><path d="M9 10h.01M12 10h.01M15 10h.01" /></svg>;
+  }
+  if (kind === "watchlists") {
+    return <svg {...common}><path d="M6 4h12v16l-6-3-6 3z" /></svg>;
+  }
+  if (kind === "learning") {
+    return <svg {...common}><path d="M5 4h10a4 4 0 0 1 4 4v12H9a4 4 0 0 0-4 4Z" /><path d="M9 4v16" /></svg>;
+  }
+  return <svg {...common}><path d="M5 12h14" /><path d="M12 5v14" /></svg>;
+}
+
 function AskAstraPage() {
   const [question, setQuestion] = useState("");
   return (
     <div className="astra-page-grid">
-      <section className="astra-ai-panel">
+      <section className="astra-ai-panel astra-ai-panel-page">
         <div>
           <span className="astra-ai-kicker">Premium AI Panel</span>
           <h1>Ask Astra</h1>
@@ -155,9 +207,9 @@ function MorePage({ setActiveTab }) {
 
 function PageHeading({ activeTab }) {
   const copy = useMemo(() => ({
-    dashboard: ["Command Dashboard", "What is happening, why it matters, and what Astra is watching."],
-    opportunities: ["Astra Opportunities", "A focused deep dive into cached ranked opportunities. Ranking logic is unchanged."],
-    portfolio: ["Portfolio", "Broker-confirmed and internal position context, displayed without changing Alpaca behavior."],
+    dashboard: ["Executive Command Dashboard", "What is happening, why it matters, and what deserves attention right now."],
+    opportunities: ["Opportunity Center", "Astra's ranked opportunity flow with confidence, horizon, fit, and rationale surfaced first."],
+    portfolio: ["Portfolio Command", "Portfolio health, performance, allocation, and active paper positions in one consumer-ready view."],
     ask: ["Ask Astra", "A premium AI workspace that stays idle until you explicitly submit a question."],
     watchlists: ["Watchlists", "Safe watchlist shells using cached context and graceful empty states."],
     learning: ["Learning Center", "Astra’s report card, trend diagnostics, and full advanced learning panels."],
@@ -193,10 +245,13 @@ function App() {
     <div className="astra-desktop-shell">
       <aside className="astra-sidebar">
         <div className="astra-brand">
-          <div className="astra-brand-mark">A</div>
-          <div>
-            <strong>Astra</strong>
-            <span>Investment Intelligence</span>
+          <div className="astra-brand-mark">
+            <AstraMark />
+          </div>
+          <div className="astra-brand-copy">
+            <strong>ASTRA</strong>
+            <span>INTELLIGENCE</span>
+            <em>Executive market intelligence</em>
           </div>
         </div>
         <nav className="astra-nav" aria-label="Primary">
@@ -207,14 +262,18 @@ function App() {
               className={`astra-nav-item ${activeTab === tab.id ? "active" : ""}`}
               onClick={() => setActiveTab(tab.id)}
             >
-              <span>{tab.icon}</span>
+              <span className="astra-nav-icon"><NavIcon kind={tab.icon} /></span>
               {tab.label}
             </button>
           ))}
         </nav>
         <div className="astra-sidebar-footer">
-          <span>API base</span>
-          <strong>{getInitialApiBase().replace(/^https?:\/\//, "")}</strong>
+          <div className="astra-sidebar-footer-row">
+            <span className="astra-sidebar-dot" />
+            <span>Paper-safe mode</span>
+          </div>
+          <strong>No behavior changes</strong>
+          <small>{getInitialApiBase().replace(/^https?:\/\//, "")}</small>
         </div>
       </aside>
       <main className="astra-main">

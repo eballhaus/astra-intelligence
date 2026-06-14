@@ -1,65 +1,121 @@
 import React from "react";
 
-// MarketSummary.jsx - Phase 2 feature
-// TEMPORARY: Uses mock data. Will connect to /api/market_overview in Phase 2.1
-// TEMPORARY: Inline styles for mock-up. Will migrate to CSS/Tailwind in Phase 2.2
+const fallbackMarkets = [
+  { id: "sp500", symbol: "SPX", name: "S&P 500", value: 4927.35, change: 0.83, type: "index" },
+  { id: "nasdaq", symbol: "NDX", name: "Nasdaq", value: 15312.77, change: 1.12, type: "index" },
+  { id: "dow", symbol: "DJI", name: "Dow", value: 38121.27, change: -0.25, type: "index" },
+  { id: "vix", symbol: "VIX", name: "VIX", value: 13.24, change: -2.31, type: "index" },
+  { id: "bitcoin", symbol: "BTC", name: "Bitcoin", value: 47805.22, change: 0.58, type: "crypto" },
+];
 
-export default function MarketSummary() {
-  const mockMarkets = [
-    { id: "sp500", symbol: "SPX", name: "S&P 500", value: 4927.35, change: 0.83, type: "index" },
-    { id: "dow", symbol: "DJI", name: "DOW", value: 38121.27, change: -0.25, type: "index" },
-    { id: "nasdaq", symbol: "NDX", name: "NASDAQ", value: 15312.77, change: 1.12, type: "index" },
-    { id: "bitcoin", symbol: "BTC", name: "Bitcoin", value: 47805.22, change: 0.58, type: "crypto" },
-  ];
+function safeNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
 
-  const formatMarketItem = (item) => {
-    const isUp = item.change >= 0;
-    const arrow = isUp ? "▲" : "▼";
-    const color = isUp ? "green" : "red";
-    const formattedValue = item.value.toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    });
-    const formattedChange = Math.abs(item.change).toFixed(2);
-    return { arrow, color, formattedValue, formattedChange, isUp };
-  };
+function formatValue(item) {
+  const value = safeNumber(item?.value, 0);
+  const digits = item?.symbol === "VIX" ? 2 : 2;
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+function sparkPath(change) {
+  const normalized = Math.max(-4, Math.min(4, safeNumber(change, 0)));
+  const mid = 18 - normalized * 1.5;
+  const tail = 9 - normalized * 2.2;
+  return `M1 24 C 10 ${mid + 3}, 16 ${mid - 2}, 24 ${mid} S 38 ${tail + 2}, 47 ${tail}`;
+}
+
+export default function MarketSummary({ markets = [], asOf = "n/a", marketSession = "market context" }) {
+  const rows = Array.isArray(markets) && markets.length ? markets.slice(0, 5) : fallbackMarkets;
 
   return (
     <div
-      className="market-summary-bar"
       style={{
-        display: "flex",
-        flexWrap: "wrap",
-        justifyContent: "center",
-        alignItems: "center",
-        gap: "1.5rem",
-        fontSize: "0.95rem",
-        marginTop: "0.4rem",
-        marginBottom: "1rem",
+        display: "grid",
+        gap: 10,
       }}
       data-testid="market-summary"
     >
-      {mockMarkets.map((market) => {
-        const { arrow, color, formattedValue, formattedChange } = formatMarketItem(market);
-        return (
-          <div
-            key={market.id}
-            className="market-item"
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 12,
+          alignItems: "center",
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span
             style={{
-              display: "flex",
-              gap: "0.3rem",
-              alignItems: "center",
+              borderRadius: 999,
+              padding: "6px 10px",
+              fontSize: 11,
+              fontWeight: 900,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              background: "#edf4ff",
+              color: "#2255a4",
+              border: "1px solid #d8e4f4",
             }}
-            data-symbol={market.symbol}
-            data-type={market.type}
           >
-            <span style={{ fontWeight: "bold" }}>{market.name}:</span>
-            <span>${formattedValue}</span>
-            <span style={{ color }}>{arrow}</span>
-            <span style={{ color }}>{formattedChange}%</span>
-          </div>
-        );
-      })}
+            {marketSession}
+          </span>
+          <span style={{ color: "#6c8098", fontSize: 12 }}>Executive market pulse</span>
+        </div>
+        <span style={{ color: "#6c8098", fontSize: 12 }}>Last updated {asOf}</span>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))",
+          gap: 10,
+        }}
+      >
+        {rows.map((market) => {
+          const change = safeNumber(market?.change, 0);
+          const positive = change >= 0;
+          return (
+            <div
+              key={market.id || market.symbol}
+              style={{
+                borderRadius: 18,
+                border: "1px solid #dbe6f2",
+                background: "linear-gradient(180deg, #ffffff, #f8fbff)",
+                padding: "10px 12px",
+                display: "grid",
+                gap: 6,
+                minHeight: 76,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                <div>
+                  <div style={{ color: "#6c8098", fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                    {market.name}
+                  </div>
+                  <div style={{ color: "#11243c", fontSize: 12, fontWeight: 900, marginTop: 2 }}>
+                    {formatValue(market)}
+                  </div>
+                </div>
+                <svg viewBox="0 0 48 28" width="48" height="28" aria-hidden="true">
+                  <path d={sparkPath(change)} fill="none" stroke={positive ? "#149455" : "#d14b57"} strokeWidth="2.4" strokeLinecap="round" />
+                </svg>
+              </div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                <span style={{ color: positive ? "#149455" : "#d14b57", fontWeight: 900, fontSize: 13 }}>
+                  {positive ? "+" : ""}{change.toFixed(2)}%
+                </span>
+                <span style={{ color: "#92a3b8", fontSize: 11 }}>{market.symbol}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

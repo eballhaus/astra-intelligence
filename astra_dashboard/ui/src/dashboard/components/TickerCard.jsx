@@ -294,11 +294,11 @@ export default function TickerCard({
                 alignItems: "center",
               }}
             >
-              <span style={{ ...labelStyle, fontSize: "0.66rem", color: "#3a567e", fontWeight: 700 }}>10R Conviction</span>
+              <span style={{ ...labelStyle, fontSize: "0.66rem", color: "#3a567e", fontWeight: 700 }}>Consistency</span>
               <span style={{ ...valueStyle, fontSize: "0.82rem", fontWeight: 800, color: "#16365f" }}>{formatConviction(conviction10)}</span>
             </div>
             <div style={rowStyle}><span style={labelStyle}>Quality</span><span style={{ ...valueStyle, color: qualityColor(qualityScore) }}>{qualityText}</span></div>
-            <div style={rowStyle}><span style={labelStyle}>Action</span><span style={valueStyle}>{action}</span></div>
+            <div style={rowStyle}><span style={labelStyle}>Candidate Type</span><span style={valueStyle}>{action}</span></div>
             <div style={rowStyle}><span style={labelStyle}>Profit Prediction</span><span style={valueStyle}>{predictionText}</span></div>
             <div style={rowStyle}><span style={labelStyle}>Stop</span><span style={valueStyle}>{stopLoss}</span></div>
           </>
@@ -321,23 +321,23 @@ export default function TickerCard({
 
       {isTopBuy ? (
         <div style={{ display: "grid", gap: "4px", marginTop: "1px" }}>
-          <div style={{ ...labelStyle, color: "#3f5f8b" }}>Qualification: {qualification}</div>
+          <div style={{ ...labelStyle, color: "#3f5f8b" }}>Candidate status: {qualification}</div>
           {item?.conviction_window_status ? (
             <div style={{ ...labelStyle, color: "#3f5f8b" }}>
-              Conviction status: {String(item.conviction_window_status).replaceAll("_", " ")}
+              Evidence window: {String(item.conviction_window_status).replaceAll("_", " ")}
             </div>
           ) : null}
           {fallbackCandidate ? (
             <div style={{ ...labelStyle, color: "#6d5a2b" }}>
-              Display mode: candidate fallback (not released-final)
+              Display mode: candidate fallback
             </div>
           ) : null}
-          {canonicalState ? <div style={{ ...labelStyle, color: "#3f5f8b" }}>Canonical state: {canonicalState.replaceAll("_", " ")}</div> : null}
+          {canonicalState ? <div style={{ ...labelStyle, color: "#3f5f8b" }}>Astra status: {canonicalState.replaceAll("_", " ")}</div> : null}
           <div style={{ fontSize: "0.7rem", lineHeight: 1.35, color: "#3a5375" }}>
-            <strong style={{ color: "#27456d" }}>Rationale:</strong> {summaryText.slice(0, 110)}
+            <strong style={{ color: "#27456d" }}>Why Astra likes it:</strong> {summaryText.slice(0, 110)}
           </div>
           <details style={{ border: "1px solid #d8e2f0", borderRadius: "8px", padding: "0.25rem 0.4rem", background: "#f8fbff" }}>
-            <summary style={{ cursor: "pointer", fontSize: "0.66rem", color: "#315078", fontWeight: 700 }}>Expanded Details</summary>
+            <summary style={{ cursor: "pointer", fontSize: "0.66rem", color: "#315078", fontWeight: 700 }}>View Details</summary>
             <div style={{ display: "grid", gap: "3px", marginTop: "4px", fontSize: "0.64rem", color: "#4a6388" }}>
               <div>5R Conviction: {formatConviction(conviction5)}</div>
               <div>20R Conviction: {formatConviction(conviction20)}</div>
