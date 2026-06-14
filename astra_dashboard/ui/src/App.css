@@ -16,9 +16,12 @@
 }
 
 .astra-desktop-shell {
+  width: 100vw;
+  max-width: none;
   min-height: 100vh;
   display: grid;
   grid-template-columns: 272px minmax(0, 1fr);
+  overflow-x: hidden;
   background:
     radial-gradient(1050px 520px at 30% -10%, rgba(78, 142, 255, 0.16), transparent 60%),
     radial-gradient(760px 420px at 100% 0%, rgba(31, 107, 255, 0.08), transparent 64%),
@@ -189,6 +192,8 @@
 }
 
 .astra-main {
+  width: 100%;
+  max-width: none;
   min-width: 0;
   padding: 22px clamp(18px, 2.2vw, 34px) 30px;
   display: grid;
@@ -329,6 +334,31 @@
 .astra-ai-input-row button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.astra-ai-status {
+  border-radius: 16px;
+  border: 1px solid rgba(182, 211, 255, 0.24);
+  background: rgba(255, 255, 255, 0.10);
+  color: #e7f1ff;
+  padding: 12px 14px;
+  font-size: 0.88rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.astra-ai-status-not_connected {
+  border-color: rgba(255, 203, 119, 0.40);
+  background: rgba(216, 138, 25, 0.14);
+}
+
+.astra-ai-status-error {
+  border-color: rgba(255, 134, 148, 0.44);
+  background: rgba(196, 61, 75, 0.16);
+}
+
+.astra-ai-status-prefilled {
+  border-color: rgba(109, 178, 255, 0.36);
 }
 
 .astra-empty-state {

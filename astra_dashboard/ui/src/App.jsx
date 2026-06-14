@@ -1,4 +1,4 @@
-import React, { Component, useMemo, useState } from "react";
+import React, { Component, useEffect, useMemo, useState } from "react";
 import Dashboard from "./dashboard/pages/Dashboard";
 import LearningTab from "./dashboard/pages/LearningTab";
 import { API_BASE_STORAGE_KEY, getInitialApiBase } from "./apiBase";
@@ -126,16 +126,40 @@ function NavIcon({ kind }) {
   return <svg {...common}><path d="M5 12h14" /><path d="M12 5v14" /></svg>;
 }
 
-function AskAstraPage() {
+function AskAstraPage({ initialQuestion = "" }) {
   const [question, setQuestion] = useState("");
+  const [status, setStatus] = useState("idle");
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    const next = String(initialQuestion || "").trim();
+    if (next) {
+      setQuestion(next);
+      setStatus("prefilled");
+      setMessage("Question prefilled from the dashboard. Submit when you are ready.");
+    }
+  }, [initialQuestion]);
+
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    const cleanQuestion = question.trim();
+    if (!cleanQuestion) {
+      setStatus("error");
+      setMessage("Type a question first, then submit.");
+      return;
+    }
+    setStatus("not_connected");
+    setMessage("Ask Astra is not connected yet. Your question is ready, but no safe response endpoint is configured in this frontend shell.");
+  };
+
   return (
     <div className="astra-page-grid">
-      <section className="astra-ai-panel astra-ai-panel-page">
+      <form className="astra-ai-panel astra-ai-panel-page" onSubmit={handleSubmit}>
         <div>
           <span className="astra-ai-kicker">Premium AI Panel</span>
           <h1>Ask Astra</h1>
           <p>
-            Ask Astra remains user-triggered only. This panel does not call an LLM, provider, broker, or dashboard endpoint until an existing submit path is connected.
+            Ask Astra remains user-triggered only. This page will not call an LLM, provider, broker, or dashboard endpoint unless a safe submit path is connected.
           </p>
         </div>
         <div className="astra-ai-input-row">
@@ -144,14 +168,19 @@ function AskAstraPage() {
             onChange={(event) => setQuestion(event.target.value)}
             placeholder="Ask about opportunities, risk, learning progress, or portfolio context..."
           />
-          <button type="button" disabled title="Existing Ask Astra submit path not wired in this shell">
-            Submit
+          <button type="submit" disabled={!question.trim()}>
+            Ask Astra
           </button>
         </div>
-      </section>
+        {message ? (
+          <div className={`astra-ai-status astra-ai-status-${status}`}>
+            {message}
+          </div>
+        ) : null}
+      </form>
       <ShellCard title="Safe Interaction Model" eyebrow="No automatic AI calls">
         <p>
-          Astra will only contact an AI/provider service when an explicit existing Ask Astra submit flow is available and the user submits a question.
+          Astra will only contact an AI/provider service when an explicit existing Ask Astra submit flow is available and you submit a question. No automatic AI calls happen on page load.
         </p>
       </ShellCard>
     </div>
@@ -230,15 +259,24 @@ function PageHeading({ activeTab }) {
 
 function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [askPrefill, setAskPrefill] = useState("");
+
+  const handleNavigate = (tabId, options = {}) => {
+    if (tabId === "ask") {
+      const question = String(options?.question || "").trim();
+      if (question) setAskPrefill(question);
+    }
+    setActiveTab(tabId);
+  };
 
   const renderTab = () => {
-    if (activeTab === "dashboard") return <Dashboard onNavigate={setActiveTab} />;
-    if (activeTab === "opportunities") return <Dashboard remoteMode remoteSection="buys" onNavigate={setActiveTab} />;
-    if (activeTab === "portfolio") return <Dashboard remoteMode remoteSection="positions" onNavigate={setActiveTab} />;
-    if (activeTab === "ask") return <AskAstraPage />;
+    if (activeTab === "dashboard") return <Dashboard onNavigate={handleNavigate} />;
+    if (activeTab === "opportunities") return <Dashboard remoteMode remoteSection="buys" onNavigate={handleNavigate} />;
+    if (activeTab === "portfolio") return <Dashboard remoteMode remoteSection="positions" onNavigate={handleNavigate} />;
+    if (activeTab === "ask") return <AskAstraPage initialQuestion={askPrefill} />;
     if (activeTab === "watchlists") return <WatchlistsPage />;
     if (activeTab === "learning") return <LearningTab />;
-    return <MorePage setActiveTab={setActiveTab} />;
+    return <MorePage setActiveTab={handleNavigate} />;
   };
 
   return (
@@ -260,7 +298,7 @@ function App() {
               key={tab.id}
               type="button"
               className={`astra-nav-item ${activeTab === tab.id ? "active" : ""}`}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => handleNavigate(tab.id)}
             >
               <span className="astra-nav-icon"><NavIcon kind={tab.icon} /></span>
               {tab.label}

@@ -286,10 +286,10 @@ function normalizeMarketSummary(systemStatus = {}, unifiedDiagnostics = {}) {
   const marketBreadth = unifiedDiagnostics?.market_breadth_index_intelligence_v1 || {};
   const proxyRows = Array.isArray(marketBreadth?.index_signal_rows) ? marketBreadth.index_signal_rows : [];
   const proxyLabels = {
-    SPY: ["sp500_proxy", "S&P Proxy", "SPY"],
-    QQQ: ["nasdaq_proxy", "Nasdaq Proxy", "QQQ"],
-    DIA: ["dow_proxy", "Dow Proxy", "DIA"],
-    IWM: ["small_cap_proxy", "Small Cap Proxy", "IWM"],
+    SPY: ["sp500_proxy", "S&P 500 / SPY Proxy", "SPY"],
+    QQQ: ["nasdaq_proxy", "Nasdaq / QQQ Proxy", "QQQ"],
+    DIA: ["dow_proxy", "Dow / DIA Proxy", "DIA"],
+    IWM: ["small_cap_proxy", "Small Caps / IWM Proxy", "IWM"],
     VIX: ["vix_pressure", "VIX Pressure", "VIX"],
   };
   const mapped = proxyRows
@@ -307,7 +307,7 @@ function normalizeMarketSummary(systemStatus = {}, unifiedDiagnostics = {}) {
         valueKind: "score",
         displayValue: Number.isFinite(signal) ? `${signal.toFixed(1)}` : "Score unavailable",
         detail: labelize(row.role || "context proxy"),
-        sourceLabel: "Cached proxy score",
+        sourceLabel: "Astra Score",
         type: "context",
       };
     });
@@ -820,16 +820,16 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               </button>
             </div>
 
-            <div onClick={() => (typeof onNavigate === "function" ? onNavigate("ask") : null)} style={{ borderRadius: 22, padding: 16, background: "radial-gradient(260px 150px at 80% 0%, rgba(45, 119, 255, 0.36), transparent 70%), linear-gradient(135deg, #071a33, #08244b)", boxShadow: "0 18px 45px rgba(25, 47, 78, 0.18)", color: "#ffffff", minHeight: 246, display: "grid", gap: 12, cursor: "pointer" }}>
+            <div onClick={() => (typeof onNavigate === "function" ? onNavigate("ask", { question: "What are the best short-term opportunities today?" }) : null)} style={{ borderRadius: 22, padding: 16, background: "radial-gradient(260px 150px at 80% 0%, rgba(45, 119, 255, 0.36), transparent 70%), linear-gradient(135deg, #071a33, #08244b)", boxShadow: "0 18px 45px rgba(25, 47, 78, 0.18)", color: "#ffffff", minHeight: 246, display: "grid", gap: 12, cursor: "pointer" }}>
               <h2 style={{ margin: 0, fontSize: "1rem", color: "#ffffff" }}>Ask Astra</h2>
               <p style={{ margin: 0, color: "#c8d8ef", fontSize: 13 }}>Your AI market analyst. Ask anything about markets, opportunities, or your portfolio.</p>
               <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, border: "1px solid rgba(180, 209, 255, 0.22)", borderRadius: 14, background: "rgba(255,255,255,0.08)", padding: 10, color: "#f5f9ff", marginTop: 2, alignItems: "center" }}>
                 <span style={{ color: "#d9e7fa", fontSize: 13 }}>What are the best short-term opportunities today?</span>
-                <button type="button" onClick={(event) => { event.stopPropagation(); if (typeof onNavigate === "function") onNavigate("ask"); }} style={{ border: 0, borderRadius: 12, background: "#2b76ff", color: "#fff", width: 34, height: 34, fontWeight: 900, cursor: "pointer" }}>→</button>
+                <button type="button" onClick={(event) => { event.stopPropagation(); if (typeof onNavigate === "function") onNavigate("ask", { question: "What are the best short-term opportunities today?" }); }} style={{ border: 0, borderRadius: 12, background: "#2b76ff", color: "#fff", width: 34, height: 34, fontWeight: 900, cursor: "pointer" }}>→</button>
               </div>
               <div style={{ color: "#8fb1df", fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Popular Questions</div>
               {["Why is my top opportunity ranked highest?", "What sectors are showing strength?", "How should I position my portfolio?", "Which stocks have unusual activity?"].map((q) => (
-                <button key={q} type="button" onClick={(event) => { event.stopPropagation(); if (typeof onNavigate === "function") onNavigate("ask"); }} style={{ textAlign: "left", border: 0, borderRadius: 10, background: "rgba(255,255,255,0.08)", color: "#eaf3ff", padding: "8px 10px", cursor: "pointer" }}>{q}</button>
+                <button key={q} type="button" onClick={(event) => { event.stopPropagation(); if (typeof onNavigate === "function") onNavigate("ask", { question: q }); }} style={{ textAlign: "left", border: 0, borderRadius: 10, background: "rgba(255,255,255,0.08)", color: "#eaf3ff", padding: "8px 10px", cursor: "pointer" }}>{q}</button>
               ))}
             </div>
           </section>
