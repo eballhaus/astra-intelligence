@@ -322,6 +322,7 @@ class UnifiedLearningDiagnosticsV1:
         intelligence_quality_learning_efficiency = self._intelligence_quality_learning_efficiency_suite_v1_summary(statuses.get("intelligence_quality_learning_efficiency_suite_v1") or {})
         advanced_attribution_controlled_exit_learning_roi = self._advanced_attribution_controlled_exit_learning_roi_suite_v1_summary(statuses.get("advanced_attribution_controlled_exit_learning_roi_suite_v1") or {})
         profit_optimization_context_intelligence = self._profit_optimization_context_intelligence_suite_v1_summary(statuses.get("profit_optimization_context_intelligence_suite_v1") or {})
+        trade_lifecycle_audit_truth_horizon_integrity = self._trade_lifecycle_audit_truth_horizon_integrity_suite_v1_summary(statuses.get("trade_lifecycle_audit_truth_horizon_integrity_suite_v1") or {})
         trade_thesis_validation = self._trade_thesis_validation_v1_summary(statuses.get("trade_thesis_validation_v1") or {})
         market_transition_detection = self._market_transition_detection_v1_summary(statuses.get("market_transition_detection_v1") or {})
         trade_family_intelligence = self._trade_family_intelligence_v1_summary(statuses.get("trade_family_intelligence_v1") or {})
@@ -415,6 +416,7 @@ class UnifiedLearningDiagnosticsV1:
             "intelligence_quality_learning_efficiency_suite_v1": intelligence_quality_learning_efficiency,
             "advanced_attribution_controlled_exit_learning_roi_suite_v1": advanced_attribution_controlled_exit_learning_roi,
             "profit_optimization_context_intelligence_suite_v1": profit_optimization_context_intelligence,
+            "trade_lifecycle_audit_truth_horizon_integrity_suite_v1": trade_lifecycle_audit_truth_horizon_integrity,
             "trade_thesis_validation_v1": trade_thesis_validation,
             "market_transition_detection_v1": market_transition_detection,
             "trade_family_intelligence_v1": trade_family_intelligence,
@@ -3199,6 +3201,85 @@ class UnifiedLearningDiagnosticsV1:
             "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
         }
 
+    def _trade_lifecycle_audit_truth_horizon_integrity_suite_v1_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        audit = dict(data.get("trade_lifecycle_audit_suite_v1") or {})
+        truth = dict(data.get("trade_lifecycle_truth_audit_v1") or {})
+        horizon = dict(data.get("horizon_integrity_conversion_intelligence_v1") or {})
+        answers = dict(data.get("final_report_answers") or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "suite": _text(data.get("suite"), "ASTRA Trade Lifecycle Audit, Truth Validation & Conditional Horizon Integrity Suite V1"),
+            "version": _text(data.get("version"), "1.0.0"),
+            "status": _text(data.get("status"), "insufficient_evidence"),
+            "mode": _text(data.get("mode"), "paper_only_lifecycle_truth_validation_advisory"),
+            "evidence_count": _to_int(data.get("evidence_count"), 0),
+            "total_active_positions": _to_int(data.get("total_active_positions") or audit.get("total_active_positions"), 0),
+            "position_rows_audited": _to_int(audit.get("position_rows_audited"), 0),
+            "broker_confirmed_positions": _to_int(audit.get("broker_confirmed_positions"), 0),
+            "stale_internal_rows": _to_int(audit.get("stale_internal_rows"), 0),
+            "active_position_source": _text(audit.get("active_position_source"), "none"),
+            "average_hold_duration_hours": _to_float(data.get("average_hold_duration_hours") or audit.get("average_hold_hours"), 0.0),
+            "average_hold_duration_days": _to_float(audit.get("average_hold_days"), 0.0),
+            "oldest_position": _text(data.get("oldest_position") or audit.get("oldest_position"), "insufficient_data"),
+            "oldest_position_hold_hours": _to_float(audit.get("oldest_position_hold_hours"), 0.0),
+            "most_overdue_position": _text(data.get("most_overdue_position") or audit.get("most_overdue_position"), "insufficient_data"),
+            "most_profitable_position": _text(data.get("most_profitable_position") or audit.get("most_profitable_position"), "insufficient_data"),
+            "most_profitable_position_pct": _to_float(audit.get("most_profitable_position_pct"), 0.0),
+            "highest_giveback_risk_position": _text(data.get("highest_giveback_risk_position") or audit.get("highest_giveback_risk_position"), "insufficient_data"),
+            "highest_giveback_risk": _to_float(audit.get("highest_giveback_risk"), 0.0),
+            "biggest_exit_blocker": _text(data.get("biggest_exit_blocker") or audit.get("biggest_exit_blocker"), "insufficient_data"),
+            "dominant_hold_reason": _text(data.get("dominant_hold_reason") or audit.get("dominant_hold_reason"), "insufficient_data"),
+            "dominant_active_horizon": _text(audit.get("dominant_active_horizon"), "unknown"),
+            "horizon_distribution": dict(audit.get("horizon_distribution") or {}),
+            "active_overdue_pct": _to_float(audit.get("active_overdue_pct"), 0.0),
+            "would_repurchase_today_pct": _to_float(audit.get("would_repurchase_today_pct"), 0.0),
+            "same_decision_if_replayed_today_count": _to_int(audit.get("same_decision_if_replayed_today_count"), 0),
+            "correctly_holding_count": _to_int(truth.get("correctly_holding_count"), 0),
+            "should_have_sold_count": _to_int(truth.get("should_have_sold_count"), 0),
+            "should_have_converted_horizon_count": _to_int(truth.get("should_have_converted_horizon_count"), 0),
+            "should_have_profit_protected_count": _to_int(truth.get("should_have_profit_protected_count"), 0),
+            "average_truth_confidence": _to_float(truth.get("average_truth_confidence"), 0.0),
+            "horizon_integrity_needed": bool(data.get("horizon_integrity_needed") or audit.get("horizon_integrity_needed")),
+            "horizon_integrity_status": _text(horizon.get("status"), "not_needed"),
+            "horizon_integrity_reason": _text(horizon.get("reason") or audit.get("horizon_integrity_reason"), "insufficient_data"),
+            "review_convert_sell_only": bool(horizon.get("review_convert_sell_only", True)),
+            "scalp_to_swing_direct_conversion_allowed": bool(horizon.get("scalp_to_swing_direct_conversion_allowed", False)),
+            "position_audit_rows": list(data.get("position_audit_rows") or [])[:12],
+            "truth_validation_rows": list(data.get("truth_validation_rows") or [])[:12],
+            "horizon_conversion_rows": list(horizon.get("conversion_rows") or [])[:12],
+            "final_report_answers": answers,
+            "is_astra_holding_everything_too_long": _text(answers.get("is_astra_holding_everything_too_long"), "insufficient_data"),
+            "intentionally_holding_or_drifting": _text(answers.get("intentionally_holding_or_drifting"), "insufficient_data"),
+            "unintentionally_swing_system": bool(answers.get("unintentionally_swing_system", False)),
+            "pf_contribution_by_horizon_pct": dict(answers.get("pf_contribution_by_horizon_pct") or {}),
+            "single_highest_roi_fix": _text(answers.get("single_highest_roi_fix"), "insufficient_data"),
+            "safest_next_implementation": _text(answers.get("safest_next_implementation"), "review_only_diagnostics"),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+            "shadow_analysis_mode": bool(data.get("shadow_analysis_mode", True)),
+            "advisory_only": bool(data.get("advisory_only", True)),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "live_trading_changed": bool(data.get("live_trading_changed", False)),
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "ranking_behavior_changed": bool(data.get("ranking_behavior_changed", False)),
+            "entry_behavior_changed": bool(data.get("entry_behavior_changed", False)),
+            "exit_behavior_changed": bool(data.get("exit_behavior_changed", False)),
+            "sell_behavior_changed": bool(data.get("sell_behavior_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+            "portfolio_allocation_changed": bool(data.get("portfolio_allocation_changed", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "paper_execution_changed": bool(data.get("paper_execution_changed", False)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "partial_sells_enabled": bool(data.get("partial_sells_enabled", False)),
+            "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
+        }
+
     def _trade_thesis_validation_v1_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -4837,7 +4918,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
             "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "profit_capture_peak_decay_exit_validation_suite_v1", "adaptive_execution_exit_intelligence_v3", "trade_archetype_regime",
-            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "long_term_memory_symbol_retrieval_suite_v1", "virtual_paper_convergence_symbol_attribution_v1", "accelerated_learning_symbol_intelligence_suite_v1", "realistic_shadow_evidence_learning_lab_v1", "historical_intelligence_market_memory_suite_v1", "catalyst_persistence_decay_curves_v2", "catalyst_lifecycle_intelligence_v1", "cross_sector_capital_flow_memory_v1", "shadow_vs_paper_performance_attribution_v1", "candidate_ranking_attribution_promotion_intelligence_v1", "learning_roi_engine_v1", "evidence_quality_scoring_v1", "confidence_decomposition_engine_v1", "learning_drift_detection_v1", "market_regime_similarity_engine_v1", "ranking_tournament_engine_v1", "exit_tournament_engine_v1", "conviction_calibration_engine_v1", "intelligence_quality_learning_efficiency_suite_v1", "advanced_attribution_controlled_exit_learning_roi_suite_v1", "profit_optimization_context_intelligence_suite_v1", "trade_thesis_validation_v1", "market_transition_detection_v1", "trade_family_intelligence_v1", "market_condition_attribution_v1", "market_breadth_index_intelligence_v1", "etf_sector_rotation_intelligence_v1", "crypto_shadow_learning_v1", "cross_market_attribution_transfer_learning_v1", "profit_lock_profit_capture_maturation_v2", "shadow_correction_validation_attribution_v1", "controlled_paper_profit_protection_pilot_v1", "adaptive_learning_prioritization_resource_allocation_v1", "autonomous_intelligence_validation_governance_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
+            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "long_term_memory_symbol_retrieval_suite_v1", "virtual_paper_convergence_symbol_attribution_v1", "accelerated_learning_symbol_intelligence_suite_v1", "realistic_shadow_evidence_learning_lab_v1", "historical_intelligence_market_memory_suite_v1", "catalyst_persistence_decay_curves_v2", "catalyst_lifecycle_intelligence_v1", "cross_sector_capital_flow_memory_v1", "shadow_vs_paper_performance_attribution_v1", "candidate_ranking_attribution_promotion_intelligence_v1", "learning_roi_engine_v1", "evidence_quality_scoring_v1", "confidence_decomposition_engine_v1", "learning_drift_detection_v1", "market_regime_similarity_engine_v1", "ranking_tournament_engine_v1", "exit_tournament_engine_v1", "conviction_calibration_engine_v1", "intelligence_quality_learning_efficiency_suite_v1", "advanced_attribution_controlled_exit_learning_roi_suite_v1", "profit_optimization_context_intelligence_suite_v1", "trade_lifecycle_audit_truth_horizon_integrity_suite_v1", "trade_thesis_validation_v1", "market_transition_detection_v1", "trade_family_intelligence_v1", "market_condition_attribution_v1", "market_breadth_index_intelligence_v1", "etf_sector_rotation_intelligence_v1", "crypto_shadow_learning_v1", "cross_market_attribution_transfer_learning_v1", "profit_lock_profit_capture_maturation_v2", "shadow_correction_validation_attribution_v1", "controlled_paper_profit_protection_pilot_v1", "adaptive_learning_prioritization_resource_allocation_v1", "autonomous_intelligence_validation_governance_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
             "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
             "paper_throughput_exit_validation_catalyst_intelligence_v1", "multi_horizon_paper_capacity_exit_validation_v1", "controlled_paper_learned_exit_validation_v1",
@@ -4910,6 +4991,7 @@ class UnifiedLearningDiagnosticsV1:
             "intelligence_quality_learning_efficiency_suite_v1": "/api/intelligence_quality_learning_efficiency_suite_v1",
             "advanced_attribution_controlled_exit_learning_roi_suite_v1": "/api/advanced_attribution_controlled_exit_learning_roi_suite_v1",
             "profit_optimization_context_intelligence_suite_v1": "/api/profit_optimization_context_intelligence_suite_v1",
+            "trade_lifecycle_audit_truth_horizon_integrity_suite_v1": "/api/trade_lifecycle_audit_truth_horizon_integrity_suite_v1",
             "trade_thesis_validation_v1": "/api/trade_thesis_validation_v1",
             "market_transition_detection_v1": "/api/market_transition_detection_v1",
             "trade_family_intelligence_v1": "/api/trade_family_intelligence_v1",

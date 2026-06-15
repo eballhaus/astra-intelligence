@@ -1621,6 +1621,7 @@ export default function LearningTab({ compact = false }) {
   const intelligenceQualityLearningEfficiency = unified?.intelligence_quality_learning_efficiency_suite_v1 || {};
   const advancedAttributionControlledExitLearningRoi = unified?.advanced_attribution_controlled_exit_learning_roi_suite_v1 || {};
   const profitOptimizationContextIntelligence = unified?.profit_optimization_context_intelligence_suite_v1 || {};
+  const tradeLifecycleAuditTruthHorizonIntegrity = unified?.trade_lifecycle_audit_truth_horizon_integrity_suite_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
   const tradeFamilyIntelligence = unified?.trade_family_intelligence_v1 || {};
@@ -1788,6 +1789,7 @@ export default function LearningTab({ compact = false }) {
       intelligence_quality_learning_efficiency_suite_v1: intelligenceQualityLearningEfficiency,
       advanced_attribution_controlled_exit_learning_roi_suite_v1: advancedAttributionControlledExitLearningRoi,
       profit_optimization_context_intelligence_suite_v1: profitOptimizationContextIntelligence,
+      trade_lifecycle_audit_truth_horizon_integrity_suite_v1: tradeLifecycleAuditTruthHorizonIntegrity,
       candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
       profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
       realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
@@ -2572,6 +2574,52 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Reasoning: {String(profitOptimizationContextIntelligence?.reasoning_summary || "Continue shadow-only profit optimization diagnostics.").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Trade Lifecycle Audit, Truth Validation & Horizon Integrity Suite V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is auditing every active Alpaca paper position to explain why it is still holding, whether the hold is intentional or drifting, and whether horizon integrity needs review. This panel is diagnostic-only and does not change broker behavior, ranking, entries, exits, sizing, thresholds, or paper execution.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Status", tradeLifecycleAuditTruthHorizonIntegrity?.status],
+            ["Active positions", safeNumber(tradeLifecycleAuditTruthHorizonIntegrity?.total_active_positions).toFixed(0)],
+            ["Rows audited", safeNumber(tradeLifecycleAuditTruthHorizonIntegrity?.position_rows_audited).toFixed(0)],
+            ["Broker confirmed", safeNumber(tradeLifecycleAuditTruthHorizonIntegrity?.broker_confirmed_positions).toFixed(0)],
+            ["Stale internal rows", safeNumber(tradeLifecycleAuditTruthHorizonIntegrity?.stale_internal_rows).toFixed(0)],
+            ["Avg hold", `${safeNumber(tradeLifecycleAuditTruthHorizonIntegrity?.average_hold_duration_days).toFixed(1)}d`],
+            ["Oldest", tradeLifecycleAuditTruthHorizonIntegrity?.oldest_position],
+            ["Most overdue", tradeLifecycleAuditTruthHorizonIntegrity?.most_overdue_position],
+            ["Most profitable", `${String(tradeLifecycleAuditTruthHorizonIntegrity?.most_profitable_position || "n/a")} ${safeNumber(tradeLifecycleAuditTruthHorizonIntegrity?.most_profitable_position_pct).toFixed(1)}%`],
+            ["Highest giveback", tradeLifecycleAuditTruthHorizonIntegrity?.highest_giveback_risk_position],
+            ["Top blocker", tradeLifecycleAuditTruthHorizonIntegrity?.biggest_exit_blocker],
+            ["Dominant horizon", tradeLifecycleAuditTruthHorizonIntegrity?.dominant_active_horizon],
+            ["Overdue", `${safeNumber(tradeLifecycleAuditTruthHorizonIntegrity?.active_overdue_pct).toFixed(1)}%`],
+            ["Repurchase today", `${safeNumber(tradeLifecycleAuditTruthHorizonIntegrity?.would_repurchase_today_pct).toFixed(1)}%`],
+            ["Horizon integrity", tradeLifecycleAuditTruthHorizonIntegrity?.horizon_integrity_needed ? "needed" : "not needed"],
+            ["API/provider/LLM", `${safeNumber(tradeLifecycleAuditTruthHorizonIntegrity?.api_calls_used).toFixed(0)} / ${safeNumber(tradeLifecycleAuditTruthHorizonIntegrity?.provider_calls_used).toFixed(0)} / ${safeNumber(tradeLifecycleAuditTruthHorizonIntegrity?.llm_calls_used).toFixed(0)}`],
+            ["Behavior safe", tradeLifecycleAuditTruthHorizonIntegrity?.behavior_safe_to_apply ? "yes" : "no"],
+            ["Paper execution changed", tradeLifecycleAuditTruthHorizonIntegrity?.paper_execution_changed ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Hold assessment: {String(tradeLifecycleAuditTruthHorizonIntegrity?.is_astra_holding_everything_too_long || "insufficient data").replaceAll("_", " ")} | {String(tradeLifecycleAuditTruthHorizonIntegrity?.intentionally_holding_or_drifting || "insufficient data").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            ROI fix: {String(tradeLifecycleAuditTruthHorizonIntegrity?.single_highest_roi_fix || "continue truth audit").replaceAll("_", " ")} | Next: {String(tradeLifecycleAuditTruthHorizonIntegrity?.safest_next_implementation || "review only diagnostics").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Active holds: {(tradeLifecycleAuditTruthHorizonIntegrity?.position_audit_rows || []).slice(0, 6).map((row) => `${String(row?.symbol || "symbol")} ${String(row?.normalized_horizon || "unknown").replaceAll("_", " ")} ${safeNumber(row?.pnl_percent).toFixed(1)}%: ${String(row?.why_still_holding || "warming up").replaceAll("_", " ")}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Truth audit: {(tradeLifecycleAuditTruthHorizonIntegrity?.truth_validation_rows || []).slice(0, 6).map((row) => `${String(row?.symbol || "symbol")} ideal ${String(row?.ideal_action || "hold").replaceAll("_", " ")} confidence ${safeNumber(row?.truth_confidence).toFixed(1)}`).join(" | ") || "warming up"}
           </div>
         </div>
       </details>

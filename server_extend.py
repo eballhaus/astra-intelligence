@@ -2421,6 +2421,7 @@ try:
     from engine.intelligence_quality_learning_efficiency_suite_v1 import IntelligenceQualityLearningEfficiencySuiteV1
     from engine.advanced_attribution_controlled_exit_learning_roi_suite_v1 import AdvancedAttributionControlledExitLearningRoiSuiteV1
     from engine.profit_optimization_context_intelligence_suite_v1 import ProfitOptimizationContextIntelligenceSuiteV1
+    from engine.trade_lifecycle_audit_truth_horizon_integrity_suite_v1 import TradeLifecycleAuditTruthHorizonIntegritySuiteV1
 except Exception:
     class _IntelligenceQualityUnavailable:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -2464,6 +2465,7 @@ except Exception:
     IntelligenceQualityLearningEfficiencySuiteV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AdvancedAttributionControlledExitLearningRoiSuiteV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     ProfitOptimizationContextIntelligenceSuiteV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    TradeLifecycleAuditTruthHorizonIntegritySuiteV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
     from engine.trade_thesis_validation_v1 import TradeThesisValidationV1
 except Exception:
@@ -3108,6 +3110,7 @@ INTELLIGENCE_QUALITY_LEARNING_EFFICIENCY_SUITE = IntelligenceQualityLearningEffi
 )
 ADVANCED_ATTRIBUTION_CONTROLLED_EXIT_LEARNING_ROI_SUITE = AdvancedAttributionControlledExitLearningRoiSuiteV1(state_dir=STATE)
 PROFIT_OPTIMIZATION_CONTEXT_INTELLIGENCE_SUITE = ProfitOptimizationContextIntelligenceSuiteV1(state_dir=STATE)
+TRADE_LIFECYCLE_AUDIT_TRUTH_HORIZON_INTEGRITY_SUITE = TradeLifecycleAuditTruthHorizonIntegritySuiteV1(state_dir=STATE)
 TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
 MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
 TRADE_FAMILY_INTELLIGENCE = TradeFamilyIntelligenceV1(state_dir=STATE)
@@ -33595,6 +33598,15 @@ def profit_optimization_context_intelligence_suite_v1(force: bool = False):
     )
 
 
+@router.get("/api/trade_lifecycle_audit_truth_horizon_integrity_suite_v1")
+def trade_lifecycle_audit_truth_horizon_integrity_suite_v1(force: bool = False):
+    return _intelligence_quality_endpoint(
+        TRADE_LIFECYCLE_AUDIT_TRUTH_HORIZON_INTEGRITY_SUITE,
+        "trade_lifecycle_audit_truth_horizon_integrity_suite_v1",
+        force=force,
+    )
+
+
 @router.get("/api/learning_roi_engine_v1")
 def learning_roi_engine_v1(force: bool = False):
     return _intelligence_quality_endpoint(LEARNING_ROI_ENGINE, "learning_roi_engine_v1", force=force)
@@ -43572,6 +43584,10 @@ def _learning_acceleration_status_bundle() -> dict:
     except Exception:
         statuses["profit_optimization_context_intelligence_suite_v1"] = {}
     try:
+        statuses["trade_lifecycle_audit_truth_horizon_integrity_suite_v1"] = TRADE_LIFECYCLE_AUDIT_TRUTH_HORIZON_INTEGRITY_SUITE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["trade_lifecycle_audit_truth_horizon_integrity_suite_v1"] = {}
+    try:
         statuses["paper_throughput_exit_validation_catalyst_intelligence_v1"] = PAPER_THROUGHPUT_EXIT_VALIDATION_CATALYST_INTELLIGENCE.status(statuses=statuses, force=False)
     except Exception:
         statuses["paper_throughput_exit_validation_catalyst_intelligence_v1"] = {}
@@ -53307,6 +53323,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("intelligence_quality_learning_efficiency_suite_v1", lambda: INTELLIGENCE_QUALITY_LEARNING_EFFICIENCY_SUITE.status(statuses=statuses, force=False))
         _safe_status("advanced_attribution_controlled_exit_learning_roi_suite_v1", lambda: ADVANCED_ATTRIBUTION_CONTROLLED_EXIT_LEARNING_ROI_SUITE.status(statuses=statuses, force=False))
         _safe_status("profit_optimization_context_intelligence_suite_v1", lambda: PROFIT_OPTIMIZATION_CONTEXT_INTELLIGENCE_SUITE.status(statuses=statuses, force=False))
+        _safe_status("trade_lifecycle_audit_truth_horizon_integrity_suite_v1", lambda: TRADE_LIFECYCLE_AUDIT_TRUTH_HORIZON_INTEGRITY_SUITE.status(statuses=statuses, force=False))
         _safe_status("mobile_runtime_compaction", lambda: _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))
         _safe_status("paper_opportunity_allocation", lambda: PAPER_OPPORTUNITY_ALLOCATION_ENGINE.status(rows=rows))
