@@ -2426,6 +2426,7 @@ try:
     from engine.astra_tier2a_librarian_executive_truth_layer_v1 import AstraTier2aLibrarianExecutiveTruthLayerV1
     from engine.astra_satellite_network_v1 import AstraSatelliteNetworkV1
     from engine.astra_tier3_historical_satellite_shadow_acceleration_v1 import AstraTier3HistoricalSatelliteShadowAccelerationV1
+    from engine.astra_final_intelligence_maturation_bundle_v1 import AstraFinalIntelligenceMaturationBundleV1
 except Exception:
     class _IntelligenceQualityUnavailable:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -2474,6 +2475,7 @@ except Exception:
     AstraTier2aLibrarianExecutiveTruthLayerV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraSatelliteNetworkV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraTier3HistoricalSatelliteShadowAccelerationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    AstraFinalIntelligenceMaturationBundleV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
     from engine.trade_thesis_validation_v1 import TradeThesisValidationV1
 except Exception:
@@ -3123,6 +3125,7 @@ ASTRA_FOUNDATION_STABILIZATION_GOVERNANCE_BUNDLE = AstraFoundationStabilizationG
 ASTRA_TIER2A_LIBRARIAN_EXECUTIVE_TRUTH_LAYER = AstraTier2aLibrarianExecutiveTruthLayerV1(state_dir=STATE)
 ASTRA_SATELLITE_NETWORK = AstraSatelliteNetworkV1(state_dir=STATE)
 ASTRA_TIER3_HISTORICAL_SATELLITE_SHADOW_ACCELERATION = AstraTier3HistoricalSatelliteShadowAccelerationV1(state_dir=STATE)
+ASTRA_FINAL_INTELLIGENCE_MATURATION_BUNDLE = AstraFinalIntelligenceMaturationBundleV1(state_dir=STATE)
 TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
 MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
 TRADE_FAMILY_INTELLIGENCE = TradeFamilyIntelligenceV1(state_dir=STATE)
@@ -33655,6 +33658,15 @@ def astra_tier3_historical_satellite_shadow_acceleration_v1(force: bool = False)
     )
 
 
+@router.get("/api/astra_final_intelligence_maturation_bundle_v1")
+def astra_final_intelligence_maturation_bundle_v1(force: bool = False):
+    return _intelligence_quality_endpoint(
+        ASTRA_FINAL_INTELLIGENCE_MATURATION_BUNDLE,
+        "astra_final_intelligence_maturation_bundle_v1",
+        force=force,
+    )
+
+
 @router.get("/api/learning_roi_engine_v1")
 def learning_roi_engine_v1(force: bool = False):
     return _intelligence_quality_endpoint(LEARNING_ROI_ENGINE, "learning_roi_engine_v1", force=force)
@@ -43652,6 +43664,10 @@ def _learning_acceleration_status_bundle() -> dict:
     except Exception:
         statuses["astra_tier3_historical_satellite_shadow_acceleration_v1"] = {}
     try:
+        statuses["astra_final_intelligence_maturation_bundle_v1"] = ASTRA_FINAL_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["astra_final_intelligence_maturation_bundle_v1"] = {}
+    try:
         statuses["paper_throughput_exit_validation_catalyst_intelligence_v1"] = PAPER_THROUGHPUT_EXIT_VALIDATION_CATALYST_INTELLIGENCE.status(statuses=statuses, force=False)
     except Exception:
         statuses["paper_throughput_exit_validation_catalyst_intelligence_v1"] = {}
@@ -53392,6 +53408,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("astra_tier2a_librarian_executive_truth_layer_v1", lambda: ASTRA_TIER2A_LIBRARIAN_EXECUTIVE_TRUTH_LAYER.status(statuses=statuses, force=False))
         _safe_status("astra_satellite_network_v1", lambda: ASTRA_SATELLITE_NETWORK.status(statuses=statuses, force=False))
         _safe_status("astra_tier3_historical_satellite_shadow_acceleration_v1", lambda: ASTRA_TIER3_HISTORICAL_SATELLITE_SHADOW_ACCELERATION.status(statuses=statuses, force=False))
+        _safe_status("astra_final_intelligence_maturation_bundle_v1", lambda: ASTRA_FINAL_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=statuses, force=False))
         _safe_status("mobile_runtime_compaction", lambda: _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))
         _safe_status("paper_opportunity_allocation", lambda: PAPER_OPPORTUNITY_ALLOCATION_ENGINE.status(rows=rows))

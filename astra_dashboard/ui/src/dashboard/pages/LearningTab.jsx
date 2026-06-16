@@ -1626,6 +1626,7 @@ export default function LearningTab({ compact = false }) {
   const astraTier2aLibrarianExecutiveTruthLayer = unified?.astra_tier2a_librarian_executive_truth_layer_v1 || {};
   const astraSatelliteNetwork = unified?.astra_satellite_network_v1 || {};
   const astraTier3HistoricalSatelliteShadowAcceleration = unified?.astra_tier3_historical_satellite_shadow_acceleration_v1 || {};
+  const astraFinalIntelligenceMaturation = unified?.astra_final_intelligence_maturation_bundle_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
   const tradeFamilyIntelligence = unified?.trade_family_intelligence_v1 || {};
@@ -1798,6 +1799,7 @@ export default function LearningTab({ compact = false }) {
       astra_tier2a_librarian_executive_truth_layer_v1: astraTier2aLibrarianExecutiveTruthLayer,
       astra_satellite_network_v1: astraSatelliteNetwork,
       astra_tier3_historical_satellite_shadow_acceleration_v1: astraTier3HistoricalSatelliteShadowAcceleration,
+      astra_final_intelligence_maturation_bundle_v1: astraFinalIntelligenceMaturation,
       candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
       profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
       realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
@@ -2808,6 +2810,56 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Integration: Librarian {String(astraTier3HistoricalSatelliteShadowAcceleration?.librarian_integration_status || "warming up").replaceAll("_", " ")}, Unified Truth {String(astraTier3HistoricalSatelliteShadowAcceleration?.unified_truth_integration_status || "warming up").replaceAll("_", " ")}, Executive Assistant {String(astraTier3HistoricalSatelliteShadowAcceleration?.executive_assistant_integration_status || "warming up").replaceAll("_", " ")}.
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Astra Final Intelligence Maturation Bundle V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra’s final major architecture bundle compresses knowledge, matures historical memory, prioritizes learning focus, coordinates safe research, monitors health, and keeps profit improvement advisory-only. This is shadow-only and does not change rankings, entries, exits, sizing, thresholds, broker behavior, or paper execution.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Status", astraFinalIntelligenceMaturation?.status],
+            ["Compression", astraFinalIntelligenceMaturation?.compression_status],
+            ["Compressed lessons", safeNumber(astraFinalIntelligenceMaturation?.compressed_lessons).toFixed(0)],
+            ["Compression efficiency", `${safeNumber(astraFinalIntelligenceMaturation?.compression_efficiency).toFixed(1)}%`],
+            ["Historical maturity", astraFinalIntelligenceMaturation?.historical_maturity_status],
+            ["Memory maturity", safeNumber(astraFinalIntelligenceMaturation?.memory_maturity).toFixed(1)],
+            ["Retrieval accuracy", safeNumber(astraFinalIntelligenceMaturation?.retrieval_accuracy).toFixed(1)],
+            ["Learning priority", astraFinalIntelligenceMaturation?.learning_prioritization_status],
+            ["Research department", astraFinalIntelligenceMaturation?.research_department_status],
+            ["Research studies", `${safeNumber(astraFinalIntelligenceMaturation?.completed_research_studies).toFixed(0)} / ${safeNumber(astraFinalIntelligenceMaturation?.research_studies).toFixed(0)}`],
+            ["Portfolio intelligence", astraFinalIntelligenceMaturation?.portfolio_intelligence_status],
+            ["Capital efficiency", safeNumber(astraFinalIntelligenceMaturation?.capital_efficiency_score).toFixed(1)],
+            ["Self optimization", astraFinalIntelligenceMaturation?.self_optimization_status],
+            ["Health monitoring", astraFinalIntelligenceMaturation?.health_monitoring_status],
+            ["Expected PF lift", safeNumber(astraFinalIntelligenceMaturation?.expected_pf_improvement).toFixed(3)],
+            ["Provider calls", safeNumber(astraFinalIntelligenceMaturation?.provider_calls_used).toFixed(0)],
+            ["LLM calls", safeNumber(astraFinalIntelligenceMaturation?.llm_calls_used).toFixed(0)],
+            ["Endpoint storm", astraFinalIntelligenceMaturation?.dashboard_endpoint_storm_created ? "yes" : "no"],
+            ["Behavior safe", astraFinalIntelligenceMaturation?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Focus allocation: {Object.entries(astraFinalIntelligenceMaturation?.attention_allocation_pct || {}).map(([key, value]) => `${String(key).replaceAll("_", " ")} ${safeNumber(value).toFixed(0)}%`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Self-optimization: weakness {String(astraFinalIntelligenceMaturation?.top_weakness || "warming up").replaceAll("_", " ")}, opportunity {String(astraFinalIntelligenceMaturation?.top_opportunity || "warming up").replaceAll("_", " ")}, bottleneck {String(astraFinalIntelligenceMaturation?.top_bottleneck || "warming up").replaceAll("_", " ")}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Profit focus: {(astraFinalIntelligenceMaturation?.focus_areas || []).slice(0, 5).map((name) => String(name).replaceAll("_", " ")).join(" | ") || "warming up"}; expected capture improvement {safeNumber(astraFinalIntelligenceMaturation?.expected_capture_improvement_pct).toFixed(2)}%, giveback reduction {safeNumber(astraFinalIntelligenceMaturation?.expected_giveback_reduction_pct).toFixed(2)}%, exit improvement {safeNumber(astraFinalIntelligenceMaturation?.expected_exit_improvement_pct).toFixed(2)}%.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Integration: Librarian {String(astraFinalIntelligenceMaturation?.librarian_integration_status || "warming up").replaceAll("_", " ")}, Unified Truth {String(astraFinalIntelligenceMaturation?.unified_truth_integration_status || "warming up").replaceAll("_", " ")}, Executive Assistant {String(astraFinalIntelligenceMaturation?.executive_assistant_integration_status || "warming up").replaceAll("_", " ")}, Astra Brain {String(astraFinalIntelligenceMaturation?.astra_brain_integration_status || "warming up").replaceAll("_", " ")}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Summary: {String(astraFinalIntelligenceMaturation?.intelligence_summary || astraFinalIntelligenceMaturation?.recommended_next_focus || "warming up").replaceAll("_", " ")}
           </div>
         </div>
       </details>
