@@ -324,6 +324,7 @@ class UnifiedLearningDiagnosticsV1:
         profit_optimization_context_intelligence = self._profit_optimization_context_intelligence_suite_v1_summary(statuses.get("profit_optimization_context_intelligence_suite_v1") or {})
         trade_lifecycle_audit_truth_horizon_integrity = self._trade_lifecycle_audit_truth_horizon_integrity_suite_v1_summary(statuses.get("trade_lifecycle_audit_truth_horizon_integrity_suite_v1") or {})
         astra_foundation_stabilization_governance = self._astra_foundation_stabilization_governance_bundle_v1_summary(statuses.get("astra_foundation_stabilization_governance_bundle_v1") or {})
+        astra_tier2a_librarian_executive_truth_layer = self._astra_tier2a_librarian_executive_truth_layer_v1_summary(statuses.get("astra_tier2a_librarian_executive_truth_layer_v1") or {})
         trade_thesis_validation = self._trade_thesis_validation_v1_summary(statuses.get("trade_thesis_validation_v1") or {})
         market_transition_detection = self._market_transition_detection_v1_summary(statuses.get("market_transition_detection_v1") or {})
         trade_family_intelligence = self._trade_family_intelligence_v1_summary(statuses.get("trade_family_intelligence_v1") or {})
@@ -419,6 +420,7 @@ class UnifiedLearningDiagnosticsV1:
             "profit_optimization_context_intelligence_suite_v1": profit_optimization_context_intelligence,
             "trade_lifecycle_audit_truth_horizon_integrity_suite_v1": trade_lifecycle_audit_truth_horizon_integrity,
             "astra_foundation_stabilization_governance_bundle_v1": astra_foundation_stabilization_governance,
+            "astra_tier2a_librarian_executive_truth_layer_v1": astra_tier2a_librarian_executive_truth_layer,
             "trade_thesis_validation_v1": trade_thesis_validation,
             "market_transition_detection_v1": market_transition_detection,
             "trade_family_intelligence_v1": trade_family_intelligence,
@@ -3366,6 +3368,73 @@ class UnifiedLearningDiagnosticsV1:
             "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
         }
 
+    def _astra_tier2a_librarian_executive_truth_layer_v1_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = dict(payload or {})
+        librarian = dict(data.get("astra_librarian_v1") or {})
+        executive = dict(data.get("executive_assistant_orchestrator_v1") or {})
+        truth = dict(data.get("unified_truth_layer_v1") or {})
+        compression = dict(data.get("knowledge_compression_engine_v1") or {})
+        retrieval = dict(data.get("retrieval_engine_integration_v1") or {})
+        tier1 = dict(data.get("tier1_integration") or {})
+        shadow = dict(data.get("shadow_lab_integration") or {})
+        return {
+            "enabled": bool(data.get("enabled", False)),
+            "suite": _text(data.get("suite"), "ASTRA Tier 2A - Librarian, Executive Assistant & Unified Truth Layer V1"),
+            "version": _text(data.get("version"), "1.0.0"),
+            "status": _text(data.get("status"), "insufficient_evidence"),
+            "mode": _text(data.get("mode"), "shadow_only_intelligence_organization"),
+            "source_systems_reviewed": _to_int(data.get("source_systems_reviewed"), 0),
+            "lessons_organized": _to_int(data.get("lessons_organized") or librarian.get("lessons_organized"), 0),
+            "duplicate_findings_reduced": _to_int(data.get("duplicate_findings_reduced") or truth.get("duplicate_findings_reduced"), 0),
+            "master_truths_created": _to_int(data.get("master_truths_created") or truth.get("master_truths_created"), 0),
+            "retrieval_indexes_created": bool(data.get("retrieval_indexes_created") or librarian.get("retrieval_indexes_created")),
+            "retrieval_index_count": _to_int(retrieval.get("index_count"), 0),
+            "compression_status": _text(data.get("compression_status") or compression.get("compression_status"), "insufficient_evidence"),
+            "executive_assistant_status": _text(data.get("executive_assistant_status") or executive.get("executive_assistant_status"), "insufficient_evidence"),
+            "unified_truth_status": _text(data.get("unified_truth_status") or truth.get("unified_truth_status"), "insufficient_evidence"),
+            "strongest_master_truth": _text(data.get("strongest_master_truth") or truth.get("strongest_master_truth"), "insufficient_evidence"),
+            "recommended_next_focus": _text(data.get("recommended_next_focus"), "continue_cache_first_intelligence_organization"),
+            "top_5_insights": list(data.get("top_5_insights") or executive.get("top_5") or [])[:5],
+            "top_10_insights": list(data.get("top_10_insights") or executive.get("top_10") or [])[:10],
+            "top_25_insights": list(data.get("top_25_insights") or executive.get("top_25") or [])[:25],
+            "master_issues": list(truth.get("master_issues") or [])[:12],
+            "retrieval_indexes": dict(librarian.get("retrieval_indexes") or retrieval.get("indexes") or {}),
+            "registered_systems": list(tier1.get("registered_systems") or [])[:8],
+            "tier1_integration_status": _text(tier1.get("status"), "insufficient_evidence"),
+            "shadow_lab_integration_status": _text(shadow.get("status"), "shadow_only"),
+            "policy_promotion_enabled": bool(shadow.get("policy_promotion_enabled", False)),
+            "trade_influence_enabled": bool(shadow.get("trade_influence_enabled", False)),
+            "ranking_influence_enabled": bool(shadow.get("ranking_influence_enabled", False)),
+            "broker_influence_enabled": bool(shadow.get("broker_influence_enabled", False)),
+            "paper_execution_influence_enabled": bool(shadow.get("paper_execution_influence_enabled", False)),
+            "dashboard_performance_impact": _text(data.get("dashboard_performance_impact"), "single_unified_diagnostics_panel_cache_first"),
+            "dashboard_provider_calls_used": _to_int(data.get("dashboard_provider_calls_used"), 0),
+            "dashboard_api_calls_added": _to_int(data.get("dashboard_api_calls_added"), 0),
+            "dashboard_endpoint_storm_created": bool(data.get("dashboard_endpoint_storm_created", False)),
+            "build_ms": _to_float(data.get("build_ms"), 0.0),
+            "api_calls_used": _to_int(data.get("api_calls_used"), 0),
+            "provider_calls_used": _to_int(data.get("provider_calls_used"), 0),
+            "llm_calls_used": _to_int(data.get("llm_calls_used"), 0),
+            "behavior_safe_to_apply": bool(data.get("behavior_safe_to_apply", False)),
+            "shadow_analysis_mode": bool(data.get("shadow_analysis_mode", True)),
+            "advisory_only": bool(data.get("advisory_only", True)),
+            "paper_only_preserved": bool(data.get("paper_only_preserved", True)),
+            "alpaca_paper_only_preserved": bool(data.get("alpaca_paper_only_preserved", True)),
+            "live_trading_changed": bool(data.get("live_trading_changed", False)),
+            "broker_behavior_changed": bool(data.get("broker_behavior_changed", False)),
+            "ranking_behavior_changed": bool(data.get("ranking_behavior_changed", False)),
+            "entry_behavior_changed": bool(data.get("entry_behavior_changed", False)),
+            "exit_behavior_changed": bool(data.get("exit_behavior_changed", False)),
+            "position_sizing_changed": bool(data.get("position_sizing_changed", False)),
+            "portfolio_allocation_changed": bool(data.get("portfolio_allocation_changed", False)),
+            "thresholds_changed": bool(data.get("thresholds_changed", False)),
+            "paper_execution_changed": bool(data.get("paper_execution_changed", False)),
+            "forced_exits_enabled": bool(data.get("forced_exits_enabled", False)),
+            "forced_trades_enabled": bool(data.get("forced_trades_enabled", False)),
+            "partial_sells_enabled": bool(data.get("partial_sells_enabled", False)),
+            "automatic_trailing_stops_enabled": bool(data.get("automatic_trailing_stops_enabled", False)),
+        }
+
     def _trade_thesis_validation_v1_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = dict(payload or {})
         return {
@@ -5004,7 +5073,7 @@ class UnifiedLearningDiagnosticsV1:
             "portfolio_diversification_correlation_v2", "profit_seeking_adaptive_exploration", "mobile_runtime_compaction",
             "market_calendar_knowledge", "broad_universe_intake_promotion", "trade_lifecycle_excursion",
             "trade_lifecycle_excursion_v2", "adaptive_profit_capture", "profit_capture_peak_decay_exit_validation_suite_v1", "adaptive_execution_exit_intelligence_v3", "trade_archetype_regime",
-            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "long_term_memory_symbol_retrieval_suite_v1", "virtual_paper_convergence_symbol_attribution_v1", "accelerated_learning_symbol_intelligence_suite_v1", "realistic_shadow_evidence_learning_lab_v1", "historical_intelligence_market_memory_suite_v1", "catalyst_persistence_decay_curves_v2", "catalyst_lifecycle_intelligence_v1", "cross_sector_capital_flow_memory_v1", "shadow_vs_paper_performance_attribution_v1", "candidate_ranking_attribution_promotion_intelligence_v1", "learning_roi_engine_v1", "evidence_quality_scoring_v1", "confidence_decomposition_engine_v1", "learning_drift_detection_v1", "market_regime_similarity_engine_v1", "ranking_tournament_engine_v1", "exit_tournament_engine_v1", "conviction_calibration_engine_v1", "intelligence_quality_learning_efficiency_suite_v1", "advanced_attribution_controlled_exit_learning_roi_suite_v1", "profit_optimization_context_intelligence_suite_v1", "trade_lifecycle_audit_truth_horizon_integrity_suite_v1", "astra_foundation_stabilization_governance_bundle_v1", "trade_thesis_validation_v1", "market_transition_detection_v1", "trade_family_intelligence_v1", "market_condition_attribution_v1", "market_breadth_index_intelligence_v1", "etf_sector_rotation_intelligence_v1", "crypto_shadow_learning_v1", "cross_market_attribution_transfer_learning_v1", "profit_lock_profit_capture_maturation_v2", "shadow_correction_validation_attribution_v1", "controlled_paper_profit_protection_pilot_v1", "adaptive_learning_prioritization_resource_allocation_v1", "autonomous_intelligence_validation_governance_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
+            "exit_learning_expansion_suite_v1", "market_context_learning_suite_v1", "learning_acceleration_retention_suite_v1", "adaptive_learning_infrastructure_suite_v1", "adaptive_worker_activation_orchestration_v1", "confidence_calibration_performance_attribution_v1", "context_evidence_expansion_suite_v1", "catalyst_theme_narrative_capital_flow_intelligence_v2", "decision_optimization_trade_management_suite_v1", "full_opportunity_lifecycle_learning_suite_v1", "long_term_memory_symbol_retrieval_suite_v1", "virtual_paper_convergence_symbol_attribution_v1", "accelerated_learning_symbol_intelligence_suite_v1", "realistic_shadow_evidence_learning_lab_v1", "historical_intelligence_market_memory_suite_v1", "catalyst_persistence_decay_curves_v2", "catalyst_lifecycle_intelligence_v1", "cross_sector_capital_flow_memory_v1", "shadow_vs_paper_performance_attribution_v1", "candidate_ranking_attribution_promotion_intelligence_v1", "learning_roi_engine_v1", "evidence_quality_scoring_v1", "confidence_decomposition_engine_v1", "learning_drift_detection_v1", "market_regime_similarity_engine_v1", "ranking_tournament_engine_v1", "exit_tournament_engine_v1", "conviction_calibration_engine_v1", "intelligence_quality_learning_efficiency_suite_v1", "advanced_attribution_controlled_exit_learning_roi_suite_v1", "profit_optimization_context_intelligence_suite_v1", "trade_lifecycle_audit_truth_horizon_integrity_suite_v1", "astra_foundation_stabilization_governance_bundle_v1", "astra_tier2a_librarian_executive_truth_layer_v1", "trade_thesis_validation_v1", "market_transition_detection_v1", "trade_family_intelligence_v1", "market_condition_attribution_v1", "market_breadth_index_intelligence_v1", "etf_sector_rotation_intelligence_v1", "crypto_shadow_learning_v1", "cross_market_attribution_transfer_learning_v1", "profit_lock_profit_capture_maturation_v2", "shadow_correction_validation_attribution_v1", "controlled_paper_profit_protection_pilot_v1", "adaptive_learning_prioritization_resource_allocation_v1", "autonomous_intelligence_validation_governance_v1", "replay_counterfactual_learning_v2", "opportunity_cost_learning",
             "advanced_learning_intelligence",
             "blind_spot_detection", "learning_issue_audit", "remote_runtime_consistency", "capacity_expansion_status",
             "paper_throughput_exit_validation_catalyst_intelligence_v1", "multi_horizon_paper_capacity_exit_validation_v1", "controlled_paper_learned_exit_validation_v1",
@@ -5079,6 +5148,7 @@ class UnifiedLearningDiagnosticsV1:
             "profit_optimization_context_intelligence_suite_v1": "/api/profit_optimization_context_intelligence_suite_v1",
             "trade_lifecycle_audit_truth_horizon_integrity_suite_v1": "/api/trade_lifecycle_audit_truth_horizon_integrity_suite_v1",
             "astra_foundation_stabilization_governance_bundle_v1": "/api/astra_foundation_stabilization_governance_bundle_v1",
+            "astra_tier2a_librarian_executive_truth_layer_v1": "/api/astra_tier2a_librarian_executive_truth_layer_v1",
             "trade_thesis_validation_v1": "/api/trade_thesis_validation_v1",
             "market_transition_detection_v1": "/api/market_transition_detection_v1",
             "trade_family_intelligence_v1": "/api/trade_family_intelligence_v1",

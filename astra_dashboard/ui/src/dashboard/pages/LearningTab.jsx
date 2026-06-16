@@ -1623,6 +1623,7 @@ export default function LearningTab({ compact = false }) {
   const profitOptimizationContextIntelligence = unified?.profit_optimization_context_intelligence_suite_v1 || {};
   const tradeLifecycleAuditTruthHorizonIntegrity = unified?.trade_lifecycle_audit_truth_horizon_integrity_suite_v1 || {};
   const astraFoundationStabilizationGovernance = unified?.astra_foundation_stabilization_governance_bundle_v1 || {};
+  const astraTier2aLibrarianExecutiveTruthLayer = unified?.astra_tier2a_librarian_executive_truth_layer_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
   const tradeFamilyIntelligence = unified?.trade_family_intelligence_v1 || {};
@@ -1792,6 +1793,7 @@ export default function LearningTab({ compact = false }) {
       profit_optimization_context_intelligence_suite_v1: profitOptimizationContextIntelligence,
       trade_lifecycle_audit_truth_horizon_integrity_suite_v1: tradeLifecycleAuditTruthHorizonIntegrity,
       astra_foundation_stabilization_governance_bundle_v1: astraFoundationStabilizationGovernance,
+      astra_tier2a_librarian_executive_truth_layer_v1: astraTier2aLibrarianExecutiveTruthLayer,
       candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
       profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
       realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
@@ -2667,6 +2669,47 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Registered systems: {(astraFoundationStabilizationGovernance?.registered_systems || []).slice(0, 6).map((row) => `${String(row?.system_name || "system")} (${String(row?.owner || "owner")})`).join(" | ") || "warming up"}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Astra Tier 2A Librarian, Executive Assistant & Unified Truth Layer V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is compressing existing intelligence into deduplicated lessons, retrieval indexes, master truths, and executive-priority insights. This section is shadow-only, advisory-only, and does not change rankings, entries, exits, sizing, allocations, broker behavior, or paper execution.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Status", astraTier2aLibrarianExecutiveTruthLayer?.status],
+            ["Source systems reviewed", safeNumber(astraTier2aLibrarianExecutiveTruthLayer?.source_systems_reviewed).toFixed(0)],
+            ["Lessons organized", safeNumber(astraTier2aLibrarianExecutiveTruthLayer?.lessons_organized).toFixed(0)],
+            ["Duplicate findings reduced", safeNumber(astraTier2aLibrarianExecutiveTruthLayer?.duplicate_findings_reduced).toFixed(0)],
+            ["Master truths", safeNumber(astraTier2aLibrarianExecutiveTruthLayer?.master_truths_created).toFixed(0)],
+            ["Retrieval indexes", astraTier2aLibrarianExecutiveTruthLayer?.retrieval_indexes_created ? `${safeNumber(astraTier2aLibrarianExecutiveTruthLayer?.retrieval_index_count).toFixed(0)} created` : "warming up"],
+            ["Compression", astraTier2aLibrarianExecutiveTruthLayer?.compression_status],
+            ["Executive Assistant", astraTier2aLibrarianExecutiveTruthLayer?.executive_assistant_status],
+            ["Unified Truth", astraTier2aLibrarianExecutiveTruthLayer?.unified_truth_status],
+            ["Strongest truth", astraTier2aLibrarianExecutiveTruthLayer?.strongest_master_truth],
+            ["Tier 1 integration", astraTier2aLibrarianExecutiveTruthLayer?.tier1_integration_status],
+            ["Shadow Lab integration", astraTier2aLibrarianExecutiveTruthLayer?.shadow_lab_integration_status],
+            ["Dashboard calls added", safeNumber(astraTier2aLibrarianExecutiveTruthLayer?.dashboard_api_calls_added).toFixed(0)],
+            ["Provider calls", safeNumber(astraTier2aLibrarianExecutiveTruthLayer?.provider_calls_used).toFixed(0)],
+            ["Endpoint storm", astraTier2aLibrarianExecutiveTruthLayer?.dashboard_endpoint_storm_created ? "yes" : "no"],
+            ["Behavior safe", astraTier2aLibrarianExecutiveTruthLayer?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Top executive insights: {(astraTier2aLibrarianExecutiveTruthLayer?.top_5_insights || []).slice(0, 5).map((row) => `${String(row?.priority || "MEDIUM")}: ${String(row?.issue || "issue")} - ${String(row?.recommended_focus || "review").replaceAll("_", " ")}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Master truths: {(astraTier2aLibrarianExecutiveTruthLayer?.master_issues || []).slice(0, 6).map((row) => `${String(row?.issue || "issue")} (${safeNumber(row?.confidence).toFixed(0)}%, ${safeNumber(row?.evidence_sources).toFixed(0)} sources)`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Registered Tier 2A systems: {(astraTier2aLibrarianExecutiveTruthLayer?.registered_systems || []).slice(0, 5).map((row) => `${String(row?.system_name || "system")} (${String(row?.owner || "owner")})`).join(" | ") || "warming up"}
           </div>
         </div>
       </details>
