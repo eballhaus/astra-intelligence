@@ -1624,6 +1624,7 @@ export default function LearningTab({ compact = false }) {
   const tradeLifecycleAuditTruthHorizonIntegrity = unified?.trade_lifecycle_audit_truth_horizon_integrity_suite_v1 || {};
   const astraFoundationStabilizationGovernance = unified?.astra_foundation_stabilization_governance_bundle_v1 || {};
   const astraTier2aLibrarianExecutiveTruthLayer = unified?.astra_tier2a_librarian_executive_truth_layer_v1 || {};
+  const astraSatelliteNetwork = unified?.astra_satellite_network_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
   const tradeFamilyIntelligence = unified?.trade_family_intelligence_v1 || {};
@@ -1794,6 +1795,7 @@ export default function LearningTab({ compact = false }) {
       trade_lifecycle_audit_truth_horizon_integrity_suite_v1: tradeLifecycleAuditTruthHorizonIntegrity,
       astra_foundation_stabilization_governance_bundle_v1: astraFoundationStabilizationGovernance,
       astra_tier2a_librarian_executive_truth_layer_v1: astraTier2aLibrarianExecutiveTruthLayer,
+      astra_satellite_network_v1: astraSatelliteNetwork,
       candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
       profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
       realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
@@ -2710,6 +2712,53 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Registered Tier 2A systems: {(astraTier2aLibrarianExecutiveTruthLayer?.registered_systems || []).slice(0, 5).map((row) => `${String(row?.system_name || "system")} (${String(row?.owner || "owner")})`).join(" | ") || "warming up"}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Astra Tier 2B Satellites 1-4 & Satellite Coordinator V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra’s first satellite network gathers market structure, sector rotation, catalyst, and trade-family context, compresses findings, and passes summaries through the Librarian, Unified Truth, and Executive Assistant chain. Satellites are shadow-only information systems and never influence trades, rankings, broker behavior, or paper execution.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Status", astraSatelliteNetwork?.status],
+            ["Coordinator", astraSatelliteNetwork?.coordinator_status],
+            ["Coordinator health", astraSatelliteNetwork?.coordinator_health],
+            ["Satellites registered", safeNumber(astraSatelliteNetwork?.satellites_registered).toFixed(0)],
+            ["Compression", astraSatelliteNetwork?.compression_status],
+            ["Compressed lessons", safeNumber(astraSatelliteNetwork?.compressed_lessons_count).toFixed(0)],
+            ["Duplicates prevented", safeNumber(astraSatelliteNetwork?.duplicates_prevented).toFixed(0)],
+            ["Market Structure", astraSatelliteNetwork?.market_structure_status],
+            ["Sector Rotation", astraSatelliteNetwork?.sector_rotation_status],
+            ["Catalyst", astraSatelliteNetwork?.catalyst_status],
+            ["Trade Family", astraSatelliteNetwork?.trade_family_status],
+            ["Bandwidth impact", astraSatelliteNetwork?.bandwidth_impact],
+            ["Provider/API impact", astraSatelliteNetwork?.provider_api_impact],
+            ["Provider calls", safeNumber(astraSatelliteNetwork?.provider_calls_used).toFixed(0)],
+            ["Endpoint storm", astraSatelliteNetwork?.dashboard_endpoint_storm_created ? "yes" : "no"],
+            ["Behavior safe", astraSatelliteNetwork?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Satellite health: {(astraSatelliteNetwork?.satellite_statuses || astraSatelliteNetwork?.satellite_health_rows || []).slice(0, 4).map((row) => `${String(row?.satellite_name || "satellite")} ${String(row?.health || "warming up").replaceAll("_", " ")} (${safeNumber(row?.confidence).toFixed(0)}%)`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Market summary: {String(astraSatelliteNetwork?.market_structure_summary || "warming up").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Sector summary: {String(astraSatelliteNetwork?.sector_rotation_summary || "warming up").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Catalyst summary: {String(astraSatelliteNetwork?.catalyst_summary || "warming up").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Trade-family summary: {String(astraSatelliteNetwork?.trade_family_summary || "warming up").replaceAll("_", " ")}
           </div>
         </div>
       </details>
