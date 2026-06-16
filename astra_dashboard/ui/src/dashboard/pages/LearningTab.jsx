@@ -1622,6 +1622,7 @@ export default function LearningTab({ compact = false }) {
   const advancedAttributionControlledExitLearningRoi = unified?.advanced_attribution_controlled_exit_learning_roi_suite_v1 || {};
   const profitOptimizationContextIntelligence = unified?.profit_optimization_context_intelligence_suite_v1 || {};
   const tradeLifecycleAuditTruthHorizonIntegrity = unified?.trade_lifecycle_audit_truth_horizon_integrity_suite_v1 || {};
+  const astraFoundationStabilizationGovernance = unified?.astra_foundation_stabilization_governance_bundle_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
   const tradeFamilyIntelligence = unified?.trade_family_intelligence_v1 || {};
@@ -1790,6 +1791,7 @@ export default function LearningTab({ compact = false }) {
       advanced_attribution_controlled_exit_learning_roi_suite_v1: advancedAttributionControlledExitLearningRoi,
       profit_optimization_context_intelligence_suite_v1: profitOptimizationContextIntelligence,
       trade_lifecycle_audit_truth_horizon_integrity_suite_v1: tradeLifecycleAuditTruthHorizonIntegrity,
+      astra_foundation_stabilization_governance_bundle_v1: astraFoundationStabilizationGovernance,
       candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
       profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
       realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
@@ -2620,6 +2622,51 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Truth audit: {(tradeLifecycleAuditTruthHorizonIntegrity?.truth_validation_rows || []).slice(0, 6).map((row) => `${String(row?.symbol || "symbol")} ideal ${String(row?.ideal_action || "hold").replaceAll("_", " ")} confidence ${safeNumber(row?.truth_confidence).toFixed(1)}`).join(" | ") || "warming up"}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Astra Tier 1 Foundation Stabilization & Governance Bundle V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is verifying trading integrity, exit visibility, profit-capture truth, capital efficiency, internal audit, operations oversight, resource governance, system registry, and knowledge preservation. This bundle is advisory-only and does not change broker behavior, ranking, entries, exits, sizing, thresholds, allocation, or paper execution.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Status", astraFoundationStabilizationGovernance?.status],
+            ["Unknown horizons", safeNumber(astraFoundationStabilizationGovernance?.unknown_horizon_positions).toFixed(0)],
+            ["Horizon inference fix", astraFoundationStabilizationGovernance?.infer_horizon_style_reads_paper_entry_horizon_style ? "verified" : "not verified"],
+            ["Broker source of truth", astraFoundationStabilizationGovernance?.broker_confirmed_positions_source_of_truth ? "yes" : "no"],
+            ["Stale rows distort active", astraFoundationStabilizationGovernance?.stale_internal_rows_distort_active_positions ? "yes" : "no"],
+            ["Learned exit candidates", safeNumber(astraFoundationStabilizationGovernance?.learned_exit_candidates_today).toFixed(0)],
+            ["Candidate diagnosis", astraFoundationStabilizationGovernance?.learned_exit_candidates_today_diagnosis],
+            ["Exit due", safeNumber(astraFoundationStabilizationGovernance?.horizon_exit_due_count).toFixed(0)],
+            ["Conversion candidates", safeNumber(astraFoundationStabilizationGovernance?.horizon_conversion_candidate_count).toFixed(0)],
+            ["Biggest exit blocker", astraFoundationStabilizationGovernance?.biggest_exit_blocker],
+            ["Biggest profit leak", astraFoundationStabilizationGovernance?.biggest_profit_capture_leak],
+            ["Giveback", safeNumber(astraFoundationStabilizationGovernance?.giveback).toFixed(2)],
+            ["Capture ratio", safeNumber(astraFoundationStabilizationGovernance?.capture_ratio).toFixed(3)],
+            ["Trapped capital", astraFoundationStabilizationGovernance?.trapped_capital_status],
+            ["Oversight governor", astraFoundationStabilizationGovernance?.oversight_governor_status],
+            ["API governor", astraFoundationStabilizationGovernance?.api_governor_status],
+            ["Registry", `${String(astraFoundationStabilizationGovernance?.registry_status || "warming up").replaceAll("_", " ")} (${safeNumber(astraFoundationStabilizationGovernance?.registered_system_count).toFixed(0)})`],
+            ["Knowledge preservation", astraFoundationStabilizationGovernance?.knowledge_preservation_status],
+            ["Dashboard provider calls", safeNumber(astraFoundationStabilizationGovernance?.dashboard_provider_calls_used).toFixed(0)],
+            ["Behavior safe", astraFoundationStabilizationGovernance?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Horizon exit candidates: {(astraFoundationStabilizationGovernance?.horizon_exit_candidate_rows || []).slice(0, 6).map((row) => `${String(row?.symbol || "symbol")} ${String(row?.horizon || "unknown").replaceAll("_", " ")} due ${row?.exit_due ? "yes" : "no"}: ${String(row?.reason || "warming up").replaceAll("_", " ")}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Exit pipeline: generated {safeNumber(astraFoundationStabilizationGovernance?.generated_exits).toFixed(0)}, suppressed {safeNumber(astraFoundationStabilizationGovernance?.suppressed_exits).toFixed(0)}, blocked {safeNumber(astraFoundationStabilizationGovernance?.blocked_exits).toFixed(0)}, rejected {safeNumber(astraFoundationStabilizationGovernance?.rejected_exits).toFixed(0)}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Registered systems: {(astraFoundationStabilizationGovernance?.registered_systems || []).slice(0, 6).map((row) => `${String(row?.system_name || "system")} (${String(row?.owner || "owner")})`).join(" | ") || "warming up"}
           </div>
         </div>
       </details>
