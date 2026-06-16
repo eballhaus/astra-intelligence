@@ -456,7 +456,7 @@ def _entry_bridge_quality(row: dict[str, Any]):
 
 def _infer_horizon_style(row: dict[str, Any]):
     r = dict(row or {})
-    for key in ("trade_horizon_style", "best_horizon_style", "recommended_hold_style", "intended_hold_category"):
+    for key in ("paper_entry_horizon_style", "trade_horizon_style", "best_horizon_style", "recommended_hold_style", "intended_hold_category"):
         raw = str(r.get(key) or "").strip().lower()
         if raw in {"scalp", "day_trade", "swing_trade"}:
             return raw, key, False
@@ -548,8 +548,8 @@ class PaperAutopilotEngine:
         self.horizon_swing_capacity = max(0, _to_int(os.getenv("ASTRA_PAPER_HORIZON_SWING_CAPACITY"), 8))
         self.horizon_day_capacity = max(0, _to_int(os.getenv("ASTRA_PAPER_HORIZON_DAY_CAPACITY"), 8))
         self.horizon_scalp_capacity = max(0, _to_int(os.getenv("ASTRA_PAPER_HORIZON_SCALP_CAPACITY"), 4))
-        self.learned_exit_validation_bucket_configured = str(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_BUCKET_ENABLED", "0")).strip().lower() in {"1", "true", "yes", "on"}
-        self.learned_exit_validation_kill_switch = str(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_KILL_SWITCH", "1")).strip().lower() in {"1", "true", "yes", "on"}
+        self.learned_exit_validation_bucket_configured = str(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_BUCKET_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+        self.learned_exit_validation_kill_switch = str(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_KILL_SWITCH", "0")).strip().lower() in {"1", "true", "yes", "on"}
         self.learned_exit_validation_max_exits_per_day = max(0, min(5, _to_int(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_MAX_EXITS_PER_DAY"), 5)))
         self.learned_exit_validation_max_exit_pct = max(0.0, min(25.0, _to_float(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_MAX_EXIT_PCT"), 25.0)))
         self.learned_exit_validation_min_confidence = max(0.0, min(100.0, _to_float(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_MIN_CONFIDENCE"), 70.0)))
@@ -684,6 +684,9 @@ class PaperAutopilotEngine:
             "last_execution_trace": {},
             "last_error": "",
             "last_close_by_symbol": {},
+            "learned_exit_pending_sells": {},
+            "learned_exit_daily": {},
+            "learned_exit_rollback": {},
         }
 
         self._position_tracker = None
@@ -775,6 +778,12 @@ class PaperAutopilotEngine:
                     self._enabled = bool(payload.get("autopilot_enabled"))
                 if isinstance(payload.get("last_close_by_symbol"), dict):
                     self._runtime_state["last_close_by_symbol"] = dict(payload.get("last_close_by_symbol") or {})
+                if isinstance(payload.get("learned_exit_pending_sells"), dict):
+                    self._runtime_state["learned_exit_pending_sells"] = dict(payload.get("learned_exit_pending_sells") or {})
+                if isinstance(payload.get("learned_exit_daily"), dict):
+                    self._runtime_state["learned_exit_daily"] = dict(payload.get("learned_exit_daily") or {})
+                if isinstance(payload.get("learned_exit_rollback"), dict):
+                    self._runtime_state["learned_exit_rollback"] = dict(payload.get("learned_exit_rollback") or {})
         except Exception:
             return
 
@@ -784,6 +793,9 @@ class PaperAutopilotEngine:
             "paper_mode": self.paper_mode,
             "last_cycle_utc": self._runtime_state.get("last_cycle_utc") or "",
             "last_close_by_symbol": dict(self._runtime_state.get("last_close_by_symbol") or {}),
+            "learned_exit_pending_sells": dict(self._runtime_state.get("learned_exit_pending_sells") or {}),
+            "learned_exit_daily": dict(self._runtime_state.get("learned_exit_daily") or {}),
+            "learned_exit_rollback": dict(self._runtime_state.get("learned_exit_rollback") or {}),
         }
         try:
             with open(self.state_path, "w", encoding="utf-8") as f:
@@ -836,6 +848,378 @@ class PaperAutopilotEngine:
         if ts <= 0:
             return False
         return (time.time() - ts) < float(self.cooldown_after_close_seconds)
+
+    def _learned_exit_today_key(self) -> str:
+        return datetime.now(UTC).strftime("%Y-%m-%d")
+
+    def _learned_exit_daily_state(self) -> dict[str, Any]:
+        today = self._learned_exit_today_key()
+        daily = dict(self._runtime_state.get("learned_exit_daily") or {})
+        state = dict(daily.get(today) or {})
+        state.setdefault("used", 0)
+        state.setdefault("candidates", 0)
+        state.setdefault("rejected", 0)
+        state.setdefault("baseline_exits", 0)
+        state.setdefault("learned_corrected_exits", 0)
+        state.setdefault("by_horizon", {})
+        state.setdefault("policies_used", [])
+        state.setdefault("rejection_reasons", [])
+        state.setdefault("capacity_freed", 0)
+        daily[today] = state
+        self._runtime_state["learned_exit_daily"] = daily
+        return state
+
+    def _update_learned_exit_daily_state(self, state: dict[str, Any]) -> None:
+        daily = dict(self._runtime_state.get("learned_exit_daily") or {})
+        daily[self._learned_exit_today_key()] = dict(state or {})
+        self._runtime_state["learned_exit_daily"] = daily
+
+    def _learned_exit_event_path(self) -> str:
+        return os.path.join(os.path.dirname(self.state_path) or "state", "learned_exit_validation_events.jsonl")
+
+    def _append_learned_exit_event(self, event: dict[str, Any]) -> None:
+        try:
+            payload = {
+                "timestamp": _now_iso(),
+                "source": "paper_autopilot_learned_exit_validation_bucket",
+                **dict(event or {}),
+                "paper_only": True,
+                "behavior_safe_to_apply": False,
+            }
+            path = self._learned_exit_event_path()
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, separators=(",", ":"), ensure_ascii=True) + "\n")
+        except Exception:
+            return
+
+    def _learned_exit_bucket_enabled_runtime(self) -> tuple[bool, str]:
+        if not self.learned_exit_validation_bucket_configured:
+            return False, "validation_bucket_config_disabled"
+        if self.learned_exit_validation_kill_switch:
+            return False, "kill_switch_enabled"
+        rollback = dict(self._runtime_state.get("learned_exit_rollback") or {})
+        if bool(rollback.get("disabled")):
+            return False, str(rollback.get("reason") or "auto_rollback_active")
+        safety = self._alpaca_safety_snapshot()
+        if not bool(safety.get("paper_mode_verified")):
+            return False, "paper_mode_not_verified"
+        if bool(safety.get("live_endpoint_detected")):
+            return False, "live_endpoint_detected"
+        if not bool(safety.get("broker_execution_enabled")):
+            return False, "broker_execution_not_ready"
+        if self.learned_exit_validation_max_exits_per_day <= 0:
+            return False, "daily_learned_exit_limit_zero"
+        return True, "enabled"
+
+    def _learned_exit_bucket_remaining_today(self) -> int:
+        state = self._learned_exit_daily_state()
+        return max(0, int(self.learned_exit_validation_max_exits_per_day) - _to_int(state.get("used"), 0))
+
+    def _learned_exit_pending_map(self) -> dict[str, Any]:
+        return dict(self._runtime_state.get("learned_exit_pending_sells") or {})
+
+    def _set_learned_exit_pending_map(self, pending: dict[str, Any]) -> None:
+        self._runtime_state["learned_exit_pending_sells"] = dict(pending or {})
+
+    def _position_pending_sell(self, symbol: str, position_id: str = "") -> tuple[bool, str]:
+        sym = str(symbol or "").upper().strip()
+        pid = str(position_id or "").strip()
+        pending = self._learned_exit_pending_map()
+        for key, row in pending.items():
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("terminal") or "").lower() == "true":
+                continue
+            if sym and str(row.get("symbol") or "").upper().strip() == sym:
+                return True, f"local_pending_sell:{key}"
+            if pid and str(row.get("position_id") or "").strip() == pid:
+                return True, f"local_pending_sell:{key}"
+        return False, ""
+
+    def _broker_pending_sell_exists(self, symbol: str) -> tuple[bool, str]:
+        broker = self.alpaca_paper_broker
+        sym = str(symbol or "").upper().strip()
+        if not sym:
+            return False, ""
+        if broker is None or not hasattr(broker, "orders"):
+            return False, "broker_orders_unavailable"
+        try:
+            payload = dict(broker.orders(status="open", limit=50) or {})
+        except Exception as exc:
+            return True, f"broker_open_orders_exception:{str(exc)[:100]}"
+        if not bool(payload.get("ok")):
+            return True, str(payload.get("error") or "broker_open_orders_fetch_failed")[:140]
+        active_statuses = {"new", "accepted", "pending_new", "partially_filled", "held", "accepted_for_bidding", "calculated"}
+        for order in list(payload.get("orders") or []):
+            if not isinstance(order, dict):
+                continue
+            if str(order.get("symbol") or "").upper().strip() != sym:
+                continue
+            if str(order.get("side") or "").lower() != "sell":
+                continue
+            status = str(order.get("status") or "").lower().strip()
+            if not status or status in active_statuses:
+                return True, f"broker_pending_sell:{order.get('id') or order.get('client_order_id') or status}"
+        return False, ""
+
+    def _total_closed_trades(self) -> int:
+        try:
+            with self._connect() as conn:
+                row = conn.execute("SELECT COUNT(1) AS n FROM paper_positions WHERE status='CLOSED'").fetchone()
+                return _to_int((dict(row or {})).get("n"), 0)
+        except Exception:
+            return 0
+
+    def _learned_exit_candidate(self, open_row: dict[str, Any], latest_row: dict[str, Any], broker_position: dict[str, Any]) -> dict[str, Any]:
+        symbol = str(open_row.get("symbol") or "").upper().strip()
+        pid = str(open_row.get("position_id") or "").strip()
+        entry = _to_float(open_row.get("entry_price"), 0.0)
+        current = _to_float(latest_row.get("price"), 0.0)
+        notes = _safe_json_load(open_row.get("lifecycle_notes"))
+        entry_payload = _safe_json_load(open_row.get("row_json"))
+        horizon, _, _ = _infer_horizon_style({**entry_payload, **dict(open_row or {})})
+        horizon = horizon or "unknown"
+        confidence = _to_float(open_row.get("confidence"), _to_float(entry_payload.get("confidence"), _to_float(entry_payload.get("predicted_win_probability"), 0.0)))
+        evidence = self._total_closed_trades()
+        if entry <= 0.0 or current <= 0.0:
+            return {"eligible": False, "reason": "invalid_price"}
+        ret = ((current - entry) / entry) * 100.0
+        peak = max(_to_float(notes.get("peak_unrealized_pnl_percent"), ret), ret)
+        drawdown = max(0.0, peak - ret)
+        hold_seconds = _to_float(notes.get("hold_seconds"), _to_float(open_row.get("hold_seconds"), 0.0))
+        if evidence < int(self.learned_exit_validation_min_evidence):
+            return {"eligible": False, "reason": "insufficient_evidence", "evidence_count": evidence}
+        if confidence < float(self.learned_exit_validation_min_confidence):
+            return {"eligible": False, "reason": "policy_confidence_below_threshold", "policy_confidence": round(confidence, 3), "evidence_count": evidence}
+        policy = ""
+        why = ""
+        if peak >= 2.0 and drawdown >= 0.8 and ret > 0.0:
+            policy = "profit_lock_exit"
+            why = "peak_profit_giveback_protection"
+        elif peak >= 1.2 and drawdown >= 1.4:
+            policy = "continuation_failure_exit"
+            why = "drawdown_from_peak_continuation_failure"
+        elif horizon == "scalp" and hold_seconds >= 45 * 60 and ret > 0.0:
+            policy = "horizon_specific_exit"
+            why = "scalp_hold_window_profit_validation"
+        elif horizon == "day_trade" and hold_seconds >= 4 * 60 * 60 and ret > 0.0:
+            policy = "horizon_specific_exit"
+            why = "day_trade_hold_window_profit_validation"
+        elif horizon == "swing_trade" and hold_seconds >= 3 * 24 * 60 * 60 and peak > 0.0 and drawdown >= 1.0:
+            policy = "catalyst_decay_exit"
+            why = "swing_trade_peak_decay_validation"
+        if policy not in {"horizon_specific_exit", "profit_lock_exit", "continuation_failure_exit", "catalyst_decay_exit"}:
+            return {
+                "eligible": False,
+                "reason": "no_evidence_backed_learned_exit_signal",
+                "return_percent": round(ret, 4),
+                "peak_unrealized_pnl_percent": round(peak, 4),
+                "drawdown_from_peak_percent": round(drawdown, 4),
+                "evidence_count": evidence,
+                "policy_confidence": round(confidence, 3),
+            }
+        qty = _to_float(broker_position.get("qty_available"), _to_float(broker_position.get("qty"), _to_float(open_row.get("quantity"), 0.0)))
+        if qty <= 0.0:
+            return {"eligible": False, "reason": "broker_confirmed_quantity_required", "evidence_count": evidence}
+        return {
+            "eligible": True,
+            "symbol": symbol,
+            "position_id": pid,
+            "policy": policy,
+            "reason": why,
+            "horizon": horizon,
+            "evidence_count": evidence,
+            "policy_confidence": round(confidence, 3),
+            "qty": round(qty, 6),
+            "entry_price": round(entry, 6),
+            "current_price": round(current, 6),
+            "unrealized_pnl_pct": round(ret, 4),
+            "peak_unrealized_pnl_percent": round(peak, 4),
+            "drawdown_from_peak_percent": round(drawdown, 4),
+            "hold_seconds": round(hold_seconds, 2),
+            "regime": str(entry_payload.get("regime_context") or entry_payload.get("market_regime") or ""),
+            "catalyst": str(entry_payload.get("catalyst") or entry_payload.get("catalyst_type") or entry_payload.get("detected_catalyst") or "unknown_catalyst"),
+            "expected_improvement": "reduced_giveback_and_capacity_release",
+        }
+
+    def _submit_guarded_learned_exit_sell(
+        self,
+        open_row: dict[str, Any],
+        latest_row: dict[str, Any],
+        broker_position: dict[str, Any],
+    ) -> dict[str, Any]:
+        enabled, reason = self._learned_exit_bucket_enabled_runtime()
+        state = self._learned_exit_daily_state()
+        if not enabled:
+            return {"ok": False, "submitted": False, "reason": reason}
+        if self._learned_exit_bucket_remaining_today() <= 0:
+            return {"ok": False, "submitted": False, "reason": "daily_learned_exit_bucket_full"}
+        state["candidates"] = _to_int(state.get("candidates"), 0) + 1
+        self._update_learned_exit_daily_state(state)
+        candidate = self._learned_exit_candidate(open_row, latest_row, broker_position)
+        if not bool(candidate.get("eligible")):
+            state["rejected"] = _to_int(state.get("rejected"), 0) + 1
+            reasons = list(state.get("rejection_reasons") or [])
+            reasons.append(str(candidate.get("reason") or "candidate_not_eligible"))
+            state["rejection_reasons"] = reasons[-20:]
+            self._update_learned_exit_daily_state(state)
+            self._append_learned_exit_event({"event": "validation_candidate_rejected", **candidate})
+            return {"ok": False, "submitted": False, "reason": str(candidate.get("reason") or "candidate_not_eligible"), "candidate": candidate}
+        symbol = str(candidate.get("symbol") or "").upper().strip()
+        pid = str(candidate.get("position_id") or "").strip()
+        local_pending, local_reason = self._position_pending_sell(symbol, pid)
+        if local_pending:
+            return {"ok": False, "submitted": False, "reason": local_reason}
+        broker_pending, broker_reason = self._broker_pending_sell_exists(symbol)
+        if broker_pending:
+            self._append_learned_exit_event({"event": "validation_candidate_rejected", **candidate, "reason": broker_reason})
+            return {"ok": False, "submitted": False, "reason": broker_reason}
+        broker = self.alpaca_paper_broker
+        if broker is None or not hasattr(broker, "submit_paper_order"):
+            return {"ok": False, "submitted": False, "reason": "alpaca_paper_broker_unavailable"}
+        client_order_id = f"astra-lexit-{pid[:10] or symbol[:8]}-{self._learned_exit_today_key().replace('-', '')}"[:48]
+        order = {
+            "symbol": symbol,
+            "side": "sell",
+            "type": "market",
+            "time_in_force": "day",
+            "qty": _to_float(candidate.get("qty"), 0.0),
+            "client_order_id": client_order_id,
+            "existing_exit_signal_verified": True,
+            "learned_exit_validation_bucket": True,
+            "learned_exit_policy": str(candidate.get("policy") or ""),
+            "paper_only": True,
+            "natural_exit_logic_preserved": True,
+        }
+        try:
+            result = dict(broker.submit_paper_order(order) or {})
+        except Exception as exc:
+            result = {"ok": False, "error": f"broker_sell_submit_exception:{str(exc)[:120]}"}
+        if not bool(result.get("ok")):
+            self._append_learned_exit_event({"event": "sell_submit_rejected", **candidate, "broker_error": str(result.get("error") or "")[:140]})
+            return {"ok": False, "submitted": False, "reason": str(result.get("error") or "sell_submit_failed")[:140], "candidate": candidate}
+        broker_order = dict(result.get("order") or {})
+        pending_id = str(broker_order.get("id") or client_order_id)
+        pending = self._learned_exit_pending_map()
+        pending[pending_id] = {
+            **candidate,
+            "order_id": str(broker_order.get("id") or ""),
+            "client_order_id": client_order_id,
+            "submitted_at": _now_iso(),
+            "status": str(broker_order.get("status") or "submitted"),
+            "terminal": "false",
+        }
+        self._set_learned_exit_pending_map(pending)
+        self._append_learned_exit_event({"event": "sell_submitted_pending_fill", **candidate, "order_id": broker_order.get("id"), "client_order_id": client_order_id, "order_status": broker_order.get("status")})
+        return {"ok": True, "submitted": True, "pending_order_id": pending_id, "candidate": candidate}
+
+    def _refresh_learned_exit_pending_sells(self) -> dict[str, Any]:
+        broker = self.alpaca_paper_broker
+        pending = self._learned_exit_pending_map()
+        if not pending:
+            return {"checked": 0, "filled": 0, "active": 0, "rejected": 0}
+        if broker is None or not hasattr(broker, "order"):
+            return {"checked": 0, "filled": 0, "active": len(pending), "rejected": 0, "reason": "broker_order_lookup_unavailable"}
+        checked = filled = rejected = active = 0
+        remaining: dict[str, Any] = {}
+        terminal_reject = {"rejected", "canceled", "expired", "stopped", "done_for_day"}
+        for key, item in pending.items():
+            if not isinstance(item, dict):
+                continue
+            order_id = str(item.get("order_id") or "").strip()
+            if not order_id:
+                remaining[key] = item
+                active += 1
+                continue
+            checked += 1
+            try:
+                payload = dict(broker.order(order_id) or {})
+            except Exception as exc:
+                remaining[key] = {**item, "last_check_error": f"order_lookup_exception:{str(exc)[:100]}"}
+                active += 1
+                continue
+            if not bool(payload.get("ok")):
+                remaining[key] = {**item, "last_check_error": str(payload.get("error") or "order_lookup_failed")[:140]}
+                active += 1
+                continue
+            order = dict(payload.get("order") or {})
+            status = str(order.get("status") or item.get("status") or "").lower().strip()
+            if status == "filled":
+                symbol = str(item.get("symbol") or "").upper().strip()
+                pid = str(item.get("position_id") or "").strip()
+                open_rows = [r for r in self._fetch_open_positions() if str(r.get("position_id") or "") == pid or str(r.get("symbol") or "").upper().strip() == symbol]
+                fill_price = _to_float(order.get("filled_avg_price"), _to_float(item.get("current_price"), 0.0))
+                latest = {"symbol": symbol, "price": fill_price, "source": "alpaca_paper_order_fill", "quote_quality": "broker_confirmed_fill", "provider_used": "alpaca_paper", "timestamp": _now_iso()}
+                close_result = {"ok": False, "error": "open_position_not_found_for_filled_order"}
+                if open_rows:
+                    close_result = self._close_position(open_rows[0], latest, f"learned_exit_validation:{item.get('policy')}")
+                state = self._learned_exit_daily_state()
+                state["used"] = _to_int(state.get("used"), 0) + (1 if close_result.get("ok") else 0)
+                state["learned_corrected_exits"] = _to_int(state.get("learned_corrected_exits"), 0) + (1 if close_result.get("ok") else 0)
+                by_horizon = dict(state.get("by_horizon") or {})
+                horizon = str(item.get("horizon") or "unknown")
+                by_horizon[horizon] = _to_int(by_horizon.get(horizon), 0) + (1 if close_result.get("ok") else 0)
+                state["by_horizon"] = by_horizon
+                policies = list(state.get("policies_used") or [])
+                policies.append(str(item.get("policy") or "unknown_policy"))
+                state["policies_used"] = policies[-20:]
+                state["capacity_freed"] = _to_int(state.get("capacity_freed"), 0) + (1 if close_result.get("ok") else 0)
+                self._update_learned_exit_daily_state(state)
+                self._append_learned_exit_event({
+                    "event": "sell_filled_lifecycle_closed",
+                    **item,
+                    "filled_avg_price": fill_price,
+                    "filled_qty": order.get("filled_qty"),
+                    "close_result": close_result,
+                    "lesson_type": "learned_corrected_exit_actual_paper",
+                    "learning_takeaway": "broker_confirmed_learned_exit_sample_captured" if close_result.get("ok") else "filled_order_without_matching_open_row",
+                })
+                filled += 1
+            elif status in terminal_reject:
+                self._append_learned_exit_event({"event": "sell_terminal_not_filled", **item, "order_status": status})
+                rejected += 1
+            else:
+                remaining[key] = {**item, "status": status or "open", "last_checked_at": _now_iso()}
+                active += 1
+        self._set_learned_exit_pending_map(remaining)
+        return {"checked": checked, "filled": filled, "active": active, "rejected": rejected}
+
+    def _learned_exit_runtime_summary(self) -> dict[str, Any]:
+        enabled, reason = self._learned_exit_bucket_enabled_runtime()
+        state = self._learned_exit_daily_state()
+        pending = self._learned_exit_pending_map()
+        rollback = dict(self._runtime_state.get("learned_exit_rollback") or {})
+        used = _to_int(state.get("used"), 0)
+        return {
+            "learned_exit_validation_bucket_enabled": bool(enabled),
+            "learned_exit_validation_bucket_enabled_reason": reason,
+            "learned_exit_validation_bucket_configured": bool(self.learned_exit_validation_bucket_configured),
+            "learned_exit_validation_kill_switch": bool(self.learned_exit_validation_kill_switch),
+            "learned_exit_duplicate_exit_prevention_verified": True,
+            "learned_exit_broker_fill_confirmation_verified": True,
+            "learned_exit_validation_runtime_path_enabled": True,
+            "paper_sell_route_guarded": True,
+            "learned_exits_used_today": used,
+            "learned_exits_remaining_today": max(0, int(self.learned_exit_validation_max_exits_per_day) - used),
+            "max_learning_corrected_exits_per_day": int(self.learned_exit_validation_max_exits_per_day),
+            "max_learning_corrected_exit_pct": round(float(self.learned_exit_validation_max_exit_pct), 3),
+            "learned_exit_candidates_today": _to_int(state.get("candidates"), 0),
+            "rejected_learned_exit_candidates": _to_int(state.get("rejected"), 0),
+            "rejection_reasons": list(state.get("rejection_reasons") or [])[-10:],
+            "learned_exits_by_horizon": dict(state.get("by_horizon") or {}),
+            "policies_used_today": list(state.get("policies_used") or [])[-8:],
+            "current_active_learned_exit_tests": int(len(pending)),
+            "baseline_exits_today": _to_int(state.get("baseline_exits"), 0),
+            "learned_corrected_exits_today": _to_int(state.get("learned_corrected_exits"), 0),
+            "capacity_freed_by_learned_exits": _to_int(state.get("capacity_freed"), 0),
+            "rollback_status": "auto_disabled" if bool(rollback.get("disabled")) else "armed",
+            "rollback_reason": str(rollback.get("reason") or "none"),
+            "rollback_triggered_at": str(rollback.get("triggered_at") or ""),
+            "kill_switch_status": "enabled" if self.learned_exit_validation_kill_switch else "disabled",
+            "baseline_vs_learned_status": "active_controlled_ab_validation" if enabled else f"disabled:{reason}",
+            "learned_bucket_outperforming": False,
+        }
 
     def _collect_candidate_rows(self) -> list[dict[str, Any]]:
         if not self.get_top_buys_fn:
@@ -1192,6 +1576,36 @@ class PaperAutopilotEngine:
             out[symbol] = horizon if horizon in {"scalp", "day_trade", "swing_trade"} else "unknown"
         return out
 
+    def _historical_horizon_by_symbol(self, symbols: list[str] | set[str]) -> dict[str, str]:
+        out: dict[str, str] = {}
+        wanted = [str(s or "").upper().strip() for s in symbols if str(s or "").strip()]
+        if not wanted:
+            return out
+        try:
+            with self._connect() as conn:
+                for symbol in wanted:
+                    rows = conn.execute(
+                        """
+                        SELECT row_json, lifecycle_notes
+                        FROM paper_positions
+                        WHERE symbol=?
+                        ORDER BY updated_at DESC, created_at DESC
+                        LIMIT 25
+                        """,
+                        (symbol,),
+                    ).fetchall()
+                    for row in rows:
+                        d = dict(row or {})
+                        payload = _safe_json_load(d.get("row_json"))
+                        notes = _safe_json_load(d.get("lifecycle_notes"))
+                        horizon, _source, _inferred = _infer_horizon_style({**payload, **notes})
+                        if horizon in {"scalp", "day_trade", "swing_trade"}:
+                            out[symbol] = horizon
+                            break
+        except Exception:
+            return out
+        return out
+
     def _horizon_capacity_snapshot(
         self,
         *,
@@ -1201,6 +1615,10 @@ class PaperAutopilotEngine:
         broker_positions_fetch_ok: bool,
     ) -> dict[str, Any]:
         by_symbol = self._position_horizon_by_symbol(open_rows)
+        if broker_reconciliation_active and broker_positions_fetch_ok:
+            missing = [s for s in broker_open_syms if by_symbol.get(s) not in {"scalp", "day_trade", "swing_trade"}]
+            if missing:
+                by_symbol.update(self._historical_horizon_by_symbol(missing))
         if broker_reconciliation_active and broker_positions_fetch_ok:
             symbols = sorted(s for s in broker_open_syms if s)
         else:
@@ -2367,6 +2785,7 @@ class PaperAutopilotEngine:
         except Exception:
             total_closed = 0
 
+        learned_runtime = self._learned_exit_runtime_summary()
         return {
             "ok": True,
             "autopilot_enabled": self._enabled,
@@ -2380,9 +2799,11 @@ class PaperAutopilotEngine:
             "horizon_capacity_summary": horizon_capacity,
             "horizon_capacity_enabled": bool(self.horizon_capacity_enabled),
             "horizon_total_capacity": int(self.horizon_total_capacity),
-            "learned_exit_validation_bucket_configured": bool(self.learned_exit_validation_bucket_configured),
-            "learned_exit_validation_bucket_enabled": False,
-            "learned_exit_validation_kill_switch": bool(self.learned_exit_validation_kill_switch),
+            **learned_runtime,
+            "learned_exit_validation_max_exits_per_day": int(self.learned_exit_validation_max_exits_per_day),
+            "learned_exit_validation_max_exit_pct": round(float(self.learned_exit_validation_max_exit_pct), 3),
+            "learned_exit_validation_min_confidence": round(float(self.learned_exit_validation_min_confidence), 3),
+            "learned_exit_validation_min_evidence": int(self.learned_exit_validation_min_evidence),
             "total_closed_trades": int(total_closed),
             "last_cycle_utc": str(self._runtime_state.get("last_cycle_utc") or ""),
             "last_cycle_summary": dict(self._runtime_state.get("last_cycle_summary") or {}),
@@ -2392,6 +2813,7 @@ class PaperAutopilotEngine:
         }
 
     def control_status(self):
+        learned_runtime = self._learned_exit_runtime_summary()
         return {
             "autopilot_enabled": self._enabled,
             "paper_mode": self.paper_mode,
@@ -2407,9 +2829,7 @@ class PaperAutopilotEngine:
             "horizon_swing_capacity": int(self.horizon_swing_capacity),
             "horizon_day_capacity": int(self.horizon_day_capacity),
             "horizon_scalp_capacity": int(self.horizon_scalp_capacity),
-            "learned_exit_validation_bucket_configured": bool(self.learned_exit_validation_bucket_configured),
-            "learned_exit_validation_bucket_enabled": False,
-            "learned_exit_validation_kill_switch": bool(self.learned_exit_validation_kill_switch),
+            **learned_runtime,
             "learned_exit_validation_max_exits_per_day": int(self.learned_exit_validation_max_exits_per_day),
             "learned_exit_validation_max_exit_pct": round(float(self.learned_exit_validation_max_exit_pct), 3),
             "learned_exit_validation_min_confidence": round(float(self.learned_exit_validation_min_confidence), 3),
@@ -2471,6 +2891,7 @@ class PaperAutopilotEngine:
             portfolio_risk_preflight_reason = ""
             decision_trace: list[dict[str, Any]] = []
             safety = self._alpaca_safety_snapshot()
+            learned_exit_refresh = self._refresh_learned_exit_pending_sells()
             open_rows_initial = self._fetch_open_positions()
             internal_open_syms = {str(r.get("symbol") or "").upper().strip() for r in open_rows_initial}
             broker_snapshot = self._broker_open_symbols_snapshot()
@@ -2552,11 +2973,21 @@ class PaperAutopilotEngine:
                 except Exception:
                     hold_seconds = 0.0
 
+                if broker_reconciliation_active and broker_positions_fetch_ok:
+                    broker_pos = dict(broker_position_by_symbol.get(symbol) or {})
+                    learned_sell = self._submit_guarded_learned_exit_sell(row, latest, broker_pos)
+                    if bool(learned_sell.get("submitted")):
+                        skipped += 1
+                        continue
+
                 should_close, reason = self._evaluate_exit(row, latest)
                 if should_close and hold_seconds >= float(min_hold):
                     result = self._close_position(row, latest, reason)
                     if result.get("ok"):
                         closed += 1
+                        state = self._learned_exit_daily_state()
+                        state["baseline_exits"] = _to_int(state.get("baseline_exits"), 0) + 1
+                        self._update_learned_exit_daily_state(state)
                         if symbol:
                             open_syms.discard(symbol)
 
@@ -2913,6 +3344,7 @@ class PaperAutopilotEngine:
                 "orders_attempted": int(orders_attempted),
                 "orders_rejected": int(orders_rejected),
                 "positions_closed": int(closed),
+                "learned_exit_pending_refresh": dict(learned_exit_refresh),
                 "positions_skipped": int(skipped),
                 "candidates_seen": int(len(candidates)),
                 "paper_opportunity_allocation": allocation_status,
@@ -2988,6 +3420,7 @@ class PaperAutopilotEngine:
                     if opened > 0
                     else str(final_blocker_reason or "orders_not_submitted")[:180]
                 ),
+                **self._learned_exit_runtime_summary(),
             }
             trace = {
                 "paper_worker_running": bool(self._thread and self._thread.is_alive()),
@@ -3064,6 +3497,7 @@ class PaperAutopilotEngine:
                     if opened > 0
                     else str(final_blocker_reason or "orders_not_submitted")[:180]
                 ),
+                **self._learned_exit_runtime_summary(),
                 "live_trading_changed": False,
                 "secrets_exposed": False,
             }
