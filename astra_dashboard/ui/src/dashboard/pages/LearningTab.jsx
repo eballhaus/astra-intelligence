@@ -1625,6 +1625,7 @@ export default function LearningTab({ compact = false }) {
   const astraFoundationStabilizationGovernance = unified?.astra_foundation_stabilization_governance_bundle_v1 || {};
   const astraTier2aLibrarianExecutiveTruthLayer = unified?.astra_tier2a_librarian_executive_truth_layer_v1 || {};
   const astraSatelliteNetwork = unified?.astra_satellite_network_v1 || {};
+  const astraTier3HistoricalSatelliteShadowAcceleration = unified?.astra_tier3_historical_satellite_shadow_acceleration_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
   const tradeFamilyIntelligence = unified?.trade_family_intelligence_v1 || {};
@@ -1796,6 +1797,7 @@ export default function LearningTab({ compact = false }) {
       astra_foundation_stabilization_governance_bundle_v1: astraFoundationStabilizationGovernance,
       astra_tier2a_librarian_executive_truth_layer_v1: astraTier2aLibrarianExecutiveTruthLayer,
       astra_satellite_network_v1: astraSatelliteNetwork,
+      astra_tier3_historical_satellite_shadow_acceleration_v1: astraTier3HistoricalSatelliteShadowAcceleration,
       candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
       profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
       realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
@@ -2759,6 +2761,53 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Trade-family summary: {String(astraSatelliteNetwork?.trade_family_summary || "warming up").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Astra Tier 3 Historical Intelligence, Satellite Expansion & Shadow Acceleration V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is expanding years-of-experience style knowledge through compressed historical lessons, satellites 5-10, and shadow experiment units. Tier 3 remains advisory-only, shadow-only, cache-first, and routes compressed outputs through the Librarian, Unified Truth Layer, and Executive Assistant before Astra Brain.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Status", astraTier3HistoricalSatelliteShadowAcceleration?.status],
+            ["Historical expansion", astraTier3HistoricalSatelliteShadowAcceleration?.historical_intelligence_status],
+            ["Satellites registered", safeNumber(astraTier3HistoricalSatelliteShadowAcceleration?.satellites_registered).toFixed(0)],
+            ["Coordinator", astraTier3HistoricalSatelliteShadowAcceleration?.satellite_coordinator_status],
+            ["Coordinator health", astraTier3HistoricalSatelliteShadowAcceleration?.satellite_coordinator_health],
+            ["Shadow units", safeNumber(astraTier3HistoricalSatelliteShadowAcceleration?.shadow_experiment_units).toFixed(0)],
+            ["Shadow expansion", astraTier3HistoricalSatelliteShadowAcceleration?.shadow_experiment_expansion_status],
+            ["Historical replays", safeNumber(astraTier3HistoricalSatelliteShadowAcceleration?.historical_replays).toFixed(0)],
+            ["Virtual exit tests", safeNumber(astraTier3HistoricalSatelliteShadowAcceleration?.virtual_exit_tests).toFixed(0)],
+            ["Horizon tests", safeNumber(astraTier3HistoricalSatelliteShadowAcceleration?.horizon_tests).toFixed(0)],
+            ["Compressed lessons", safeNumber(astraTier3HistoricalSatelliteShadowAcceleration?.compressed_lessons_created).toFixed(0)],
+            ["Compression", astraTier3HistoricalSatelliteShadowAcceleration?.compression_status],
+            ["Bandwidth", astraTier3HistoricalSatelliteShadowAcceleration?.bandwidth_status],
+            ["Provider calls", safeNumber(astraTier3HistoricalSatelliteShadowAcceleration?.provider_calls_used).toFixed(0)],
+            ["Endpoint storm", astraTier3HistoricalSatelliteShadowAcceleration?.dashboard_endpoint_storm_created ? "yes" : "no"],
+            ["Behavior safe", astraTier3HistoricalSatelliteShadowAcceleration?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Satellites 5-10: {(astraTier3HistoricalSatelliteShadowAcceleration?.satellites_added || []).slice(0, 6).map((name) => String(name).replaceAll("_", " ")).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Top historical lesson: {String(astraTier3HistoricalSatelliteShadowAcceleration?.top_historical_lesson || "warming up").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Top satellite insight: {String(astraTier3HistoricalSatelliteShadowAcceleration?.top_satellite_insight || "warming up").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Top shadow lesson: {String(astraTier3HistoricalSatelliteShadowAcceleration?.top_shadow_lesson || "warming up").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Integration: Librarian {String(astraTier3HistoricalSatelliteShadowAcceleration?.librarian_integration_status || "warming up").replaceAll("_", " ")}, Unified Truth {String(astraTier3HistoricalSatelliteShadowAcceleration?.unified_truth_integration_status || "warming up").replaceAll("_", " ")}, Executive Assistant {String(astraTier3HistoricalSatelliteShadowAcceleration?.executive_assistant_integration_status || "warming up").replaceAll("_", " ")}.
           </div>
         </div>
       </details>
