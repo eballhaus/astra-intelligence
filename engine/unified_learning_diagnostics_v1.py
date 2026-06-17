@@ -732,6 +732,7 @@ class UnifiedLearningDiagnosticsV1:
         shadow_lab = dict(statuses.get("realistic_shadow_evidence_learning_lab_v1") or {})
         paper_trace = dict(statuses.get("paper_execution_trace") or {})
         paper_autopilot = dict(statuses.get("paper_autopilot_throughput") or {})
+        paper_autopilot_status = dict(statuses.get("paper_autopilot_status") or {})
 
         closed_rows = [
             row for row in history_rows
@@ -843,6 +844,33 @@ class UnifiedLearningDiagnosticsV1:
         else:
             next_test = "Increase 1d-10d swing coverage and keep learned exits shadow-only."
 
+        horizon_assignment_used = bool(
+            paper_trace.get("horizon_assignment_used")
+            or paper_autopilot_status.get("horizon_assignment_used")
+            or paper_autopilot.get("horizon_assignment_used")
+        )
+        horizon_assignment_confidence = _to_float(
+            paper_trace.get("horizon_assignment_confidence"),
+            _to_float(paper_autopilot_status.get("horizon_assignment_confidence"), 0.0),
+        )
+        horizon_execution_candidate = dict(
+            paper_trace.get("horizon_execution_candidate")
+            or paper_autopilot_status.get("horizon_execution_candidate")
+            or {}
+        )
+        horizon_execution_reason = _text(
+            paper_trace.get("horizon_execution_reason")
+            or paper_autopilot_status.get("horizon_execution_reason"),
+            "existing_rank_and_safety_gates_only",
+        )
+        horizon_execution_blocker = _text(
+            paper_trace.get("horizon_execution_blocker")
+            or paper_autopilot_status.get("horizon_execution_blocker")
+            or paper_trace.get("final_blocker_reason")
+            or paper_autopilot_status.get("final_blocker_reason"),
+            "diagnostic_only_no_behavior_change",
+        )
+
         return {
             "enabled": True,
             "horizon_coverage_status": "observed_and_shadow_compared",
@@ -882,6 +910,11 @@ class UnifiedLearningDiagnosticsV1:
             "weakest_horizon": weakest_horizon,
             "horizon_mismatch_risk_score": round(horizon_mismatch_risk, 2),
             "horizon_mismatch_risk_label": "high" if horizon_mismatch_risk >= 65 else "moderate" if horizon_mismatch_risk >= 35 else "low",
+            "horizon_assignment_used": bool(horizon_assignment_used),
+            "horizon_assignment_confidence": round(horizon_assignment_confidence, 3),
+            "horizon_execution_candidate": horizon_execution_candidate,
+            "horizon_execution_reason": horizon_execution_reason,
+            "horizon_execution_blocker": horizon_execution_blocker,
             "learned_exits_applied": learned_exits_applied,
             "learned_horizon_status": "shadow_only_not_applied" if not learned_exits_applied else "paper_ready_candidate",
             "natural_exit_preserved": natural_exit_preserved,
@@ -3871,6 +3904,11 @@ class UnifiedLearningDiagnosticsV1:
             "rebalance_action_taken": bool(data.get("rebalance_action_taken", False)),
             "rebalance_action_reason": _text(data.get("rebalance_action_reason"), "diagnostic_only_no_behavior_change"),
             "preferred_next_horizon": _text(data.get("preferred_next_horizon"), _text(capacity.get("underexposed_horizon"), "scalp")),
+            "horizon_assignment_used": bool(data.get("horizon_assignment_used", False)),
+            "horizon_assignment_confidence": _to_float(data.get("horizon_assignment_confidence"), 0.0),
+            "horizon_execution_candidate": dict(data.get("horizon_execution_candidate") or {}),
+            "horizon_execution_reason": _text(data.get("horizon_execution_reason"), "existing_rank_and_safety_gates_only"),
+            "horizon_execution_blocker": _text(data.get("horizon_execution_blocker"), "diagnostic_only_no_behavior_change"),
             "overconcentration_warning": bool(data.get("overconcentration_warning", False)),
             "practice_bucket_status": _text(data.get("practice_bucket_status"), "advisory_only_disabled_pending_human_review"),
             "bucket_enabled": bool(data.get("bucket_enabled", False)),

@@ -387,6 +387,18 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             }
             for horizon in HORIZONS
         ]
+        horizon_assignment_confidence = 0.0
+        confidence_values = [to_float(row.get("horizon_confidence"), 0.0) for row in assigned_rows if isinstance(row, dict)]
+        if confidence_values:
+            horizon_assignment_confidence = round(sum(confidence_values) / len(confidence_values), 3)
+        horizon_execution_candidate = next((row for row in assigned_rows if bool(row.get("selected"))), assigned_rows[0] if assigned_rows else {})
+        horizon_assignment_used = bool(selected_total > 0 and preferred in HORIZONS)
+        horizon_execution_reason = (
+            f"preferred_{preferred}_tie_break"
+            if horizon_assignment_used and text(horizon_execution_candidate.get("assigned_horizon"), "") == preferred
+            else "existing_rank_and_safety_gates_only"
+        )
+        horizon_execution_blocker = reason_not_ready if reason_not_ready not in {"collect_more_horizon_assignment_evidence", "diagnostic_only_no_behavior_change"} else ""
         return {
             "module": "Horizon Opportunity Assignment Engine V1",
             "status": "ok" if assigned_rows else "insufficient_evidence",
@@ -404,6 +416,15 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "capacity_rebalance_recommendation": text(capacity.get("recommended_capacity_shift"), "maintain_current_learning_mix"),
             "rebalance_action_taken": False,
             "rebalance_action_reason": "diagnostic_only_no_behavior_change",
+            "horizon_assignment_used": bool(horizon_assignment_used),
+            "horizon_assignment_confidence": rounded(horizon_assignment_confidence, 3),
+            "horizon_execution_candidate": {
+                "symbol": text(horizon_execution_candidate.get("symbol"), "insufficient_data"),
+                "assigned_horizon": text(horizon_execution_candidate.get("assigned_horizon"), "unknown"),
+                "horizon_source": text(horizon_execution_candidate.get("horizon_source"), "unknown"),
+            } if horizon_execution_candidate else {},
+            "horizon_execution_reason": horizon_execution_reason,
+            "horizon_execution_blocker": horizon_execution_blocker,
             "adaptive_focus": preferred_next,
             "hot_market_focus": text(multi.get("best_horizon"), preferred_next),
             "overconcentration_warning": bool(exposure.get("horizon_exposure_balance") == "overconcentrated_swing"),
@@ -478,27 +499,43 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
         }
 
     def _capacity_manager(self, statuses: dict[str, Any], repair: dict[str, Any]) -> dict[str, Any]:
+        alpaca = self._alpaca(statuses)
+        paper_autopilot = dict((alpaca or {}).get("paper_autopilot_status") or status_value(statuses, "paper_autopilot_status") or status_value(statuses, "paper_autopilot_status_v1") or {})
+        paper_capacity = dict((paper_autopilot or {}).get("horizon_capacity_summary") or {})
         capacity = status_value(statuses, "multi_horizon_paper_capacity_exit_validation_v1")
         broker_positions = self._active_broker_positions(statuses)
         counts = Counter(_horizon_label(row) for row in broker_positions)
-        total_used = max(sum(counts.values()), to_int(repair.get("broker_confirmed_count"), 0), to_int(capacity.get("total_used"), 0))
-        if total_used == 0:
-            counts.update({"unknown": 0})
-        total_capacity = max(20, to_int(capacity.get("total_capacity"), 20))
-        unknown = max(counts.get("unknown", 0), to_int(capacity.get("unknown_horizon_positions"), 0))
-        used = {
-            "scalp": max(counts.get("scalp", 0), to_int(capacity.get("scalp_used"), 0)),
-            "day_trade": max(counts.get("day_trade", 0), to_int(capacity.get("day_used"), 0)),
-            "swing_trade": max(counts.get("swing_trade", 0), to_int(capacity.get("swing_used"), 0)),
-        }
-        known_used = sum(used.values())
-        conservatively_classified = 0
-        if total_used > known_used:
-            # Broker-confirmed rows without durable horizon labels should not make the
-            # active audit look empty/unknown; classify them as swing-like for capacity
-            # pressure because that is the safest learning assumption for long holds.
-            conservatively_classified = total_used - known_used
-            used["swing_trade"] += conservatively_classified
+        if paper_capacity:
+            total_capacity = max(20, to_int(paper_capacity.get("total_capacity"), 20))
+            total_used = max(to_int(paper_capacity.get("total_used"), 0), to_int(repair.get("broker_confirmed_count"), 0))
+            used = {
+                "scalp": max(to_int(paper_capacity.get("scalp_used"), 0), counts.get("scalp", 0)),
+                "day_trade": max(to_int(paper_capacity.get("day_used"), 0), counts.get("day_trade", 0)),
+                "swing_trade": max(to_int(paper_capacity.get("swing_used"), 0), counts.get("swing_trade", 0)),
+            }
+            unknown = max(0, to_int(paper_capacity.get("unknown_horizon_positions"), 0))
+            conservatively_classified = 0
+        else:
+            total_used = max(sum(counts.values()), to_int(repair.get("broker_confirmed_count"), 0), to_int(capacity.get("total_used"), 0))
+            if total_used == 0:
+                counts.update({"unknown": 0})
+            total_capacity = max(20, to_int(capacity.get("total_capacity"), 20))
+            unknown = max(counts.get("unknown", 0), to_int(capacity.get("unknown_horizon_positions"), 0))
+            used = {
+                "scalp": max(counts.get("scalp", 0), to_int(capacity.get("scalp_used"), 0)),
+                "day_trade": max(counts.get("day_trade", 0), to_int(capacity.get("day_used"), 0)),
+                "swing_trade": max(counts.get("swing_trade", 0), to_int(capacity.get("swing_used"), 0)),
+            }
+            known_used = sum(used.values())
+            conservatively_classified = 0
+            if total_used > known_used:
+                # Broker-confirmed rows without durable horizon labels should not make the
+                # active audit look empty/unknown; classify them as swing-like for capacity
+                # pressure because that is the safest learning assumption for long holds.
+                conservatively_classified = total_used - known_used
+                used["swing_trade"] += conservatively_classified
+                unknown = 0
+        if repair.get("repair_status") == "broker_confirmed_source_of_truth_active" and to_int(repair.get("broker_confirmed_count"), 0) > 0:
             unknown = 0
         total_for_pct = max(1, sum(used.values()) + unknown)
         pct = {k: rounded(v / total_for_pct * 100.0, 3) for k, v in used.items()}
@@ -696,6 +733,11 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "assigned_horizon_rows": assignment.get("assigned_horizon_rows"),
             "assigned_horizon_count": assignment.get("assigned_horizon_count"),
             "preferred_next_horizon": assignment.get("preferred_next_horizon"),
+            "horizon_assignment_used": bool(assignment.get("horizon_assignment_used", False)),
+            "horizon_assignment_confidence": rounded(to_float(assignment.get("horizon_assignment_confidence"), 0.0), 3),
+            "horizon_execution_candidate": dict(assignment.get("horizon_execution_candidate") or {}),
+            "horizon_execution_reason": text(assignment.get("horizon_execution_reason"), "existing_rank_and_safety_gates_only"),
+            "horizon_execution_blocker": text(assignment.get("horizon_execution_blocker"), "diagnostic_only_no_behavior_change"),
             "capacity_rebalance_recommendation": assignment.get("capacity_rebalance_recommendation"),
             "rebalance_action_taken": assignment.get("rebalance_action_taken"),
             "rebalance_action_reason": assignment.get("rebalance_action_reason"),

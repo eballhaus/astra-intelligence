@@ -1680,6 +1680,30 @@ class PaperAutopilotEngine:
             ),
         }
 
+    def _preferred_horizon_from_capacity(self, horizon_capacity: dict[str, Any]) -> str:
+        if not self.horizon_capacity_enabled:
+            return ""
+        pct = dict(horizon_capacity.get("horizon_distribution_pct") or {})
+        if not pct:
+            return ""
+        gaps = {
+            "scalp": max(0.0, 20.0 - _to_float(pct.get("scalp"), 0.0)),
+            "day_trade": max(0.0, 30.0 - _to_float(pct.get("day_trade"), 0.0)),
+            "swing_trade": max(0.0, 30.0 - _to_float(pct.get("swing_trade"), 0.0)),
+        }
+        preferred = max(gaps.items(), key=lambda item: item[1])[0]
+        if gaps.get(preferred, 0.0) <= 0.0:
+            if _to_float(pct.get("swing_trade"), 0.0) > max(_to_float(pct.get("scalp"), 0.0), _to_float(pct.get("day_trade"), 0.0)):
+                return "scalp"
+            return ""
+        return preferred
+
+    def _horizon_tie_break_score(self, row: dict[str, Any], preferred_horizon: str) -> float:
+        if preferred_horizon not in {"scalp", "day_trade", "swing_trade"}:
+            return 0.0
+        horizon, _source, _inferred = _infer_horizon_style(row)
+        return 1.0 if horizon == preferred_horizon else 0.0
+
     def _horizon_has_capacity(self, horizon_capacity: dict[str, Any], horizon: str) -> tuple[bool, str]:
         if not self.horizon_capacity_enabled:
             return True, "horizon_capacity_disabled"
@@ -2786,6 +2810,7 @@ class PaperAutopilotEngine:
             total_closed = 0
 
         learned_runtime = self._learned_exit_runtime_summary()
+        last_trace = dict(self._runtime_state.get("last_execution_trace") or {})
         return {
             "ok": True,
             "autopilot_enabled": self._enabled,
@@ -2799,6 +2824,11 @@ class PaperAutopilotEngine:
             "horizon_capacity_summary": horizon_capacity,
             "horizon_capacity_enabled": bool(self.horizon_capacity_enabled),
             "horizon_total_capacity": int(self.horizon_total_capacity),
+            "horizon_assignment_used": bool(last_trace.get("horizon_assignment_used", False)),
+            "horizon_assignment_confidence": _to_float(last_trace.get("horizon_assignment_confidence"), 0.0),
+            "horizon_execution_candidate": dict(last_trace.get("horizon_execution_candidate") or {}),
+            "horizon_execution_reason": str(last_trace.get("horizon_execution_reason") or ""),
+            "horizon_execution_blocker": str(last_trace.get("horizon_execution_blocker") or last_trace.get("final_blocker_reason") or ""),
             **learned_runtime,
             "learned_exit_validation_max_exits_per_day": int(self.learned_exit_validation_max_exits_per_day),
             "learned_exit_validation_max_exit_pct": round(float(self.learned_exit_validation_max_exit_pct), 3),
@@ -2814,6 +2844,7 @@ class PaperAutopilotEngine:
 
     def control_status(self):
         learned_runtime = self._learned_exit_runtime_summary()
+        last_trace = dict(self._runtime_state.get("last_execution_trace") or {})
         return {
             "autopilot_enabled": self._enabled,
             "paper_mode": self.paper_mode,
@@ -2829,6 +2860,11 @@ class PaperAutopilotEngine:
             "horizon_swing_capacity": int(self.horizon_swing_capacity),
             "horizon_day_capacity": int(self.horizon_day_capacity),
             "horizon_scalp_capacity": int(self.horizon_scalp_capacity),
+            "horizon_assignment_used": bool(last_trace.get("horizon_assignment_used", False)),
+            "horizon_assignment_confidence": _to_float(last_trace.get("horizon_assignment_confidence"), 0.0),
+            "horizon_execution_candidate": dict(last_trace.get("horizon_execution_candidate") or {}),
+            "horizon_execution_reason": str(last_trace.get("horizon_execution_reason") or ""),
+            "horizon_execution_blocker": str(last_trace.get("horizon_execution_blocker") or last_trace.get("final_blocker_reason") or ""),
             **learned_runtime,
             "learned_exit_validation_max_exits_per_day": int(self.learned_exit_validation_max_exits_per_day),
             "learned_exit_validation_max_exit_pct": round(float(self.learned_exit_validation_max_exit_pct), 3),
@@ -2889,6 +2925,10 @@ class PaperAutopilotEngine:
             portfolio_risk_score_used = None
             portfolio_risk_label_used = ""
             portfolio_risk_preflight_reason = ""
+            horizon_assignment_confidence = 0.0
+            horizon_execution_candidate: dict[str, Any] = {}
+            horizon_execution_reason = ""
+            horizon_execution_blocker = ""
             decision_trace: list[dict[str, Any]] = []
             safety = self._alpaca_safety_snapshot()
             learned_exit_refresh = self._refresh_learned_exit_pending_sells()
@@ -3014,6 +3054,9 @@ class PaperAutopilotEngine:
                 broker_reconciliation_active=broker_reconciliation_active,
                 broker_positions_fetch_ok=broker_positions_fetch_ok,
             )
+            preferred_execution_horizon = self._preferred_horizon_from_capacity(horizon_capacity)
+            horizon_assignment_active = bool(preferred_execution_horizon in {"scalp", "day_trade", "swing_trade"})
+            horizon_assignment_used = False
             if self.horizon_capacity_enabled:
                 total_capacity = int(horizon_capacity.get("total_available", total_capacity))
                 stock_capacity = max(stock_capacity, total_capacity)
@@ -3104,6 +3147,16 @@ class PaperAutopilotEngine:
                     )
                 except Exception:
                     profit_seeking_exploration_status = {}
+            if horizon_assignment_active:
+                candidates = sorted(
+                    candidates,
+                    key=lambda row: (
+                        round(_to_float(row.get("paper_allocation_priority"), 0.0), 2),
+                        round(_to_float(row.get("risk_adjusted_profit_score"), 0.0), 2),
+                        round(self._horizon_tie_break_score(row, preferred_execution_horizon), 3),
+                    ),
+                    reverse=True,
+                )
             for row in candidates:
                 if selected_count >= self.max_new_positions_per_cycle:
                     final_blocker_reason = final_blocker_reason or "max_new_positions_per_cycle_reached"
@@ -3254,6 +3307,27 @@ class PaperAutopilotEngine:
                 orders_attempted += 1
                 row_trace["selected"] = True
                 row_trace["order_attempted"] = True
+                row_trace["horizon_assignment_confidence"] = round(
+                    _to_float(row.get("confidence"), _to_float(row.get("predicted_win_probability"), 0.0)),
+                    2,
+                )
+                horizon_assignment_confidence = float(row_trace["horizon_assignment_confidence"])
+                horizon_execution_candidate = {
+                    "symbol": symbol,
+                    "horizon": candidate_horizon,
+                    "horizon_source": candidate_horizon_source,
+                }
+                horizon_assignment_used = bool(horizon_assignment_used or candidate_horizon == preferred_execution_horizon)
+                row_trace["horizon_assignment_used"] = bool(horizon_assignment_used)
+                horizon_execution_reason = (
+                    f"preferred_{preferred_execution_horizon}_tie_break"
+                    if horizon_assignment_used
+                    else "existing_rank_and_safety_gates_only"
+                )
+                horizon_execution_blocker = ""
+                row_trace["horizon_execution_candidate"] = dict(horizon_execution_candidate)
+                row_trace["horizon_execution_reason"] = horizon_execution_reason
+                row_trace["horizon_execution_blocker"] = horizon_execution_blocker
                 gate_meta = dict(gate_meta or {})
                 gate_meta["paper_autopilot_limits_ok"] = True
                 gate_meta["paper_autopilot_limits_reason"] = "max_new_max_open_and_capacity_passed"
@@ -3368,6 +3442,11 @@ class PaperAutopilotEngine:
                 "selected_candidates": int(selected_count),
                 "final_blocker_reason": str(final_blocker_reason)[:180],
                 "last_alpaca_error_sanitized": str(last_alpaca_error)[:180],
+                "horizon_assignment_used": bool(horizon_assignment_used and selected_count > 0),
+                "horizon_assignment_confidence": round(horizon_assignment_confidence, 2),
+                "horizon_execution_candidate": dict(horizon_execution_candidate),
+                "horizon_execution_reason": str(horizon_execution_reason or ""),
+                "horizon_execution_blocker": str(horizon_execution_blocker or final_blocker_reason or ""),
                 "portfolio_risk_proof_present": bool(portfolio_risk_proof_present),
                 "portfolio_risk_score_used": portfolio_risk_score_used,
                 "portfolio_risk_label_used": str(portfolio_risk_label_used),
@@ -3453,6 +3532,11 @@ class PaperAutopilotEngine:
                 "orders_submitted": int(opened),
                 "orders_rejected": int(orders_rejected),
                 "final_blocker_reason": str(final_blocker_reason)[:180],
+                "horizon_assignment_used": bool(horizon_assignment_used and selected_count > 0),
+                "horizon_assignment_confidence": round(horizon_assignment_confidence, 2),
+                "horizon_execution_candidate": dict(horizon_execution_candidate),
+                "horizon_execution_reason": str(horizon_execution_reason or ""),
+                "horizon_execution_blocker": str(horizon_execution_blocker or final_blocker_reason or ""),
                 "per_candidate_decision_trace": decision_trace[:12],
                 "last_alpaca_error_sanitized": str(last_alpaca_error)[:180],
                 "portfolio_risk_proof_present": bool(portfolio_risk_proof_present),

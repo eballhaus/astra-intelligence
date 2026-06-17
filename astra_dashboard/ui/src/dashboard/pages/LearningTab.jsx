@@ -2949,6 +2949,11 @@ export default function LearningTab({ compact = false }) {
             ["Preferred next", astraHorizonLifecycleCapacityPromotion?.preferred_next_horizon],
             ["Capacity mode", astraHorizonLifecycleCapacityPromotion?.capacity_mode],
             ["Rebalance status", astraHorizonLifecycleCapacityPromotion?.capacity_rebalance_status],
+            ["Assignment used", astraHorizonLifecycleCapacityPromotion?.horizon_assignment_used ? "yes" : "no"],
+            ["Assignment confidence", safeNumber(astraHorizonLifecycleCapacityPromotion?.horizon_assignment_confidence).toFixed(1)],
+            ["Execution candidate", astraHorizonLifecycleCapacityPromotion?.horizon_execution_candidate?.symbol || "warming up"],
+            ["Execution reason", astraHorizonLifecycleCapacityPromotion?.horizon_execution_reason],
+            ["Execution blocker", astraHorizonLifecycleCapacityPromotion?.horizon_execution_blocker],
             ["Recycling", astraHorizonLifecycleCapacityPromotion?.dynamic_recycling_status],
             ["Recycled slots", safeNumber(astraHorizonLifecycleCapacityPromotion?.recycled_slots_available).toFixed(0)],
             ["Exposure balance", astraHorizonLifecycleCapacityPromotion?.horizon_exposure_balance],
@@ -2990,6 +2995,9 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Next action: {String(astraHorizonLifecycleCapacityPromotion?.next_recommended_action || "continue advisory horizon learning").replaceAll("_", " ")}; overconcentration warning {astraHorizonLifecycleCapacityPromotion?.overconcentration_warning ? "yes" : "no"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Activation: {astraHorizonLifecycleCapacityPromotion?.horizon_assignment_used ? "adaptive horizon tie-break active" : "diagnostic only"}; confidence {safeNumber(astraHorizonLifecycleCapacityPromotion?.horizon_assignment_confidence).toFixed(1)}; candidate {astraHorizonLifecycleCapacityPromotion?.horizon_execution_candidate?.symbol || "warming up"}.
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Flow: {String(astraHorizonLifecycleCapacityPromotion?.integration_flow || "Trade lifecycle / Shadow / Horizon systems -> Librarian -> Unified Truth -> Executive Assistant -> Learning Center").replaceAll("_", " ")}
