@@ -1627,6 +1627,7 @@ export default function LearningTab({ compact = false }) {
   const astraSatelliteNetwork = unified?.astra_satellite_network_v1 || {};
   const astraTier3HistoricalSatelliteShadowAcceleration = unified?.astra_tier3_historical_satellite_shadow_acceleration_v1 || {};
   const astraFinalIntelligenceMaturation = unified?.astra_final_intelligence_maturation_bundle_v1 || {};
+  const astraTargetedMaturityProfitCapture = unified?.astra_targeted_maturity_profit_capture_optimization_bundle_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
   const tradeFamilyIntelligence = unified?.trade_family_intelligence_v1 || {};
@@ -1800,6 +1801,7 @@ export default function LearningTab({ compact = false }) {
       astra_satellite_network_v1: astraSatelliteNetwork,
       astra_tier3_historical_satellite_shadow_acceleration_v1: astraTier3HistoricalSatelliteShadowAcceleration,
       astra_final_intelligence_maturation_bundle_v1: astraFinalIntelligenceMaturation,
+      astra_targeted_maturity_profit_capture_optimization_bundle_v1: astraTargetedMaturityProfitCapture,
       candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
       profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
       realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
@@ -2860,6 +2862,62 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Summary: {String(astraFinalIntelligenceMaturation?.intelligence_summary || astraFinalIntelligenceMaturation?.recommended_next_focus || "warming up").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Astra Targeted Maturity & Profit-Capture Optimization Bundle V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is consolidating horizon management, exit review, profit capture, root-cause analysis, intelligence throughput, saturation, and safe universe recommendations. This section is advisory-only, shadow-only, cache-first, and does not change rankings, entries, exits, sizing, allocations, thresholds, broker behavior, or paper execution.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Status", astraTargetedMaturityProfitCapture?.status],
+            ["Horizon status", astraTargetedMaturityProfitCapture?.horizon_status],
+            ["Positions reviewed", safeNumber(astraTargetedMaturityProfitCapture?.positions_reviewed).toFixed(0)],
+            ["Horizon drift", safeNumber(astraTargetedMaturityProfitCapture?.horizon_drift_count).toFixed(0)],
+            ["Exit quality", astraTargetedMaturityProfitCapture?.exit_quality_status],
+            ["Review-only exits", safeNumber(astraTargetedMaturityProfitCapture?.review_only_exit_candidates).toFixed(0)],
+            ["Profit capture", astraTargetedMaturityProfitCapture?.profit_capture_status],
+            ["Capture ratio", safeNumber(astraTargetedMaturityProfitCapture?.capture_ratio).toFixed(1)],
+            ["Avg giveback", safeNumber(astraTargetedMaturityProfitCapture?.giveback).toFixed(1)],
+            ["Top root cause", astraTargetedMaturityProfitCapture?.top_root_cause],
+            ["Duplicate findings", safeNumber(astraTargetedMaturityProfitCapture?.duplicate_findings_detected).toFixed(0)],
+            ["Merged findings", safeNumber(astraTargetedMaturityProfitCapture?.merged_findings).toFixed(0)],
+            ["Throughput", astraTargetedMaturityProfitCapture?.throughput_meter_status],
+            ["Efficiency ratio", safeNumber(astraTargetedMaturityProfitCapture?.intelligence_efficiency_ratio).toFixed(1)],
+            ["Saturation", `${safeNumber(astraTargetedMaturityProfitCapture?.saturation_percentage).toFixed(1)}%`],
+            ["Safe expansion", `${safeNumber(astraTargetedMaturityProfitCapture?.safe_expansion_capacity).toFixed(1)}%`],
+            ["Next universe", safeNumber(astraTargetedMaturityProfitCapture?.next_safe_universe_target).toFixed(0)],
+            ["Expected PF lift", safeNumber(astraTargetedMaturityProfitCapture?.expected_pf_improvement).toFixed(3)],
+            ["Provider calls", safeNumber(astraTargetedMaturityProfitCapture?.provider_calls_used).toFixed(0)],
+            ["LLM calls", safeNumber(astraTargetedMaturityProfitCapture?.llm_calls_used).toFixed(0)],
+            ["Endpoint storm", astraTargetedMaturityProfitCapture?.dashboard_endpoint_storm_created ? "yes" : "no"],
+            ["Behavior safe", astraTargetedMaturityProfitCapture?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Executive summary: {String(astraTargetedMaturityProfitCapture?.executive_summary || "warming up").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Profit capture: biggest giveback {String(astraTargetedMaturityProfitCapture?.biggest_giveback_symbol || "unknown").replaceAll("_", " ")}, biggest leak {String(astraTargetedMaturityProfitCapture?.biggest_capture_leak || "warming up").replaceAll("_", " ")}, best protection candidate {String(astraTargetedMaturityProfitCapture?.best_profit_protection_candidate || "warming up").replaceAll("_", " ")}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Root cause: {String(astraTargetedMaturityProfitCapture?.top_root_cause || "warming up").replaceAll("_", " ")} affecting {(astraTargetedMaturityProfitCapture?.affected_metrics || []).slice(0, 6).map((name) => String(name).replaceAll("_", " ")).join(" | ") || "warming up"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Learning Center departments: {(astraTargetedMaturityProfitCapture?.departments || []).slice(0, 9).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Universe recommendation: current {safeNumber(astraTargetedMaturityProfitCapture?.current_universe).toFixed(0)}, next safe target {safeNumber(astraTargetedMaturityProfitCapture?.next_safe_universe_target).toFixed(0)}, mature target {String(astraTargetedMaturityProfitCapture?.mature_universe_target || "warming up").replaceAll("_", " ")}. {String(astraTargetedMaturityProfitCapture?.dynamic_universe_recommendation || "recommendation only").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Flow: {String(astraTargetedMaturityProfitCapture?.integration_flow || "Satellites/Historical/Shadow -> Librarian -> Unified Truth -> Executive Assistant -> Astra Brain").replaceAll("_", " ")}
           </div>
         </div>
       </details>
