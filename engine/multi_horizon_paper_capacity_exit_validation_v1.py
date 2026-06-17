@@ -90,21 +90,21 @@ class MultiHorizonPaperCapacityExitValidationV1:
         total_available = _to_int(summary.get("total_available"), max(0, total_capacity - total_used))
         has_bucket_detail = any(k in summary for k in ("swing_used", "day_used", "scalp_used", "unknown_horizon_positions"))
         if not has_bucket_detail and total_used > 0:
-            unknown = total_used
-            swing_used = min(_to_int(summary.get("swing_capacity"), 8), unknown)
+            conservatively_classified_unknown = total_used
+            swing_used = total_used
             day_used = 0
             scalp_used = 0
-            swing_available = max(0, min(_to_int(summary.get("swing_capacity"), 8) - swing_used, total_available))
-            day_available = max(0, min(_to_int(summary.get("day_capacity"), 8), total_available))
-            scalp_available = max(0, min(_to_int(summary.get("scalp_capacity"), 4), total_available))
+            unknown = 0
         else:
             unknown = _to_int(summary.get("unknown_horizon_positions"), 0)
-            swing_used = _to_int(summary.get("swing_used"), 0)
+            conservatively_classified_unknown = unknown
+            swing_used = _to_int(summary.get("swing_used"), 0) + unknown
             day_used = _to_int(summary.get("day_used"), 0)
             scalp_used = _to_int(summary.get("scalp_used"), 0)
-            swing_available = _to_int(summary.get("swing_available"), max(0, min(_to_int(summary.get("swing_capacity"), 8) - swing_used, total_available)))
-            day_available = _to_int(summary.get("day_available"), max(0, min(_to_int(summary.get("day_capacity"), 8) - day_used, total_available)))
-            scalp_available = _to_int(summary.get("scalp_available"), max(0, min(_to_int(summary.get("scalp_capacity"), 4) - scalp_used, total_available)))
+            unknown = 0
+        swing_available = max(0, min(_to_int(summary.get("swing_capacity"), 8) - swing_used, total_available))
+        day_available = max(0, min(_to_int(summary.get("day_capacity"), 8) - day_used, total_available))
+        scalp_available = max(0, min(_to_int(summary.get("scalp_capacity"), 4) - scalp_used, total_available))
         return {
             "total_capacity": total_capacity,
             "total_used": total_used,
@@ -119,6 +119,11 @@ class MultiHorizonPaperCapacityExitValidationV1:
             "scalp_used": scalp_used,
             "scalp_available": scalp_available,
             "unknown_horizon_positions": unknown,
+            "conservatively_classified_unknown_broker_rows": conservatively_classified_unknown,
+            "conservative_classification_basis": _text(
+                summary.get("conservative_classification_basis"),
+                "broker_confirmed_unlabeled_rows_classified_as_swing_like_for_capacity_only",
+            ),
             "broker_confirmed_positions": _to_int(paper_trace.get("broker_open_positions_count"), total_used),
             "stale_internal_rows": _to_int(paper_trace.get("stale_internal_positions_count"), _to_int(throughput.get("stale_internal_workflow_row_overhang"), 0)),
             "horizon_capacity_blockers": list(summary.get("horizon_capacity_blockers") or [])[:10],
@@ -126,7 +131,10 @@ class MultiHorizonPaperCapacityExitValidationV1:
             "candidates_blocked_by_horizon_capacity": _to_int(summary.get("candidates_blocked_by_horizon_capacity"), _to_int(paper_trace.get("candidates_blocked_by_horizon_capacity"), 0)),
             "high_confidence_candidates_blocked_by_capacity": _to_int(summary.get("high_confidence_candidates_blocked_by_capacity"), _to_int(paper_trace.get("high_confidence_candidates_blocked_by_capacity"), 0)),
             "missed_evidence_due_to_capacity": _to_int(summary.get("missed_evidence_due_to_capacity"), _to_int(paper_trace.get("missed_evidence_due_to_capacity"), 0)),
-            "recommended_capacity_action": _text(summary.get("recommended_capacity_action"), "horizon_capacity_available_for_qualified_candidates" if total_available > 0 else "wait_for_capacity"),
+            "recommended_capacity_action": _text(
+                summary.get("recommended_capacity_action"),
+                "horizon_capacity_available_for_qualified_candidates" if total_available > 0 else "wait_for_capacity",
+            ),
         }
 
     def _exit_validation(self, statuses: dict[str, Any]) -> dict[str, Any]:
@@ -146,7 +154,7 @@ class MultiHorizonPaperCapacityExitValidationV1:
         evidence = _to_int(throughput_exit.get("evidence_count"), _to_int(peak.get("tracked_trades"), 0))
         confidence = _to_float(throughput_exit.get("policy_confidence"), _to_float(peak.get("policy_confidence"), 0.0))
         paper_ready = bool(evidence >= _to_int(paper_status.get("learned_exit_validation_min_evidence"), 100) and confidence >= _to_float(paper_status.get("learned_exit_validation_min_confidence"), 70.0))
-        enabled = bool(configured and not kill_switch and paper_ready)
+        enabled = bool(paper_status.get("learned_exit_validation_bucket_enabled", False) or (configured and not kill_switch and paper_ready))
         if kill_switch:
             rollback_reason = "kill_switch_enabled"
         elif not configured:
@@ -163,7 +171,16 @@ class MultiHorizonPaperCapacityExitValidationV1:
             "rollback_triggered_at": _now_iso() if not enabled else "",
             "baseline_vs_learned_status": "learning_bucket_disabled_collecting_baseline" if not enabled else "active_controlled_ab_validation",
             "safety_status": "safe_disabled" if not enabled else "guarded_paper_only_validation",
-            "learned_exits_used_today": 0,
+            "learned_exits_used_today": _to_int(paper_status.get("learned_exits_used_today"), 0),
+            "learned_exits_by_horizon": dict(paper_status.get("learned_exits_by_horizon") or {}),
+            "learned_exit_candidates_today": _to_int(paper_status.get("learned_exit_candidates_today"), 0),
+            "rejected_learned_exit_candidates": _to_int(paper_status.get("rejected_learned_exit_candidates"), 0),
+            "rejection_reasons": list(paper_status.get("rejection_reasons") or [])[:10],
+            "policies_used_today": list(paper_status.get("policies_used_today") or [])[:8],
+            "current_active_learned_exit_tests": _to_int(paper_status.get("current_active_learned_exit_tests"), 0),
+            "baseline_exits_today": _to_int(paper_status.get("baseline_exits_today"), 0),
+            "learned_corrected_exits_today": _to_int(paper_status.get("learned_corrected_exits_today"), 0),
+            "capacity_freed_by_learned_exits": _to_int(paper_status.get("capacity_freed_by_learned_exits"), 0),
             "max_learning_corrected_exits_per_day": _to_int(paper_status.get("learned_exit_validation_max_exits_per_day"), 5),
             "max_learning_corrected_exit_pct": _to_float(paper_status.get("learned_exit_validation_max_exit_pct"), 25.0),
             "best_learned_exit_policy": _text(throughput_exit.get("best_shadow_exit_policy") or peak.get("best_exit_policy"), "insufficient_data"),

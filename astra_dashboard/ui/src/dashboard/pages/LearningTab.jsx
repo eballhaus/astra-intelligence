@@ -2946,11 +2946,16 @@ export default function LearningTab({ compact = false }) {
             ["Swing slots", safeNumber(astraHorizonLifecycleCapacityPromotion?.swing_slots_used).toFixed(0)],
             ["Underexposed", astraHorizonLifecycleCapacityPromotion?.underexposed_horizon],
             ["Overexposed", astraHorizonLifecycleCapacityPromotion?.overexposed_horizon],
+            ["Preferred next", astraHorizonLifecycleCapacityPromotion?.preferred_next_horizon],
+            ["Capacity mode", astraHorizonLifecycleCapacityPromotion?.capacity_mode],
+            ["Rebalance status", astraHorizonLifecycleCapacityPromotion?.capacity_rebalance_status],
             ["Recycling", astraHorizonLifecycleCapacityPromotion?.dynamic_recycling_status],
             ["Recycled slots", safeNumber(astraHorizonLifecycleCapacityPromotion?.recycled_slots_available).toFixed(0)],
             ["Exposure balance", astraHorizonLifecycleCapacityPromotion?.horizon_exposure_balance],
             ["Balance score", safeNumber(astraHorizonLifecycleCapacityPromotion?.horizon_learning_balance_score).toFixed(1)],
             ["Top learning gap", astraHorizonLifecycleCapacityPromotion?.top_learning_exposure_gap],
+            ["Practice bucket", astraHorizonLifecycleCapacityPromotion?.practice_bucket_status],
+            ["Exit readiness", astraHorizonLifecycleCapacityPromotion?.exit_readiness_status],
             ["Provider calls", safeNumber(astraHorizonLifecycleCapacityPromotion?.provider_calls_used).toFixed(0)],
             ["LLM calls", safeNumber(astraHorizonLifecycleCapacityPromotion?.llm_calls_used).toFixed(0)],
             ["Paper sell enabled", astraHorizonLifecycleCapacityPromotion?.paper_sell_behavior_enabled ? "yes" : "no"],
@@ -2966,7 +2971,16 @@ export default function LearningTab({ compact = false }) {
             Horizon distribution: {Object.entries(astraHorizonLifecycleCapacityPromotion?.horizon_distribution || {}).map(([key, value]) => `${String(key).replaceAll("_", " ")} ${safeNumber(value).toFixed(1)}%`).join(" | ") || "warming up"}
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Assigned horizons today: {Object.entries(astraHorizonLifecycleCapacityPromotion?.assigned_horizons_today || {}).map(([key, value]) => `${String(key).replaceAll("_", " ")} ${safeNumber(value).toFixed(0)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Shadow readiness: {Object.entries(astraHorizonLifecycleCapacityPromotion?.readiness_by_horizon || {}).map(([key, value]) => `${String(key).replaceAll("_", " ")} ${String(value).replaceAll("_", " ")}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Exit readiness: scalp {String(astraHorizonLifecycleCapacityPromotion?.scalp_exit_readiness || "collect_more_evidence").replaceAll("_", " ")}, day {String(astraHorizonLifecycleCapacityPromotion?.day_trade_exit_readiness || "collect_more_evidence").replaceAll("_", " ")}, swing {String(astraHorizonLifecycleCapacityPromotion?.swing_exit_readiness || "collect_more_evidence").replaceAll("_", " ")}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Practice bucket: {String(astraHorizonLifecycleCapacityPromotion?.practice_bucket_status || "advisory only disabled pending human review").replaceAll("_", " ")}; size {safeNumber(astraHorizonLifecycleCapacityPromotion?.bucket_size, 3).toFixed(0)}; used today {safeNumber(astraHorizonLifecycleCapacityPromotion?.bucket_used_today).toFixed(0)}.
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Recycling: {String(astraHorizonLifecycleCapacityPromotion?.recycling_recommendation || "monitor capacity until slot reopens").replaceAll("_", " ")}; block reason {String(astraHorizonLifecycleCapacityPromotion?.recycle_block_reason || "none").replaceAll("_", " ")}.
@@ -2975,7 +2989,7 @@ export default function LearningTab({ compact = false }) {
             Lifecycle reconciliation: unmatched broker {(astraHorizonLifecycleCapacityPromotion?.unmatched_broker_symbols || []).join(", ") || "none"}; unmatched internal {(astraHorizonLifecycleCapacityPromotion?.unmatched_internal_symbols || []).join(", ") || "none"}.
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
-            Next action: {String(astraHorizonLifecycleCapacityPromotion?.next_recommended_action || "continue advisory horizon learning").replaceAll("_", " ")}
+            Next action: {String(astraHorizonLifecycleCapacityPromotion?.next_recommended_action || "continue advisory horizon learning").replaceAll("_", " ")}; overconcentration warning {astraHorizonLifecycleCapacityPromotion?.overconcentration_warning ? "yes" : "no"}.
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Flow: {String(astraHorizonLifecycleCapacityPromotion?.integration_flow || "Trade lifecycle / Shadow / Horizon systems -> Librarian -> Unified Truth -> Executive Assistant -> Learning Center").replaceAll("_", " ")}

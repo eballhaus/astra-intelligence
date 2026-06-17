@@ -21,11 +21,14 @@ from engine.intelligence_quality_common_v1 import (
 
 MODULES_CREATED = [
     "Trade Lifecycle Audit Auto-Repair V1",
+    "Horizon Opportunity Assignment Engine V1",
     "Horizon Shadow-to-Paper Promotion Readiness V1",
     "Horizon Capacity Manager V1",
     "Dynamic Capacity Recycling V1",
     "Horizon Exposure Balancer V1",
     "Learning Exposure Optimizer V1",
+    "Controlled Paper Horizon Practice Bucket V1",
+    "Horizon Exit / Profit Capture Readiness V1",
     "Horizon Lifecycle Dashboard Summary",
 ]
 
@@ -34,6 +37,11 @@ TARGET_RANGES = {
     "scalp": (20.0, 30.0),
     "day_trade": (30.0, 40.0),
     "swing_trade": (30.0, 40.0),
+}
+HORIZON_EXPECTED_WINDOWS = {
+    "scalp": "15m-60m",
+    "day_trade": "2h-EOD",
+    "swing_trade": "1d-10d+",
 }
 
 
@@ -145,6 +153,10 @@ def _readiness(sample: int, confidence: float, delta: float) -> str:
     if sample >= 100 and confidence >= 75 and delta > 0.05:
         return "promotion_candidate"
     return "advisory_only"
+
+
+def _expected_hold_window(horizon: str) -> str:
+    return HORIZON_EXPECTED_WINDOWS.get(horizon, "unknown")
 
 
 class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticModule):
@@ -265,6 +277,203 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "highest_readiness": first(next((r["readiness"] for r in rows if r["readiness"] in {"promotion_candidate", "tiny_bucket_candidate"}), None), "collect_more_evidence"),
             "auto_promotion_enabled": False,
             "learned_exits_enabled": False,
+            **_safe_flags(),
+        }
+
+    def _candidate_horizon_assignment(self, statuses: dict[str, Any], capacity: dict[str, Any], exposure: dict[str, Any], readiness: dict[str, Any]) -> dict[str, Any]:
+        trace = status_value(statuses, "paper_execution_trace")
+        throughput = status_value(statuses, "paper_autopilot_throughput")
+        allocation = status_value(statuses, "paper_opportunity_allocation")
+        fallback = status_value(statuses, "paper_opportunity_allocation_status_v1")
+        multi = status_value(statuses, "multi_horizon_intelligence_adaptive_lifecycle_suite_v1")
+        rows = list(trace.get("per_candidate_decision_trace") or [])
+        if not rows:
+            rows = list(throughput.get("per_candidate_decision_trace") or [])
+        if not rows and isinstance(allocation.get("candidate_rows"), list):
+            rows = [dict(row) for row in allocation.get("candidate_rows") if isinstance(row, dict)]
+        if not rows and isinstance(fallback.get("candidate_rows"), list):
+            rows = [dict(row) for row in fallback.get("candidate_rows") if isinstance(row, dict)]
+
+        assigned_rows: list[dict[str, Any]] = []
+        assigned_counts = Counter()
+        selected_counts = Counter()
+        blocked_counts = Counter()
+        for row in rows[:30]:
+            if not isinstance(row, dict):
+                continue
+            horizon = _horizon_label(row)
+            if horizon not in {"scalp", "day_trade", "swing_trade"}:
+                horizon = text(first(row.get("paper_entry_horizon_style"), row.get("trade_horizon_style"), row.get("best_horizon_style"), default="unknown"), "unknown")
+                if horizon not in {"scalp", "day_trade", "swing_trade"}:
+                    continue
+            eligible = bool(row.get("eligible", False) or row.get("selected", False) or row.get("order_attempted", False))
+            selected = bool(row.get("selected", False) or row.get("order_submitted", False) or row.get("order_result") == "submitted")
+            if not eligible and not selected:
+                continue
+            confidence = clamp(first(row.get("confidence"), row.get("open_confirmation_score"), row.get("paper_entry_horizon_confidence"), row.get("horizon_confidence"), default=55.0))
+            reason = text(first(row.get("decision_reason"), row.get("horizon_reason"), row.get("why_selected"), row.get("allocation_reason"), row.get("horizon_capacity_reason"), default="existing_paper_entry_horizon_assignment"))
+            source = text(first(row.get("paper_entry_horizon_source"), row.get("horizon_source"), row.get("trade_horizon_style"), row.get("best_horizon_style"), default="paper_autopilot_horizon_inference"))
+            assigned_row = {
+                "symbol": text(first(row.get("symbol"), row.get("ticker"), default="UNKNOWN"), "UNKNOWN").upper(),
+                "assigned_horizon": horizon,
+                "horizon_confidence": rounded(confidence, 3),
+                "horizon_reason": reason,
+                "expected_hold_window": _expected_hold_window(horizon),
+                "horizon_source": source,
+                "horizon_assignment_version": "paper_autopilot_horizon_inference_v1",
+                "eligible": eligible,
+                "selected": selected,
+                "order_result": text(row.get("order_result"), "unknown"),
+            }
+            assigned_rows.append(assigned_row)
+            assigned_counts[horizon] += 1
+            if selected:
+                selected_counts[horizon] += 1
+            if not selected:
+                blocked_counts[reason] += 1
+
+        if not assigned_rows:
+            paper_trades = dict(multi.get("paper_trades_per_horizon") or {})
+            for horizon in HORIZONS:
+                assigned_counts[horizon] += to_int(paper_trades.get(horizon), 0)
+            assigned_rows = [
+                {
+                    "symbol": "insufficient_data",
+                    "assigned_horizon": horizon,
+                    "horizon_confidence": 0.0,
+                    "horizon_reason": "paper_trades_per_horizon_cached_summary",
+                    "expected_hold_window": _expected_hold_window(horizon),
+                    "horizon_source": "multi_horizon_intelligence_adaptive_lifecycle_suite_v1.paper_trades_per_horizon",
+                    "horizon_assignment_version": "paper_autopilot_horizon_inference_v1",
+                    "eligible": False,
+                    "selected": False,
+                    "order_result": "cached_summary_only",
+                }
+                for horizon in HORIZONS
+                if to_int(paper_trades.get(horizon), 0) > 0
+            ]
+
+        assigned_total = sum(assigned_counts.values())
+        preferred = capacity.get("underexposed_horizon")
+        if preferred not in {"scalp", "day_trade", "swing_trade"}:
+            preferred = multi.get("best_horizon") if multi.get("best_horizon") in {"scalp", "day_trade", "swing_trade"} else "scalp"
+        capacity_mode = "advisory_rebalance_only" if exposure.get("horizon_exposure_balance") == "overconcentrated_swing" or preferred != "scalp" else "balanced_advisory"
+        block_reasons = dict(blocked_counts.most_common(6))
+        practice_rows = [row for row in assigned_rows if row["assigned_horizon"] in {"scalp", "day_trade", "swing_trade"}]
+        practice_candidate_count = len(practice_rows)
+        selected_total = sum(selected_counts.values())
+        if capacity.get("capacity_health") == "balanced":
+            preferred_next = "maintain_current_learning_mix"
+        elif capacity.get("underexposed_horizon") in {"scalp", "day_trade", "swing_trade"}:
+            preferred_next = text(capacity.get("underexposed_horizon"), "scalp")
+        elif multi.get("best_horizon") in {"scalp", "day_trade", "swing_trade"}:
+            preferred_next = text(multi.get("best_horizon"), "scalp")
+        else:
+            preferred_next = "scalp"
+        if not assigned_rows and not rows:
+            reason_not_ready = "no_candidate_trace_rows_available_from_cached_diagnostics"
+        elif assigned_total <= 0:
+            reason_not_ready = "candidate_rows_present_but_no_qualified_horizon_assignment_rows"
+        elif exposure.get("horizon_exposure_balance") == "overconcentrated_swing":
+            reason_not_ready = "current_paper_mix_is_overconcentrated_swing"
+        else:
+            reason_not_ready = "collect_more_horizon_assignment_evidence"
+        exit_readiness_map = dict(readiness.get("readiness_by_horizon") or {})
+        exit_readiness_rows = [
+            {
+                "horizon": horizon,
+                "status": text(exit_readiness_map.get(horizon), "collect_more_evidence"),
+                "evidence_count": 0,
+            }
+            for horizon in HORIZONS
+        ]
+        return {
+            "module": "Horizon Opportunity Assignment Engine V1",
+            "status": "ok" if assigned_rows else "insufficient_evidence",
+            "capacity_mode": capacity_mode,
+            "assigned_horizons_today": {k: int(v) for k, v in assigned_counts.items()},
+            "selected_horizons_today": {k: int(v) for k, v in selected_counts.items()},
+            "assigned_horizon_rows": assigned_rows[:12],
+            "assigned_horizon_count": assigned_total,
+            "selected_horizon_count": selected_total,
+            "practice_candidate_count": practice_candidate_count,
+            "blocked_candidate_count": max(0, practice_candidate_count - selected_total),
+            "block_reasons": block_reasons,
+            "preferred_next_horizon": preferred_next,
+            "capacity_rebalance_status": text(exposure.get("horizon_exposure_balance"), "insufficient_evidence"),
+            "capacity_rebalance_recommendation": text(capacity.get("recommended_capacity_shift"), "maintain_current_learning_mix"),
+            "rebalance_action_taken": False,
+            "rebalance_action_reason": "diagnostic_only_no_behavior_change",
+            "adaptive_focus": preferred_next,
+            "hot_market_focus": text(multi.get("best_horizon"), preferred_next),
+            "overconcentration_warning": bool(exposure.get("horizon_exposure_balance") == "overconcentrated_swing"),
+            "current_horizon_distribution": dict(capacity.get("horizon_distribution_pct") or {}),
+            "assigned_horizon_source": "paper_execution_trace.per_candidate_decision_trace",
+            "horizon_assignment_version": "paper_autopilot_horizon_inference_v1",
+            "exit_readiness_by_horizon": exit_readiness_rows,
+            "scalp_exit_readiness": text(exit_readiness_map.get("scalp"), "collect_more_evidence"),
+            "day_trade_exit_readiness": text(exit_readiness_map.get("day_trade"), "collect_more_evidence"),
+            "swing_exit_readiness": text(exit_readiness_map.get("swing_trade"), "collect_more_evidence"),
+            "highest_roi_exit_focus": text(capacity.get("top_learning_exposure_gap"), "horizon_exposure"),
+            "promotion_readiness": "promotion_candidate" if any(v in {"promotion_candidate", "tiny_bucket_candidate"} for v in exit_readiness_map.values()) else "collect_more_evidence",
+            "reason_not_ready": reason_not_ready,
+            **_safe_flags(),
+        }
+
+    def _practice_bucket(self, assignment: dict[str, Any], capacity: dict[str, Any]) -> dict[str, Any]:
+        practice_size = 3
+        bucket_enabled = False
+        selected_total = to_int(assignment.get("selected_horizon_count"), 0)
+        assigned_total = to_int(assignment.get("assigned_horizon_count"), 0)
+        scalp_count = to_int(dict(assignment.get("assigned_horizons_today") or {}).get("scalp"), 0)
+        day_count = to_int(dict(assignment.get("assigned_horizons_today") or {}).get("day_trade"), 0)
+        swing_count = to_int(dict(assignment.get("assigned_horizons_today") or {}).get("swing_trade"), 0)
+        practice_count = assigned_total if bucket_enabled else 0
+        blocked_count = max(0, assigned_total - selected_total)
+        block_reasons = list((assignment.get("block_reasons") or {}).keys())[:6]
+        return {
+            "module": "Controlled Paper Horizon Practice Bucket V1",
+            "status": "ok" if assigned_total > 0 else "insufficient_evidence",
+            "practice_bucket_status": "advisory_only_disabled_pending_human_review",
+            "bucket_enabled": bucket_enabled,
+            "bucket_size": practice_size,
+            "bucket_used_today": practice_count,
+            "scalp_practice_count": scalp_count,
+            "day_trade_practice_count": day_count,
+            "swing_practice_count": swing_count,
+            "practice_candidate_count": assigned_total,
+            "blocked_candidate_count": blocked_count,
+            "block_reasons": block_reasons,
+            "human_review_required": True,
+            "paper_only_preserved": True,
+            "learned_exit_bucket_enabled": False,
+            "reason_not_ready": "controlled_paper_horizon_practice_bucket_remains_disabled_until_project_conventions_support_it",
+            "recommended_action": text(capacity.get("recommended_capacity_shift"), "prefer_underexposed_horizon_only_when_existing_gates_pass"),
+            **_safe_flags(),
+        }
+
+    def _exit_readiness(self, readiness: dict[str, Any], capacity: dict[str, Any], exposure: dict[str, Any]) -> dict[str, Any]:
+        readiness_map = dict(readiness.get("readiness_by_horizon") or {})
+        scalp = text(readiness_map.get("scalp"), "collect_more_evidence")
+        day = text(readiness_map.get("day_trade"), "collect_more_evidence")
+        swing = text(readiness_map.get("swing_trade"), "collect_more_evidence")
+        highest = text(readiness.get("highest_readiness"), "collect_more_evidence")
+        if highest in {"promotion_candidate", "tiny_bucket_candidate"}:
+            not_ready = "human_review_required_before_any_paper_behavior_change"
+        elif exposure.get("horizon_exposure_balance") == "overconcentrated_swing":
+            not_ready = "overconcentrated_swing_requires_more_scalp_and_day_learning_evidence"
+        else:
+            not_ready = "more_horizon_evidence_required"
+        return {
+            "module": "Horizon Exit / Profit Capture Readiness V1",
+            "status": "ok" if readiness_map else "insufficient_evidence",
+            "scalp_exit_readiness": scalp,
+            "day_trade_exit_readiness": day,
+            "swing_exit_readiness": swing,
+            "highest_roi_exit_focus": text(capacity.get("top_learning_exposure_gap"), "horizon_exposure"),
+            "promotion_readiness": highest,
+            "reason_not_ready": not_ready,
+            "exit_readiness_by_horizon": readiness_map,
             **_safe_flags(),
         }
 
@@ -442,14 +651,20 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
         recycling = self._dynamic_recycling(statuses, capacity)
         exposure = self._exposure_balancer(statuses, capacity)
         optimizer = self._learning_exposure_optimizer(statuses, exposure)
+        assignment = self._candidate_horizon_assignment(statuses, capacity, exposure, readiness)
+        practice_bucket = self._practice_bucket(assignment, capacity)
+        exit_readiness = self._exit_readiness(readiness, capacity, exposure)
         dashboard = self._dashboard_summary(repair, readiness, capacity, recycling, exposure, optimizer)
         modules = {
             "trade_lifecycle_audit_auto_repair_v1": repair,
+            "horizon_opportunity_assignment_engine_v1": assignment,
             "horizon_shadow_to_paper_promotion_readiness_v1": readiness,
             "horizon_capacity_manager_v1": capacity,
             "dynamic_capacity_recycling_v1": recycling,
             "horizon_exposure_balancer_v1": exposure,
             "learning_exposure_optimizer_v1": optimizer,
+            "controlled_paper_horizon_practice_bucket_v1": practice_bucket,
+            "horizon_exit_profit_capture_readiness_v1": exit_readiness,
             "horizon_lifecycle_dashboard_summary": dashboard,
         }
         payload = {
@@ -471,6 +686,38 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "unmatched_internal_symbols": repair.get("unmatched_internal_symbols"),
             "unknown_horizon_positions": capacity.get("unknown_horizon_slots"),
             "horizon_distribution": capacity.get("horizon_distribution_pct"),
+            "current_horizon_distribution": capacity.get("horizon_distribution_pct"),
+            "assigned_horizon_source": assignment.get("assigned_horizon_source"),
+            "horizon_assignment_version": assignment.get("horizon_assignment_version"),
+            "capacity_mode": assignment.get("capacity_mode"),
+            "capacity_rebalance_status": assignment.get("capacity_rebalance_status"),
+            "assigned_horizons_today": assignment.get("assigned_horizons_today"),
+            "selected_horizons_today": assignment.get("selected_horizons_today"),
+            "assigned_horizon_rows": assignment.get("assigned_horizon_rows"),
+            "assigned_horizon_count": assignment.get("assigned_horizon_count"),
+            "preferred_next_horizon": assignment.get("preferred_next_horizon"),
+            "capacity_rebalance_recommendation": assignment.get("capacity_rebalance_recommendation"),
+            "rebalance_action_taken": assignment.get("rebalance_action_taken"),
+            "rebalance_action_reason": assignment.get("rebalance_action_reason"),
+            "overconcentration_warning": assignment.get("overconcentration_warning"),
+            "practice_bucket_status": practice_bucket.get("practice_bucket_status"),
+            "bucket_enabled": practice_bucket.get("bucket_enabled"),
+            "bucket_size": practice_bucket.get("bucket_size"),
+            "bucket_used_today": practice_bucket.get("bucket_used_today"),
+            "scalp_practice_count": practice_bucket.get("scalp_practice_count"),
+            "day_trade_practice_count": practice_bucket.get("day_trade_practice_count"),
+            "swing_practice_count": practice_bucket.get("swing_practice_count"),
+            "practice_candidate_count": practice_bucket.get("practice_candidate_count"),
+            "blocked_candidate_count": practice_bucket.get("blocked_candidate_count"),
+            "practice_bucket_block_reasons": practice_bucket.get("block_reasons"),
+            "exit_readiness_status": exit_readiness.get("promotion_readiness"),
+            "scalp_exit_readiness": exit_readiness.get("scalp_exit_readiness"),
+            "day_trade_exit_readiness": exit_readiness.get("day_trade_exit_readiness"),
+            "swing_exit_readiness": exit_readiness.get("swing_exit_readiness"),
+            "highest_roi_exit_focus": exit_readiness.get("highest_roi_exit_focus"),
+            "promotion_readiness": exit_readiness.get("promotion_readiness"),
+            "reason_not_ready": exit_readiness.get("reason_not_ready"),
+            "exit_readiness_by_horizon": exit_readiness.get("exit_readiness_by_horizon"),
             "readiness_by_horizon": readiness.get("readiness_by_horizon"),
             "horizon_capacity_status": capacity.get("capacity_status"),
             "dynamic_recycling_status": recycling.get("dynamic_recycling_status"),
