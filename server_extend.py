@@ -2428,6 +2428,7 @@ try:
     from engine.astra_tier3_historical_satellite_shadow_acceleration_v1 import AstraTier3HistoricalSatelliteShadowAccelerationV1
     from engine.astra_final_intelligence_maturation_bundle_v1 import AstraFinalIntelligenceMaturationBundleV1
     from engine.astra_targeted_maturity_profit_capture_optimization_bundle_v1 import AstraTargetedMaturityProfitCaptureOptimizationBundleV1
+    from engine.astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1 import AstraHorizonLifecycleCapacityPromotionReadinessBundleV1
 except Exception:
     class _IntelligenceQualityUnavailable:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -2478,6 +2479,7 @@ except Exception:
     AstraTier3HistoricalSatelliteShadowAccelerationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraFinalIntelligenceMaturationBundleV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraTargetedMaturityProfitCaptureOptimizationBundleV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    AstraHorizonLifecycleCapacityPromotionReadinessBundleV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
     from engine.trade_thesis_validation_v1 import TradeThesisValidationV1
 except Exception:
@@ -3129,6 +3131,7 @@ ASTRA_SATELLITE_NETWORK = AstraSatelliteNetworkV1(state_dir=STATE)
 ASTRA_TIER3_HISTORICAL_SATELLITE_SHADOW_ACCELERATION = AstraTier3HistoricalSatelliteShadowAccelerationV1(state_dir=STATE)
 ASTRA_FINAL_INTELLIGENCE_MATURATION_BUNDLE = AstraFinalIntelligenceMaturationBundleV1(state_dir=STATE)
 ASTRA_TARGETED_MATURITY_PROFIT_CAPTURE_OPTIMIZATION_BUNDLE = AstraTargetedMaturityProfitCaptureOptimizationBundleV1(state_dir=STATE)
+ASTRA_HORIZON_LIFECYCLE_CAPACITY_PROMOTION_READINESS_BUNDLE = AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(state_dir=STATE)
 TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
 MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
 TRADE_FAMILY_INTELLIGENCE = TradeFamilyIntelligenceV1(state_dir=STATE)
@@ -33679,6 +33682,61 @@ def astra_targeted_maturity_profit_capture_optimization_bundle_v1(force: bool = 
     )
 
 
+@router.get("/api/astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1")
+def astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1(force: bool = False):
+    try:
+        statuses = _learning_acceleration_status_bundle()
+        try:
+            statuses["mobile_runtime_compaction"] = _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False)
+        except Exception:
+            statuses["mobile_runtime_compaction"] = {}
+        out = dict(ASTRA_HORIZON_LIFECYCLE_CAPACITY_PROMOTION_READINESS_BUNDLE.status(statuses=statuses, force=bool(force)) or {})
+        out["astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1"] = True
+        out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
+        out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
+        out["llm_calls_used"] = int(_to_float(out.get("llm_calls_used"), 0.0))
+        out["behavior_safe_to_apply"] = False
+        out["shadow_analysis_mode"] = True
+        out["advisory_only"] = True
+        out["paper_only_preserved"] = True
+        out["alpaca_paper_only_preserved"] = True
+        out["live_trading_changed"] = False
+        out["broker_behavior_changed"] = False
+        out["ranking_behavior_changed"] = False
+        out["entry_behavior_changed"] = False
+        out["exit_behavior_changed"] = False
+        out["position_sizing_changed"] = False
+        out["portfolio_allocation_changed"] = False
+        out["thresholds_changed"] = False
+        out["paper_execution_changed"] = False
+        out["paper_sell_behavior_enabled"] = False
+        out["learned_exits_enabled"] = False
+        return out
+    except Exception as exc:
+        return {
+            "enabled": False,
+            "version": "1.0.0",
+            "status": "insufficient_evidence",
+            "mode": "paper_safe_shadow_horizon_lifecycle_capacity_promotion_readiness",
+            "astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1": True,
+            "degraded_reason": f"astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1_endpoint_unavailable:{str(exc)[:140]}",
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "behavior_safe_to_apply": False,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "paper_execution_changed": False,
+            "paper_sell_behavior_enabled": False,
+            "learned_exits_enabled": False,
+        }
+
+
 @router.get("/api/learning_roi_engine_v1")
 def learning_roi_engine_v1(force: bool = False):
     return _intelligence_quality_endpoint(LEARNING_ROI_ENGINE, "learning_roi_engine_v1", force=force)
@@ -43684,6 +43742,10 @@ def _learning_acceleration_status_bundle() -> dict:
     except Exception:
         statuses["astra_targeted_maturity_profit_capture_optimization_bundle_v1"] = {}
     try:
+        statuses["astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1"] = ASTRA_HORIZON_LIFECYCLE_CAPACITY_PROMOTION_READINESS_BUNDLE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1"] = {}
+    try:
         statuses["paper_throughput_exit_validation_catalyst_intelligence_v1"] = PAPER_THROUGHPUT_EXIT_VALIDATION_CATALYST_INTELLIGENCE.status(statuses=statuses, force=False)
     except Exception:
         statuses["paper_throughput_exit_validation_catalyst_intelligence_v1"] = {}
@@ -53427,6 +53489,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("astra_final_intelligence_maturation_bundle_v1", lambda: ASTRA_FINAL_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=statuses, force=False))
         _safe_status("astra_targeted_maturity_profit_capture_optimization_bundle_v1", lambda: ASTRA_TARGETED_MATURITY_PROFIT_CAPTURE_OPTIMIZATION_BUNDLE.status(statuses=statuses, force=False))
         _safe_status("mobile_runtime_compaction", lambda: _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False))
+        _safe_status("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1", lambda: ASTRA_HORIZON_LIFECYCLE_CAPACITY_PROMOTION_READINESS_BUNDLE.status(statuses=statuses, force=True))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))
         _safe_status("paper_opportunity_allocation", lambda: PAPER_OPPORTUNITY_ALLOCATION_ENGINE.status(rows=rows))
         _safe_status("portfolio_risk_intelligence", lambda: PORTFOLIO_RISK_INTELLIGENCE_SUITE.status(rows=rows))

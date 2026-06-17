@@ -1628,6 +1628,7 @@ export default function LearningTab({ compact = false }) {
   const astraTier3HistoricalSatelliteShadowAcceleration = unified?.astra_tier3_historical_satellite_shadow_acceleration_v1 || {};
   const astraFinalIntelligenceMaturation = unified?.astra_final_intelligence_maturation_bundle_v1 || {};
   const astraTargetedMaturityProfitCapture = unified?.astra_targeted_maturity_profit_capture_optimization_bundle_v1 || {};
+  const astraHorizonLifecycleCapacityPromotion = unified?.astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
   const tradeFamilyIntelligence = unified?.trade_family_intelligence_v1 || {};
@@ -1802,6 +1803,7 @@ export default function LearningTab({ compact = false }) {
       astra_tier3_historical_satellite_shadow_acceleration_v1: astraTier3HistoricalSatelliteShadowAcceleration,
       astra_final_intelligence_maturation_bundle_v1: astraFinalIntelligenceMaturation,
       astra_targeted_maturity_profit_capture_optimization_bundle_v1: astraTargetedMaturityProfitCapture,
+      astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1: astraHorizonLifecycleCapacityPromotion,
       candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
       profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
       realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
@@ -2918,6 +2920,65 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Flow: {String(astraTargetedMaturityProfitCapture?.integration_flow || "Satellites/Historical/Shadow -> Librarian -> Unified Truth -> Executive Assistant -> Astra Brain").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Astra Horizon Lifecycle, Capacity Recycling & Promotion Readiness Bundle V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is reconciling broker-confirmed active positions with lifecycle audit rows, measuring scalp/day/swing learning balance, and preparing future horizon behavior through shadow readiness only. This panel is paper-safe, advisory-first, human-review required, and does not enable broker sells, learned exits, ranking changes, entry changes, sizing changes, allocation changes, or threshold changes.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Status", astraHorizonLifecycleCapacityPromotion?.status],
+            ["Repair status", astraHorizonLifecycleCapacityPromotion?.repair_status],
+            ["Position source", astraHorizonLifecycleCapacityPromotion?.active_position_source],
+            ["Broker confirmed", safeNumber(astraHorizonLifecycleCapacityPromotion?.broker_confirmed_count).toFixed(0)],
+            ["Rows audited", safeNumber(astraHorizonLifecycleCapacityPromotion?.lifecycle_rows_audited).toFixed(0)],
+            ["Stale rows hidden", safeNumber(astraHorizonLifecycleCapacityPromotion?.stale_internal_rows_hidden).toFixed(0)],
+            ["Unknown horizons", safeNumber(astraHorizonLifecycleCapacityPromotion?.unknown_horizon_positions).toFixed(0)],
+            ["Conservative horizon repairs", safeNumber(astraHorizonLifecycleCapacityPromotion?.conservatively_classified_unknown_broker_rows).toFixed(0)],
+            ["Capacity", astraHorizonLifecycleCapacityPromotion?.horizon_capacity_status],
+            ["Total used", `${safeNumber(astraHorizonLifecycleCapacityPromotion?.total_used).toFixed(0)} / ${safeNumber(astraHorizonLifecycleCapacityPromotion?.total_capacity, 20).toFixed(0)}`],
+            ["Scalp slots", safeNumber(astraHorizonLifecycleCapacityPromotion?.scalp_slots_used).toFixed(0)],
+            ["Day slots", safeNumber(astraHorizonLifecycleCapacityPromotion?.day_trade_slots_used).toFixed(0)],
+            ["Swing slots", safeNumber(astraHorizonLifecycleCapacityPromotion?.swing_slots_used).toFixed(0)],
+            ["Underexposed", astraHorizonLifecycleCapacityPromotion?.underexposed_horizon],
+            ["Overexposed", astraHorizonLifecycleCapacityPromotion?.overexposed_horizon],
+            ["Recycling", astraHorizonLifecycleCapacityPromotion?.dynamic_recycling_status],
+            ["Recycled slots", safeNumber(astraHorizonLifecycleCapacityPromotion?.recycled_slots_available).toFixed(0)],
+            ["Exposure balance", astraHorizonLifecycleCapacityPromotion?.horizon_exposure_balance],
+            ["Balance score", safeNumber(astraHorizonLifecycleCapacityPromotion?.horizon_learning_balance_score).toFixed(1)],
+            ["Top learning gap", astraHorizonLifecycleCapacityPromotion?.top_learning_exposure_gap],
+            ["Provider calls", safeNumber(astraHorizonLifecycleCapacityPromotion?.provider_calls_used).toFixed(0)],
+            ["LLM calls", safeNumber(astraHorizonLifecycleCapacityPromotion?.llm_calls_used).toFixed(0)],
+            ["Paper sell enabled", astraHorizonLifecycleCapacityPromotion?.paper_sell_behavior_enabled ? "yes" : "no"],
+            ["Learned exits", astraHorizonLifecycleCapacityPromotion?.learned_exits_enabled ? "yes" : "no"],
+            ["Behavior safe", astraHorizonLifecycleCapacityPromotion?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Horizon distribution: {Object.entries(astraHorizonLifecycleCapacityPromotion?.horizon_distribution || {}).map(([key, value]) => `${String(key).replaceAll("_", " ")} ${safeNumber(value).toFixed(1)}%`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow readiness: {Object.entries(astraHorizonLifecycleCapacityPromotion?.readiness_by_horizon || {}).map(([key, value]) => `${String(key).replaceAll("_", " ")} ${String(value).replaceAll("_", " ")}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Recycling: {String(astraHorizonLifecycleCapacityPromotion?.recycling_recommendation || "monitor capacity until slot reopens").replaceAll("_", " ")}; block reason {String(astraHorizonLifecycleCapacityPromotion?.recycle_block_reason || "none").replaceAll("_", " ")}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Lifecycle reconciliation: unmatched broker {(astraHorizonLifecycleCapacityPromotion?.unmatched_broker_symbols || []).join(", ") || "none"}; unmatched internal {(astraHorizonLifecycleCapacityPromotion?.unmatched_internal_symbols || []).join(", ") || "none"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Next action: {String(astraHorizonLifecycleCapacityPromotion?.next_recommended_action || "continue advisory horizon learning").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Flow: {String(astraHorizonLifecycleCapacityPromotion?.integration_flow || "Trade lifecycle / Shadow / Horizon systems -> Librarian -> Unified Truth -> Executive Assistant -> Learning Center").replaceAll("_", " ")}
           </div>
         </div>
       </details>
