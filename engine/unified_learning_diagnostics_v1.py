@@ -3873,6 +3873,12 @@ class UnifiedLearningDiagnosticsV1:
         rotation = dict(modules.get("adaptive_portfolio_rotation_engine_v1") or {})
         lifecycle = dict(modules.get("trade_lifecycle_intelligence_v2") or {})
         regime_allocation = dict(modules.get("adaptive_market_regime_allocation_v1") or {})
+        promotion_v2 = dict(modules.get("shadow_to_paper_promotion_engine_v2") or data.get("shadow_to_paper_promotion_engine_v2") or {})
+        test_bucket_v2 = dict(modules.get("controlled_paper_test_bucket_v2") or data.get("controlled_paper_test_bucket_v2") or {})
+        exit_promotion_v2 = dict(modules.get("exit_promotion_readiness_v2") or data.get("exit_promotion_readiness_v2") or {})
+        horizon_regime_promotion_v2 = dict(modules.get("horizon_regime_promotion_readiness_v2") or data.get("horizon_regime_promotion_readiness_v2") or {})
+        stale_rotation_promotion_v2 = dict(modules.get("stale_position_rotation_promotion_readiness_v2") or data.get("stale_position_rotation_promotion_readiness_v2") or {})
+        scorecard_v2 = dict(modules.get("shadow_vs_paper_scorecard_v2") or data.get("shadow_vs_paper_scorecard_v2") or {})
         dashboard = dict(modules.get("horizon_lifecycle_dashboard_summary") or {})
         return {
             "enabled": bool(data.get("enabled", False)),
@@ -4008,6 +4014,42 @@ class UnifiedLearningDiagnosticsV1:
             "horizon_market_bias": _text(data.get("horizon_market_bias") or regime_allocation.get("horizon_market_bias"), "balanced_adaptive_learning_mix"),
             "regime_allocation_recommendation": _text(data.get("regime_allocation_recommendation") or regime_allocation.get("regime_allocation_recommendation"), "balanced_adaptive_learning_mix"),
             "market_adaptability_score": _to_float(data.get("market_adaptability_score") or regime_allocation.get("market_adaptability_score"), 0.0),
+            "shadow_to_paper_promotion_engine_v2": dict(promotion_v2),
+            "promotion_candidates_v2": list(data.get("promotion_candidates_v2") or promotion_v2.get("promotion_candidates") or [])[:7],
+            "top_promotion_candidate": dict(data.get("top_promotion_candidate") or promotion_v2.get("top_promotion_candidate") or {}),
+            "top_promotion_candidate_name": _text(data.get("top_promotion_candidate_name") or promotion_v2.get("top_promotion_candidate_name"), "insufficient_evidence"),
+            "top_promotion_readiness": _text(data.get("top_promotion_readiness") or promotion_v2.get("top_promotion_readiness"), "advisory_only"),
+            "top_promotion_blocker": _text(data.get("top_promotion_blocker") or promotion_v2.get("top_promotion_blocker"), "human_review_required"),
+            "expected_pf_improvement": _to_float(data.get("expected_pf_improvement") or promotion_v2.get("expected_pf_improvement"), 0.0),
+            "expected_giveback_reduction": _to_float(data.get("expected_giveback_reduction") or promotion_v2.get("expected_giveback_reduction"), 0.0),
+            "expected_capture_improvement": _to_float(data.get("expected_capture_improvement") or promotion_v2.get("expected_capture_improvement"), 0.0),
+            "promotion_recommended_next_action": _text(data.get("promotion_recommended_next_action") or promotion_v2.get("recommended_next_action"), "human_review_before_any_tiny_paper_bucket"),
+            "controlled_paper_test_bucket_v2": dict(test_bucket_v2),
+            "test_bucket_enabled": bool(data.get("test_bucket_enabled") or test_bucket_v2.get("bucket_enabled", False)),
+            "test_bucket_status": _text(data.get("test_bucket_status") or test_bucket_v2.get("status"), "disabled_pending_human_review"),
+            "test_bucket_size": _to_int(data.get("test_bucket_size") or test_bucket_v2.get("bucket_size"), 2),
+            "test_bucket_used_today": _to_int(data.get("test_bucket_used_today") or test_bucket_v2.get("bucket_used_today"), 0),
+            "tested_behavior": _text(data.get("tested_behavior") or test_bucket_v2.get("tested_behavior"), "insufficient_evidence"),
+            "rollback_status": _text(data.get("rollback_status") or test_bucket_v2.get("rollback_status"), "armed"),
+            "kill_switch_status": _text(data.get("kill_switch_status") or test_bucket_v2.get("kill_switch_status"), "available"),
+            "exit_promotion_readiness_v2": dict(exit_promotion_v2),
+            "exit_promotion_rows_v2": list(data.get("exit_promotion_rows_v2") or exit_promotion_v2.get("exit_promotion_rows") or [])[:7],
+            "horizon_regime_promotion_readiness_v2": dict(horizon_regime_promotion_v2),
+            "stale_position_rotation_promotion_readiness_v2": dict(stale_rotation_promotion_v2),
+            "shadow_vs_paper_scorecard_v2": dict(scorecard_v2),
+            "paper_pf": _to_float(data.get("paper_pf") or scorecard_v2.get("paper_pf"), 0.0),
+            "shadow_expected_pf": _to_float(data.get("shadow_expected_pf") or scorecard_v2.get("shadow_expected_pf"), 0.0),
+            "pf_delta": _to_float(data.get("pf_delta") or scorecard_v2.get("pf_delta"), 0.0),
+            "paper_exit_quality": _to_float(data.get("paper_exit_quality") or scorecard_v2.get("paper_exit_quality"), 0.0),
+            "shadow_exit_quality": _to_float(data.get("shadow_exit_quality") or scorecard_v2.get("shadow_exit_quality"), 0.0),
+            "exit_quality_delta": _to_float(data.get("exit_quality_delta") or scorecard_v2.get("exit_quality_delta"), 0.0),
+            "paper_giveback": _to_float(data.get("paper_giveback") or scorecard_v2.get("paper_giveback"), 0.0),
+            "shadow_expected_giveback": _to_float(data.get("shadow_expected_giveback") or scorecard_v2.get("shadow_expected_giveback"), 0.0),
+            "giveback_delta": _to_float(data.get("giveback_delta") or scorecard_v2.get("giveback_delta"), 0.0),
+            "paper_capture_ratio": _to_float(data.get("paper_capture_ratio") or scorecard_v2.get("paper_capture_ratio"), 0.0),
+            "shadow_capture_ratio": _to_float(data.get("shadow_capture_ratio") or scorecard_v2.get("shadow_capture_ratio"), 0.0),
+            "capture_delta": _to_float(data.get("capture_delta") or scorecard_v2.get("capture_delta"), 0.0),
+            "horizon_gap": _to_float(data.get("horizon_gap") or scorecard_v2.get("horizon_gap"), 0.0),
             "active_broker_positions": _to_int(data.get("active_broker_positions") or dashboard.get("active_broker_positions"), 0),
             "rows_audited": _to_int(data.get("rows_audited") or dashboard.get("rows_audited"), 0),
             "shadow_horizon_readiness": dict(dashboard.get("shadow_horizon_readiness") or {}),

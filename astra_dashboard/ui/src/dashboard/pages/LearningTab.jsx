@@ -3041,6 +3041,46 @@ export default function LearningTab({ compact = false }) {
       </details>
 
       <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Shadow-to-Paper Promotion Engine V2</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Controlled promotion bridge for shadow-learned exits, horizon behavior, and rotation concepts. Human review remains required before any tiny paper test bucket.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Top candidate", astraHorizonLifecycleCapacityPromotion?.top_promotion_candidate_name],
+            ["Readiness", astraHorizonLifecycleCapacityPromotion?.top_promotion_readiness],
+            ["PF gain", safeNumber(astraHorizonLifecycleCapacityPromotion?.expected_pf_improvement).toFixed(3)],
+            ["Giveback reduction", safeNumber(astraHorizonLifecycleCapacityPromotion?.expected_giveback_reduction).toFixed(1)],
+            ["Capture improvement", safeNumber(astraHorizonLifecycleCapacityPromotion?.expected_capture_improvement).toFixed(3)],
+            ["Test bucket", astraHorizonLifecycleCapacityPromotion?.test_bucket_status],
+            ["Bucket used", `${safeNumber(astraHorizonLifecycleCapacityPromotion?.test_bucket_used_today).toFixed(0)} / ${safeNumber(astraHorizonLifecycleCapacityPromotion?.test_bucket_size, 2).toFixed(0)}`],
+            ["Rollback", astraHorizonLifecycleCapacityPromotion?.rollback_status],
+            ["Kill switch", astraHorizonLifecycleCapacityPromotion?.kill_switch_status],
+            ["Biggest blocker", astraHorizonLifecycleCapacityPromotion?.top_promotion_blocker],
+            ["Paper PF", safeNumber(astraHorizonLifecycleCapacityPromotion?.paper_pf).toFixed(3)],
+            ["Shadow PF", safeNumber(astraHorizonLifecycleCapacityPromotion?.shadow_expected_pf).toFixed(3)],
+            ["Exit delta", safeNumber(astraHorizonLifecycleCapacityPromotion?.exit_quality_delta).toFixed(1)],
+            ["Horizon gap", safeNumber(astraHorizonLifecycleCapacityPromotion?.horizon_gap).toFixed(1)],
+            ["Behavior safe", astraHorizonLifecycleCapacityPromotion?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Scorecard: paper PF {safeNumber(astraHorizonLifecycleCapacityPromotion?.paper_pf).toFixed(3)}, shadow PF {safeNumber(astraHorizonLifecycleCapacityPromotion?.shadow_expected_pf).toFixed(3)}, giveback {safeNumber(astraHorizonLifecycleCapacityPromotion?.paper_giveback).toFixed(1)} to {safeNumber(astraHorizonLifecycleCapacityPromotion?.shadow_expected_giveback).toFixed(1)}, capture {safeNumber(astraHorizonLifecycleCapacityPromotion?.paper_capture_ratio).toFixed(3)} to {safeNumber(astraHorizonLifecycleCapacityPromotion?.shadow_capture_ratio).toFixed(3)}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Promotion candidates: {(astraHorizonLifecycleCapacityPromotion?.promotion_candidates_v2 || []).map((row) => `${String(row?.behavior_name || "unknown").replaceAll("_", " ")} ${String(row?.promotion_readiness || "warming up").replaceAll("_", " ")}`).join(" | ") || "warming up"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Next action: {String(astraHorizonLifecycleCapacityPromotion?.promotion_recommended_next_action || "human_review_before_any_tiny_paper_bucket").replaceAll("_", " ")}; bucket enabled {astraHorizonLifecycleCapacityPromotion?.test_bucket_enabled ? "yes" : "no"}.
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
         <summary style={{ cursor: "pointer", fontWeight: 700 }}>Trade Thesis Validation V1</summary>
         <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
           Astra is checking whether the original trade thesis actually matched what happened in the market across catalyst, symbol, sector, regime, horizon, entry, and exit reasoning. This remains learning-only and does not change entries, exits, sizing, thresholds, or broker behavior.

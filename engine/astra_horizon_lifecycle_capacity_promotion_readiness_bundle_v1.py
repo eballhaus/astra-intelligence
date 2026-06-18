@@ -30,6 +30,12 @@ MODULES_CREATED = [
     "Adaptive Portfolio Rotation Engine V1",
     "Trade Lifecycle Intelligence V2",
     "Adaptive Market Regime Allocation V1",
+    "Shadow-to-Paper Promotion Engine V2",
+    "Controlled Paper Test Bucket V2",
+    "Exit Promotion Readiness V2",
+    "Horizon & Regime Promotion Readiness V2",
+    "Stale Position / Rotation Promotion Readiness V2",
+    "Shadow vs Paper Scorecard V2",
     "Controlled Paper Horizon Practice Bucket V1",
     "Horizon Exit / Profit Capture Readiness V1",
     "Horizon Lifecycle Dashboard Summary",
@@ -980,6 +986,291 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             **_safe_flags(),
         }
 
+    def _shadow_vs_paper_scorecard_v2(
+        self,
+        statuses: dict[str, Any],
+        readiness: dict[str, Any],
+        capacity: dict[str, Any],
+        rotation: dict[str, Any],
+        lifecycle: dict[str, Any],
+        regime: dict[str, Any],
+    ) -> dict[str, Any]:
+        attribution = status_value(statuses, "shadow_vs_paper_performance_attribution_v1")
+        profit = status_value(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
+        shadow_lab = status_value(statuses, "realistic_shadow_evidence_learning_lab_v1")
+        paper_pf = _pf(attribution, "paper_profit_factor_verified", "paper_profit_factor", "lifetime_paper_pf", default=_pf(profit, "current_policy_profit_factor", default=0.0))
+        shadow_pf = _pf(attribution, "shadow_profit_factor_verified", "shadow_profit_factor", "lifetime_shadow_pf", default=max(paper_pf, _pf(shadow_lab, "shadow_profit_factor", default=0.0)))
+        paper_exit_quality = rounded(to_float(first(profit.get("current_policy_exit_quality"), profit.get("paper_exit_quality"), lifecycle.get("exit_efficiency"), 0.0), 0.0), 3)
+        shadow_exit_quality = rounded(to_float(first(profit.get("best_policy_exit_quality"), readiness.get("shadow_exit_quality"), paper_exit_quality + 5.0, 0.0), 0.0), 3)
+        paper_giveback = rounded(to_float(first(profit.get("current_policy_giveback"), profit.get("average_giveback_pct"), lifecycle.get("giveback_ratio"), 0.0), 0.0), 3)
+        shadow_giveback = rounded(max(0.0, to_float(first(profit.get("best_policy_giveback"), profit.get("learned_corrected_giveback"), paper_giveback - 2.0, 0.0), 0.0)), 3)
+        paper_capture = rounded(to_float(first(profit.get("current_policy_capture_ratio"), profit.get("average_capture_ratio"), lifecycle.get("capture_ratio"), 0.0), 0.0), 3)
+        shadow_capture = rounded(to_float(first(profit.get("best_policy_capture_ratio"), profit.get("learned_corrected_capture_ratio"), paper_capture + 0.05, 0.0), 0.0), 3)
+        horizon_distribution = dict(capacity.get("horizon_distribution_pct") or {})
+        preferred_mix = dict(regime.get("preferred_horizon_mix") or {})
+        horizon_gap = rounded(sum(abs(to_float(horizon_distribution.get(k), 0.0) - to_float(preferred_mix.get(k), 0.0)) for k in HORIZONS) / max(1, len(HORIZONS)), 3)
+        return {
+            "module": "Shadow vs Paper Scorecard V2",
+            "status": "ok",
+            "paper_pf": paper_pf,
+            "shadow_expected_pf": shadow_pf,
+            "pf_delta": rounded(shadow_pf - paper_pf, 4),
+            "paper_exit_quality": paper_exit_quality,
+            "shadow_exit_quality": shadow_exit_quality,
+            "exit_quality_delta": rounded(shadow_exit_quality - paper_exit_quality, 3),
+            "paper_giveback": paper_giveback,
+            "shadow_expected_giveback": shadow_giveback,
+            "giveback_delta": rounded(paper_giveback - shadow_giveback, 3),
+            "paper_capture_ratio": paper_capture,
+            "shadow_capture_ratio": shadow_capture,
+            "capture_delta": rounded(shadow_capture - paper_capture, 3),
+            "paper_horizon_distribution": horizon_distribution,
+            "shadow_recommended_horizon_distribution": preferred_mix,
+            "horizon_gap": horizon_gap,
+            "paper_stale_position_pressure": rounded(to_float(rotation.get("capital_trapped_score"), 0.0), 3),
+            "shadow_rotation_recommendation": "review_stale_positions" if to_int(rotation.get("stale_positions_count"), 0) > 0 else "monitor_active_positions",
+            **_safe_flags(),
+        }
+
+    def _exit_promotion_readiness_v2(self, statuses: dict[str, Any], scorecard: dict[str, Any]) -> dict[str, Any]:
+        learned_exit = status_value(statuses, "controlled_paper_learned_exit_validation_v1")
+        profit = status_value(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
+        evidence = max(to_int(learned_exit.get("evidence_count"), 0), to_int(profit.get("evidence_count"), 0), to_int(learned_exit.get("learned_exit_candidates_today"), 0))
+        confidence = clamp(first(learned_exit.get("policy_confidence"), learned_exit.get("validation_confidence"), profit.get("confidence_score"), default=55.0))
+        safety_score = 95.0 if bool(learned_exit.get("paper_sell_route_guarded", True)) and bool(learned_exit.get("learned_exit_duplicate_exit_prevention_verified", True)) else 60.0
+        base_gain = max(0.0, to_float(scorecard.get("pf_delta"), 0.0))
+        giveback_reduction = max(0.0, to_float(scorecard.get("giveback_delta"), 0.0))
+        capture_gain = max(0.0, to_float(scorecard.get("capture_delta"), 0.0))
+        policies = [
+            "hybrid_exit_candidate",
+            "catalyst_aware_exit",
+            "profit_lock_exit",
+            "continuation_failure_exit",
+            "horizon_specific_exit",
+            "regime_aware_exit",
+            "symbol_aware_exit",
+        ]
+        rows = []
+        for idx, policy in enumerate(policies):
+            readiness_score = rounded(clamp(confidence * 0.35 + min(35.0, evidence / 3.0) + safety_score * 0.2 + (giveback_reduction + capture_gain * 10.0 + base_gain * 8.0) * 0.8 - idx * 1.5), 3)
+            if evidence < 25:
+                blocker = "minimum_evidence_not_met"
+            elif confidence < 60:
+                blocker = "confidence_below_promotion_threshold"
+            elif safety_score < 80:
+                blocker = "paper_exit_path_safety_not_verified"
+            elif readiness_score < 65:
+                blocker = "readiness_score_below_tiny_bucket_threshold"
+            else:
+                blocker = "human_review_required_before_tiny_bucket"
+            rows.append(
+                {
+                    "behavior_name": policy,
+                    "readiness_score": readiness_score,
+                    "confidence": rounded(confidence, 3),
+                    "evidence_count": evidence,
+                    "expected_pf_gain": rounded(base_gain, 4),
+                    "expected_giveback_reduction": rounded(giveback_reduction, 3),
+                    "expected_capture_ratio_gain": rounded(capture_gain, 3),
+                    "safety_score": rounded(safety_score, 3),
+                    "blocker": blocker,
+                }
+            )
+        best = max(rows, key=lambda row: row["readiness_score"]) if rows else {}
+        return {
+            "module": "Exit Promotion Readiness V2",
+            "status": "ok" if rows else "insufficient_evidence",
+            "exit_promotion_rows": rows,
+            "top_exit_promotion_candidate": best,
+            "readiness_score": best.get("readiness_score", 0.0),
+            "confidence": best.get("confidence", 0.0),
+            "evidence_count": best.get("evidence_count", 0),
+            "expected_pf_gain": best.get("expected_pf_gain", 0.0),
+            "expected_giveback_reduction": best.get("expected_giveback_reduction", 0.0),
+            "expected_capture_ratio_gain": best.get("expected_capture_ratio_gain", 0.0),
+            "safety_score": best.get("safety_score", 0.0),
+            "blocker": best.get("blocker", "insufficient_evidence"),
+            "automatic_sells_enabled": False,
+            **_safe_flags(),
+        }
+
+    def _horizon_regime_promotion_readiness_v2(self, capacity: dict[str, Any], exposure: dict[str, Any], regime: dict[str, Any]) -> dict[str, Any]:
+        preferred_by_regime = {
+            "high_volatility": "scalp",
+            "momentum_continuation": "day_trade",
+            "risk_on": "swing_trade",
+            "catalyst_heavy": "day_trade",
+            "chop_range": "scalp",
+            "risk_off": "scalp_or_defensive_hold_review",
+        }
+        horizon_gap = rounded(sum(max(0.0, TARGET_RANGES[h][0] - to_float((capacity.get("horizon_distribution_pct") or {}).get(h), 0.0)) for h in HORIZONS), 3)
+        confidence = rounded(to_float(regime.get("market_adaptability_score"), 0.0), 3)
+        if confidence < 45:
+            readiness = "collect_more_evidence"
+            blocker = "market_regime_confidence_low"
+        elif horizon_gap > 30:
+            readiness = "advisory_only"
+            blocker = "paper_horizon_exposure_gap_high"
+        else:
+            readiness = "tiny_bucket_candidate_pending_human_review"
+            blocker = "human_review_required_before_tiny_bucket"
+        return {
+            "module": "Horizon & Regime Promotion Readiness V2",
+            "status": "ok",
+            "preferred_horizon_by_regime": preferred_by_regime,
+            "paper_horizon_gap": horizon_gap,
+            "shadow_horizon_confidence": confidence,
+            "paper_horizon_exposure_gap": rounded(to_float(exposure.get("horizon_exposure_gap"), 0.0), 3),
+            "promotion_readiness": readiness,
+            "blocker": blocker,
+            "forced_horizon_quotas_enabled": False,
+            "forced_trades_enabled": False,
+            **_safe_flags(),
+        }
+
+    def _stale_rotation_promotion_readiness_v2(self, rotation: dict[str, Any]) -> dict[str, Any]:
+        rows = []
+        for row in list(rotation.get("rotation_review_positions") or rotation.get("top_stale_positions") or [])[:8]:
+            if not isinstance(row, dict):
+                continue
+            replacement_edge = to_float(row.get("replacement_edge"), 0.0)
+            stale_score = to_float(row.get("stale_score"), 0.0)
+            review_priority = "high" if stale_score >= 70 or replacement_edge >= 20 else "medium" if stale_score >= 50 or replacement_edge >= 10 else "watch"
+            rows.append(
+                {
+                    "symbol": text(row.get("symbol"), "UNKNOWN"),
+                    "stale_score": rounded(stale_score, 3),
+                    "trapped_capital_score": rounded(to_float(row.get("trapped_capital_score"), 0.0), 3),
+                    "replacement_candidate_score": rounded(to_float(row.get("replacement_score"), 0.0), 3),
+                    "better_opportunity_available": bool(row.get("recommendation") == "better_opportunity_available" or replacement_edge >= 15),
+                    "would_repurchase_today": bool(stale_score < 45 and replacement_edge < 10),
+                    "thesis_decay": rounded(max(0.0, 100.0 - to_float(row.get("thesis_health"), 50.0)), 3),
+                    "catalyst_decay": rounded(to_float(row.get("catalyst_decay"), 0.0), 3),
+                    "momentum_decay": rounded(to_float(row.get("momentum_fade"), 0.0), 3),
+                    "relative_strength_loss": rounded(max(0.0, 100.0 - to_float(row.get("relative_strength"), 50.0)), 3),
+                    "rotation_candidate": bool(row.get("rotation_candidate", False)),
+                    "rotation_reason": text(row.get("rotation_reason"), "monitor"),
+                    "review_priority": review_priority,
+                    "replacement_edge": rounded(replacement_edge, 3),
+                }
+            )
+        top = rows[0] if rows else {}
+        return {
+            "module": "Stale Position / Rotation Promotion Readiness V2",
+            "status": "ok" if rows else "insufficient_evidence",
+            "rotation_rows": rows,
+            "rotation_candidate": bool(top.get("rotation_candidate", False)),
+            "rotation_reason": text(top.get("rotation_reason"), "monitor_active_positions"),
+            "review_priority": text(top.get("review_priority"), "watch"),
+            "replacement_edge": rounded(to_float(top.get("replacement_edge"), 0.0), 3),
+            "forced_sells_enabled": False,
+            "automatic_replacement_enabled": False,
+            **_safe_flags(),
+        }
+
+    def _shadow_to_paper_promotion_engine_v2(
+        self,
+        scorecard: dict[str, Any],
+        exit_readiness_v2: dict[str, Any],
+        horizon_regime_v2: dict[str, Any],
+        stale_rotation_v2: dict[str, Any],
+    ) -> dict[str, Any]:
+        exit_best = dict(exit_readiness_v2.get("top_exit_promotion_candidate") or {})
+        candidates = [
+            {
+                "behavior_name": text(exit_best.get("behavior_name"), "profit_lock_exit"),
+                "behavior_type": text(exit_best.get("behavior_name"), "profit_lock_exit"),
+                "shadow_evidence_count": to_int(exit_best.get("evidence_count"), 0),
+                "shadow_confidence": rounded(to_float(exit_best.get("confidence"), 0.0), 3),
+                "paper_baseline_pf": scorecard.get("paper_pf"),
+                "shadow_expected_pf": scorecard.get("shadow_expected_pf"),
+                "expected_pf_delta": scorecard.get("pf_delta"),
+                "expected_giveback_reduction": scorecard.get("giveback_delta"),
+                "expected_capture_improvement": scorecard.get("capture_delta"),
+                "expected_exit_quality_improvement": scorecard.get("exit_quality_delta"),
+                "promotion_readiness": "tiny_bucket_candidate" if to_float(exit_best.get("readiness_score"), 0.0) >= 65 else "advisory_only",
+                "promotion_blocker": text(exit_best.get("blocker"), "insufficient_evidence"),
+                "human_review_required": True,
+            },
+            {
+                "behavior_name": "adaptive_horizon_selection",
+                "behavior_type": "adaptive_horizon_selection",
+                "shadow_evidence_count": 0,
+                "shadow_confidence": horizon_regime_v2.get("shadow_horizon_confidence"),
+                "paper_baseline_pf": scorecard.get("paper_pf"),
+                "shadow_expected_pf": scorecard.get("shadow_expected_pf"),
+                "expected_pf_delta": max(0.0, to_float(scorecard.get("pf_delta"), 0.0) * 0.4),
+                "expected_giveback_reduction": max(0.0, to_float(scorecard.get("giveback_delta"), 0.0) * 0.35),
+                "expected_capture_improvement": max(0.0, to_float(scorecard.get("capture_delta"), 0.0) * 0.4),
+                "expected_exit_quality_improvement": max(0.0, to_float(scorecard.get("exit_quality_delta"), 0.0) * 0.25),
+                "promotion_readiness": horizon_regime_v2.get("promotion_readiness"),
+                "promotion_blocker": horizon_regime_v2.get("blocker"),
+                "human_review_required": True,
+            },
+            {
+                "behavior_name": "stale_position_rotation",
+                "behavior_type": "stale_position_rotation",
+                "shadow_evidence_count": len(list(stale_rotation_v2.get("rotation_rows") or [])),
+                "shadow_confidence": 55.0,
+                "paper_baseline_pf": scorecard.get("paper_pf"),
+                "shadow_expected_pf": scorecard.get("shadow_expected_pf"),
+                "expected_pf_delta": max(0.0, to_float(scorecard.get("pf_delta"), 0.0) * 0.3),
+                "expected_giveback_reduction": max(0.0, to_float(scorecard.get("giveback_delta"), 0.0) * 0.2),
+                "expected_capture_improvement": 0.0,
+                "expected_exit_quality_improvement": 0.0,
+                "promotion_readiness": "advisory_only",
+                "promotion_blocker": stale_rotation_v2.get("rotation_reason"),
+                "human_review_required": True,
+            },
+        ]
+        top = max(candidates, key=lambda row: to_float(row.get("expected_pf_delta"), 0.0) + to_float(row.get("expected_giveback_reduction"), 0.0) * 0.1 + to_float(row.get("expected_capture_improvement"), 0.0) * 10.0)
+        return {
+            "module": "Shadow-to-Paper Promotion Engine V2",
+            "status": "ok",
+            "promotion_candidates": candidates,
+            "top_promotion_candidate": top,
+            "top_promotion_candidate_name": top.get("behavior_name"),
+            "top_promotion_readiness": top.get("promotion_readiness"),
+            "top_promotion_blocker": top.get("promotion_blocker"),
+            "expected_pf_improvement": rounded(to_float(top.get("expected_pf_delta"), 0.0), 4),
+            "expected_giveback_reduction": rounded(to_float(top.get("expected_giveback_reduction"), 0.0), 3),
+            "expected_capture_improvement": rounded(to_float(top.get("expected_capture_improvement"), 0.0), 3),
+            "recommended_next_action": "human_review_before_any_tiny_paper_bucket",
+            "human_review_required": True,
+            "broad_paper_deployment_enabled": False,
+            **_safe_flags(),
+        }
+
+    def _controlled_paper_test_bucket_v2(self, statuses: dict[str, Any], promotion: dict[str, Any], scorecard: dict[str, Any]) -> dict[str, Any]:
+        learned_exit = status_value(statuses, "controlled_paper_learned_exit_validation_v1")
+        bucket_enabled = False
+        return {
+            "module": "Controlled Paper Test Bucket V2",
+            "status": "disabled_pending_human_review",
+            "bucket_enabled": bucket_enabled,
+            "bucket_size": 2,
+            "bucket_used_today": 0,
+            "tested_behavior": promotion.get("top_promotion_candidate_name"),
+            "test_start_time": "",
+            "baseline_comparison_group": "natural_paper_behavior",
+            "bucket_pf": 0.0,
+            "baseline_pf": scorecard.get("paper_pf"),
+            "bucket_giveback": 0.0,
+            "baseline_giveback": scorecard.get("paper_giveback"),
+            "bucket_capture_ratio": 0.0,
+            "baseline_capture_ratio": scorecard.get("paper_capture_ratio"),
+            "bucket_exit_quality": 0.0,
+            "baseline_exit_quality": scorecard.get("paper_exit_quality"),
+            "bucket_result": "not_started",
+            "rollback_status": text(learned_exit.get("rollback_status"), "armed"),
+            "kill_switch_status": text(learned_exit.get("kill_switch_status"), "available"),
+            "human_review_required": True,
+            "forced_buys_enabled": False,
+            "forced_sells_enabled": False,
+            "broad_paper_deployment_enabled": False,
+            **_safe_flags(),
+        }
+
     def _dashboard_summary(
         self,
         repair: dict[str, Any],
@@ -1029,6 +1320,12 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
         rotation = self._adaptive_portfolio_rotation(statuses, capacity, exposure)
         lifecycle_v2 = self._trade_lifecycle_intelligence_v2(statuses, rotation)
         regime_allocation = self._adaptive_market_regime_allocation(statuses, capacity, exposure)
+        scorecard_v2 = self._shadow_vs_paper_scorecard_v2(statuses, readiness, capacity, rotation, lifecycle_v2, regime_allocation)
+        exit_promotion_v2 = self._exit_promotion_readiness_v2(statuses, scorecard_v2)
+        horizon_regime_promotion_v2 = self._horizon_regime_promotion_readiness_v2(capacity, exposure, regime_allocation)
+        stale_rotation_promotion_v2 = self._stale_rotation_promotion_readiness_v2(rotation)
+        shadow_promotion_v2 = self._shadow_to_paper_promotion_engine_v2(scorecard_v2, exit_promotion_v2, horizon_regime_promotion_v2, stale_rotation_promotion_v2)
+        paper_test_bucket_v2 = self._controlled_paper_test_bucket_v2(statuses, shadow_promotion_v2, scorecard_v2)
         assignment = self._candidate_horizon_assignment(statuses, capacity, exposure, readiness)
         practice_bucket = self._practice_bucket(assignment, capacity)
         exit_readiness = self._exit_readiness(readiness, capacity, exposure)
@@ -1044,6 +1341,12 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "adaptive_portfolio_rotation_engine_v1": rotation,
             "trade_lifecycle_intelligence_v2": lifecycle_v2,
             "adaptive_market_regime_allocation_v1": regime_allocation,
+            "shadow_to_paper_promotion_engine_v2": shadow_promotion_v2,
+            "controlled_paper_test_bucket_v2": paper_test_bucket_v2,
+            "exit_promotion_readiness_v2": exit_promotion_v2,
+            "horizon_regime_promotion_readiness_v2": horizon_regime_promotion_v2,
+            "stale_position_rotation_promotion_readiness_v2": stale_rotation_promotion_v2,
+            "shadow_vs_paper_scorecard_v2": scorecard_v2,
             "controlled_paper_horizon_practice_bucket_v1": practice_bucket,
             "horizon_exit_profit_capture_readiness_v1": exit_readiness,
             "horizon_lifecycle_dashboard_summary": dashboard,
@@ -1147,6 +1450,42 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "horizon_market_bias": regime_allocation.get("horizon_market_bias"),
             "regime_allocation_recommendation": regime_allocation.get("regime_allocation_recommendation"),
             "market_adaptability_score": regime_allocation.get("market_adaptability_score"),
+            "shadow_to_paper_promotion_engine_v2": shadow_promotion_v2,
+            "promotion_candidates_v2": shadow_promotion_v2.get("promotion_candidates"),
+            "top_promotion_candidate": shadow_promotion_v2.get("top_promotion_candidate"),
+            "top_promotion_candidate_name": shadow_promotion_v2.get("top_promotion_candidate_name"),
+            "top_promotion_readiness": shadow_promotion_v2.get("top_promotion_readiness"),
+            "top_promotion_blocker": shadow_promotion_v2.get("top_promotion_blocker"),
+            "expected_pf_improvement": shadow_promotion_v2.get("expected_pf_improvement"),
+            "expected_giveback_reduction": shadow_promotion_v2.get("expected_giveback_reduction"),
+            "expected_capture_improvement": shadow_promotion_v2.get("expected_capture_improvement"),
+            "promotion_recommended_next_action": shadow_promotion_v2.get("recommended_next_action"),
+            "controlled_paper_test_bucket_v2": paper_test_bucket_v2,
+            "test_bucket_enabled": paper_test_bucket_v2.get("bucket_enabled"),
+            "test_bucket_status": paper_test_bucket_v2.get("status"),
+            "test_bucket_size": paper_test_bucket_v2.get("bucket_size"),
+            "test_bucket_used_today": paper_test_bucket_v2.get("bucket_used_today"),
+            "tested_behavior": paper_test_bucket_v2.get("tested_behavior"),
+            "rollback_status": paper_test_bucket_v2.get("rollback_status"),
+            "kill_switch_status": paper_test_bucket_v2.get("kill_switch_status"),
+            "exit_promotion_readiness_v2": exit_promotion_v2,
+            "exit_promotion_rows_v2": exit_promotion_v2.get("exit_promotion_rows"),
+            "horizon_regime_promotion_readiness_v2": horizon_regime_promotion_v2,
+            "stale_position_rotation_promotion_readiness_v2": stale_rotation_promotion_v2,
+            "shadow_vs_paper_scorecard_v2": scorecard_v2,
+            "paper_pf": scorecard_v2.get("paper_pf"),
+            "shadow_expected_pf": scorecard_v2.get("shadow_expected_pf"),
+            "pf_delta": scorecard_v2.get("pf_delta"),
+            "paper_exit_quality": scorecard_v2.get("paper_exit_quality"),
+            "shadow_exit_quality": scorecard_v2.get("shadow_exit_quality"),
+            "exit_quality_delta": scorecard_v2.get("exit_quality_delta"),
+            "paper_giveback": scorecard_v2.get("paper_giveback"),
+            "shadow_expected_giveback": scorecard_v2.get("shadow_expected_giveback"),
+            "giveback_delta": scorecard_v2.get("giveback_delta"),
+            "paper_capture_ratio": scorecard_v2.get("paper_capture_ratio"),
+            "shadow_capture_ratio": scorecard_v2.get("shadow_capture_ratio"),
+            "capture_delta": scorecard_v2.get("capture_delta"),
+            "horizon_gap": scorecard_v2.get("horizon_gap"),
             "active_broker_positions": dashboard.get("active_broker_positions"),
             "rows_audited": dashboard.get("rows_audited"),
             "underexposed_horizon": dashboard.get("underexposed_horizon"),
