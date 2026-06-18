@@ -33690,6 +33690,32 @@ def astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1(force: bool =
             statuses["mobile_runtime_compaction"] = _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False)
         except Exception:
             statuses["mobile_runtime_compaction"] = {}
+        try:
+            paper_autopilot_status = dict(PAPER_AUTOPILOT.control_status() or {})
+        except Exception:
+            paper_autopilot_status = {}
+        statuses["paper_autopilot_status"] = paper_autopilot_status
+        try:
+            broker_safety = dict(ALPACA_PAPER_BROKER.safety_status() or {})
+        except Exception:
+            broker_safety = {}
+        statuses["alpaca_paper_broker"] = {
+            "enabled": bool(broker_safety.get("enabled_requested")),
+            "paper_mode_verified": bool(broker_safety.get("paper_mode_verified")),
+            "broker_execution_enabled": bool(broker_safety.get("broker_execution_enabled")),
+            "broker_execution_ready": bool(broker_safety.get("broker_execution_enabled")),
+            "open_positions_count": int(_to_float(paper_autopilot_status.get("open_positions_count"), 0.0)),
+            "paper_autopilot_status": paper_autopilot_status,
+            "safety_status": "summary_only_no_broker_fetch",
+            "safety_reasons": list(broker_safety.get("safety_reasons") or []),
+            "paper_endpoint_detected": bool(broker_safety.get("paper_endpoint_detected")),
+            "live_endpoint_detected": bool(broker_safety.get("live_endpoint_detected")),
+            "broker_live_endpoint_allowed": False,
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "live_trading_changed": False,
+        }
         out = dict(ASTRA_HORIZON_LIFECYCLE_CAPACITY_PROMOTION_READINESS_BUNDLE.status(statuses=statuses, force=bool(force)) or {})
         out["astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1"] = True
         out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))

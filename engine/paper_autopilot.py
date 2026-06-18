@@ -483,6 +483,16 @@ def _infer_horizon_style(row: dict[str, Any]):
     return "", "", False
 
 
+def _expected_hold_window(horizon: str) -> str:
+    if horizon == "scalp":
+        return "15m-60m"
+    if horizon == "day_trade":
+        return "2h-EOD"
+    if horizon == "swing_trade":
+        return "1d-10d+"
+    return "unknown"
+
+
 def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
     r = dict(row or {})
     score, source = _entry_bridge_quality(r)
@@ -1815,7 +1825,11 @@ class PaperAutopilotEngine:
             "asset_type": asset,
             "action": str(r.get("action") or r.get("prediction") or ""),
             "readiness": str(r.get("readiness_label") or r.get("paper_ready_status") or r.get("buy_eligibility") or ""),
-            "trade_horizon_style": str(r.get("trade_horizon_style") or r.get("best_horizon_style") or ""),
+            "assigned_horizon": str(r.get("paper_entry_horizon_style") or r.get("trade_horizon_style") or r.get("best_horizon_style") or ""),
+            "trade_horizon_style": str(r.get("trade_horizon_style") or r.get("best_horizon_style") or r.get("paper_entry_horizon_style") or ""),
+            "paper_entry_horizon_style": str(r.get("paper_entry_horizon_style") or r.get("trade_horizon_style") or r.get("best_horizon_style") or ""),
+            "paper_entry_horizon_source": str(r.get("paper_entry_horizon_source") or ""),
+            "paper_entry_horizon_inferred": bool(r.get("paper_entry_horizon_inferred", False)),
             "opportunity_quality_score": round(_to_float(r.get("opportunity_quality_score"), 0.0), 2),
             "opportunity_quality_label": str(r.get("opportunity_quality_label") or ""),
             "expected_value_score": round(_to_float(r.get("expected_value_score"), 0.0), 2),
@@ -1866,6 +1880,11 @@ class PaperAutopilotEngine:
             "risk_adjusted_opportunity_rank": int(_to_float(r.get("risk_adjusted_opportunity_rank"), 0.0)),
             "entry_score": round(_to_float(r.get("paper_entry_bridge_score"), _to_float(r.get("entry_quality_score"), 0.0)), 2),
             "confidence": round(_to_float(r.get("confidence"), _to_float(r.get("predicted_win_probability"), 0.0)), 2),
+            "horizon_confidence": round(_to_float(r.get("confidence"), _to_float(r.get("predicted_win_probability"), 0.0)), 2),
+            "expected_hold_window": _expected_hold_window(
+                str(r.get("paper_entry_horizon_style") or r.get("trade_horizon_style") or r.get("best_horizon_style") or "").strip().lower()
+            ),
+            "horizon_reason": str(r.get("paper_entry_horizon_source") or r.get("horizon_reason") or r.get("allocation_reason") or ""),
             "eligible": bool(allowed),
             "decision_reason": str(reason),
             "commitment_score": round(_to_float(gate_meta.get("commitment_score"), 0.0), 2),
@@ -2829,6 +2848,7 @@ class PaperAutopilotEngine:
             "horizon_execution_candidate": dict(last_trace.get("horizon_execution_candidate") or {}),
             "horizon_execution_reason": str(last_trace.get("horizon_execution_reason") or ""),
             "horizon_execution_blocker": str(last_trace.get("horizon_execution_blocker") or last_trace.get("final_blocker_reason") or ""),
+            "paper_tie_breaker_blocker": str(last_trace.get("paper_tie_breaker_blocker") or last_trace.get("horizon_execution_blocker") or last_trace.get("final_blocker_reason") or ""),
             **learned_runtime,
             "learned_exit_validation_max_exits_per_day": int(self.learned_exit_validation_max_exits_per_day),
             "learned_exit_validation_max_exit_pct": round(float(self.learned_exit_validation_max_exit_pct), 3),
@@ -2865,6 +2885,7 @@ class PaperAutopilotEngine:
             "horizon_execution_candidate": dict(last_trace.get("horizon_execution_candidate") or {}),
             "horizon_execution_reason": str(last_trace.get("horizon_execution_reason") or ""),
             "horizon_execution_blocker": str(last_trace.get("horizon_execution_blocker") or last_trace.get("final_blocker_reason") or ""),
+            "paper_tie_breaker_blocker": str(last_trace.get("paper_tie_breaker_blocker") or last_trace.get("horizon_execution_blocker") or last_trace.get("final_blocker_reason") or ""),
             **learned_runtime,
             "learned_exit_validation_max_exits_per_day": int(self.learned_exit_validation_max_exits_per_day),
             "learned_exit_validation_max_exit_pct": round(float(self.learned_exit_validation_max_exit_pct), 3),
@@ -3537,6 +3558,7 @@ class PaperAutopilotEngine:
                 "horizon_execution_candidate": dict(horizon_execution_candidate),
                 "horizon_execution_reason": str(horizon_execution_reason or ""),
                 "horizon_execution_blocker": str(horizon_execution_blocker or final_blocker_reason or ""),
+                "paper_tie_breaker_blocker": str(horizon_execution_blocker or final_blocker_reason or ""),
                 "per_candidate_decision_trace": decision_trace[:12],
                 "last_alpaca_error_sanitized": str(last_alpaca_error)[:180],
                 "portfolio_risk_proof_present": bool(portfolio_risk_proof_present),

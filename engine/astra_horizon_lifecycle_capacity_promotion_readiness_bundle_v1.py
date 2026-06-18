@@ -27,6 +27,9 @@ MODULES_CREATED = [
     "Dynamic Capacity Recycling V1",
     "Horizon Exposure Balancer V1",
     "Learning Exposure Optimizer V1",
+    "Adaptive Portfolio Rotation Engine V1",
+    "Trade Lifecycle Intelligence V2",
+    "Adaptive Market Regime Allocation V1",
     "Controlled Paper Horizon Practice Bucket V1",
     "Horizon Exit / Profit Capture Readiness V1",
     "Horizon Lifecycle Dashboard Summary",
@@ -108,11 +111,13 @@ def _pf(payload: dict[str, Any], *keys: str, default: float = 0.0) -> float:
 def _horizon_label(row: dict[str, Any]) -> str:
     raw = text(
         first(
+            row.get("assigned_horizon"),
             row.get("horizon"),
             row.get("current_horizon"),
             row.get("paper_entry_horizon_style"),
             row.get("horizon_style"),
             row.get("best_horizon"),
+            row.get("best_horizon_style"),
             row.get("trade_horizon_style"),
             row.get("style"),
             "unknown",
@@ -159,6 +164,56 @@ def _expected_hold_window(horizon: str) -> str:
     return HORIZON_EXPECTED_WINDOWS.get(horizon, "unknown")
 
 
+def _return_pct(row: dict[str, Any]) -> float:
+    raw = first(
+        row.get("return_pct"),
+        row.get("unrealized_plpc"),
+        row.get("unrealized_return_pct"),
+        row.get("pnl_pct"),
+        row.get("change_pct"),
+        default=0.0,
+    )
+    value = to_float(raw, 0.0)
+    if abs(value) <= 2.0 and any(key in row for key in ("unrealized_plpc", "plpc")):
+        return rounded(value * 100.0, 3)
+    return rounded(value, 3)
+
+
+def _age_days(row: dict[str, Any]) -> float:
+    minutes = first(
+        row.get("hold_minutes"),
+        row.get("elapsed_hold_minutes"),
+        row.get("position_age_minutes"),
+        row.get("age_minutes"),
+        default=None,
+    )
+    if minutes is not None:
+        return rounded(max(0.0, to_float(minutes, 0.0) / 1440.0), 3)
+    hours = first(row.get("hold_hours"), row.get("position_age_hours"), row.get("age_hours"), default=None)
+    if hours is not None:
+        return rounded(max(0.0, to_float(hours, 0.0) / 24.0), 3)
+    days = first(row.get("hold_days"), row.get("position_age_days"), row.get("age_days"), default=None)
+    if days is not None:
+        return rounded(max(0.0, to_float(days, 0.0)), 3)
+    return 0.0
+
+
+def _candidate_score(row: dict[str, Any]) -> float:
+    return rounded(
+        clamp(
+            first(
+                row.get("paper_allocation_priority"),
+                row.get("risk_adjusted_profit_score"),
+                row.get("opportunity_quality_score"),
+                row.get("expected_value_score"),
+                row.get("confidence"),
+                default=0.0,
+            )
+        ),
+        3,
+    )
+
+
 class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticModule):
     """Advisory horizon lifecycle, capacity recycling, and promotion readiness bundle."""
 
@@ -185,6 +240,20 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
         capacity = status_value(statuses, "multi_horizon_paper_capacity_exit_validation_v1")
         rows = list(foundation.get("horizon_exit_candidate_rows") or [])
         rows.extend([dict(row) for row in (capacity.get("position_rows") or []) if isinstance(row, dict)])
+        return [dict(row) for row in rows if isinstance(row, dict)]
+
+    def _candidate_rows(self, statuses: dict[str, Any]) -> list[dict[str, Any]]:
+        trace = status_value(statuses, "paper_execution_trace")
+        throughput = status_value(statuses, "paper_autopilot_throughput")
+        allocation = status_value(statuses, "paper_opportunity_allocation")
+        fallback = status_value(statuses, "paper_opportunity_allocation_status_v1")
+        rows = list(trace.get("per_candidate_decision_trace") or [])
+        if not rows:
+            rows = list(throughput.get("per_candidate_decision_trace") or [])
+        if not rows and isinstance(allocation.get("candidate_rows"), list):
+            rows = [dict(row) for row in allocation.get("candidate_rows") if isinstance(row, dict)]
+        if not rows and isinstance(fallback.get("candidate_rows"), list):
+            rows = [dict(row) for row in fallback.get("candidate_rows") if isinstance(row, dict)]
         return [dict(row) for row in rows if isinstance(row, dict)]
 
     def _trade_lifecycle_repair(self, statuses: dict[str, Any]) -> dict[str, Any]:
@@ -281,18 +350,30 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
         }
 
     def _candidate_horizon_assignment(self, statuses: dict[str, Any], capacity: dict[str, Any], exposure: dict[str, Any], readiness: dict[str, Any]) -> dict[str, Any]:
-        trace = status_value(statuses, "paper_execution_trace")
-        throughput = status_value(statuses, "paper_autopilot_throughput")
-        allocation = status_value(statuses, "paper_opportunity_allocation")
-        fallback = status_value(statuses, "paper_opportunity_allocation_status_v1")
         multi = status_value(statuses, "multi_horizon_intelligence_adaptive_lifecycle_suite_v1")
-        rows = list(trace.get("per_candidate_decision_trace") or [])
-        if not rows:
-            rows = list(throughput.get("per_candidate_decision_trace") or [])
-        if not rows and isinstance(allocation.get("candidate_rows"), list):
-            rows = [dict(row) for row in allocation.get("candidate_rows") if isinstance(row, dict)]
-        if not rows and isinstance(fallback.get("candidate_rows"), list):
-            rows = [dict(row) for row in fallback.get("candidate_rows") if isinstance(row, dict)]
+        rows = self._candidate_rows(statuses)
+
+        all_rows = [dict(row) for row in rows[:30] if isinstance(row, dict)]
+        shadow_counts = Counter()
+        qualified_counts = Counter()
+        missing_horizon_field_count = 0
+        missing_horizon_field_examples: list[str] = []
+        blocker_counts = Counter()
+        for row in all_rows:
+            horizon = _horizon_label(row)
+            symbol = text(first(row.get("symbol"), row.get("ticker"), default=""), "").upper()
+            if horizon in HORIZONS:
+                shadow_counts[horizon] += 1
+                if bool(row.get("eligible", False) or row.get("selected", False) or row.get("order_attempted", False)):
+                    qualified_counts[horizon] += 1
+            else:
+                missing_horizon_field_count += 1
+                if symbol and len(missing_horizon_field_examples) < 5:
+                    missing_horizon_field_examples.append(symbol)
+            if not bool(row.get("selected", False)):
+                blocker = text(first(row.get("decision_reason"), row.get("horizon_reason"), row.get("horizon_execution_blocker"), row.get("paper_tie_breaker_blocker"), default=""), "")
+                if blocker:
+                    blocker_counts[blocker] += 1
 
         assigned_rows: list[dict[str, Any]] = []
         assigned_counts = Counter()
@@ -370,6 +451,25 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             preferred_next = text(multi.get("best_horizon"), "scalp")
         else:
             preferred_next = "scalp"
+        shadow_total = sum(shadow_counts.values())
+        qualified_total = sum(qualified_counts.values())
+        if not all_rows:
+            horizon_assignment_dropoff_point = "no_candidate_trace_rows_available_from_cached_diagnostics"
+        elif shadow_total <= 0:
+            horizon_assignment_dropoff_point = "candidate_rows_missing_horizon_fields_before_qualification"
+        elif qualified_total <= 0:
+            if missing_horizon_field_count >= len(all_rows):
+                horizon_assignment_dropoff_point = "all_candidate_rows_missing_horizon_fields"
+            elif any(str(row.get("decision_reason") or "") in {"session_order_submission_blocked", "open_confirmation_required"} for row in all_rows):
+                horizon_assignment_dropoff_point = "paper_autopilot_session_gate"
+            elif any(str(row.get("decision_reason") or "") in {"total_horizon_capacity_reached", "scalp_capacity_reached", "day_trade_capacity_reached", "swing_trade_capacity_reached", "max_concurrent_positions_reached", "max_new_positions_per_cycle_reached", "stock_capacity_reached", "crypto_capacity_reached"} for row in all_rows):
+                horizon_assignment_dropoff_point = "paper_autopilot_capacity_gate"
+            else:
+                horizon_assignment_dropoff_point = "paper_autopilot_ranking_or_safety_gate"
+        elif selected_total <= 0:
+            horizon_assignment_dropoff_point = "paper_tie_breaker_not_activated"
+        else:
+            horizon_assignment_dropoff_point = "paper_assignment_completed"
         if not assigned_rows and not rows:
             reason_not_ready = "no_candidate_trace_rows_available_from_cached_diagnostics"
         elif assigned_total <= 0:
@@ -378,6 +478,29 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             reason_not_ready = "current_paper_mix_is_overconcentrated_swing"
         else:
             reason_not_ready = "collect_more_horizon_assignment_evidence"
+        horizon_assignment_blocker = text(
+            first((blocker_counts.most_common(1) or [("", 0)])[0][0], reason_not_ready, default=""),
+            "none",
+        )
+        paper_tie_breaker_blocker = (
+            "no_selected_candidate_rows_survived_to_tie_break"
+            if selected_total <= 0 and shadow_total > 0
+            else "diagnostic_only_no_behavior_change"
+        )
+        if assigned_total <= 0 and shadow_total > 0:
+            practice_bucket_blocker = "qualified_horizon_candidates_missing_before_practice_bucket"
+        elif selected_total <= 0:
+            practice_bucket_blocker = "paper_tie_breaker_not_activated"
+        else:
+            practice_bucket_blocker = "advisory_only_disabled_pending_human_review"
+        if missing_horizon_field_count > 0 and qualified_total <= 0:
+            next_required_fix = "preserve_horizon_fields_on_candidate_trace_rows"
+        elif shadow_total > 0 and qualified_total <= 0:
+            next_required_fix = "relax_advisory_only_horizon_qualification_for_eligible_rows"
+        elif selected_total <= 0:
+            next_required_fix = "activate_tie_breaker_for_eligible_horizon_rows_without_selection"
+        else:
+            next_required_fix = "collect_more_horizon_evidence"
         exit_readiness_map = dict(readiness.get("readiness_by_horizon") or {})
         exit_readiness_rows = [
             {
@@ -411,6 +534,19 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "practice_candidate_count": practice_candidate_count,
             "blocked_candidate_count": max(0, practice_candidate_count - selected_total),
             "block_reasons": block_reasons,
+            "shadow_scalp_candidates": int(shadow_counts.get("scalp", 0)),
+            "shadow_day_trade_candidates": int(shadow_counts.get("day_trade", 0)),
+            "shadow_swing_trade_candidates": int(shadow_counts.get("swing_trade", 0)),
+            "qualified_scalp_candidates": int(qualified_counts.get("scalp", 0)),
+            "qualified_day_trade_candidates": int(qualified_counts.get("day_trade", 0)),
+            "qualified_swing_trade_candidates": int(qualified_counts.get("swing_trade", 0)),
+            "missing_horizon_field_count": int(missing_horizon_field_count),
+            "missing_horizon_field_examples": list(missing_horizon_field_examples[:5]),
+            "horizon_assignment_dropoff_point": horizon_assignment_dropoff_point,
+            "horizon_assignment_blocker": horizon_assignment_blocker,
+            "practice_bucket_blocker": practice_bucket_blocker,
+            "paper_tie_breaker_blocker": paper_tie_breaker_blocker,
+            "next_required_fix": next_required_fix,
             "preferred_next_horizon": preferred_next,
             "capacity_rebalance_status": text(exposure.get("horizon_exposure_balance"), "insufficient_evidence"),
             "capacity_rebalance_recommendation": text(capacity.get("recommended_capacity_shift"), "maintain_current_learning_mix"),
@@ -660,7 +796,202 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             **_safe_flags(),
         }
 
-    def _dashboard_summary(self, repair: dict[str, Any], readiness: dict[str, Any], capacity: dict[str, Any], recycling: dict[str, Any], exposure: dict[str, Any], optimizer: dict[str, Any]) -> dict[str, Any]:
+    def _adaptive_portfolio_rotation(self, statuses: dict[str, Any], capacity: dict[str, Any], exposure: dict[str, Any]) -> dict[str, Any]:
+        positions = self._active_broker_positions(statuses)
+        active_symbols = {text(first(row.get("symbol"), row.get("asset"), row.get("ticker"), default=""), "").upper() for row in positions}
+        candidates = [
+            row for row in self._candidate_rows(statuses)[:40]
+            if text(first(row.get("symbol"), row.get("ticker"), default=""), "").upper() not in active_symbols
+        ]
+        ranked_candidates = sorted(candidates, key=_candidate_score, reverse=True)
+        best_candidate = ranked_candidates[0] if ranked_candidates else {}
+        best_candidate_score = _candidate_score(best_candidate) if best_candidate else 0.0
+        best_replacements = [
+            {
+                "symbol": text(first(row.get("symbol"), row.get("ticker"), default="UNKNOWN"), "UNKNOWN").upper(),
+                "replacement_score": _candidate_score(row),
+                "horizon": _horizon_label(row),
+                "reason": text(first(row.get("decision_reason"), row.get("horizon_reason"), row.get("why_selected"), default="cached_candidate_trace")),
+            }
+            for row in ranked_candidates[:5]
+        ]
+
+        position_rows: list[dict[str, Any]] = []
+        for row in positions[:40]:
+            symbol = text(first(row.get("symbol"), row.get("asset"), row.get("ticker"), default="UNKNOWN"), "UNKNOWN").upper()
+            horizon = _horizon_label(row)
+            age = _age_days(row)
+            ret = _return_pct(row)
+            momentum_strength = clamp(50.0 + ret * 2.0)
+            momentum_fade = clamp(max(0.0, 50.0 - momentum_strength))
+            catalyst_strength = clamp(first(row.get("catalyst_strength"), row.get("catalyst_confidence"), default=50.0))
+            catalyst_decay = clamp(first(row.get("catalyst_decay"), row.get("catalyst_decay_risk"), default=max(0.0, 55.0 - catalyst_strength)))
+            relative_strength = clamp(first(row.get("relative_strength"), row.get("rs_score"), default=momentum_strength))
+            capital_efficiency = clamp(50.0 + ret - age * 2.5)
+            stale_score = clamp(age * 6.0 + momentum_fade * 0.4 + max(0.0, 50.0 - capital_efficiency) * 0.5 + catalyst_decay * 0.25)
+            replacement_edge = rounded(max(0.0, best_candidate_score - capital_efficiency), 3)
+            trapped_capital_score = clamp(stale_score * 0.7 + replacement_edge * 0.3)
+            if ret > 6.0 and catalyst_decay < 45.0 and momentum_fade < 35.0:
+                action = "protect_winner"
+            elif stale_score >= 72.0 and replacement_edge >= 12.0:
+                action = "better_opportunity_available"
+            elif stale_score >= 65.0:
+                action = "stale_position_warning"
+            elif stale_score >= 50.0 or replacement_edge >= 18.0:
+                action = "review_for_rotation"
+            elif stale_score >= 30.0:
+                action = "monitor"
+            else:
+                action = "hold"
+            position_rows.append(
+                {
+                    "symbol": symbol,
+                    "horizon": horizon,
+                    "position_age": rounded(age, 3),
+                    "thesis_health": rounded(clamp(100.0 - stale_score), 3),
+                    "catalyst_strength": rounded(catalyst_strength, 3),
+                    "catalyst_decay": rounded(catalyst_decay, 3),
+                    "momentum_strength": rounded(momentum_strength, 3),
+                    "momentum_fade": rounded(momentum_fade, 3),
+                    "relative_strength": rounded(relative_strength, 3),
+                    "capital_efficiency": rounded(capital_efficiency, 3),
+                    "stale_score": rounded(stale_score, 3),
+                    "replacement_score": rounded(best_candidate_score, 3),
+                    "replacement_candidate": text(first(best_candidate.get("symbol"), best_candidate.get("ticker"), default="none"), "none").upper() if best_candidate else "none",
+                    "replacement_edge": replacement_edge,
+                    "rotation_candidate": bool(action in {"better_opportunity_available", "stale_position_warning", "review_for_rotation"}),
+                    "rotation_reason": action,
+                    "trapped_capital_score": rounded(trapped_capital_score, 3),
+                    "recommendation": action,
+                }
+            )
+
+        stale_positions = [row for row in position_rows if row["recommendation"] in {"stale_position_warning", "better_opportunity_available"}]
+        review_positions = [row for row in position_rows if row["rotation_candidate"]]
+        trapped_score = rounded(sum(row["trapped_capital_score"] for row in position_rows) / max(1, len(position_rows)), 3)
+        learning_access_score = rounded(max(0.0, 100.0 - trapped_score - max(0.0, to_float(exposure.get("swing_exposure_pct"), 0.0) - 40.0)), 3)
+        return {
+            "module": "Adaptive Portfolio Rotation Engine V1",
+            "status": "ok" if positions else "insufficient_evidence",
+            "portfolio_rotation_status": "advisory_monitoring",
+            "stale_positions_count": len(stale_positions),
+            "top_stale_positions": sorted(stale_positions, key=lambda row: row["stale_score"], reverse=True)[:5],
+            "rotation_review_positions": sorted(review_positions, key=lambda row: row["trapped_capital_score"], reverse=True)[:8],
+            "best_replacement_candidates": best_replacements,
+            "capital_trapped_score": trapped_score,
+            "trapped_capital_score": trapped_score,
+            "scalp_learning_blocked": bool(to_float(exposure.get("scalp_exposure_pct"), 0.0) < TARGET_RANGES["scalp"][0] and to_int(capacity.get("total_used"), 0) >= to_int(capacity.get("total_capacity"), 20)),
+            "day_learning_blocked": bool(to_float(exposure.get("day_trade_exposure_pct"), 0.0) < TARGET_RANGES["day_trade"][0] and to_int(capacity.get("total_used"), 0) >= to_int(capacity.get("total_capacity"), 20)),
+            "swing_overconcentration": bool(exposure.get("horizon_exposure_balance") == "overconcentrated_swing"),
+            "stale_swing_pressure": rounded(sum(row["stale_score"] for row in position_rows if row["horizon"] == "swing_trade") / max(1, len([row for row in position_rows if row["horizon"] == "swing_trade"])), 3),
+            "learning_access_score": learning_access_score,
+            "forced_rotation_enabled": False,
+            "automatic_replacement_enabled": False,
+            **_safe_flags(),
+        }
+
+    def _trade_lifecycle_intelligence_v2(self, statuses: dict[str, Any], rotation: dict[str, Any]) -> dict[str, Any]:
+        profit = status_value(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
+        lifecycle = status_value(statuses, "trade_lifecycle_excursion_exit_learning_v2")
+        adaptive = status_value(statuses, "adaptive_profit_capture_intelligence")
+        mfe = to_float(first(lifecycle.get("avg_mfe"), profit.get("avg_mfe"), profit.get("average_mfe"), 0.0), 0.0)
+        mae = to_float(first(lifecycle.get("avg_mae"), profit.get("avg_mae"), profit.get("average_mae"), 0.0), 0.0)
+        capture_ratio = to_float(first(lifecycle.get("capture_ratio"), profit.get("average_capture_ratio"), profit.get("capture_ratio"), 0.0), 0.0)
+        giveback_ratio = to_float(first(lifecycle.get("average_profit_giveback_pct"), profit.get("average_giveback_pct"), adaptive.get("average_profit_giveback_pct"), 0.0), 0.0)
+        exit_efficiency = clamp(first(profit.get("exit_quality"), lifecycle.get("exit_quality"), 100.0 - giveback_ratio, default=50.0))
+        profit_efficiency = clamp(first(adaptive.get("average_profit_retention_score"), 100.0 - giveback_ratio, default=50.0))
+        hold_efficiency = clamp(first(lifecycle.get("hold_duration_quality_score"), 100.0 - to_float(rotation.get("capital_trapped_score"), 0.0), default=50.0))
+        horizon_efficiency = clamp(first(lifecycle.get("horizon_efficiency"), 100.0 - to_float(rotation.get("stale_swing_pressure"), 0.0), default=50.0))
+        lifecycle_efficiency_score = rounded((exit_efficiency + profit_efficiency + hold_efficiency + horizon_efficiency) / 4.0, 3)
+        profit_retention_score = rounded((profit_efficiency + max(0.0, 100.0 - giveback_ratio)) / 2.0, 3)
+        if giveback_ratio >= 12.0:
+            profit_status = "needs_giveback_reduction"
+        elif profit_retention_score >= 65.0:
+            profit_status = "healthy"
+        else:
+            profit_status = "monitoring"
+        return {
+            "module": "Trade Lifecycle Intelligence V2",
+            "status": "ok",
+            "mfe": rounded(mfe, 3),
+            "mae": rounded(mae, 3),
+            "capture_ratio": rounded(capture_ratio, 3),
+            "giveback_ratio": rounded(giveback_ratio, 3),
+            "thesis_decay": rounded(to_float(rotation.get("capital_trapped_score"), 0.0), 3),
+            "momentum_decay": rounded(to_float(rotation.get("stale_swing_pressure"), 0.0), 3),
+            "time_decay": rounded(to_float(rotation.get("capital_trapped_score"), 0.0) * 0.6, 3),
+            "hold_efficiency": rounded(hold_efficiency, 3),
+            "horizon_efficiency": rounded(horizon_efficiency, 3),
+            "profit_efficiency": rounded(profit_efficiency, 3),
+            "exit_efficiency": rounded(exit_efficiency, 3),
+            "profit_retention_score": profit_retention_score,
+            "giveback_score": rounded(giveback_ratio, 3),
+            "lifecycle_efficiency_score": lifecycle_efficiency_score,
+            "profit_retention_status": profit_status,
+            "lifecycle_efficiency_status": "healthy" if lifecycle_efficiency_score >= 65.0 else "needs_attention",
+            "protect_profit_recommendation": "review_profitable_positions_for_profit_protection" if giveback_ratio >= 8.0 else "continue_shadow_validation",
+            "reduce_giveback_recommendation": "prioritize_profit_capture_learning" if giveback_ratio >= 8.0 else "monitor_giveback",
+            "thesis_review_recommendation": "review_stale_or_low_thesis_health_positions" if rotation.get("stale_positions_count", 0) else "monitor_active_theses",
+            "horizon_adjustment_recommendation": "prefer_underexposed_horizons_when_existing_gates_pass" if rotation.get("scalp_learning_blocked") or rotation.get("day_learning_blocked") else "keep_adaptive_horizon_learning",
+            "automatic_sells_enabled": False,
+            **_safe_flags(),
+        }
+
+    def _adaptive_market_regime_allocation(self, statuses: dict[str, Any], capacity: dict[str, Any], exposure: dict[str, Any]) -> dict[str, Any]:
+        breadth = status_value(statuses, "market_breadth_index_intelligence_v1")
+        transition = status_value(statuses, "market_transition_detection_v1")
+        condition = status_value(statuses, "market_condition_attribution_v1")
+        regime = text(first(condition.get("best_condition"), breadth.get("current_index_regime"), transition.get("current_market_phase"), default="unknown"), "unknown")
+        volatility_pressure = clamp(first(breadth.get("volatility_pressure_score"), transition.get("volatility_regime_shift"), default=50.0))
+        trend_strength = clamp(first(breadth.get("index_trend_strength"), condition.get("trend_strength"), default=50.0))
+        trend_persistence = clamp(first(breadth.get("index_momentum_score"), condition.get("momentum_quality"), default=50.0))
+        momentum_quality = clamp(first(condition.get("momentum_quality"), breadth.get("risk_on_score"), default=50.0))
+        if volatility_pressure >= 65.0:
+            preferred_mix = {"scalp": 35.0, "day_trade": 40.0, "swing_trade": 25.0}
+            bias = "volatile_market_favors_scalp_day_learning"
+        elif trend_strength >= 65.0 and trend_persistence >= 60.0:
+            preferred_mix = {"scalp": 15.0, "day_trade": 30.0, "swing_trade": 55.0}
+            bias = "trending_market_can_support_swing_learning"
+        elif trend_strength <= 45.0:
+            preferred_mix = {"scalp": 30.0, "day_trade": 45.0, "swing_trade": 25.0}
+            bias = "choppy_market_favors_day_trade_learning"
+        else:
+            preferred_mix = {"scalp": 25.0, "day_trade": 35.0, "swing_trade": 40.0}
+            bias = "balanced_adaptive_learning_mix"
+        market_adaptability_score = rounded((trend_strength + trend_persistence + momentum_quality + max(0.0, 100.0 - volatility_pressure)) / 4.0, 3)
+        current_swing = to_float((capacity.get("horizon_distribution_pct") or {}).get("swing_trade"), 0.0)
+        learning_focus = "scalp_day_learning_access" if current_swing > preferred_mix["swing_trade"] + 15.0 else text(exposure.get("recommended_learning_focus"), "maintain_adaptive_horizon_learning")
+        return {
+            "module": "Adaptive Market Regime Allocation V1",
+            "status": "ok",
+            "market_regime": regime,
+            "horizon_market_fit": "adaptive_not_quota_based",
+            "volatility_pressure": rounded(volatility_pressure, 3),
+            "trend_strength": rounded(trend_strength, 3),
+            "trend_persistence": rounded(trend_persistence, 3),
+            "momentum_quality": rounded(momentum_quality, 3),
+            "market_adaptability_score": market_adaptability_score,
+            "preferred_horizon_mix": preferred_mix,
+            "horizon_market_bias": bias,
+            "regime_allocation_recommendation": bias,
+            "recommended_learning_focus": learning_focus,
+            "fixed_quotas_enabled": False,
+            "portfolio_allocation_changed": False,
+            **_safe_flags(),
+        }
+
+    def _dashboard_summary(
+        self,
+        repair: dict[str, Any],
+        readiness: dict[str, Any],
+        capacity: dict[str, Any],
+        recycling: dict[str, Any],
+        exposure: dict[str, Any],
+        optimizer: dict[str, Any],
+        rotation: dict[str, Any],
+        lifecycle: dict[str, Any],
+        regime: dict[str, Any],
+    ) -> dict[str, Any]:
         readiness_map = dict(readiness.get("readiness_by_horizon") or {})
         top_problem = "broker_lifecycle_audit_mismatch" if repair.get("repair_status") != "broker_confirmed_source_of_truth_active" else first(exposure.get("horizon_exposure_balance"), "monitoring")
         return {
@@ -677,6 +1008,13 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "recycling_recommendation": "run_replacement_scan_through_existing_gates" if recycling.get("replacement_scan_recommended") else "monitor_capacity_until_slot_reopens",
             "top_horizon_problem": top_problem,
             "next_recommended_action": optimizer.get("recommended_paper_learning_focus"),
+            "stale_positions_count": rotation.get("stale_positions_count"),
+            "capital_trapped_score": rotation.get("capital_trapped_score"),
+            "horizon_learning_access_score": rotation.get("learning_access_score"),
+            "regime_allocation_recommendation": regime.get("regime_allocation_recommendation"),
+            "profit_retention_score": lifecycle.get("profit_retention_score"),
+            "giveback_score": lifecycle.get("giveback_score"),
+            "lifecycle_efficiency_score": lifecycle.get("lifecycle_efficiency_score"),
             **_safe_flags(),
         }
 
@@ -688,10 +1026,13 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
         recycling = self._dynamic_recycling(statuses, capacity)
         exposure = self._exposure_balancer(statuses, capacity)
         optimizer = self._learning_exposure_optimizer(statuses, exposure)
+        rotation = self._adaptive_portfolio_rotation(statuses, capacity, exposure)
+        lifecycle_v2 = self._trade_lifecycle_intelligence_v2(statuses, rotation)
+        regime_allocation = self._adaptive_market_regime_allocation(statuses, capacity, exposure)
         assignment = self._candidate_horizon_assignment(statuses, capacity, exposure, readiness)
         practice_bucket = self._practice_bucket(assignment, capacity)
         exit_readiness = self._exit_readiness(readiness, capacity, exposure)
-        dashboard = self._dashboard_summary(repair, readiness, capacity, recycling, exposure, optimizer)
+        dashboard = self._dashboard_summary(repair, readiness, capacity, recycling, exposure, optimizer, rotation, lifecycle_v2, regime_allocation)
         modules = {
             "trade_lifecycle_audit_auto_repair_v1": repair,
             "horizon_opportunity_assignment_engine_v1": assignment,
@@ -700,6 +1041,9 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "dynamic_capacity_recycling_v1": recycling,
             "horizon_exposure_balancer_v1": exposure,
             "learning_exposure_optimizer_v1": optimizer,
+            "adaptive_portfolio_rotation_engine_v1": rotation,
+            "trade_lifecycle_intelligence_v2": lifecycle_v2,
+            "adaptive_market_regime_allocation_v1": regime_allocation,
             "controlled_paper_horizon_practice_bucket_v1": practice_bucket,
             "horizon_exit_profit_capture_readiness_v1": exit_readiness,
             "horizon_lifecycle_dashboard_summary": dashboard,
@@ -732,6 +1076,19 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "selected_horizons_today": assignment.get("selected_horizons_today"),
             "assigned_horizon_rows": assignment.get("assigned_horizon_rows"),
             "assigned_horizon_count": assignment.get("assigned_horizon_count"),
+            "shadow_scalp_candidates": assignment.get("shadow_scalp_candidates"),
+            "shadow_day_trade_candidates": assignment.get("shadow_day_trade_candidates"),
+            "shadow_swing_trade_candidates": assignment.get("shadow_swing_trade_candidates"),
+            "qualified_scalp_candidates": assignment.get("qualified_scalp_candidates"),
+            "qualified_day_trade_candidates": assignment.get("qualified_day_trade_candidates"),
+            "qualified_swing_trade_candidates": assignment.get("qualified_swing_trade_candidates"),
+            "missing_horizon_field_count": assignment.get("missing_horizon_field_count"),
+            "missing_horizon_field_examples": assignment.get("missing_horizon_field_examples"),
+            "horizon_assignment_dropoff_point": assignment.get("horizon_assignment_dropoff_point"),
+            "horizon_assignment_blocker": assignment.get("horizon_assignment_blocker"),
+            "practice_bucket_blocker": assignment.get("practice_bucket_blocker"),
+            "paper_tie_breaker_blocker": assignment.get("paper_tie_breaker_blocker"),
+            "next_required_fix": assignment.get("next_required_fix"),
             "preferred_next_horizon": assignment.get("preferred_next_horizon"),
             "horizon_assignment_used": bool(assignment.get("horizon_assignment_used", False)),
             "horizon_assignment_confidence": rounded(to_float(assignment.get("horizon_assignment_confidence"), 0.0), 3),
@@ -765,6 +1122,31 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "dynamic_recycling_status": recycling.get("dynamic_recycling_status"),
             "horizon_exposure_balance": exposure.get("horizon_exposure_balance"),
             "top_learning_exposure_gap": optimizer.get("top_learning_gap"),
+            "adaptive_portfolio_rotation_status": rotation.get("portfolio_rotation_status"),
+            "stale_positions_count": rotation.get("stale_positions_count"),
+            "top_stale_positions": rotation.get("top_stale_positions"),
+            "best_replacement_candidates": rotation.get("best_replacement_candidates"),
+            "capital_trapped_score": rotation.get("capital_trapped_score"),
+            "trapped_capital_score": rotation.get("trapped_capital_score"),
+            "scalp_learning_blocked": rotation.get("scalp_learning_blocked"),
+            "day_learning_blocked": rotation.get("day_learning_blocked"),
+            "swing_overconcentration": rotation.get("swing_overconcentration"),
+            "stale_swing_pressure": rotation.get("stale_swing_pressure"),
+            "horizon_learning_access_score": rotation.get("learning_access_score"),
+            "profit_retention_score": lifecycle_v2.get("profit_retention_score"),
+            "profit_retention_status": lifecycle_v2.get("profit_retention_status"),
+            "giveback_score": lifecycle_v2.get("giveback_score"),
+            "lifecycle_efficiency_score": lifecycle_v2.get("lifecycle_efficiency_score"),
+            "lifecycle_efficiency_status": lifecycle_v2.get("lifecycle_efficiency_status"),
+            "protect_profit_recommendation": lifecycle_v2.get("protect_profit_recommendation"),
+            "reduce_giveback_recommendation": lifecycle_v2.get("reduce_giveback_recommendation"),
+            "thesis_review_recommendation": lifecycle_v2.get("thesis_review_recommendation"),
+            "horizon_adjustment_recommendation": lifecycle_v2.get("horizon_adjustment_recommendation"),
+            "market_regime": regime_allocation.get("market_regime"),
+            "preferred_horizon_mix": regime_allocation.get("preferred_horizon_mix"),
+            "horizon_market_bias": regime_allocation.get("horizon_market_bias"),
+            "regime_allocation_recommendation": regime_allocation.get("regime_allocation_recommendation"),
+            "market_adaptability_score": regime_allocation.get("market_adaptability_score"),
             "active_broker_positions": dashboard.get("active_broker_positions"),
             "rows_audited": dashboard.get("rows_audited"),
             "underexposed_horizon": dashboard.get("underexposed_horizon"),

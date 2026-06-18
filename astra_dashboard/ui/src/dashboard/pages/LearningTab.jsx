@@ -2954,6 +2954,17 @@ export default function LearningTab({ compact = false }) {
             ["Execution candidate", astraHorizonLifecycleCapacityPromotion?.horizon_execution_candidate?.symbol || "warming up"],
             ["Execution reason", astraHorizonLifecycleCapacityPromotion?.horizon_execution_reason],
             ["Execution blocker", astraHorizonLifecycleCapacityPromotion?.horizon_execution_blocker],
+            ["Dropoff point", astraHorizonLifecycleCapacityPromotion?.horizon_assignment_dropoff_point],
+            ["Tie-break blocker", astraHorizonLifecycleCapacityPromotion?.paper_tie_breaker_blocker],
+            ["Practice blocker", astraHorizonLifecycleCapacityPromotion?.practice_bucket_blocker],
+            ["Next fix", astraHorizonLifecycleCapacityPromotion?.next_required_fix],
+            ["Stale positions", safeNumber(astraHorizonLifecycleCapacityPromotion?.stale_positions_count).toFixed(0)],
+            ["Trapped capital", safeNumber(astraHorizonLifecycleCapacityPromotion?.capital_trapped_score).toFixed(1)],
+            ["Learning access", safeNumber(astraHorizonLifecycleCapacityPromotion?.horizon_learning_access_score).toFixed(1)],
+            ["Profit retention", safeNumber(astraHorizonLifecycleCapacityPromotion?.profit_retention_score).toFixed(1)],
+            ["Giveback score", safeNumber(astraHorizonLifecycleCapacityPromotion?.giveback_score).toFixed(1)],
+            ["Lifecycle efficiency", safeNumber(astraHorizonLifecycleCapacityPromotion?.lifecycle_efficiency_score).toFixed(1)],
+            ["Regime bias", astraHorizonLifecycleCapacityPromotion?.horizon_market_bias],
             ["Recycling", astraHorizonLifecycleCapacityPromotion?.dynamic_recycling_status],
             ["Recycled slots", safeNumber(astraHorizonLifecycleCapacityPromotion?.recycled_slots_available).toFixed(0)],
             ["Exposure balance", astraHorizonLifecycleCapacityPromotion?.horizon_exposure_balance],
@@ -2977,6 +2988,30 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Assigned horizons today: {Object.entries(astraHorizonLifecycleCapacityPromotion?.assigned_horizons_today || {}).map(([key, value]) => `${String(key).replaceAll("_", " ")} ${safeNumber(value).toFixed(0)}`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow candidates: scalp {safeNumber(astraHorizonLifecycleCapacityPromotion?.shadow_scalp_candidates).toFixed(0)}, day {safeNumber(astraHorizonLifecycleCapacityPromotion?.shadow_day_trade_candidates).toFixed(0)}, swing {safeNumber(astraHorizonLifecycleCapacityPromotion?.shadow_swing_trade_candidates).toFixed(0)}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Qualified candidates: scalp {safeNumber(astraHorizonLifecycleCapacityPromotion?.qualified_scalp_candidates).toFixed(0)}, day {safeNumber(astraHorizonLifecycleCapacityPromotion?.qualified_day_trade_candidates).toFixed(0)}, swing {safeNumber(astraHorizonLifecycleCapacityPromotion?.qualified_swing_trade_candidates).toFixed(0)}; missing horizon fields {safeNumber(astraHorizonLifecycleCapacityPromotion?.missing_horizon_field_count).toFixed(0)}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Missing horizon examples: {(astraHorizonLifecycleCapacityPromotion?.missing_horizon_field_examples || []).join(", ") || "none"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Top stale positions: {(astraHorizonLifecycleCapacityPromotion?.top_stale_positions || []).map((row) => `${row?.symbol || "unknown"} ${safeNumber(row?.stale_score).toFixed(1)}`).join(" | ") || "none"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Best replacements: {(astraHorizonLifecycleCapacityPromotion?.best_replacement_candidates || []).map((row) => `${row?.symbol || "unknown"} ${safeNumber(row?.replacement_score).toFixed(1)}`).join(" | ") || "warming up"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Learning access: scalp blocked {astraHorizonLifecycleCapacityPromotion?.scalp_learning_blocked ? "yes" : "no"}; day blocked {astraHorizonLifecycleCapacityPromotion?.day_learning_blocked ? "yes" : "no"}; swing overconcentration {astraHorizonLifecycleCapacityPromotion?.swing_overconcentration ? "yes" : "no"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Regime allocation: {String(astraHorizonLifecycleCapacityPromotion?.regime_allocation_recommendation || "balanced adaptive learning mix").replaceAll("_", " ")}; mix {Object.entries(astraHorizonLifecycleCapacityPromotion?.preferred_horizon_mix || {}).map(([key, value]) => `${String(key).replaceAll("_", " ")} ${safeNumber(value).toFixed(0)}%`).join(" | ") || "warming up"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Profit retention: {String(astraHorizonLifecycleCapacityPromotion?.profit_retention_status || "monitoring").replaceAll("_", " ")}; lifecycle {String(astraHorizonLifecycleCapacityPromotion?.lifecycle_efficiency_status || "monitoring").replaceAll("_", " ")}; recommendation {String(astraHorizonLifecycleCapacityPromotion?.reduce_giveback_recommendation || "monitor_giveback").replaceAll("_", " ")}.
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Shadow readiness: {Object.entries(astraHorizonLifecycleCapacityPromotion?.readiness_by_horizon || {}).map(([key, value]) => `${String(key).replaceAll("_", " ")} ${String(value).replaceAll("_", " ")}`).join(" | ") || "warming up"}
