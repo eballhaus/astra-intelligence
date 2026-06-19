@@ -97,6 +97,17 @@ def _sanitize_position(row: dict[str, Any]) -> dict[str, Any]:
     return {k: row.get(k) for k in allowed if k in row}
 
 
+def _parse_timestamp(value: Any) -> datetime | None:
+    raw = _safe_text(value)
+    if not raw:
+        return None
+    try:
+        normalized = raw.replace("Z", "+00:00")
+        return datetime.fromisoformat(normalized)
+    except Exception:
+        return None
+
+
 class AlpacaPaperBroker:
     """Small guarded Alpaca paper broker wrapper.
 
@@ -247,6 +258,150 @@ class AlpacaPaperBroker:
         orders = [_sanitize_order(o) for o in data if isinstance(o, dict)]
         return {"ok": True, "orders": orders, "open_orders_count": len(orders)}
 
+    def broker_truth_metrics(self, limit: int = 200) -> dict[str, Any]:
+        closed = self.orders(status="closed", limit=max(50, min(500, _to_int(limit, 200))))
+        if not isinstance(closed, dict) or not closed.get("ok"):
+            return {
+                "ok": False,
+                "broker_truth_engine_v1": True,
+                "true_paper_trade_count": 0,
+                "true_paper_closed_trade_count": 0,
+                "true_paper_metric_source": "broker_truth_engine_v1",
+                "true_paper_metric_confidence": 0.0,
+                "true_paper_metric_trust_level": "insufficient_broker_confirmed_evidence",
+                "pf_source": "broker_truth_engine_v1",
+                "pf_scope": "broker_confirmed_paper_closed_trades",
+                "pf_dataset_owner": "alpaca_paper_broker",
+                "metric_reconciliation_status": "insufficient_broker_confirmed_evidence",
+                "metric_scope_mismatch": False,
+                "metric_trust_score": 0.0,
+                "error": _safe_text(closed.get("error"), "closed_orders_unavailable"),
+                "closed_orders_reviewed": 0,
+                "filled_orders_reviewed": 0,
+                "closed_trade_rows": [],
+            }
+        orders = [dict(row) for row in (closed.get("orders") or []) if isinstance(row, dict)]
+        orders.sort(
+            key=lambda row: (
+                _parse_timestamp(row.get("filled_at"))
+                or _parse_timestamp(row.get("updated_at"))
+                or _parse_timestamp(row.get("submitted_at"))
+                or _parse_timestamp(row.get("created_at"))
+                or datetime.min.replace(tzinfo=timezone.utc)
+            )
+        )
+        lots: dict[str, list[dict[str, float]]] = {}
+        closed_rows: list[dict[str, Any]] = []
+        realized_profit = 0.0
+        realized_loss = 0.0
+        gross_cost = 0.0
+        filled_orders_reviewed = 0
+        for row in orders:
+            qty = _to_float(row.get("filled_qty") or row.get("qty"), 0.0)
+            price = _to_float(row.get("filled_avg_price"), 0.0)
+            symbol = _safe_text(row.get("symbol")).upper()
+            side = _safe_text(row.get("side")).lower()
+            status = _safe_text(row.get("status")).lower()
+            if not symbol or qty <= 0 or price <= 0:
+                continue
+            if status not in {"filled", "partially_filled", "done_for_day", "canceled"}:
+                continue
+            filled_orders_reviewed += 1
+            symbol_lots = lots.setdefault(symbol, [])
+            if side == "buy":
+                symbol_lots.append({"qty": qty, "price": price})
+                continue
+            if side != "sell" or not symbol_lots:
+                continue
+            remaining = qty
+            cost_basis = 0.0
+            matched_qty = 0.0
+            while remaining > 1e-9 and symbol_lots:
+                head = symbol_lots[0]
+                take = min(remaining, _to_float(head.get("qty"), 0.0))
+                if take <= 0:
+                    symbol_lots.pop(0)
+                    continue
+                cost_basis += take * _to_float(head.get("price"), 0.0)
+                matched_qty += take
+                head["qty"] = max(0.0, _to_float(head.get("qty"), 0.0) - take)
+                remaining -= take
+                if _to_float(head.get("qty"), 0.0) <= 1e-9:
+                    symbol_lots.pop(0)
+            proceeds = matched_qty * price
+            pnl = proceeds - cost_basis
+            if matched_qty <= 0 or cost_basis <= 0:
+                continue
+            gross_cost += cost_basis
+            if pnl >= 0:
+                realized_profit += pnl
+            else:
+                realized_loss += abs(pnl)
+            return_pct = ((pnl / cost_basis) * 100.0) if cost_basis > 0 else 0.0
+            closed_rows.append(
+                {
+                    "symbol": symbol,
+                    "qty": round(matched_qty, 6),
+                    "entry_cost_basis": round(cost_basis, 4),
+                    "exit_proceeds": round(proceeds, 4),
+                    "realized_pnl": round(pnl, 4),
+                    "realized_return_pct": round(return_pct, 4),
+                    "filled_at": _safe_text(row.get("filled_at") or row.get("updated_at") or row.get("submitted_at") or row.get("created_at")),
+                    "order_id": _safe_text(row.get("id")),
+                    "client_order_id": _safe_text(row.get("client_order_id")),
+                }
+            )
+        trade_count = len(closed_rows)
+        winning = len([row for row in closed_rows if _to_float(row.get("realized_pnl"), 0.0) > 0])
+        losing = len([row for row in closed_rows if _to_float(row.get("realized_pnl"), 0.0) < 0])
+        breakeven = max(0, trade_count - winning - losing)
+        returns = [_to_float(row.get("realized_return_pct"), 0.0) for row in closed_rows]
+        avg_return = (sum(returns) / len(returns)) if returns else None
+        roi = ((realized_profit - realized_loss) / gross_cost * 100.0) if gross_cost > 0 else None
+        pf = (realized_profit / realized_loss) if realized_loss > 1e-9 else (realized_profit if realized_profit > 0 else None)
+        win_rate = ((winning / trade_count) * 100.0) if trade_count > 0 else None
+        trust = "high" if trade_count >= 20 else "warming_up" if trade_count > 0 else "insufficient_broker_confirmed_evidence"
+        confidence = min(100.0, trade_count * 4.0)
+        return {
+            "ok": True,
+            "broker_truth_engine_v1": True,
+            "closed_orders_reviewed": len(orders),
+            "filled_orders_reviewed": filled_orders_reviewed,
+            "true_paper_pf": round(pf, 4) if pf is not None else None,
+            "true_paper_win_rate": round(win_rate, 4) if win_rate is not None else None,
+            "true_paper_avg_return": round(avg_return, 4) if avg_return is not None else None,
+            "true_paper_roi": round(roi, 4) if roi is not None else None,
+            "true_paper_profit_capture": None,
+            "true_paper_avg_giveback": None,
+            "true_paper_exit_quality": None,
+            "true_paper_trade_count": trade_count,
+            "true_paper_closed_trade_count": trade_count,
+            "true_paper_metric_source": "broker_truth_engine_v1",
+            "true_paper_metric_confidence": round(confidence, 3),
+            "true_paper_metric_trust_level": trust,
+            "pf_source": "broker_truth_engine_v1",
+            "pf_scope": "broker_confirmed_paper_closed_trades",
+            "pf_dataset_owner": "alpaca_paper_broker",
+            "metric_reconciliation_status": "PASS" if trade_count > 0 else "insufficient_broker_confirmed_evidence",
+            "metric_scope_mismatch": False,
+            "metric_trust_score": round(confidence, 3),
+            "paper_gross_profit": round(realized_profit, 4),
+            "paper_gross_loss": round(realized_loss, 4),
+            "winning_trade_count": winning,
+            "losing_trade_count": losing,
+            "breakeven_trade_count": breakeven,
+            "closed_trade_rows": closed_rows[-25:],
+        }
+
+    def order(self, order_id: str) -> dict[str, Any]:
+        oid = _safe_text(order_id)
+        if not oid:
+            return {"ok": False, "error": "order_id_required", "order": {}}
+        ok, data, err = self._request("GET", f"/orders/{urllib.parse.quote(oid)}")
+        if not ok or not isinstance(data, dict):
+            return {"ok": False, "error": err, "order": {}}
+        return {"ok": True, "order": _sanitize_order(data)}
+
     def submit_paper_order(self, order: dict[str, Any]) -> dict[str, Any]:
         safety = self.safety_status()
         if not safety.get("broker_execution_enabled"):
@@ -327,10 +482,12 @@ class AlpacaPaperBroker:
         account = {"ok": False}
         positions = {"ok": False, "positions": [], "open_positions_count": 0}
         orders = {"ok": False, "orders": [], "open_orders_count": 0}
+        broker_truth = {"ok": False}
         if safety.get("broker_execution_enabled"):
             account = self.account()
             positions = self.positions()
             orders = self.orders(status="open", limit=50)
+            broker_truth = self.broker_truth_metrics(limit=200)
         account_ok = bool(isinstance(account, dict) and account.get("ok"))
         positions_ok = bool(isinstance(positions, dict) and positions.get("ok"))
         orders_ok = bool(isinstance(orders, dict) and orders.get("ok"))
@@ -363,6 +520,8 @@ class AlpacaPaperBroker:
             "live_endpoint_detected": bool(safety.get("live_endpoint_detected")),
             "live_endpoint_rejected": bool(safety.get("live_endpoint_rejected")),
             "credential_source": safety.get("credential_source"),
+            "broker_truth_engine_v1": bool(broker_truth.get("broker_truth_engine_v1", False)),
+            "broker_truth_metrics": broker_truth if isinstance(broker_truth, dict) else {},
             "api_calls_used": int(self._api_calls_used),
             "live_trading_changed": False,
             "broker_live_endpoint_allowed": False,

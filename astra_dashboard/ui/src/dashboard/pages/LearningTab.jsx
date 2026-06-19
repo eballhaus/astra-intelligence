@@ -2980,10 +2980,19 @@ export default function LearningTab({ compact = false }) {
             ["True paper PF", safeNumber(astraHorizonLifecycleCapacityPromotion?.true_paper_pf).toFixed(3)],
             ["Learning PF", safeNumber(astraHorizonLifecycleCapacityPromotion?.learning_pf).toFixed(3)],
             ["Shadow PF", safeNumber(astraHorizonLifecycleCapacityPromotion?.shadow_pf || astraHorizonLifecycleCapacityPromotion?.shadow_expected_pf).toFixed(3)],
+            ["Previous PF source", astraHorizonLifecycleCapacityPromotion?.previous_pf_source],
+            ["New PF source", astraHorizonLifecycleCapacityPromotion?.new_pf_source],
             ["PF source", astraHorizonLifecycleCapacityPromotion?.displayed_dashboard_pf_source],
             ["PF trust", astraHorizonLifecycleCapacityPromotion?.displayed_dashboard_pf_trust_level],
             ["Metric reconciliation", astraHorizonLifecycleCapacityPromotion?.metric_reconciliation_status],
             ["Metric mismatch", astraHorizonLifecycleCapacityPromotion?.metric_scope_mismatch_detected ? "yes" : "no"],
+            ["Session refresh", astraHorizonLifecycleCapacityPromotion?.session_refresh_status],
+            ["Session stale", astraHorizonLifecycleCapacityPromotion?.session_is_stale ? "yes" : "no"],
+            ["Session cache age", safeNumber(astraHorizonLifecycleCapacityPromotion?.session_cache_age).toFixed(1)],
+            ["Active workflow rows", safeNumber(astraHorizonLifecycleCapacityPromotion?.active_workflow_rows).toFixed(0)],
+            ["Archived workflow rows", safeNumber(astraHorizonLifecycleCapacityPromotion?.archived_workflow_rows).toFixed(0)],
+            ["Stale rows compacted", safeNumber(astraHorizonLifecycleCapacityPromotion?.stale_rows_compacted).toFixed(0)],
+            ["Archive retrieval", astraHorizonLifecycleCapacityPromotion?.archive_retrieval_health],
             ["Catalyst coverage", `${safeNumber(astraHorizonLifecycleCapacityPromotion?.catalyst_coverage_pct).toFixed(1)}%`],
             ["Unknown catalysts", `${safeNumber(astraHorizonLifecycleCapacityPromotion?.unknown_catalyst_rate).toFixed(1)}%`],
             ["Catalyst gap", astraHorizonLifecycleCapacityPromotion?.catalyst_learning_gap],
@@ -3001,6 +3010,9 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Performance Truth Layer: true paper PF {safeNumber(astraHorizonLifecycleCapacityPromotion?.true_paper_pf).toFixed(3)} from {String(astraHorizonLifecycleCapacityPromotion?.true_paper_metric_source || "unavailable").replaceAll("_", " ")}, learning PF {safeNumber(astraHorizonLifecycleCapacityPromotion?.learning_pf).toFixed(3)}, shadow PF {safeNumber(astraHorizonLifecycleCapacityPromotion?.shadow_pf || astraHorizonLifecycleCapacityPromotion?.shadow_expected_pf).toFixed(3)}. Safest display: {String(astraHorizonLifecycleCapacityPromotion?.safest_metric_to_show_user || "label learning PF as learning metric").replaceAll("_", " ")}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Source repair: previous PF source {String(astraHorizonLifecycleCapacityPromotion?.previous_pf_source || "unknown").replaceAll("_", " ")}; new PF source {String(astraHorizonLifecycleCapacityPromotion?.new_pf_source || "broker_truth_engine_v1").replaceAll("_", " ")}; trust {String(astraHorizonLifecycleCapacityPromotion?.true_paper_metric_trust_level || "insufficient broker confirmed evidence").replaceAll("_", " ")}.
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Assigned horizons today: {Object.entries(astraHorizonLifecycleCapacityPromotion?.assigned_horizons_today || {}).map(([key, value]) => `${String(key).replaceAll("_", " ")} ${safeNumber(value).toFixed(0)}`).join(" | ") || "warming up"}
@@ -3025,6 +3037,12 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Horizon participation: {String(astraHorizonLifecycleCapacityPromotion?.horizon_participation_recommendation || "maintain adaptive horizon learning").replaceAll("_", " ")}; blocker {String(astraHorizonLifecycleCapacityPromotion?.horizon_participation_blocker || "none").replaceAll("_", " ")}. This remains tie-breaker/advisory only and does not bypass ranking or safety gates.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Session repair: {String(astraHorizonLifecycleCapacityPromotion?.session_refresh_status || "cache fresh").replaceAll("_", " ")}; reason {String(astraHorizonLifecycleCapacityPromotion?.session_refresh_reason || "market session cache valid").replaceAll("_", " ")}; recovery {String(astraHorizonLifecycleCapacityPromotion?.session_recovery_status || "healthy").replaceAll("_", " ")}; last rebuild {String(astraHorizonLifecycleCapacityPromotion?.session_last_rebuild || "warming up").replaceAll("_", " ")}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Workflow compaction: active {safeNumber(astraHorizonLifecycleCapacityPromotion?.active_workflow_rows).toFixed(0)}, archived {safeNumber(astraHorizonLifecycleCapacityPromotion?.archived_workflow_rows).toFixed(0)}, stale compacted {safeNumber(astraHorizonLifecycleCapacityPromotion?.stale_rows_compacted).toFixed(0)}, hidden {safeNumber(astraHorizonLifecycleCapacityPromotion?.stale_rows_hidden).toFixed(0)}, archive integrity {astraHorizonLifecycleCapacityPromotion?.archive_integrity ? "yes" : "no"}.
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Regime allocation: {String(astraHorizonLifecycleCapacityPromotion?.regime_allocation_recommendation || "balanced adaptive learning mix").replaceAll("_", " ")}; mix {Object.entries(astraHorizonLifecycleCapacityPromotion?.preferred_horizon_mix || {}).map(([key, value]) => `${String(key).replaceAll("_", " ")} ${safeNumber(value).toFixed(0)}%`).join(" | ") || "warming up"}.

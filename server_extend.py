@@ -33699,23 +33699,27 @@ def astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1(force: bool =
             broker_safety = dict(ALPACA_PAPER_BROKER.safety_status() or {})
         except Exception:
             broker_safety = {}
-        statuses["alpaca_paper_broker"] = {
-            "enabled": bool(broker_safety.get("enabled_requested")),
-            "paper_mode_verified": bool(broker_safety.get("paper_mode_verified")),
-            "broker_execution_enabled": bool(broker_safety.get("broker_execution_enabled")),
-            "broker_execution_ready": bool(broker_safety.get("broker_execution_enabled")),
-            "open_positions_count": int(_to_float(paper_autopilot_status.get("open_positions_count"), 0.0)),
-            "paper_autopilot_status": paper_autopilot_status,
-            "safety_status": "summary_only_no_broker_fetch",
-            "safety_reasons": list(broker_safety.get("safety_reasons") or []),
-            "paper_endpoint_detected": bool(broker_safety.get("paper_endpoint_detected")),
-            "live_endpoint_detected": bool(broker_safety.get("live_endpoint_detected")),
-            "broker_live_endpoint_allowed": False,
-            "api_calls_used": 0,
-            "provider_calls_used": 0,
-            "llm_calls_used": 0,
-            "live_trading_changed": False,
-        }
+        cached_alpaca = ((_CACHE.get("alpaca_paper_status_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
+        if isinstance(cached_alpaca, dict) and cached_alpaca:
+            statuses["alpaca_paper_broker"] = dict(cached_alpaca)
+        else:
+            statuses["alpaca_paper_broker"] = {
+                "enabled": bool(broker_safety.get("enabled_requested")),
+                "paper_mode_verified": bool(broker_safety.get("paper_mode_verified")),
+                "broker_execution_enabled": bool(broker_safety.get("broker_execution_enabled")),
+                "broker_execution_ready": bool(broker_safety.get("broker_execution_enabled")),
+                "open_positions_count": int(_to_float(paper_autopilot_status.get("open_positions_count"), 0.0)),
+                "paper_autopilot_status": paper_autopilot_status,
+                "safety_status": "summary_only_no_broker_fetch",
+                "safety_reasons": list(broker_safety.get("safety_reasons") or []),
+                "paper_endpoint_detected": bool(broker_safety.get("paper_endpoint_detected")),
+                "live_endpoint_detected": bool(broker_safety.get("live_endpoint_detected")),
+                "broker_live_endpoint_allowed": False,
+                "api_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "live_trading_changed": False,
+            }
         out = dict(ASTRA_HORIZON_LIFECYCLE_CAPACITY_PROMOTION_READINESS_BUNDLE.status(statuses=statuses, force=bool(force)) or {})
         out["astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1"] = True
         out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
@@ -34410,8 +34414,38 @@ def alpaca_paper_status_v1():
                 exit_learning = dict(EXIT_LEARNING_EXPANSION_SUITE.status(force=False) or {})
             except Exception:
                 exit_learning = {}
+            try:
+                mobile_compaction = dict(_mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False) or {})
+            except Exception:
+                mobile_compaction = {}
             session_timing = dict(autopilot_status.get("market_session_execution_timing") or autopilot_trace.get("market_session_execution_timing") or {})
             session_block_reason = str(session_timing.get("session_block_reason") or autopilot_trace.get("final_blocker_reason") or autopilot_trace.get("why_no_trade_today") or "unknown_blocker")
+            broker_truth = dict(out.get("broker_truth_metrics") or {})
+            session_is_stale = bool(session_timing.get("session_is_stale", False))
+            session_cache_age = round(_to_float(session_timing.get("session_cache_age_seconds"), 0.0), 2)
+            stale_rejected = "stale_rejected" in str(session_timing.get("session_source") or "")
+            session_refresh_status = (
+                "stale_cache_rejected_and_local_schedule_rebuilt"
+                if session_is_stale and stale_rejected
+                else ("cache_fresh" if not session_is_stale else "stale_cache_detected_waiting_rebuild")
+            )
+            session_refresh_reason = (
+                "market_calendar_cache_stale_but_local_schedule_confirmed_session_truth"
+                if stale_rejected
+                else str(session_timing.get("session_reason") or "market_session_cache_valid")
+            )
+            workflow_active_rows = int(_to_float(mobile_compaction.get("display_active_positions_count"), 0.0))
+            workflow_archived_rows = int(_to_float(mobile_compaction.get("stale_internal_positions"), 0.0))
+            stale_hidden = int(_to_float(mobile_compaction.get("stale_rows_hidden_count"), 0.0))
+            workflow_compaction = {
+                "active_workflow_rows": workflow_active_rows,
+                "archived_workflow_rows": workflow_archived_rows,
+                "stale_rows_compacted": workflow_archived_rows,
+                "stale_rows_hidden": stale_hidden,
+                "archive_integrity": bool(mobile_compaction.get("full_history_preserved", True)),
+                "archive_retrieval_health": "healthy" if bool(mobile_compaction.get("learning_fast_path_active", True)) else "warming_up",
+                "summary": str(mobile_compaction.get("summary") or "workflow_compaction_status_unavailable"),
+            }
             paper_path_gating_summary = {
                 "paper_path_status": session_block_reason,
                 "top_blocker": str(autopilot_trace.get("final_blocker_reason") or session_block_reason or "unknown_blocker"),
@@ -34437,6 +34471,10 @@ def alpaca_paper_status_v1():
                 "market_should_be_open_now": bool(session_timing.get("market_should_be_open_now", False)),
                 "session_block_reason": str(session_timing.get("session_block_reason") or session_block_reason),
                 "session_block_validated": bool(session_timing.get("session_block_validated", False)),
+                "session_refresh_status": session_refresh_status,
+                "session_refresh_reason": session_refresh_reason,
+                "session_last_rebuild": str(session_timing.get("session_timestamp_et") or session_timing.get("session_now_et") or ""),
+                "session_recovery_status": "recovered_with_local_schedule_guard" if stale_rejected else ("healthy" if not session_is_stale else "monitoring"),
                 "candidates_blocked_by_session_gate_today": int(
                     max(
                         0,
@@ -34477,11 +34515,44 @@ def alpaca_paper_status_v1():
                 "behavior_safe_to_apply": False,
             }
             out["paper_path_gating_summary"] = paper_path_gating_summary
+            out["broker_truth_metrics"] = broker_truth
+            out["true_paper_pf"] = broker_truth.get("true_paper_pf")
+            out["true_paper_win_rate"] = broker_truth.get("true_paper_win_rate")
+            out["true_paper_avg_return"] = broker_truth.get("true_paper_avg_return")
+            out["true_paper_roi"] = broker_truth.get("true_paper_roi")
+            out["true_paper_profit_capture"] = broker_truth.get("true_paper_profit_capture")
+            out["true_paper_avg_giveback"] = broker_truth.get("true_paper_avg_giveback")
+            out["true_paper_exit_quality"] = broker_truth.get("true_paper_exit_quality")
+            out["true_paper_trade_count"] = broker_truth.get("true_paper_trade_count")
+            out["true_paper_closed_trade_count"] = broker_truth.get("true_paper_closed_trade_count")
+            out["true_paper_metric_source"] = broker_truth.get("true_paper_metric_source")
+            out["true_paper_metric_confidence"] = broker_truth.get("true_paper_metric_confidence")
+            out["true_paper_metric_trust_level"] = broker_truth.get("true_paper_metric_trust_level")
+            out["pf_source"] = broker_truth.get("pf_source")
+            out["pf_scope"] = broker_truth.get("pf_scope")
+            out["pf_dataset_owner"] = broker_truth.get("pf_dataset_owner")
+            out["metric_reconciliation_status"] = broker_truth.get("metric_reconciliation_status")
+            out["metric_scope_mismatch"] = broker_truth.get("metric_scope_mismatch")
+            out["metric_trust_score"] = broker_truth.get("metric_trust_score")
+            out["session_is_stale"] = session_is_stale
+            out["session_cache_age"] = session_cache_age
+            out["session_refresh_status"] = session_refresh_status
+            out["session_refresh_reason"] = session_refresh_reason
+            out["session_last_rebuild"] = str(session_timing.get("session_timestamp_et") or session_timing.get("session_now_et") or "")
+            out["session_recovery_status"] = "recovered_with_local_schedule_guard" if stale_rejected else ("healthy" if not session_is_stale else "monitoring")
+            out["workflow_compaction_v1"] = workflow_compaction
+            out["active_workflow_rows"] = workflow_compaction.get("active_workflow_rows")
+            out["archived_workflow_rows"] = workflow_compaction.get("archived_workflow_rows")
+            out["stale_rows_compacted"] = workflow_compaction.get("stale_rows_compacted")
+            out["stale_rows_hidden"] = workflow_compaction.get("stale_rows_hidden")
+            out["archive_integrity"] = workflow_compaction.get("archive_integrity")
+            out["archive_retrieval_health"] = workflow_compaction.get("archive_retrieval_health")
             out["paper_autopilot_status"] = dict(autopilot_status or {})
             out["paper_autopilot_trace"] = dict(autopilot_trace or {})
             out["alpaca_paper_status_v1"] = True
             out["live_trading_changed"] = False
             out["broker_live_endpoint_allowed"] = False
+            _CACHE["alpaca_paper_status_v1"] = {"data": dict(out), "ts": time.time()}
             return out
     except Exception as exc:
         return {
@@ -53533,19 +53604,23 @@ def unified_learning_diagnostics_v1(force: bool = False):
             broker_safety = dict(ALPACA_PAPER_BROKER.safety_status() or {})
         except Exception:
             broker_safety = {}
-        statuses["alpaca_paper_broker"] = {
-            "enabled": bool(broker_safety.get("enabled_requested")),
-            "paper_mode_verified": bool(broker_safety.get("paper_mode_verified")),
-            "broker_execution_enabled": bool(broker_safety.get("broker_execution_enabled")),
-            "broker_execution_ready": bool(broker_safety.get("broker_execution_enabled")),
-            "safety_status": "summary_only_no_broker_fetch",
-            "safety_reasons": list(broker_safety.get("safety_reasons") or []),
-            "paper_endpoint_detected": bool(broker_safety.get("paper_endpoint_detected")),
-            "live_endpoint_detected": bool(broker_safety.get("live_endpoint_detected")),
-            "broker_live_endpoint_allowed": False,
-            "api_calls_used": 0,
-            "live_trading_changed": False,
-        }
+        cached_alpaca = ((_CACHE.get("alpaca_paper_status_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
+        if isinstance(cached_alpaca, dict) and cached_alpaca:
+            statuses["alpaca_paper_broker"] = dict(cached_alpaca)
+        else:
+            statuses["alpaca_paper_broker"] = {
+                "enabled": bool(broker_safety.get("enabled_requested")),
+                "paper_mode_verified": bool(broker_safety.get("paper_mode_verified")),
+                "broker_execution_enabled": bool(broker_safety.get("broker_execution_enabled")),
+                "broker_execution_ready": bool(broker_safety.get("broker_execution_enabled")),
+                "safety_status": "summary_only_no_broker_fetch",
+                "safety_reasons": list(broker_safety.get("safety_reasons") or []),
+                "paper_endpoint_detected": bool(broker_safety.get("paper_endpoint_detected")),
+                "live_endpoint_detected": bool(broker_safety.get("live_endpoint_detected")),
+                "broker_live_endpoint_allowed": False,
+                "api_calls_used": 0,
+                "live_trading_changed": False,
+            }
         _safe_status("controlled_paper_learned_exit_validation_v1", lambda: CONTROLLED_PAPER_LEARNED_EXIT_VALIDATION.status(statuses=statuses, force=False))
 
         sources["statuses"] = statuses

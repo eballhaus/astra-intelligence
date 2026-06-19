@@ -237,85 +237,34 @@ class ShadowVsPaperPerformanceAttributionV1:
         return list(latest.values())
 
     def _paper_canonical(self, statuses: dict[str, dict[str, Any]]) -> dict[str, Any]:
-        advanced = self._advanced_learning_status(statuses)
-        replay = _status(statuses, "replay_lifecycle_expectancy")
-        confidence = _status(statuses, "confidence_calibration_performance_attribution_v1")
+        broker = _status(statuses, "alpaca_paper_broker")
+        broker_truth = dict(broker.get("broker_truth_metrics") or {})
         lifecycle = _status(statuses, "trade_lifecycle_excursion_v2")
-        convergence = _status(statuses, "virtual_paper_convergence_symbol_attribution_v1")
-        learned_exit = _status(statuses, "controlled_paper_learned_exit_validation_v1")
 
-        rows = self._paper_rows()
-        returns_all = [_paper_return_pct(row) for row in rows if _text(row.get("symbol"), "")]
+        returns_all = [_to_float(row.get("realized_return_pct"), 0.0) for row in (broker_truth.get("closed_trade_rows") or []) if isinstance(row, dict)]
         non_zero_returns = [value for value in returns_all if abs(value) > 1e-9]
-        wins = [value for value in non_zero_returns if value > 0]
-        losses = [value for value in non_zero_returns if value < 0]
-        paper_gross_profit = round(sum(wins), 4)
-        paper_gross_loss = round(abs(sum(losses)), 4)
-        raw_pf = _profit_factor(non_zero_returns)
+        raw_pf = broker_truth.get("true_paper_pf")
         avg_return_raw = _avg(non_zero_returns)
-        win_rate_raw = round((len(wins) / len(non_zero_returns)) * 100.0, 4) if non_zero_returns else None
-
-        evidence_count = len(non_zero_returns)
-        advanced_count = _to_int((advanced.get("evidence_counts") or {}).get("return_evidence"), 0)
-        advanced_core_values_available = all(advanced.get(key) not in (None, "") for key in ("released_win_rate", "profit_factor", "average_return"))
-        advanced_available = bool(
-            advanced_count > 0
-            and advanced_core_values_available
-            and (advanced.get("source_validation_passed") or _to_float(advanced.get("metric_confidence_score"), 0.0) >= 45.0)
-        )
-        canonical_closed_trade_count = max(evidence_count, advanced_count)
-        if advanced_available:
-            paper_profit_factor_verified = _to_float(advanced.get("profit_factor"), 0.0)
-            paper_win_rate = _to_float(_first(advanced.get("released_win_rate"), advanced.get("win_rate"), default=0.0), 0.0)
-            paper_avg_return = _to_float(advanced.get("average_return"), 0.0)
-            canonical_source = "advanced_learning_intelligence_v1"
-        else:
-            replay_pf = _to_float(replay.get("expectancy_profit_factor"), 0.0)
-            paper_profit_factor_verified = replay_pf if replay_pf > 0 else _to_float(raw_pf, 0.0)
-            paper_win_rate = _to_float(
-                _first(confidence.get("released_win_rate"), confidence.get("win_rate"), win_rate_raw, default=0.0),
-                0.0,
-            )
-            replay_avg_return = _to_float(replay.get("expectancy_avg_return"), 0.0)
-            paper_avg_return = _to_float(
-                _first(
-                    replay_avg_return if abs(replay_avg_return) > 1e-9 else None,
-                    avg_return_raw,
-                    confidence.get("average_return"),
-                    convergence.get("average_actual_return"),
-                    default=0.0,
-                ),
-                0.0,
-            )
-            canonical_source = "legacy_learning_sources"
-
-        paper_profit_capture = _ratio_to_pct(
-            _first(
-                lifecycle.get("average_profit_capture_ratio"),
-                learned_exit.get("baseline_capture_ratio"),
-                default=0.0,
-            )
-        )
-        paper_exit_quality = _to_float(
-            _first(
-                lifecycle.get("average_exit_quality"),
-                learned_exit.get("baseline_expectancy"),
-                default=0.0,
-            ),
-            0.0,
-        )
+        paper_profit_factor_verified = broker_truth.get("true_paper_pf")
+        paper_win_rate = broker_truth.get("true_paper_win_rate")
+        paper_avg_return = broker_truth.get("true_paper_avg_return")
+        canonical_source = _text(broker_truth.get("true_paper_metric_source"), "broker_truth_engine_v1")
+        canonical_closed_trade_count = _to_int(broker_truth.get("true_paper_closed_trade_count"), 0)
+        paper_profit_capture = broker_truth.get("true_paper_profit_capture")
+        paper_exit_quality = broker_truth.get("true_paper_exit_quality")
+        metric_trust_level = _text(broker_truth.get("true_paper_metric_trust_level"), "insufficient_broker_confirmed_evidence")
 
         return {
             "canonical_performance_source": canonical_source,
             "canonical_closed_trade_count": int(canonical_closed_trade_count),
-            "paper_rows_reviewed": len(rows),
+            "paper_rows_reviewed": _to_int(broker_truth.get("closed_orders_reviewed"), 0),
             "paper_returns_count": len(non_zero_returns),
             "paper_returns": non_zero_returns,
-            "paper_gross_profit": paper_gross_profit,
-            "paper_gross_loss": paper_gross_loss,
-            "winning_trade_count": len(wins),
-            "losing_trade_count": len(losses),
-            "breakeven_trade_count": max(0, len(returns_all) - len(non_zero_returns)),
+            "paper_gross_profit": _to_float(broker_truth.get("paper_gross_profit"), 0.0),
+            "paper_gross_loss": _to_float(broker_truth.get("paper_gross_loss"), 0.0),
+            "winning_trade_count": _to_int(broker_truth.get("winning_trade_count"), 0),
+            "losing_trade_count": _to_int(broker_truth.get("losing_trade_count"), 0),
+            "breakeven_trade_count": _to_int(broker_truth.get("breakeven_trade_count"), 0),
             "paper_profit_factor_raw": _round_or_none(raw_pf, 4),
             "paper_profit_factor_verified": _round_or_none(paper_profit_factor_verified, 4),
             "paper_profit_factor": _round_or_none(paper_profit_factor_verified, 4),
@@ -330,6 +279,10 @@ class ShadowVsPaperPerformanceAttributionV1:
             "paper_trade_count": int(canonical_closed_trade_count),
             "unified_profit_factor_reference": _round_or_none(paper_profit_factor_verified, 4),
             "unified_average_return_reference": _round_or_none(paper_avg_return, 4),
+            "paper_metric_trust_level": metric_trust_level,
+            "paper_metric_confidence": _to_float(broker_truth.get("true_paper_metric_confidence"), 0.0),
+            "paper_pf_scope": _text(broker_truth.get("pf_scope"), "broker_confirmed_paper_closed_trades"),
+            "paper_pf_dataset_owner": _text(broker_truth.get("pf_dataset_owner"), "alpaca_paper_broker"),
         }
 
     def _shadow_metrics(self, statuses: dict[str, dict[str, Any]], paper: dict[str, Any]) -> dict[str, Any]:

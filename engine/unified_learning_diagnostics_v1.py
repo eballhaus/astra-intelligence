@@ -3880,6 +3880,8 @@ class UnifiedLearningDiagnosticsV1:
         stale_rotation_promotion_v2 = dict(modules.get("stale_position_rotation_promotion_readiness_v2") or data.get("stale_position_rotation_promotion_readiness_v2") or {})
         scorecard_v2 = dict(modules.get("shadow_vs_paper_scorecard_v2") or data.get("shadow_vs_paper_scorecard_v2") or {})
         performance_truth = dict(modules.get("performance_truth_layer_v1") or data.get("performance_truth_layer") or {})
+        session_repair = dict(modules.get("stale_session_repair_v1") or data.get("stale_session_repair_v1") or {})
+        workflow_compaction = dict(modules.get("stale_workflow_compaction_v1") or data.get("stale_workflow_compaction_v1") or {})
         horizon_participation = dict(modules.get("adaptive_horizon_participation_engine_v1") or data.get("adaptive_horizon_participation_engine_v1") or {})
         catalyst_context = dict(modules.get("news_intelligence_catalyst_context_engine_v1") or data.get("news_intelligence_catalyst_context_engine_v1") or {})
         exit_maturation = dict(modules.get("exit_profit_retention_maturation_v1") or data.get("exit_profit_retention_maturation_v1") or {})
@@ -4055,6 +4057,8 @@ class UnifiedLearningDiagnosticsV1:
             "true_paper_metric_source": _text(data.get("true_paper_metric_source") or performance_truth.get("true_paper_metric_source"), "unavailable"),
             "true_paper_metric_confidence": _to_float(data.get("true_paper_metric_confidence") or performance_truth.get("true_paper_metric_confidence"), 0.0),
             "true_paper_metric_trust_level": _text(data.get("true_paper_metric_trust_level") or performance_truth.get("true_paper_metric_trust_level"), "insufficient_paper_evidence"),
+            "previous_pf_source": _text(data.get("previous_pf_source") or performance_truth.get("previous_pf_source"), "unknown"),
+            "new_pf_source": _text(data.get("new_pf_source") or performance_truth.get("new_pf_source"), "broker_truth_engine_v1"),
             "learning_pf": _to_float(data.get("learning_pf") or performance_truth.get("learning_pf"), 0.0),
             "shadow_pf": _to_float(data.get("shadow_pf") or performance_truth.get("shadow_pf") or scorecard_v2.get("shadow_expected_pf"), 0.0),
             "displayed_dashboard_pf_source": _text(data.get("displayed_dashboard_pf_source") or performance_truth.get("displayed_dashboard_pf_source"), "label_learning_pf_as_learning_metric"),
@@ -4062,6 +4066,20 @@ class UnifiedLearningDiagnosticsV1:
             "metric_scope_mismatch_detected": bool(data.get("metric_scope_mismatch_detected") or performance_truth.get("metric_scope_mismatch_detected", False)),
             "metric_reconciliation_status": _text(data.get("metric_reconciliation_status") or performance_truth.get("metric_reconciliation_status"), "insufficient_evidence"),
             "safest_metric_to_show_user": _text(data.get("safest_metric_to_show_user") or performance_truth.get("safest_metric_to_show_user"), "label_learning_pf_as_learning_metric"),
+            "stale_session_repair_v1": dict(session_repair),
+            "session_is_stale": bool(data.get("session_is_stale") or session_repair.get("session_is_stale", False)),
+            "session_cache_age": _to_float(data.get("session_cache_age") or session_repair.get("session_cache_age"), 0.0),
+            "session_refresh_status": _text(data.get("session_refresh_status") or session_repair.get("session_refresh_status"), "cache_fresh"),
+            "session_refresh_reason": _text(data.get("session_refresh_reason") or session_repair.get("session_refresh_reason"), "market_session_cache_valid"),
+            "session_last_rebuild": _text(data.get("session_last_rebuild") or session_repair.get("session_last_rebuild"), ""),
+            "session_recovery_status": _text(data.get("session_recovery_status") or session_repair.get("session_recovery_status"), "healthy"),
+            "stale_workflow_compaction_v1": dict(workflow_compaction),
+            "active_workflow_rows": _to_int(data.get("active_workflow_rows") or workflow_compaction.get("active_workflow_rows"), 0),
+            "archived_workflow_rows": _to_int(data.get("archived_workflow_rows") or workflow_compaction.get("archived_workflow_rows"), 0),
+            "stale_rows_compacted": _to_int(data.get("stale_rows_compacted") or workflow_compaction.get("stale_rows_compacted"), 0),
+            "stale_rows_hidden": _to_int(data.get("stale_rows_hidden") or workflow_compaction.get("stale_rows_hidden"), 0),
+            "archive_integrity": bool(data.get("archive_integrity") if data.get("archive_integrity") is not None else workflow_compaction.get("archive_integrity", True)),
+            "archive_retrieval_health": _text(data.get("archive_retrieval_health") or workflow_compaction.get("archive_retrieval_health"), "healthy"),
             "adaptive_horizon_participation_engine_v1": dict(horizon_participation),
             "paper_horizon_distribution": dict(data.get("paper_horizon_distribution") or horizon_participation.get("paper_horizon_distribution") or {}),
             "shadow_recommended_horizon_distribution": dict(data.get("shadow_recommended_horizon_distribution") or horizon_participation.get("shadow_recommended_horizon_distribution") or {}),

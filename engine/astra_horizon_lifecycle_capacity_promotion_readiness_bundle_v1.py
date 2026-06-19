@@ -42,6 +42,9 @@ MODULES_CREATED = [
     "Adaptive Horizon Participation Engine V1",
     "News Intelligence & Catalyst Context Engine V1",
     "Exit & Profit Retention Maturation V1",
+    "Astra Broker Truth Engine V1",
+    "Stale Session Repair V1",
+    "Stale Workflow Compaction V1",
     "Horizon Lifecycle Dashboard Summary",
 ]
 
@@ -1038,33 +1041,46 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
 
     def _performance_truth_layer(self, statuses: dict[str, Any], scorecard: dict[str, Any]) -> dict[str, Any]:
         attribution = status_value(statuses, "shadow_vs_paper_performance_attribution_v1")
+        alpaca = self._alpaca(statuses)
+        broker_truth = dict(alpaca.get("broker_truth_metrics") or {})
         advanced = status_value(statuses, "advanced_learning_intelligence")
         profit = status_value(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
         learning_pf = _pf(advanced, "profit_factor", default=_pf(profit, "current_policy_profit_factor", default=0.0))
-        true_paper_pf = _pf(attribution, "paper_profit_factor_verified", "paper_profit_factor", "lifetime_paper_pf", default=0.0)
-        true_paper_win_rate = rounded(to_float(first(attribution.get("paper_win_rate"), advanced.get("released_win_rate"), 0.0), 0.0), 4)
-        true_paper_avg_return = rounded(to_float(first(attribution.get("paper_avg_return"), advanced.get("average_return"), 0.0), 0.0), 4)
-        true_paper_capture = rounded(to_float(first(scorecard.get("paper_capture_ratio"), profit.get("current_policy_capture_ratio"), profit.get("average_capture_ratio"), 0.0), 0.0), 4)
-        true_paper_giveback = rounded(to_float(first(scorecard.get("paper_giveback"), profit.get("current_policy_giveback"), profit.get("average_giveback_pct"), 0.0), 0.0), 4)
-        true_paper_exit_quality = rounded(to_float(first(scorecard.get("paper_exit_quality"), profit.get("current_policy_exit_quality"), profit.get("exit_quality"), 0.0), 0.0), 4)
+        previous_source = text(
+            first(
+                attribution.get("legacy_paper_performance_source"),
+                attribution.get("previous_pf_source"),
+                "advanced_learning_intelligence_v1",
+            ),
+            "advanced_learning_intelligence_v1",
+        )
+        true_paper_pf = rounded(to_float(first(broker_truth.get("true_paper_pf"), alpaca.get("true_paper_pf"), 0.0), 0.0), 4)
+        true_paper_win_rate = rounded(to_float(first(broker_truth.get("true_paper_win_rate"), alpaca.get("true_paper_win_rate"), 0.0), 0.0), 4)
+        true_paper_avg_return = rounded(to_float(first(broker_truth.get("true_paper_avg_return"), alpaca.get("true_paper_avg_return"), 0.0), 0.0), 4)
+        true_paper_roi = rounded(to_float(first(broker_truth.get("true_paper_roi"), alpaca.get("true_paper_roi"), 0.0), 0.0), 4)
+        true_paper_capture = first(broker_truth.get("true_paper_profit_capture"), alpaca.get("true_paper_profit_capture"))
+        true_paper_giveback = first(broker_truth.get("true_paper_avg_giveback"), alpaca.get("true_paper_avg_giveback"))
+        true_paper_exit_quality = first(broker_truth.get("true_paper_exit_quality"), alpaca.get("true_paper_exit_quality"))
         shadow_pf = _pf(scorecard, "shadow_expected_pf", default=_pf(attribution, "shadow_profit_factor_verified", "shadow_profit_factor", default=0.0))
-        paper_available = bool(attribution.get("paper_profit_factor_available", true_paper_pf > 0))
-        canonical_source = text(attribution.get("canonical_performance_source"), "shadow_vs_paper_performance_attribution_v1")
+        paper_available = bool(to_int(first(broker_truth.get("true_paper_closed_trade_count"), alpaca.get("true_paper_closed_trade_count"), 0), 0) > 0 and broker_truth.get("true_paper_pf") is not None)
+        canonical_source = text(first(broker_truth.get("true_paper_metric_source"), alpaca.get("true_paper_metric_source"), "broker_truth_engine_v1"), "broker_truth_engine_v1")
         metric_scope_mismatch = bool(paper_available and learning_pf > 0 and abs(true_paper_pf - learning_pf) > 0.05)
-        trust = "high" if paper_available and bool(attribution.get("paper_pf_matches_unified", True)) else "medium" if true_paper_pf > 0 else "insufficient_paper_evidence"
-        safest = "true_paper_pf" if paper_available else "label_learning_pf_as_learning_metric"
+        trust = text(first(broker_truth.get("true_paper_metric_trust_level"), alpaca.get("true_paper_metric_trust_level"), "insufficient_broker_confirmed_evidence"), "insufficient_broker_confirmed_evidence")
+        safest = "true_paper_pf" if paper_available else "insufficient_broker_confirmed_evidence"
         return {
             "module": "Performance Truth Layer V1",
             "status": "ok" if true_paper_pf > 0 or learning_pf > 0 else "insufficient_evidence",
+            "previous_pf_source": previous_source,
+            "new_pf_source": canonical_source,
             "true_paper_pf": true_paper_pf,
             "true_paper_win_rate": true_paper_win_rate,
             "true_paper_avg_return": true_paper_avg_return,
-            "true_paper_roi": true_paper_avg_return,
-            "true_paper_capture_ratio": true_paper_capture,
-            "true_paper_giveback": true_paper_giveback,
-            "true_paper_exit_quality": true_paper_exit_quality,
+            "true_paper_roi": true_paper_roi,
+            "true_paper_capture_ratio": rounded(to_float(true_paper_capture, 0.0), 4) if true_paper_capture is not None else None,
+            "true_paper_giveback": rounded(to_float(true_paper_giveback, 0.0), 4) if true_paper_giveback is not None else None,
+            "true_paper_exit_quality": rounded(to_float(true_paper_exit_quality, 0.0), 4) if true_paper_exit_quality is not None else None,
             "true_paper_metric_source": canonical_source,
-            "true_paper_metric_confidence": rounded(to_float(first(attribution.get("canonical_confidence"), 100.0 if paper_available else 35.0), 35.0), 3),
+            "true_paper_metric_confidence": rounded(to_float(first(broker_truth.get("true_paper_metric_confidence"), alpaca.get("true_paper_metric_confidence"), 100.0 if paper_available else 0.0), 0.0), 3),
             "true_paper_metric_trust_level": trust,
             "shadow_pf": shadow_pf,
             "shadow_win_rate": rounded(to_float(first(attribution.get("shadow_win_rate"), 0.0), 0.0), 4),
@@ -1084,13 +1100,49 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "system_health": "healthy" if to_int(status_value(statuses, "unified_learning_diagnostics_v1").get("failed_sources_count"), 0) == 0 else "degraded",
             "runtime_integrity": "cache_first_no_hot_path_provider_calls",
             "data_quality": trust,
-            "evidence_maturity": to_int(attribution.get("canonical_closed_trade_count"), 0),
+            "evidence_maturity": to_int(first(broker_truth.get("true_paper_closed_trade_count"), alpaca.get("true_paper_closed_trade_count"), 0), 0),
             "failed_sources_count": 0,
             "displayed_dashboard_pf_source": safest,
             "displayed_dashboard_pf_trust_level": trust,
             "metric_scope_mismatch_detected": metric_scope_mismatch,
-            "metric_reconciliation_status": "scope_mismatch_labeled" if metric_scope_mismatch else "PASS",
+            "metric_reconciliation_status": text(first(broker_truth.get("metric_reconciliation_status"), alpaca.get("metric_reconciliation_status"), "scope_mismatch_labeled" if metric_scope_mismatch else "PASS")),
             "safest_metric_to_show_user": safest,
+            **_safe_flags(),
+        }
+
+    def _stale_session_repair(self, statuses: dict[str, Any]) -> dict[str, Any]:
+        alpaca = self._alpaca(statuses)
+        session = dict(alpaca.get("paper_path_gating_summary") or {})
+        return {
+            "module": "Stale Session Repair V1",
+            "status": "ok",
+            "session_is_stale": bool(first(alpaca.get("session_is_stale"), session.get("session_is_stale"), False)),
+            "session_cache_age": rounded(to_float(first(alpaca.get("session_cache_age"), session.get("session_cache_age_seconds"), 0.0), 0.0), 3),
+            "session_refresh_status": text(first(alpaca.get("session_refresh_status"), session.get("session_refresh_status"), "cache_fresh")),
+            "session_refresh_reason": text(first(alpaca.get("session_refresh_reason"), session.get("session_refresh_reason"), "market_session_cache_valid")),
+            "session_last_rebuild": text(first(alpaca.get("session_last_rebuild"), session.get("session_last_rebuild"), session.get("session_now_et"), "")),
+            "session_recovery_status": text(first(alpaca.get("session_recovery_status"), session.get("session_recovery_status"), "healthy")),
+            "session_ttl_enforced": True,
+            "market_calendar_rebuild_guard_active": True,
+            **_safe_flags(),
+        }
+
+    def _stale_workflow_compaction(self, statuses: dict[str, Any]) -> dict[str, Any]:
+        alpaca = self._alpaca(statuses)
+        workflow = dict(alpaca.get("workflow_compaction_v1") or {})
+        mobile = self._mobile(statuses)
+        return {
+            "module": "Stale Workflow Compaction V1",
+            "status": "ok",
+            "active_workflow_rows": to_int(first(workflow.get("active_workflow_rows"), mobile.get("display_active_positions_count"), 0), 0),
+            "archived_workflow_rows": to_int(first(workflow.get("archived_workflow_rows"), mobile.get("stale_internal_positions"), 0), 0),
+            "stale_rows_compacted": to_int(first(workflow.get("stale_rows_compacted"), mobile.get("stale_internal_positions"), 0), 0),
+            "stale_rows_hidden": to_int(first(workflow.get("stale_rows_hidden"), mobile.get("stale_rows_hidden_count"), 0), 0),
+            "archive_integrity": bool(first(workflow.get("archive_integrity"), mobile.get("full_history_preserved"), True)),
+            "archive_retrieval_health": text(first(workflow.get("archive_retrieval_health"), "healthy")),
+            "shadow_history_preserved": True,
+            "replay_history_preserved": True,
+            "learning_history_preserved": True,
             **_safe_flags(),
         }
 
@@ -1519,6 +1571,8 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
         practice_bucket = self._practice_bucket(assignment, capacity)
         exit_readiness = self._exit_readiness(readiness, capacity, exposure)
         performance_truth = self._performance_truth_layer(statuses, scorecard_v2)
+        session_repair = self._stale_session_repair(statuses)
+        workflow_compaction = self._stale_workflow_compaction(statuses)
         horizon_participation = self._adaptive_horizon_participation(capacity, exposure, assignment, scorecard_v2)
         catalyst_context = self._news_catalyst_context(statuses)
         exit_maturation = self._exit_profit_retention_maturation(statuses, lifecycle_v2, exit_promotion_v2, scorecard_v2)
@@ -1543,6 +1597,8 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "controlled_paper_horizon_practice_bucket_v1": practice_bucket,
             "horizon_exit_profit_capture_readiness_v1": exit_readiness,
             "performance_truth_layer_v1": performance_truth,
+            "stale_session_repair_v1": session_repair,
+            "stale_workflow_compaction_v1": workflow_compaction,
             "adaptive_horizon_participation_engine_v1": horizon_participation,
             "news_intelligence_catalyst_context_engine_v1": catalyst_context,
             "exit_profit_retention_maturation_v1": exit_maturation,
@@ -1694,6 +1750,8 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "true_paper_metric_source": performance_truth.get("true_paper_metric_source"),
             "true_paper_metric_confidence": performance_truth.get("true_paper_metric_confidence"),
             "true_paper_metric_trust_level": performance_truth.get("true_paper_metric_trust_level"),
+            "previous_pf_source": performance_truth.get("previous_pf_source"),
+            "new_pf_source": performance_truth.get("new_pf_source"),
             "learning_pf": performance_truth.get("learning_pf"),
             "shadow_pf": performance_truth.get("shadow_pf"),
             "displayed_dashboard_pf_source": performance_truth.get("displayed_dashboard_pf_source"),
@@ -1701,6 +1759,20 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "metric_scope_mismatch_detected": performance_truth.get("metric_scope_mismatch_detected"),
             "metric_reconciliation_status": performance_truth.get("metric_reconciliation_status"),
             "safest_metric_to_show_user": performance_truth.get("safest_metric_to_show_user"),
+            "stale_session_repair_v1": session_repair,
+            "session_is_stale": session_repair.get("session_is_stale"),
+            "session_cache_age": session_repair.get("session_cache_age"),
+            "session_refresh_status": session_repair.get("session_refresh_status"),
+            "session_refresh_reason": session_repair.get("session_refresh_reason"),
+            "session_last_rebuild": session_repair.get("session_last_rebuild"),
+            "session_recovery_status": session_repair.get("session_recovery_status"),
+            "stale_workflow_compaction_v1": workflow_compaction,
+            "active_workflow_rows": workflow_compaction.get("active_workflow_rows"),
+            "archived_workflow_rows": workflow_compaction.get("archived_workflow_rows"),
+            "stale_rows_compacted": workflow_compaction.get("stale_rows_compacted"),
+            "stale_rows_hidden": workflow_compaction.get("stale_rows_hidden"),
+            "archive_integrity": workflow_compaction.get("archive_integrity"),
+            "archive_retrieval_health": workflow_compaction.get("archive_retrieval_health"),
             "adaptive_horizon_participation_engine_v1": horizon_participation,
             "paper_horizon_distribution": horizon_participation.get("paper_horizon_distribution"),
             "shadow_recommended_horizon_distribution": horizon_participation.get("shadow_recommended_horizon_distribution"),
