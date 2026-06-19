@@ -42299,6 +42299,351 @@ def ollama_status():
     return status
 
 
+def _astra_local_ai_status_v1(force=False):
+    try:
+        raw = _ollama_models_status_cached(force=bool(force))
+    except Exception as exc:
+        raw = {"available": False, "models": [], "error": str(exc)[:160]}
+    models = raw.get("models") if isinstance(raw.get("models"), list) else []
+    model_names = []
+    for model in models:
+        if isinstance(model, dict):
+            name = str(model.get("name") or model.get("model") or "").strip()
+        else:
+            name = str(model or "").strip()
+        if name:
+            model_names.append(name)
+    model_lc = {m.lower(): m for m in model_names}
+    primary = "qwen3:8b"
+    fallback = "qwen3:14b"
+    primary_available = primary.lower() in model_lc
+    fallback_available = fallback.lower() in model_lc
+    selected = (
+        model_lc.get(primary.lower())
+        or model_lc.get(fallback.lower())
+        or str(raw.get("selected_model") or "").strip()
+    )
+    reachable = bool(raw.get("available") and selected)
+    response_mode = "local_qwen" if reachable else "structured_fallback"
+    return {
+        "ok": True,
+        "suite": "Ask Astra Local AI / Ollama / Qwen Foundation V1",
+        "local_ai_status": "online" if reachable else "offline",
+        "ollama_reachable": bool(raw.get("available", False)),
+        "primary_model": primary,
+        "fallback_model": fallback,
+        "selected_model": selected,
+        "primary_model_available": bool(primary_available),
+        "fallback_model_available": bool(fallback_available),
+        "available_models": model_names[:12],
+        "last_health_check": raw.get("last_checked_utc") or raw.get("generated_at") or _now_utc_iso(),
+        "response_mode": response_mode,
+        "structured_fallback_available": True,
+        "dashboard_render_llm_calls": 0,
+        "api_calls_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "behavior_safe_to_apply": False,
+        "paper_only_preserved": True,
+        "alpaca_paper_only_preserved": True,
+        "live_trading_changed": False,
+        "broker_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "exit_behavior_changed": False,
+    }
+
+
+def _copilot_action_from_row(row, idx=0, action=None):
+    r = row if isinstance(row, dict) else {}
+    symbol = str(r.get("symbol") or r.get("ticker") or r.get("asset") or "N/A").upper()
+    confidence = _to_float(
+        r.get("confidence")
+        or r.get("buy_confidence")
+        or r.get("predicted_win_probability")
+        or r.get("entry_filter_v2_score"),
+        0.0,
+    )
+    confidence = max(0.0, min(100.0, confidence))
+    horizon = str(
+        r.get("best_horizon_style")
+        or r.get("paper_entry_horizon_style")
+        or r.get("best_profit_horizon")
+        or r.get("trade_horizon_style")
+        or r.get("horizon")
+        or "intraday"
+    )
+    why = str(
+        r.get("why_this_is_a_buy")
+        or r.get("why_made_list")
+        or r.get("buy_reason")
+        or r.get("rationale")
+        or r.get("ranked_universe_action_explanation")
+        or "Astra sees supportive cached ranking, confidence, and setup context."
+    )
+    selected_action = action
+    if not selected_action:
+        if confidence >= 82:
+            selected_action = "BUY_NOW"
+        elif confidence >= 68:
+            selected_action = "WATCH_CLOSELY"
+        else:
+            selected_action = "HOLD"
+    return {
+        "rank": int(idx) + 1,
+        "symbol": symbol,
+        "asset_type": str(r.get("asset_type") or r.get("kind") or "stock"),
+        "action": selected_action,
+        "confidence": round(confidence, 2),
+        "horizon": horizon,
+        "expected_hold_window": str(r.get("expected_hold_window") or r.get("best_hold_window") or horizon),
+        "why_astra_chose_it": _safe_text(why, 240),
+        "simple_summary": _safe_text(f"{symbol}: {selected_action.replace('_', ' ').title()} with {confidence:.0f}% confidence on a {horizon} horizon.", 220),
+        "risk_level": str(r.get("portfolio_risk_label") or r.get("risk_label") or "risk_warming_up"),
+        "contributing_systems": [
+            "cached_top_buys",
+            "candidate_ranking_attribution",
+            "horizon_lifecycle_readiness",
+            "unified_diagnostics",
+        ],
+        "source_trace": {
+            "source": "cached_top_buys_snapshot",
+            "ranking_unchanged": True,
+            "entry_logic_unchanged": True,
+            "paper_execution_unchanged": True,
+        },
+        "paper_position_status": str(r.get("paper_position_status") or "not_checked_on_dashboard_hot_path"),
+        "shadow_support": str(r.get("shadow_support") or r.get("shadow_readiness") or "advisory_only"),
+        "catalyst_context": str(r.get("catalyst") or r.get("theme") or r.get("sector") or "cached_context_warming_up"),
+        "exit_context": str(r.get("exit_context") or "natural_exit_preserved"),
+        "market_regime_context": str(r.get("market_regime") or r.get("regime") or "cached_market_context"),
+        "generated_at": _now_utc_iso(),
+    }
+
+
+def _astra_copilot_suite_v1(limit=12, force=False):
+    del force
+    try:
+        top_payload = dict(_latest_top_buys_runtime_snapshot() or {})
+    except Exception:
+        top_payload = {}
+    if not top_payload:
+        try:
+            cached = _CACHE.get("top_buys", {}) if isinstance(_CACHE.get("top_buys"), dict) else {}
+            top_payload = dict(((cached.get("mode::balanced") or {}).get("data")) or {})
+        except Exception:
+            top_payload = {}
+    try:
+        rows = _candidate_rows_from_payload(top_payload) if isinstance(top_payload, dict) else []
+    except Exception:
+        rows = []
+    if not rows:
+        rows = ((top_payload.get("stocks") or {}).get("final") or []) if isinstance(top_payload, dict) else []
+    actions = [_copilot_action_from_row(row, idx) for idx, row in enumerate((rows or [])[: max(1, int(_to_float(limit, 12)))])]
+    actions_by_type = {}
+    for item in actions:
+        actions_by_type.setdefault(str(item.get("action") or "UNKNOWN"), []).append(item)
+    return {
+        "ok": True,
+        "suite": "Astra Copilot Suite V1",
+        "status": "ok" if actions else "warming_up",
+        "enabled": True,
+        "recommendations": actions,
+        "top_actions": actions[:5],
+        "actions_by_type": actions_by_type,
+        "action_labels": {
+            "BUY_NOW": "Buy Now",
+            "HOLD": "Hold",
+            "WATCH_CLOSELY": "Watch Closely",
+            "APPROACHING_SELL": "Approaching Sell",
+            "SELL_RECOMMENDED": "Sell Recommended",
+        },
+        "source_summary": {
+            "top_buys_rows_seen": int(len(rows or [])),
+            "ranking_logic_changed": False,
+            "entry_logic_changed": False,
+            "exit_logic_changed": False,
+            "broker_behavior_changed": False,
+        },
+        "copilot_guidance": "Advisory-only. Copilot summarizes existing Astra intelligence and does not create, block, buy, or sell trades.",
+        "api_calls_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "behavior_safe_to_apply": False,
+        "paper_only_preserved": True,
+        "alpaca_paper_only_preserved": True,
+        "live_trading_changed": False,
+        "broker_behavior_changed": False,
+        "ranking_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "exit_behavior_changed": False,
+        "position_sizing_changed": False,
+        "portfolio_allocation_changed": False,
+        "thresholds_changed": False,
+        "generated_at": _now_utc_iso(),
+    }
+
+
+def _dashboard_data_wiring_summary_v1(unified_payload=None):
+    p = unified_payload if isinstance(unified_payload, dict) else {}
+    has_payload = bool(p)
+    cards = [
+        ("Market Environment", "system_status + market_breadth_index_intelligence_v1", "/api/system_status + /api/unified_learning_diagnostics_v1"),
+        ("Astra Brief", "unified diagnostics executive summary", "/api/unified_learning_diagnostics_v1"),
+        ("Copilot Guidance", "astra_copilot_suite_v1 from cached top_buys", "/api/top_buys + cached dashboard state"),
+        ("Ask Astra", "local_ai_status_v1", "/api/ask_astra_v1 user-triggered only"),
+        ("Portfolio Overview", "positions cache", "/api/positions"),
+        ("Astra Performance", "performance_summary", "/api/unified_learning_diagnostics_v1"),
+        ("Learning Center", "unified diagnostics", "/api/unified_learning_diagnostics_v1"),
+    ]
+    card_rows = []
+    missing = 0
+    for name, owner, endpoint in cards:
+        missing_fields = []
+        if has_payload and name == "Astra Performance" and not p.get("performance_summary"):
+            missing_fields.append("performance_summary")
+        if has_payload and name == "Learning Center" and not p:
+            missing_fields.append("unified_payload")
+        if missing_fields:
+            missing += 1
+        card_rows.append({
+            "card_name": name,
+            "data_owner": owner,
+            "endpoint_source": endpoint,
+            "freshness": "cached_fast_path",
+            "fallback_used": bool(missing_fields),
+            "trust_level": "high" if not missing_fields else "warming_up",
+            "missing_fields": missing_fields,
+        })
+    wired = len(card_rows) - missing
+    trust = round((wired / max(1, len(card_rows))) * 100.0, 2)
+    return {
+        "ok": True,
+        "suite": "Dashboard Data Wiring Engine V1",
+        "dashboard_cards": card_rows,
+        "dashboard_cards_wired": int(wired),
+        "dashboard_cards_missing_data": int(missing),
+        "dashboard_data_wiring_status": "ok" if missing == 0 else "partial",
+        "dashboard_data_trust_score": trust,
+        "api_calls_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "dashboard_provider_calls_used": 0,
+        "behavior_safe_to_apply": False,
+        "generated_at": _now_utc_iso(),
+    }
+
+
+@router.get("/api/ask_astra_status_v1")
+def ask_astra_status_v1(force: bool = False):
+    return _astra_local_ai_status_v1(force=bool(force))
+
+
+@router.get("/api/astra_copilot_suite_v1")
+def astra_copilot_suite_endpoint_v1(limit: int = 12, force: bool = False):
+    return _astra_copilot_suite_v1(limit=limit, force=force)
+
+
+@router.get("/api/dashboard_data_wiring_v1")
+def dashboard_data_wiring_v1():
+    return _dashboard_data_wiring_summary_v1({})
+
+
+@router.post("/api/ask_astra_v1")
+def ask_astra_v1(payload: dict = Body(...)):
+    data = payload if isinstance(payload, dict) else {}
+    question = str(data.get("question") or "").strip()
+    if not question:
+        return {"ok": False, "error": "question_required"}
+    selected_symbol = str(data.get("selected_symbol") or "").strip().upper()
+    response_mode = str(data.get("response_mode") or "auto").strip().lower()
+    local_status = _astra_local_ai_status_v1(force=False)
+    copilot = _astra_copilot_suite_v1(limit=5, force=False)
+    context = {
+        "question": question,
+        "selected_symbol": selected_symbol,
+        "context_scope": str(data.get("context_scope") or "dashboard"),
+        "copilot_top_actions": copilot.get("top_actions") or [],
+        "copilot_status": copilot.get("status"),
+        "safety": {
+            "advisory_only": True,
+            "paper_only_preserved": True,
+            "behavior_safe_to_apply": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+        },
+    }
+    wants_deep_reasoning = response_mode in {"long", "deep", "reasoning"} or len(question) > 180
+    model = ""
+    if local_status.get("ollama_reachable"):
+        if wants_deep_reasoning and local_status.get("fallback_model_available"):
+            model = str(local_status.get("fallback_model") or "")
+        elif local_status.get("primary_model_available"):
+            model = str(local_status.get("primary_model") or "")
+        else:
+            model = str(local_status.get("selected_model") or "")
+    answer = ""
+    mode_used = "structured_fallback"
+    if model:
+        prompt = (
+            "You are Ask Astra, a paper-safe investment intelligence copilot. "
+            "Use only the supplied Astra JSON context. Do not suggest live trading, broker actions, forced exits, "
+            "sizing changes, allocation changes, or threshold changes. Be concise, practical, and explain why.\n\n"
+            f"Question: {question}\n\n"
+            f"Astra context JSON:\n{json.dumps(context, ensure_ascii=True)}"
+        )
+        try:
+            run_out = _ollama_run_prompt(prompt, model=model, timeout_seconds=55)
+            if isinstance(run_out, dict):
+                answer = str(run_out.get("text") or "").strip()
+            else:
+                answer = str(run_out or "").strip()
+            if answer:
+                mode_used = "local_qwen"
+        except Exception:
+            answer = ""
+    if not answer:
+        actions = context.get("copilot_top_actions") or []
+        first = actions[0] if actions else {}
+        if first:
+            answer = (
+                f"Local AI is unavailable, so I am answering from Astra's cached Copilot context. "
+                f"Top action: {first.get('action')} for {first.get('symbol')} at {first.get('confidence')}% confidence. "
+                f"Horizon: {first.get('horizon')}. Why: {first.get('why_astra_chose_it')}. "
+                "This is advisory-only and does not change ranking, entries, exits, sizing, allocation, or broker behavior."
+            )
+        else:
+            answer = (
+                "Local AI is unavailable and Copilot context is still warming up. "
+                "Astra remains paper-safe and advisory-only; no trading behavior was changed."
+            )
+    return {
+        "ok": True,
+        "answer": _safe_text(answer, 4000),
+        "model_used": model or "structured_fallback",
+        "local_ai_status": {**local_status, "response_mode": mode_used},
+        "source_context": context,
+        "confidence": 72 if context.get("copilot_top_actions") else 45,
+        "generated_at": _now_utc_iso(),
+        "api_calls_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0 if mode_used == "structured_fallback" else 1,
+        "dashboard_render_llm_calls": 0,
+        "behavior_safe_to_apply": False,
+        "paper_only_preserved": True,
+        "alpaca_paper_only_preserved": True,
+        "live_trading_changed": False,
+        "broker_behavior_changed": False,
+        "ranking_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "exit_behavior_changed": False,
+        "position_sizing_changed": False,
+        "portfolio_allocation_changed": False,
+        "thresholds_changed": False,
+    }
+
+
 @router.post("/api/ollama/explain")
 def ollama_explain(payload: dict = Body(...)):
     data = payload if isinstance(payload, dict) else {}
@@ -53622,10 +53967,22 @@ def unified_learning_diagnostics_v1(force: bool = False):
             }
         _safe_status("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1", lambda: ASTRA_HORIZON_LIFECYCLE_CAPACITY_PROMOTION_READINESS_BUNDLE.status(statuses=statuses, force=True))
         _safe_status("controlled_paper_learned_exit_validation_v1", lambda: CONTROLLED_PAPER_LEARNED_EXIT_VALIDATION.status(statuses=statuses, force=False))
+        _safe_status("astra_copilot_suite_v1", lambda: _astra_copilot_suite_v1(limit=12, force=False))
+        _safe_status("ask_astra_local_ai_status_v1", lambda: _astra_local_ai_status_v1(force=False))
 
         sources["statuses"] = statuses
         out = UNIFIED_LEARNING_DIAGNOSTICS.build(sources, force=bool(force))
         if isinstance(out, dict):
+            wiring_summary = _dashboard_data_wiring_summary_v1(out)
+            out["dashboard_data_wiring_v1"] = wiring_summary
+            out["astra_copilot_suite_v1"] = dict(statuses.get("astra_copilot_suite_v1") or {})
+            out["ask_astra_local_ai_status_v1"] = dict(statuses.get("ask_astra_local_ai_status_v1") or {})
+            out["dashboard_cards_wired"] = int(wiring_summary.get("dashboard_cards_wired", 0))
+            out["dashboard_cards_missing_data"] = int(wiring_summary.get("dashboard_cards_missing_data", 0))
+            out["dashboard_data_wiring_status"] = str(wiring_summary.get("dashboard_data_wiring_status") or "partial")
+            out["dashboard_data_trust_score"] = _to_float(wiring_summary.get("dashboard_data_trust_score"), 0.0)
+            out["dashboard_provider_calls_used"] = 0
+            out["initial_learning_tab_endpoint_count"] = int(_to_float(out.get("initial_learning_tab_endpoint_count"), 1.0) or 1)
             out["api_calls_used"] = 0
             out["live_trading_changed"] = False
             out["broker_behavior_changed"] = False

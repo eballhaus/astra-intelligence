@@ -480,7 +480,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
   );
 
   const topSection = remoteMode
-    ? (remoteSection === "positions" ? "positions" : "buys")
+    ? (remoteSection === "positions" ? "positions" : remoteSection === "copilot" ? "copilot" : "buys")
     : "dashboard";
   const performanceSummary = unifiedDiagnostics?.performance_summary || {};
   const executiveSnapshot = unifiedDiagnostics?.executive_snapshot || {};
@@ -626,6 +626,17 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     risk: labelize(row.portfolio_risk_label || row.risk_label || "Risk Warming Up"),
     consistency: safeNumber(row.rolling_conviction_10r ?? row.conviction_display_score ?? row.buy_quality_score, 0),
   }));
+  const copilotStatus = unifiedDiagnostics?.astra_copilot_suite_v1 || {};
+  const askLocalAiStatus = unifiedDiagnostics?.ask_astra_local_ai_status_v1 || {};
+  const copilotRows = opportunityRows.map((row) => {
+    const action = row.confidence >= 82 ? "BUY_NOW" : row.confidence >= 68 ? "WATCH_CLOSELY" : "HOLD";
+    return {
+      ...row,
+      action,
+      actionLabel: action === "BUY_NOW" ? "Buy Now" : action === "WATCH_CLOSELY" ? "Watch Closely" : "Hold",
+      signal: action === "BUY_NOW" ? "Buy Now" : action === "WATCH_CLOSELY" ? "Watch" : "Hold",
+    };
+  });
   const leadingThemes = Array.isArray(systemStatus?.current_themes)
     ? systemStatus.current_themes.slice(0, 3).map((theme) => labelize(theme))
     : Array.from(new Set([
@@ -823,6 +834,19 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
             <div onClick={() => (typeof onNavigate === "function" ? onNavigate("ask", { question: "What are the best short-term opportunities today?" }) : null)} style={{ borderRadius: 22, padding: 16, background: "radial-gradient(260px 150px at 80% 0%, rgba(45, 119, 255, 0.36), transparent 70%), linear-gradient(135deg, #071a33, #08244b)", boxShadow: "0 18px 45px rgba(25, 47, 78, 0.18)", color: "#ffffff", minHeight: 246, display: "grid", gap: 12, cursor: "pointer" }}>
               <h2 style={{ margin: 0, fontSize: "1rem", color: "#ffffff" }}>Ask Astra</h2>
               <p style={{ margin: 0, color: "#c8d8ef", fontSize: 13 }}>Your AI market analyst. Ask anything about markets, opportunities, or your portfolio.</p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+                {[
+                  ["Local AI", askLocalAiStatus?.local_ai_status || "warming up"],
+                  ["Primary", askLocalAiStatus?.primary_model || "qwen3:8b"],
+                  ["Fallback", askLocalAiStatus?.fallback_model || "qwen3:14b"],
+                  ["Mode", askLocalAiStatus?.response_mode || "structured fallback"],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ borderRadius: 10, border: "1px solid rgba(180, 209, 255, 0.18)", background: "rgba(255,255,255,0.07)", padding: "7px 8px" }}>
+                    <div style={{ color: "#8fb1df", fontSize: 9, fontWeight: 900, textTransform: "uppercase" }}>{label}</div>
+                    <div style={{ color: "#ffffff", fontSize: 11, fontWeight: 900 }}>{value}</div>
+                  </div>
+                ))}
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, border: "1px solid rgba(180, 209, 255, 0.22)", borderRadius: 14, background: "rgba(255,255,255,0.08)", padding: 10, color: "#f5f9ff", marginTop: 2, alignItems: "center" }}>
                 <span style={{ color: "#d9e7fa", fontSize: 13 }}>What are the best short-term opportunities today?</span>
                 <button type="button" onClick={(event) => { event.stopPropagation(); if (typeof onNavigate === "function") onNavigate("ask", { question: "What are the best short-term opportunities today?" }); }} style={{ border: 0, borderRadius: 12, background: "#2b76ff", color: "#fff", width: 34, height: 34, fontWeight: 900, cursor: "pointer" }}>→</button>
@@ -836,22 +860,25 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
 
           <section style={{ ...panelStyle, overflow: "hidden", display: "grid", alignContent: "start" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 8 }}>
-              <h2 style={panelTitleStyle}>Astra Opportunities</h2>
-              <button type="button" onClick={() => (typeof onNavigate === "function" ? onNavigate("opportunities") : null)} style={{ border: 0, background: "transparent", color: "#004fe0", fontWeight: 900, cursor: "pointer" }}>
-                View All Opportunities
+              <div>
+                <h2 style={panelTitleStyle}>Astra Copilot</h2>
+                <div style={{ color: "#667994", fontSize: 12, marginTop: 2 }}>Top 5 actions Astra recommends right now.</div>
+              </div>
+              <button type="button" onClick={() => (typeof onNavigate === "function" ? onNavigate("copilot") : null)} style={{ border: 0, background: "transparent", color: "#004fe0", fontWeight: 900, cursor: "pointer" }}>
+                View Copilot Guidance
               </button>
             </div>
             <div style={{ display: "grid", gap: 0 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "36px minmax(90px, .85fr) minmax(94px, .8fr) minmax(120px, .9fr) minmax(0, 3fr) 54px", gap: 10, padding: "8px 0", color: "#667994", fontSize: 10, fontWeight: 950, textTransform: "uppercase", borderBottom: "1px solid #e5edf6" }}>
-                <span>#</span><span>Symbol</span><span>Confidence</span><span>Best Horizon</span><span>Why Astra Likes It</span><span>Trend</span>
+              <div style={{ display: "grid", gridTemplateColumns: "92px minmax(90px, .75fr) minmax(94px, .75fr) minmax(120px, .9fr) minmax(0, 3fr)", gap: 10, padding: "8px 0", color: "#667994", fontSize: 10, fontWeight: 950, textTransform: "uppercase", borderBottom: "1px solid #e5edf6" }}>
+                <span>Signal</span><span>Asset</span><span>Confidence</span><span>Horizon</span><span>Why Astra Chose It</span>
               </div>
-              {opportunityRows.length === 0 ? (
+              {copilotRows.length === 0 ? (
                 <div style={{ border: "1px dashed #cfdced", borderRadius: 14, color: "#667994", background: "#f7fbff", padding: 16, marginTop: 12, fontSize: 13, lineHeight: 1.45 }}>
-                  Opportunity cache is warming up. Ranked opportunities will appear here when cached data is available.
+                  Copilot guidance is warming up from cached rankings. No provider, broker, or model calls are made by this card.
                 </div>
-              ) : opportunityRows.map((row) => (
-                <div key={`${row.rank}-${row.symbol}`} style={{ display: "grid", gridTemplateColumns: "36px minmax(90px, .85fr) minmax(94px, .8fr) minmax(120px, .9fr) minmax(0, 3fr) 54px", gap: 10, padding: "10px 0", alignItems: "center", borderBottom: "1px solid #edf2f8" }}>
-                  <strong style={{ color: "#13243a", fontSize: 12 }}>{row.rank}</strong>
+              ) : copilotRows.map((row) => (
+                <div key={`${row.rank}-${row.symbol}`} onClick={() => (typeof onNavigate === "function" ? onNavigate("copilot") : null)} style={{ display: "grid", gridTemplateColumns: "92px minmax(90px, .75fr) minmax(94px, .75fr) minmax(120px, .9fr) minmax(0, 3fr)", gap: 10, padding: "10px 0", alignItems: "center", borderBottom: "1px solid #edf2f8", cursor: "pointer" }}>
+                  <strong style={{ color: row.action === "BUY_NOW" ? "#079246" : "#1855c8", fontSize: 12 }}>{row.signal}</strong>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ color: "#13243a", fontWeight: 950, fontSize: 13 }}>{row.symbol}</div>
                     <div style={{ color: "#667994", fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.company || row.risk}</div>
@@ -862,13 +889,6 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                     <span style={{ color: "#7a8da7", fontSize: 9.5 }}>Consistency {row.consistency ? row.consistency.toFixed(0) : "Warming Up"}</span>
                   </div>
                   <span style={{ color: "#273d5a", fontSize: 11.5, lineHeight: 1.35, minWidth: 0 }}>{row.why}</span>
-                  {Number.isFinite(Number(row.trendBias)) ? (
-                    <svg viewBox="0 0 38 20" width="38" height="20" aria-hidden="true">
-                      <path d={`M1 17 C 8 ${row.trendBias >= 0 ? 13 : 16}, 14 ${row.trendBias >= 0 ? 9 : 15}, 20 ${row.trendBias >= 0 ? 10 : 13} S 30 ${row.trendBias >= 0 ? 6 : 14}, 37 ${row.trendBias >= 0 ? 4 : 12}`} fill="none" stroke={row.trendBias >= 0 ? "#149455" : "#d14b57"} strokeWidth="2.2" strokeLinecap="round" />
-                    </svg>
-                  ) : (
-                    <span style={{ color: "#8ea0b5", fontSize: 10 }}>N/A</span>
-                  )}
                 </div>
               ))}
             </div>
@@ -1068,13 +1088,18 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
         </section>
       )}
 
-      {topSection === "buys" && (
+      {(topSection === "buys" || topSection === "copilot") && (
         <>
           <section style={{ display: "grid", gridTemplateColumns: "1.1fr 2fr", gap: 14 }}>
             <div style={panelStyle}>
-              <h2 style={panelTitleStyle}>Opportunity Summary</h2>
+              <h2 style={panelTitleStyle}>{topSection === "copilot" ? "Today's Actions" : "Opportunity Summary"}</h2>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10, marginTop: 12 }}>
-                {opportunitySummary.map(([label, value]) => (
+                {(topSection === "copilot" ? [
+                  ["Buy Now", `${copilotRows.filter((r) => r.action === "BUY_NOW").length}`],
+                  ["Hold", `${copilotRows.filter((r) => r.action === "HOLD").length}`],
+                  ["Watch Closely", `${copilotRows.filter((r) => r.action === "WATCH_CLOSELY").length}`],
+                  ["System Status", copilotStatus?.status || "cached"],
+                ] : opportunitySummary).map(([label, value]) => (
                   <div key={label} style={{ borderRadius: 14, border: "1px solid #dce6f3", background: "#f7fbff", padding: "11px 12px" }}>
                     <div style={{ color: "#667994", fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>{label}</div>
                     <div style={{ color: "#13243a", fontSize: 17, fontWeight: 950, marginTop: 4 }}>{value}</div>
@@ -1084,19 +1109,47 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
             </div>
 
             <div style={panelStyle}>
-              <h2 style={panelTitleStyle}>Astra Opportunity Center</h2>
+              <h2 style={panelTitleStyle}>{topSection === "copilot" ? "Copilot Guidance Center" : "Astra Opportunity Center"}</h2>
               <p style={{ margin: "10px 0 0", color: "#5f748f", fontSize: "0.9rem", lineHeight: 1.55 }}>
-                A consumer-ready view of Astra's ranked opportunities. Confidence, horizon, risk fit, and plain-English rationale are surfaced first while deeper technical evidence remains available inside expandable details.
+                {topSection === "copilot"
+                  ? "Copilot translates Astra's existing rankings, horizon context, and diagnostics into advisory actions. It does not create trades, block trades, sell positions, or change ranking logic."
+                  : "A consumer-ready view of Astra's ranked opportunities. Confidence, horizon, risk fit, and plain-English rationale are surfaced first while deeper technical evidence remains available inside expandable details."}
               </p>
             </div>
           </section>
 
+          {topSection === "copilot" && (
+            <section style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10 }}>
+              {[
+                ["BUY_NOW", "Buy Now"],
+                ["HOLD", "Hold"],
+                ["WATCH_CLOSELY", "Watch Closely"],
+                ["APPROACHING_SELL", "Approaching Sell"],
+                ["SELL_RECOMMENDED", "Sell Recommended"],
+              ].map(([action, label]) => (
+                <div key={action} style={{ ...panelStyle, padding: 14, minHeight: 120 }}>
+                  <h2 style={{ ...panelTitleStyle, fontSize: 13 }}>{label}</h2>
+                  <div style={{ color: "#13243a", fontSize: 24, fontWeight: 950, marginTop: 8 }}>
+                    {copilotRows.filter((r) => r.action === action).length}
+                  </div>
+                  <div style={{ color: "#667994", fontSize: 11, marginTop: 6 }}>
+                    {action === "APPROACHING_SELL" || action === "SELL_RECOMMENDED"
+                      ? "Exit center remains advisory. No paper sell behavior is enabled."
+                      : "Derived from existing cached rankings."}
+                  </div>
+                </div>
+              ))}
+            </section>
+          )}
+
           <section style={panelStyle}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
               <div>
-                <h2 style={panelTitleStyle}>Astra Opportunities</h2>
+                <h2 style={panelTitleStyle}>{topSection === "copilot" ? "Why Astra Chose This" : "Astra Opportunities"}</h2>
                 <div style={{ color: "#667994", fontSize: "0.84rem", marginTop: 3 }}>
-                  Ranking logic is unchanged. Technical details stay collapsible so the default experience feels like an opportunity center rather than a diagnostic dump.
+                  {topSection === "copilot"
+                    ? "These cards reuse the unchanged ranked opportunity payload. Copilot language is advisory-only and source-aware."
+                    : "Ranking logic is unchanged. Technical details stay collapsible so the default experience feels like an opportunity center rather than a diagnostic dump."}
                 </div>
               </div>
             </div>
@@ -1110,6 +1163,21 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               positionActionState={effectivePositionActionState}
             />
           </section>
+
+          {topSection === "copilot" && (
+            <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+              {[
+                ["Exit Center", "Approaching sell and sell-recommended categories are visible for review only. Natural exits remain preserved."],
+                ["What Changed Today", "Copilot refreshes from cached dashboard data and unified diagnostics. No model/provider calls happen during render."],
+                ["Copilot System Sources", "Cached top_buys, unified diagnostics, horizon lifecycle readiness, candidate ranking attribution, and portfolio context."],
+              ].map(([title, copy]) => (
+                <div key={title} style={panelStyle}>
+                  <h2 style={panelTitleStyle}>{title}</h2>
+                  <p style={{ color: "#5f748f", fontSize: 13, lineHeight: 1.55 }}>{copy}</p>
+                </div>
+              ))}
+            </section>
+          )}
         </>
       )}
 

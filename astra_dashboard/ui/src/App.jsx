@@ -1,7 +1,7 @@
 import React, { Component, useEffect, useMemo, useState } from "react";
 import Dashboard from "./dashboard/pages/Dashboard";
 import LearningTab from "./dashboard/pages/LearningTab";
-import { API_BASE_STORAGE_KEY, getInitialApiBase } from "./apiBase";
+import { API_BASE_STORAGE_KEY, fetchJsonWithFallback, getInitialApiBase } from "./apiBase";
 import "./App.css";
 
 console.log("ASTRA APP FILE ACTIVE:", import.meta.url);
@@ -48,12 +48,14 @@ class AppErrorBoundary extends Component {
 
 const primaryTabs = [
   { id: "dashboard", label: "Dashboard", icon: "dashboard" },
-  { id: "opportunities", label: "Opportunities", icon: "opportunities" },
+  { id: "copilot", label: "Copilot", icon: "copilot" },
   { id: "portfolio", label: "Portfolio", icon: "portfolio" },
-  { id: "ask", label: "Ask Astra", icon: "ask" },
   { id: "watchlists", label: "Watchlists", icon: "watchlists" },
+  { id: "ask", label: "Ask Astra", icon: "ask" },
   { id: "learning", label: "Learning Center", icon: "learning" },
-  { id: "more", label: "More", icon: "more" },
+  { id: "alerts", label: "Alerts", icon: "alerts" },
+  { id: "reports", label: "Reports", icon: "reports" },
+  { id: "settings", label: "Settings", icon: "settings" },
 ];
 
 const moreLinks = [
@@ -108,7 +110,7 @@ function NavIcon({ kind }) {
   if (kind === "dashboard") {
     return <svg {...common}><path d="M4 13h7V4H4zM13 20h7v-9h-7zM13 4h7v7h-7zM4 20h7v-5H4z" /></svg>;
   }
-  if (kind === "opportunities") {
+  if (kind === "opportunities" || kind === "copilot") {
     return <svg {...common}><path d="m4 15 5-5 4 4 7-8" /><path d="M20 10V4h-6" /></svg>;
   }
   if (kind === "portfolio") {
@@ -123,6 +125,15 @@ function NavIcon({ kind }) {
   if (kind === "learning") {
     return <svg {...common}><path d="M5 4h10a4 4 0 0 1 4 4v12H9a4 4 0 0 0-4 4Z" /><path d="M9 4v16" /></svg>;
   }
+  if (kind === "alerts") {
+    return <svg {...common}><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" /></svg>;
+  }
+  if (kind === "reports") {
+    return <svg {...common}><path d="M5 3h10l4 4v14H5z" /><path d="M15 3v5h5" /><path d="M8 13h8M8 17h6" /></svg>;
+  }
+  if (kind === "settings") {
+    return <svg {...common}><path d="M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z" /><path d="M4 12h2M18 12h2M12 4v2M12 18v2M6.3 6.3l1.4 1.4M16.3 16.3l1.4 1.4M17.7 6.3l-1.4 1.4M7.7 16.3l-1.4 1.4" /></svg>;
+  }
   return <svg {...common}><path d="M5 12h14" /><path d="M12 5v14" /></svg>;
 }
 
@@ -130,6 +141,8 @@ function AskAstraPage({ initialQuestion = "" }) {
   const [question, setQuestion] = useState("");
   const [status, setStatus] = useState("idle");
   const [message, setMessage] = useState("");
+  const [answer, setAnswer] = useState("");
+  const [localStatus, setLocalStatus] = useState({});
 
   useEffect(() => {
     const next = String(initialQuestion || "").trim();
@@ -140,7 +153,23 @@ function AskAstraPage({ initialQuestion = "" }) {
     }
   }, [initialQuestion]);
 
-  const handleSubmit = (event) => {
+  useEffect(() => {
+    let mounted = true;
+    const refreshStatus = async () => {
+      const result = await fetchJsonWithFallback("/api/ask_astra_status_v1", {
+        preferredBase: getInitialApiBase(),
+        fallbackValue: {},
+        timeoutMs: 6000,
+      });
+      if (mounted && result.ok && result.parsed) setLocalStatus(result.parsed || {});
+    };
+    refreshStatus();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const handleSubmit = async (event) => {
     event.preventDefault();
     const cleanQuestion = question.trim();
     if (!cleanQuestion) {
@@ -148,9 +177,32 @@ function AskAstraPage({ initialQuestion = "" }) {
       setMessage("Type a question first, then submit.");
       return;
     }
-    setStatus("not_connected");
-    setMessage("Ask Astra is not connected yet. Your question is ready, but no safe response endpoint is configured in this frontend shell.");
+    setStatus("working");
+    setMessage("Asking Astra from cached context. No automatic dashboard LLM calls are made.");
+    setAnswer("");
+    const result = await fetchJsonWithFallback("/api/ask_astra_v1", {
+      preferredBase: getInitialApiBase(),
+      fallbackValue: { ok: false, error: "ask_astra_unavailable" },
+      timeoutMs: 70000,
+      init: {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ question: cleanQuestion, context_scope: "copilot", response_mode: "auto" }),
+      },
+    });
+    if (result.ok && result.parsed?.ok) {
+      setStatus("ready");
+      setMessage(`Response mode: ${result.parsed?.local_ai_status?.response_mode || "structured_fallback"}.`);
+      setAnswer(String(result.parsed?.answer || ""));
+      setLocalStatus(result.parsed?.local_ai_status || localStatus || {});
+    } else {
+      setStatus("error");
+      setMessage(String(result.parsed?.error || result.error || "Ask Astra endpoint unavailable."));
+    }
   };
+
+  const aiStatusText = localStatus?.local_ai_status || "checking";
+  const modelText = localStatus?.selected_model || localStatus?.primary_model || "qwen3:8b";
 
   return (
     <div className="astra-page-grid">
@@ -159,8 +211,16 @@ function AskAstraPage({ initialQuestion = "" }) {
           <span className="astra-ai-kicker">Premium AI Panel</span>
           <h1>Ask Astra</h1>
           <p>
-            Ask Astra remains user-triggered only. This page will not call an LLM, provider, broker, or dashboard endpoint unless a safe submit path is connected.
+            Ask Astra remains user-triggered only. Dashboard render never calls a model; submitted questions use local Qwen through Ollama when available, or a structured cached-data fallback.
           </p>
+          <div className="astra-ai-status-grid">
+            <span>Local AI status <strong>{aiStatusText}</strong></span>
+            <span>Ollama reachable <strong>{localStatus?.ollama_reachable ? "yes" : "no"}</strong></span>
+            <span>Primary model <strong>{localStatus?.primary_model || "qwen3:8b"}</strong></span>
+            <span>Fallback model <strong>{localStatus?.fallback_model || "qwen3:14b"}</strong></span>
+            <span>Active model <strong>{modelText}</strong></span>
+            <span>Response mode <strong>{localStatus?.response_mode || "structured_fallback"}</strong></span>
+          </div>
         </div>
         <div className="astra-ai-input-row">
           <input
@@ -177,10 +237,11 @@ function AskAstraPage({ initialQuestion = "" }) {
             {message}
           </div>
         ) : null}
+        {answer ? <div className="astra-ai-answer">{answer}</div> : null}
       </form>
       <ShellCard title="Safe Interaction Model" eyebrow="No automatic AI calls">
         <p>
-          Astra will only contact an AI/provider service when an explicit existing Ask Astra submit flow is available and you submit a question. No automatic AI calls happen on page load.
+          Astra only contacts local AI after you submit a question. If Ollama or Qwen is offline, the page returns a safe structured answer from cached Astra data.
         </p>
       </ShellCard>
     </div>
@@ -227,7 +288,7 @@ function MorePage({ setActiveTab }) {
         <div className="astra-button-row">
           <button type="button" onClick={() => setActiveTab("dashboard")}>Dashboard</button>
           <button type="button" onClick={() => setActiveTab("learning")}>Learning Center</button>
-          <button type="button" onClick={() => setActiveTab("opportunities")}>Opportunities</button>
+          <button type="button" onClick={() => setActiveTab("copilot")}>Copilot</button>
         </div>
       </ShellCard>
     </div>
@@ -237,11 +298,14 @@ function MorePage({ setActiveTab }) {
 function PageHeading({ activeTab }) {
   const copy = useMemo(() => ({
     dashboard: ["Executive Command Dashboard", "What is happening, why it matters, and what deserves attention right now."],
-    opportunities: ["Opportunity Center", "Astra's ranked opportunity flow with confidence, horizon, fit, and rationale surfaced first."],
+    copilot: ["Copilot", "Astra's advisory action center: buy-now candidates, holds, watch items, and exit-review context."],
     portfolio: ["Portfolio Command", "Portfolio health, performance, allocation, and active paper positions in one consumer-ready view."],
     ask: ["Ask Astra", "A premium AI workspace that stays idle until you explicitly submit a question."],
     watchlists: ["Watchlists", "Safe watchlist shells using cached context and graceful empty states."],
     learning: ["Learning Center", "Astra’s report card, trend diagnostics, and full advanced learning panels."],
+    alerts: ["Alerts", "Read-only risk, market, and portfolio alerts from existing diagnostics."],
+    reports: ["Reports", "Export-ready summaries remain consolidated in Learning Center diagnostics."],
+    settings: ["Settings", "Safe frontend shell for configuration awareness; no trading behavior changes."],
     more: ["More", "Settings, reports, raw diagnostics, alerts, and admin/dev utilities."],
   }), []);
   const [title, subtitle] = copy[activeTab] || copy.dashboard;
@@ -271,11 +335,12 @@ function App() {
 
   const renderTab = () => {
     if (activeTab === "dashboard") return <Dashboard onNavigate={handleNavigate} />;
-    if (activeTab === "opportunities") return <Dashboard remoteMode remoteSection="buys" onNavigate={handleNavigate} />;
+    if (activeTab === "copilot") return <Dashboard remoteMode remoteSection="copilot" onNavigate={handleNavigate} />;
     if (activeTab === "portfolio") return <Dashboard remoteMode remoteSection="positions" onNavigate={handleNavigate} />;
     if (activeTab === "ask") return <AskAstraPage initialQuestion={askPrefill} />;
     if (activeTab === "watchlists") return <WatchlistsPage />;
     if (activeTab === "learning") return <LearningTab />;
+    if (["alerts", "reports", "settings"].includes(activeTab)) return <MorePage setActiveTab={handleNavigate} />;
     return <MorePage setActiveTab={handleNavigate} />;
   };
 

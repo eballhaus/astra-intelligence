@@ -361,6 +361,45 @@
   border-color: rgba(109, 178, 255, 0.36);
 }
 
+.astra-ai-status-ready,
+.astra-ai-status-working {
+  border-color: rgba(74, 222, 128, 0.34);
+  background: rgba(22, 163, 74, 0.12);
+}
+
+.astra-ai-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.astra-ai-status-grid span {
+  border: 1px solid rgba(182, 211, 255, 0.22);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #b9cbea;
+  padding: 9px 10px;
+  font-size: 0.76rem;
+  display: grid;
+  gap: 2px;
+}
+
+.astra-ai-status-grid strong {
+  color: #ffffff;
+  font-size: 0.86rem;
+}
+
+.astra-ai-answer {
+  white-space: pre-wrap;
+  border-radius: 18px;
+  border: 1px solid rgba(182, 211, 255, 0.26);
+  background: rgba(255, 255, 255, 0.12);
+  color: #f5f9ff;
+  padding: 16px;
+  line-height: 1.55;
+}
+
 .astra-empty-state {
   margin-top: 14px;
   border-radius: 14px;
