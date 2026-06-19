@@ -39,9 +39,9 @@ MODULES_CREATED = [
     "Controlled Paper Horizon Practice Bucket V1",
     "Horizon Exit / Profit Capture Readiness V1",
     "Performance Truth Layer V1",
-    "Adaptive Horizon Participation Engine V1",
-    "News Intelligence & Catalyst Context Engine V1",
-    "Exit & Profit Retention Maturation V1",
+    "Adaptive Horizon Participation Engine V2",
+    "Catalyst Intelligence Activation V2",
+    "Exit & Profit Retention Maturation V2",
     "Astra Broker Truth Engine V1",
     "Stale Session Repair V1",
     "Stale Workflow Compaction V1",
@@ -1166,14 +1166,28 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
         else:
             recommendation = "maintain_adaptive_horizon_learning"
             blocker = "no_material_horizon_gap"
+        participation_score = rounded(
+            clamp(
+                100.0
+                - horizon_gap * 1.6
+                + (10.0 if under in {"scalp", "day_trade"} and blocker == "none" else 0.0)
+                - (12.0 if swing_over else 0.0)
+                + min(12.0, qualified_scalp * 1.5 + qualified_day * 1.5),
+                0.0,
+                100.0,
+            ),
+            3,
+        )
         return {
-            "module": "Adaptive Horizon Participation Engine V1",
+            "module": "Adaptive Horizon Participation Engine V2",
             "status": "ok",
             "paper_horizon_distribution": dict(capacity.get("horizon_distribution_pct") or {}),
+            "target_horizon_distribution": {k: rounded((TARGET_RANGES[k][0] + TARGET_RANGES[k][1]) / 2.0, 3) for k in HORIZONS},
             "shadow_recommended_horizon_distribution": dict(scorecard.get("shadow_recommended_horizon_distribution") or {}),
             "horizon_gap": horizon_gap,
             "underexposed_horizon": under,
             "overexposed_horizon": over,
+            "horizon_participation_score": participation_score,
             "scalp_learning_blocked": bool(assignment.get("qualified_scalp_candidates", 0) <= 0 and under == "scalp"),
             "day_learning_blocked": bool(assignment.get("qualified_day_trade_candidates", 0) <= 0 and under == "day_trade"),
             "swing_overconcentration": swing_over,
@@ -1208,8 +1222,20 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
         coverage = rounded(to_float(first(catalyst.get("catalyst_coverage_score"), paper.get("catalyst_coverage"), lifecycle.get("catalyst_lifecycle_confidence"), 0.0), 0.0), 3)
         unknown_rate = rounded(to_float(first(catalyst.get("unknown_catalyst_rate"), paper.get("unknown_catalyst_rate"), 100.0 - coverage), 100.0 - coverage), 3)
         dominant = text(first(catalyst.get("dominant_catalyst"), catalyst.get("strongest_catalyst_type"), lifecycle.get("strongest_catalyst_stage"), "unknown_catalyst"), "unknown_catalyst")
+        known_symbols = [row.get("symbol") for row in high_conf if row.get("symbol")]
+        readiness_score = rounded(
+            clamp(
+                coverage * 0.45
+                + max(0.0, 100.0 - unknown_rate) * 0.35
+                + rounded(to_float(first(catalyst.get("catalyst_confidence"), lifecycle.get("catalyst_lifecycle_confidence"), 0.0), 0.0), 3) * 0.20,
+                0.0,
+                100.0,
+            ),
+            3,
+        )
+        improvement_rate = rounded(max(0.0, coverage - max(0.0, unknown_rate * 0.10)), 3)
         return {
-            "module": "News Intelligence & Catalyst Context Engine V1",
+            "module": "Catalyst Intelligence Activation V2",
             "status": "ok" if coverage > 0 or high_conf else "insufficient_evidence",
             "catalyst_type": dominant,
             "catalyst_source": "cached_catalyst_theme_lifecycle_decay_and_candidate_context",
@@ -1223,10 +1249,15 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "catalyst_decay_risk": rounded(to_float(first(decay.get("catalyst_decay_readiness"), catalyst.get("catalyst_decay_learning_score"), lifecycle.get("decay_probability"), 0.0), 0.0), 3),
             "catalyst_persistence": rounded(to_float(first(decay.get("catalyst_decay_confidence"), catalyst.get("catalyst_strength_reliability"), lifecycle.get("persistence_score"), 0.0), 0.0), 3),
             "catalyst_half_life": dict(first(decay.get("catalyst_half_life"), catalyst.get("catalyst_half_life"), {})),
+            "catalyst_half_life_minutes": rounded(to_float(first(decay.get("catalyst_half_life_estimate"), lifecycle.get("average_lifespan_minutes"), 0.0), 0.0), 3),
+            "catalyst_strength": rounded(to_float(first(catalyst.get("catalyst_strength_score"), catalyst.get("catalyst_truth_score"), 0.0), 0.0), 3),
             "catalyst_impact_score": rounded(to_float(first(catalyst.get("catalyst_strength_score"), lifecycle.get("continuation_probability"), 0.0), 0.0), 3),
             "top_unknown_symbols": unknown_symbols,
+            "top_known_symbols": known_symbols[:8],
             "highest_confidence_catalysts": high_conf,
             "catalyst_learning_gap": "reduce_unknown_catalyst_rate" if unknown_rate > 25 else "mature_catalyst_decay_and_persistence_learning",
+            "catalyst_readiness_score": readiness_score,
+            "catalyst_improvement_rate": improvement_rate,
             "recommended_catalyst_fix": "use_cached_theme_sector_earnings_context_before_classifying_unknown",
             **_safe_flags(),
         }
@@ -1241,11 +1272,14 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
         exit_score = rounded(to_float(first(best.get("readiness_score"), lifecycle.get("profit_retention_score"), 0.0), 0.0), 3)
         policy = text(first(best.get("behavior_name"), scorecard.get("top_exit_promotion_candidate_name"), "hybrid_exit_candidate"), "hybrid_exit_candidate")
         blocker = text(first(best.get("blocker"), "human_review_required_no_automatic_sells"), "human_review_required_no_automatic_sells")
+        expected_profit_capture_improvement = rounded(max(0.0, to_float(scorecard.get("capture_delta"), 0.0)), 3)
+        peak_profit = rounded(current_profit + giveback, 3)
         return {
-            "module": "Exit & Profit Retention Maturation V1",
+            "module": "Exit & Profit Retention Maturation V2",
             "status": "ok",
             "mfe": rounded(to_float(first(lifecycle.get("mfe"), profit.get("average_mfe"), 0.0), 0.0), 3),
             "mae": rounded(to_float(first(lifecycle.get("mae"), profit.get("average_mae"), 0.0), 0.0), 3),
+            "peak_profit": peak_profit,
             "current_profit": current_profit,
             "realized_profit": rounded(to_float(first(profit.get("realized_profit"), profit.get("total_realized_profit"), 0.0), 0.0), 3),
             "profit_giveback": giveback,
@@ -1264,6 +1298,7 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "closest_exit_policy_to_readiness": policy,
             "exit_policy_readiness_score": exit_score,
             "giveback_reduction_opportunity": rounded(max(0.0, to_float(scorecard.get("giveback_delta"), 0.0)), 3),
+            "expected_profit_capture_improvement": expected_profit_capture_improvement,
             "profit_capture_recommendation": text(lifecycle.get("protect_profit_recommendation"), "review_profitable_positions_for_profit_protection"),
             "human_review_required": True,
             "automatic_sells_enabled": False,
@@ -1465,20 +1500,61 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             },
         ]
         top = max(candidates, key=lambda row: to_float(row.get("expected_pf_delta"), 0.0) + to_float(row.get("expected_giveback_reduction"), 0.0) * 0.1 + to_float(row.get("expected_capture_improvement"), 0.0) * 10.0)
+        promotion_readiness_score = rounded(
+            clamp(
+                to_float(top.get("expected_pf_delta"), 0.0) * 100.0
+                + to_float(top.get("expected_giveback_reduction"), 0.0) * 4.0
+                + to_float(top.get("expected_capture_improvement"), 0.0) * 25.0
+                + to_float(top.get("shadow_confidence"), 0.0) * 0.35,
+                0.0,
+                100.0,
+            ),
+            3,
+        )
+        shadow_consensus = rounded(sum(to_float(row.get("shadow_confidence"), 0.0) for row in candidates) / max(1, len(candidates)), 3)
+        paper_consensus = rounded(
+            clamp(
+                50.0
+                + to_float(scorecard.get("paper_pf"), 0.0) * 12.0
+                + max(0.0, 100.0 - to_float(scorecard.get("paper_giveback"), 0.0)) * 0.10,
+                0.0,
+                100.0,
+            ),
+            3,
+        )
         return {
             "module": "Shadow-to-Paper Promotion Engine V2",
             "status": "ok",
             "promotion_candidates": candidates,
+            "promotion_candidate_count": len(candidates),
             "top_promotion_candidate": top,
             "top_promotion_candidate_name": top.get("behavior_name"),
             "top_promotion_readiness": top.get("promotion_readiness"),
             "top_promotion_blocker": top.get("promotion_blocker"),
+            "promotion_readiness_score": promotion_readiness_score,
+            "shadow_confidence": rounded(to_float(top.get("shadow_confidence"), 0.0), 3),
+            "shadow_consensus": shadow_consensus,
+            "paper_consensus": paper_consensus,
+            "promotion_roi": rounded(
+                max(
+                    0.0,
+                    to_float(top.get("expected_pf_delta"), 0.0) * 100.0
+                    + to_float(top.get("expected_capture_improvement"), 0.0) * 20.0
+                    + to_float(top.get("expected_giveback_reduction"), 0.0) * 3.0,
+                ),
+                3,
+            ),
+            "rollback_readiness": "armed",
             "expected_pf_improvement": rounded(to_float(top.get("expected_pf_delta"), 0.0), 4),
             "expected_giveback_reduction": rounded(to_float(top.get("expected_giveback_reduction"), 0.0), 3),
             "expected_capture_improvement": rounded(to_float(top.get("expected_capture_improvement"), 0.0), 3),
+            "expected_profit_capture_improvement": rounded(to_float(top.get("expected_capture_improvement"), 0.0), 3),
+            "expected_exit_improvement": rounded(to_float(top.get("expected_exit_quality_improvement"), 0.0), 3),
+            "kill_switch_status": "available",
             "recommended_next_action": "human_review_before_any_tiny_paper_bucket",
             "human_review_required": True,
             "broad_paper_deployment_enabled": False,
+            "automatic_promotions_enabled": False,
             **_safe_flags(),
         }
 
@@ -1776,21 +1852,34 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "adaptive_horizon_participation_engine_v1": horizon_participation,
             "paper_horizon_distribution": horizon_participation.get("paper_horizon_distribution"),
             "shadow_recommended_horizon_distribution": horizon_participation.get("shadow_recommended_horizon_distribution"),
+            "horizon_participation_score": horizon_participation.get("horizon_participation_score"),
             "horizon_participation_blocker": horizon_participation.get("horizon_participation_blocker"),
             "horizon_participation_recommendation": horizon_participation.get("horizon_participation_recommendation"),
             "news_intelligence_catalyst_context_engine_v1": catalyst_context,
             "catalyst_coverage_pct": catalyst_context.get("catalyst_coverage_pct"),
             "unknown_catalyst_rate": catalyst_context.get("unknown_catalyst_rate"),
             "top_unknown_symbols": catalyst_context.get("top_unknown_symbols"),
+            "top_known_symbols": catalyst_context.get("top_known_symbols"),
             "highest_confidence_catalysts": catalyst_context.get("highest_confidence_catalysts"),
             "catalyst_learning_gap": catalyst_context.get("catalyst_learning_gap"),
+            "catalyst_readiness_score": catalyst_context.get("catalyst_readiness_score"),
+            "catalyst_improvement_rate": catalyst_context.get("catalyst_improvement_rate"),
             "recommended_catalyst_fix": catalyst_context.get("recommended_catalyst_fix"),
             "exit_profit_retention_maturation_v1": exit_maturation,
             "best_exit_policy_candidate": exit_maturation.get("best_exit_policy_candidate"),
             "closest_exit_policy_to_readiness": exit_maturation.get("closest_exit_policy_to_readiness"),
             "exit_policy_readiness_score": exit_maturation.get("exit_policy_readiness_score"),
             "giveback_reduction_opportunity": exit_maturation.get("giveback_reduction_opportunity"),
+            "expected_profit_capture_improvement": exit_maturation.get("expected_profit_capture_improvement"),
             "profit_capture_recommendation": exit_maturation.get("profit_capture_recommendation"),
+            "promotion_candidate_count": shadow_promotion_v2.get("promotion_candidate_count"),
+            "promotion_readiness_score": shadow_promotion_v2.get("promotion_readiness_score"),
+            "shadow_confidence": shadow_promotion_v2.get("shadow_confidence"),
+            "shadow_consensus": shadow_promotion_v2.get("shadow_consensus"),
+            "paper_consensus": shadow_promotion_v2.get("paper_consensus"),
+            "promotion_roi": shadow_promotion_v2.get("promotion_roi"),
+            "rollback_readiness": shadow_promotion_v2.get("rollback_readiness"),
+            "expected_exit_improvement": shadow_promotion_v2.get("expected_exit_improvement"),
             "active_broker_positions": dashboard.get("active_broker_positions"),
             "rows_audited": dashboard.get("rows_audited"),
             "underexposed_horizon": dashboard.get("underexposed_horizon"),

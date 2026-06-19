@@ -53586,7 +53586,6 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("astra_final_intelligence_maturation_bundle_v1", lambda: ASTRA_FINAL_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=statuses, force=False))
         _safe_status("astra_targeted_maturity_profit_capture_optimization_bundle_v1", lambda: ASTRA_TARGETED_MATURITY_PROFIT_CAPTURE_OPTIMIZATION_BUNDLE.status(statuses=statuses, force=False))
         _safe_status("mobile_runtime_compaction", lambda: _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False))
-        _safe_status("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1", lambda: ASTRA_HORIZON_LIFECYCLE_CAPACITY_PROMOTION_READINESS_BUNDLE.status(statuses=statuses, force=True))
         _safe_status("market_session_execution_timing", lambda: MARKET_SESSION_EXECUTION_TIMING_SUITE.status(candidate=(rows[0] if rows else {})))
         _safe_status("paper_opportunity_allocation", lambda: PAPER_OPPORTUNITY_ALLOCATION_ENGINE.status(rows=rows))
         _safe_status("portfolio_risk_intelligence", lambda: PORTFOLIO_RISK_INTELLIGENCE_SUITE.status(rows=rows))
@@ -53621,6 +53620,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 "api_calls_used": 0,
                 "live_trading_changed": False,
             }
+        _safe_status("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1", lambda: ASTRA_HORIZON_LIFECYCLE_CAPACITY_PROMOTION_READINESS_BUNDLE.status(statuses=statuses, force=True))
         _safe_status("controlled_paper_learned_exit_validation_v1", lambda: CONTROLLED_PAPER_LEARNED_EXIT_VALIDATION.status(statuses=statuses, force=False))
 
         sources["statuses"] = statuses

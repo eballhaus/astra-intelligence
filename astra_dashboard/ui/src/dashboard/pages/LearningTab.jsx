@@ -2958,6 +2958,7 @@ export default function LearningTab({ compact = false }) {
             ["Tie-break blocker", astraHorizonLifecycleCapacityPromotion?.paper_tie_breaker_blocker],
             ["Practice blocker", astraHorizonLifecycleCapacityPromotion?.practice_bucket_blocker],
             ["Next fix", astraHorizonLifecycleCapacityPromotion?.next_required_fix],
+            ["Participation score", safeNumber(astraHorizonLifecycleCapacityPromotion?.horizon_participation_score).toFixed(1)],
             ["Stale positions", safeNumber(astraHorizonLifecycleCapacityPromotion?.stale_positions_count).toFixed(0)],
             ["Trapped capital", safeNumber(astraHorizonLifecycleCapacityPromotion?.capital_trapped_score).toFixed(1)],
             ["Learning access", safeNumber(astraHorizonLifecycleCapacityPromotion?.horizon_learning_access_score).toFixed(1)],
@@ -2995,10 +2996,18 @@ export default function LearningTab({ compact = false }) {
             ["Archive retrieval", astraHorizonLifecycleCapacityPromotion?.archive_retrieval_health],
             ["Catalyst coverage", `${safeNumber(astraHorizonLifecycleCapacityPromotion?.catalyst_coverage_pct).toFixed(1)}%`],
             ["Unknown catalysts", `${safeNumber(astraHorizonLifecycleCapacityPromotion?.unknown_catalyst_rate).toFixed(1)}%`],
+            ["Catalyst readiness", safeNumber(astraHorizonLifecycleCapacityPromotion?.catalyst_readiness_score).toFixed(1)],
+            ["Catalyst improvement", safeNumber(astraHorizonLifecycleCapacityPromotion?.catalyst_improvement_rate).toFixed(1)],
             ["Catalyst gap", astraHorizonLifecycleCapacityPromotion?.catalyst_learning_gap],
             ["Best exit policy", astraHorizonLifecycleCapacityPromotion?.best_exit_policy_candidate],
             ["Exit readiness", safeNumber(astraHorizonLifecycleCapacityPromotion?.exit_policy_readiness_score).toFixed(1)],
             ["Giveback opportunity", safeNumber(astraHorizonLifecycleCapacityPromotion?.giveback_reduction_opportunity).toFixed(1)],
+            ["Capture improvement", safeNumber(astraHorizonLifecycleCapacityPromotion?.expected_profit_capture_improvement).toFixed(1)],
+            ["Promotion score", safeNumber(astraHorizonLifecycleCapacityPromotion?.promotion_readiness_score).toFixed(1)],
+            ["Promotion candidates", safeNumber(astraHorizonLifecycleCapacityPromotion?.promotion_candidate_count).toFixed(0)],
+            ["Promotion ROI", safeNumber(astraHorizonLifecycleCapacityPromotion?.promotion_roi).toFixed(1)],
+            ["Shadow consensus", safeNumber(astraHorizonLifecycleCapacityPromotion?.shadow_consensus).toFixed(1)],
+            ["Paper consensus", safeNumber(astraHorizonLifecycleCapacityPromotion?.paper_consensus).toFixed(1)],
           ].map(([label, value]) => (
             <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
               <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
@@ -3051,10 +3060,16 @@ export default function LearningTab({ compact = false }) {
             Catalyst context: coverage {safeNumber(astraHorizonLifecycleCapacityPromotion?.catalyst_coverage_pct).toFixed(1)}%, unknown {safeNumber(astraHorizonLifecycleCapacityPromotion?.unknown_catalyst_rate).toFixed(1)}%, top unknown symbols {(astraHorizonLifecycleCapacityPromotion?.top_unknown_symbols || []).join(", ") || "none"}. Fix: {String(astraHorizonLifecycleCapacityPromotion?.recommended_catalyst_fix || "use cached context first").replaceAll("_", " ")}.
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Known catalysts: {(astraHorizonLifecycleCapacityPromotion?.top_known_symbols || []).join(", ") || "warming up"}; readiness {safeNumber(astraHorizonLifecycleCapacityPromotion?.catalyst_readiness_score).toFixed(1)}; improvement rate {safeNumber(astraHorizonLifecycleCapacityPromotion?.catalyst_improvement_rate).toFixed(1)}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Profit retention: {String(astraHorizonLifecycleCapacityPromotion?.profit_retention_status || "monitoring").replaceAll("_", " ")}; lifecycle {String(astraHorizonLifecycleCapacityPromotion?.lifecycle_efficiency_status || "monitoring").replaceAll("_", " ")}; recommendation {String(astraHorizonLifecycleCapacityPromotion?.reduce_giveback_recommendation || "monitor_giveback").replaceAll("_", " ")}.
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
-            Exit maturation: best policy {String(astraHorizonLifecycleCapacityPromotion?.best_exit_policy_candidate || "warming up").replaceAll("_", " ")}, closest readiness {String(astraHorizonLifecycleCapacityPromotion?.closest_exit_policy_to_readiness || "warming up").replaceAll("_", " ")}, score {safeNumber(astraHorizonLifecycleCapacityPromotion?.exit_policy_readiness_score).toFixed(1)}, giveback reduction opportunity {safeNumber(astraHorizonLifecycleCapacityPromotion?.giveback_reduction_opportunity).toFixed(1)}. Human review required; automatic sells remain disabled.
+            Exit maturation: best policy {String(astraHorizonLifecycleCapacityPromotion?.best_exit_policy_candidate || "warming up").replaceAll("_", " ")}, closest readiness {String(astraHorizonLifecycleCapacityPromotion?.closest_exit_policy_to_readiness || "warming up").replaceAll("_", " ")}, score {safeNumber(astraHorizonLifecycleCapacityPromotion?.exit_policy_readiness_score).toFixed(1)}, giveback reduction opportunity {safeNumber(astraHorizonLifecycleCapacityPromotion?.giveback_reduction_opportunity).toFixed(1)}, expected capture improvement {safeNumber(astraHorizonLifecycleCapacityPromotion?.expected_profit_capture_improvement).toFixed(1)}. Human review required; automatic sells remain disabled.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Shadow promotion: {String(astraHorizonLifecycleCapacityPromotion?.top_promotion_candidate_name || "warming up").replaceAll("_", " ")} readiness {String(astraHorizonLifecycleCapacityPromotion?.top_promotion_readiness || "advisory only").replaceAll("_", " ")}, score {safeNumber(astraHorizonLifecycleCapacityPromotion?.promotion_readiness_score).toFixed(1)}, PF {safeNumber(astraHorizonLifecycleCapacityPromotion?.expected_pf_improvement).toFixed(3)}, giveback {safeNumber(astraHorizonLifecycleCapacityPromotion?.expected_giveback_reduction).toFixed(1)}, exit {safeNumber(astraHorizonLifecycleCapacityPromotion?.expected_exit_improvement).toFixed(1)}. Human review required; automatic promotions remain disabled.
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Shadow readiness: {Object.entries(astraHorizonLifecycleCapacityPromotion?.readiness_by_horizon || {}).map(([key, value]) => `${String(key).replaceAll("_", " ")} ${String(value).replaceAll("_", " ")}`).join(" | ") || "warming up"}
