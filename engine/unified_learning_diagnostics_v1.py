@@ -3879,6 +3879,10 @@ class UnifiedLearningDiagnosticsV1:
         horizon_regime_promotion_v2 = dict(modules.get("horizon_regime_promotion_readiness_v2") or data.get("horizon_regime_promotion_readiness_v2") or {})
         stale_rotation_promotion_v2 = dict(modules.get("stale_position_rotation_promotion_readiness_v2") or data.get("stale_position_rotation_promotion_readiness_v2") or {})
         scorecard_v2 = dict(modules.get("shadow_vs_paper_scorecard_v2") or data.get("shadow_vs_paper_scorecard_v2") or {})
+        performance_truth = dict(modules.get("performance_truth_layer_v1") or data.get("performance_truth_layer") or {})
+        horizon_participation = dict(modules.get("adaptive_horizon_participation_engine_v1") or data.get("adaptive_horizon_participation_engine_v1") or {})
+        catalyst_context = dict(modules.get("news_intelligence_catalyst_context_engine_v1") or data.get("news_intelligence_catalyst_context_engine_v1") or {})
+        exit_maturation = dict(modules.get("exit_profit_retention_maturation_v1") or data.get("exit_profit_retention_maturation_v1") or {})
         dashboard = dict(modules.get("horizon_lifecycle_dashboard_summary") or {})
         return {
             "enabled": bool(data.get("enabled", False)),
@@ -4040,6 +4044,42 @@ class UnifiedLearningDiagnosticsV1:
             "paper_pf": _to_float(data.get("paper_pf") or scorecard_v2.get("paper_pf"), 0.0),
             "shadow_expected_pf": _to_float(data.get("shadow_expected_pf") or scorecard_v2.get("shadow_expected_pf"), 0.0),
             "pf_delta": _to_float(data.get("pf_delta") or scorecard_v2.get("pf_delta"), 0.0),
+            "performance_truth_layer": dict(performance_truth),
+            "true_paper_pf": _to_float(data.get("true_paper_pf") or performance_truth.get("true_paper_pf"), 0.0),
+            "true_paper_win_rate": _to_float(data.get("true_paper_win_rate") or performance_truth.get("true_paper_win_rate"), 0.0),
+            "true_paper_avg_return": _to_float(data.get("true_paper_avg_return") or performance_truth.get("true_paper_avg_return"), 0.0),
+            "true_paper_roi": _to_float(data.get("true_paper_roi") or performance_truth.get("true_paper_roi"), 0.0),
+            "true_paper_capture_ratio": _to_float(data.get("true_paper_capture_ratio") or performance_truth.get("true_paper_capture_ratio"), 0.0),
+            "true_paper_giveback": _to_float(data.get("true_paper_giveback") or performance_truth.get("true_paper_giveback"), 0.0),
+            "true_paper_exit_quality": _to_float(data.get("true_paper_exit_quality") or performance_truth.get("true_paper_exit_quality"), 0.0),
+            "true_paper_metric_source": _text(data.get("true_paper_metric_source") or performance_truth.get("true_paper_metric_source"), "unavailable"),
+            "true_paper_metric_confidence": _to_float(data.get("true_paper_metric_confidence") or performance_truth.get("true_paper_metric_confidence"), 0.0),
+            "true_paper_metric_trust_level": _text(data.get("true_paper_metric_trust_level") or performance_truth.get("true_paper_metric_trust_level"), "insufficient_paper_evidence"),
+            "learning_pf": _to_float(data.get("learning_pf") or performance_truth.get("learning_pf"), 0.0),
+            "shadow_pf": _to_float(data.get("shadow_pf") or performance_truth.get("shadow_pf") or scorecard_v2.get("shadow_expected_pf"), 0.0),
+            "displayed_dashboard_pf_source": _text(data.get("displayed_dashboard_pf_source") or performance_truth.get("displayed_dashboard_pf_source"), "label_learning_pf_as_learning_metric"),
+            "displayed_dashboard_pf_trust_level": _text(data.get("displayed_dashboard_pf_trust_level") or performance_truth.get("displayed_dashboard_pf_trust_level"), "insufficient_paper_evidence"),
+            "metric_scope_mismatch_detected": bool(data.get("metric_scope_mismatch_detected") or performance_truth.get("metric_scope_mismatch_detected", False)),
+            "metric_reconciliation_status": _text(data.get("metric_reconciliation_status") or performance_truth.get("metric_reconciliation_status"), "insufficient_evidence"),
+            "safest_metric_to_show_user": _text(data.get("safest_metric_to_show_user") or performance_truth.get("safest_metric_to_show_user"), "label_learning_pf_as_learning_metric"),
+            "adaptive_horizon_participation_engine_v1": dict(horizon_participation),
+            "paper_horizon_distribution": dict(data.get("paper_horizon_distribution") or horizon_participation.get("paper_horizon_distribution") or {}),
+            "shadow_recommended_horizon_distribution": dict(data.get("shadow_recommended_horizon_distribution") or horizon_participation.get("shadow_recommended_horizon_distribution") or {}),
+            "horizon_participation_blocker": _text(data.get("horizon_participation_blocker") or horizon_participation.get("horizon_participation_blocker"), "insufficient_evidence"),
+            "horizon_participation_recommendation": _text(data.get("horizon_participation_recommendation") or horizon_participation.get("horizon_participation_recommendation"), "maintain_adaptive_horizon_learning"),
+            "news_intelligence_catalyst_context_engine_v1": dict(catalyst_context),
+            "catalyst_coverage_pct": _to_float(data.get("catalyst_coverage_pct") or catalyst_context.get("catalyst_coverage_pct"), 0.0),
+            "unknown_catalyst_rate": _to_float(data.get("unknown_catalyst_rate") or catalyst_context.get("unknown_catalyst_rate"), 100.0),
+            "top_unknown_symbols": list(data.get("top_unknown_symbols") or catalyst_context.get("top_unknown_symbols") or [])[:10],
+            "highest_confidence_catalysts": list(data.get("highest_confidence_catalysts") or catalyst_context.get("highest_confidence_catalysts") or [])[:8],
+            "catalyst_learning_gap": _text(data.get("catalyst_learning_gap") or catalyst_context.get("catalyst_learning_gap"), "reduce_unknown_catalyst_rate"),
+            "recommended_catalyst_fix": _text(data.get("recommended_catalyst_fix") or catalyst_context.get("recommended_catalyst_fix"), "use_cached_context_first"),
+            "exit_profit_retention_maturation_v1": dict(exit_maturation),
+            "best_exit_policy_candidate": _text(data.get("best_exit_policy_candidate") or exit_maturation.get("best_exit_policy_candidate"), "insufficient_evidence"),
+            "closest_exit_policy_to_readiness": _text(data.get("closest_exit_policy_to_readiness") or exit_maturation.get("closest_exit_policy_to_readiness"), "insufficient_evidence"),
+            "exit_policy_readiness_score": _to_float(data.get("exit_policy_readiness_score") or exit_maturation.get("exit_policy_readiness_score"), 0.0),
+            "giveback_reduction_opportunity": _to_float(data.get("giveback_reduction_opportunity") or exit_maturation.get("giveback_reduction_opportunity"), 0.0),
+            "profit_capture_recommendation": _text(data.get("profit_capture_recommendation") or exit_maturation.get("profit_capture_recommendation"), "continue_shadow_validation"),
             "paper_exit_quality": _to_float(data.get("paper_exit_quality") or scorecard_v2.get("paper_exit_quality"), 0.0),
             "shadow_exit_quality": _to_float(data.get("shadow_exit_quality") or scorecard_v2.get("shadow_exit_quality"), 0.0),
             "exit_quality_delta": _to_float(data.get("exit_quality_delta") or scorecard_v2.get("exit_quality_delta"), 0.0),

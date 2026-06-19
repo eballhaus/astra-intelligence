@@ -2977,6 +2977,19 @@ export default function LearningTab({ compact = false }) {
             ["Paper sell enabled", astraHorizonLifecycleCapacityPromotion?.paper_sell_behavior_enabled ? "yes" : "no"],
             ["Learned exits", astraHorizonLifecycleCapacityPromotion?.learned_exits_enabled ? "yes" : "no"],
             ["Behavior safe", astraHorizonLifecycleCapacityPromotion?.behavior_safe_to_apply ? "yes" : "no"],
+            ["True paper PF", safeNumber(astraHorizonLifecycleCapacityPromotion?.true_paper_pf).toFixed(3)],
+            ["Learning PF", safeNumber(astraHorizonLifecycleCapacityPromotion?.learning_pf).toFixed(3)],
+            ["Shadow PF", safeNumber(astraHorizonLifecycleCapacityPromotion?.shadow_pf || astraHorizonLifecycleCapacityPromotion?.shadow_expected_pf).toFixed(3)],
+            ["PF source", astraHorizonLifecycleCapacityPromotion?.displayed_dashboard_pf_source],
+            ["PF trust", astraHorizonLifecycleCapacityPromotion?.displayed_dashboard_pf_trust_level],
+            ["Metric reconciliation", astraHorizonLifecycleCapacityPromotion?.metric_reconciliation_status],
+            ["Metric mismatch", astraHorizonLifecycleCapacityPromotion?.metric_scope_mismatch_detected ? "yes" : "no"],
+            ["Catalyst coverage", `${safeNumber(astraHorizonLifecycleCapacityPromotion?.catalyst_coverage_pct).toFixed(1)}%`],
+            ["Unknown catalysts", `${safeNumber(astraHorizonLifecycleCapacityPromotion?.unknown_catalyst_rate).toFixed(1)}%`],
+            ["Catalyst gap", astraHorizonLifecycleCapacityPromotion?.catalyst_learning_gap],
+            ["Best exit policy", astraHorizonLifecycleCapacityPromotion?.best_exit_policy_candidate],
+            ["Exit readiness", safeNumber(astraHorizonLifecycleCapacityPromotion?.exit_policy_readiness_score).toFixed(1)],
+            ["Giveback opportunity", safeNumber(astraHorizonLifecycleCapacityPromotion?.giveback_reduction_opportunity).toFixed(1)],
           ].map(([label, value]) => (
             <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
               <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
@@ -2985,6 +2998,9 @@ export default function LearningTab({ compact = false }) {
           ))}
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Horizon distribution: {Object.entries(astraHorizonLifecycleCapacityPromotion?.horizon_distribution || {}).map(([key, value]) => `${String(key).replaceAll("_", " ")} ${safeNumber(value).toFixed(1)}%`).join(" | ") || "warming up"}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Performance Truth Layer: true paper PF {safeNumber(astraHorizonLifecycleCapacityPromotion?.true_paper_pf).toFixed(3)} from {String(astraHorizonLifecycleCapacityPromotion?.true_paper_metric_source || "unavailable").replaceAll("_", " ")}, learning PF {safeNumber(astraHorizonLifecycleCapacityPromotion?.learning_pf).toFixed(3)}, shadow PF {safeNumber(astraHorizonLifecycleCapacityPromotion?.shadow_pf || astraHorizonLifecycleCapacityPromotion?.shadow_expected_pf).toFixed(3)}. Safest display: {String(astraHorizonLifecycleCapacityPromotion?.safest_metric_to_show_user || "label learning PF as learning metric").replaceAll("_", " ")}.
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Assigned horizons today: {Object.entries(astraHorizonLifecycleCapacityPromotion?.assigned_horizons_today || {}).map(([key, value]) => `${String(key).replaceAll("_", " ")} ${safeNumber(value).toFixed(0)}`).join(" | ") || "warming up"}
@@ -3008,10 +3024,19 @@ export default function LearningTab({ compact = false }) {
             Learning access: scalp blocked {astraHorizonLifecycleCapacityPromotion?.scalp_learning_blocked ? "yes" : "no"}; day blocked {astraHorizonLifecycleCapacityPromotion?.day_learning_blocked ? "yes" : "no"}; swing overconcentration {astraHorizonLifecycleCapacityPromotion?.swing_overconcentration ? "yes" : "no"}.
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Horizon participation: {String(astraHorizonLifecycleCapacityPromotion?.horizon_participation_recommendation || "maintain adaptive horizon learning").replaceAll("_", " ")}; blocker {String(astraHorizonLifecycleCapacityPromotion?.horizon_participation_blocker || "none").replaceAll("_", " ")}. This remains tie-breaker/advisory only and does not bypass ranking or safety gates.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Regime allocation: {String(astraHorizonLifecycleCapacityPromotion?.regime_allocation_recommendation || "balanced adaptive learning mix").replaceAll("_", " ")}; mix {Object.entries(astraHorizonLifecycleCapacityPromotion?.preferred_horizon_mix || {}).map(([key, value]) => `${String(key).replaceAll("_", " ")} ${safeNumber(value).toFixed(0)}%`).join(" | ") || "warming up"}.
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Catalyst context: coverage {safeNumber(astraHorizonLifecycleCapacityPromotion?.catalyst_coverage_pct).toFixed(1)}%, unknown {safeNumber(astraHorizonLifecycleCapacityPromotion?.unknown_catalyst_rate).toFixed(1)}%, top unknown symbols {(astraHorizonLifecycleCapacityPromotion?.top_unknown_symbols || []).join(", ") || "none"}. Fix: {String(astraHorizonLifecycleCapacityPromotion?.recommended_catalyst_fix || "use cached context first").replaceAll("_", " ")}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Profit retention: {String(astraHorizonLifecycleCapacityPromotion?.profit_retention_status || "monitoring").replaceAll("_", " ")}; lifecycle {String(astraHorizonLifecycleCapacityPromotion?.lifecycle_efficiency_status || "monitoring").replaceAll("_", " ")}; recommendation {String(astraHorizonLifecycleCapacityPromotion?.reduce_giveback_recommendation || "monitor_giveback").replaceAll("_", " ")}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Exit maturation: best policy {String(astraHorizonLifecycleCapacityPromotion?.best_exit_policy_candidate || "warming up").replaceAll("_", " ")}, closest readiness {String(astraHorizonLifecycleCapacityPromotion?.closest_exit_policy_to_readiness || "warming up").replaceAll("_", " ")}, score {safeNumber(astraHorizonLifecycleCapacityPromotion?.exit_policy_readiness_score).toFixed(1)}, giveback reduction opportunity {safeNumber(astraHorizonLifecycleCapacityPromotion?.giveback_reduction_opportunity).toFixed(1)}. Human review required; automatic sells remain disabled.
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Shadow readiness: {Object.entries(astraHorizonLifecycleCapacityPromotion?.readiness_by_horizon || {}).map(([key, value]) => `${String(key).replaceAll("_", " ")} ${String(value).replaceAll("_", " ")}`).join(" | ") || "warming up"}

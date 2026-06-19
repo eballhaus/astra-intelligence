@@ -38,6 +38,10 @@ MODULES_CREATED = [
     "Shadow vs Paper Scorecard V2",
     "Controlled Paper Horizon Practice Bucket V1",
     "Horizon Exit / Profit Capture Readiness V1",
+    "Performance Truth Layer V1",
+    "Adaptive Horizon Participation Engine V1",
+    "News Intelligence & Catalyst Context Engine V1",
+    "Exit & Profit Retention Maturation V1",
     "Horizon Lifecycle Dashboard Summary",
 ]
 
@@ -1032,6 +1036,191 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             **_safe_flags(),
         }
 
+    def _performance_truth_layer(self, statuses: dict[str, Any], scorecard: dict[str, Any]) -> dict[str, Any]:
+        attribution = status_value(statuses, "shadow_vs_paper_performance_attribution_v1")
+        advanced = status_value(statuses, "advanced_learning_intelligence")
+        profit = status_value(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
+        learning_pf = _pf(advanced, "profit_factor", default=_pf(profit, "current_policy_profit_factor", default=0.0))
+        true_paper_pf = _pf(attribution, "paper_profit_factor_verified", "paper_profit_factor", "lifetime_paper_pf", default=0.0)
+        true_paper_win_rate = rounded(to_float(first(attribution.get("paper_win_rate"), advanced.get("released_win_rate"), 0.0), 0.0), 4)
+        true_paper_avg_return = rounded(to_float(first(attribution.get("paper_avg_return"), advanced.get("average_return"), 0.0), 0.0), 4)
+        true_paper_capture = rounded(to_float(first(scorecard.get("paper_capture_ratio"), profit.get("current_policy_capture_ratio"), profit.get("average_capture_ratio"), 0.0), 0.0), 4)
+        true_paper_giveback = rounded(to_float(first(scorecard.get("paper_giveback"), profit.get("current_policy_giveback"), profit.get("average_giveback_pct"), 0.0), 0.0), 4)
+        true_paper_exit_quality = rounded(to_float(first(scorecard.get("paper_exit_quality"), profit.get("current_policy_exit_quality"), profit.get("exit_quality"), 0.0), 0.0), 4)
+        shadow_pf = _pf(scorecard, "shadow_expected_pf", default=_pf(attribution, "shadow_profit_factor_verified", "shadow_profit_factor", default=0.0))
+        paper_available = bool(attribution.get("paper_profit_factor_available", true_paper_pf > 0))
+        canonical_source = text(attribution.get("canonical_performance_source"), "shadow_vs_paper_performance_attribution_v1")
+        metric_scope_mismatch = bool(paper_available and learning_pf > 0 and abs(true_paper_pf - learning_pf) > 0.05)
+        trust = "high" if paper_available and bool(attribution.get("paper_pf_matches_unified", True)) else "medium" if true_paper_pf > 0 else "insufficient_paper_evidence"
+        safest = "true_paper_pf" if paper_available else "label_learning_pf_as_learning_metric"
+        return {
+            "module": "Performance Truth Layer V1",
+            "status": "ok" if true_paper_pf > 0 or learning_pf > 0 else "insufficient_evidence",
+            "true_paper_pf": true_paper_pf,
+            "true_paper_win_rate": true_paper_win_rate,
+            "true_paper_avg_return": true_paper_avg_return,
+            "true_paper_roi": true_paper_avg_return,
+            "true_paper_capture_ratio": true_paper_capture,
+            "true_paper_giveback": true_paper_giveback,
+            "true_paper_exit_quality": true_paper_exit_quality,
+            "true_paper_metric_source": canonical_source,
+            "true_paper_metric_confidence": rounded(to_float(first(attribution.get("canonical_confidence"), 100.0 if paper_available else 35.0), 35.0), 3),
+            "true_paper_metric_trust_level": trust,
+            "shadow_pf": shadow_pf,
+            "shadow_win_rate": rounded(to_float(first(attribution.get("shadow_win_rate"), 0.0), 0.0), 4),
+            "shadow_expected_pf": shadow_pf,
+            "shadow_expected_giveback": rounded(to_float(scorecard.get("shadow_expected_giveback"), 0.0), 4),
+            "shadow_capture_ratio": rounded(to_float(scorecard.get("shadow_capture_ratio"), 0.0), 4),
+            "shadow_metric_source": "shadow_vs_paper_scorecard_v2",
+            "shadow_metric_confidence": rounded(to_float(first(attribution.get("shadow_alpha_confidence"), scorecard.get("shadow_horizon_confidence"), 0.0), 0.0), 3),
+            "lifecycle_pf": _pf(profit, "current_policy_profit_factor", default=0.0),
+            "replay_pf": _pf(status_value(statuses, "replay_lifecycle_expectancy"), "expectancy_profit_factor", default=0.0),
+            "counterfactual_pf": _pf(status_value(statuses, "replay_counterfactual_learning_v2"), "counterfactual_profit_factor", "profit_factor", default=0.0),
+            "promotion_pf": _pf(scorecard, "shadow_expected_pf", default=0.0),
+            "learning_pf": learning_pf,
+            "learning_dataset_scope": "advanced_learning_and_profit_capture_diagnostics",
+            "learning_metric_confidence": rounded(_confidence(advanced, 55.0), 3),
+            "provider_health": text(status_value(statuses, "provider_usage_status_v1").get("status"), "not_queried_dashboard_cache_path"),
+            "system_health": "healthy" if to_int(status_value(statuses, "unified_learning_diagnostics_v1").get("failed_sources_count"), 0) == 0 else "degraded",
+            "runtime_integrity": "cache_first_no_hot_path_provider_calls",
+            "data_quality": trust,
+            "evidence_maturity": to_int(attribution.get("canonical_closed_trade_count"), 0),
+            "failed_sources_count": 0,
+            "displayed_dashboard_pf_source": safest,
+            "displayed_dashboard_pf_trust_level": trust,
+            "metric_scope_mismatch_detected": metric_scope_mismatch,
+            "metric_reconciliation_status": "scope_mismatch_labeled" if metric_scope_mismatch else "PASS",
+            "safest_metric_to_show_user": safest,
+            **_safe_flags(),
+        }
+
+    def _adaptive_horizon_participation(self, capacity: dict[str, Any], exposure: dict[str, Any], assignment: dict[str, Any], scorecard: dict[str, Any]) -> dict[str, Any]:
+        qualified_scalp = to_int(assignment.get("qualified_scalp_candidates"), 0)
+        qualified_day = to_int(assignment.get("qualified_day_trade_candidates"), 0)
+        qualified_swing = to_int(assignment.get("qualified_swing_trade_candidates"), 0)
+        under = text(capacity.get("underexposed_horizon"), "none")
+        over = text(capacity.get("overexposed_horizon"), "none")
+        swing_over = bool(exposure.get("horizon_exposure_balance") == "overconcentrated_swing" or over == "swing_trade")
+        horizon_gap = rounded(to_float(scorecard.get("horizon_gap"), to_float(exposure.get("horizon_exposure_gap"), 0.0)), 3)
+        if under == "scalp" and qualified_scalp > 0:
+            recommendation = "allow_qualified_scalp_candidates_to_tie_break_against_lower_quality_redundant_swing"
+            blocker = "none"
+        elif under == "day_trade" and qualified_day > 0:
+            recommendation = "allow_qualified_day_trade_candidates_to_tie_break_against_lower_quality_redundant_swing"
+            blocker = "none"
+        elif under in HORIZONS:
+            recommendation = "collect_more_underexposed_horizon_candidates_that_already_pass_existing_gates"
+            blocker = f"no_qualified_{under}_candidate_after_existing_gates"
+        else:
+            recommendation = "maintain_adaptive_horizon_learning"
+            blocker = "no_material_horizon_gap"
+        return {
+            "module": "Adaptive Horizon Participation Engine V1",
+            "status": "ok",
+            "paper_horizon_distribution": dict(capacity.get("horizon_distribution_pct") or {}),
+            "shadow_recommended_horizon_distribution": dict(scorecard.get("shadow_recommended_horizon_distribution") or {}),
+            "horizon_gap": horizon_gap,
+            "underexposed_horizon": under,
+            "overexposed_horizon": over,
+            "scalp_learning_blocked": bool(assignment.get("qualified_scalp_candidates", 0) <= 0 and under == "scalp"),
+            "day_learning_blocked": bool(assignment.get("qualified_day_trade_candidates", 0) <= 0 and under == "day_trade"),
+            "swing_overconcentration": swing_over,
+            "horizon_participation_blocker": blocker,
+            "qualified_scalp_candidates": qualified_scalp,
+            "qualified_day_trade_candidates": qualified_day,
+            "qualified_swing_trade_candidates": qualified_swing,
+            "horizon_participation_recommendation": recommendation,
+            "tie_breaker_only": True,
+            "forced_horizon_quotas_enabled": False,
+            "forced_trades_enabled": False,
+            "bypasses_existing_gates": False,
+            **_safe_flags(),
+        }
+
+    def _news_catalyst_context(self, statuses: dict[str, Any]) -> dict[str, Any]:
+        catalyst = status_value(statuses, "catalyst_theme_narrative_capital_flow_intelligence_v2")
+        lifecycle = status_value(statuses, "catalyst_lifecycle_intelligence_v1")
+        decay = status_value(statuses, "catalyst_persistence_decay_curves_v2")
+        paper = status_value(statuses, "paper_throughput_exit_validation_catalyst_intelligence_v1")
+        rows = self._candidate_rows(statuses)[:40]
+        unknown_symbols: list[str] = []
+        high_conf: list[dict[str, Any]] = []
+        for row in rows:
+            symbol = text(first(row.get("symbol"), row.get("ticker"), default=""), "").upper()
+            raw = text(first(row.get("catalyst_type"), row.get("catalyst_context"), row.get("catalyst"), default="unknown_catalyst"), "unknown_catalyst")
+            confidence = clamp(first(row.get("catalyst_confidence"), row.get("confidence"), default=0.0))
+            if raw.lower() in {"", "unknown", "unknown_catalyst", "none", "non_catalyst"} and symbol and len(unknown_symbols) < 10:
+                unknown_symbols.append(symbol)
+            elif symbol and len(high_conf) < 8:
+                high_conf.append({"symbol": symbol, "catalyst_type": raw, "catalyst_confidence": rounded(confidence, 3)})
+        coverage = rounded(to_float(first(catalyst.get("catalyst_coverage_score"), paper.get("catalyst_coverage"), lifecycle.get("catalyst_lifecycle_confidence"), 0.0), 0.0), 3)
+        unknown_rate = rounded(to_float(first(catalyst.get("unknown_catalyst_rate"), paper.get("unknown_catalyst_rate"), 100.0 - coverage), 100.0 - coverage), 3)
+        dominant = text(first(catalyst.get("dominant_catalyst"), catalyst.get("strongest_catalyst_type"), lifecycle.get("strongest_catalyst_stage"), "unknown_catalyst"), "unknown_catalyst")
+        return {
+            "module": "News Intelligence & Catalyst Context Engine V1",
+            "status": "ok" if coverage > 0 or high_conf else "insufficient_evidence",
+            "catalyst_type": dominant,
+            "catalyst_source": "cached_catalyst_theme_lifecycle_decay_and_candidate_context",
+            "catalyst_confidence": rounded(to_float(first(catalyst.get("catalyst_confidence"), lifecycle.get("catalyst_lifecycle_confidence"), 0.0), 0.0), 3),
+            "catalyst_coverage_pct": coverage,
+            "unknown_catalyst_rate": unknown_rate,
+            "news_context_available": bool(coverage > 0),
+            "macro_context_available": bool(catalyst.get("macro_context_available", False) or dominant in {"macro_news", "fed_rates", "inflation_data", "jobs_report"}),
+            "earnings_context_available": bool(dominant == "earnings" or "earnings" in str(catalyst.get("supporting_catalysts") or "").lower()),
+            "sector_sympathy_context_available": bool(dominant in {"sector_sympathy", "sector_rotation"} or status_value(statuses, "etf_sector_rotation_intelligence_v1")),
+            "catalyst_decay_risk": rounded(to_float(first(decay.get("catalyst_decay_readiness"), catalyst.get("catalyst_decay_learning_score"), lifecycle.get("decay_probability"), 0.0), 0.0), 3),
+            "catalyst_persistence": rounded(to_float(first(decay.get("catalyst_decay_confidence"), catalyst.get("catalyst_strength_reliability"), lifecycle.get("persistence_score"), 0.0), 0.0), 3),
+            "catalyst_half_life": dict(first(decay.get("catalyst_half_life"), catalyst.get("catalyst_half_life"), {})),
+            "catalyst_impact_score": rounded(to_float(first(catalyst.get("catalyst_strength_score"), lifecycle.get("continuation_probability"), 0.0), 0.0), 3),
+            "top_unknown_symbols": unknown_symbols,
+            "highest_confidence_catalysts": high_conf,
+            "catalyst_learning_gap": "reduce_unknown_catalyst_rate" if unknown_rate > 25 else "mature_catalyst_decay_and_persistence_learning",
+            "recommended_catalyst_fix": "use_cached_theme_sector_earnings_context_before_classifying_unknown",
+            **_safe_flags(),
+        }
+
+    def _exit_profit_retention_maturation(self, statuses: dict[str, Any], lifecycle: dict[str, Any], exit_promotion: dict[str, Any], scorecard: dict[str, Any]) -> dict[str, Any]:
+        profit = status_value(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
+        best = dict(exit_promotion.get("top_exit_promotion_candidate") or {})
+        positions = self._active_broker_positions(statuses)
+        current_profit = rounded(sum(_return_pct(row) for row in positions), 3)
+        giveback = rounded(to_float(first(lifecycle.get("giveback_ratio"), scorecard.get("paper_giveback"), profit.get("average_giveback_pct"), 0.0), 0.0), 3)
+        capture = rounded(to_float(first(scorecard.get("paper_capture_ratio"), lifecycle.get("capture_ratio"), profit.get("average_capture_ratio"), 0.0), 0.0), 4)
+        exit_score = rounded(to_float(first(best.get("readiness_score"), lifecycle.get("profit_retention_score"), 0.0), 0.0), 3)
+        policy = text(first(best.get("behavior_name"), scorecard.get("top_exit_promotion_candidate_name"), "hybrid_exit_candidate"), "hybrid_exit_candidate")
+        blocker = text(first(best.get("blocker"), "human_review_required_no_automatic_sells"), "human_review_required_no_automatic_sells")
+        return {
+            "module": "Exit & Profit Retention Maturation V1",
+            "status": "ok",
+            "mfe": rounded(to_float(first(lifecycle.get("mfe"), profit.get("average_mfe"), 0.0), 0.0), 3),
+            "mae": rounded(to_float(first(lifecycle.get("mae"), profit.get("average_mae"), 0.0), 0.0), 3),
+            "current_profit": current_profit,
+            "realized_profit": rounded(to_float(first(profit.get("realized_profit"), profit.get("total_realized_profit"), 0.0), 0.0), 3),
+            "profit_giveback": giveback,
+            "capture_ratio": capture,
+            "peak_decay": rounded(max(0.0, giveback), 3),
+            "continuation_probability": rounded(to_float(first(profit.get("continuation_probability"), 100.0 - giveback, 0.0), 0.0), 3),
+            "thesis_decay": rounded(to_float(lifecycle.get("thesis_decay"), 0.0), 3),
+            "catalyst_decay": rounded(to_float(first(status_value(statuses, "catalyst_persistence_decay_curves_v2").get("catalyst_decay_readiness"), 0.0), 0.0), 3),
+            "momentum_decay": rounded(to_float(lifecycle.get("momentum_decay"), 0.0), 3),
+            "horizon_expiration": text(lifecycle.get("horizon_adjustment_recommendation"), "monitor_horizon_expiration"),
+            "exit_readiness_score": exit_score,
+            "exit_policy_candidate": policy,
+            "exit_policy_confidence": rounded(to_float(first(best.get("confidence"), exit_promotion.get("confidence"), 0.0), 0.0), 3),
+            "exit_policy_blocker": blocker,
+            "best_exit_policy_candidate": policy,
+            "closest_exit_policy_to_readiness": policy,
+            "exit_policy_readiness_score": exit_score,
+            "giveback_reduction_opportunity": rounded(max(0.0, to_float(scorecard.get("giveback_delta"), 0.0)), 3),
+            "profit_capture_recommendation": text(lifecycle.get("protect_profit_recommendation"), "review_profitable_positions_for_profit_protection"),
+            "human_review_required": True,
+            "automatic_sells_enabled": False,
+            "learned_exits_enabled": False,
+            "partial_sells_enabled": False,
+            "automatic_trailing_stops_enabled": False,
+            **_safe_flags(),
+        }
+
     def _exit_promotion_readiness_v2(self, statuses: dict[str, Any], scorecard: dict[str, Any]) -> dict[str, Any]:
         learned_exit = status_value(statuses, "controlled_paper_learned_exit_validation_v1")
         profit = status_value(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
@@ -1329,6 +1518,10 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
         assignment = self._candidate_horizon_assignment(statuses, capacity, exposure, readiness)
         practice_bucket = self._practice_bucket(assignment, capacity)
         exit_readiness = self._exit_readiness(readiness, capacity, exposure)
+        performance_truth = self._performance_truth_layer(statuses, scorecard_v2)
+        horizon_participation = self._adaptive_horizon_participation(capacity, exposure, assignment, scorecard_v2)
+        catalyst_context = self._news_catalyst_context(statuses)
+        exit_maturation = self._exit_profit_retention_maturation(statuses, lifecycle_v2, exit_promotion_v2, scorecard_v2)
         dashboard = self._dashboard_summary(repair, readiness, capacity, recycling, exposure, optimizer, rotation, lifecycle_v2, regime_allocation)
         modules = {
             "trade_lifecycle_audit_auto_repair_v1": repair,
@@ -1349,6 +1542,10 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "shadow_vs_paper_scorecard_v2": scorecard_v2,
             "controlled_paper_horizon_practice_bucket_v1": practice_bucket,
             "horizon_exit_profit_capture_readiness_v1": exit_readiness,
+            "performance_truth_layer_v1": performance_truth,
+            "adaptive_horizon_participation_engine_v1": horizon_participation,
+            "news_intelligence_catalyst_context_engine_v1": catalyst_context,
+            "exit_profit_retention_maturation_v1": exit_maturation,
             "horizon_lifecycle_dashboard_summary": dashboard,
         }
         payload = {
@@ -1486,6 +1683,42 @@ class AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(CachedDiagnosticMo
             "shadow_capture_ratio": scorecard_v2.get("shadow_capture_ratio"),
             "capture_delta": scorecard_v2.get("capture_delta"),
             "horizon_gap": scorecard_v2.get("horizon_gap"),
+            "performance_truth_layer": performance_truth,
+            "true_paper_pf": performance_truth.get("true_paper_pf"),
+            "true_paper_win_rate": performance_truth.get("true_paper_win_rate"),
+            "true_paper_avg_return": performance_truth.get("true_paper_avg_return"),
+            "true_paper_roi": performance_truth.get("true_paper_roi"),
+            "true_paper_capture_ratio": performance_truth.get("true_paper_capture_ratio"),
+            "true_paper_giveback": performance_truth.get("true_paper_giveback"),
+            "true_paper_exit_quality": performance_truth.get("true_paper_exit_quality"),
+            "true_paper_metric_source": performance_truth.get("true_paper_metric_source"),
+            "true_paper_metric_confidence": performance_truth.get("true_paper_metric_confidence"),
+            "true_paper_metric_trust_level": performance_truth.get("true_paper_metric_trust_level"),
+            "learning_pf": performance_truth.get("learning_pf"),
+            "shadow_pf": performance_truth.get("shadow_pf"),
+            "displayed_dashboard_pf_source": performance_truth.get("displayed_dashboard_pf_source"),
+            "displayed_dashboard_pf_trust_level": performance_truth.get("displayed_dashboard_pf_trust_level"),
+            "metric_scope_mismatch_detected": performance_truth.get("metric_scope_mismatch_detected"),
+            "metric_reconciliation_status": performance_truth.get("metric_reconciliation_status"),
+            "safest_metric_to_show_user": performance_truth.get("safest_metric_to_show_user"),
+            "adaptive_horizon_participation_engine_v1": horizon_participation,
+            "paper_horizon_distribution": horizon_participation.get("paper_horizon_distribution"),
+            "shadow_recommended_horizon_distribution": horizon_participation.get("shadow_recommended_horizon_distribution"),
+            "horizon_participation_blocker": horizon_participation.get("horizon_participation_blocker"),
+            "horizon_participation_recommendation": horizon_participation.get("horizon_participation_recommendation"),
+            "news_intelligence_catalyst_context_engine_v1": catalyst_context,
+            "catalyst_coverage_pct": catalyst_context.get("catalyst_coverage_pct"),
+            "unknown_catalyst_rate": catalyst_context.get("unknown_catalyst_rate"),
+            "top_unknown_symbols": catalyst_context.get("top_unknown_symbols"),
+            "highest_confidence_catalysts": catalyst_context.get("highest_confidence_catalysts"),
+            "catalyst_learning_gap": catalyst_context.get("catalyst_learning_gap"),
+            "recommended_catalyst_fix": catalyst_context.get("recommended_catalyst_fix"),
+            "exit_profit_retention_maturation_v1": exit_maturation,
+            "best_exit_policy_candidate": exit_maturation.get("best_exit_policy_candidate"),
+            "closest_exit_policy_to_readiness": exit_maturation.get("closest_exit_policy_to_readiness"),
+            "exit_policy_readiness_score": exit_maturation.get("exit_policy_readiness_score"),
+            "giveback_reduction_opportunity": exit_maturation.get("giveback_reduction_opportunity"),
+            "profit_capture_recommendation": exit_maturation.get("profit_capture_recommendation"),
             "active_broker_positions": dashboard.get("active_broker_positions"),
             "rows_audited": dashboard.get("rows_audited"),
             "underexposed_horizon": dashboard.get("underexposed_horizon"),
