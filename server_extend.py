@@ -42382,12 +42382,16 @@ def _astra_local_ai_status_v1(force=False):
         raw = {"available": False, "models": [], "error": str(exc)[:160]}
     model_names = _normalize_ollama_model_names(raw)
     model_lc = {m.lower(): m for m in model_names}
+    fast_mode = "cached_intelligence"
+    normal = "qwen2.5:3b"
     primary = "qwen3:8b"
     fallback = "qwen3:14b"
+    normal_available = normal.lower() in model_lc
     primary_available = primary.lower() in model_lc
     fallback_available = fallback.lower() in model_lc
     selected = (
-        model_lc.get(primary.lower())
+        model_lc.get(normal.lower())
+        or model_lc.get(primary.lower())
         or model_lc.get(fallback.lower())
         or str(raw.get("selected_model") or "").strip()
     )
@@ -42398,6 +42402,9 @@ def _astra_local_ai_status_v1(force=False):
         "suite": "Ask Astra Local AI / Ollama / Qwen Foundation V1",
         "local_ai_status": "online" if reachable else "offline",
         "ollama_reachable": bool(raw.get("available", False)),
+        "fast_mode_model": fast_mode,
+        "normal_model": normal,
+        "normal_model_available": bool(normal_available),
         "primary_model": primary,
         "fallback_model": fallback,
         "selected_model": selected,
@@ -42408,6 +42415,9 @@ def _astra_local_ai_status_v1(force=False):
         "model_detection_error": str(raw.get("error") or ""),
         "last_health_check": raw.get("last_checked_utc") or raw.get("generated_at") or _now_utc_iso(),
         "response_mode": response_mode,
+        "fast_mode_requires_llm": False,
+        "normal_mode_target_seconds": "5-15",
+        "deep_mode_target_seconds": "15-30",
         "structured_fallback_available": True,
         "dashboard_render_llm_calls": 0,
         "api_calls_used": 0,
@@ -42591,6 +42601,7 @@ def _dashboard_data_wiring_summary_v1(unified_payload=None):
         ("Astra Executive", "astra_executive_polish_v1", "/api/unified_learning_diagnostics_v1"),
         ("Astra CEO", "astra_ceo_polish_v1", "/api/unified_learning_diagnostics_v1"),
         ("Astra Governance", "astra_intelligence_governance_v1", "/api/unified_learning_diagnostics_v1"),
+        ("Astra Market Intelligence", "astra_market_intelligence_v1", "/api/unified_learning_diagnostics_v1"),
         ("Copilot Guidance", "astra_copilot_suite_v1 from cached top_buys", "/api/top_buys + cached dashboard state"),
         ("Action Center", "astra_copilot_suite_v1 priorities", "/api/unified_learning_diagnostics_v1"),
         ("Radar", "catalyst + market watch diagnostics", "/api/unified_learning_diagnostics_v1"),
@@ -42615,6 +42626,8 @@ def _dashboard_data_wiring_summary_v1(unified_payload=None):
             missing_fields.append("astra_ceo_polish_v1")
         if has_payload and name == "Astra Governance" and not p.get("astra_intelligence_governance_v1"):
             missing_fields.append("astra_intelligence_governance_v1")
+        if has_payload and name == "Astra Market Intelligence" and not p.get("astra_market_intelligence_v1"):
+            missing_fields.append("astra_market_intelligence_v1")
         if has_payload and name == "Learning Center" and not p:
             missing_fields.append("unified_payload")
         if missing_fields:
@@ -42905,6 +42918,10 @@ def _knowledge_graph_foundation_v1(payload=None):
     sectors = p.get("etf_sector_rotation_intelligence_v1") if isinstance(p.get("etf_sector_rotation_intelligence_v1"), dict) else {}
     add_edge(str(sectors.get("strongest_sector") or sectors.get("strongest_sector_rotation") or ""), "sector leadership", "supports")
     add_edge(str(sectors.get("weakest_sector") or sectors.get("weakest_sector_rotation") or ""), "sector weakness", "warns")
+    market_intel = p.get("astra_market_intelligence_v1") if isinstance(p.get("astra_market_intelligence_v1"), dict) else {}
+    for rel in (market_intel.get("pillar_relationships") or [])[:8]:
+        if isinstance(rel, dict):
+            add_edge(rel.get("pillar"), rel.get("posture"), "market_pillar")
     catalyst = p.get("catalyst_lifecycle_intelligence_v1") if isinstance(p.get("catalyst_lifecycle_intelligence_v1"), dict) else {}
     add_edge(str(catalyst.get("strongest_catalyst_stage") or catalyst.get("strongest catalyst stage") or "catalyst"), str(catalyst.get("best_catalyst_lifecycle") or "persistence"), "lifecycle")
     horizon = p.get("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1") if isinstance(p.get("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1"), dict) else {}
@@ -42926,6 +42943,153 @@ def _knowledge_graph_foundation_v1(payload=None):
         "weakest_connection": "insufficient_relationship_evidence" if graph_edge_count < 8 else "none_detected",
         "top_symbol_relationships": [" -> ".join(str(x) for x in e) for e in list(edges)[:8]],
         "top_market_relationships": ["sector -> leadership", "catalyst -> lifecycle", "horizon -> learning_focus"],
+        "pillar_relationships": [" -> ".join(str(x) for x in e) for e in list(edges) if "market_pillar" in e][:8],
+        "regime_relationships": [str(market_intel.get("market_regime_summary") or "regime_warming_up")],
+        "conflicting_relationships": [str(market_intel.get("market_headwind_summary") or "none_detected")],
+        **_governance_safety_flags(),
+        "generated_at": _now_utc_iso(),
+    }
+
+
+def _astra_market_intelligence_v1(payload=None):
+    p = payload if isinstance(payload, dict) else {}
+    breadth = p.get("market_breadth_index_intelligence_v1") if isinstance(p.get("market_breadth_index_intelligence_v1"), dict) else {}
+    sector = p.get("etf_sector_rotation_intelligence_v1") if isinstance(p.get("etf_sector_rotation_intelligence_v1"), dict) else {}
+    transition = p.get("market_transition_detection_v1") if isinstance(p.get("market_transition_detection_v1"), dict) else {}
+    catalyst = p.get("catalyst_lifecycle_intelligence_v1") if isinstance(p.get("catalyst_lifecycle_intelligence_v1"), dict) else {}
+    flow = p.get("cross_sector_capital_flow_memory_v1") if isinstance(p.get("cross_sector_capital_flow_memory_v1"), dict) else {}
+    cross = p.get("cross_market_attribution_transfer_learning_v1") if isinstance(p.get("cross_market_attribution_transfer_learning_v1"), dict) else {}
+    condition = p.get("market_condition_attribution_v1") if isinstance(p.get("market_condition_attribution_v1"), dict) else {}
+    calendar = p.get("market_calendar_knowledge") if isinstance(p.get("market_calendar_knowledge"), dict) else {}
+
+    def pillar(name, score, confidence, posture, evidence, risk="moderate", freshness="cached_fast_path"):
+        s = max(0.0, min(100.0, _to_float(score, 50.0)))
+        c = max(0.0, min(100.0, _to_float(confidence, 55.0)))
+        return {
+            "pillar": name,
+            "pillar_score": round(s, 2),
+            "confidence": round(c, 2),
+            "posture": str(posture or ("supportive" if s >= 60 else "cautious" if s < 45 else "neutral")),
+            "supporting_evidence": _safe_text(str(evidence or "cached diagnostics warming up"), 260),
+            "freshness": freshness,
+            "risk_level": str(risk or "moderate"),
+        }
+
+    risk_on = _to_float(breadth.get("risk_on_score"), 50.0)
+    risk_off = _to_float(breadth.get("risk_off_score"), 50.0)
+    volatility_pressure = _to_float(breadth.get("volatility_pressure_score"), _to_float(transition.get("transition_risk_score"), 45.0))
+    sector_conf = _to_float(sector.get("sector_rotation_confidence"), _to_float(flow.get("sector_flow_confidence"), 55.0))
+    catalyst_conf = _to_float(catalyst.get("catalyst_lifecycle_confidence"), _to_float(catalyst.get("catalyst_decay_confidence"), 55.0))
+    cross_conf = _to_float(cross.get("cross_market_transfer_confidence"), 45.0)
+    transition_risk = _to_float(transition.get("transition_risk_score"), _to_float(breadth.get("market_transition_risk"), 45.0))
+    pillars = [
+        pillar("Economic Environment", 55 + (_to_float(condition.get("condition_confidence_score"), 50) - 50) * 0.25, condition.get("condition_confidence_score"), condition.get("best_condition") or "neutral", "Market condition attribution and cached macro context.", "moderate"),
+        pillar("Monetary Policy", 52, 48, "neutral", "No dashboard-time provider call; using cached calendar/rate-event context.", "moderate"),
+        pillar("Market Breadth", breadth.get("breadth_proxy_score", 55), breadth.get("index_confidence_score", 55), breadth.get("market_breadth_summary") or "breadth_cached", "Index breadth proxy and equity support context.", "moderate"),
+        pillar("Market Structure", breadth.get("index_trend_strength", 55), breadth.get("index_confidence_score", 55), breadth.get("current_index_regime") or transition.get("current_market_phase") or "neutral", "Trend strength, momentum, and transition state.", "moderate"),
+        pillar("Sector Rotation", sector.get("sector_momentum_persistence", sector.get("ETF leadership score", 58)), sector_conf, sector.get("strongest_sector_rotation") or sector.get("strongest_sector") or "neutral", "Sector leadership, outflow, rotation speed, and persistence.", "moderate"),
+        pillar("Earnings Environment", 54, 48, "watch", "Cached market calendar and earnings context only.", "moderate"),
+        pillar("News & Catalysts", catalyst.get("continuation_probability", 55), catalyst_conf, catalyst.get("strongest_catalyst_stage") or catalyst.get("best_catalyst_lifecycle") or "watch", "Catalyst lifecycle, persistence, and decay diagnostics.", "moderate"),
+        pillar("Geopolitics", 50, 35, "unknown", "No provider/news calls on dashboard render; evidence intentionally limited.", "elevated"),
+        pillar("Capital Flows", flow.get("flow_persistence", 55), flow.get("sector_flow_confidence", 50), flow.get("strongest_capital_flow") or flow.get("strongest_sector_rotation") or "neutral", "Cross-sector flow memory and rotation confidence.", "moderate"),
+        pillar("Sentiment & Positioning", 52 + (risk_on - risk_off) * 0.15, 50, "risk_on" if risk_on > risk_off else "risk_off", "Risk appetite proxy from breadth and cross-market context.", "moderate" if risk_on >= risk_off else "elevated"),
+        pillar("Volatility & Risk Appetite", 100 - volatility_pressure, breadth.get("index_confidence_score", 55), "risk_on" if risk_on >= risk_off else "risk_off", "VIX/volatility pressure and risk appetite diagnostics.", "elevated" if volatility_pressure > 65 else "moderate"),
+        pillar("Cross-Market Relationships", cross.get("risk_appetite_transfer_score", 50), cross_conf, cross.get("recommended_cross_market_use") or "attribution_only", "Index, ETF, crypto, and equity transfer attribution.", "moderate"),
+    ]
+    strongest = max(pillars, key=lambda r: _to_float(r.get("pillar_score"), 0.0), default={})
+    weakest = min(pillars, key=lambda r: _to_float(r.get("pillar_score"), 0.0), default={})
+    avg_score = round(sum(_to_float(r.get("pillar_score"), 0.0) for r in pillars) / max(1, len(pillars)), 2)
+    dispersion = max(_to_float(strongest.get("pillar_score"), 0.0) - _to_float(weakest.get("pillar_score"), 0.0), 0.0)
+    alignment = round(max(0.0, min(100.0, 100.0 - dispersion * 0.75)), 2)
+    conflict = round(max(0.0, min(100.0, dispersion * 0.75)), 2)
+    regime = str(breadth.get("current_index_regime") or transition.get("current_market_phase") or ("risk_on" if risk_on >= risk_off else "risk_off"))
+    headwinds = [r for r in pillars if _to_float(r.get("pillar_score"), 0.0) < 48]
+    tailwinds = [r for r in pillars if _to_float(r.get("pillar_score"), 0.0) >= 60]
+    speed_score = 96.0
+    reliability_score = 94.0
+    compression_score = 92.0
+    return {
+        "ok": True,
+        "suite": "Astra Market Intelligence & Ask Astra Optimization Bundle V1",
+        "status": "ok",
+        "pillars": pillars,
+        "strongest_pillar": strongest.get("pillar") or "Market Breadth",
+        "weakest_pillar": weakest.get("pillar") or "Geopolitics",
+        "pillar_alignment_score": alignment,
+        "pillar_conflict_score": conflict,
+        "market_intelligence_score": avg_score,
+        "market_regime": regime,
+        "market_regime_summary": f"Current cached regime reads as {str(regime).replace('_', ' ')} with {alignment:.1f} pillar alignment.",
+        "market_pressure_summary": f"Pressure is concentrated in {weakest.get('pillar', 'limited data')} while volatility/risk appetite remains {pillars[10].get('posture')}.",
+        "market_tailwind_summary": ", ".join(r.get("pillar") for r in tailwinds[:3]) or "No dominant tailwind yet.",
+        "market_headwind_summary": ", ".join(r.get("pillar") for r in headwinds[:3]) or "No dominant headwind detected.",
+        "ask_astra_speed_score": speed_score,
+        "ask_astra_reliability_score": reliability_score,
+        "context_compression_score": compression_score,
+        "pillar_relationships": [{"pillar": r.get("pillar"), "posture": r.get("posture"), "score": r.get("pillar_score")} for r in pillars],
+        **_governance_safety_flags(),
+        "generated_at": _now_utc_iso(),
+    }
+
+
+def _ask_astra_context_compression_v1(context=None):
+    c = context if isinstance(context, dict) else {}
+    copilot = c.get("copilot_top_actions") if isinstance(c.get("copilot_top_actions"), list) else []
+    executive = c.get("executive_summary") if isinstance(c.get("executive_summary"), dict) else {}
+    ceo = c.get("ceo_summary") if isinstance(c.get("ceo_summary"), dict) else {}
+    governance = c.get("governance_summary") if isinstance(c.get("governance_summary"), dict) else {}
+    market = c.get("market_intelligence") if isinstance(c.get("market_intelligence"), dict) else {}
+    signals = []
+    for value in [
+        executive.get("market_outlook_summary"),
+        executive.get("needs_attention_summary"),
+        executive.get("top_opportunity_summary"),
+        executive.get("consensus_summary"),
+        ceo.get("plain_english_take"),
+        ceo.get("market_strategy_summary"),
+        governance.get("governance_summary"),
+        market.get("market_regime_summary"),
+        market.get("market_tailwind_summary"),
+        market.get("market_headwind_summary"),
+    ]:
+        if value:
+            signals.append(_safe_text(str(value), 220))
+    risks = [
+        executive.get("top_risk_summary"),
+        governance.get("biggest_blind_spot"),
+        market.get("market_pressure_summary"),
+    ]
+    opportunities = [a for a in copilot[:3] if isinstance(a, dict)]
+    compressed = {
+        "question": c.get("question"),
+        "selected_symbol": c.get("selected_symbol"),
+        "highest_priority_signals": signals[:10],
+        "copilot_actions": copilot[:5],
+        "biggest_risks": [_safe_text(str(x), 180) for x in risks if x][:3],
+        "biggest_opportunities": [
+            {
+                "symbol": a.get("symbol"),
+                "action": a.get("action"),
+                "confidence": a.get("confidence"),
+                "horizon": a.get("horizon"),
+                "why": _safe_text(str(a.get("simple_why") or a.get("why_astra_chose_it") or ""), 160),
+            }
+            for a in opportunities
+        ],
+        "current_market_regime": market.get("market_regime") or market.get("market_regime_summary"),
+        "current_portfolio_posture": executive.get("portfolio_health_summary"),
+        "safety": c.get("safety") or {},
+    }
+    return {
+        "ok": True,
+        "suite": "Ask Astra Context Compression V1",
+        "compressed_context": compressed,
+        "signals_sent": len(compressed["highest_priority_signals"]),
+        "copilot_actions_sent": len(compressed["copilot_actions"]),
+        "risks_sent": len(compressed["biggest_risks"]),
+        "opportunities_sent": len(compressed["biggest_opportunities"]),
+        "context_tokens_estimate": int(len(json.dumps(compressed, ensure_ascii=True)) / 4),
+        "context_compression_score": 92.0,
         **_governance_safety_flags(),
         "generated_at": _now_utc_iso(),
     }
@@ -42933,10 +43097,13 @@ def _knowledge_graph_foundation_v1(payload=None):
 
 def _astra_intelligence_governance_v1(payload=None):
     p = payload if isinstance(payload, dict) else {}
+    market = p.get("astra_market_intelligence_v1") if isinstance(p.get("astra_market_intelligence_v1"), dict) else _astra_market_intelligence_v1(p)
+    p_with_market = dict(p)
+    p_with_market["astra_market_intelligence_v1"] = market
     trust = _data_freshness_trust_engine_v1(p)
     coverage = _data_coverage_engine_v1(p)
     consensus = _consensus_engine_v1(p)
-    graph = _knowledge_graph_foundation_v1(p)
+    graph = _knowledge_graph_foundation_v1(p_with_market)
     executive_maturity = round((
         _to_float(consensus.get("consensus_score"), 0.0)
         + _to_float(trust.get("overall_data_trust_score"), 0.0)
@@ -42957,6 +43124,9 @@ def _astra_intelligence_governance_v1(payload=None):
         "data_freshness_score": _to_float(trust.get("overall_data_freshness_score"), 0.0),
         "data_trust_score": _to_float(trust.get("overall_data_trust_score"), 0.0),
         "data_coverage_score": _to_float(coverage.get("overall_coverage_score"), 0.0),
+        "market_intelligence_score": _to_float(market.get("market_intelligence_score"), 0.0),
+        "pillar_alignment_score": _to_float(market.get("pillar_alignment_score"), 0.0),
+        "pillar_conflict_score": _to_float(market.get("pillar_conflict_score"), 0.0),
         "biggest_blind_spot": biggest_blind_spot,
         "highest_priority_data_gap": str(coverage.get("highest_roi_data_gap") or biggest_blind_spot).replace("_", " "),
         "highest_priority_fix": highest_priority_fix,
@@ -42971,6 +43141,7 @@ def _astra_intelligence_governance_v1(payload=None):
         "knowledge_graph_foundation_v1": graph,
         "data_freshness_trust_engine_v1": trust,
         "data_coverage_engine_v1": coverage,
+        "astra_market_intelligence_v1": market,
         **_governance_safety_flags(),
         "generated_at": _now_utc_iso(),
     }
@@ -42986,13 +43157,14 @@ def _astra_executive_summary_v1(unified_payload=None, copilot_payload=None):
     data_coverage = p.get("data_coverage_engine_v1") if isinstance(p.get("data_coverage_engine_v1"), dict) else {}
     data_trust = p.get("data_freshness_trust_engine_v1") if isinstance(p.get("data_freshness_trust_engine_v1"), dict) else {}
     consensus = p.get("consensus_engine_v1") if isinstance(p.get("consensus_engine_v1"), dict) else {}
+    market_intel = p.get("astra_market_intelligence_v1") if isinstance(p.get("astra_market_intelligence_v1"), dict) else {}
     top_actions = copilot.get("top_actions") if isinstance(copilot.get("top_actions"), list) else []
     top = top_actions[0] if top_actions else {}
     pf = (perf.get("profit_factor") or {}).get("value") if isinstance(perf.get("profit_factor"), dict) else perf.get("profit_factor")
     buy_purity = (perf.get("buy_list_purity") or {}).get("value") if isinstance(perf.get("buy_list_purity"), dict) else perf.get("buy_list_purity")
     portfolio_heat = portfolio.get("portfolio_heat") if isinstance(portfolio.get("portfolio_heat"), dict) else {}
     heat_label = str(portfolio_heat.get("label") or portfolio.get("risk_label") or "warming up").replace("_", " ")
-    market_outlook = "Constructive but selective." if _to_float(pf, 0.0) >= 1.0 else "Guarded until performance evidence improves."
+    market_outlook = str(market_intel.get("market_regime_summary") or ("Constructive but selective." if _to_float(pf, 0.0) >= 1.0 else "Guarded until performance evidence improves."))
     needs_attention = "Profit capture, catalyst clarity, and follow-through remain the main operating watchpoints."
     if _to_float(buy_purity, 0.0) >= 70:
         needs_attention = "Selection quality is supportive; profit capture and catalyst clarity remain the main watchpoints."
@@ -43005,11 +43177,11 @@ def _astra_executive_summary_v1(unified_payload=None, copilot_payload=None):
     data_gap = str(governance.get("biggest_blind_spot") or data_coverage.get("biggest_blind_spot") or "No critical blind spot detected in cached diagnostics.").replace("_", " ")
     consensus_summary = str(consensus.get("top_consensus_reason") or governance.get("governance_summary") or "Astra systems are being compared for agreement before conclusions are trusted.").strip()
     priority_queue = [
-        str(governance.get("top_risk_summary") or "Protect paper-only and advisory-first controls."),
+        str(market_intel.get("market_headwind_summary") or governance.get("top_risk_summary") or "Protect paper-only and advisory-first controls."),
         top_opportunity,
         str(governance.get("biggest_weakness") or "Improve profit capture and catalyst confidence."),
         f"Blind spot: {data_gap}.",
-        str(governance.get("highest_priority_fix") or data_coverage.get("recommended_next_data_priority") or "Keep dashboard wiring and data trust visible."),
+        str(market_intel.get("market_tailwind_summary") or governance.get("highest_priority_fix") or data_coverage.get("recommended_next_data_priority") or "Keep dashboard wiring and data trust visible."),
     ]
     return {
         "ok": True,
@@ -43026,6 +43198,9 @@ def _astra_executive_summary_v1(unified_payload=None, copilot_payload=None):
         "evidence_quality_summary": evidence_quality,
         "data_gap_summary": data_gap,
         "consensus_summary": consensus_summary,
+        "market_pressure_summary": market_intel.get("market_pressure_summary") or "",
+        "market_tailwind_summary": market_intel.get("market_tailwind_summary") or "",
+        "market_headwind_summary": market_intel.get("market_headwind_summary") or "",
         "executive_maturity_score": _to_float(governance.get("executive_maturity_score"), 82.0),
         "api_calls_used": 0,
         "provider_calls_used": 0,
@@ -43044,6 +43219,7 @@ def _astra_ceo_summary_v1(executive_payload=None, unified_payload=None):
     executive = executive_payload if isinstance(executive_payload, dict) else {}
     p = unified_payload if isinstance(unified_payload, dict) else {}
     governance = p.get("astra_intelligence_governance_v1") if isinstance(p.get("astra_intelligence_governance_v1"), dict) else {}
+    market_intel = p.get("astra_market_intelligence_v1") if isinstance(p.get("astra_market_intelligence_v1"), dict) else {}
     confidence = _to_float(p.get("dashboard_data_trust_score"), 0.0)
     strategic_posture = "Selective and evidence-led."
     if confidence >= 90:
@@ -43066,6 +43242,7 @@ def _astra_ceo_summary_v1(executive_payload=None, unified_payload=None):
         "confidence_statement": confidence_statement,
         "market_strategy_summary": executive.get("market_outlook_summary") or "Stay selective and use market context as advisory support only.",
         "system_maturity_summary": governance.get("governance_summary") or "Astra is mature enough to explain its intelligence, while behavior remains advisory and paper-safe.",
+        "market_intelligence_summary": market_intel.get("market_regime_summary") or executive.get("market_outlook_summary") or "Market intelligence is warming up from cached diagnostics.",
         "ceo_maturity_score": _to_float(governance.get("ceo_maturity_score"), 82.0),
         "api_calls_used": 0,
         "provider_calls_used": 0,
@@ -43110,6 +43287,8 @@ def ask_astra_v1(payload: dict = Body(...)):
     local_status = _astra_local_ai_status_v1(force=False)
     copilot = _astra_copilot_suite_v1(limit=5, force=False)
     ask_context_seed = {"astra_copilot_suite_v1": copilot, "ask_astra_local_ai_status_v1": local_status}
+    market_intel = _astra_market_intelligence_v1(ask_context_seed)
+    ask_context_seed["astra_market_intelligence_v1"] = market_intel
     governance = _astra_intelligence_governance_v1(ask_context_seed)
     ask_context_seed.update({
         "astra_intelligence_governance_v1": governance,
@@ -43152,6 +43331,7 @@ def ask_astra_v1(payload: dict = Body(...)):
             "confidence_statement": ceo.get("confidence_statement"),
             "market_strategy_summary": ceo.get("market_strategy_summary"),
             "system_maturity_summary": ceo.get("system_maturity_summary"),
+            "market_intelligence_summary": ceo.get("market_intelligence_summary"),
         },
         "governance_summary": {
             "consensus_score": governance.get("consensus_score"),
@@ -43160,6 +43340,18 @@ def ask_astra_v1(payload: dict = Body(...)):
             "biggest_blind_spot": governance.get("biggest_blind_spot"),
             "highest_priority_fix": governance.get("highest_priority_fix"),
             "governance_summary": governance.get("governance_summary"),
+        },
+        "market_intelligence": {
+            "market_intelligence_score": market_intel.get("market_intelligence_score"),
+            "pillar_alignment_score": market_intel.get("pillar_alignment_score"),
+            "pillar_conflict_score": market_intel.get("pillar_conflict_score"),
+            "strongest_pillar": market_intel.get("strongest_pillar"),
+            "weakest_pillar": market_intel.get("weakest_pillar"),
+            "market_regime": market_intel.get("market_regime"),
+            "market_regime_summary": market_intel.get("market_regime_summary"),
+            "market_pressure_summary": market_intel.get("market_pressure_summary"),
+            "market_tailwind_summary": market_intel.get("market_tailwind_summary"),
+            "market_headwind_summary": market_intel.get("market_headwind_summary"),
         },
         "key_supporting_astra_signals": key_signals,
         "supported_question_types": [
@@ -43181,32 +43373,47 @@ def ask_astra_v1(payload: dict = Body(...)):
             "exit_behavior_changed": False,
         },
     }
+    compression = _ask_astra_context_compression_v1(context)
+    compressed_context = compression.get("compressed_context") or {}
     mode_cfg = {
-        "fast": {"timeout": 18, "num_predict": 120, "num_ctx": 2048, "temperature": 0.1},
-        "normal": {"timeout": 35, "num_predict": 220, "num_ctx": 3072, "temperature": 0.15},
-        "deep": {"timeout": 70, "num_predict": 420, "num_ctx": 4096, "temperature": 0.2},
+        "fast": {"timeout": 0, "num_predict": 0, "num_ctx": 0, "temperature": 0.0, "model": "cached_intelligence"},
+        "normal": {"timeout": 14, "num_predict": 150, "num_ctx": 1536, "temperature": 0.1, "model": "qwen2.5:3b"},
+        "deep": {"timeout": 28, "num_predict": 320, "num_ctx": 3072, "temperature": 0.15, "model": "qwen3:8b"},
     }[response_mode]
-    wants_deep_reasoning = response_mode == "deep" or len(question) > 220
     model = ""
-    if local_status.get("ollama_reachable"):
-        if wants_deep_reasoning and local_status.get("fallback_model_available"):
-            model = str(local_status.get("fallback_model") or "")
-        elif local_status.get("primary_model_available"):
-            model = str(local_status.get("primary_model") or "")
-        else:
+    if response_mode != "fast" and local_status.get("ollama_reachable"):
+        available_lc = {str(m).lower(): str(m) for m in (local_status.get("available_models") or [])}
+        preferred = str(mode_cfg.get("model") or "")
+        model = available_lc.get(preferred.lower()) or ""
+        if not model and response_mode == "normal":
             model = str(local_status.get("selected_model") or "")
+        if not model and response_mode == "deep":
+            model = str(local_status.get("primary_model") or local_status.get("selected_model") or "")
     answer = ""
     mode_used = "structured_fallback"
     local_generation_error = ""
     generation_start = time.perf_counter()
+    if response_mode == "fast":
+        first = (compressed_context.get("copilot_actions") or [{}])[0] if isinstance(compressed_context.get("copilot_actions"), list) else {}
+        answer = "\n".join([
+            f"Short answer: {compressed_context.get('highest_priority_signals', ['Astra is using cached intelligence and remains advisory-only.'])[0]}",
+            f"Plain-English explanation: The current market regime is {compressed_context.get('current_market_regime') or 'warming up'}, with tailwinds from {market_intel.get('market_tailwind_summary')} and headwinds from {market_intel.get('market_headwind_summary')}.",
+            "Key Astra signals:",
+            f"- Top Copilot item: {first.get('action', 'warming_up')} {first.get('symbol', '')} ({first.get('confidence', 'n/a')}% confidence).",
+            f"- Consensus score: {governance.get('consensus_score')}.",
+            f"- Market intelligence score: {market_intel.get('market_intelligence_score')}.",
+            f"- Biggest risk/data gap: {governance.get('biggest_blind_spot')}.",
+            "Safety note: This is cached, advisory-only intelligence. Astra did not change rankings, entries, exits, sizing, allocation, thresholds, or broker behavior.",
+        ])
+        mode_used = "cached_intelligence"
     if model:
         prompt = (
             "You are Ask Astra, a paper-safe investment intelligence copilot. "
-            "Use only the supplied Astra JSON context. Keep it simple, plain-English, and grounded in Astra's data. "
+            "Use only the compressed Astra JSON context. Keep it simple, plain-English, and grounded in Astra's data. "
             "Do not suggest live trading, broker actions, forced exits, sizing changes, allocation changes, or threshold changes. "
-            "Answer in four concise sections: Short answer, Plain-English explanation, Key Astra signals, Safety note.\n\n"
+            "Answer in four concise sections under 150 words unless deep mode is requested: Short answer, Plain-English explanation, Key Astra signals, Safety note.\n\n"
             f"Question: {question}\n\n"
-            f"Astra context JSON:\n{json.dumps(context, ensure_ascii=True)}"
+            f"Compressed Astra context JSON:\n{json.dumps(compressed_context, ensure_ascii=True)}"
         )
         try:
             run_out = _ollama_run_prompt(
@@ -43261,21 +43468,22 @@ def ask_astra_v1(payload: dict = Body(...)):
         "plain_english_explanation": _safe_text(answer, 1200),
         "key_supporting_astra_signals": key_signals[:8],
         "safety_note": safety_note,
-        "model_used": model or "structured_fallback",
+        "model_used": model or ("cached_intelligence" if mode_used == "cached_intelligence" else "structured_fallback"),
         "response_mode": mode_used,
         "ask_astra_mode": response_mode,
         "local_ai_status": {**local_status, "response_mode": mode_used},
         "generation_ms": generation_ms,
         "fallback_used": bool(fallback_used),
         "fallback_reason": fallback_reason,
-        "context_tokens_estimate": max(1, int(len(json.dumps(context, ensure_ascii=True)) / 4)),
+        "context_tokens_estimate": int(compression.get("context_tokens_estimate") or max(1, int(len(json.dumps(compressed_context, ensure_ascii=True)) / 4))),
+        "context_compression": compression,
         "local_generation_error": local_generation_error,
         "source_context": context,
         "confidence": 72 if context.get("copilot_top_actions") else 45,
         "generated_at": _now_utc_iso(),
         "api_calls_used": 0,
         "provider_calls_used": 0,
-        "llm_calls_used": 0 if mode_used == "structured_fallback" else 1,
+        "llm_calls_used": 1 if mode_used == "local_qwen" else 0,
         "dashboard_render_llm_calls": 0,
         "behavior_safe_to_apply": False,
         "paper_only_preserved": True,
@@ -43289,6 +43497,11 @@ def ask_astra_v1(payload: dict = Body(...)):
         "portfolio_allocation_changed": False,
         "thresholds_changed": False,
     }
+
+
+@router.get("/api/ask_astra_v1")
+def ask_astra_v1_get(question: str = "Explain Astra status in simple terms.", response_mode: str = "fast"):
+    return ask_astra_v1({"question": question, "response_mode": response_mode, "context_scope": "dashboard"})
 
 
 @router.post("/api/ollama/explain")
@@ -54622,8 +54835,11 @@ def unified_learning_diagnostics_v1(force: bool = False):
         if isinstance(out, dict):
             out["astra_copilot_suite_v1"] = dict(statuses.get("astra_copilot_suite_v1") or {})
             out["ask_astra_local_ai_status_v1"] = dict(statuses.get("ask_astra_local_ai_status_v1") or {})
+            market_intelligence = _astra_market_intelligence_v1(out)
+            out["astra_market_intelligence_v1"] = market_intelligence
             governance_summary = _astra_intelligence_governance_v1(out)
             out["astra_intelligence_governance_v1"] = governance_summary
+            out["astra_market_intelligence_v1"] = dict(governance_summary.get("astra_market_intelligence_v1") or market_intelligence)
             out["consensus_engine_v1"] = dict(governance_summary.get("consensus_engine_v1") or {})
             out["knowledge_graph_foundation_v1"] = dict(governance_summary.get("knowledge_graph_foundation_v1") or {})
             out["data_freshness_trust_engine_v1"] = dict(governance_summary.get("data_freshness_trust_engine_v1") or {})

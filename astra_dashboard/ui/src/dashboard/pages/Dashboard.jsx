@@ -642,6 +642,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
   const astraExecutive = unifiedDiagnostics?.astra_executive_polish_v1 || {};
   const astraCeo = unifiedDiagnostics?.astra_ceo_polish_v1 || {};
   const astraGovernance = unifiedDiagnostics?.astra_intelligence_governance_v1 || {};
+  const astraMarketIntelligence = unifiedDiagnostics?.astra_market_intelligence_v1 || {};
   const copilotRows = opportunityRows.map((row) => {
     const action = row.confidence >= 82 ? "BUY_NOW" : row.confidence >= 68 ? "WATCH_CLOSELY" : "HOLD";
     const signalLabel = action === "BUY_NOW" ? "🟢 Buy Now" : action === "WATCH_CLOSELY" ? "🟡 Watch Closely" : "🔵 Hold";
@@ -700,7 +701,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
   const actionCenterItems = [
     copilotRows.some((r) => r.action === "BUY_NOW") ? "Buy after confirmation: review top Copilot buy-now names" : "Buy after confirmation: wait for stronger confirmation",
     "Hold validated leaders: keep broker truth and paper state separated",
-    "Watch catalyst changes: monitor theme persistence before chasing",
+    astraMarketIntelligence?.strongest_pillar ? `Market pillar: strongest support is ${astraMarketIntelligence.strongest_pillar}` : "Watch catalyst changes: monitor theme persistence before chasing",
     astraGovernance?.highest_priority_fix ? `Governance focus: ${astraGovernance.highest_priority_fix}` : "Prepare exits: review profit capture without enabling automatic sells",
   ];
   const radarItems = [
@@ -708,6 +709,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     `Catalyst Watch: ${strongestTheme}`,
     `Horizon Watch: ${copilotRows[0]?.horizon || "warming up"}`,
     `Market Regime Watch: ${marketTone}${marketBiasSource ? ` / ${labelize(marketBiasSource)}` : ""}`,
+    `Market Pillars: ${astraMarketIntelligence?.market_regime_summary || "pillar context warming up"}`,
     `Governance Watch: ${astraGovernance?.biggest_blind_spot || "blind spots warming up"}`,
   ];
   const decisionSummary = [

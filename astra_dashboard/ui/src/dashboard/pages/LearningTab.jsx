@@ -1671,6 +1671,7 @@ export default function LearningTab({ compact = false }) {
   const knowledgeGraphFoundation = unified?.knowledge_graph_foundation_v1 || astraIntelligenceGovernance?.knowledge_graph_foundation_v1 || {};
   const dataFreshnessTrust = unified?.data_freshness_trust_engine_v1 || astraIntelligenceGovernance?.data_freshness_trust_engine_v1 || {};
   const dataCoverageEngine = unified?.data_coverage_engine_v1 || astraIntelligenceGovernance?.data_coverage_engine_v1 || {};
+  const astraMarketIntelligence = unified?.astra_market_intelligence_v1 || astraIntelligenceGovernance?.astra_market_intelligence_v1 || {};
   const metricDisplay = (metric, suffix = "") => {
     if (!metric || typeof metric !== "object") return "n/a";
     if (metric.value === null || metric.value === undefined) {
@@ -1957,6 +1958,41 @@ export default function LearningTab({ compact = false }) {
             ))}
           </div>
         </div>
+      </section>
+
+      <section style={{ background: "#ffffff", border: "1px solid #d8e3f2", borderRadius: 22, boxShadow: "0 18px 45px rgba(25, 47, 78, 0.10)", padding: 16, color: "#13243a" }}>
+        <details>
+          <summary style={{ cursor: "pointer", fontWeight: 900, color: "#13243a" }}>
+            Astra Market Intelligence
+            <span style={{ marginLeft: 10, color: "#667994", fontWeight: 700, fontSize: 12 }}>
+              score {safeNumber(astraMarketIntelligence?.market_intelligence_score).toFixed(1)} · alignment {safeNumber(astraMarketIntelligence?.pillar_alignment_score).toFixed(1)}
+            </span>
+          </summary>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginTop: 14 }}>
+            {[
+              ["Market Intelligence", safeNumber(astraMarketIntelligence?.market_intelligence_score).toFixed(1)],
+              ["Pillar Alignment", safeNumber(astraMarketIntelligence?.pillar_alignment_score).toFixed(1)],
+              ["Pillar Conflict", safeNumber(astraMarketIntelligence?.pillar_conflict_score).toFixed(1)],
+              ["Strongest Pillar", astraMarketIntelligence?.strongest_pillar || "warming up"],
+              ["Weakest Pillar", astraMarketIntelligence?.weakest_pillar || "warming up"],
+              ["Market Regime", astraMarketIntelligence?.market_regime || "warming up"],
+              ["Ask Speed", safeNumber(astraMarketIntelligence?.ask_astra_speed_score).toFixed(1)],
+              ["Context Compression", safeNumber(astraMarketIntelligence?.context_compression_score).toFixed(1)],
+            ].map(([label, value]) => (
+              <div key={label} style={{ border: "1px solid #dce6f3", borderRadius: 14, background: "#f7fbff", padding: "10px 11px" }}>
+                <div style={{ color: "#667994", fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+                <div style={{ color: "#13243a", fontSize: 16, fontWeight: 900, marginTop: 3 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, marginTop: 12 }}>
+            {[astraMarketIntelligence?.market_regime_summary, astraMarketIntelligence?.market_tailwind_summary, astraMarketIntelligence?.market_headwind_summary].filter(Boolean).map((line, idx) => (
+              <div key={`${idx}-${line}`} style={{ border: "1px solid #dce6f3", borderRadius: 14, background: "#f7fbff", padding: "10px 11px", color: "#314965", fontSize: 13, lineHeight: 1.45 }}>
+                {String(line).replaceAll("_", " ")}
+              </div>
+            ))}
+          </div>
+        </details>
       </section>
 
       <section style={{ background: "#ffffff", border: "1px solid #d8e3f2", borderRadius: 22, boxShadow: "0 18px 45px rgba(25, 47, 78, 0.10)", padding: 16, color: "#13243a" }}>
