@@ -3837,18 +3837,77 @@ def _discover_ollama_models_from_fs():
     return out
 
 
+def _ollama_tags_url():
+    raw = str(OLLAMA_API_URL or "http://127.0.0.1:11434/api/generate").strip()
+    if raw.endswith("/api/generate"):
+        return raw[: -len("/api/generate")] + "/api/tags"
+    if raw.endswith("/api/chat"):
+        return raw[: -len("/api/chat")] + "/api/tags"
+    if raw.endswith("/api/tags"):
+        return raw
+    return raw.rstrip("/") + "/api/tags"
+
+
+def _normalize_ollama_model_names(value):
+    names = []
+    if isinstance(value, dict):
+        candidates = value.get("models")
+        if candidates is None:
+            candidates = value.get("installed_models")
+        if candidates is None:
+            candidates = [value]
+    elif isinstance(value, list):
+        candidates = value
+    else:
+        candidates = []
+    for item in candidates:
+        if isinstance(item, dict):
+            name = str(item.get("name") or item.get("model") or item.get("digest") or "").strip()
+        else:
+            name = str(item or "").strip()
+        if name:
+            names.append(name)
+    return sorted(list(dict.fromkeys(names)), key=lambda x: x.lower())
+
+
 def _ollama_models_status():
     bin_path = shutil.which("ollama")
     status = {
         "available": bool(bin_path),
         "binary_path": bin_path or "",
         "installed_models": [],
+        "models": [],
         "selected_model": None,
         "error": "",
+        "source": "cli",
         "last_checked_utc": _now_utc_iso(),
     }
+    http_models = []
+    http_error = ""
+    try:
+        resp = requests.get(
+            _ollama_tags_url(),
+            timeout=3.5,
+            proxies={"http": "", "https": ""},
+        )
+        if resp.status_code == 200:
+            http_payload = resp.json() if "application/json" in str(resp.headers.get("content-type", "")).lower() else {}
+            http_models = _normalize_ollama_model_names(http_payload)
+            if http_models:
+                status["available"] = True
+                status["installed_models"] = http_models
+                status["models"] = [{"name": name, "model": name} for name in http_models]
+                status["selected_model"] = _best_ollama_model(http_models)
+                status["source"] = "ollama_api_tags"
+                status["error"] = ""
+                return status
+        else:
+            http_error = f"tags_status_{resp.status_code}"
+    except Exception as exc:
+        http_error = f"tags_error:{str(exc)[:120]}"
+
     if not bin_path:
-        status["error"] = "ollama_not_installed"
+        status["error"] = http_error or "ollama_not_installed"
         return status
     try:
         proc = subprocess.run(
@@ -3864,8 +3923,10 @@ def _ollama_models_status():
             models_fs = _discover_ollama_models_from_fs()
             if models_fs:
                 status["installed_models"] = models_fs
+                status["models"] = [{"name": name, "model": name} for name in models_fs]
                 status["selected_model"] = _best_ollama_model(models_fs)
                 status["error"] = status["error"] + " | daemon_unavailable_fs_fallback"
+                status["source"] = "filesystem_fallback"
             return status
         models = []
         for line in raw.splitlines():
@@ -3876,22 +3937,28 @@ def _ollama_models_status():
             if model:
                 models.append(model)
         status["installed_models"] = models
+        status["models"] = [{"name": name, "model": name} for name in models]
         status["selected_model"] = _best_ollama_model(models)
+        status["source"] = "ollama_cli_list"
         if not status["selected_model"]:
             models_fs = _discover_ollama_models_from_fs()
             if models_fs:
                 status["installed_models"] = models_fs
+                status["models"] = [{"name": name, "model": name} for name in models_fs]
                 status["selected_model"] = _best_ollama_model(models_fs)
                 status["error"] = "daemon_list_empty_fs_fallback"
+                status["source"] = "filesystem_fallback"
             else:
-                status["error"] = "no_models_installed"
+                status["error"] = http_error or "no_models_installed"
     except Exception as e:
-        status["error"] = str(e)[:220]
+        status["error"] = (str(e)[:220] + (f" | {http_error}" if http_error else "")).strip()
         models_fs = _discover_ollama_models_from_fs()
         if models_fs:
             status["installed_models"] = models_fs
+            status["models"] = [{"name": name, "model": name} for name in models_fs]
             status["selected_model"] = _best_ollama_model(models_fs)
             status["error"] = status["error"] + " | daemon_exception_fs_fallback"
+            status["source"] = "filesystem_fallback"
     return status
 
 
@@ -3957,7 +4024,16 @@ def _ollama_run_prompt(prompt, model=None, timeout_seconds=None):
     try:
         resp = requests.post(
             OLLAMA_API_URL,
-            json={"model": selected, "prompt": str(prompt or ""), "stream": False},
+            json={
+                "model": selected,
+                "prompt": str(prompt or ""),
+                "stream": False,
+                "options": {
+                    "temperature": 0.2,
+                    "num_predict": 260,
+                    "num_ctx": 4096,
+                },
+            },
             timeout=max(1.0, timeout),
             proxies={"http": "", "https": ""},
         )
@@ -42304,15 +42380,7 @@ def _astra_local_ai_status_v1(force=False):
         raw = _ollama_models_status_cached(force=bool(force))
     except Exception as exc:
         raw = {"available": False, "models": [], "error": str(exc)[:160]}
-    models = raw.get("models") if isinstance(raw.get("models"), list) else []
-    model_names = []
-    for model in models:
-        if isinstance(model, dict):
-            name = str(model.get("name") or model.get("model") or "").strip()
-        else:
-            name = str(model or "").strip()
-        if name:
-            model_names.append(name)
+    model_names = _normalize_ollama_model_names(raw)
     model_lc = {m.lower(): m for m in model_names}
     primary = "qwen3:8b"
     fallback = "qwen3:14b"
@@ -42336,6 +42404,8 @@ def _astra_local_ai_status_v1(force=False):
         "primary_model_available": bool(primary_available),
         "fallback_model_available": bool(fallback_available),
         "available_models": model_names[:12],
+        "model_detection_source": str(raw.get("source") or "unknown"),
+        "model_detection_error": str(raw.get("error") or ""),
         "last_health_check": raw.get("last_checked_utc") or raw.get("generated_at") or _now_utc_iso(),
         "response_mode": response_mode,
         "structured_fallback_available": True,
@@ -42353,8 +42423,9 @@ def _astra_local_ai_status_v1(force=False):
     }
 
 
-def _copilot_action_from_row(row, idx=0, action=None):
+def _copilot_action_from_row(row, idx=0, action=None, active_symbols=None):
     r = row if isinstance(row, dict) else {}
+    active = set(active_symbols or [])
     symbol = str(r.get("symbol") or r.get("ticker") or r.get("asset") or "N/A").upper()
     confidence = _to_float(
         r.get("confidence")
@@ -42380,9 +42451,17 @@ def _copilot_action_from_row(row, idx=0, action=None):
         or r.get("ranked_universe_action_explanation")
         or "Astra sees supportive cached ranking, confidence, and setup context."
     )
+    simple_why = _safe_text(
+        why
+        if why and why != "Astra sees supportive cached ranking, confidence, and setup context."
+        else f"Astra ranks {symbol} well on cached confidence, horizon fit, and current setup quality.",
+        220,
+    )
     selected_action = action
     if not selected_action:
-        if confidence >= 82:
+        if symbol in active:
+            selected_action = "HOLD"
+        elif confidence >= 82:
             selected_action = "BUY_NOW"
         elif confidence >= 68:
             selected_action = "WATCH_CLOSELY"
@@ -42396,6 +42475,7 @@ def _copilot_action_from_row(row, idx=0, action=None):
         "confidence": round(confidence, 2),
         "horizon": horizon,
         "expected_hold_window": str(r.get("expected_hold_window") or r.get("best_hold_window") or horizon),
+        "simple_why": simple_why,
         "why_astra_chose_it": _safe_text(why, 240),
         "simple_summary": _safe_text(f"{symbol}: {selected_action.replace('_', ' ').title()} with {confidence:.0f}% confidence on a {horizon} horizon.", 220),
         "risk_level": str(r.get("portfolio_risk_label") or r.get("risk_label") or "risk_warming_up"),
@@ -42438,7 +42518,18 @@ def _astra_copilot_suite_v1(limit=12, force=False):
         rows = []
     if not rows:
         rows = ((top_payload.get("stocks") or {}).get("final") or []) if isinstance(top_payload, dict) else []
-    actions = [_copilot_action_from_row(row, idx) for idx, row in enumerate((rows or [])[: max(1, int(_to_float(limit, 12)))])]
+    cached_alpaca = ((_CACHE.get("alpaca_paper_status_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
+    position_rows = []
+    if isinstance(cached_alpaca, dict):
+        for key in ("positions", "paper_positions", "active_positions"):
+            if isinstance(cached_alpaca.get(key), list):
+                position_rows.extend(cached_alpaca.get(key) or [])
+    active_symbols = {
+        str((p or {}).get("symbol") or (p or {}).get("ticker") or "").upper()
+        for p in position_rows
+        if isinstance(p, dict) and str((p or {}).get("symbol") or (p or {}).get("ticker") or "").strip()
+    }
+    actions = [_copilot_action_from_row(row, idx, active_symbols=active_symbols) for idx, row in enumerate((rows or [])[: max(1, int(_to_float(limit, 12)))])]
     actions_by_type = {}
     for item in actions:
         actions_by_type.setdefault(str(item.get("action") or "UNKNOWN"), []).append(item)
@@ -42459,6 +42550,14 @@ def _astra_copilot_suite_v1(limit=12, force=False):
         },
         "source_summary": {
             "top_buys_rows_seen": int(len(rows or [])),
+            "broker_truth_source": "cached_alpaca_paper_status_v1",
+            "broker_confirmed_symbols_seen": sorted(active_symbols)[:20],
+            "paper_trading_state_source": "cached_paper_status",
+            "shadow_learning_source": "unified_diagnostics_shadow_summaries",
+            "horizon_intelligence_source": "horizon_lifecycle_readiness",
+            "exit_profit_retention_source": "profit_capture_and_exit_validation_summaries",
+            "catalyst_context_source": "cached_candidate_catalyst_theme_fields",
+            "market_regime_context_source": "cached_market_context_fields",
             "ranking_logic_changed": False,
             "entry_logic_changed": False,
             "exit_logic_changed": False,
@@ -42490,9 +42589,11 @@ def _dashboard_data_wiring_summary_v1(unified_payload=None):
         ("Market Environment", "system_status + market_breadth_index_intelligence_v1", "/api/system_status + /api/unified_learning_diagnostics_v1"),
         ("Astra Brief", "unified diagnostics executive summary", "/api/unified_learning_diagnostics_v1"),
         ("Copilot Guidance", "astra_copilot_suite_v1 from cached top_buys", "/api/top_buys + cached dashboard state"),
+        ("Action Center", "astra_copilot_suite_v1 priorities", "/api/unified_learning_diagnostics_v1"),
+        ("Radar", "catalyst + market watch diagnostics", "/api/unified_learning_diagnostics_v1"),
         ("Ask Astra", "local_ai_status_v1", "/api/ask_astra_v1 user-triggered only"),
         ("Portfolio Overview", "positions cache", "/api/positions"),
-        ("Astra Performance", "performance_summary", "/api/unified_learning_diagnostics_v1"),
+        ("Astra Performance", "broker truth + performance truth", "/api/positions + /api/unified_learning_diagnostics_v1"),
         ("Learning Center", "unified diagnostics", "/api/unified_learning_diagnostics_v1"),
     ]
     card_rows = []
@@ -42501,6 +42602,10 @@ def _dashboard_data_wiring_summary_v1(unified_payload=None):
         missing_fields = []
         if has_payload and name == "Astra Performance" and not p.get("performance_summary"):
             missing_fields.append("performance_summary")
+        if has_payload and name == "Copilot Guidance" and not p.get("astra_copilot_suite_v1"):
+            missing_fields.append("astra_copilot_suite_v1")
+        if has_payload and name == "Ask Astra" and not p.get("ask_astra_local_ai_status_v1"):
+            missing_fields.append("ask_astra_local_ai_status_v1")
         if has_payload and name == "Learning Center" and not p:
             missing_fields.append("unified_payload")
         if missing_fields:
@@ -42558,12 +42663,35 @@ def ask_astra_v1(payload: dict = Body(...)):
     response_mode = str(data.get("response_mode") or "auto").strip().lower()
     local_status = _astra_local_ai_status_v1(force=False)
     copilot = _astra_copilot_suite_v1(limit=5, force=False)
+    top_actions = copilot.get("top_actions") or []
+    top_action = top_actions[0] if top_actions else {}
+    key_signals = []
+    if top_action:
+        key_signals.extend([
+            f"Top Copilot action: {top_action.get('action')} for {top_action.get('symbol')}",
+            f"Confidence: {top_action.get('confidence')}%",
+            f"Horizon: {top_action.get('horizon')}",
+        ])
+    key_signals.extend([
+        "Ranking, entry, exit, sizing, allocation, and broker behavior are unchanged.",
+        "Copilot guidance is advisory-only and sourced from cached Astra diagnostics.",
+    ])
     context = {
         "question": question,
         "selected_symbol": selected_symbol,
         "context_scope": str(data.get("context_scope") or "dashboard"),
-        "copilot_top_actions": copilot.get("top_actions") or [],
+        "copilot_top_actions": top_actions,
         "copilot_status": copilot.get("status"),
+        "key_supporting_astra_signals": key_signals,
+        "supported_question_types": [
+            "explain_status",
+            "why_astra_chose_this",
+            "what_changed_today",
+            "approaching_sell_review",
+            "what_astra_is_learning",
+            "biggest_opportunity",
+            "today_market_explanation",
+        ],
         "safety": {
             "advisory_only": True,
             "paper_only_preserved": True,
@@ -42585,11 +42713,14 @@ def ask_astra_v1(payload: dict = Body(...)):
             model = str(local_status.get("selected_model") or "")
     answer = ""
     mode_used = "structured_fallback"
+    local_generation_error = ""
     if model:
         prompt = (
             "You are Ask Astra, a paper-safe investment intelligence copilot. "
-            "Use only the supplied Astra JSON context. Do not suggest live trading, broker actions, forced exits, "
-            "sizing changes, allocation changes, or threshold changes. Be concise, practical, and explain why.\n\n"
+            "Use only the supplied Astra JSON context. Do not answer like a generic chatbot. "
+            "Keep it simple, plain-English, and grounded in Astra's data. "
+            "Do not suggest live trading, broker actions, forced exits, sizing changes, allocation changes, or threshold changes. "
+            "Return these sections: Short answer, Plain-English explanation, Key Astra signals, Safety note.\n\n"
             f"Question: {question}\n\n"
             f"Astra context JSON:\n{json.dumps(context, ensure_ascii=True)}"
         )
@@ -42597,32 +42728,48 @@ def ask_astra_v1(payload: dict = Body(...)):
             run_out = _ollama_run_prompt(prompt, model=model, timeout_seconds=55)
             if isinstance(run_out, dict):
                 answer = str(run_out.get("text") or "").strip()
+                local_generation_error = str(run_out.get("error") or "")
             else:
                 answer = str(run_out or "").strip()
             if answer:
                 mode_used = "local_qwen"
         except Exception:
+            local_generation_error = "local_qwen_exception"
             answer = ""
     if not answer:
         actions = context.get("copilot_top_actions") or []
         first = actions[0] if actions else {}
         if first:
-            answer = (
-                f"Local AI is unavailable, so I am answering from Astra's cached Copilot context. "
-                f"Top action: {first.get('action')} for {first.get('symbol')} at {first.get('confidence')}% confidence. "
-                f"Horizon: {first.get('horizon')}. Why: {first.get('why_astra_chose_it')}. "
-                "This is advisory-only and does not change ranking, entries, exits, sizing, allocation, or broker behavior."
-            )
+            answer = "\n".join([
+                f"Short answer: Astra's strongest current Copilot item is {first.get('action')} for {first.get('symbol')}.",
+                f"Plain-English explanation: Astra likes it because {first.get('simple_why') or first.get('why_astra_chose_it')}. The current expected horizon is {first.get('horizon')}.",
+                "Key Astra signals:",
+                f"- Confidence: {first.get('confidence')}%",
+                f"- Risk level: {first.get('risk_level')}",
+                f"- Supporting systems: {', '.join(first.get('contributing_systems') or [])}",
+                "Safety note: This is advisory-only. Astra did not change rankings, entries, exits, sizing, allocation, thresholds, or broker behavior.",
+            ])
         else:
-            answer = (
-                "Local AI is unavailable and Copilot context is still warming up. "
-                "Astra remains paper-safe and advisory-only; no trading behavior was changed."
-            )
+            answer = "\n".join([
+                "Short answer: Astra's Copilot context is still warming up.",
+                "Plain-English explanation: There is not enough cached Copilot data to explain a specific action yet.",
+                "Key Astra signals:",
+                "- Cached Copilot top actions are unavailable.",
+                "- Structured fallback is working.",
+                "Safety note: Astra remains paper-safe and advisory-only; no trading behavior was changed.",
+            ])
+    short_answer = answer.splitlines()[0].replace("Short answer:", "").strip() if answer else ""
+    safety_note = "Advisory-only. No live trading, broker behavior, ranking, entry, exit, sizing, allocation, or threshold changes."
     return {
         "ok": True,
         "answer": _safe_text(answer, 4000),
+        "short_answer": _safe_text(short_answer, 360),
+        "plain_english_explanation": _safe_text(answer, 1200),
+        "key_supporting_astra_signals": key_signals[:8],
+        "safety_note": safety_note,
         "model_used": model or "structured_fallback",
         "local_ai_status": {**local_status, "response_mode": mode_used},
+        "local_generation_error": local_generation_error,
         "source_context": context,
         "confidence": 72 if context.get("copilot_top_actions") else 45,
         "generated_at": _now_utc_iso(),
@@ -53973,10 +54120,10 @@ def unified_learning_diagnostics_v1(force: bool = False):
         sources["statuses"] = statuses
         out = UNIFIED_LEARNING_DIAGNOSTICS.build(sources, force=bool(force))
         if isinstance(out, dict):
-            wiring_summary = _dashboard_data_wiring_summary_v1(out)
-            out["dashboard_data_wiring_v1"] = wiring_summary
             out["astra_copilot_suite_v1"] = dict(statuses.get("astra_copilot_suite_v1") or {})
             out["ask_astra_local_ai_status_v1"] = dict(statuses.get("ask_astra_local_ai_status_v1") or {})
+            wiring_summary = _dashboard_data_wiring_summary_v1(out)
+            out["dashboard_data_wiring_v1"] = wiring_summary
             out["dashboard_cards_wired"] = int(wiring_summary.get("dashboard_cards_wired", 0))
             out["dashboard_cards_missing_data"] = int(wiring_summary.get("dashboard_cards_missing_data", 0))
             out["dashboard_data_wiring_status"] = str(wiring_summary.get("dashboard_data_wiring_status") or "partial")
