@@ -47,15 +47,15 @@ class AppErrorBoundary extends Component {
 }
 
 const primaryTabs = [
-  { id: "dashboard", label: "Dashboard", icon: "dashboard" },
-  { id: "copilot", label: "Copilot", icon: "copilot" },
-  { id: "portfolio", label: "Portfolio", icon: "portfolio" },
-  { id: "watchlists", label: "Watchlists", icon: "watchlists" },
-  { id: "ask", label: "Ask Astra", icon: "ask" },
-  { id: "learning", label: "Learning Center", icon: "learning" },
-  { id: "alerts", label: "Alerts", icon: "alerts" },
-  { id: "reports", label: "Reports", icon: "reports" },
-  { id: "settings", label: "Settings", icon: "settings" },
+  { id: "dashboard", label: "🏠 Dashboard", icon: "dashboard" },
+  { id: "copilot", label: "🤖 Copilot", icon: "copilot" },
+  { id: "portfolio", label: "💼 Portfolio", icon: "portfolio" },
+  { id: "watchlists", label: "👀 Watchlists", icon: "watchlists" },
+  { id: "ask", label: "💬 Ask Astra", icon: "ask" },
+  { id: "learning", label: "🧠 Learning Center", icon: "learning" },
+  { id: "alerts", label: "🚨 Alerts", icon: "alerts" },
+  { id: "reports", label: "📄 Reports", icon: "reports" },
+  { id: "settings", label: "⚙️ Settings", icon: "settings" },
 ];
 
 const moreLinks = [
@@ -187,12 +187,12 @@ function AskAstraPage({ initialQuestion = "" }) {
       init: {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ question: cleanQuestion, context_scope: "copilot", response_mode: "auto" }),
+        body: JSON.stringify({ question: cleanQuestion, context_scope: "copilot", response_mode: "fast" }),
       },
     });
     if (result.ok && result.parsed?.ok) {
       setStatus("ready");
-      setMessage(`Response mode: ${result.parsed?.local_ai_status?.response_mode || "structured_fallback"}.`);
+      setMessage(`Mode: ${result.parsed?.ask_astra_mode || "fast"} · Response: ${result.parsed?.response_mode || result.parsed?.local_ai_status?.response_mode || "structured_fallback"} · ${result.parsed?.generation_ms ?? 0}ms.`);
       setAnswer(String(result.parsed?.answer || ""));
       setLocalStatus(result.parsed?.local_ai_status || localStatus || {});
     } else {

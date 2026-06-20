@@ -4001,7 +4001,7 @@ def _json_from_maybe_markdown(raw):
     return {}
 
 
-def _ollama_run_prompt(prompt, model=None, timeout_seconds=None):
+def _ollama_run_prompt(prompt, model=None, timeout_seconds=None, *, num_predict=260, num_ctx=4096, temperature=0.2):
     status = _ollama_models_status_cached()
     timeout = float(timeout_seconds or OLLAMA_INLINE_EXPLAIN_TIMEOUT_SECONDS)
     selected = str(model or "").strip()
@@ -4029,9 +4029,9 @@ def _ollama_run_prompt(prompt, model=None, timeout_seconds=None):
                 "prompt": str(prompt or ""),
                 "stream": False,
                 "options": {
-                    "temperature": 0.2,
-                    "num_predict": 260,
-                    "num_ctx": 4096,
+                    "temperature": float(temperature),
+                    "num_predict": int(num_predict),
+                    "num_ctx": int(num_ctx),
                 },
             },
             timeout=max(1.0, timeout),
@@ -42588,6 +42588,8 @@ def _dashboard_data_wiring_summary_v1(unified_payload=None):
     cards = [
         ("Market Environment", "system_status + market_breadth_index_intelligence_v1", "/api/system_status + /api/unified_learning_diagnostics_v1"),
         ("Astra Brief", "unified diagnostics executive summary", "/api/unified_learning_diagnostics_v1"),
+        ("Astra Executive", "astra_executive_polish_v1", "/api/unified_learning_diagnostics_v1"),
+        ("Astra CEO", "astra_ceo_polish_v1", "/api/unified_learning_diagnostics_v1"),
         ("Copilot Guidance", "astra_copilot_suite_v1 from cached top_buys", "/api/top_buys + cached dashboard state"),
         ("Action Center", "astra_copilot_suite_v1 priorities", "/api/unified_learning_diagnostics_v1"),
         ("Radar", "catalyst + market watch diagnostics", "/api/unified_learning_diagnostics_v1"),
@@ -42606,6 +42608,10 @@ def _dashboard_data_wiring_summary_v1(unified_payload=None):
             missing_fields.append("astra_copilot_suite_v1")
         if has_payload and name == "Ask Astra" and not p.get("ask_astra_local_ai_status_v1"):
             missing_fields.append("ask_astra_local_ai_status_v1")
+        if has_payload and name == "Astra Executive" and not p.get("astra_executive_polish_v1"):
+            missing_fields.append("astra_executive_polish_v1")
+        if has_payload and name == "Astra CEO" and not p.get("astra_ceo_polish_v1"):
+            missing_fields.append("astra_ceo_polish_v1")
         if has_payload and name == "Learning Center" and not p:
             missing_fields.append("unified_payload")
         if missing_fields:
@@ -42638,6 +42644,93 @@ def _dashboard_data_wiring_summary_v1(unified_payload=None):
     }
 
 
+def _astra_executive_summary_v1(unified_payload=None, copilot_payload=None):
+    p = unified_payload if isinstance(unified_payload, dict) else {}
+    copilot = copilot_payload if isinstance(copilot_payload, dict) else {}
+    perf = p.get("performance_summary") if isinstance(p.get("performance_summary"), dict) else {}
+    portfolio = p.get("portfolio_health_summary") if isinstance(p.get("portfolio_health_summary"), dict) else {}
+    wiring = p.get("dashboard_data_wiring_v1") if isinstance(p.get("dashboard_data_wiring_v1"), dict) else {}
+    top_actions = copilot.get("top_actions") if isinstance(copilot.get("top_actions"), list) else []
+    top = top_actions[0] if top_actions else {}
+    pf = (perf.get("profit_factor") or {}).get("value") if isinstance(perf.get("profit_factor"), dict) else perf.get("profit_factor")
+    buy_purity = (perf.get("buy_list_purity") or {}).get("value") if isinstance(perf.get("buy_list_purity"), dict) else perf.get("buy_list_purity")
+    portfolio_heat = portfolio.get("portfolio_heat") if isinstance(portfolio.get("portfolio_heat"), dict) else {}
+    heat_label = str(portfolio_heat.get("label") or portfolio.get("risk_label") or "warming up").replace("_", " ")
+    market_outlook = "Constructive but selective." if _to_float(pf, 0.0) >= 1.0 else "Guarded until performance evidence improves."
+    needs_attention = "Profit capture, catalyst clarity, and follow-through remain the main operating watchpoints."
+    if _to_float(buy_purity, 0.0) >= 70:
+        needs_attention = "Selection quality is supportive; profit capture and catalyst clarity remain the main watchpoints."
+    top_opportunity = (
+        f"{top.get('symbol')} is the highest current Copilot item ({top.get('action')}, {top.get('confidence')}% confidence)."
+        if top else
+        "Copilot opportunity context is warming up."
+    )
+    return {
+        "ok": True,
+        "suite": "Astra Executive Polish V1",
+        "style": "coo_operational_compression",
+        "market_outlook_summary": market_outlook,
+        "needs_attention_summary": needs_attention,
+        "portfolio_health_summary": f"Portfolio health is {heat_label}; broker truth remains source-aware and paper-only.",
+        "system_health_summary": "Dashboard wiring is healthy." if wiring.get("dashboard_data_wiring_status") == "ok" else "Dashboard wiring is partially warmed up.",
+        "learning_focus_summary": "Keep learning focused on profit retention, catalyst quality, horizon participation, and ranking reliability.",
+        "top_risk_summary": "Do not loosen execution controls until exit quality and catalyst confidence stay stable.",
+        "top_opportunity_summary": top_opportunity,
+        "executive_priority_queue": [
+            "Protect paper-only and advisory-first controls.",
+            "Keep Copilot compact and source-aware.",
+            "Improve profit capture and catalyst confidence.",
+            "Watch horizon participation without forcing quotas.",
+        ],
+        "api_calls_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "behavior_safe_to_apply": False,
+        "paper_only_preserved": True,
+        "live_trading_changed": False,
+        "broker_behavior_changed": False,
+        "ranking_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "exit_behavior_changed": False,
+    }
+
+
+def _astra_ceo_summary_v1(executive_payload=None, unified_payload=None):
+    executive = executive_payload if isinstance(executive_payload, dict) else {}
+    p = unified_payload if isinstance(unified_payload, dict) else {}
+    confidence = _to_float(p.get("dashboard_data_trust_score"), 0.0)
+    strategic_posture = "Selective and evidence-led."
+    if confidence >= 90:
+        confidence_statement = "Astra's dashboard wiring and diagnostics are healthy enough for concise executive review."
+    else:
+        confidence_statement = "Astra has useful context, but some dashboard sources are still warming up."
+    return {
+        "ok": True,
+        "suite": "Astra CEO Polish V1",
+        "style": "strategic_plain_english",
+        "plain_english_take": (
+            "Astra is finding opportunities, but it is still being careful with exits, catalyst confidence, "
+            "and horizon balance before allowing more aggressive behavior."
+        ),
+        "strategic_posture": strategic_posture,
+        "what_astra_is_doing": "Compressing rankings, paper state, learning diagnostics, and Copilot actions into a safer executive view.",
+        "what_astra_is_avoiding": "No live trading, forced trades, automatic exits, sizing changes, allocation changes, or threshold changes.",
+        "what_astra_should_learn_next": executive.get("learning_focus_summary") or "Profit retention, catalyst quality, and ranking reliability.",
+        "roadmap_priority_summary": "Polish decision visibility first; promote behavior only after validated paper-safe evidence.",
+        "confidence_statement": confidence_statement,
+        "api_calls_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "behavior_safe_to_apply": False,
+        "paper_only_preserved": True,
+        "live_trading_changed": False,
+        "broker_behavior_changed": False,
+        "ranking_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "exit_behavior_changed": False,
+    }
+
+
 @router.get("/api/ask_astra_status_v1")
 def ask_astra_status_v1(force: bool = False):
     return _astra_local_ai_status_v1(force=bool(force))
@@ -42660,9 +42753,15 @@ def ask_astra_v1(payload: dict = Body(...)):
     if not question:
         return {"ok": False, "error": "question_required"}
     selected_symbol = str(data.get("selected_symbol") or "").strip().upper()
-    response_mode = str(data.get("response_mode") or "auto").strip().lower()
+    response_mode = str(data.get("response_mode") or data.get("mode") or "fast").strip().lower()
+    if response_mode == "auto":
+        response_mode = "fast"
+    if response_mode not in {"fast", "normal", "deep"}:
+        response_mode = "fast"
     local_status = _astra_local_ai_status_v1(force=False)
     copilot = _astra_copilot_suite_v1(limit=5, force=False)
+    executive = _astra_executive_summary_v1({}, copilot)
+    ceo = _astra_ceo_summary_v1(executive, {})
     top_actions = copilot.get("top_actions") or []
     top_action = top_actions[0] if top_actions else {}
     key_signals = []
@@ -42682,6 +42781,18 @@ def ask_astra_v1(payload: dict = Body(...)):
         "context_scope": str(data.get("context_scope") or "dashboard"),
         "copilot_top_actions": top_actions,
         "copilot_status": copilot.get("status"),
+        "executive_summary": {
+            "market_outlook_summary": executive.get("market_outlook_summary"),
+            "needs_attention_summary": executive.get("needs_attention_summary"),
+            "top_opportunity_summary": executive.get("top_opportunity_summary"),
+            "executive_priority_queue": executive.get("executive_priority_queue"),
+        },
+        "ceo_summary": {
+            "plain_english_take": ceo.get("plain_english_take"),
+            "strategic_posture": ceo.get("strategic_posture"),
+            "what_astra_is_avoiding": ceo.get("what_astra_is_avoiding"),
+            "confidence_statement": ceo.get("confidence_statement"),
+        },
         "key_supporting_astra_signals": key_signals,
         "supported_question_types": [
             "explain_status",
@@ -42702,7 +42813,12 @@ def ask_astra_v1(payload: dict = Body(...)):
             "exit_behavior_changed": False,
         },
     }
-    wants_deep_reasoning = response_mode in {"long", "deep", "reasoning"} or len(question) > 180
+    mode_cfg = {
+        "fast": {"timeout": 18, "num_predict": 120, "num_ctx": 2048, "temperature": 0.1},
+        "normal": {"timeout": 35, "num_predict": 220, "num_ctx": 3072, "temperature": 0.15},
+        "deep": {"timeout": 70, "num_predict": 420, "num_ctx": 4096, "temperature": 0.2},
+    }[response_mode]
+    wants_deep_reasoning = response_mode == "deep" or len(question) > 220
     model = ""
     if local_status.get("ollama_reachable"):
         if wants_deep_reasoning and local_status.get("fallback_model_available"):
@@ -42714,18 +42830,25 @@ def ask_astra_v1(payload: dict = Body(...)):
     answer = ""
     mode_used = "structured_fallback"
     local_generation_error = ""
+    generation_start = time.perf_counter()
     if model:
         prompt = (
             "You are Ask Astra, a paper-safe investment intelligence copilot. "
-            "Use only the supplied Astra JSON context. Do not answer like a generic chatbot. "
-            "Keep it simple, plain-English, and grounded in Astra's data. "
+            "Use only the supplied Astra JSON context. Keep it simple, plain-English, and grounded in Astra's data. "
             "Do not suggest live trading, broker actions, forced exits, sizing changes, allocation changes, or threshold changes. "
-            "Return these sections: Short answer, Plain-English explanation, Key Astra signals, Safety note.\n\n"
+            "Answer in four concise sections: Short answer, Plain-English explanation, Key Astra signals, Safety note.\n\n"
             f"Question: {question}\n\n"
             f"Astra context JSON:\n{json.dumps(context, ensure_ascii=True)}"
         )
         try:
-            run_out = _ollama_run_prompt(prompt, model=model, timeout_seconds=55)
+            run_out = _ollama_run_prompt(
+                prompt,
+                model=model,
+                timeout_seconds=mode_cfg["timeout"],
+                num_predict=mode_cfg["num_predict"],
+                num_ctx=mode_cfg["num_ctx"],
+                temperature=mode_cfg["temperature"],
+            )
             if isinstance(run_out, dict):
                 answer = str(run_out.get("text") or "").strip()
                 local_generation_error = str(run_out.get("error") or "")
@@ -42736,6 +42859,9 @@ def ask_astra_v1(payload: dict = Body(...)):
         except Exception:
             local_generation_error = "local_qwen_exception"
             answer = ""
+    generation_ms = round((time.perf_counter() - generation_start) * 1000.0, 2)
+    fallback_used = not bool(answer)
+    fallback_reason = local_generation_error if fallback_used and local_generation_error else ("local_model_unavailable" if fallback_used and not model else "")
     if not answer:
         actions = context.get("copilot_top_actions") or []
         first = actions[0] if actions else {}
@@ -42768,7 +42894,13 @@ def ask_astra_v1(payload: dict = Body(...)):
         "key_supporting_astra_signals": key_signals[:8],
         "safety_note": safety_note,
         "model_used": model or "structured_fallback",
+        "response_mode": mode_used,
+        "ask_astra_mode": response_mode,
         "local_ai_status": {**local_status, "response_mode": mode_used},
+        "generation_ms": generation_ms,
+        "fallback_used": bool(fallback_used),
+        "fallback_reason": fallback_reason,
+        "context_tokens_estimate": max(1, int(len(json.dumps(context, ensure_ascii=True)) / 4)),
         "local_generation_error": local_generation_error,
         "source_context": context,
         "confidence": 72 if context.get("copilot_top_actions") else 45,
@@ -54122,6 +54254,8 @@ def unified_learning_diagnostics_v1(force: bool = False):
         if isinstance(out, dict):
             out["astra_copilot_suite_v1"] = dict(statuses.get("astra_copilot_suite_v1") or {})
             out["ask_astra_local_ai_status_v1"] = dict(statuses.get("ask_astra_local_ai_status_v1") or {})
+            out["astra_executive_polish_v1"] = _astra_executive_summary_v1(out, out.get("astra_copilot_suite_v1") or {})
+            out["astra_ceo_polish_v1"] = _astra_ceo_summary_v1(out.get("astra_executive_polish_v1") or {}, out)
             wiring_summary = _dashboard_data_wiring_summary_v1(out)
             out["dashboard_data_wiring_v1"] = wiring_summary
             out["dashboard_cards_wired"] = int(wiring_summary.get("dashboard_cards_wired", 0))

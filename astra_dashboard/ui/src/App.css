@@ -1,18 +1,18 @@
 :root {
-  --astra-bg: #f3f7fc;
-  --astra-bg-2: #eef4fa;
-  --astra-card: #ffffff;
+  --astra-bg: #061225;
+  --astra-bg-2: #0a1a31;
+  --astra-card: #0e2038;
   --astra-navy: #071a33;
   --astra-navy-2: #0d294d;
   --astra-blue: #246bfe;
   --astra-blue-soft: #e7f0ff;
-  --astra-border: #d8e3f2;
-  --astra-text: #13243a;
-  --astra-muted: #667994;
+  --astra-border: rgba(129, 170, 229, 0.22);
+  --astra-text: #eef6ff;
+  --astra-muted: #98acc8;
   --astra-green: #1c9b63;
   --astra-red: #c43d4b;
   --astra-warning: #d88a19;
-  --astra-shadow: 0 18px 45px rgba(25, 47, 78, 0.10);
+  --astra-shadow: 0 20px 54px rgba(0, 0, 0, 0.26);
 }
 
 .astra-desktop-shell {
@@ -23,8 +23,8 @@
   grid-template-columns: 272px minmax(0, 1fr);
   overflow-x: hidden;
   background:
-    radial-gradient(1050px 520px at 30% -10%, rgba(78, 142, 255, 0.16), transparent 60%),
-    radial-gradient(760px 420px at 100% 0%, rgba(31, 107, 255, 0.08), transparent 64%),
+    radial-gradient(1050px 520px at 30% -10%, rgba(38, 105, 225, 0.32), transparent 60%),
+    radial-gradient(760px 420px at 100% 0%, rgba(16, 185, 129, 0.09), transparent 64%),
     linear-gradient(135deg, var(--astra-bg), var(--astra-bg-2));
   color: var(--astra-text);
 }
@@ -212,13 +212,13 @@
   margin: 0;
   font-size: clamp(1.9rem, 2.7vw, 2.65rem);
   letter-spacing: -0.04em;
-  color: #0f223a;
+  color: #f3f8ff;
 }
 
 .astra-page-heading p {
   margin: 4px 0 0;
   max-width: 980px;
-  color: var(--astra-muted);
+  color: #9fb3cf;
   font-size: 0.92rem;
 }
 
@@ -234,9 +234,9 @@
 
 .astra-safe-pill {
   border-radius: 999px;
-  border: 1px solid #c9d8eb;
-  background: #ffffff;
-  color: #31506f;
+  border: 1px solid rgba(129, 170, 229, 0.26);
+  background: rgba(14, 32, 56, 0.82);
+  color: #dbeafe;
   padding: 8px 12px;
   font-size: 0.78rem;
   font-weight: 800;

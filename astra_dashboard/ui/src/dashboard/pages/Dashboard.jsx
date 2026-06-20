@@ -17,18 +17,18 @@ const shellStyle = {
 };
 
 const panelStyle = {
-  background: "#ffffff",
-  border: "1px solid #d8e3f2",
+  background: "linear-gradient(180deg, rgba(15, 34, 58, 0.96), rgba(9, 24, 44, 0.96))",
+  border: "1px solid rgba(129, 170, 229, 0.22)",
   borderRadius: "22px",
   padding: "16px",
-  boxShadow: "0 18px 45px rgba(25, 47, 78, 0.10)",
-  color: "#13243a",
+  boxShadow: "0 22px 54px rgba(0, 0, 0, 0.25)",
+  color: "#eef6ff",
 };
 
 const panelTitleStyle = {
   margin: 0,
   fontSize: "1rem",
-  color: "#13243a",
+  color: "#f4f8ff",
   fontWeight: 900,
 };
 
@@ -40,8 +40,8 @@ const stripGridStyle = {
 
 const statusPillStyle = {
   borderRadius: "14px",
-  border: "1px solid #d7e1ef",
-  background: "#f7fbff",
+  border: "1px solid rgba(129, 170, 229, 0.20)",
+  background: "rgba(255, 255, 255, 0.06)",
   padding: "0.62rem 0.72rem",
   display: "grid",
   gap: "0.2rem",
@@ -54,7 +54,7 @@ const positionsGridStyle = {
 };
 
 const emptyStyle = {
-  color: "#667994",
+  color: "#9fb3cf",
   fontSize: "0.83rem",
   padding: "8px 0",
 };
@@ -64,6 +64,17 @@ const insightGridStyle = {
   gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
   gap: "14px",
 };
+
+const execSubcardStyle = {
+  borderRadius: 14,
+  border: "1px solid rgba(129, 170, 229, 0.18)",
+  background: "rgba(255, 255, 255, 0.065)",
+  color: "#dbeafe",
+};
+
+const execMutedText = "#9fb3cf";
+const execBodyText = "#dce9fb";
+const execAccent = "#6db2ff";
 
 function safeNumber(v, fallback = 0) {
   const n = Number(v);
@@ -628,13 +639,16 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
   }));
   const copilotStatus = unifiedDiagnostics?.astra_copilot_suite_v1 || {};
   const askLocalAiStatus = unifiedDiagnostics?.ask_astra_local_ai_status_v1 || {};
+  const astraExecutive = unifiedDiagnostics?.astra_executive_polish_v1 || {};
+  const astraCeo = unifiedDiagnostics?.astra_ceo_polish_v1 || {};
   const copilotRows = opportunityRows.map((row) => {
     const action = row.confidence >= 82 ? "BUY_NOW" : row.confidence >= 68 ? "WATCH_CLOSELY" : "HOLD";
+    const signalLabel = action === "BUY_NOW" ? "🟢 Buy Now" : action === "WATCH_CLOSELY" ? "🟡 Watch Closely" : "🔵 Hold";
     return {
       ...row,
       action,
       actionLabel: action === "BUY_NOW" ? "Buy Now" : action === "WATCH_CLOSELY" ? "Watch Closely" : "Hold",
-      signal: action === "BUY_NOW" ? "Buy Now" : action === "WATCH_CLOSELY" ? "Watch" : "Hold",
+      signal: signalLabel,
     };
   });
   const leadingThemes = Array.isArray(systemStatus?.current_themes)
@@ -683,16 +697,22 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     ["Market bias", marketTone],
   ];
   const actionCenterItems = [
-    `Best opportunity: ${bestOpportunity?.symbol || "Warming Up"}`,
-    `High-confidence opportunities: ${highConfidenceCount || 0}`,
-    `Risk warning: ${portfolioRiskText}`,
-    `Next review: ${nextFocus}`,
+    copilotRows.some((r) => r.action === "BUY_NOW") ? "Buy after confirmation: review top Copilot buy-now names" : "Buy after confirmation: wait for stronger confirmation",
+    "Hold validated leaders: keep broker truth and paper state separated",
+    "Watch catalyst changes: monitor theme persistence before chasing",
+    "Prepare exits: review profit capture without enabling automatic sells",
+  ];
+  const radarItems = [
+    `Earnings Watch: ${calendarItems[0]?.[1] || "calendar feed warming up"}`,
+    `Catalyst Watch: ${strongestTheme}`,
+    `Horizon Watch: ${copilotRows[0]?.horizon || "warming up"}`,
+    `Market Regime Watch: ${marketTone}${marketBiasSource ? ` / ${labelize(marketBiasSource)}` : ""}`,
   ];
   const decisionSummary = [
-    `Best opportunity ${bestOpportunity?.symbol || "Warming Up"}`,
-    `Market tone ${marketTone}${marketBiasSource ? ` · ${labelize(marketBiasSource)}` : ""}`,
-    `Main weakness ${mainWeakness}`,
-    `Next review ${highConfidenceCount > 0 ? "top ranked candidates" : "wait for fresh opportunity evidence"}`,
+    astraCeo?.strategic_posture ? `Posture: ${astraCeo.strategic_posture}` : `Market tone ${marketTone}${marketBiasSource ? ` / ${labelize(marketBiasSource)}` : ""}`,
+    astraExecutive?.top_opportunity_summary || `Best opportunity ${bestOpportunity?.symbol || "Warming Up"}`,
+    astraExecutive?.needs_attention_summary || `Main weakness ${mainWeakness}`,
+    astraCeo?.what_astra_should_learn_next ? `Next learning: ${astraCeo.what_astra_should_learn_next}` : `Next review ${highConfidenceCount > 0 ? "top ranked candidates" : "wait for fresh opportunity evidence"}`,
   ];
 
   const refreshPositions = async () => {
@@ -783,16 +803,16 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
           <section style={{ display: "grid", gridTemplateColumns: "0.95fr 1.55fr 1.05fr", gap: 14, alignItems: "stretch" }}>
             <div style={{ ...panelStyle, minHeight: 246, display: "grid", alignContent: "start", gap: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                <h2 style={panelTitleStyle}>Market Environment</h2>
-                <span style={{ color: "#7890aa", fontWeight: 900 }}>ⓘ</span>
+                <h2 style={panelTitleStyle}>Market Context</h2>
+                <span style={{ color: execAccent, fontWeight: 900 }}>Live</span>
               </div>
               <div>
                 <div style={{ color: marketTone === "Bearish" ? "#c43d4b" : marketTone === "Neutral" ? "#d88a19" : "#079246", fontSize: 28, fontWeight: 950, letterSpacing: "-0.04em" }}>{marketTone}</div>
-                <div style={{ color: "#13243a", fontWeight: 900, marginTop: 2 }}>
-                  {marketConfidence == null ? "Warming Up" : `${marketConfidence.toFixed(0)}%`} <span style={{ color: "#667994", fontWeight: 700 }}>Confidence</span>
+                <div style={{ color: "#eaf3ff", fontWeight: 900, marginTop: 2 }}>
+                  {marketConfidence == null ? "Warming Up" : `${marketConfidence.toFixed(0)}%`} <span style={{ color: execMutedText, fontWeight: 700 }}>Confidence</span>
                 </div>
               </div>
-              <div style={{ height: 1, background: "#e3ebf5" }} />
+              <div style={{ height: 1, background: "rgba(129, 170, 229, 0.20)" }} />
               {[
                 ["Risk Environment", riskMode],
                 ["Volatility", volatilityStatus],
@@ -800,46 +820,46 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                 ["Leadership", strongestTheme],
               ].map(([label, value]) => (
                 <div key={label} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center" }}>
-                  <span style={{ color: "#405672", fontWeight: 800, fontSize: 12.5 }}>{label}</span>
+                  <span style={{ color: execMutedText, fontWeight: 800, fontSize: 12.5 }}>{label}</span>
                   <strong style={{ color: String(value).toLowerCase().includes("risk-off") ? "#c43d4b" : "#078943", fontSize: 12.5, textAlign: "right" }}>{value}</strong>
                 </div>
               ))}
-              <button type="button" onClick={() => (typeof onNavigate === "function" ? onNavigate("more") : null)} style={{ marginTop: "auto", border: "1px solid #cfdced", background: "#f7fbff", color: "#004fe0", borderRadius: 12, padding: "9px 11px", fontWeight: 900, cursor: "pointer" }}>
+              <button type="button" onClick={() => (typeof onNavigate === "function" ? onNavigate("reports") : null)} style={{ marginTop: "auto", border: "1px solid rgba(109, 178, 255, 0.32)", background: "rgba(36, 107, 254, 0.14)", color: "#b9d5ff", borderRadius: 12, padding: "9px 11px", fontWeight: 900, cursor: "pointer" }}>
                 View Market Details →
               </button>
             </div>
 
             <div style={{ ...panelStyle, minHeight: 246, display: "grid", alignContent: "start", gap: 12 }}>
-              <h2 style={panelTitleStyle}>Today's Astra Brief</h2>
-              <p style={{ margin: 0, color: "#273d5a", fontSize: 13, lineHeight: 1.62 }}>{astraBrief}</p>
+              <h2 style={panelTitleStyle}>Astra's Plain-English Take</h2>
+              <p style={{ margin: 0, color: execBodyText, fontSize: 13, lineHeight: 1.62 }}>{astraCeo?.plain_english_take || astraBrief}</p>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, marginTop: "auto" }}>
                 {[
-                  ["Opportunities", `${highConfidenceCount}`, "> 70% Confidence"],
-                  ["Market Bias", marketTone, ""],
-                  ["Portfolio Risk", portfolioRiskLabel, portfolioRiskScore == null ? "warming up" : `${formatScore(portfolioRiskScore)} score`],
+                  ["Market Outlook", astraExecutive?.market_outlook_summary || marketTone, ""],
+                  ["Needs Attention", astraExecutive?.needs_attention_summary || mainWeakness, ""],
+                  ["Portfolio Health", portfolioRiskLabel, portfolioRiskScore == null ? "warming up" : `${formatScore(portfolioRiskScore)} score`],
                   ["Astra Confidence", modelConfidence == null ? "Warming Up" : modelConfidence >= 80 ? "High" : modelConfidence >= 55 ? "Moderate" : "Developing", modelConfidenceLabel],
                 ].map(([label, value, sub]) => (
-                  <div key={label} style={{ borderRadius: 16, background: "#f5f9fe", border: "1px solid #dfe8f4", padding: "9px 10px", display: "grid", gap: 3 }}>
-                    <div style={{ color: "#526982", fontSize: 10, fontWeight: 900 }}>{label}</div>
-                    <div style={{ color: "#10233c", fontSize: 16, fontWeight: 950 }}>{value}</div>
-                    {sub ? <div style={{ color: "#7890aa", fontSize: 9 }}>{sub}</div> : null}
+                  <div key={label} style={{ ...execSubcardStyle, padding: "9px 10px", display: "grid", gap: 3 }}>
+                    <div style={{ color: execMutedText, fontSize: 10, fontWeight: 900 }}>{label}</div>
+                    <div style={{ color: "#f5f9ff", fontSize: 13, fontWeight: 950, lineHeight: 1.25 }}>{value}</div>
+                    {sub ? <div style={{ color: execMutedText, fontSize: 9 }}>{sub}</div> : null}
                   </div>
                 ))}
               </div>
-              <button type="button" onClick={() => (typeof onNavigate === "function" ? onNavigate("learning") : null)} style={{ border: "1px solid #cfdced", background: "#f7fbff", color: "#004fe0", borderRadius: 12, padding: "9px 11px", fontWeight: 900, cursor: "pointer" }}>
+              <button type="button" onClick={() => (typeof onNavigate === "function" ? onNavigate("learning") : null)} style={{ border: "1px solid rgba(109, 178, 255, 0.32)", background: "rgba(36, 107, 254, 0.14)", color: "#b9d5ff", borderRadius: 12, padding: "9px 11px", fontWeight: 900, cursor: "pointer" }}>
                 Read Full Analysis →
               </button>
             </div>
 
-            <div onClick={() => (typeof onNavigate === "function" ? onNavigate("ask", { question: "What are the best short-term opportunities today?" }) : null)} style={{ borderRadius: 22, padding: 16, background: "radial-gradient(260px 150px at 80% 0%, rgba(45, 119, 255, 0.36), transparent 70%), linear-gradient(135deg, #071a33, #08244b)", boxShadow: "0 18px 45px rgba(25, 47, 78, 0.18)", color: "#ffffff", minHeight: 246, display: "grid", gap: 12, cursor: "pointer" }}>
+            <div onClick={() => (typeof onNavigate === "function" ? onNavigate("ask", { question: "What are the best short-term opportunities today?" }) : null)} style={{ borderRadius: 22, padding: 16, background: "radial-gradient(260px 150px at 80% 0%, rgba(45, 119, 255, 0.36), transparent 70%), linear-gradient(135deg, #071a33, #08244b)", boxShadow: "0 22px 54px rgba(0, 0, 0, 0.26)", color: "#ffffff", minHeight: 246, display: "grid", gap: 12, cursor: "pointer", border: "1px solid rgba(129, 170, 229, 0.24)" }}>
               <h2 style={{ margin: 0, fontSize: "1rem", color: "#ffffff" }}>Ask Astra</h2>
-              <p style={{ margin: 0, color: "#c8d8ef", fontSize: 13 }}>Your AI market analyst. Ask anything about markets, opportunities, or your portfolio.</p>
+              <p style={{ margin: 0, color: "#c8d8ef", fontSize: 13 }}>Local AI executive assistant. Fast mode uses Qwen only after you submit.</p>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
                 {[
                   ["Local AI", askLocalAiStatus?.local_ai_status || "warming up"],
-                  ["Primary", askLocalAiStatus?.primary_model || "qwen3:8b"],
-                  ["Fallback", askLocalAiStatus?.fallback_model || "qwen3:14b"],
-                  ["Mode", askLocalAiStatus?.response_mode || "structured fallback"],
+                  ["Primary", "Qwen3:8B"],
+                  ["Fallback", "Qwen3:14B"],
+                  ["Mode", askLocalAiStatus?.response_mode || "fast fallback"],
                 ].map(([label, value]) => (
                   <div key={label} style={{ borderRadius: 10, border: "1px solid rgba(180, 209, 255, 0.18)", background: "rgba(255,255,255,0.07)", padding: "7px 8px" }}>
                     <div style={{ color: "#8fb1df", fontSize: 9, fontWeight: 900, textTransform: "uppercase" }}>{label}</div>
@@ -851,8 +871,8 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                 <span style={{ color: "#d9e7fa", fontSize: 13 }}>What are the best short-term opportunities today?</span>
                 <button type="button" onClick={(event) => { event.stopPropagation(); if (typeof onNavigate === "function") onNavigate("ask", { question: "What are the best short-term opportunities today?" }); }} style={{ border: 0, borderRadius: 12, background: "#2b76ff", color: "#fff", width: 34, height: 34, fontWeight: 900, cursor: "pointer" }}>→</button>
               </div>
-              <div style={{ color: "#8fb1df", fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Popular Questions</div>
-              {["Why is my top opportunity ranked highest?", "What sectors are showing strength?", "How should I position my portfolio?", "Which stocks have unusual activity?"].map((q) => (
+              <div style={{ color: "#8fb1df", fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Suggested Questions</div>
+              {["Explain Astra status simply.", "Why did Astra choose this?", "What changed today?", "What is Astra learning?"].map((q) => (
                 <button key={q} type="button" onClick={(event) => { event.stopPropagation(); if (typeof onNavigate === "function") onNavigate("ask", { question: q }); }} style={{ textAlign: "left", border: 0, borderRadius: 10, background: "rgba(255,255,255,0.08)", color: "#eaf3ff", padding: "8px 10px", cursor: "pointer" }}>{q}</button>
               ))}
             </div>
@@ -862,33 +882,33 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 8 }}>
               <div>
                 <h2 style={panelTitleStyle}>Astra Copilot</h2>
-                <div style={{ color: "#667994", fontSize: 12, marginTop: 2 }}>Top 5 actions Astra recommends right now.</div>
+                <div style={{ color: execMutedText, fontSize: 12, marginTop: 2 }}>Top 5 actions Astra recommends right now.</div>
               </div>
-              <button type="button" onClick={() => (typeof onNavigate === "function" ? onNavigate("copilot") : null)} style={{ border: 0, background: "transparent", color: "#004fe0", fontWeight: 900, cursor: "pointer" }}>
+              <button type="button" onClick={() => (typeof onNavigate === "function" ? onNavigate("copilot") : null)} style={{ border: 0, background: "transparent", color: "#8dbbff", fontWeight: 900, cursor: "pointer" }}>
                 View Copilot Guidance
               </button>
             </div>
             <div style={{ display: "grid", gap: 0 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "92px minmax(90px, .75fr) minmax(94px, .75fr) minmax(120px, .9fr) minmax(0, 3fr)", gap: 10, padding: "8px 0", color: "#667994", fontSize: 10, fontWeight: 950, textTransform: "uppercase", borderBottom: "1px solid #e5edf6" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "132px minmax(90px, .75fr) minmax(94px, .75fr) minmax(120px, .9fr) minmax(0, 3fr)", gap: 10, padding: "8px 0", color: execMutedText, fontSize: 10, fontWeight: 950, textTransform: "uppercase", borderBottom: "1px solid rgba(129, 170, 229, 0.18)" }}>
                 <span>Signal</span><span>Asset</span><span>Confidence</span><span>Horizon</span><span>Why Astra Chose It</span>
               </div>
               {copilotRows.length === 0 ? (
-                <div style={{ border: "1px dashed #cfdced", borderRadius: 14, color: "#667994", background: "#f7fbff", padding: 16, marginTop: 12, fontSize: 13, lineHeight: 1.45 }}>
+                <div style={{ border: "1px dashed rgba(129, 170, 229, 0.24)", borderRadius: 14, color: "#9fb3cf", background: "rgba(255,255,255,0.06)", padding: 16, marginTop: 12, fontSize: 13, lineHeight: 1.45 }}>
                   Copilot guidance is warming up from cached rankings. No provider, broker, or model calls are made by this card.
                 </div>
               ) : copilotRows.map((row) => (
-                <div key={`${row.rank}-${row.symbol}`} onClick={() => (typeof onNavigate === "function" ? onNavigate("copilot") : null)} style={{ display: "grid", gridTemplateColumns: "92px minmax(90px, .75fr) minmax(94px, .75fr) minmax(120px, .9fr) minmax(0, 3fr)", gap: 10, padding: "10px 0", alignItems: "center", borderBottom: "1px solid #edf2f8", cursor: "pointer" }}>
-                  <strong style={{ color: row.action === "BUY_NOW" ? "#079246" : "#1855c8", fontSize: 12 }}>{row.signal}</strong>
+                <div key={`${row.rank}-${row.symbol}`} onClick={() => (typeof onNavigate === "function" ? onNavigate("copilot") : null)} style={{ display: "grid", gridTemplateColumns: "132px minmax(90px, .75fr) minmax(94px, .75fr) minmax(120px, .9fr) minmax(0, 3fr)", gap: 10, padding: "10px 0", alignItems: "center", borderBottom: "1px solid rgba(129, 170, 229, 0.12)", cursor: "pointer" }}>
+                  <strong style={{ color: row.action === "BUY_NOW" ? "#5ee6a8" : row.action === "WATCH_CLOSELY" ? "#f6c453" : "#8dbbff", fontSize: 12 }}>{row.signal}</strong>
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ color: "#13243a", fontWeight: 950, fontSize: 13 }}>{row.symbol}</div>
-                    <div style={{ color: "#667994", fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.company || row.risk}</div>
+                    <div style={{ color: "#f5f9ff", fontWeight: 950, fontSize: 13 }}>{row.symbol}</div>
+                    <div style={{ color: execMutedText, fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.company || row.risk}</div>
                   </div>
-                  <strong style={{ color: "#079246", fontSize: 15 }}>{row.confidence.toFixed(0)}%</strong>
+                  <strong style={{ color: "#5ee6a8", fontSize: 15 }}>{row.confidence.toFixed(0)}%</strong>
                   <div style={{ display: "grid", gap: 2 }}>
-                    <strong style={{ color: "#078943", fontSize: 11.5 }}>{row.horizon}</strong>
-                    <span style={{ color: "#7a8da7", fontSize: 9.5 }}>Consistency {row.consistency ? row.consistency.toFixed(0) : "Warming Up"}</span>
+                    <strong style={{ color: "#b9d5ff", fontSize: 11.5 }}>{row.horizon}</strong>
+                    <span style={{ color: execMutedText, fontSize: 9.5 }}>Consistency {row.consistency ? row.consistency.toFixed(0) : "Warming Up"}</span>
                   </div>
-                  <span style={{ color: "#273d5a", fontSize: 11.5, lineHeight: 1.35, minWidth: 0 }}>{row.why}</span>
+                  <span style={{ color: execBodyText, fontSize: 11.5, lineHeight: 1.35, minWidth: 0 }}>{row.why}</span>
                 </div>
               ))}
             </div>
@@ -897,29 +917,29 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
           <section style={{ display: "grid", gridTemplateColumns: "1.05fr 1.45fr 0.9fr", gap: 14 }}>
             <div style={panelStyle}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                <h2 style={panelTitleStyle}>Portfolio Overview</h2>
-                <button type="button" onClick={() => (typeof onNavigate === "function" ? onNavigate("portfolio") : null)} style={{ border: 0, background: "transparent", color: "#004fe0", fontWeight: 900, cursor: "pointer" }}>View Portfolio</button>
+                <h2 style={panelTitleStyle}>Portfolio Overview & Positioning</h2>
+                <button type="button" onClick={() => (typeof onNavigate === "function" ? onNavigate("portfolio") : null)} style={{ border: 0, background: "transparent", color: "#8dbbff", fontWeight: 900, cursor: "pointer" }}>View Portfolio</button>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginTop: 14 }}>
                 {[["Total Value", portfolioValue], ["Day's P/L", formatSignedPct(avgPositionPnl)], ["Cash", cashValue]].map(([label, value]) => (
                   <div key={label}>
-                    <div style={{ color: "#667994", fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>{label}</div>
-                    <div style={{ color: label === "Day's P/L" && avgPositionPnl < 0 ? "#c43d4b" : "#13243a", fontSize: 19, fontWeight: 950 }}>{value}</div>
+                    <div style={{ color: "#9fb3cf", fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>{label}</div>
+                    <div style={{ color: label === "Day's P/L" && avgPositionPnl < 0 ? "#c43d4b" : "#f5f9ff", fontSize: 19, fontWeight: 950 }}>{value}</div>
                   </div>
                 ))}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "122px 1fr", gap: 16, alignItems: "center", marginTop: 16 }}>
                 <div style={{ width: 114, height: 114, borderRadius: "50%", background: "#eef4fa", border: "10px solid #dce8f5", display: "grid", placeItems: "center", margin: "0 auto" }}>
-                  <div style={{ width: 70, height: 70, borderRadius: "50%", background: "#ffffff", display: "grid", placeItems: "center", color: "#13243a", fontWeight: 950 }}>{brokerActiveCount}<br /><span style={{ fontSize: 10, color: "#667994" }}>Open</span></div>
+                  <div style={{ width: 70, height: 70, borderRadius: "50%", background: "#ffffff", display: "grid", placeItems: "center", color: "#f5f9ff", fontWeight: 950 }}>{brokerActiveCount}<br /><span style={{ fontSize: 10, color: "#9fb3cf" }}>Open</span></div>
                 </div>
                 <div style={{ display: "grid", gap: 8, fontSize: 12 }}>
-                  <div style={{ color: "#273d5a", fontWeight: 800 }}>
+                  <div style={{ color: "#dce9fb", fontWeight: 800 }}>
                     Risk {portfolioRiskScore == null ? "Warming Up" : `${portfolioRiskLabel} (${formatScore(portfolioRiskScore)})`}
                   </div>
                   {allocationRows.length === 0 ? (
-                    <div style={{ color: "#667994", fontWeight: 800 }}>Allocation Warming Up</div>
+                    <div style={{ color: "#9fb3cf", fontWeight: 800 }}>Allocation Warming Up</div>
                   ) : allocationRows.map(([label, pct]) => (
-                    <div key={`${label}-${pct}`} style={{ color: "#273d5a", fontWeight: 800 }}>{label} {pct}</div>
+                    <div key={`${label}-${pct}`} style={{ color: "#dce9fb", fontWeight: 800 }}>{label} {pct}</div>
                   ))}
                 </div>
               </div>
@@ -927,7 +947,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
 
             <div style={panelStyle}>
               <h2 style={panelTitleStyle}>Astra Performance</h2>
-              <p style={{ margin: "8px 0 12px", color: "#273d5a", fontSize: 13 }}>Verified learning metrics from unified diagnostics.</p>
+              <p style={{ margin: "8px 0 12px", color: "#dce9fb", fontSize: 13 }}>Verified learning metrics from unified diagnostics.</p>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
                 {[
                   ["Win Rate", metricOrUnavailable(performanceSummary?.released_win_rate?.value ?? systemStatus?.win_rate ?? systemStatus?.released_win_rate, "%")],
@@ -935,33 +955,33 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                   ["Avg Return", metricOrUnavailable(performanceSummary?.average_return?.value, "%")],
                   ["Buy Purity", metricOrUnavailable(performanceSummary?.buy_list_purity?.value ?? systemStatus?.buy_purity, "%")],
                 ].map(([label, value]) => (
-                  <div key={label} style={{ border: "1px solid #e1e9f4", borderRadius: 14, padding: "10px 11px", background: "#f9fbff" }}>
+                  <div key={label} style={{ border: "1px solid rgba(129, 170, 229, 0.20)", borderRadius: 14, padding: "10px 11px", background: "rgba(255,255,255,0.06)" }}>
                     <div style={{ color: "#079246", fontSize: 20, fontWeight: 950 }}>{value}</div>
-                    <div style={{ color: "#667994", fontSize: 11, fontWeight: 900 }}>{label}</div>
+                    <div style={{ color: "#9fb3cf", fontSize: 11, fontWeight: 900 }}>{label}</div>
                   </div>
                 ))}
               </div>
             </div>
 
             <div style={panelStyle}>
-              <h2 style={panelTitleStyle}>Market Themes & Sector Heat</h2>
+              <h2 style={panelTitleStyle}>Sector Heat Map</h2>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
                 {leadingThemes.length === 0 ? (
-                  <span style={{ background: "#f7fbff", color: "#667994", border: "1px dashed #cfdced", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 900 }}>Theme Data Warming Up</span>
+                  <span style={{ background: "rgba(255,255,255,0.06)", color: "#9fb3cf", border: "1px dashed rgba(129, 170, 229, 0.24)", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 900 }}>Theme Data Warming Up</span>
                 ) : leadingThemes.map((theme) => (
                   <span key={theme} style={{ background: "#e8f7ec", color: "#087a41", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 900 }}>{theme}</span>
                 ))}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: topSectors.length ? "repeat(3, 1fr)" : "1fr", gap: 8, marginTop: 14 }}>
                 {topSectors.length === 0 ? (
-                  <div style={{ border: "1px dashed #cfdced", borderRadius: 12, background: "#f7fbff", color: "#667994", padding: "12px 13px", fontSize: 13 }}>
+                  <div style={{ border: "1px dashed rgba(129, 170, 229, 0.24)", borderRadius: 12, background: "rgba(255,255,255,0.06)", color: "#9fb3cf", padding: "12px 13px", fontSize: 13 }}>
                     Sector intelligence is warming up from cached diagnostics.
                   </div>
                 ) : topSectors.slice(0, 6).map(([sector, change, positive, qualitative]) => (
                   <div key={sector} style={{ background: positive ? "#e9f8ee" : "#fdebed", color: positive ? "#087a41" : "#b7283a", borderRadius: 10, padding: 10 }}>
-                    <div style={{ color: "#273d5a", fontSize: 11, fontWeight: 900 }}>{sector}</div>
+                    <div style={{ color: "#dce9fb", fontSize: 11, fontWeight: 900 }}>{sector}</div>
                     <div style={{ fontWeight: 950 }}>{change}</div>
-                    {qualitative ? <div style={{ color: "#667994", fontSize: 10, fontWeight: 800, marginTop: 2 }}>{qualitative}</div> : null}
+                    {qualitative ? <div style={{ color: "#9fb3cf", fontSize: 10, fontWeight: 800, marginTop: 2 }}>{qualitative}</div> : null}
                   </div>
                 ))}
               </div>
@@ -970,7 +990,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
 
           <section style={{ display: "grid", gridTemplateColumns: "1.18fr 1.1fr 0.92fr", gap: 14 }}>
             <div style={panelStyle}>
-              <h2 style={panelTitleStyle}>Learning / Risk Summary</h2>
+              <h2 style={panelTitleStyle}>Latest Learning Insights</h2>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, marginTop: 12 }}>
                 {[
                   ["Learning", learningConfidenceLabel],
@@ -978,9 +998,9 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                   ["Exit Quality", formatScore(executionQuality?.exit_quality?.value)],
                   ["Capture", formatPctFromRatio(profitCapture?.average_capture_ratio)],
                 ].map(([label, value]) => (
-                  <div key={label} style={{ border: "1px solid #e0e8f3", borderRadius: 12, background: "#f8fbff", padding: "10px 11px" }}>
-                    <div style={{ color: "#667994", fontSize: 10, fontWeight: 900 }}>{label}</div>
-                    <div style={{ color: "#13243a", fontWeight: 950, marginTop: 4 }}>{value}</div>
+                  <div key={label} style={{ border: "1px solid rgba(129, 170, 229, 0.20)", borderRadius: 12, background: "rgba(255,255,255,0.06)", padding: "10px 11px" }}>
+                    <div style={{ color: "#9fb3cf", fontSize: 10, fontWeight: 900 }}>{label}</div>
+                    <div style={{ color: "#f5f9ff", fontWeight: 950, marginTop: 4 }}>{value}</div>
                   </div>
                 ))}
               </div>
@@ -990,7 +1010,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               <h2 style={panelTitleStyle}>Astra Action Center</h2>
               <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
                 {actionCenterItems.map((item) => (
-                  <div key={item} style={{ border: "1px solid #e0e8f3", borderRadius: 12, background: "#f8fbff", padding: "10px 11px", color: "#29415f", fontSize: 12.5, lineHeight: 1.4 }}>
+                  <div key={item} style={{ border: "1px solid rgba(129, 170, 229, 0.20)", borderRadius: 12, background: "rgba(255,255,255,0.06)", padding: "10px 11px", color: "#dce9fb", fontSize: 12.5, lineHeight: 1.4 }}>
                     {item}
                   </div>
                 ))}
@@ -1001,17 +1021,17 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               <h2 style={panelTitleStyle}>Market Calendar</h2>
               <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
                 {calendarItems.length === 0 ? (
-                  <div style={{ border: "1px dashed #cfdced", borderRadius: 12, background: "#f7fbff", color: "#667994", padding: "12px 13px", fontSize: 13 }}>
+                  <div style={{ border: "1px dashed rgba(129, 170, 229, 0.24)", borderRadius: 12, background: "rgba(255,255,255,0.06)", color: "#9fb3cf", padding: "12px 13px", fontSize: 13 }}>
                     Source-backed event calendar is not connected in the cached dashboard payload.
                   </div>
                 ) : calendarItems.map(([time, event]) => (
-                  <div key={`${time}-${event}`} style={{ display: "grid", gridTemplateColumns: "74px 1fr", gap: 10, color: "#273d5a", fontSize: 13 }}>
-                    <strong style={{ color: "#004fe0" }}>{time}</strong>
+                  <div key={`${time}-${event}`} style={{ display: "grid", gridTemplateColumns: "74px 1fr", gap: 10, color: "#dce9fb", fontSize: 13 }}>
+                    <strong style={{ color: "#8dbbff" }}>{time}</strong>
                     <span>{event}</span>
                   </div>
                 ))}
               </div>
-              <button type="button" disabled={calendarItems.length === 0} style={{ marginTop: 14, width: "100%", border: "1px solid #cfdced", background: calendarItems.length ? "#f7fbff" : "#f1f5fa", color: calendarItems.length ? "#004fe0" : "#7f91a8", borderRadius: 12, padding: "10px 12px", fontWeight: 900, cursor: calendarItems.length ? "pointer" : "not-allowed" }}>
+              <button type="button" disabled={calendarItems.length === 0} style={{ marginTop: 14, width: "100%", border: "1px solid rgba(129, 170, 229, 0.24)", background: calendarItems.length ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.04)", color: calendarItems.length ? "#8dbbff" : "#7f91a8", borderRadius: 12, padding: "10px 12px", fontWeight: 900, cursor: calendarItems.length ? "pointer" : "not-allowed" }}>
                 {calendarItems.length ? "See Full Economic Calendar →" : "Calendar Feed Unavailable"}
               </button>
             </div>
@@ -1019,18 +1039,20 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
 
           <section style={{ display: "grid", gridTemplateColumns: "1.25fr 1fr", gap: 14 }}>
             <div style={panelStyle}>
-              <h2 style={panelTitleStyle}>What Astra Is Watching</h2>
-              <ul style={{ margin: "12px 0 0", paddingLeft: 18, color: "#273d5a", display: "grid", gap: 8, fontSize: 13 }}>
-                {watchingItems.map((item) => (
-                  <li key={item}>{item}</li>
+              <h2 style={panelTitleStyle}>Astra Radar</h2>
+              <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+                {radarItems.map((item) => (
+                  <div key={item} style={{ ...execSubcardStyle, padding: "10px 11px", color: execBodyText, fontSize: 12.5, lineHeight: 1.4 }}>
+                    {item}
+                  </div>
                 ))}
-              </ul>
+              </div>
             </div>
             <div style={panelStyle}>
               <h2 style={panelTitleStyle}>Today's Decision Summary</h2>
               <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
                 {decisionSummary.map((item) => (
-                  <div key={item} style={{ borderRadius: 12, border: "1px solid #dce6f3", background: "#f7fbff", padding: "10px 11px", color: "#28405e", fontSize: 12.5, fontWeight: 800 }}>
+                  <div key={item} style={{ borderRadius: 12, border: "1px solid rgba(129, 170, 229, 0.20)", background: "rgba(255,255,255,0.06)", padding: "10px 11px", color: "#dce9fb", fontSize: 12.5, fontWeight: 800 }}>
                     {item}
                   </div>
                 ))}
@@ -1050,11 +1072,11 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                 key={title}
                 type="button"
                 onClick={() => (idx === 4 && typeof onNavigate === "function" ? onNavigate("learning") : null)}
-                style={{ border: 0, borderRight: idx < 4 ? "1px solid #e1e9f4" : 0, background: "transparent", padding: 16, textAlign: "left", cursor: idx === 4 ? "pointer" : "default" }}
+                style={{ border: 0, borderRight: idx < 4 ? "1px solid rgba(129, 170, 229, 0.20)" : 0, background: "transparent", padding: 16, textAlign: "left", cursor: idx === 4 ? "pointer" : "default" }}
               >
-                <div style={{ color: "#13243a", fontWeight: 950, fontSize: 13 }}>{title}</div>
-                <div style={{ color: idx === 4 ? "#004fe0" : "#273d5a", fontWeight: 850, fontSize: 12, marginTop: 7 }}>{main}</div>
-                <div style={{ color: "#667994", fontSize: 11, marginTop: 4 }}>{sub}</div>
+                <div style={{ color: "#f5f9ff", fontWeight: 950, fontSize: 13 }}>{title}</div>
+                <div style={{ color: idx === 4 ? "#8dbbff" : "#dce9fb", fontWeight: 850, fontSize: 12, marginTop: 7 }}>{main}</div>
+                <div style={{ color: "#9fb3cf", fontSize: 11, marginTop: 4 }}>{sub}</div>
               </button>
             ))}
           </section>
@@ -1100,9 +1122,9 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                   ["Watch Closely", `${copilotRows.filter((r) => r.action === "WATCH_CLOSELY").length}`],
                   ["System Status", copilotStatus?.status || "cached"],
                 ] : opportunitySummary).map(([label, value]) => (
-                  <div key={label} style={{ borderRadius: 14, border: "1px solid #dce6f3", background: "#f7fbff", padding: "11px 12px" }}>
-                    <div style={{ color: "#667994", fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>{label}</div>
-                    <div style={{ color: "#13243a", fontSize: 17, fontWeight: 950, marginTop: 4 }}>{value}</div>
+                  <div key={label} style={{ borderRadius: 14, border: "1px solid rgba(129, 170, 229, 0.20)", background: "rgba(255,255,255,0.06)", padding: "11px 12px" }}>
+                    <div style={{ color: "#9fb3cf", fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>{label}</div>
+                    <div style={{ color: "#f5f9ff", fontSize: 17, fontWeight: 950, marginTop: 4 }}>{value}</div>
                   </div>
                 ))}
               </div>
@@ -1110,7 +1132,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
 
             <div style={panelStyle}>
               <h2 style={panelTitleStyle}>{topSection === "copilot" ? "Copilot Guidance Center" : "Astra Opportunity Center"}</h2>
-              <p style={{ margin: "10px 0 0", color: "#5f748f", fontSize: "0.9rem", lineHeight: 1.55 }}>
+              <p style={{ margin: "10px 0 0", color: "#9fb3cf", fontSize: "0.9rem", lineHeight: 1.55 }}>
                 {topSection === "copilot"
                   ? "Copilot translates Astra's existing rankings, horizon context, and diagnostics into advisory actions. It does not create trades, block trades, sell positions, or change ranking logic."
                   : "A consumer-ready view of Astra's ranked opportunities. Confidence, horizon, risk fit, and plain-English rationale are surfaced first while deeper technical evidence remains available inside expandable details."}
@@ -1129,10 +1151,10 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               ].map(([action, label]) => (
                 <div key={action} style={{ ...panelStyle, padding: 14, minHeight: 120 }}>
                   <h2 style={{ ...panelTitleStyle, fontSize: 13 }}>{label}</h2>
-                  <div style={{ color: "#13243a", fontSize: 24, fontWeight: 950, marginTop: 8 }}>
+                  <div style={{ color: "#f5f9ff", fontSize: 24, fontWeight: 950, marginTop: 8 }}>
                     {copilotRows.filter((r) => r.action === action).length}
                   </div>
-                  <div style={{ color: "#667994", fontSize: 11, marginTop: 6 }}>
+                  <div style={{ color: "#9fb3cf", fontSize: 11, marginTop: 6 }}>
                     {action === "APPROACHING_SELL" || action === "SELL_RECOMMENDED"
                       ? "Exit center remains advisory. No paper sell behavior is enabled."
                       : "Derived from existing cached rankings."}
@@ -1146,7 +1168,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
               <div>
                 <h2 style={panelTitleStyle}>{topSection === "copilot" ? "Why Astra Chose This" : "Astra Opportunities"}</h2>
-                <div style={{ color: "#667994", fontSize: "0.84rem", marginTop: 3 }}>
+                <div style={{ color: "#9fb3cf", fontSize: "0.84rem", marginTop: 3 }}>
                   {topSection === "copilot"
                     ? "These cards reuse the unchanged ranked opportunity payload. Copilot language is advisory-only and source-aware."
                     : "Ranking logic is unchanged. Technical details stay collapsible so the default experience feels like an opportunity center rather than a diagnostic dump."}
@@ -1173,7 +1195,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               ].map(([title, copy]) => (
                 <div key={title} style={panelStyle}>
                   <h2 style={panelTitleStyle}>{title}</h2>
-                  <p style={{ color: "#5f748f", fontSize: 13, lineHeight: 1.55 }}>{copy}</p>
+                  <p style={{ color: "#9fb3cf", fontSize: 13, lineHeight: 1.55 }}>{copy}</p>
                 </div>
               ))}
             </section>
@@ -1193,9 +1215,9 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                   ["Buying power", buyingPowerValue],
                   ["Active positions", `${brokerActiveCount}`],
                 ].map(([label, value]) => (
-                  <div key={label} style={{ borderRadius: 14, border: "1px solid #dce6f3", background: "#f7fbff", padding: "10px 11px" }}>
-                    <div style={{ color: "#667994", fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>{label}</div>
-                    <div style={{ color: "#13243a", fontSize: 17, fontWeight: 950, marginTop: 4 }}>{value}</div>
+                  <div key={label} style={{ borderRadius: 14, border: "1px solid rgba(129, 170, 229, 0.20)", background: "rgba(255,255,255,0.06)", padding: "10px 11px" }}>
+                    <div style={{ color: "#9fb3cf", fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>{label}</div>
+                    <div style={{ color: "#f5f9ff", fontSize: 17, fontWeight: 950, marginTop: 4 }}>{value}</div>
                   </div>
                 ))}
               </div>
@@ -1206,7 +1228,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                 <h2 style={panelTitleStyle}>Performance Overview</h2>
                 <div style={{ display: "flex", gap: 6 }}>
                   {["Daily", "Weekly"].map((label, idx) => (
-                    <button key={label} type="button" style={{ border: "1px solid #d6e2ef", background: idx === 0 ? "#eef4ff" : "#fff", color: idx === 0 ? "#1855c8" : "#5e7491", borderRadius: 10, padding: "5px 9px", fontSize: 11, fontWeight: 900, cursor: "pointer" }}>{label}</button>
+                    <button key={label} type="button" style={{ border: "1px solid #d6e2ef", background: idx === 0 ? "#eef4ff" : "#fff", color: idx === 0 ? "#8dbbff" : "#9fb3cf", borderRadius: 10, padding: "5px 9px", fontSize: 11, fontWeight: 900, cursor: "pointer" }}>{label}</button>
                   ))}
                 </div>
               </div>
@@ -1227,8 +1249,8 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               <h2 style={panelTitleStyle}>Risk & Allocation</h2>
               <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
                 {riskLines.map(([label, value]) => (
-                  <div key={label} style={{ borderRadius: 12, border: "1px solid #dce6f3", background: "#f9fbff", padding: "10px 11px", color: "#28405e", fontSize: 12.5, fontWeight: 800 }}>
-                    <span style={{ color: "#667994" }}>{label}: </span>{value}
+                  <div key={label} style={{ borderRadius: 12, border: "1px solid rgba(129, 170, 229, 0.20)", background: "rgba(255,255,255,0.06)", padding: "10px 11px", color: "#dce9fb", fontSize: 12.5, fontWeight: 800 }}>
+                    <span style={{ color: "#9fb3cf" }}>{label}: </span>{value}
                   </div>
                 ))}
               </div>
@@ -1239,14 +1261,14 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
             <div style={panelStyle}>
               <h2 style={panelTitleStyle}>Top Movers</h2>
               <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-                <div style={{ borderRadius: 14, border: "1px solid #deebf6", background: "#f7fbff", padding: "11px 12px" }}>
-                  <div style={{ color: "#667994", fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Biggest winner</div>
-                  <div style={{ color: "#13243a", fontWeight: 950, marginTop: 4 }}>{biggestWinner?.symbol || "Data Not Available"}</div>
+                <div style={{ borderRadius: 14, border: "1px solid rgba(129, 170, 229, 0.20)", background: "rgba(255,255,255,0.06)", padding: "11px 12px" }}>
+                  <div style={{ color: "#9fb3cf", fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Biggest winner</div>
+                  <div style={{ color: "#f5f9ff", fontWeight: 950, marginTop: 4 }}>{biggestWinner?.symbol || "Data Not Available"}</div>
                   <div style={{ color: "#079246", fontSize: 13, marginTop: 2 }}>{biggestWinner?.symbol ? formatSignedPct(biggestWinner?.pnl_percent) : "Warming Up"}</div>
                 </div>
-                <div style={{ borderRadius: 14, border: "1px solid #deebf6", background: "#f7fbff", padding: "11px 12px" }}>
-                  <div style={{ color: "#667994", fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Biggest loser</div>
-                  <div style={{ color: "#13243a", fontWeight: 950, marginTop: 4 }}>{biggestLoser?.symbol || "Data Not Available"}</div>
+                <div style={{ borderRadius: 14, border: "1px solid rgba(129, 170, 229, 0.20)", background: "rgba(255,255,255,0.06)", padding: "11px 12px" }}>
+                  <div style={{ color: "#9fb3cf", fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Biggest loser</div>
+                  <div style={{ color: "#f5f9ff", fontWeight: 950, marginTop: 4 }}>{biggestLoser?.symbol || "Data Not Available"}</div>
                   <div style={{ color: "#c43d4b", fontSize: 13, marginTop: 2 }}>{biggestLoser?.symbol ? formatSignedPct(biggestLoser?.pnl_percent) : "Warming Up"}</div>
                 </div>
               </div>
@@ -1254,10 +1276,10 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
 
             <div style={panelStyle}>
               <h2 style={panelTitleStyle}>Largest Position</h2>
-              <div style={{ marginTop: 12, borderRadius: 16, border: "1px solid #dce6f3", background: "#f7fbff", padding: "14px 14px" }}>
-                <div style={{ color: "#13243a", fontSize: 20, fontWeight: 950 }}>{largestPosition?.symbol || "Data Not Available"}</div>
-                <div style={{ color: "#667994", fontSize: 12, marginTop: 4 }}>Broker-confirmed label remains source-aware.</div>
-                <div style={{ color: "#28405e", fontSize: 12.5, marginTop: 10 }}>{largestPosition ? `Current ${formatMoney(largestPosition?.current_price ?? largestPosition?.price)}` : "Warming up from cached portfolio context."}</div>
+              <div style={{ marginTop: 12, borderRadius: 16, border: "1px solid rgba(129, 170, 229, 0.20)", background: "rgba(255,255,255,0.06)", padding: "14px 14px" }}>
+                <div style={{ color: "#f5f9ff", fontSize: 20, fontWeight: 950 }}>{largestPosition?.symbol || "Data Not Available"}</div>
+                <div style={{ color: "#9fb3cf", fontSize: 12, marginTop: 4 }}>Broker-confirmed label remains source-aware.</div>
+                <div style={{ color: "#dce9fb", fontSize: 12.5, marginTop: 10 }}>{largestPosition ? `Current ${formatMoney(largestPosition?.current_price ?? largestPosition?.price)}` : "Warming up from cached portfolio context."}</div>
               </div>
             </div>
 
@@ -1287,7 +1309,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
             <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", flexWrap: "wrap", marginBottom: "10px" }}>
               <div>
                 <div style={panelTitleStyle}>Active Positions</div>
-                <div style={{ color: "#667994", fontSize: "0.82rem", marginTop: 3 }}>
+                <div style={{ color: "#9fb3cf", fontSize: "0.82rem", marginTop: 3 }}>
                   {brokerTruthKnown ? `${brokerActiveCount} broker-confirmed positions` : `${positions.length} workflow positions`} shown in a cleaner portfolio view.
                 </div>
               </div>
