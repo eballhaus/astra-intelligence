@@ -1666,6 +1666,11 @@ export default function LearningTab({ compact = false }) {
   const paperThroughputExitCatalyst = unified?.paper_throughput_exit_validation_catalyst_intelligence_v1 || {};
   const multiHorizonCapacityExitValidation = unified?.multi_horizon_paper_capacity_exit_validation_v1 || {};
   const controlledPaperLearnedExit = unified?.controlled_paper_learned_exit_validation_v1 || {};
+  const astraIntelligenceGovernance = unified?.astra_intelligence_governance_v1 || {};
+  const consensusEngine = unified?.consensus_engine_v1 || astraIntelligenceGovernance?.consensus_engine_v1 || {};
+  const knowledgeGraphFoundation = unified?.knowledge_graph_foundation_v1 || astraIntelligenceGovernance?.knowledge_graph_foundation_v1 || {};
+  const dataFreshnessTrust = unified?.data_freshness_trust_engine_v1 || astraIntelligenceGovernance?.data_freshness_trust_engine_v1 || {};
+  const dataCoverageEngine = unified?.data_coverage_engine_v1 || astraIntelligenceGovernance?.data_coverage_engine_v1 || {};
   const metricDisplay = (metric, suffix = "") => {
     if (!metric || typeof metric !== "object") return "n/a";
     if (metric.value === null || metric.value === undefined) {
@@ -1952,6 +1957,48 @@ export default function LearningTab({ compact = false }) {
             ))}
           </div>
         </div>
+      </section>
+
+      <section style={{ background: "#ffffff", border: "1px solid #d8e3f2", borderRadius: 22, boxShadow: "0 18px 45px rgba(25, 47, 78, 0.10)", padding: 16, color: "#13243a" }}>
+        <details>
+          <summary style={{ cursor: "pointer", fontWeight: 900, color: "#13243a" }}>
+            Astra Intelligence Governance
+            <span style={{ marginLeft: 10, color: "#667994", fontWeight: 700, fontSize: 12 }}>
+              consensus {safeNumber(astraIntelligenceGovernance?.consensus_score).toFixed(1)} · trust {safeNumber(astraIntelligenceGovernance?.data_trust_score).toFixed(1)}
+            </span>
+          </summary>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginTop: 14 }}>
+            {[
+              ["Executive Maturity", safeNumber(astraIntelligenceGovernance?.executive_maturity_score).toFixed(1)],
+              ["CEO Maturity", safeNumber(astraIntelligenceGovernance?.ceo_maturity_score).toFixed(1)],
+              ["Consensus", safeNumber(astraIntelligenceGovernance?.consensus_score).toFixed(1)],
+              ["Knowledge Graph", safeNumber(astraIntelligenceGovernance?.knowledge_graph_score).toFixed(1)],
+              ["Freshness", safeNumber(astraIntelligenceGovernance?.data_freshness_score).toFixed(1)],
+              ["Trust", safeNumber(astraIntelligenceGovernance?.data_trust_score).toFixed(1)],
+              ["Coverage", safeNumber(astraIntelligenceGovernance?.data_coverage_score).toFixed(1)],
+              ["Consensus Label", statusLabel(consensusEngine?.consensus_label, "warming_up")],
+            ].map(([label, value]) => (
+              <div key={label} style={{ border: "1px solid #dce6f3", borderRadius: 14, background: "#f7fbff", padding: "10px 11px" }}>
+                <div style={{ color: "#667994", fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+                <div style={{ color: "#13243a", fontSize: 16, fontWeight: 900, marginTop: 3 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, marginTop: 12 }}>
+            <div style={{ border: "1px solid #dce6f3", borderRadius: 14, background: "#f7fbff", padding: "10px 11px", color: "#314965", fontSize: 13, lineHeight: 1.45 }}>
+              <strong>Biggest blind spot:</strong> {String(astraIntelligenceGovernance?.biggest_blind_spot || dataCoverageEngine?.biggest_blind_spot || "warming up").replaceAll("_", " ")}
+            </div>
+            <div style={{ border: "1px solid #dce6f3", borderRadius: 14, background: "#f7fbff", padding: "10px 11px", color: "#314965", fontSize: 13, lineHeight: 1.45 }}>
+              <strong>Highest priority fix:</strong> {String(astraIntelligenceGovernance?.highest_priority_fix || dataFreshnessTrust?.recommended_data_fix || "keep cached governance summaries visible").replaceAll("_", " ")}
+            </div>
+            <div style={{ border: "1px solid #dce6f3", borderRadius: 14, background: "#f7fbff", padding: "10px 11px", color: "#314965", fontSize: 13, lineHeight: 1.45 }}>
+              <strong>Graph coverage:</strong> {safeNumber(knowledgeGraphFoundation?.graph_coverage).toFixed(1)} with {safeNumber(knowledgeGraphFoundation?.graph_edge_count).toFixed(0)} relationships.
+            </div>
+          </div>
+          <div style={{ marginTop: 12, color: "#667994", fontSize: 13, lineHeight: 1.5 }}>
+            {astraIntelligenceGovernance?.governance_summary || "Governance summary is warming up from cached diagnostics. This section is advisory-only and does not change trading behavior."}
+          </div>
+        </details>
       </section>
 
       <div style={{ ...panelStyle, padding: "16px" }}>

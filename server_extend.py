@@ -42590,6 +42590,7 @@ def _dashboard_data_wiring_summary_v1(unified_payload=None):
         ("Astra Brief", "unified diagnostics executive summary", "/api/unified_learning_diagnostics_v1"),
         ("Astra Executive", "astra_executive_polish_v1", "/api/unified_learning_diagnostics_v1"),
         ("Astra CEO", "astra_ceo_polish_v1", "/api/unified_learning_diagnostics_v1"),
+        ("Astra Governance", "astra_intelligence_governance_v1", "/api/unified_learning_diagnostics_v1"),
         ("Copilot Guidance", "astra_copilot_suite_v1 from cached top_buys", "/api/top_buys + cached dashboard state"),
         ("Action Center", "astra_copilot_suite_v1 priorities", "/api/unified_learning_diagnostics_v1"),
         ("Radar", "catalyst + market watch diagnostics", "/api/unified_learning_diagnostics_v1"),
@@ -42612,6 +42613,8 @@ def _dashboard_data_wiring_summary_v1(unified_payload=None):
             missing_fields.append("astra_executive_polish_v1")
         if has_payload and name == "Astra CEO" and not p.get("astra_ceo_polish_v1"):
             missing_fields.append("astra_ceo_polish_v1")
+        if has_payload and name == "Astra Governance" and not p.get("astra_intelligence_governance_v1"):
+            missing_fields.append("astra_intelligence_governance_v1")
         if has_payload and name == "Learning Center" and not p:
             missing_fields.append("unified_payload")
         if missing_fields:
@@ -42644,12 +42647,345 @@ def _dashboard_data_wiring_summary_v1(unified_payload=None):
     }
 
 
+def _safe_age_seconds_from_iso(raw):
+    try:
+        if not raw:
+            return None
+        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return max(0.0, (datetime.now(UTC) - dt.astimezone(UTC)).total_seconds())
+    except Exception:
+        return None
+
+
+def _governance_safety_flags():
+    return {
+        "advisory_only": True,
+        "cache_first": True,
+        "human_review_required": True,
+        "behavior_safe_to_apply": False,
+        "paper_only_preserved": True,
+        "alpaca_paper_only_preserved": True,
+        "live_trading_changed": False,
+        "broker_behavior_changed": False,
+        "ranking_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "exit_behavior_changed": False,
+        "position_sizing_changed": False,
+        "portfolio_allocation_changed": False,
+        "thresholds_changed": False,
+        "automatic_exits_enabled": False,
+        "automatic_promotions_enabled": False,
+        "trailing_stops_enabled": False,
+        "forced_trades_enabled": False,
+        "forced_exits_enabled": False,
+        "api_calls_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "dashboard_provider_calls_used": 0,
+        "dashboard_llm_calls_used": 0,
+    }
+
+
+def _data_freshness_trust_engine_v1(payload=None):
+    p = payload if isinstance(payload, dict) else {}
+    source_specs = [
+        ("Broker Truth", "alpaca_paper_broker", ["alpaca_paper_broker", "alpaca_paper_status_v1"]),
+        ("Copilot", "astra_copilot_suite_v1", ["astra_copilot_suite_v1"]),
+        ("Performance Truth", "performance_summary", ["performance_summary"]),
+        ("Portfolio Intelligence", "portfolio_risk_intelligence", ["portfolio_risk_intelligence", "portfolio_health_summary"]),
+        ("Horizon Intelligence", "astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1", ["astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1", "multi_horizon_intelligence_adaptive_lifecycle_suite_v1"]),
+        ("Exit Intelligence", "profit_capture_peak_decay_exit_validation_suite_v1", ["profit_capture_peak_decay_exit_validation_suite_v1", "adaptive_execution_exit_intelligence_v3"]),
+        ("Catalyst Intelligence", "catalyst_lifecycle_intelligence_v1", ["catalyst_lifecycle_intelligence_v1", "catalyst_persistence_decay_curves_v2"]),
+        ("Shadow Learning", "realistic_shadow_evidence_learning_lab_v1", ["realistic_shadow_evidence_learning_lab_v1", "shadow_vs_paper_performance_attribution_v1"]),
+        ("Dashboard Wiring", "dashboard_data_wiring_v1", ["dashboard_data_wiring_v1"]),
+        ("Learning Diagnostics", "unified_learning_diagnostics_v1", ["executive_snapshot", "evidence_maturity_status"]),
+    ]
+    rows = []
+    now_age = 0.0
+    for source_name, owner, keys in source_specs:
+        source = {}
+        source_key = ""
+        for key in keys:
+            candidate = p.get(key)
+            if isinstance(candidate, dict) and candidate:
+                source = candidate
+                source_key = key
+                break
+        last_updated = ""
+        for field in ("generated_at", "updated_at", "last_updated", "last_updated_utc", "timestamp", "built_at_utc"):
+            if source.get(field):
+                last_updated = str(source.get(field))
+                break
+        if not last_updated and p.get("generated_at"):
+            last_updated = str(p.get("generated_at"))
+        age_seconds = _safe_age_seconds_from_iso(last_updated)
+        if age_seconds is None:
+            age_seconds = now_age if source else 86400.0
+        freshness_score = max(0.0, min(100.0, 100.0 - (age_seconds / 3600.0) * 6.0))
+        fallback_used = bool(source.get("fallback_used") or source.get("fallback") or source.get("degraded_reason"))
+        trust_score = 95.0 if source else 45.0
+        if fallback_used:
+            trust_score -= 18.0
+        if source_name == "Broker Truth":
+            trust_score = max(trust_score, 90.0) if source else 60.0
+        trust_score = max(0.0, min(100.0, trust_score))
+        expiration_status = "fresh" if freshness_score >= 70 else "stale" if freshness_score < 40 else "aging"
+        rows.append({
+            "source_name": source_name,
+            "source_owner": owner,
+            "source_key": source_key or keys[0],
+            "last_updated": last_updated,
+            "age_seconds": round(age_seconds, 2),
+            "freshness_score": round(freshness_score, 2),
+            "trust_score": round(trust_score, 2),
+            "expiration_status": expiration_status,
+            "stale_reason": "" if expiration_status != "stale" else "cached_source_age_or_missing_timestamp",
+            "fallback_used": fallback_used,
+            "confidence_decay": round(max(0.0, 100.0 - freshness_score), 2),
+        })
+    overall_freshness = round(sum(_to_float(r.get("freshness_score"), 0.0) for r in rows) / max(1, len(rows)), 2)
+    overall_trust = round(sum(_to_float(r.get("trust_score"), 0.0) for r in rows) / max(1, len(rows)), 2)
+    stale_rows = [r for r in rows if str(r.get("expiration_status")) == "stale"]
+    low_trust_rows = [r for r in rows if _to_float(r.get("trust_score"), 0.0) < 65.0]
+    most_trusted = max(rows, key=lambda r: _to_float(r.get("trust_score"), 0.0), default={})
+    least_trusted = min(rows, key=lambda r: _to_float(r.get("trust_score"), 0.0), default={})
+    return {
+        "ok": True,
+        "suite": "Data Freshness & Trust Engine V1",
+        "sources": rows,
+        "overall_data_freshness_score": overall_freshness,
+        "overall_data_trust_score": overall_trust,
+        "stale_sources_count": len(stale_rows),
+        "low_trust_sources_count": len(low_trust_rows),
+        "most_trusted_source": most_trusted.get("source_name") or "Broker Truth",
+        "least_trusted_source": least_trusted.get("source_name") or "warming_up",
+        "recommended_data_fix": "Refresh or timestamp stale cached summaries before trusting edge cases." if stale_rows else "No urgent freshness repair needed.",
+        **_governance_safety_flags(),
+        "generated_at": _now_utc_iso(),
+    }
+
+
+def _data_coverage_engine_v1(payload=None):
+    p = payload if isinstance(payload, dict) else {}
+    coverage_specs = [
+        ("stocks", ["performance_summary", "candidate_ranking_attribution_promotion_intelligence_v1", "astra_copilot_suite_v1"], "high"),
+        ("ETFs", ["etf_sector_rotation_intelligence_v1", "market_breadth_index_intelligence_v1"], "medium"),
+        ("crypto", ["crypto_shadow_learning_v1", "cross_market_attribution_transfer_learning_v1"], "medium"),
+        ("earnings", ["market_calendar_knowledge", "catalyst_lifecycle_intelligence_v1"], "medium"),
+        ("portfolio", ["portfolio_risk_intelligence", "portfolio_health_summary"], "high"),
+        ("broker truth", ["alpaca_paper_broker", "controlled_paper_learned_exit_validation_v1"], "critical"),
+        ("shadow learning", ["realistic_shadow_evidence_learning_lab_v1", "shadow_correction_validation_attribution_v1"], "high"),
+        ("paper trading", ["paper_autopilot_status", "paper_throughput_exit_validation_catalyst_intelligence_v1"], "high"),
+        ("sector intelligence", ["cross_sector_capital_flow_memory_v1", "etf_sector_rotation_intelligence_v1"], "medium"),
+        ("catalyst intelligence", ["catalyst_lifecycle_intelligence_v1", "catalyst_persistence_decay_curves_v2"], "high"),
+    ]
+    rows = []
+    for area, keys, priority in coverage_specs:
+        present = [key for key in keys if isinstance(p.get(key), dict) and p.get(key)]
+        source = p.get(present[0]) if present else {}
+        evidence_count = 0.0
+        if isinstance(source, dict):
+            for field in ("evidence_count", "validation_count", "trade_count", "sample_size", "shadow_sample_size", "total_validated_recommendations"):
+                evidence_count = max(evidence_count, _to_float(source.get(field), 0.0))
+        coverage_score = min(100.0, 38.0 + len(present) * 27.0 + min(25.0, evidence_count / 20.0)) if present else 24.0
+        missing = [key for key in keys if key not in present]
+        rows.append({
+            "area": area,
+            "coverage_score": round(coverage_score, 2),
+            "evidence_count": int(evidence_count),
+            "missing_data": missing,
+            "priority": priority,
+            "recommended_fix": "Keep observing cached evidence." if coverage_score >= 70 else f"Improve cached {area} coverage before relying on this area.",
+        })
+    overall = round(sum(_to_float(r.get("coverage_score"), 0.0) for r in rows) / max(1, len(rows)), 2)
+    strongest = max(rows, key=lambda r: _to_float(r.get("coverage_score"), 0.0), default={})
+    weakest = min(rows, key=lambda r: _to_float(r.get("coverage_score"), 0.0), default={})
+    priority_gap = min(
+        rows,
+        key=lambda r: (_to_float(r.get("coverage_score"), 0.0), 0 if r.get("priority") == "critical" else 1 if r.get("priority") == "high" else 2),
+        default={},
+    )
+    return {
+        "ok": True,
+        "suite": "Data Coverage Engine V1",
+        "coverage": rows,
+        "overall_coverage_score": overall,
+        "strongest_coverage_area": strongest.get("area") or "stocks",
+        "weakest_coverage_area": weakest.get("area") or "warming_up",
+        "biggest_blind_spot": weakest.get("area") or "warming_up",
+        "highest_roi_data_gap": priority_gap.get("area") or weakest.get("area") or "warming_up",
+        "recommended_next_data_priority": priority_gap.get("recommended_fix") or "Keep cached data coverage visible.",
+        **_governance_safety_flags(),
+        "generated_at": _now_utc_iso(),
+    }
+
+
+def _consensus_engine_v1(payload=None):
+    p = payload if isinstance(payload, dict) else {}
+    checks = []
+    def add(name, signal, reason):
+        checks.append({"system": name, "signal": str(signal or "neutral"), "reason": str(reason or "")})
+
+    perf = p.get("performance_summary") if isinstance(p.get("performance_summary"), dict) else {}
+    pf = (perf.get("profit_factor") or {}).get("value") if isinstance(perf.get("profit_factor"), dict) else perf.get("profit_factor")
+    add("Performance", "supportive" if _to_float(pf, 0.0) >= 1.0 else "cautious", f"profit_factor={_to_float(pf, 0.0):.2f}")
+    copilot = p.get("astra_copilot_suite_v1") if isinstance(p.get("astra_copilot_suite_v1"), dict) else {}
+    top_actions = copilot.get("top_actions") if isinstance(copilot.get("top_actions"), list) else []
+    add("Copilot", "supportive" if top_actions else "warming_up", f"top_actions={len(top_actions)}")
+    broker = p.get("alpaca_paper_broker") if isinstance(p.get("alpaca_paper_broker"), dict) else {}
+    paper_verified = bool(broker.get("paper_mode_verified") or broker.get("paper_only_preserved") or p.get("alpaca_paper_only_preserved"))
+    add("Broker Truth", "supportive" if paper_verified else "cautious", "paper_mode_verified" if paper_verified else "paper_mode_not_confirmed_in_payload")
+    shadow = p.get("realistic_shadow_evidence_learning_lab_v1") if isinstance(p.get("realistic_shadow_evidence_learning_lab_v1"), dict) else {}
+    add("Shadow Learning", "supportive" if _to_float(shadow.get("evidence_count"), 0.0) > 0 or shadow else "warming_up", "cached_shadow_summary_present" if shadow else "shadow_summary_warming_up")
+    horizon = p.get("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1") if isinstance(p.get("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1"), dict) else {}
+    add("Horizon Intelligence", "supportive" if horizon else "warming_up", "horizon_lifecycle_summary_present" if horizon else "horizon_summary_warming_up")
+    exit_intel = p.get("profit_capture_peak_decay_exit_validation_suite_v1") if isinstance(p.get("profit_capture_peak_decay_exit_validation_suite_v1"), dict) else {}
+    giveback = _to_float(exit_intel.get("giveback_delta"), 0.0)
+    add("Exit Intelligence", "cautious" if giveback > 0 else "supportive" if exit_intel else "warming_up", "profit_capture_summary_present" if exit_intel else "exit_summary_warming_up")
+    catalyst = p.get("catalyst_lifecycle_intelligence_v1") if isinstance(p.get("catalyst_lifecycle_intelligence_v1"), dict) else {}
+    add("Catalyst Intelligence", "supportive" if catalyst else "warming_up", "catalyst_lifecycle_summary_present" if catalyst else "catalyst_summary_warming_up")
+
+    supportive = [c for c in checks if c["signal"] == "supportive"]
+    cautious = [c for c in checks if c["signal"] == "cautious"]
+    warming = [c for c in checks if c["signal"] == "warming_up"]
+    agreement_count = len(supportive)
+    conflict_count = len(cautious)
+    consensus_score = round(max(0.0, min(100.0, 45.0 + agreement_count * 8.0 - conflict_count * 10.0 - len(warming) * 2.0)), 2)
+    if conflict_count > 0 and consensus_score < 65:
+        label = "conflict_detected"
+    elif consensus_score >= 80:
+        label = "strong_consensus"
+    elif consensus_score >= 65:
+        label = "moderate_consensus"
+    elif consensus_score >= 50:
+        label = "mixed_consensus"
+    else:
+        label = "weak_consensus"
+    return {
+        "ok": True,
+        "suite": "Consensus Engine V1",
+        "consensus_score": consensus_score,
+        "systems_agreeing": [c["system"] for c in supportive],
+        "systems_conflicting": [c["system"] for c in cautious],
+        "agreement_count": agreement_count,
+        "conflict_count": conflict_count,
+        "confidence_adjustment": round((consensus_score - 60.0) / 10.0, 2),
+        "consensus_label": label,
+        "top_consensus_reason": supportive[0]["reason"] if supportive else "systems_are_warming_up",
+        "top_conflict_reason": cautious[0]["reason"] if cautious else "",
+        "signals": checks,
+        **_governance_safety_flags(),
+        "generated_at": _now_utc_iso(),
+    }
+
+
+def _knowledge_graph_foundation_v1(payload=None):
+    p = payload if isinstance(payload, dict) else {}
+    nodes = set()
+    edges = set()
+    def add_edge(a, b, relation):
+        a = str(a or "").strip()
+        b = str(b or "").strip()
+        if not a or not b:
+            return
+        nodes.add(a)
+        nodes.add(b)
+        edges.add((a, relation, b))
+
+    copilot = p.get("astra_copilot_suite_v1") if isinstance(p.get("astra_copilot_suite_v1"), dict) else {}
+    for action in (copilot.get("top_actions") or [])[:12]:
+        if not isinstance(action, dict):
+            continue
+        sym = str(action.get("symbol") or "").upper()
+        add_edge(sym, str(action.get("horizon") or "unknown_horizon"), "has_horizon")
+        add_edge(sym, str(action.get("action") or "WATCH_CLOSELY"), "copilot_action")
+        add_edge(sym, str(action.get("risk_level") or "risk_warming_up"), "risk_context")
+    sectors = p.get("etf_sector_rotation_intelligence_v1") if isinstance(p.get("etf_sector_rotation_intelligence_v1"), dict) else {}
+    add_edge(str(sectors.get("strongest_sector") or sectors.get("strongest_sector_rotation") or ""), "sector leadership", "supports")
+    add_edge(str(sectors.get("weakest_sector") or sectors.get("weakest_sector_rotation") or ""), "sector weakness", "warns")
+    catalyst = p.get("catalyst_lifecycle_intelligence_v1") if isinstance(p.get("catalyst_lifecycle_intelligence_v1"), dict) else {}
+    add_edge(str(catalyst.get("strongest_catalyst_stage") or catalyst.get("strongest catalyst stage") or "catalyst"), str(catalyst.get("best_catalyst_lifecycle") or "persistence"), "lifecycle")
+    horizon = p.get("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1") if isinstance(p.get("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1"), dict) else {}
+    add_edge(str(horizon.get("underexposed_horizon") or "horizon_balance"), str(horizon.get("recommended_learning_focus") or "learning_focus"), "needs_attention")
+    graph_node_count = len(nodes)
+    graph_edge_count = len(edges)
+    graph_coverage = round(min(100.0, 25.0 + graph_edge_count * 5.0), 2)
+    graph_confidence = round(min(100.0, 40.0 + graph_node_count * 2.2), 2)
+    strongest = next(iter(edges), None)
+    return {
+        "ok": True,
+        "suite": "Knowledge Graph Foundation V1",
+        "graph_node_count": graph_node_count,
+        "graph_edge_count": graph_edge_count,
+        "graph_confidence": graph_confidence,
+        "graph_coverage": graph_coverage,
+        "graph_freshness": "cached_fast_path",
+        "strongest_connection": " -> ".join(str(x) for x in strongest) if strongest else "warming_up",
+        "weakest_connection": "insufficient_relationship_evidence" if graph_edge_count < 8 else "none_detected",
+        "top_symbol_relationships": [" -> ".join(str(x) for x in e) for e in list(edges)[:8]],
+        "top_market_relationships": ["sector -> leadership", "catalyst -> lifecycle", "horizon -> learning_focus"],
+        **_governance_safety_flags(),
+        "generated_at": _now_utc_iso(),
+    }
+
+
+def _astra_intelligence_governance_v1(payload=None):
+    p = payload if isinstance(payload, dict) else {}
+    trust = _data_freshness_trust_engine_v1(p)
+    coverage = _data_coverage_engine_v1(p)
+    consensus = _consensus_engine_v1(p)
+    graph = _knowledge_graph_foundation_v1(p)
+    executive_maturity = round((
+        _to_float(consensus.get("consensus_score"), 0.0)
+        + _to_float(trust.get("overall_data_trust_score"), 0.0)
+        + _to_float(coverage.get("overall_coverage_score"), 0.0)
+    ) / 3.0, 2)
+    ceo_maturity = round((executive_maturity + _to_float(graph.get("graph_confidence"), 0.0)) / 2.0, 2)
+    knowledge_graph_score = round((_to_float(graph.get("graph_confidence"), 0.0) + _to_float(graph.get("graph_coverage"), 0.0)) / 2.0, 2)
+    biggest_blind_spot = str(coverage.get("biggest_blind_spot") or "warming_up").replace("_", " ")
+    highest_priority_fix = str(coverage.get("recommended_next_data_priority") or trust.get("recommended_data_fix") or "Keep governance summaries cache-first.")
+    return {
+        "ok": True,
+        "suite": "Astra Intelligence Governance & Executive Maturation Bundle V1",
+        "status": "ok",
+        "executive_maturity_score": executive_maturity,
+        "ceo_maturity_score": ceo_maturity,
+        "consensus_score": _to_float(consensus.get("consensus_score"), 0.0),
+        "knowledge_graph_score": knowledge_graph_score,
+        "data_freshness_score": _to_float(trust.get("overall_data_freshness_score"), 0.0),
+        "data_trust_score": _to_float(trust.get("overall_data_trust_score"), 0.0),
+        "data_coverage_score": _to_float(coverage.get("overall_coverage_score"), 0.0),
+        "biggest_blind_spot": biggest_blind_spot,
+        "highest_priority_data_gap": str(coverage.get("highest_roi_data_gap") or biggest_blind_spot).replace("_", " "),
+        "highest_priority_fix": highest_priority_fix,
+        "top_risk_summary": "Consensus and freshness are advisory gates; broker truth remains highest priority.",
+        "biggest_weakness": biggest_blind_spot,
+        "evidence_quality_summary": f"Data trust {trust.get('overall_data_trust_score')} and coverage {coverage.get('overall_coverage_score')} from cached diagnostics.",
+        "governance_summary": (
+            f"Governance is {consensus.get('consensus_label')} with data trust {trust.get('overall_data_trust_score')} "
+            f"and coverage {coverage.get('overall_coverage_score')}. Biggest blind spot: {biggest_blind_spot}."
+        ),
+        "consensus_engine_v1": consensus,
+        "knowledge_graph_foundation_v1": graph,
+        "data_freshness_trust_engine_v1": trust,
+        "data_coverage_engine_v1": coverage,
+        **_governance_safety_flags(),
+        "generated_at": _now_utc_iso(),
+    }
+
+
 def _astra_executive_summary_v1(unified_payload=None, copilot_payload=None):
     p = unified_payload if isinstance(unified_payload, dict) else {}
     copilot = copilot_payload if isinstance(copilot_payload, dict) else {}
     perf = p.get("performance_summary") if isinstance(p.get("performance_summary"), dict) else {}
     portfolio = p.get("portfolio_health_summary") if isinstance(p.get("portfolio_health_summary"), dict) else {}
     wiring = p.get("dashboard_data_wiring_v1") if isinstance(p.get("dashboard_data_wiring_v1"), dict) else {}
+    governance = p.get("astra_intelligence_governance_v1") if isinstance(p.get("astra_intelligence_governance_v1"), dict) else {}
+    data_coverage = p.get("data_coverage_engine_v1") if isinstance(p.get("data_coverage_engine_v1"), dict) else {}
+    data_trust = p.get("data_freshness_trust_engine_v1") if isinstance(p.get("data_freshness_trust_engine_v1"), dict) else {}
+    consensus = p.get("consensus_engine_v1") if isinstance(p.get("consensus_engine_v1"), dict) else {}
     top_actions = copilot.get("top_actions") if isinstance(copilot.get("top_actions"), list) else []
     top = top_actions[0] if top_actions else {}
     pf = (perf.get("profit_factor") or {}).get("value") if isinstance(perf.get("profit_factor"), dict) else perf.get("profit_factor")
@@ -42665,9 +43001,19 @@ def _astra_executive_summary_v1(unified_payload=None, copilot_payload=None):
         if top else
         "Copilot opportunity context is warming up."
     )
+    evidence_quality = str(governance.get("evidence_quality_summary") or data_trust.get("recommended_data_fix") or "Evidence quality is source-aware and cache-first.").strip()
+    data_gap = str(governance.get("biggest_blind_spot") or data_coverage.get("biggest_blind_spot") or "No critical blind spot detected in cached diagnostics.").replace("_", " ")
+    consensus_summary = str(consensus.get("top_consensus_reason") or governance.get("governance_summary") or "Astra systems are being compared for agreement before conclusions are trusted.").strip()
+    priority_queue = [
+        str(governance.get("top_risk_summary") or "Protect paper-only and advisory-first controls."),
+        top_opportunity,
+        str(governance.get("biggest_weakness") or "Improve profit capture and catalyst confidence."),
+        f"Blind spot: {data_gap}.",
+        str(governance.get("highest_priority_fix") or data_coverage.get("recommended_next_data_priority") or "Keep dashboard wiring and data trust visible."),
+    ]
     return {
         "ok": True,
-        "suite": "Astra Executive Polish V1",
+        "suite": "Astra Executive Polish V2",
         "style": "coo_operational_compression",
         "market_outlook_summary": market_outlook,
         "needs_attention_summary": needs_attention,
@@ -42676,12 +43022,11 @@ def _astra_executive_summary_v1(unified_payload=None, copilot_payload=None):
         "learning_focus_summary": "Keep learning focused on profit retention, catalyst quality, horizon participation, and ranking reliability.",
         "top_risk_summary": "Do not loosen execution controls until exit quality and catalyst confidence stay stable.",
         "top_opportunity_summary": top_opportunity,
-        "executive_priority_queue": [
-            "Protect paper-only and advisory-first controls.",
-            "Keep Copilot compact and source-aware.",
-            "Improve profit capture and catalyst confidence.",
-            "Watch horizon participation without forcing quotas.",
-        ],
+        "executive_priority_queue": priority_queue,
+        "evidence_quality_summary": evidence_quality,
+        "data_gap_summary": data_gap,
+        "consensus_summary": consensus_summary,
+        "executive_maturity_score": _to_float(governance.get("executive_maturity_score"), 82.0),
         "api_calls_used": 0,
         "provider_calls_used": 0,
         "llm_calls_used": 0,
@@ -42698,6 +43043,7 @@ def _astra_executive_summary_v1(unified_payload=None, copilot_payload=None):
 def _astra_ceo_summary_v1(executive_payload=None, unified_payload=None):
     executive = executive_payload if isinstance(executive_payload, dict) else {}
     p = unified_payload if isinstance(unified_payload, dict) else {}
+    governance = p.get("astra_intelligence_governance_v1") if isinstance(p.get("astra_intelligence_governance_v1"), dict) else {}
     confidence = _to_float(p.get("dashboard_data_trust_score"), 0.0)
     strategic_posture = "Selective and evidence-led."
     if confidence >= 90:
@@ -42706,7 +43052,7 @@ def _astra_ceo_summary_v1(executive_payload=None, unified_payload=None):
         confidence_statement = "Astra has useful context, but some dashboard sources are still warming up."
     return {
         "ok": True,
-        "suite": "Astra CEO Polish V1",
+        "suite": "Astra CEO Polish V2",
         "style": "strategic_plain_english",
         "plain_english_take": (
             "Astra is finding opportunities, but it is still being careful with exits, catalyst confidence, "
@@ -42718,6 +43064,9 @@ def _astra_ceo_summary_v1(executive_payload=None, unified_payload=None):
         "what_astra_should_learn_next": executive.get("learning_focus_summary") or "Profit retention, catalyst quality, and ranking reliability.",
         "roadmap_priority_summary": "Polish decision visibility first; promote behavior only after validated paper-safe evidence.",
         "confidence_statement": confidence_statement,
+        "market_strategy_summary": executive.get("market_outlook_summary") or "Stay selective and use market context as advisory support only.",
+        "system_maturity_summary": governance.get("governance_summary") or "Astra is mature enough to explain its intelligence, while behavior remains advisory and paper-safe.",
+        "ceo_maturity_score": _to_float(governance.get("ceo_maturity_score"), 82.0),
         "api_calls_used": 0,
         "provider_calls_used": 0,
         "llm_calls_used": 0,
@@ -42760,8 +43109,17 @@ def ask_astra_v1(payload: dict = Body(...)):
         response_mode = "fast"
     local_status = _astra_local_ai_status_v1(force=False)
     copilot = _astra_copilot_suite_v1(limit=5, force=False)
-    executive = _astra_executive_summary_v1({}, copilot)
-    ceo = _astra_ceo_summary_v1(executive, {})
+    ask_context_seed = {"astra_copilot_suite_v1": copilot, "ask_astra_local_ai_status_v1": local_status}
+    governance = _astra_intelligence_governance_v1(ask_context_seed)
+    ask_context_seed.update({
+        "astra_intelligence_governance_v1": governance,
+        "consensus_engine_v1": governance.get("consensus_engine_v1") or {},
+        "knowledge_graph_foundation_v1": governance.get("knowledge_graph_foundation_v1") or {},
+        "data_freshness_trust_engine_v1": governance.get("data_freshness_trust_engine_v1") or {},
+        "data_coverage_engine_v1": governance.get("data_coverage_engine_v1") or {},
+    })
+    executive = _astra_executive_summary_v1(ask_context_seed, copilot)
+    ceo = _astra_ceo_summary_v1(executive, ask_context_seed)
     top_actions = copilot.get("top_actions") or []
     top_action = top_actions[0] if top_actions else {}
     key_signals = []
@@ -42792,6 +43150,16 @@ def ask_astra_v1(payload: dict = Body(...)):
             "strategic_posture": ceo.get("strategic_posture"),
             "what_astra_is_avoiding": ceo.get("what_astra_is_avoiding"),
             "confidence_statement": ceo.get("confidence_statement"),
+            "market_strategy_summary": ceo.get("market_strategy_summary"),
+            "system_maturity_summary": ceo.get("system_maturity_summary"),
+        },
+        "governance_summary": {
+            "consensus_score": governance.get("consensus_score"),
+            "data_trust_score": governance.get("data_trust_score"),
+            "data_coverage_score": governance.get("data_coverage_score"),
+            "biggest_blind_spot": governance.get("biggest_blind_spot"),
+            "highest_priority_fix": governance.get("highest_priority_fix"),
+            "governance_summary": governance.get("governance_summary"),
         },
         "key_supporting_astra_signals": key_signals,
         "supported_question_types": [
@@ -54254,6 +54622,12 @@ def unified_learning_diagnostics_v1(force: bool = False):
         if isinstance(out, dict):
             out["astra_copilot_suite_v1"] = dict(statuses.get("astra_copilot_suite_v1") or {})
             out["ask_astra_local_ai_status_v1"] = dict(statuses.get("ask_astra_local_ai_status_v1") or {})
+            governance_summary = _astra_intelligence_governance_v1(out)
+            out["astra_intelligence_governance_v1"] = governance_summary
+            out["consensus_engine_v1"] = dict(governance_summary.get("consensus_engine_v1") or {})
+            out["knowledge_graph_foundation_v1"] = dict(governance_summary.get("knowledge_graph_foundation_v1") or {})
+            out["data_freshness_trust_engine_v1"] = dict(governance_summary.get("data_freshness_trust_engine_v1") or {})
+            out["data_coverage_engine_v1"] = dict(governance_summary.get("data_coverage_engine_v1") or {})
             out["astra_executive_polish_v1"] = _astra_executive_summary_v1(out, out.get("astra_copilot_suite_v1") or {})
             out["astra_ceo_polish_v1"] = _astra_ceo_summary_v1(out.get("astra_executive_polish_v1") or {}, out)
             wiring_summary = _dashboard_data_wiring_summary_v1(out)
@@ -54263,8 +54637,11 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["dashboard_data_wiring_status"] = str(wiring_summary.get("dashboard_data_wiring_status") or "partial")
             out["dashboard_data_trust_score"] = _to_float(wiring_summary.get("dashboard_data_trust_score"), 0.0)
             out["dashboard_provider_calls_used"] = 0
+            out["dashboard_llm_calls_used"] = 0
             out["initial_learning_tab_endpoint_count"] = int(_to_float(out.get("initial_learning_tab_endpoint_count"), 1.0) or 1)
             out["api_calls_used"] = 0
+            out["provider_calls_used"] = 0
+            out["llm_calls_used"] = 0
             out["live_trading_changed"] = False
             out["broker_behavior_changed"] = False
             out["alpaca_paper_only_preserved"] = True
