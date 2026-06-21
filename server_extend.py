@@ -43243,6 +43243,7 @@ def _ask_astra_context_compression_v1(context=None):
     market = c.get("market_intelligence") if isinstance(c.get("market_intelligence"), dict) else {}
     cio = c.get("cio_intelligence") if isinstance(c.get("cio_intelligence"), dict) else {}
     institutional = c.get("institutional_intelligence") if isinstance(c.get("institutional_intelligence"), dict) else {}
+    aios = c.get("aios_intelligence") if isinstance(c.get("aios_intelligence"), dict) else {}
     signals = []
     for value in [
         executive.get("market_outlook_summary"),
@@ -43259,6 +43260,10 @@ def _ask_astra_context_compression_v1(context=None):
         cio.get("portfolio_risk_summary"),
         cio.get("exit_readiness_summary"),
         institutional.get("highest_roi_next_improvement"),
+        aios.get("highest_priority_focus"),
+        aios.get("exit_warning_summary"),
+        aios.get("historical_comparison_summary"),
+        aios.get("symbol_behavior_summary"),
     ]:
         if value:
             signals.append(_safe_text(str(value), 220))
@@ -43308,6 +43313,18 @@ def _ask_astra_context_compression_v1(context=None):
             "strongest_area": institutional.get("strongest_area"),
             "weakest_area": institutional.get("weakest_area"),
             "highest_roi_next_improvement": institutional.get("highest_roi_next_improvement"),
+        },
+        "aios_intelligence": {
+            "final_maturation_bundle_health": aios.get("final_maturation_bundle_health"),
+            "exit_intelligence_maturity": aios.get("exit_intelligence_maturity"),
+            "ihie_maturity": aios.get("ihie_maturity"),
+            "symbol_behavioral_memory_maturity": aios.get("symbol_behavioral_memory_maturity"),
+            "memory_retrieval_maturity": aios.get("memory_retrieval_maturity"),
+            "learning_reinforcement_maturity": aios.get("learning_reinforcement_maturity"),
+            "ask_astra_v2_readiness": aios.get("ask_astra_v2_readiness"),
+            "executive_ceo_v3_readiness": aios.get("executive_ceo_v3_readiness"),
+            "weakest_remaining_areas": aios.get("weakest_remaining_areas"),
+            "highest_priority_focus": aios.get("highest_priority_focus"),
         },
         "safety": c.get("safety") or {},
     }
@@ -43597,6 +43614,7 @@ def _astra_executive_summary_v1(unified_payload=None, copilot_payload=None):
     consensus = p.get("consensus_engine_v1") if isinstance(p.get("consensus_engine_v1"), dict) else {}
     market_intel = p.get("astra_market_intelligence_v1") if isinstance(p.get("astra_market_intelligence_v1"), dict) else {}
     cio = p.get("astra_cio_intelligence_v1") if isinstance(p.get("astra_cio_intelligence_v1"), dict) else {}
+    aios = p.get("astra_aios_intelligence_maturation_bundle_v1") if isinstance(p.get("astra_aios_intelligence_maturation_bundle_v1"), dict) else {}
     top_actions = copilot.get("top_actions") if isinstance(copilot.get("top_actions"), list) else []
     top = top_actions[0] if top_actions else {}
     pf = (perf.get("profit_factor") or {}).get("value") if isinstance(perf.get("profit_factor"), dict) else perf.get("profit_factor")
@@ -43619,9 +43637,13 @@ def _astra_executive_summary_v1(unified_payload=None, copilot_payload=None):
         str(market_intel.get("market_headwind_summary") or governance.get("top_risk_summary") or "Protect paper-only and advisory-first controls."),
         top_opportunity,
         str(cio.get("cio_summary") or governance.get("biggest_weakness") or "Improve profit capture and catalyst confidence."),
+        str(aios.get("highest_priority_focus") or "Mature AIOS memory, retrieval, exit intelligence, and symbol behavior."),
         f"Blind spot: {data_gap}.",
         str(market_intel.get("market_tailwind_summary") or governance.get("highest_priority_fix") or data_coverage.get("recommended_next_data_priority") or "Keep dashboard wiring and data trust visible."),
     ]
+    exit_maturation = aios.get("exit_intelligence_maturation_v2") if isinstance(aios.get("exit_intelligence_maturation_v2"), dict) else {}
+    ihie = aios.get("institutional_historical_intelligence_engine_v1") if isinstance(aios.get("institutional_historical_intelligence_engine_v1"), dict) else {}
+    symbol_memory = aios.get("symbol_behavioral_memory_expansion_v1") if isinstance(aios.get("symbol_behavioral_memory_expansion_v1"), dict) else {}
     return {
         "ok": True,
         "suite": "Astra Executive Polish V2",
@@ -43643,6 +43665,10 @@ def _astra_executive_summary_v1(unified_payload=None, copilot_payload=None):
         "cio_summary": cio.get("cio_summary") or "",
         "portfolio_risk_summary": cio.get("portfolio_risk_summary") or "",
         "exit_readiness_summary": cio.get("exit_readiness_summary") or "",
+        "aios_maturation_summary": f"AIOS final maturation health {aios.get('final_maturation_bundle_health', 'warming up')}; weakest remaining areas are {', '.join(str((row or {}).get('area')) for row in (aios.get('weakest_remaining_areas') or [])[:3] if isinstance(row, dict)) or 'warming up'}.",
+        "exit_intelligence_warning_summary": exit_maturation.get("when_taking_profit_earlier_helps") or "Exit intelligence is advisory-only and warming up.",
+        "historical_comparison_summary": ihie.get("top_historical_lesson") or "Historical comparison is cache-first and gradual.",
+        "symbol_behavior_summary": symbol_memory.get("strongest_symbol_memory") or "Symbol behavioral memory is warming up.",
         "executive_maturity_score": _to_float(governance.get("executive_maturity_score"), 82.0),
         "api_calls_used": 0,
         "provider_calls_used": 0,
@@ -43663,6 +43689,7 @@ def _astra_ceo_summary_v1(executive_payload=None, unified_payload=None):
     governance = p.get("astra_intelligence_governance_v1") if isinstance(p.get("astra_intelligence_governance_v1"), dict) else {}
     market_intel = p.get("astra_market_intelligence_v1") if isinstance(p.get("astra_market_intelligence_v1"), dict) else {}
     cio = p.get("astra_cio_intelligence_v1") if isinstance(p.get("astra_cio_intelligence_v1"), dict) else {}
+    aios = p.get("astra_aios_intelligence_maturation_bundle_v1") if isinstance(p.get("astra_aios_intelligence_maturation_bundle_v1"), dict) else {}
     confidence = _to_float(p.get("dashboard_data_trust_score"), 0.0)
     strategic_posture = "Selective and evidence-led."
     if confidence >= 90:
@@ -43681,12 +43708,16 @@ def _astra_ceo_summary_v1(executive_payload=None, unified_payload=None):
         "what_astra_is_doing": "Compressing rankings, paper state, learning diagnostics, and Copilot actions into a safer executive view.",
         "what_astra_is_avoiding": "No live trading, forced trades, automatic exits, sizing changes, allocation changes, or threshold changes.",
         "what_astra_should_learn_next": executive.get("learning_focus_summary") or "Profit retention, catalyst quality, and ranking reliability.",
+        "what_changed": executive.get("aios_maturation_summary") or "AIOS is compressing cached intelligence into safer executive summaries.",
+        "why_it_matters": "Astra can remember, retrieve, and explain better without becoming more autonomous or expensive.",
+        "what_needs_attention": executive.get("needs_attention_summary") or "Profit capture, catalyst clarity, and memory retrieval remain the main watchpoints.",
         "roadmap_priority_summary": "Polish decision visibility first; promote behavior only after validated paper-safe evidence.",
         "confidence_statement": confidence_statement,
         "market_strategy_summary": executive.get("market_outlook_summary") or "Stay selective and use market context as advisory support only.",
         "system_maturity_summary": governance.get("governance_summary") or "Astra is mature enough to explain its intelligence, while behavior remains advisory and paper-safe.",
         "market_intelligence_summary": market_intel.get("market_regime_summary") or executive.get("market_outlook_summary") or "Market intelligence is warming up from cached diagnostics.",
         "cio_intelligence_summary": cio.get("cio_summary") or "CIO intelligence is warming up from cached portfolio, exit, breadth, and macro diagnostics.",
+        "aios_intelligence_summary": executive.get("aios_maturation_summary") or f"AIOS final maturation health is {aios.get('final_maturation_bundle_health', 'warming up')}.",
         "ceo_maturity_score": _to_float(governance.get("ceo_maturity_score"), 82.0),
         "api_calls_used": 0,
         "provider_calls_used": 0,
@@ -43745,6 +43776,11 @@ def ask_astra_v1(payload: dict = Body(...)):
         "data_freshness_trust_engine_v1": governance.get("data_freshness_trust_engine_v1") or {},
         "data_coverage_engine_v1": governance.get("data_coverage_engine_v1") or {},
     })
+    try:
+        aios = ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=ask_context_seed, force=False)
+    except Exception:
+        aios = {}
+    ask_context_seed["astra_aios_intelligence_maturation_bundle_v1"] = aios
     executive = _astra_executive_summary_v1(ask_context_seed, copilot)
     ceo = _astra_ceo_summary_v1(executive, ask_context_seed)
     top_actions = copilot.get("top_actions") or []
@@ -43831,6 +43867,21 @@ def ask_astra_v1(payload: dict = Body(...)):
             "highest_roi_next_improvement": provider_orchestration.get("highest_roi_next_improvement"),
             "dashboard_provider_calls_used": provider_orchestration.get("dashboard_provider_calls_used"),
         },
+        "aios_intelligence": {
+            "final_maturation_bundle_health": aios.get("final_maturation_bundle_health"),
+            "exit_intelligence_maturity": aios.get("exit_intelligence_maturity"),
+            "ihie_maturity": aios.get("ihie_maturity"),
+            "symbol_behavioral_memory_maturity": aios.get("symbol_behavioral_memory_maturity"),
+            "memory_retrieval_maturity": aios.get("memory_retrieval_maturity"),
+            "learning_reinforcement_maturity": aios.get("learning_reinforcement_maturity"),
+            "ask_astra_v2_readiness": aios.get("ask_astra_v2_readiness"),
+            "executive_ceo_v3_readiness": aios.get("executive_ceo_v3_readiness"),
+            "weakest_remaining_areas": aios.get("weakest_remaining_areas"),
+            "highest_priority_focus": aios.get("highest_priority_focus"),
+            "exit_warning_summary": (aios.get("exit_intelligence_maturation_v2") or {}).get("when_taking_profit_earlier_helps") if isinstance(aios.get("exit_intelligence_maturation_v2"), dict) else None,
+            "historical_comparison_summary": (aios.get("institutional_historical_intelligence_engine_v1") or {}).get("top_historical_lesson") if isinstance(aios.get("institutional_historical_intelligence_engine_v1"), dict) else None,
+            "symbol_behavior_summary": (aios.get("symbol_behavioral_memory_expansion_v1") or {}).get("strongest_symbol_memory") if isinstance(aios.get("symbol_behavioral_memory_expansion_v1"), dict) else None,
+        },
         "key_supporting_astra_signals": key_signals,
         "supported_question_types": [
             "explain_status",
@@ -43886,6 +43937,12 @@ def ask_astra_v1(payload: dict = Body(...)):
             fast_short = cio.get("macro_risk_summary") or cio.get("fed_policy_summary") or "Macro/Fed context is cache-derived and advisory-only."
         elif "cio" in q_lc or "concern" in q_lc:
             fast_short = cio.get("highest_roi_cio_improvement") or cio.get("cio_summary") or "CIO intelligence is warming up."
+        elif "remember" in q_lc or "memory" in q_lc:
+            fast_short = aios.get("highest_priority_focus") or "Astra is organizing cached lessons into bounded memory and retrieval."
+        elif "historical" in q_lc or "similar" in q_lc:
+            fast_short = (aios.get("institutional_historical_intelligence_engine_v1") or {}).get("top_historical_lesson") if isinstance(aios.get("institutional_historical_intelligence_engine_v1"), dict) else "Historical comparison is warming up from cached evidence."
+        elif "personality" in q_lc or "symbol behavior" in q_lc:
+            fast_short = (aios.get("symbol_behavioral_memory_expansion_v1") or {}).get("strongest_symbol_memory") if isinstance(aios.get("symbol_behavioral_memory_expansion_v1"), dict) else "Symbol behavioral memory is warming up."
         else:
             fast_short = compressed_context.get("highest_priority_signals", ["Astra is using cached intelligence and remains advisory-only."])[0]
         answer = "\n".join([
@@ -43896,6 +43953,7 @@ def ask_astra_v1(payload: dict = Body(...)):
             f"- Consensus score: {governance.get('consensus_score')}.",
             f"- Market intelligence score: {market_intel.get('market_intelligence_score')}.",
             f"- CIO intelligence score: {cio.get('overall_cio_intelligence_score')}.",
+            f"- AIOS final maturation health: {aios.get('final_maturation_bundle_health')}.",
             f"- Weakest CIO area: {cio.get('weakest_cio_area')}.",
             f"- Biggest risk/data gap: {governance.get('biggest_blind_spot')}.",
             "Safety note: This is cached, advisory-only intelligence. Astra did not change rankings, entries, exits, sizing, allocation, thresholds, or broker behavior.",

@@ -3231,6 +3231,14 @@ export default function LearningTab({ compact = false }) {
           {[
             ["Status", astraAiosIntelligenceMaturation?.status],
             ["AIOS maturity", safeNumber(astraAiosIntelligenceMaturation?.aios_maturity_score).toFixed(1)],
+            ["Final health", safeNumber(astraAiosIntelligenceMaturation?.final_maturation_bundle_health).toFixed(1)],
+            ["Exit maturity", safeNumber(astraAiosIntelligenceMaturation?.exit_intelligence_maturity).toFixed(1)],
+            ["IHIE maturity", safeNumber(astraAiosIntelligenceMaturation?.ihie_maturity).toFixed(1)],
+            ["Symbol memory", safeNumber(astraAiosIntelligenceMaturation?.symbol_behavioral_memory_maturity).toFixed(1)],
+            ["Retrieval maturity", safeNumber(astraAiosIntelligenceMaturation?.memory_retrieval_maturity).toFixed(1)],
+            ["Reinforcement", safeNumber(astraAiosIntelligenceMaturation?.learning_reinforcement_maturity).toFixed(1)],
+            ["Ask V2 readiness", safeNumber(astraAiosIntelligenceMaturation?.ask_astra_v2_readiness).toFixed(1)],
+            ["Exec/CEO readiness", safeNumber(astraAiosIntelligenceMaturation?.executive_ceo_v3_readiness).toFixed(1)],
             ["Satellites", safeNumber(astraAiosIntelligenceMaturation?.satellites_registered).toFixed(0)],
             ["Lessons created", safeNumber(astraAiosIntelligenceMaturation?.lessons_created).toFixed(0)],
             ["Triage acceptance", `${safeNumber(astraAiosIntelligenceMaturation?.triage_acceptance_rate).toFixed(1)}%`],
@@ -3258,6 +3266,18 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Highest priority focus: {String(astraAiosIntelligenceMaturation?.highest_priority_focus || "continue cache-first AIOS maturation").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Weakest remaining areas: {(astraAiosIntelligenceMaturation?.weakest_remaining_areas || []).map((row) => `${String(row?.area || "area").replaceAll("_", " ")} ${safeNumber(row?.score).toFixed(1)}`).join(" | ") || "warming up"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Exit maturity: {String(astraAiosIntelligenceMaturation?.exit_intelligence_maturation_v2?.when_taking_profit_earlier_helps || "monitor giveback, profit decay, and catalyst weakening").replaceAll("_", " ")}; automatic exits {astraAiosIntelligenceMaturation?.automatic_exits_enabled ? "enabled" : "disabled"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Historical scope: {(astraAiosIntelligenceMaturation?.institutional_historical_intelligence_engine_v1?.historical_collection_priorities?.tier_1 || []).join(", ") || "SPY, QQQ, IWM, VIX, Sector ETFs"} first; full-market downloads {astraAiosIntelligenceMaturation?.institutional_historical_intelligence_engine_v1?.full_market_download_allowed ? "allowed" : "blocked"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Symbol memory labels: {(astraAiosIntelligenceMaturation?.symbol_behavioral_memory_expansion_v1?.personality_labels_supported || []).slice(0, 7).join(" | ") || "Momentum Leader | Catalyst Driven | High Giveback Risk"}.
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Memory budgets: daily {safeNumber(astraAiosIntelligenceMaturation?.multi_tier_memory_v1?.learning_budgets?.daily_max_lessons, 100).toFixed(0)}, weekly {safeNumber(astraAiosIntelligenceMaturation?.multi_tier_memory_v1?.learning_budgets?.weekly_max_lessons, 500).toFixed(0)}, monthly {safeNumber(astraAiosIntelligenceMaturation?.multi_tier_memory_v1?.learning_budgets?.monthly_max_lessons, 2000).toFixed(0)}. Excess intelligence is compressed, archived, or discarded.

@@ -126,6 +126,11 @@ def _summary_for(name: str, sources: list[tuple[str, dict[str, Any]]]) -> str:
     return "; ".join(snippets[:4]) or f"{name} is warming up from cached Astra diagnostics."
 
 
+def _avg(values: list[Any], default: float = 0.0) -> float:
+    nums = [to_float(value, 0.0) for value in values if value is not None]
+    return rounded(sum(nums) / max(1, len(nums)), 3) if nums else default
+
+
 class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
     """Astra Intelligence Operating System V1 coordinator.
 
@@ -137,6 +142,12 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
 
     module_name = "astra_aios_intelligence_maturation_bundle_v1"
     mode = "advisory_cache_first_aios_intelligence_maturation"
+
+    def _cached(self, force: bool) -> dict[str, Any] | None:
+        cached = super()._cached(force)
+        if cached and not cached.get("final_maturation_bundle_health"):
+            return None
+        return cached
 
     def _source(self, statuses: dict[str, Any], key: str) -> dict[str, Any]:
         return status_value(statuses, key)
@@ -188,6 +199,13 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
         provider = self._source(statuses, "astra_provider_orchestration_data_governance_v1")
         sources = [payload for payload in (tier3, historical, memory, provider) if payload]
         conf = rounded(sum(_confidence(payload) for payload in sources) / max(1, len(sources)), 3)
+        maturity = _avg([
+            conf,
+            78.0 if tier3 else None,
+            72.0 if historical else None,
+            70.0 if memory else None,
+            80.0 if provider else None,
+        ], 0.0)
         return {
             "system": "Institutional Historical Intelligence Engine V1",
             "status": "ok" if sources else "insufficient_evidence",
@@ -203,6 +221,18 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             "portfolio_history_supported": True,
             "gradual_collection_only": True,
             "entire_market_download_allowed": False,
+            "full_market_download_allowed": False,
+            "satellite_long_history_download_allowed": False,
+            "historical_comparison_tiers": HISTORICAL_PRIORITIES,
+            "ihie_maturity_score": maturity,
+            "market_history_status": "tier_1_priority_cache_first",
+            "symbol_history_status": "tier_2_frequent_symbols_then_watchlists",
+            "sector_history_status": "tier_1_sector_etf_priority",
+            "breadth_history_status": "tier_1_index_proxy_priority",
+            "macro_history_status": "fred_owner_cached_when_available",
+            "catalyst_history_status": "finnhub_cached_context_when_available",
+            "exit_history_status": "profit_capture_and_lifecycle_memory_only",
+            "portfolio_history_status": "alpaca_broker_truth_summary_only",
             "confidence": conf,
             "evidence_count": max([_evidence(payload) for payload in sources] + [0]),
             "top_historical_lesson": first(tier3.get("top_historical_lesson"), memory.get("summary"), "historical intelligence warming up"),
@@ -344,7 +374,21 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
         return {
             "system": "Memory Retrieval Engine V1",
             "status": "ok" if retrieval or long_memory else "insufficient_evidence",
-            "supports_retrieval_by": ["symbol", "sector", "regime", "catalyst", "exit_pattern", "horizon", "confidence", "outcome", "similarity"],
+            "supports_retrieval_by": ["symbol", "sector", "regime", "catalyst", "exit_pattern", "horizon", "confidence", "freshness", "outcome", "similarity", "portfolio_context"],
+            "retrieval_scoring_components": {
+                "confidence": 0.22,
+                "freshness": 0.18,
+                "similarity": 0.18,
+                "outcome_relevance": 0.18,
+                "retention_score": 0.14,
+                "importance": 0.10,
+            },
+            "memory_retrieval_maturity": rounded(_avg([
+                75.0 if retrieval else None,
+                72.0 if long_memory else None,
+                70.0 if memory.get("status") == "ok" else 45.0,
+                85.0 if memory.get("memory_growth_policy") == "bounded_never_grow_forever" else None,
+            ], 0.0), 3),
             "cache_first": True,
             "full_history_scans": False,
             "tier2a_index_count": retrieval.get("index_count"),
@@ -406,10 +450,188 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             "system": "Shadow Input Expansion V1",
             "status": "inputs_expanded_without_shadow_logic_changes",
             "shadow_logic_changed": False,
-            "shadow_observes": ["satellite_outputs", "market_regimes", "portfolio_exposures", "macro_environments", "exit_intelligence", "symbol_behavioral_memory"],
+            "shadow_observes": ["satellite_outputs", "market_regimes", "portfolio_exposures", "macro_environments", "exit_intelligence", "symbol_behavioral_memory", "ihie_historical_comparisons", "memory_retrieval_summaries"],
             "shadow_executes": False,
             "shadow_overrides_paper": False,
             "shadow_submits_orders": False,
+            **_safe_flags(),
+        }
+
+    def _exit_intelligence_maturation_v2(self, statuses: dict[str, Any]) -> dict[str, Any]:
+        exit_suite = self._source(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
+        profit_pilot = self._source(statuses, "controlled_paper_profit_protection_pilot_v1")
+        exit_v3 = self._source(statuses, "adaptive_execution_exit_intelligence_v3")
+        lifecycle = self._source(statuses, "trade_lifecycle_audit_truth_horizon_integrity_suite_v1")
+        horizon = self._source(statuses, "astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1")
+        sources = [p for p in (exit_suite, profit_pilot, exit_v3, lifecycle, horizon) if p]
+        evidence = max([_evidence(payload) for payload in sources] + [0])
+        maturity = _avg([
+            _confidence(exit_suite, 0.0) if exit_suite else None,
+            _confidence(profit_pilot, 0.0) if profit_pilot else None,
+            _confidence(exit_v3, 0.0) if exit_v3 else None,
+            72.0 if lifecycle else None,
+            70.0 if horizon else None,
+        ], 0.0)
+        giveback = first(
+            exit_suite.get("average_giveback"),
+            exit_suite.get("avg_giveback"),
+            profit_pilot.get("giveback_risk_score"),
+            horizon.get("biggest_profit_capture_leak"),
+            0.0,
+        )
+        capture = first(
+            exit_suite.get("capture_ratio"),
+            exit_suite.get("learned_capture_ratio"),
+            profit_pilot.get("estimated_profit_capture_improvement"),
+            horizon.get("profit_capture_score"),
+            0.0,
+        )
+        return {
+            "system": "Exit Intelligence Maturation V2",
+            "status": "ok" if sources else "insufficient_evidence",
+            "exit_intelligence_maturity": rounded(maturity, 3),
+            "evidence_count": evidence,
+            "mfe_tracking_status": "active_cached_learning" if sources else "insufficient_evidence",
+            "mae_tracking_status": "active_cached_learning" if sources else "insufficient_evidence",
+            "giveback_tracking_status": "active_cached_learning" if sources else "insufficient_evidence",
+            "continuation_tracking_status": "active_cached_learning" if sources else "insufficient_evidence",
+            "hold_duration_tracking_status": "active_cached_learning" if sources else "insufficient_evidence",
+            "profit_decay_tracking_status": "active_cached_learning" if sources else "insufficient_evidence",
+            "horizon_optimization_status": text(first(horizon.get("shadow_to_paper_promotion_readiness_status"), "advisory_only")),
+            "exit_timing_quality": rounded(clamp(first(exit_suite.get("exit_quality"), exit_v3.get("exit_quality"), maturity)), 3),
+            "missed_continuation_detection": text(first(exit_suite.get("missed_continuation_detection"), "tracked_advisory_only")),
+            "early_exit_detection": text(first(exit_suite.get("early_exit_detection"), "tracked_advisory_only")),
+            "late_exit_detection": text(first(exit_suite.get("late_exit_detection"), "tracked_advisory_only")),
+            "average_giveback": giveback,
+            "capture_ratio": capture,
+            "profit_decay_learning": "compare_peak_profit_to_current_or_realized_profit_and_route_lessons_through_memory",
+            "when_trades_historically_peak": text(first(exit_suite.get("highest_giveback_window"), exit_suite.get("best_shadow_exit_policy"), "insufficient_cached_peak_window_evidence")),
+            "when_profits_decay": text(first(profit_pilot.get("strongest_profit_protection_pattern"), exit_suite.get("strongest_decay_pattern"), "monitor_giveback_and_catalyst_decay")),
+            "when_continuation_is_likely": text(first(exit_suite.get("continuation_supported_pattern"), "requires_more_cached_lifecycle_evidence")),
+            "when_holding_longer_helps": text(first(horizon.get("best_horizon"), exit_suite.get("best_horizon"), "use_horizon_readiness_advisory_only")),
+            "when_taking_profit_earlier_helps": text(first(profit_pilot.get("strongest_profit_protection_pattern"), "high_giveback_or_catalyst_decay_cases")),
+            "automatic_exits_enabled": False,
+            "broker_behavior_changed": False,
+            "paper_execution_changed": False,
+            **_safe_flags(),
+        }
+
+    def _symbol_behavioral_memory_expansion_v1(self, statuses: dict[str, Any]) -> dict[str, Any]:
+        long_memory = self._source(statuses, "long_term_memory_symbol_retrieval_suite_v1")
+        accelerated = self._source(statuses, "accelerated_learning_symbol_intelligence_suite_v1")
+        family = self._source(statuses, "trade_family_intelligence_v1")
+        tier3 = self._source(statuses, "astra_tier3_historical_satellite_shadow_acceleration_v1")
+        sources = [p for p in (long_memory, accelerated, family, tier3) if p]
+        profile_count = max([to_int(p.get("symbol_profiles_tracked"), 0) for p in sources] + [0])
+        maturity = _avg([
+            _confidence(long_memory, 0.0) if long_memory else None,
+            _confidence(accelerated, 0.0) if accelerated else None,
+            _confidence(family, 0.0) if family else None,
+            _confidence(tier3, 0.0) if tier3 else None,
+        ], 0.0)
+        labels = [
+            "Momentum Leader",
+            "Mean Reversion Candidate",
+            "Volatility Breakout",
+            "Catalyst Driven",
+            "Slow Compounder",
+            "Weak Continuation",
+            "High Giveback Risk",
+        ]
+        return {
+            "system": "Symbol Behavioral Memory Expansion V1",
+            "status": "ok" if sources else "insufficient_evidence",
+            "symbol_behavioral_memory_maturity": rounded(maturity, 3),
+            "symbol_profiles_tracked": profile_count,
+            "tracks_best_horizon": True,
+            "tracks_worst_horizon": True,
+            "tracks_average_hold_duration": True,
+            "tracks_continuation_behavior": True,
+            "tracks_profit_decay": True,
+            "tracks_mfe_mae_giveback": True,
+            "tracks_volatility_personality": True,
+            "tracks_regime_sensitivity": True,
+            "tracks_catalyst_sensitivity": True,
+            "tracks_sector_sensitivity": True,
+            "personality_labels_supported": labels,
+            "strongest_symbol_memory": text(first(long_memory.get("strongest_symbol_memory"), accelerated.get("best_symbol"), family.get("strongest_trade_family"), "warming_up")),
+            "weakest_symbol_memory": text(first(long_memory.get("weakest_symbol_memory"), accelerated.get("weakest_symbol"), family.get("weakest_trade_family"), "warming_up")),
+            "cached_consumers": ["AIOS", "Ask Astra", "Copilot", "CIO", "Executive", "CEO", "Learning Center"],
+            "dashboard_provider_calls_used": 0,
+            **_safe_flags(),
+        }
+
+    def _learning_reinforcement_v1(self, teacher: dict[str, Any], memory: dict[str, Any], dna: dict[str, Any]) -> dict[str, Any]:
+        lessons = to_int(teacher.get("lessons_created"), 0)
+        excess = to_int(memory.get("excess_lessons_today"), 0)
+        reinforcement = clamp((lessons / max(1, MEMORY_BUDGETS["daily_max_lessons"])) * 100.0)
+        return {
+            "system": "Learning Reinforcement V1",
+            "status": "ok" if lessons or dna.get("dna_count") else "insufficient_evidence",
+            "memory_lifecycle": ["collect", "compress", "store", "retrieve", "reinforce", "promote", "archive", "discard"],
+            "daily_max_lessons": MEMORY_BUDGETS["daily_max_lessons"],
+            "weekly_max_lessons": MEMORY_BUDGETS["weekly_max_lessons"],
+            "monthly_max_lessons": MEMORY_BUDGETS["monthly_max_lessons"],
+            "lessons_created_today": lessons,
+            "dna_objects_created": to_int(dna.get("dna_count"), 0),
+            "reinforcement_maturity": rounded(reinforcement if lessons else 45.0, 3),
+            "promotion_policy": "advisory_only_no_behavior_promotion",
+            "archive_policy": "compress_or_archive_excess_low_value_intelligence",
+            "discard_policy": "discard_duplicate_stale_low_retention_items",
+            "excess_intelligence_count": excess,
+            "memory_growth_policy": memory.get("memory_growth_policy"),
+            **_safe_flags(),
+        }
+
+    def _ask_astra_v2_light_maturation(self, statuses: dict[str, Any], retrieval: dict[str, Any]) -> dict[str, Any]:
+        ask = self._source(statuses, "ask_astra_local_ai_status_v1")
+        readiness = _avg([
+            retrieval.get("memory_retrieval_maturity"),
+            80.0 if ask.get("ollama_reachable") or ask.get("structured_fallback_available", True) else 55.0,
+            85.0,
+        ], 0.0)
+        return {
+            "system": "Ask Astra V2 Light Maturation",
+            "status": "ok",
+            "ask_astra_v2_readiness": rounded(readiness, 3),
+            "fast_mode_cache_first": True,
+            "basic_questions_require_llm": False,
+            "drives_data_gathering": False,
+            "supports_cross_satellite_explanations": True,
+            "supports_source_attribution": True,
+            "supports_confidence_explanation": True,
+            "supports_why_this_matters": True,
+            "supports_what_astra_remembers": True,
+            "supports_similar_historical_environments": True,
+            "supports_exit_intelligence_explanation": True,
+            "supports_symbol_personality_explanation": True,
+            **_safe_flags(),
+        }
+
+    def _executive_ceo_v3_light_maturation(self, exit_maturity: dict[str, Any], ihie: dict[str, Any], symbol_memory: dict[str, Any]) -> dict[str, Any]:
+        readiness = _avg([
+            exit_maturity.get("exit_intelligence_maturity"),
+            ihie.get("ihie_maturity_score"),
+            symbol_memory.get("symbol_behavioral_memory_maturity"),
+            82.0,
+        ], 0.0)
+        return {
+            "system": "Executive / CEO V3 Light Maturation",
+            "status": "ok",
+            "executive_ceo_v3_readiness": rounded(readiness, 3),
+            "summarizes_top_market_risks": True,
+            "summarizes_top_opportunities": True,
+            "summarizes_weakest_intelligence_areas": True,
+            "summarizes_exit_intelligence_warnings": True,
+            "summarizes_historical_comparison_highlights": True,
+            "summarizes_symbol_behavior_highlights": True,
+            "ceo_translates_what_changed": True,
+            "ceo_translates_why_it_matters": True,
+            "ceo_translates_recommendations": True,
+            "ceo_translates_needs_attention": True,
+            "cached_summary_only": True,
+            "dashboard_provider_calls_used": 0,
+            "dashboard_llm_calls_used": 0,
             **_safe_flags(),
         }
 
@@ -456,6 +678,11 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
         aic = self._aic(statuses, request_manager, ihie, compression, retrieval)
         validation = self._validation_layer()
         shadow = self._shadow_inputs()
+        exit_maturity = self._exit_intelligence_maturation_v2(statuses)
+        symbol_memory = self._symbol_behavioral_memory_expansion_v1(statuses)
+        reinforcement = self._learning_reinforcement_v1(teacher, memory, dna)
+        ask_v2 = self._ask_astra_v2_light_maturation(statuses, retrieval)
+        executive_ceo_v3 = self._executive_ceo_v3_light_maturation(exit_maturity, ihie, symbol_memory)
         maturity_score = rounded(sum([
             to_float(request_manager.get("average_satellite_confidence"), 0.0),
             to_float(ihie.get("confidence"), 0.0),
@@ -463,6 +690,21 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             70.0 if triage.get("status") == "ok" else 45.0,
             70.0 if memory.get("status") == "ok" else 45.0,
         ]) / 5.0, 3)
+        final_scores = {
+            "exit_intelligence": to_float(exit_maturity.get("exit_intelligence_maturity"), 0.0),
+            "ihie": to_float(ihie.get("ihie_maturity_score"), 0.0),
+            "symbol_behavioral_memory": to_float(symbol_memory.get("symbol_behavioral_memory_maturity"), 0.0),
+            "memory_retrieval": to_float(retrieval.get("memory_retrieval_maturity"), 0.0),
+            "learning_reinforcement": to_float(reinforcement.get("reinforcement_maturity"), 0.0),
+            "shadow_input_expansion": 82.0 if shadow.get("status") == "inputs_expanded_without_shadow_logic_changes" else 45.0,
+            "ask_astra_v2": to_float(ask_v2.get("ask_astra_v2_readiness"), 0.0),
+            "executive_ceo_v3": to_float(executive_ceo_v3.get("executive_ceo_v3_readiness"), 0.0),
+        }
+        final_maturation_health = rounded(sum(final_scores.values()) / max(1, len(final_scores)), 3)
+        weakest_remaining = [
+            {"area": key, "score": rounded(value, 3)}
+            for key, value in sorted(final_scores.items(), key=lambda item: item[1])[:4]
+        ]
         weakest = "exit_intelligence" if any(row.get("satellite_key") == "exit_intelligence_satellite" and row.get("health") != "healthy" for row in satellites) else "memory_depth" if memory.get("status") != "ok" else "historical_depth"
         out = {
             "enabled": True,
@@ -489,7 +731,53 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             "astra_intelligence_core_v1": aic,
             "experimentation_validation_layer_v1": validation,
             "shadow_input_expansion_v1": shadow,
+            "exit_intelligence_maturation_v2": exit_maturity,
+            "symbol_behavioral_memory_expansion_v1": symbol_memory,
+            "learning_reinforcement_v1": reinforcement,
+            "ask_astra_v2_light_maturation": ask_v2,
+            "executive_ceo_v3_light_maturation": executive_ceo_v3,
+            "final_intelligence_maturation_optimization_v1": {
+                "system": "ASTRA Final Intelligence Maturation & Optimization Bundle V1",
+                "status": "ok",
+                "final_maturation_bundle_health": final_maturation_health,
+                "exit_intelligence_maturity": exit_maturity.get("exit_intelligence_maturity"),
+                "ihie_maturity": ihie.get("ihie_maturity_score"),
+                "symbol_behavioral_memory_maturity": symbol_memory.get("symbol_behavioral_memory_maturity"),
+                "memory_retrieval_maturity": retrieval.get("memory_retrieval_maturity"),
+                "learning_reinforcement_maturity": reinforcement.get("reinforcement_maturity"),
+                "shadow_input_expansion_status": shadow.get("status"),
+                "ask_astra_v2_readiness": ask_v2.get("ask_astra_v2_readiness"),
+                "executive_ceo_v3_readiness": executive_ceo_v3.get("executive_ceo_v3_readiness"),
+                "weakest_remaining_areas": weakest_remaining,
+                "provider_policy": {
+                    "fmp_owner": "market_and_fundamental_data",
+                    "alpaca_owner": "broker_truth_only",
+                    "fred_owner": "macro_context",
+                    "finnhub_owner": "news_catalyst_sentiment_context",
+                    "moralis_owner": "crypto_context",
+                    "secondary_providers": "backup_only",
+                },
+                "bandwidth_budget_gb_month": {
+                    "target_low": 5,
+                    "target_high": 10,
+                    "soft_limit": 15,
+                    "warning": 25,
+                    "throttle": 35,
+                    "emergency_stop": 45,
+                },
+                **_safe_flags(),
+            },
             "aios_maturity_score": maturity_score,
+            "final_maturation_bundle_health": final_maturation_health,
+            "exit_intelligence_maturity": exit_maturity.get("exit_intelligence_maturity"),
+            "ihie_maturity": ihie.get("ihie_maturity_score"),
+            "symbol_behavioral_memory_maturity": symbol_memory.get("symbol_behavioral_memory_maturity"),
+            "memory_retrieval_maturity": retrieval.get("memory_retrieval_maturity"),
+            "learning_reinforcement_maturity": reinforcement.get("reinforcement_maturity"),
+            "shadow_input_expansion_status": shadow.get("status"),
+            "ask_astra_v2_readiness": ask_v2.get("ask_astra_v2_readiness"),
+            "executive_ceo_v3_readiness": executive_ceo_v3.get("executive_ceo_v3_readiness"),
+            "weakest_remaining_areas": weakest_remaining,
             "satellites_registered": len(satellites),
             "lessons_created": teacher.get("lessons_created", 0),
             "triage_acceptance_rate": rounded(to_float(triage.get("accepted"), 0.0) / max(1.0, to_float(triage.get("reviewed"), 0.0)) * 100.0, 3),
@@ -500,7 +788,8 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
                 "Data Coverage Engine", "Provider Governance", "Provider Self-Healing", "Market Regime Engine",
                 "CIO Intelligence", "Executive/CEO summaries", "Ask Astra", "Copilot", "Shadow", "Dashboard",
                 "Tier2A Librarian/Truth", "Tier2B Satellite Network", "Tier3 Historical Satellite Acceleration",
-                "Long-Term Memory Symbol Retrieval",
+                "Long-Term Memory Symbol Retrieval", "Exit Intelligence", "IHIE", "Symbol Behavioral Memory",
+                "Memory Retrieval", "Learning Reinforcement",
             ],
             "intentionally_not_changed": [
                 "Shadow logic", "live trading", "automatic entries", "automatic exits", "automatic allocations",
