@@ -2429,6 +2429,7 @@ try:
     from engine.astra_final_intelligence_maturation_bundle_v1 import AstraFinalIntelligenceMaturationBundleV1
     from engine.astra_targeted_maturity_profit_capture_optimization_bundle_v1 import AstraTargetedMaturityProfitCaptureOptimizationBundleV1
     from engine.astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1 import AstraHorizonLifecycleCapacityPromotionReadinessBundleV1
+    from engine.astra_aios_intelligence_maturation_bundle_v1 import AstraAiosIntelligenceMaturationBundleV1
 except Exception:
     class _IntelligenceQualityUnavailable:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -2480,6 +2481,7 @@ except Exception:
     AstraFinalIntelligenceMaturationBundleV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraTargetedMaturityProfitCaptureOptimizationBundleV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraHorizonLifecycleCapacityPromotionReadinessBundleV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    AstraAiosIntelligenceMaturationBundleV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
@@ -3167,6 +3169,7 @@ ASTRA_TIER3_HISTORICAL_SATELLITE_SHADOW_ACCELERATION = AstraTier3HistoricalSatel
 ASTRA_FINAL_INTELLIGENCE_MATURATION_BUNDLE = AstraFinalIntelligenceMaturationBundleV1(state_dir=STATE)
 ASTRA_TARGETED_MATURITY_PROFIT_CAPTURE_OPTIMIZATION_BUNDLE = AstraTargetedMaturityProfitCaptureOptimizationBundleV1(state_dir=STATE)
 ASTRA_HORIZON_LIFECYCLE_CAPACITY_PROMOTION_READINESS_BUNDLE = AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(state_dir=STATE)
+ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE = AstraAiosIntelligenceMaturationBundleV1(state_dir=STATE)
 ASTRA_PROVIDER_ORCHESTRATION_DATA_GOVERNANCE = AstraProviderOrchestrationDataGovernanceV1(state_dir=STATE)
 TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
 MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
@@ -34030,6 +34033,15 @@ def astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1(force: bool =
         }
 
 
+@router.get("/api/astra_aios_intelligence_maturation_bundle_v1")
+def astra_aios_intelligence_maturation_bundle_v1(force: bool = False):
+    return _intelligence_quality_endpoint(
+        ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE,
+        "astra_aios_intelligence_maturation_bundle_v1",
+        force=force,
+    )
+
+
 @router.get("/api/learning_roi_engine_v1")
 def learning_roi_engine_v1(force: bool = False):
     return _intelligence_quality_endpoint(LEARNING_ROI_ENGINE, "learning_roi_engine_v1", force=force)
@@ -55313,6 +55325,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("astra_copilot_suite_v1", lambda: _astra_copilot_suite_v1(limit=12, force=False))
         _safe_status("ask_astra_local_ai_status_v1", lambda: _astra_local_ai_status_v1(force=False))
         _safe_status("astra_provider_orchestration_data_governance_v1", lambda: _provider_orchestration_data_governance_v1(force=False, statuses=statuses))
+        _safe_status("astra_aios_intelligence_maturation_bundle_v1", lambda: ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=statuses, force=False))
 
         sources["statuses"] = statuses
         out = UNIFIED_LEARNING_DIAGNOSTICS.build(sources, force=bool(force))
@@ -55320,6 +55333,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_copilot_suite_v1"] = dict(statuses.get("astra_copilot_suite_v1") or {})
             out["ask_astra_local_ai_status_v1"] = dict(statuses.get("ask_astra_local_ai_status_v1") or {})
             out["astra_provider_orchestration_data_governance_v1"] = dict(statuses.get("astra_provider_orchestration_data_governance_v1") or {})
+            out["astra_aios_intelligence_maturation_bundle_v1"] = dict(statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {})
             market_intelligence = _astra_market_intelligence_v1(out)
             out["astra_market_intelligence_v1"] = market_intelligence
             cio_intelligence = _astra_cio_intelligence_v1(out)

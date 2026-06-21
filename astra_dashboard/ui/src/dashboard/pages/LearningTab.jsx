@@ -1630,6 +1630,7 @@ export default function LearningTab({ compact = false }) {
   const astraTargetedMaturityProfitCapture = unified?.astra_targeted_maturity_profit_capture_optimization_bundle_v1 || {};
   const astraHorizonLifecycleCapacityPromotion = unified?.astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1 || {};
   const astraProviderOrchestrationDataGovernance = unified?.astra_provider_orchestration_data_governance_v1 || {};
+  const astraAiosIntelligenceMaturation = unified?.astra_aios_intelligence_maturation_bundle_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
   const tradeFamilyIntelligence = unified?.trade_family_intelligence_v1 || {};
@@ -3217,6 +3218,55 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Flow: {String(astraHorizonLifecycleCapacityPromotion?.integration_flow || "Trade lifecycle / Shadow / Horizon systems -> Librarian -> Unified Truth -> Executive Assistant -> Learning Center").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Astra AIOS V1 & Intelligence Maturation</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is organizing existing intelligence through satellites, historical comparison, triage, compression, teaching, memory retrieval, and AIC coordination. This is advisory-only, cache-first, and does not change Shadow, rankings, entries, exits, sizing, allocation, broker behavior, or live trading.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Status", astraAiosIntelligenceMaturation?.status],
+            ["AIOS maturity", safeNumber(astraAiosIntelligenceMaturation?.aios_maturity_score).toFixed(1)],
+            ["Satellites", safeNumber(astraAiosIntelligenceMaturation?.satellites_registered).toFixed(0)],
+            ["Lessons created", safeNumber(astraAiosIntelligenceMaturation?.lessons_created).toFixed(0)],
+            ["Triage acceptance", `${safeNumber(astraAiosIntelligenceMaturation?.triage_acceptance_rate).toFixed(1)}%`],
+            ["Weakest area", astraAiosIntelligenceMaturation?.weakest_aios_area],
+            ["AIC score", safeNumber(astraAiosIntelligenceMaturation?.astra_intelligence_core_v1?.aic_coordination_score).toFixed(1)],
+            ["IHIE status", astraAiosIntelligenceMaturation?.institutional_historical_intelligence_engine_v1?.status],
+            ["Triage accepted", safeNumber(astraAiosIntelligenceMaturation?.triage_relevance_gate_v1?.accepted).toFixed(0)],
+            ["Triage rejected", safeNumber(astraAiosIntelligenceMaturation?.triage_relevance_gate_v1?.rejected).toFixed(0)],
+            ["Compression", astraAiosIntelligenceMaturation?.multi_stage_compression_v1?.status],
+            ["Teacher", astraAiosIntelligenceMaturation?.teacher_layer_v1?.status],
+            ["Memory", astraAiosIntelligenceMaturation?.multi_tier_memory_v1?.status],
+            ["Retrieval", astraAiosIntelligenceMaturation?.memory_retrieval_engine_v1?.status],
+            ["Shadow changed", astraAiosIntelligenceMaturation?.shadow_logic_changed ? "yes" : "no"],
+            ["Dashboard provider calls", safeNumber(astraAiosIntelligenceMaturation?.dashboard_provider_calls_used).toFixed(0)],
+            ["Dashboard LLM calls", safeNumber(astraAiosIntelligenceMaturation?.dashboard_llm_calls_used).toFixed(0)],
+            ["Behavior safe", astraAiosIntelligenceMaturation?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Flow: {(astraAiosIntelligenceMaturation?.architecture_flow || []).join(" -> ") || "Providers/APIs -> Controlled Data Acquisition -> Satellites -> IHIE -> Shadow Layer -> Triage -> Compression -> Teacher -> Memory -> AIC -> CIO/Executive/Copilot/Dashboard"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Highest priority focus: {String(astraAiosIntelligenceMaturation?.highest_priority_focus || "continue cache-first AIOS maturation").replaceAll("_", " ")}
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Memory budgets: daily {safeNumber(astraAiosIntelligenceMaturation?.multi_tier_memory_v1?.learning_budgets?.daily_max_lessons, 100).toFixed(0)}, weekly {safeNumber(astraAiosIntelligenceMaturation?.multi_tier_memory_v1?.learning_budgets?.weekly_max_lessons, 500).toFixed(0)}, monthly {safeNumber(astraAiosIntelligenceMaturation?.multi_tier_memory_v1?.learning_budgets?.monthly_max_lessons, 2000).toFixed(0)}. Excess intelligence is compressed, archived, or discarded.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Satellite health: {(astraAiosIntelligenceMaturation?.satellite_request_manager_v1?.satellites || []).map((row) => `${String(row?.satellite_name || "satellite").replaceAll("_", " ")} ${String(row?.health || "warming up").replaceAll("_", " ")}`).join(" | ") || "warming up"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Not changed: {(astraAiosIntelligenceMaturation?.intentionally_not_changed || []).join(" | ") || "Shadow logic | live trading | broker execution | rankings | entries | exits | sizing | allocation | thresholds"}.
           </div>
         </div>
       </details>
