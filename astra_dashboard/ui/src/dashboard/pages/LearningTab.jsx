@@ -1629,6 +1629,7 @@ export default function LearningTab({ compact = false }) {
   const astraFinalIntelligenceMaturation = unified?.astra_final_intelligence_maturation_bundle_v1 || {};
   const astraTargetedMaturityProfitCapture = unified?.astra_targeted_maturity_profit_capture_optimization_bundle_v1 || {};
   const astraHorizonLifecycleCapacityPromotion = unified?.astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1 || {};
+  const astraProviderOrchestrationDataGovernance = unified?.astra_provider_orchestration_data_governance_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
   const tradeFamilyIntelligence = unified?.trade_family_intelligence_v1 || {};
@@ -3216,6 +3217,55 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Flow: {String(astraHorizonLifecycleCapacityPromotion?.integration_flow || "Trade lifecycle / Shadow / Horizon systems -> Librarian -> Unified Truth -> Executive Assistant -> Learning Center").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Provider Orchestration & Data Governance V1</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is assigning one owner per data category, suppressing duplicate provider work, and keeping dashboard reads cache-only. This suite is governance-only and does not change ranking, entries, exits, sizing, allocation, broker behavior, paper execution, or live trading.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Status", astraProviderOrchestrationDataGovernance?.status],
+            ["Primary model", astraProviderOrchestrationDataGovernance?.summary?.primary_provider_model],
+            ["Best owner", astraProviderOrchestrationDataGovernance?.summary?.best_configured_owner],
+            ["Provider scores", safeNumber(astraProviderOrchestrationDataGovernance?.provider_confidence_engine?.providers_scored).toFixed(0)],
+            ["Configured", safeNumber(astraProviderOrchestrationDataGovernance?.provider_confidence_engine?.providers_configured).toFixed(0)],
+            ["Healthy", safeNumber(astraProviderOrchestrationDataGovernance?.provider_confidence_engine?.providers_healthy).toFixed(0)],
+            ["Avg score", safeNumber(astraProviderOrchestrationDataGovernance?.provider_confidence_engine?.average_overall_provider_score).toFixed(1)],
+            ["FMP market data", astraProviderOrchestrationDataGovernance?.provider_owner_readiness?.fmp_ready_for_core_market_data ? "ready" : "not ready"],
+            ["Alpaca broker truth", astraProviderOrchestrationDataGovernance?.provider_owner_readiness?.alpaca_ready_for_broker_truth ? "ready" : "not ready"],
+            ["FRED macro", astraProviderOrchestrationDataGovernance?.provider_owner_readiness?.fred_ready_for_macro ? "ready" : "not ready"],
+            ["Finnhub catalysts", astraProviderOrchestrationDataGovernance?.provider_owner_readiness?.finnhub_ready_for_news_catalysts ? "ready" : "not ready"],
+            ["Moralis crypto", astraProviderOrchestrationDataGovernance?.provider_owner_readiness?.moralis_ready_for_crypto_context ? "ready" : "not ready"],
+            ["Anti-overlap", astraProviderOrchestrationDataGovernance?.anti_overlap_engine?.enabled ? "enabled" : "warming up"],
+            ["Backups", astraProviderOrchestrationDataGovernance?.anti_overlap_engine?.primary_success_suppresses_backups ? "suppressed after primary success" : "warming up"],
+            ["Projected GB/mo", safeNumber(astraProviderOrchestrationDataGovernance?.bandwidth_governance?.projected_monthly_usage_gb).toFixed(3)],
+            ["Bandwidth", astraProviderOrchestrationDataGovernance?.bandwidth_governance?.bandwidth_status],
+            ["Target GB/mo", `${safeNumber(astraProviderOrchestrationDataGovernance?.bandwidth_governance?.target_low_gb, 5).toFixed(0)}-${safeNumber(astraProviderOrchestrationDataGovernance?.bandwidth_governance?.target_high_gb, 10).toFixed(0)}`],
+            ["Soft limit GB", safeNumber(astraProviderOrchestrationDataGovernance?.bandwidth_governance?.soft_limit_gb, 15).toFixed(0)],
+            ["Dashboard calls", safeNumber(astraProviderOrchestrationDataGovernance?.dashboard_provider_calls_used).toFixed(0)],
+            ["LLM calls", safeNumber(astraProviderOrchestrationDataGovernance?.dashboard_llm_calls_used).toFixed(0)],
+            ["Behavior safe", astraProviderOrchestrationDataGovernance?.behavior_safe_to_apply ? "yes" : "no"],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Owners: historical/fundamentals/earnings FMP; broker truth Alpaca; macro/Fed FRED; news/catalysts Finnhub; crypto context Moralis. Polygon, TwelveData, EODHD, AlphaVantage, NASDAQ, SimFin, and DataJockey stay secondary or specialized.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            CIO feed priorities: {(astraProviderOrchestrationDataGovernance?.intelligent_data_acquisition_orchestrator_v2?.feed_priorities || []).slice(0, 5).map((row) => `${String(row?.system || "unknown").replaceAll("_", " ")} via ${String(row?.primary_owner || "cache")}`).join(" | ") || "warming up"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Improvements: {(astraProviderOrchestrationDataGovernance?.cio_intelligence_maturation?.weaknesses_improved || []).map((item) => String(item).replaceAll("_", " ")).join(" | ") || "warming up"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Dashboard contract: {String(astraProviderOrchestrationDataGovernance?.summary?.dashboard_contract || "cache only no provider or LLM calls").replaceAll("_", " ")}.
           </div>
         </div>
       </details>

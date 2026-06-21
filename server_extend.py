@@ -2481,6 +2481,41 @@ except Exception:
     AstraTargetedMaturityProfitCaptureOptimizationBundleV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraHorizonLifecycleCapacityPromotionReadinessBundleV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
+    from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
+except Exception:
+    class AstraProviderOrchestrationDataGovernanceV1:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def status(self, *args, **kwargs):
+            return {
+                "suite": "Astra Intelligent Provider Orchestration & Data Governance Suite V1",
+                "status": "insufficient_evidence",
+                "enabled": False,
+                "mode": "cache_first_provider_orchestration_governance_unavailable",
+                "provider_ownership_matrix": {},
+                "provider_utilization_matrix": [],
+                "provider_health_matrix": [],
+                "bandwidth_governance": {},
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "api_calls_used": 0,
+                "dashboard_provider_calls_used": 0,
+                "dashboard_llm_calls_used": 0,
+                "behavior_safe_to_apply": False,
+                "paper_only_preserved": True,
+                "alpaca_paper_only_preserved": True,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "entry_behavior_changed": False,
+                "exit_behavior_changed": False,
+                "ranking_behavior_changed": False,
+                "position_sizing_changed": False,
+                "portfolio_allocation_changed": False,
+                "thresholds_changed": False,
+                "paper_execution_changed": False,
+            }
+try:
     from engine.trade_thesis_validation_v1 import TradeThesisValidationV1
 except Exception:
     class TradeThesisValidationV1:  # type: ignore[override]
@@ -3132,6 +3167,7 @@ ASTRA_TIER3_HISTORICAL_SATELLITE_SHADOW_ACCELERATION = AstraTier3HistoricalSatel
 ASTRA_FINAL_INTELLIGENCE_MATURATION_BUNDLE = AstraFinalIntelligenceMaturationBundleV1(state_dir=STATE)
 ASTRA_TARGETED_MATURITY_PROFIT_CAPTURE_OPTIMIZATION_BUNDLE = AstraTargetedMaturityProfitCaptureOptimizationBundleV1(state_dir=STATE)
 ASTRA_HORIZON_LIFECYCLE_CAPACITY_PROMOTION_READINESS_BUNDLE = AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(state_dir=STATE)
+ASTRA_PROVIDER_ORCHESTRATION_DATA_GOVERNANCE = AstraProviderOrchestrationDataGovernanceV1(state_dir=STATE)
 TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
 MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
 TRADE_FAMILY_INTELLIGENCE = TradeFamilyIntelligenceV1(state_dir=STATE)
@@ -23995,6 +24031,37 @@ def provider_capability_audit(
         "fred_macro_diagnostics": fred_diag,
         "provider_signal_continuity_v1": signal_continuity,
     }
+
+
+def _provider_orchestration_data_governance_v1(force: bool = False):
+    try:
+        capability = provider_capability_audit(run_probe=False, include_sample_symbols=False)
+    except Exception:
+        capability = {}
+    try:
+        diagnostics = provider_diagnostics()
+    except Exception:
+        diagnostics = {}
+    try:
+        usage = get_usage_summary()
+    except Exception:
+        usage = {}
+    try:
+        managers = get_provider_status_summary()
+    except Exception:
+        managers = []
+    return ASTRA_PROVIDER_ORCHESTRATION_DATA_GOVERNANCE.status(
+        provider_capability=capability if isinstance(capability, dict) else {},
+        provider_diagnostics=diagnostics if isinstance(diagnostics, dict) else {},
+        provider_usage=usage if isinstance(usage, dict) else {},
+        manager_rows=managers if isinstance(managers, list) else [],
+        force=bool(force),
+    )
+
+
+@router.get("/api/astra_provider_orchestration_data_governance_v1")
+def astra_provider_orchestration_data_governance_v1(force: bool = False):
+    return _provider_orchestration_data_governance_v1(force=bool(force))
 
 
 @router.get("/api/api_usage")
@@ -55098,12 +55165,14 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("controlled_paper_learned_exit_validation_v1", lambda: CONTROLLED_PAPER_LEARNED_EXIT_VALIDATION.status(statuses=statuses, force=False))
         _safe_status("astra_copilot_suite_v1", lambda: _astra_copilot_suite_v1(limit=12, force=False))
         _safe_status("ask_astra_local_ai_status_v1", lambda: _astra_local_ai_status_v1(force=False))
+        _safe_status("astra_provider_orchestration_data_governance_v1", lambda: _provider_orchestration_data_governance_v1(force=False))
 
         sources["statuses"] = statuses
         out = UNIFIED_LEARNING_DIAGNOSTICS.build(sources, force=bool(force))
         if isinstance(out, dict):
             out["astra_copilot_suite_v1"] = dict(statuses.get("astra_copilot_suite_v1") or {})
             out["ask_astra_local_ai_status_v1"] = dict(statuses.get("ask_astra_local_ai_status_v1") or {})
+            out["astra_provider_orchestration_data_governance_v1"] = dict(statuses.get("astra_provider_orchestration_data_governance_v1") or {})
             market_intelligence = _astra_market_intelligence_v1(out)
             out["astra_market_intelligence_v1"] = market_intelligence
             cio_intelligence = _astra_cio_intelligence_v1(out)
