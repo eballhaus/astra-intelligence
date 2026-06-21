@@ -643,6 +643,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
   const astraCeo = unifiedDiagnostics?.astra_ceo_polish_v1 || {};
   const astraGovernance = unifiedDiagnostics?.astra_intelligence_governance_v1 || {};
   const astraMarketIntelligence = unifiedDiagnostics?.astra_market_intelligence_v1 || {};
+  const astraCio = unifiedDiagnostics?.astra_cio_intelligence_v1 || {};
   const copilotRows = opportunityRows.map((row) => {
     const action = row.confidence >= 82 ? "BUY_NOW" : row.confidence >= 68 ? "WATCH_CLOSELY" : "HOLD";
     const signalLabel = action === "BUY_NOW" ? "🟢 Buy Now" : action === "WATCH_CLOSELY" ? "🟡 Watch Closely" : "🔵 Hold";
@@ -702,7 +703,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     copilotRows.some((r) => r.action === "BUY_NOW") ? "Buy after confirmation: review top Copilot buy-now names" : "Buy after confirmation: wait for stronger confirmation",
     "Hold validated leaders: keep broker truth and paper state separated",
     astraMarketIntelligence?.strongest_pillar ? `Market pillar: strongest support is ${astraMarketIntelligence.strongest_pillar}` : "Watch catalyst changes: monitor theme persistence before chasing",
-    astraGovernance?.highest_priority_fix ? `Governance focus: ${astraGovernance.highest_priority_fix}` : "Prepare exits: review profit capture without enabling automatic sells",
+    astraCio?.highest_roi_cio_improvement ? `CIO focus: ${astraCio.highest_roi_cio_improvement}` : astraGovernance?.highest_priority_fix ? `Governance focus: ${astraGovernance.highest_priority_fix}` : "Prepare exits: review profit capture without enabling automatic sells",
   ];
   const radarItems = [
     `Earnings Watch: ${calendarItems[0]?.[1] || "calendar feed warming up"}`,
@@ -710,13 +711,14 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     `Horizon Watch: ${copilotRows[0]?.horizon || "warming up"}`,
     `Market Regime Watch: ${marketTone}${marketBiasSource ? ` / ${labelize(marketBiasSource)}` : ""}`,
     `Market Pillars: ${astraMarketIntelligence?.market_regime_summary || "pillar context warming up"}`,
+    `CIO Watch: ${astraCio?.weakest_cio_area || "CIO context warming up"}`,
     `Governance Watch: ${astraGovernance?.biggest_blind_spot || "blind spots warming up"}`,
   ];
   const decisionSummary = [
     astraCeo?.strategic_posture ? `Posture: ${astraCeo.strategic_posture}` : `Market tone ${marketTone}${marketBiasSource ? ` / ${labelize(marketBiasSource)}` : ""}`,
     astraExecutive?.top_opportunity_summary || `Best opportunity ${bestOpportunity?.symbol || "Warming Up"}`,
     astraExecutive?.consensus_summary || astraExecutive?.needs_attention_summary || `Main weakness ${mainWeakness}`,
-    astraCeo?.what_astra_should_learn_next ? `Next learning: ${astraCeo.what_astra_should_learn_next}` : `Next review ${highConfidenceCount > 0 ? "top ranked candidates" : "wait for fresh opportunity evidence"}`,
+    astraCio?.cio_summary || (astraCeo?.what_astra_should_learn_next ? `Next learning: ${astraCeo.what_astra_should_learn_next}` : `Next review ${highConfidenceCount > 0 ? "top ranked candidates" : "wait for fresh opportunity evidence"}`),
   ];
 
   const refreshPositions = async () => {

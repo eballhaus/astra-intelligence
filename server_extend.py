@@ -42602,6 +42602,7 @@ def _dashboard_data_wiring_summary_v1(unified_payload=None):
         ("Astra CEO", "astra_ceo_polish_v1", "/api/unified_learning_diagnostics_v1"),
         ("Astra Governance", "astra_intelligence_governance_v1", "/api/unified_learning_diagnostics_v1"),
         ("Astra Market Intelligence", "astra_market_intelligence_v1", "/api/unified_learning_diagnostics_v1"),
+        ("Astra CIO Intelligence", "astra_cio_intelligence_v1", "/api/unified_learning_diagnostics_v1"),
         ("Copilot Guidance", "astra_copilot_suite_v1 from cached top_buys", "/api/top_buys + cached dashboard state"),
         ("Action Center", "astra_copilot_suite_v1 priorities", "/api/unified_learning_diagnostics_v1"),
         ("Radar", "catalyst + market watch diagnostics", "/api/unified_learning_diagnostics_v1"),
@@ -42628,6 +42629,8 @@ def _dashboard_data_wiring_summary_v1(unified_payload=None):
             missing_fields.append("astra_intelligence_governance_v1")
         if has_payload and name == "Astra Market Intelligence" and not p.get("astra_market_intelligence_v1"):
             missing_fields.append("astra_market_intelligence_v1")
+        if has_payload and name == "Astra CIO Intelligence" and not p.get("astra_cio_intelligence_v1"):
+            missing_fields.append("astra_cio_intelligence_v1")
         if has_payload and name == "Learning Center" and not p:
             missing_fields.append("unified_payload")
         if missing_fields:
@@ -43039,6 +43042,7 @@ def _ask_astra_context_compression_v1(context=None):
     ceo = c.get("ceo_summary") if isinstance(c.get("ceo_summary"), dict) else {}
     governance = c.get("governance_summary") if isinstance(c.get("governance_summary"), dict) else {}
     market = c.get("market_intelligence") if isinstance(c.get("market_intelligence"), dict) else {}
+    cio = c.get("cio_intelligence") if isinstance(c.get("cio_intelligence"), dict) else {}
     signals = []
     for value in [
         executive.get("market_outlook_summary"),
@@ -43051,6 +43055,9 @@ def _ask_astra_context_compression_v1(context=None):
         market.get("market_regime_summary"),
         market.get("market_tailwind_summary"),
         market.get("market_headwind_summary"),
+        cio.get("cio_summary"),
+        cio.get("portfolio_risk_summary"),
+        cio.get("exit_readiness_summary"),
     ]:
         if value:
             signals.append(_safe_text(str(value), 220))
@@ -43078,6 +43085,18 @@ def _ask_astra_context_compression_v1(context=None):
         ],
         "current_market_regime": market.get("market_regime") or market.get("market_regime_summary"),
         "current_portfolio_posture": executive.get("portfolio_health_summary"),
+        "cio_intelligence": {
+            "overall_cio_intelligence_score": cio.get("overall_cio_intelligence_score"),
+            "portfolio_intelligence_score": cio.get("portfolio_intelligence_score"),
+            "exit_intelligence_score": cio.get("exit_intelligence_score"),
+            "sector_rotation_score": cio.get("sector_rotation_score"),
+            "market_breadth_score": cio.get("market_breadth_score"),
+            "macro_intelligence_score": cio.get("macro_intelligence_score"),
+            "fed_intelligence_score": cio.get("fed_intelligence_score"),
+            "strongest_cio_area": cio.get("strongest_cio_area"),
+            "weakest_cio_area": cio.get("weakest_cio_area"),
+            "highest_roi_cio_improvement": cio.get("highest_roi_cio_improvement"),
+        },
         "safety": c.get("safety") or {},
     }
     return {
@@ -43091,6 +43110,213 @@ def _ask_astra_context_compression_v1(context=None):
         "context_tokens_estimate": int(len(json.dumps(compressed, ensure_ascii=True)) / 4),
         "context_compression_score": 92.0,
         **_governance_safety_flags(),
+        "generated_at": _now_utc_iso(),
+    }
+
+
+def _astra_cio_intelligence_v1(payload=None):
+    p = payload if isinstance(payload, dict) else {}
+    portfolio = p.get("portfolio_health_summary") if isinstance(p.get("portfolio_health_summary"), dict) else {}
+    portfolio_risk = p.get("portfolio_risk_intelligence") if isinstance(p.get("portfolio_risk_intelligence"), dict) else {}
+    portfolio_div = p.get("portfolio_diversification_correlation_v2") if isinstance(p.get("portfolio_diversification_correlation_v2"), dict) else {}
+    exit_suite = p.get("profit_capture_peak_decay_exit_validation_suite_v1") if isinstance(p.get("profit_capture_peak_decay_exit_validation_suite_v1"), dict) else {}
+    profit_pilot = p.get("controlled_paper_profit_protection_pilot_v1") if isinstance(p.get("controlled_paper_profit_protection_pilot_v1"), dict) else {}
+    exit_v3 = p.get("adaptive_execution_exit_intelligence_v3") if isinstance(p.get("adaptive_execution_exit_intelligence_v3"), dict) else {}
+    sector = p.get("etf_sector_rotation_intelligence_v1") if isinstance(p.get("etf_sector_rotation_intelligence_v1"), dict) else {}
+    breadth = p.get("market_breadth_index_intelligence_v1") if isinstance(p.get("market_breadth_index_intelligence_v1"), dict) else {}
+    market = p.get("astra_market_intelligence_v1") if isinstance(p.get("astra_market_intelligence_v1"), dict) else _astra_market_intelligence_v1(p)
+    transition = p.get("market_transition_detection_v1") if isinstance(p.get("market_transition_detection_v1"), dict) else {}
+    calendar = p.get("market_calendar_knowledge") if isinstance(p.get("market_calendar_knowledge"), dict) else {}
+
+    heat_raw = portfolio.get("portfolio_heat")
+    heat_score = _to_float(heat_raw.get("value") if isinstance(heat_raw, dict) else heat_raw, _to_float(portfolio_risk.get("portfolio_heat"), 45.0))
+    concentration = _to_float(
+        portfolio_div.get("concentration_risk_trend")
+        or portfolio_div.get("concentration_risk")
+        or portfolio_risk.get("portfolio_concentration_score"),
+        45.0,
+    )
+    correlation = _to_float(
+        portfolio_div.get("correlation_risk_trend")
+        or portfolio_div.get("correlation_risk")
+        or portfolio_risk.get("portfolio_correlation_score"),
+        45.0,
+    )
+    diversification = _to_float(
+        portfolio_div.get("diversification_quality_trend")
+        or portfolio_div.get("diversification_quality")
+        or portfolio_risk.get("portfolio_diversification_score"),
+        max(0.0, 100.0 - ((concentration + correlation) / 2.0)),
+    )
+    capital_efficiency = _to_float(
+        p.get("capital_efficiency_score")
+        or portfolio_risk.get("capital_efficiency_score")
+        or (100.0 - min(85.0, heat_score * 0.55 + concentration * 0.25)),
+        58.0,
+    )
+    recycling_score = _to_float(
+        (p.get("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1") or {}).get("recycled_slots_available")
+        if isinstance(p.get("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1"), dict) else None,
+        0.0,
+    )
+    portfolio_health_score = round(max(0.0, min(100.0, (diversification + capital_efficiency + (100.0 - heat_score)) / 3.0)), 2)
+    portfolio_intelligence_score = round(max(0.0, min(100.0, (portfolio_health_score + diversification + capital_efficiency) / 3.0)), 2)
+
+    profit_lock = _to_float(profit_pilot.get("profit_lock_readiness") or exit_suite.get("profit_lock_readiness"), 45.0)
+    continuation = _to_float(profit_pilot.get("continuation_failure_probability") or exit_suite.get("continuation_failure_readiness"), 45.0)
+    catalyst_decay = _to_float(profit_pilot.get("catalyst_decay_risk") or exit_suite.get("catalyst_decay_exit_value"), 45.0)
+    horizon_exit = _to_float(exit_suite.get("horizon_specific_exit_readiness") or exit_v3.get("horizon_specific_exit_readiness"), 45.0)
+    regime_exit = _to_float(exit_v3.get("regime_aware_exit_readiness") or market.get("pillar_alignment_score"), 45.0)
+    symbol_exit = _to_float(exit_v3.get("symbol_aware_exit_readiness") or exit_suite.get("policy_confidence"), 45.0)
+    exit_evidence = int(_to_float(exit_suite.get("evidence_count") or profit_pilot.get("evidence_count") or exit_v3.get("evidence_count"), 0.0))
+    exit_intelligence_score = round(max(0.0, min(100.0, (profit_lock + horizon_exit + regime_exit + symbol_exit) / 4.0)), 2)
+    exit_stage = "stage_2_alerts" if exit_intelligence_score >= 62 and exit_evidence >= 25 else "stage_1_recommendations"
+    false_positive = round(max(5.0, 100.0 - exit_intelligence_score), 2)
+    false_negative = round(max(5.0, 70.0 - profit_lock), 2)
+
+    sector_rotation_score = _to_float(
+        sector.get("sector_rotation_score")
+        or sector.get("sector_momentum_persistence")
+        or sector.get("ETF leadership score"),
+        _to_float(market.get("market_intelligence_score"), 50.0),
+    )
+    sector_leadership = _to_float(sector.get("sector_leadership_score") or sector.get("sector_inflow_score"), sector_rotation_score)
+    sector_lagging = _to_float(sector.get("sector_lagging_score") or sector.get("sector_outflow_score"), 100.0 - sector_rotation_score)
+    market_breadth_score = _to_float(breadth.get("market_breadth_score") or breadth.get("breadth_proxy_score"), 50.0)
+    participation = _to_float(breadth.get("participation_score") or breadth.get("market_support_for_equity_trades"), market_breadth_score)
+    breadth_confidence = _to_float(breadth.get("breadth_confidence") or breadth.get("index_confidence_score"), 50.0)
+    narrow_market_risk = round(max(0.0, 100.0 - market_breadth_score), 2)
+
+    macro_pillar = next((r for r in (market.get("pillars") or []) if isinstance(r, dict) and r.get("pillar") == "Economic Environment"), {})
+    fed_pillar = next((r for r in (market.get("pillars") or []) if isinstance(r, dict) and r.get("pillar") == "Monetary Policy"), {})
+    macro_intelligence_score = _to_float(macro_pillar.get("pillar_score"), 50.0)
+    fed_intelligence_score = _to_float(fed_pillar.get("pillar_score"), 50.0)
+    macro_confidence = round((_to_float(macro_pillar.get("confidence"), 45.0) + _to_float(fed_pillar.get("confidence"), 45.0)) / 2.0, 2)
+    fed_risk = round(max(0.0, 100.0 - fed_intelligence_score), 2)
+
+    scores = {
+        "Portfolio Intelligence": portfolio_intelligence_score,
+        "Exit Intelligence": exit_intelligence_score,
+        "Sector Rotation": sector_rotation_score,
+        "Market Breadth": market_breadth_score,
+        "Macro Intelligence": macro_intelligence_score,
+        "Fed Intelligence": fed_intelligence_score,
+    }
+    strongest = max(scores.items(), key=lambda kv: kv[1])
+    weakest = min(scores.items(), key=lambda kv: kv[1])
+    overall = round(sum(scores.values()) / max(1, len(scores)), 2)
+    highest_roi = (
+        "Improve sector rotation and breadth evidence before leaning on market context."
+        if weakest[0] in {"Sector Rotation", "Market Breadth"} else
+        "Keep exit recommendations advisory until evidence and false-positive risk improve."
+        if weakest[0] == "Exit Intelligence" else
+        "Improve cached macro/Fed context without adding dashboard provider calls."
+        if weakest[0] in {"Macro Intelligence", "Fed Intelligence"} else
+        "Review portfolio overlap, heat, and capital recycling candidates."
+    )
+    return {
+        "ok": True,
+        "suite": "Astra CIO Intelligence Maturation Bundle V1",
+        "status": "ok",
+        "portfolio_intelligence_score": portfolio_intelligence_score,
+        "portfolio_health_score": portfolio_health_score,
+        "portfolio_concentration_score": round(concentration, 2),
+        "portfolio_diversification_score": round(diversification, 2),
+        "portfolio_correlation_score": round(correlation, 2),
+        "portfolio_heat_score": round(heat_score, 2),
+        "portfolio_capital_efficiency_score": round(capital_efficiency, 2),
+        "portfolio_recycling_score": round(recycling_score, 2),
+        "strongest_position_contribution": str(portfolio_risk.get("biggest_winner") or portfolio.get("biggest_winner") or "warming_up"),
+        "weakest_position_drag": str(portfolio_risk.get("biggest_loser") or portfolio.get("biggest_loser") or "warming_up"),
+        "top_overlap_theme": str(portfolio_div.get("top_overlap_theme") or "theme_overlap_warming_up"),
+        "top_overlap_sector": str(portfolio_div.get("top_overlap_sector") or sector.get("strongest_sector") or "sector_overlap_warming_up"),
+        "highest_risk_cluster": str(portfolio_div.get("highest_risk_cluster") or "cluster_pressure_warming_up"),
+        "best_capital_recycling_candidate": str(portfolio_risk.get("best_capital_recycling_candidate") or "review_weakest_low_efficiency_position"),
+        "portfolio_priority_action": "Review concentration, heat, and capital recycling candidates; do not change allocation automatically.",
+        "portfolio_health_summary": f"Portfolio CIO score is {portfolio_intelligence_score:.1f}; heat {heat_score:.1f}, diversification {diversification:.1f}, capital efficiency {capital_efficiency:.1f}.",
+        "concentration_summary": f"Concentration risk reads {concentration:.1f}; monitor overlap but do not force allocation changes.",
+        "diversification_summary": f"Diversification quality reads {diversification:.1f}; correlation risk {correlation:.1f}.",
+        "capital_efficiency_summary": f"Capital efficiency reads {capital_efficiency:.1f}; recycling remains advisory-only.",
+        "portfolio_risk_summary": f"Portfolio heat is {heat_score:.1f}; highest risk cluster is {portfolio_div.get('highest_risk_cluster') or 'warming up'}.",
+        "capital_recycling_summary": "Look for weak-position drag and stale capital before expanding exposure.",
+        "portfolio_recommendation_summary": "Keep portfolio decisions human-reviewed; no sizing or allocation changes are applied.",
+        "exit_intelligence_score": exit_intelligence_score,
+        "profit_lock_readiness": round(profit_lock, 2),
+        "continuation_failure_readiness": round(continuation, 2),
+        "catalyst_decay_exit_readiness": round(catalyst_decay, 2),
+        "horizon_specific_exit_readiness": round(horizon_exit, 2),
+        "regime_aware_exit_readiness": round(regime_exit, 2),
+        "symbol_aware_exit_readiness": round(symbol_exit, 2),
+        "expected_giveback_reduction": _to_float(profit_pilot.get("estimated_giveback_reduction") or exit_suite.get("improvement_delta"), 0.0),
+        "expected_capture_improvement": _to_float(profit_pilot.get("estimated_profit_capture_improvement") or exit_suite.get("capture_ratio_delta"), 0.0),
+        "exit_false_positive_risk": false_positive,
+        "exit_false_negative_risk": false_negative,
+        "exit_policy_confidence": round((profit_lock + regime_exit + symbol_exit) / 3.0, 2),
+        "exit_policy_evidence_count": exit_evidence,
+        "exit_activation_stage": exit_stage,
+        "exit_maturity_summary": f"Exit intelligence is {exit_stage}; recommendations and alerts only, no automatic sells.",
+        "profit_lock_summary": f"Profit-lock readiness {profit_lock:.1f}.",
+        "continuation_failure_summary": f"Continuation-failure readiness {continuation:.1f}.",
+        "catalyst_decay_summary": f"Catalyst-decay exit readiness {catalyst_decay:.1f}.",
+        "horizon_exit_summary": f"Horizon-specific exit readiness {horizon_exit:.1f}.",
+        "exit_readiness_summary": "Human review remains required; automatic exits, partial sells, and trailing stops remain disabled.",
+        "exit_alert_candidates": [],
+        "human_review_required": True,
+        "sector_rotation_score": round(sector_rotation_score, 2),
+        "sector_leadership_score": round(sector_leadership, 2),
+        "sector_lagging_score": round(sector_lagging, 2),
+        "leadership_persistence_score": _to_float(sector.get("sector_momentum_persistence"), sector_rotation_score),
+        "capital_rotation_signal": str(sector.get("strongest_sector_rotation") or sector.get("strongest_sector") or market.get("strongest_pillar") or "warming_up"),
+        "top_leading_sector": str(sector.get("strongest_sector") or sector.get("strongest_sector_rotation") or "warming_up"),
+        "top_lagging_sector": str(sector.get("weakest_sector") or sector.get("weakest_sector_rotation") or "warming_up"),
+        "improving_sectors": sector.get("improving_sectors") or [],
+        "weakening_sectors": sector.get("weakening_sectors") or [],
+        "sector_relative_strength": _to_float(sector.get("sector_relative_strength"), sector_rotation_score),
+        "ETF_proxy_strength": _to_float(sector.get("ETF leadership score") or sector.get("etf_proxy_strength"), sector_rotation_score),
+        "sector_rotation_confidence": _to_float(sector.get("sector_rotation_confidence"), 50.0),
+        "market_breadth_score": round(market_breadth_score, 2),
+        "participation_score": round(participation, 2),
+        "breadth_thrust_score": _to_float(breadth.get("breadth_thrust_score"), market_breadth_score),
+        "leadership_quality_score": _to_float(breadth.get("leadership_quality_score"), sector_leadership),
+        "narrow_market_risk": narrow_market_risk,
+        "broad_participation_signal": str(breadth.get("broad_participation_signal") or ("supportive" if market_breadth_score >= 55 else "narrow")),
+        "risk_on_breadth_signal": str(breadth.get("risk_on_breadth_signal") or breadth.get("risk_on_score") or "warming_up"),
+        "risk_off_breadth_signal": str(breadth.get("risk_off_breadth_signal") or breadth.get("risk_off_score") or "warming_up"),
+        "breadth_confidence": breadth_confidence,
+        "sector_rotation_summary": f"Sector rotation score {sector_rotation_score:.1f}; leading sector {sector.get('strongest_sector') or 'warming up'}.",
+        "market_breadth_summary": f"Breadth score {market_breadth_score:.1f}; narrow-market risk {narrow_market_risk:.1f}.",
+        "leadership_summary": f"Leadership quality {sector_leadership:.1f}; persistence remains cache-derived.",
+        "capital_flow_summary": str(sector.get("sector_rotation_summary") or market.get("market_tailwind_summary") or "Capital flow context warming up."),
+        "market_participation_summary": str(breadth.get("market_breadth_summary") or "Participation is estimated from cached breadth proxies."),
+        "sector_breadth_recommendation": "Use breadth and sector rotation for explanation only; do not change rankings or trades.",
+        "macro_intelligence_score": round(macro_intelligence_score, 2),
+        "fed_intelligence_score": round(fed_intelligence_score, 2),
+        "inflation_posture": str(calendar.get("inflation_posture") or "insufficient_cached_evidence"),
+        "employment_posture": str(calendar.get("employment_posture") or "insufficient_cached_evidence"),
+        "growth_posture": str(macro_pillar.get("posture") or "neutral"),
+        "rate_policy_posture": str(fed_pillar.get("posture") or "neutral"),
+        "treasury_yield_posture": str(calendar.get("treasury_yield_posture") or "insufficient_cached_evidence"),
+        "dollar_strength_posture": str(calendar.get("dollar_strength_posture") or "insufficient_cached_evidence"),
+        "liquidity_posture": str(calendar.get("liquidity_posture") or "insufficient_cached_evidence"),
+        "macro_tailwind_score": round(max(0.0, macro_intelligence_score - 45.0), 2),
+        "macro_headwind_score": round(max(0.0, 55.0 - macro_intelligence_score), 2),
+        "fed_risk_score": fed_risk,
+        "macro_confidence": macro_confidence,
+        "macro_environment_summary": f"Macro score {macro_intelligence_score:.1f}; cached evidence only.",
+        "fed_policy_summary": f"Fed score {fed_intelligence_score:.1f}; no live Fed/provider calls were made.",
+        "rates_summary": "Rates context is cache-first; mark as insufficient evidence when fresh local data is unavailable.",
+        "inflation_summary": "Inflation posture is not fabricated; cached evidence is limited unless supplied by existing systems.",
+        "employment_summary": "Employment posture is cache-derived and advisory only.",
+        "liquidity_summary": "Liquidity posture is cache-derived and advisory only.",
+        "macro_risk_summary": f"Fed risk score {fed_risk:.1f}; macro confidence {macro_confidence:.1f}.",
+        "macro_recommendation_summary": "Use macro/Fed context to explain risk posture only; no trading changes.",
+        "overall_cio_intelligence_score": overall,
+        "strongest_cio_area": strongest[0],
+        "weakest_cio_area": weakest[0],
+        "highest_roi_cio_improvement": highest_roi,
+        "cio_summary": f"CIO intelligence score {overall:.1f}. Strongest area: {strongest[0]}; weakest area: {weakest[0]}. {highest_roi}",
+        **_governance_safety_flags(),
+        "partial_sells_enabled": False,
         "generated_at": _now_utc_iso(),
     }
 
@@ -43158,6 +43384,7 @@ def _astra_executive_summary_v1(unified_payload=None, copilot_payload=None):
     data_trust = p.get("data_freshness_trust_engine_v1") if isinstance(p.get("data_freshness_trust_engine_v1"), dict) else {}
     consensus = p.get("consensus_engine_v1") if isinstance(p.get("consensus_engine_v1"), dict) else {}
     market_intel = p.get("astra_market_intelligence_v1") if isinstance(p.get("astra_market_intelligence_v1"), dict) else {}
+    cio = p.get("astra_cio_intelligence_v1") if isinstance(p.get("astra_cio_intelligence_v1"), dict) else {}
     top_actions = copilot.get("top_actions") if isinstance(copilot.get("top_actions"), list) else []
     top = top_actions[0] if top_actions else {}
     pf = (perf.get("profit_factor") or {}).get("value") if isinstance(perf.get("profit_factor"), dict) else perf.get("profit_factor")
@@ -43165,7 +43392,7 @@ def _astra_executive_summary_v1(unified_payload=None, copilot_payload=None):
     portfolio_heat = portfolio.get("portfolio_heat") if isinstance(portfolio.get("portfolio_heat"), dict) else {}
     heat_label = str(portfolio_heat.get("label") or portfolio.get("risk_label") or "warming up").replace("_", " ")
     market_outlook = str(market_intel.get("market_regime_summary") or ("Constructive but selective." if _to_float(pf, 0.0) >= 1.0 else "Guarded until performance evidence improves."))
-    needs_attention = "Profit capture, catalyst clarity, and follow-through remain the main operating watchpoints."
+    needs_attention = str(cio.get("highest_roi_cio_improvement") or "Profit capture, catalyst clarity, and follow-through remain the main operating watchpoints.")
     if _to_float(buy_purity, 0.0) >= 70:
         needs_attention = "Selection quality is supportive; profit capture and catalyst clarity remain the main watchpoints."
     top_opportunity = (
@@ -43179,7 +43406,7 @@ def _astra_executive_summary_v1(unified_payload=None, copilot_payload=None):
     priority_queue = [
         str(market_intel.get("market_headwind_summary") or governance.get("top_risk_summary") or "Protect paper-only and advisory-first controls."),
         top_opportunity,
-        str(governance.get("biggest_weakness") or "Improve profit capture and catalyst confidence."),
+        str(cio.get("cio_summary") or governance.get("biggest_weakness") or "Improve profit capture and catalyst confidence."),
         f"Blind spot: {data_gap}.",
         str(market_intel.get("market_tailwind_summary") or governance.get("highest_priority_fix") or data_coverage.get("recommended_next_data_priority") or "Keep dashboard wiring and data trust visible."),
     ]
@@ -43201,6 +43428,9 @@ def _astra_executive_summary_v1(unified_payload=None, copilot_payload=None):
         "market_pressure_summary": market_intel.get("market_pressure_summary") or "",
         "market_tailwind_summary": market_intel.get("market_tailwind_summary") or "",
         "market_headwind_summary": market_intel.get("market_headwind_summary") or "",
+        "cio_summary": cio.get("cio_summary") or "",
+        "portfolio_risk_summary": cio.get("portfolio_risk_summary") or "",
+        "exit_readiness_summary": cio.get("exit_readiness_summary") or "",
         "executive_maturity_score": _to_float(governance.get("executive_maturity_score"), 82.0),
         "api_calls_used": 0,
         "provider_calls_used": 0,
@@ -43220,6 +43450,7 @@ def _astra_ceo_summary_v1(executive_payload=None, unified_payload=None):
     p = unified_payload if isinstance(unified_payload, dict) else {}
     governance = p.get("astra_intelligence_governance_v1") if isinstance(p.get("astra_intelligence_governance_v1"), dict) else {}
     market_intel = p.get("astra_market_intelligence_v1") if isinstance(p.get("astra_market_intelligence_v1"), dict) else {}
+    cio = p.get("astra_cio_intelligence_v1") if isinstance(p.get("astra_cio_intelligence_v1"), dict) else {}
     confidence = _to_float(p.get("dashboard_data_trust_score"), 0.0)
     strategic_posture = "Selective and evidence-led."
     if confidence >= 90:
@@ -43243,6 +43474,7 @@ def _astra_ceo_summary_v1(executive_payload=None, unified_payload=None):
         "market_strategy_summary": executive.get("market_outlook_summary") or "Stay selective and use market context as advisory support only.",
         "system_maturity_summary": governance.get("governance_summary") or "Astra is mature enough to explain its intelligence, while behavior remains advisory and paper-safe.",
         "market_intelligence_summary": market_intel.get("market_regime_summary") or executive.get("market_outlook_summary") or "Market intelligence is warming up from cached diagnostics.",
+        "cio_intelligence_summary": cio.get("cio_summary") or "CIO intelligence is warming up from cached portfolio, exit, breadth, and macro diagnostics.",
         "ceo_maturity_score": _to_float(governance.get("ceo_maturity_score"), 82.0),
         "api_calls_used": 0,
         "provider_calls_used": 0,
@@ -43289,6 +43521,8 @@ def ask_astra_v1(payload: dict = Body(...)):
     ask_context_seed = {"astra_copilot_suite_v1": copilot, "ask_astra_local_ai_status_v1": local_status}
     market_intel = _astra_market_intelligence_v1(ask_context_seed)
     ask_context_seed["astra_market_intelligence_v1"] = market_intel
+    cio = _astra_cio_intelligence_v1(ask_context_seed)
+    ask_context_seed["astra_cio_intelligence_v1"] = cio
     governance = _astra_intelligence_governance_v1(ask_context_seed)
     ask_context_seed.update({
         "astra_intelligence_governance_v1": governance,
@@ -43332,6 +43566,7 @@ def ask_astra_v1(payload: dict = Body(...)):
             "market_strategy_summary": ceo.get("market_strategy_summary"),
             "system_maturity_summary": ceo.get("system_maturity_summary"),
             "market_intelligence_summary": ceo.get("market_intelligence_summary"),
+            "cio_intelligence_summary": ceo.get("cio_intelligence_summary"),
         },
         "governance_summary": {
             "consensus_score": governance.get("consensus_score"),
@@ -43352,6 +43587,23 @@ def ask_astra_v1(payload: dict = Body(...)):
             "market_pressure_summary": market_intel.get("market_pressure_summary"),
             "market_tailwind_summary": market_intel.get("market_tailwind_summary"),
             "market_headwind_summary": market_intel.get("market_headwind_summary"),
+        },
+        "cio_intelligence": {
+            "portfolio_intelligence_score": cio.get("portfolio_intelligence_score"),
+            "exit_intelligence_score": cio.get("exit_intelligence_score"),
+            "sector_rotation_score": cio.get("sector_rotation_score"),
+            "market_breadth_score": cio.get("market_breadth_score"),
+            "macro_intelligence_score": cio.get("macro_intelligence_score"),
+            "fed_intelligence_score": cio.get("fed_intelligence_score"),
+            "overall_cio_intelligence_score": cio.get("overall_cio_intelligence_score"),
+            "strongest_cio_area": cio.get("strongest_cio_area"),
+            "weakest_cio_area": cio.get("weakest_cio_area"),
+            "highest_roi_cio_improvement": cio.get("highest_roi_cio_improvement"),
+            "portfolio_risk_summary": cio.get("portfolio_risk_summary"),
+            "exit_readiness_summary": cio.get("exit_readiness_summary"),
+            "sector_rotation_summary": cio.get("sector_rotation_summary"),
+            "market_breadth_summary": cio.get("market_breadth_summary"),
+            "macro_risk_summary": cio.get("macro_risk_summary"),
         },
         "key_supporting_astra_signals": key_signals,
         "supported_question_types": [
@@ -43395,13 +43647,30 @@ def ask_astra_v1(payload: dict = Body(...)):
     generation_start = time.perf_counter()
     if response_mode == "fast":
         first = (compressed_context.get("copilot_actions") or [{}])[0] if isinstance(compressed_context.get("copilot_actions"), list) else {}
+        q_lc = question.lower()
+        if "portfolio" in q_lc or "risk" in q_lc:
+            fast_short = cio.get("portfolio_risk_summary") or cio.get("portfolio_health_summary") or "Portfolio risk is warming up from cached diagnostics."
+        elif "exit" in q_lc or "sell" in q_lc:
+            fast_short = cio.get("exit_readiness_summary") or cio.get("exit_maturity_summary") or "Exit intelligence remains advisory-only."
+        elif "sector" in q_lc:
+            fast_short = cio.get("sector_rotation_summary") or "Sector rotation context is warming up."
+        elif "breadth" in q_lc or "participation" in q_lc:
+            fast_short = cio.get("market_breadth_summary") or "Market breadth context is warming up."
+        elif "fed" in q_lc or "macro" in q_lc or "rate" in q_lc:
+            fast_short = cio.get("macro_risk_summary") or cio.get("fed_policy_summary") or "Macro/Fed context is cache-derived and advisory-only."
+        elif "cio" in q_lc or "concern" in q_lc:
+            fast_short = cio.get("highest_roi_cio_improvement") or cio.get("cio_summary") or "CIO intelligence is warming up."
+        else:
+            fast_short = compressed_context.get("highest_priority_signals", ["Astra is using cached intelligence and remains advisory-only."])[0]
         answer = "\n".join([
-            f"Short answer: {compressed_context.get('highest_priority_signals', ['Astra is using cached intelligence and remains advisory-only.'])[0]}",
+            f"Short answer: {fast_short}",
             f"Plain-English explanation: The current market regime is {compressed_context.get('current_market_regime') or 'warming up'}, with tailwinds from {market_intel.get('market_tailwind_summary')} and headwinds from {market_intel.get('market_headwind_summary')}.",
             "Key Astra signals:",
             f"- Top Copilot item: {first.get('action', 'warming_up')} {first.get('symbol', '')} ({first.get('confidence', 'n/a')}% confidence).",
             f"- Consensus score: {governance.get('consensus_score')}.",
             f"- Market intelligence score: {market_intel.get('market_intelligence_score')}.",
+            f"- CIO intelligence score: {cio.get('overall_cio_intelligence_score')}.",
+            f"- Weakest CIO area: {cio.get('weakest_cio_area')}.",
             f"- Biggest risk/data gap: {governance.get('biggest_blind_spot')}.",
             "Safety note: This is cached, advisory-only intelligence. Astra did not change rankings, entries, exits, sizing, allocation, thresholds, or broker behavior.",
         ])
@@ -54837,6 +55106,8 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["ask_astra_local_ai_status_v1"] = dict(statuses.get("ask_astra_local_ai_status_v1") or {})
             market_intelligence = _astra_market_intelligence_v1(out)
             out["astra_market_intelligence_v1"] = market_intelligence
+            cio_intelligence = _astra_cio_intelligence_v1(out)
+            out["astra_cio_intelligence_v1"] = cio_intelligence
             governance_summary = _astra_intelligence_governance_v1(out)
             out["astra_intelligence_governance_v1"] = governance_summary
             out["astra_market_intelligence_v1"] = dict(governance_summary.get("astra_market_intelligence_v1") or market_intelligence)

@@ -1672,6 +1672,7 @@ export default function LearningTab({ compact = false }) {
   const dataFreshnessTrust = unified?.data_freshness_trust_engine_v1 || astraIntelligenceGovernance?.data_freshness_trust_engine_v1 || {};
   const dataCoverageEngine = unified?.data_coverage_engine_v1 || astraIntelligenceGovernance?.data_coverage_engine_v1 || {};
   const astraMarketIntelligence = unified?.astra_market_intelligence_v1 || astraIntelligenceGovernance?.astra_market_intelligence_v1 || {};
+  const astraCioIntelligence = unified?.astra_cio_intelligence_v1 || {};
   const metricDisplay = (metric, suffix = "") => {
     if (!metric || typeof metric !== "object") return "n/a";
     if (metric.value === null || metric.value === undefined) {
@@ -1991,6 +1992,44 @@ export default function LearningTab({ compact = false }) {
                 {String(line).replaceAll("_", " ")}
               </div>
             ))}
+          </div>
+        </details>
+      </section>
+
+      <section style={{ background: "#ffffff", border: "1px solid #d8e3f2", borderRadius: 22, boxShadow: "0 18px 45px rgba(25, 47, 78, 0.10)", padding: 16, color: "#13243a" }}>
+        <details>
+          <summary style={{ cursor: "pointer", fontWeight: 900, color: "#13243a" }}>
+            Astra CIO Intelligence
+            <span style={{ marginLeft: 10, color: "#667994", fontWeight: 700, fontSize: 12 }}>
+              score {safeNumber(astraCioIntelligence?.overall_cio_intelligence_score).toFixed(1)} · weakest {String(astraCioIntelligence?.weakest_cio_area || "warming up").replaceAll("_", " ")}
+            </span>
+          </summary>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginTop: 14 }}>
+            {[
+              ["Portfolio", safeNumber(astraCioIntelligence?.portfolio_intelligence_score).toFixed(1)],
+              ["Exits", safeNumber(astraCioIntelligence?.exit_intelligence_score).toFixed(1)],
+              ["Sector Rotation", safeNumber(astraCioIntelligence?.sector_rotation_score).toFixed(1)],
+              ["Market Breadth", safeNumber(astraCioIntelligence?.market_breadth_score).toFixed(1)],
+              ["Macro", safeNumber(astraCioIntelligence?.macro_intelligence_score).toFixed(1)],
+              ["Fed", safeNumber(astraCioIntelligence?.fed_intelligence_score).toFixed(1)],
+              ["Strongest Area", astraCioIntelligence?.strongest_cio_area || "warming up"],
+              ["Exit Stage", astraCioIntelligence?.exit_activation_stage || "observe only"],
+            ].map(([label, value]) => (
+              <div key={label} style={{ border: "1px solid #dce6f3", borderRadius: 14, background: "#f7fbff", padding: "10px 11px" }}>
+                <div style={{ color: "#667994", fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+                <div style={{ color: "#13243a", fontSize: 16, fontWeight: 900, marginTop: 3 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, marginTop: 12 }}>
+            {[astraCioIntelligence?.portfolio_health_summary, astraCioIntelligence?.exit_maturity_summary, astraCioIntelligence?.sector_rotation_summary, astraCioIntelligence?.market_breadth_summary, astraCioIntelligence?.macro_risk_summary].filter(Boolean).map((line, idx) => (
+              <div key={`${idx}-${line}`} style={{ border: "1px solid #dce6f3", borderRadius: 14, background: "#f7fbff", padding: "10px 11px", color: "#314965", fontSize: 13, lineHeight: 1.45 }}>
+                {String(line).replaceAll("_", " ")}
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 12, color: "#667994", fontSize: 13, lineHeight: 1.5 }}>
+            {astraCioIntelligence?.cio_summary || "CIO intelligence is warming up from cached portfolio, exit, breadth, sector, and macro diagnostics."}
           </div>
         </details>
       </section>
