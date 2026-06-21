@@ -3229,6 +3229,21 @@ export default function LearningTab({ compact = false }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
           {[
             ["Status", astraProviderOrchestrationDataGovernance?.status],
+            ["Institutional score", safeNumber(astraProviderOrchestrationDataGovernance?.institutional_intelligence_score).toFixed(1)],
+            ["Data acquisition", safeNumber(astraProviderOrchestrationDataGovernance?.controlled_data_acquisition_score).toFixed(1)],
+            ["Worker", astraProviderOrchestrationDataGovernance?.controlled_data_acquisition_orchestrator_v2?.background_worker_exists ? "exists" : "warming up"],
+            ["Scheduler", astraProviderOrchestrationDataGovernance?.controlled_data_acquisition_orchestrator_v2?.scheduler_exists ? "exists" : "warming up"],
+            ["Last collection", astraProviderOrchestrationDataGovernance?.controlled_data_acquisition_orchestrator_v2?.last_collection_at],
+            ["Portfolio Intel", safeNumber(astraProviderOrchestrationDataGovernance?.portfolio_intelligence_score).toFixed(1)],
+            ["Exit Intel", safeNumber(astraProviderOrchestrationDataGovernance?.exit_intelligence_score).toFixed(1)],
+            ["Sector Rotation", safeNumber(astraProviderOrchestrationDataGovernance?.sector_rotation_score).toFixed(1)],
+            ["Market Breadth", safeNumber(astraProviderOrchestrationDataGovernance?.market_breadth_score).toFixed(1)],
+            ["Macro / Fed", `${safeNumber(astraProviderOrchestrationDataGovernance?.macro_intelligence_score).toFixed(1)} / ${safeNumber(astraProviderOrchestrationDataGovernance?.fed_intelligence_score).toFixed(1)}`],
+            ["Regime", astraProviderOrchestrationDataGovernance?.market_regime_engine_v1?.market_regime],
+            ["Consensus", safeNumber(astraProviderOrchestrationDataGovernance?.consensus_score).toFixed(1)],
+            ["Knowledge Graph", safeNumber(astraProviderOrchestrationDataGovernance?.knowledge_graph_score).toFixed(1)],
+            ["Strongest area", astraProviderOrchestrationDataGovernance?.strongest_area],
+            ["Weakest area", astraProviderOrchestrationDataGovernance?.weakest_area],
             ["Primary model", astraProviderOrchestrationDataGovernance?.summary?.primary_provider_model],
             ["Best owner", astraProviderOrchestrationDataGovernance?.summary?.best_configured_owner],
             ["Provider scores", safeNumber(astraProviderOrchestrationDataGovernance?.provider_confidence_engine?.providers_scored).toFixed(0)],
@@ -3263,6 +3278,15 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Improvements: {(astraProviderOrchestrationDataGovernance?.cio_intelligence_maturation?.weaknesses_improved || []).map((item) => String(item).replaceAll("_", " ")).join(" | ") || "warming up"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Controlled acquisition: {(astraProviderOrchestrationDataGovernance?.controlled_data_acquisition_orchestrator_v2?.collection_schedule || []).map((row) => `${String(row?.cycle || "cycle").replaceAll("_", " ")} ${String(row?.window || "")}`).join(" | ") || "warming up"}. Provider calls stay inside the background/cache path.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Provider self-healing: {(astraProviderOrchestrationDataGovernance?.provider_self_healing_v1?.provider_rows || []).filter((row) => row?.fallback_used).slice(0, 4).map((row) => `${String(row?.provider_name || "provider")} fallback ${String(row?.fallback_provider || "none")}`).join(" | ") || "no active fallback needed"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            V3 focus: {String(astraProviderOrchestrationDataGovernance?.highest_roi_next_improvement || "continue controlled background evidence gathering").replaceAll("_", " ")}. Executive/Copilot/Ask Astra enrichment is cached and advisory-only.
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Dashboard contract: {String(astraProviderOrchestrationDataGovernance?.summary?.dashboard_contract || "cache only no provider or LLM calls").replaceAll("_", " ")}.

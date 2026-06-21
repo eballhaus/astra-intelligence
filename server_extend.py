@@ -24033,7 +24033,56 @@ def provider_capability_audit(
     }
 
 
-def _provider_orchestration_data_governance_v1(force: bool = False):
+PROVIDER_ORCHESTRATION_BACKGROUND_INTERVAL_SECONDS = max(
+    300.0,
+    _to_float(os.getenv("ASTRA_PROVIDER_ORCHESTRATION_BACKGROUND_INTERVAL_SECONDS", "900"), 900.0),
+)
+PROVIDER_ORCHESTRATION_BACKGROUND_ENABLED = str(
+    os.getenv("ASTRA_PROVIDER_ORCHESTRATION_BACKGROUND_ENABLED", "1")
+).strip().lower() not in {"0", "false", "no", "off"}
+_PROVIDER_ORCHESTRATION_BACKGROUND_LOCK = threading.Lock()
+_PROVIDER_ORCHESTRATION_BACKGROUND_STATE = {
+    "thread_started": False,
+    "running": False,
+    "last_success": "",
+    "last_error": "",
+    "last_reason": "",
+    "last_duration_ms": 0.0,
+    "runs": 0,
+}
+
+
+def _provider_orchestration_cached_statuses_v1():
+    statuses = {}
+    for key, fn in (
+        ("market_breadth_index_intelligence_v1", lambda: MARKET_BREADTH_INDEX_INTELLIGENCE.status(statuses={}, force=False)),
+        ("etf_sector_rotation_intelligence_v1", lambda: ETF_SECTOR_ROTATION_INTELLIGENCE.status(statuses={}, force=False)),
+        ("cross_sector_capital_flow_memory_v1", lambda: CROSS_SECTOR_CAPITAL_FLOW_MEMORY.status(statuses={}, force=False)),
+        ("market_transition_detection_v1", lambda: MARKET_TRANSITION_DETECTION.status(statuses={}, force=False)),
+        ("market_condition_attribution_v1", lambda: MARKET_CONDITION_ATTRIBUTION.status(statuses={}, force=False)),
+        ("controlled_paper_profit_protection_pilot_v1", lambda: CONTROLLED_PAPER_PROFIT_PROTECTION_PILOT.status(statuses={}, force=False)),
+    ):
+        try:
+            value = fn()
+            if isinstance(value, dict):
+                statuses[key] = value
+        except Exception:
+            statuses[key] = {"status": "warming_up", "provider_calls_used": 0, "llm_calls_used": 0}
+    try:
+        cached_alpaca = ((_CACHE.get("alpaca_paper_status_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
+        if isinstance(cached_alpaca, dict) and cached_alpaca:
+            statuses["alpaca_paper_broker"] = dict(cached_alpaca)
+    except Exception:
+        pass
+    return statuses
+
+
+def _provider_orchestration_data_governance_v1(
+    force: bool = False,
+    statuses: dict | None = None,
+    allow_cache_write: bool = False,
+    collection_reason: str = "endpoint_status",
+):
     try:
         capability = provider_capability_audit(run_probe=False, include_sample_symbols=False)
     except Exception:
@@ -24050,18 +24099,89 @@ def _provider_orchestration_data_governance_v1(force: bool = False):
         managers = get_provider_status_summary()
     except Exception:
         managers = []
-    return ASTRA_PROVIDER_ORCHESTRATION_DATA_GOVERNANCE.status(
+    payload = ASTRA_PROVIDER_ORCHESTRATION_DATA_GOVERNANCE.status(
+        statuses=statuses if isinstance(statuses, dict) else {},
         provider_capability=capability if isinstance(capability, dict) else {},
         provider_diagnostics=diagnostics if isinstance(diagnostics, dict) else {},
         provider_usage=usage if isinstance(usage, dict) else {},
         manager_rows=managers if isinstance(managers, list) else [],
         force=bool(force),
+        allow_cache_write=bool(allow_cache_write),
+        collection_reason=str(collection_reason or "endpoint_status"),
+        background_state=dict(_PROVIDER_ORCHESTRATION_BACKGROUND_STATE),
     )
+    if isinstance(payload, dict):
+        payload["background_worker_state"] = dict(_PROVIDER_ORCHESTRATION_BACKGROUND_STATE)
+    return payload
+
+
+def _run_provider_orchestration_collection_once_v1(reason: str = "background_schedule"):
+    if not PROVIDER_ORCHESTRATION_BACKGROUND_ENABLED:
+        return {"ran": False, "reason": "disabled_by_env"}
+    with _PROVIDER_ORCHESTRATION_BACKGROUND_LOCK:
+        if bool(_PROVIDER_ORCHESTRATION_BACKGROUND_STATE.get("running", False)):
+            return {"ran": False, "reason": "already_running"}
+        _PROVIDER_ORCHESTRATION_BACKGROUND_STATE["running"] = True
+        _PROVIDER_ORCHESTRATION_BACKGROUND_STATE["last_reason"] = str(reason or "background_schedule")
+        started = time.perf_counter()
+        try:
+            statuses = _provider_orchestration_cached_statuses_v1()
+            payload = _provider_orchestration_data_governance_v1(
+                force=False,
+                statuses=statuses,
+                allow_cache_write=True,
+                collection_reason=str(reason or "background_schedule"),
+            )
+            _PROVIDER_ORCHESTRATION_BACKGROUND_STATE["last_success"] = _now_utc_iso()
+            _PROVIDER_ORCHESTRATION_BACKGROUND_STATE["last_error"] = ""
+            _PROVIDER_ORCHESTRATION_BACKGROUND_STATE["runs"] = int(_to_float(_PROVIDER_ORCHESTRATION_BACKGROUND_STATE.get("runs"), 0.0)) + 1
+            return {
+                "ran": True,
+                "reason": str(reason or "background_schedule"),
+                "institutional_intelligence_score": (payload or {}).get("institutional_intelligence_score") if isinstance(payload, dict) else None,
+                "cache_write_status": (payload or {}).get("cache_write_status") if isinstance(payload, dict) else "unknown",
+            }
+        except Exception as exc:
+            _PROVIDER_ORCHESTRATION_BACKGROUND_STATE["last_error"] = _safe_text(f"provider_orchestration_collection_failed:{exc}", 180)
+            return {"ran": False, "reason": "exception", "error": _PROVIDER_ORCHESTRATION_BACKGROUND_STATE["last_error"]}
+        finally:
+            _PROVIDER_ORCHESTRATION_BACKGROUND_STATE["last_duration_ms"] = round((time.perf_counter() - started) * 1000.0, 2)
+            _PROVIDER_ORCHESTRATION_BACKGROUND_STATE["running"] = False
+
+
+def _run_provider_orchestration_background_loop_v1():
+    time.sleep(2.0)
+    while True:
+        try:
+            _run_provider_orchestration_collection_once_v1(reason="background_schedule")
+        except Exception as exc:
+            _PROVIDER_ORCHESTRATION_BACKGROUND_STATE["last_error"] = _safe_text(f"provider_orchestration_loop_failed:{exc}", 180)
+        time.sleep(PROVIDER_ORCHESTRATION_BACKGROUND_INTERVAL_SECONDS)
+
+
+def _start_provider_orchestration_background_worker_v1():
+    if not PROVIDER_ORCHESTRATION_BACKGROUND_ENABLED:
+        _PROVIDER_ORCHESTRATION_BACKGROUND_STATE["last_error"] = "disabled_by_env"
+        return False
+    with _PROVIDER_ORCHESTRATION_BACKGROUND_LOCK:
+        if bool(_PROVIDER_ORCHESTRATION_BACKGROUND_STATE.get("thread_started", False)):
+            return False
+        _PROVIDER_ORCHESTRATION_BACKGROUND_STATE["thread_started"] = True
+        threading.Thread(target=_run_provider_orchestration_background_loop_v1, daemon=True).start()
+        return True
 
 
 @router.get("/api/astra_provider_orchestration_data_governance_v1")
 def astra_provider_orchestration_data_governance_v1(force: bool = False):
     return _provider_orchestration_data_governance_v1(force=bool(force))
+
+
+@router.on_event("startup")
+def _provider_orchestration_background_startup_v1():
+    try:
+        _start_provider_orchestration_background_worker_v1()
+    except Exception:
+        pass
 
 
 @router.get("/api/api_usage")
@@ -43110,6 +43230,7 @@ def _ask_astra_context_compression_v1(context=None):
     governance = c.get("governance_summary") if isinstance(c.get("governance_summary"), dict) else {}
     market = c.get("market_intelligence") if isinstance(c.get("market_intelligence"), dict) else {}
     cio = c.get("cio_intelligence") if isinstance(c.get("cio_intelligence"), dict) else {}
+    institutional = c.get("institutional_intelligence") if isinstance(c.get("institutional_intelligence"), dict) else {}
     signals = []
     for value in [
         executive.get("market_outlook_summary"),
@@ -43125,6 +43246,7 @@ def _ask_astra_context_compression_v1(context=None):
         cio.get("cio_summary"),
         cio.get("portfolio_risk_summary"),
         cio.get("exit_readiness_summary"),
+        institutional.get("highest_roi_next_improvement"),
     ]:
         if value:
             signals.append(_safe_text(str(value), 220))
@@ -43163,6 +43285,17 @@ def _ask_astra_context_compression_v1(context=None):
             "strongest_cio_area": cio.get("strongest_cio_area"),
             "weakest_cio_area": cio.get("weakest_cio_area"),
             "highest_roi_cio_improvement": cio.get("highest_roi_cio_improvement"),
+        },
+        "institutional_intelligence": {
+            "institutional_intelligence_score": institutional.get("institutional_intelligence_score"),
+            "controlled_data_acquisition_score": institutional.get("controlled_data_acquisition_score"),
+            "provider_health_score": institutional.get("provider_health_score"),
+            "portfolio_intelligence_score": institutional.get("portfolio_intelligence_score"),
+            "exit_intelligence_score": institutional.get("exit_intelligence_score"),
+            "market_regime": institutional.get("market_regime"),
+            "strongest_area": institutional.get("strongest_area"),
+            "weakest_area": institutional.get("weakest_area"),
+            "highest_roi_next_improvement": institutional.get("highest_roi_next_improvement"),
         },
         "safety": c.get("safety") or {},
     }
@@ -43586,6 +43719,8 @@ def ask_astra_v1(payload: dict = Body(...)):
     local_status = _astra_local_ai_status_v1(force=False)
     copilot = _astra_copilot_suite_v1(limit=5, force=False)
     ask_context_seed = {"astra_copilot_suite_v1": copilot, "ask_astra_local_ai_status_v1": local_status}
+    provider_orchestration = _provider_orchestration_data_governance_v1(force=False, statuses=ask_context_seed)
+    ask_context_seed["astra_provider_orchestration_data_governance_v1"] = provider_orchestration
     market_intel = _astra_market_intelligence_v1(ask_context_seed)
     ask_context_seed["astra_market_intelligence_v1"] = market_intel
     cio = _astra_cio_intelligence_v1(ask_context_seed)
@@ -43671,6 +43806,18 @@ def ask_astra_v1(payload: dict = Body(...)):
             "sector_rotation_summary": cio.get("sector_rotation_summary"),
             "market_breadth_summary": cio.get("market_breadth_summary"),
             "macro_risk_summary": cio.get("macro_risk_summary"),
+        },
+        "institutional_intelligence": {
+            "institutional_intelligence_score": provider_orchestration.get("institutional_intelligence_score"),
+            "controlled_data_acquisition_score": provider_orchestration.get("controlled_data_acquisition_score"),
+            "provider_health_score": provider_orchestration.get("provider_health_score"),
+            "portfolio_intelligence_score": provider_orchestration.get("portfolio_intelligence_score"),
+            "exit_intelligence_score": provider_orchestration.get("exit_intelligence_score"),
+            "market_regime": (provider_orchestration.get("market_regime_engine_v1") or {}).get("market_regime") if isinstance(provider_orchestration.get("market_regime_engine_v1"), dict) else None,
+            "strongest_area": provider_orchestration.get("strongest_area"),
+            "weakest_area": provider_orchestration.get("weakest_area"),
+            "highest_roi_next_improvement": provider_orchestration.get("highest_roi_next_improvement"),
+            "dashboard_provider_calls_used": provider_orchestration.get("dashboard_provider_calls_used"),
         },
         "key_supporting_astra_signals": key_signals,
         "supported_question_types": [
@@ -55165,7 +55312,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("controlled_paper_learned_exit_validation_v1", lambda: CONTROLLED_PAPER_LEARNED_EXIT_VALIDATION.status(statuses=statuses, force=False))
         _safe_status("astra_copilot_suite_v1", lambda: _astra_copilot_suite_v1(limit=12, force=False))
         _safe_status("ask_astra_local_ai_status_v1", lambda: _astra_local_ai_status_v1(force=False))
-        _safe_status("astra_provider_orchestration_data_governance_v1", lambda: _provider_orchestration_data_governance_v1(force=False))
+        _safe_status("astra_provider_orchestration_data_governance_v1", lambda: _provider_orchestration_data_governance_v1(force=False, statuses=statuses))
 
         sources["statuses"] = statuses
         out = UNIFIED_LEARNING_DIAGNOSTICS.build(sources, force=bool(force))
