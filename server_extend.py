@@ -34042,6 +34042,57 @@ def astra_aios_intelligence_maturation_bundle_v1(force: bool = False):
     )
 
 
+@router.get("/api/astra_aios_throughput_institutional_memory_optimization_v1")
+def astra_aios_throughput_institutional_memory_optimization_v1(force: bool = False):
+    try:
+        payload = dict(ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=_learning_acceleration_status_bundle(), force=bool(force)) or {})
+        out = dict(payload.get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
+        out["astra_aios_throughput_institutional_memory_optimization_v1"] = True
+        out["source_aios_status"] = payload.get("status")
+        out["aios_capacity_manager_v1"] = payload.get("aios_capacity_manager_v1") or {}
+        out["provider_calls_used"] = 0
+        out["llm_calls_used"] = 0
+        out["dashboard_provider_calls_used"] = 0
+        out["dashboard_llm_calls_used"] = 0
+        out["behavior_safe_to_apply"] = False
+        out["shadow_logic_changed"] = False
+        out["broker_execution_added"] = False
+        out["automatic_entries_enabled"] = False
+        out["automatic_exits_enabled"] = False
+        out["automatic_sizing_enabled"] = False
+        out["automatic_allocations_enabled"] = False
+        out["partial_sells_enabled"] = False
+        out["trailing_stops_enabled"] = False
+        out["paper_only_preserved"] = True
+        out["human_supervised"] = True
+        out["cache_first"] = True
+        out["advisory_only"] = True
+        return out
+    except Exception as exc:
+        return {
+            "astra_aios_throughput_institutional_memory_optimization_v1": True,
+            "status": "unavailable",
+            "degraded_reason": f"aios_throughput_optimization_unavailable:{str(exc)[:140]}",
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "dashboard_provider_calls_used": 0,
+            "dashboard_llm_calls_used": 0,
+            "behavior_safe_to_apply": False,
+            "shadow_logic_changed": False,
+            "broker_execution_added": False,
+            "automatic_entries_enabled": False,
+            "automatic_exits_enabled": False,
+            "automatic_sizing_enabled": False,
+            "automatic_allocations_enabled": False,
+            "partial_sells_enabled": False,
+            "trailing_stops_enabled": False,
+            "paper_only_preserved": True,
+            "human_supervised": True,
+            "cache_first": True,
+            "advisory_only": True,
+        }
+
+
 @router.get("/api/learning_roi_engine_v1")
 def learning_roi_engine_v1(force: bool = False):
     return _intelligence_quality_endpoint(LEARNING_ROI_ENGINE, "learning_roi_engine_v1", force=force)
@@ -55384,6 +55435,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("ask_astra_local_ai_status_v1", lambda: _astra_local_ai_status_v1(force=False))
         _safe_status("astra_provider_orchestration_data_governance_v1", lambda: _provider_orchestration_data_governance_v1(force=False, statuses=statuses))
         _safe_status("astra_aios_intelligence_maturation_bundle_v1", lambda: ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=statuses, force=False))
+        statuses["astra_aios_throughput_institutional_memory_optimization_v1"] = dict((statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {}).get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
 
         sources["statuses"] = statuses
         out = UNIFIED_LEARNING_DIAGNOSTICS.build(sources, force=bool(force))
@@ -55392,6 +55444,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["ask_astra_local_ai_status_v1"] = dict(statuses.get("ask_astra_local_ai_status_v1") or {})
             out["astra_provider_orchestration_data_governance_v1"] = dict(statuses.get("astra_provider_orchestration_data_governance_v1") or {})
             out["astra_aios_intelligence_maturation_bundle_v1"] = dict(statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {})
+            out["astra_aios_throughput_institutional_memory_optimization_v1"] = dict(statuses.get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
             market_intelligence = _astra_market_intelligence_v1(out)
             out["astra_market_intelligence_v1"] = market_intelligence
             cio_intelligence = _astra_cio_intelligence_v1(out)

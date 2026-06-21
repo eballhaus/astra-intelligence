@@ -1631,6 +1631,7 @@ export default function LearningTab({ compact = false }) {
   const astraHorizonLifecycleCapacityPromotion = unified?.astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1 || {};
   const astraProviderOrchestrationDataGovernance = unified?.astra_provider_orchestration_data_governance_v1 || {};
   const astraAiosIntelligenceMaturation = unified?.astra_aios_intelligence_maturation_bundle_v1 || {};
+  const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
   const tradeFamilyIntelligence = unified?.trade_family_intelligence_v1 || {};
@@ -3218,6 +3219,45 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Flow: {String(astraHorizonLifecycleCapacityPromotion?.integration_flow || "Trade lifecycle / Shadow / Horizon systems -> Librarian -> Unified Truth -> Executive Assistant -> Learning Center").replaceAll("_", " ")}
+          </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>AIOS Throughput & Institutional Memory</summary>
+        <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
+          Astra is measuring whether AIOS is underfed across satellites, IHIE, Shadow, triage, compression, Teacher, memory, retrieval, AIC, Executive, CEO, and Copilot. This panel is advisory-only, cache-first, and does not change trading, Shadow logic, providers, broker behavior, rankings, entries, exits, sizing, allocation, or thresholds.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, marginTop: 12, fontSize: 12 }}>
+          {[
+            ["Status", astraAiosThroughputInstitutionalMemory?.status],
+            ["Satellite utilization", `${safeNumber(astraAiosThroughputInstitutionalMemory?.satellite_utilization).toFixed(1)}%`],
+            ["Satellite observations", safeNumber(astraAiosThroughputInstitutionalMemory?.satellite_observations_today).toFixed(0)],
+            ["IHIE Collector", astraAiosThroughputInstitutionalMemory?.ihie_collector_status],
+            ["IHIE enrichments", safeNumber(astraAiosThroughputInstitutionalMemory?.ihie_analyst_enrichments_today).toFixed(0)],
+            ["Shadow experiments", safeNumber(astraAiosThroughputInstitutionalMemory?.shadow_experiments_today).toFixed(0)],
+            ["Triage packets", safeNumber(astraAiosThroughputInstitutionalMemory?.triage_throughput).toFixed(0)],
+            ["Compression", safeNumber(astraAiosThroughputInstitutionalMemory?.compression_throughput).toFixed(0)],
+            ["Teacher lessons", safeNumber(astraAiosThroughputInstitutionalMemory?.teacher_lessons_today).toFixed(0)],
+            ["Memory reinforces", safeNumber(astraAiosThroughputInstitutionalMemory?.memory_reinforcements_today).toFixed(0)],
+            ["Retrieval candidates", safeNumber(astraAiosThroughputInstitutionalMemory?.retrieval_candidates_today).toFixed(0)],
+            ["AIC priorities", safeNumber(astraAiosThroughputInstitutionalMemory?.aic_working_priorities_today).toFixed(0)],
+            ["Weakest layer", astraAiosThroughputInstitutionalMemory?.weakest_layer],
+            ["Strongest layer", astraAiosThroughputInstitutionalMemory?.strongest_layer],
+            ["Safe to scale", astraAiosThroughputInstitutionalMemory?.safe_to_scale ? "yes" : "no"],
+            ["Dashboard provider calls", safeNumber(astraAiosThroughputInstitutionalMemory?.dashboard_provider_calls_used).toFixed(0)],
+            ["Dashboard LLM calls", safeNumber(astraAiosThroughputInstitutionalMemory?.dashboard_llm_calls_used).toFixed(0)],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
+              <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Recommended action: {String(astraAiosThroughputInstitutionalMemory?.recommended_action || "scale cached internal observations only where quality allows").replaceAll("_", " ")}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Capacity manager: {(astraAiosThroughputInstitutionalMemory?.aios_capacity_manager_v1?.layers || []).slice(0, 6).map((row) => `${String(row?.layer || "layer").replaceAll("_", " ")} ${safeNumber(row?.utilization_percent).toFixed(1)}%`).join(" | ") || "warming up"}.
           </div>
         </div>
       </details>

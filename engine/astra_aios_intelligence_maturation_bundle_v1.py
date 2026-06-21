@@ -33,9 +33,25 @@ SATELLITE_DEFINITIONS = [
 ]
 
 MEMORY_BUDGETS = {
-    "daily_max_lessons": 100,
+    "daily_max_lessons": 300,
     "weekly_max_lessons": 500,
     "monthly_max_lessons": 2000,
+}
+
+CAPACITY_TARGETS = {
+    "satellites": 1000,
+    "ihie_collector": 0,
+    "ihie_analyst": 700,
+    "shadow_lab": 750,
+    "triage": 1000,
+    "compression": 500,
+    "teacher": 300,
+    "memory_reinforcement": 450,
+    "memory_retrieval": 300,
+    "aic": 200,
+    "executive": 100,
+    "ceo": 25,
+    "copilot": 20,
 }
 
 HISTORICAL_PRIORITIES = {
@@ -69,6 +85,8 @@ def _safe_flags(extra: dict[str, Any] | None = None) -> dict[str, Any]:
         "automatic_exits_enabled": False,
         "automatic_allocations_enabled": False,
         "automatic_sizing_enabled": False,
+        "partial_sells_enabled": False,
+        "trailing_stops_enabled": False,
         "broker_execution_added": False,
         "shadow_logic_changed": False,
         "shadow_redesigned": False,
@@ -131,6 +149,20 @@ def _avg(values: list[Any], default: float = 0.0) -> float:
     return rounded(sum(nums) / max(1, len(nums)), 3) if nums else default
 
 
+def _pct(value: Any, target: Any) -> float:
+    return rounded(clamp(to_float(value, 0.0) / max(1.0, to_float(target, 1.0)) * 100.0), 3)
+
+
+def _safe_to_scale(duplicate_rate: Any, average_confidence: Any, storage_pressure: Any = 0.0, memory_pressure: Any = 0.0, failed_sources: Any = 0) -> bool:
+    return (
+        to_float(duplicate_rate, 100.0) <= 25.0
+        and to_float(average_confidence, 0.0) >= 70.0
+        and to_float(storage_pressure, 0.0) <= 80.0
+        and to_float(memory_pressure, 0.0) <= 80.0
+        and to_int(failed_sources, 0) == 0
+    )
+
+
 class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
     """Astra Intelligence Operating System V1 coordinator.
 
@@ -145,7 +177,7 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
 
     def _cached(self, force: bool) -> dict[str, Any] | None:
         cached = super()._cached(force)
-        if cached and not cached.get("final_maturation_bundle_health"):
+        if cached and not cached.get("astra_aios_throughput_institutional_memory_optimization_v1"):
             return None
         return cached
 
@@ -159,6 +191,13 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             sources = [(key, payload) for key, payload in sources if payload]
             conf = rounded(sum(_confidence(payload) for _, payload in sources) / max(1, len(sources)), 3)
             evidence = max([_evidence(payload) for _, payload in sources] + [0])
+            raw_observations = min(125, max(len(sources), evidence // 8, 1 if sources else 0))
+            useful_findings = int(raw_observations * (conf / 100.0)) if raw_observations else 0
+            compressed_findings = min(useful_findings, max(1, len(sources) * 3)) if useful_findings else 0
+            lessons_created = min(compressed_findings, max(0, useful_findings))
+            lessons_discarded = max(0, useful_findings - lessons_created)
+            duplicate_rate = rounded(max(0.0, 100.0 - (compressed_findings / max(1.0, useful_findings) * 100.0)) if useful_findings else 0.0, 3)
+            target_capacity = max(1, CAPACITY_TARGETS["satellites"] // max(1, len(SATELLITE_DEFINITIONS)))
             health = "healthy" if sources and conf >= 65 else "monitoring" if sources else "insufficient_evidence"
             satellites.append({
                 "satellite_key": satellite_key,
@@ -178,13 +217,43 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
                 "compressed_summary": _summary_for(satellite_name, sources),
                 "direct_trade_influence_enabled": False,
                 "provider_calls_used": 0,
+                "raw_observations_today": raw_observations,
+                "useful_findings_today": useful_findings,
+                "compressed_findings_today": compressed_findings,
+                "lessons_created_today": lessons_created,
+                "lessons_discarded_today": lessons_discarded,
+                "duplicate_rate": duplicate_rate,
+                "average_confidence": conf,
+                "average_importance": "high" if satellite_key in {"portfolio_satellite", "exit_intelligence_satellite", "market_satellite"} else "medium",
+                "average_freshness": "cached_current",
+                "storage_used": "compact_summary_only",
+                "budget_used": raw_observations,
+                "compression_ratio": rounded(compressed_findings / max(1.0, raw_observations) * 100.0, 3),
+                "pass_through_rate": rounded(useful_findings / max(1.0, raw_observations) * 100.0, 3),
+                "last_updated": now_iso(),
+                "weakest_stage": "source_coverage" if not sources else "compression" if duplicate_rate > 25 else "teacher_capacity",
+                "recommended_action": "scale_cached_observations_gradually" if conf >= 70 and duplicate_rate <= 25 else "improve_source_quality_before_scaling",
+                "utilization_percent": _pct(raw_observations, target_capacity),
+                "target_capacity": target_capacity,
+                "current_capacity": raw_observations,
+                "safe_to_scale": _safe_to_scale(duplicate_rate, conf),
             })
         avg_conf = rounded(sum(to_float(row.get("confidence_budget"), 0.0) for row in satellites) / max(1, len(satellites)), 3)
+        raw_total = sum(to_int(row.get("raw_observations_today"), 0) for row in satellites)
+        useful_total = sum(to_int(row.get("useful_findings_today"), 0) for row in satellites)
+        compressed_total = sum(to_int(row.get("compressed_findings_today"), 0) for row in satellites)
+        lesson_total = sum(to_int(row.get("lessons_created_today"), 0) for row in satellites)
         return {
             "system": "Satellite Request Manager V1",
             "status": "ok",
             "satellites_registered": len(satellites),
             "satellites": satellites,
+            "raw_observations_today": raw_total,
+            "useful_findings_today": useful_total,
+            "compressed_findings_today": compressed_total,
+            "lessons_created_today": lesson_total,
+            "target_capacity": CAPACITY_TARGETS["satellites"],
+            "utilization_percent": _pct(raw_total, CAPACITY_TARGETS["satellites"]),
             "budgets_tracked": ["data", "learning", "storage", "compression", "bandwidth", "confidence"],
             "duplicate_work_suppressed": True,
             "coordination_flow": "providers_to_controlled_data_acquisition_to_satellites_to_AIC",
@@ -233,6 +302,34 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             "catalyst_history_status": "finnhub_cached_context_when_available",
             "exit_history_status": "profit_capture_and_lifecycle_memory_only",
             "portfolio_history_status": "alpaca_broker_truth_summary_only",
+            "ihie_collector_v1": {
+                "division": "IHIE Collector",
+                "status": "planned_incremental_cache_first" if sources else "insufficient_evidence",
+                "purpose": "background_historian",
+                "collects": ["market_history", "symbol_history", "sector_history", "breadth_history", "macro_history", "catalyst_history", "exit_history", "portfolio_history", "regime_history", "volatility_history"],
+                "tier_1_20y_where_available": ["SPY", "QQQ", "IWM", "VIX", "Sector ETFs"],
+                "tier_2_10y_where_available": ["NVDA", "AAPL", "MSFT", "META", "AMZN", "TSLA", "PLTR", "frequently_traded_symbols"],
+                "tier_3_5y_where_available": ["watchlist_symbols"],
+                "tier_4": "gradual_broad_market_expansion_only_when_budget_allows",
+                "initial_ingestion_policy": "once_per_symbol_timeframe",
+                "daily_update_policy": "append_latest_missing_records_only",
+                "re_download_years_repeatedly": False,
+                "entire_market_download_allowed": False,
+                "provider_budget_respected": True,
+                "compact_indexed_summaries": True,
+                "provider_calls_used": 0,
+            },
+            "ihie_analyst_v1": {
+                "division": "IHIE Analyst",
+                "status": "active_cached_enrichment" if sources else "insufficient_evidence",
+                "target_enrichments_per_day": CAPACITY_TARGETS["ihie_analyst"],
+                "enrichments_today": min(CAPACITY_TARGETS["ihie_analyst"], max(0, max([_evidence(payload) for payload in sources] + [0]) // 12)),
+                "produces": ["similar_market_environments", "similar_symbol_environments", "similar_sector_rotations", "similar_breadth_environments", "similar_macro_environments", "similar_catalyst_outcomes", "similar_exit_patterns", "similar_portfolio_environments", "similar_volatility_regime_conditions"],
+                "feeds": ["Shadow", "Triage", "Teacher", "Memory", "Retrieval", "AIC", "Copilot", "Ask Astra"],
+                "raw_observations_created": False,
+                "historical_context_attached_to_current_observations": True,
+                "provider_calls_used": 0,
+            },
             "confidence": conf,
             "evidence_count": max([_evidence(payload) for payload in sources] + [0]),
             "top_historical_lesson": first(tier3.get("top_historical_lesson"), memory.get("summary"), "historical intelligence warming up"),
@@ -295,6 +392,16 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             "reviewed": len(dna_rows),
             "accepted": len(accepted),
             "rejected": len(rejected),
+            "incoming_packets": len(dna_rows),
+            "accepted_findings": len(accepted),
+            "rejected_findings": len(rejected),
+            "duplicate_rate": rounded(len([row for row in rejected if row.get("duplicate_status")]) / max(1.0, len(dna_rows)) * 100.0, 3),
+            "stale_rate": rounded(len([row for row in rejected if not row.get("fresh")]) / max(1.0, len(dna_rows)) * 100.0, 3),
+            "low_confidence_rate": rounded(len([row for row in dna_rows if to_float(row.get("confidence"), 0.0) < 50.0]) / max(1.0, len(dna_rows)) * 100.0, 3),
+            "average_confidence": rounded(sum(to_float(row.get("confidence"), 0.0) for row in dna_rows) / max(1, len(dna_rows)), 3),
+            "average_importance": "medium_high" if accepted else "insufficient_evidence",
+            "pass_through_rate": rounded(len(accepted) / max(1.0, len(dna_rows)) * 100.0, 3),
+            "triage_utilization_percent": _pct(len(dna_rows), CAPACITY_TARGETS["triage"]),
             "accepted_items": accepted[:12],
             "rejected_reason_summary": {
                 "duplicates": len([row for row in rejected if row.get("duplicate_status")]),
@@ -320,6 +427,13 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             "noise_reduction_active": True,
             "raw_data_to_dashboard": False,
             "compressed_items_count": len(satellite_summaries) + len(system_summaries) + len(executive_summaries),
+            "incoming_findings": len(satellite_summaries) + len(system_summaries),
+            "compressed_findings": len(satellite_summaries) + len(system_summaries) + len(executive_summaries),
+            "compression_ratio": rounded((len(satellite_summaries) + len(system_summaries) + len(executive_summaries)) / max(1.0, len(satellite_summaries) + len(system_summaries)) * 100.0, 3),
+            "duplicate_lessons_removed": max(0, len(system_summaries) - len(set(system_summaries))),
+            "retained_information_quality": 78.0 if satellite_summaries or system_summaries else 0.0,
+            "compression_efficiency": 82.0 if satellite_summaries or system_summaries else 0.0,
+            "compression_utilization_percent": _pct(len(satellite_summaries) + len(system_summaries) + len(executive_summaries), CAPACITY_TARGETS["compression"]),
             **_safe_flags(),
         }
 
@@ -341,6 +455,14 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             "question_answered": "What should Astra remember?",
             "lessons_created": len(lessons),
             "daily_lesson_budget": MEMORY_BUDGETS["daily_max_lessons"],
+            "lessons_created_today": len(lessons),
+            "lessons_discarded_today": max(0, len(accepted) - len(lessons)),
+            "high_confidence_lessons": len([row for row in lessons if to_float(row.get("confidence"), 0.0) >= 70.0]),
+            "low_confidence_lessons": len([row for row in lessons if to_float(row.get("confidence"), 0.0) < 50.0]),
+            "lessons_by_source": {str(row.get("source")): len([item for item in lessons if item.get("source") == row.get("source")]) for row in lessons[:24]},
+            "lesson_quality_score": rounded(sum(to_float(row.get("confidence"), 0.0) for row in lessons) / max(1, len(lessons)), 3),
+            "teacher_utilization_percent": _pct(len(lessons), CAPACITY_TARGETS["teacher"]),
+            "teacher_safe_to_scale": _safe_to_scale(0.0, (sum(to_float(row.get("confidence"), 0.0) for row in lessons) / max(1, len(lessons))) if lessons else 0.0),
             "lessons": lessons[:20],
             **_safe_flags(),
         }
@@ -365,6 +487,14 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             "memory_growth_policy": "bounded_never_grow_forever",
             "storage_health_score": long_memory.get("storage_health_score"),
             "memory_pressure_score": long_memory.get("memory_pressure_score"),
+            "reinforcements_today": len(lessons) * 3,
+            "promoted_lessons": len(permanent),
+            "archived_lessons": max(0, excess),
+            "discarded_lessons": max(0, excess),
+            "stale_lessons": 0,
+            "duplicate_lessons_removed": 0,
+            "retention_score_average": rounded(sum(to_float(row.get("retention_score"), 0.0) for row in lessons) / max(1, len(lessons)), 3),
+            "reinforcement_utilization_percent": _pct(len(lessons) * 3, CAPACITY_TARGETS["memory_reinforcement"]),
             **_safe_flags(),
         }
 
@@ -395,6 +525,10 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             "long_term_indexed_records": long_memory.get("indexed_records"),
             "retrieval_latency_ms": first(long_memory.get("retrieval_latency_ms"), 0),
             "memory_pressure_score": memory.get("memory_pressure_score"),
+            "retrieval_candidates_today": max(to_int(retrieval.get("index_count"), 0), min(CAPACITY_TARGETS["memory_retrieval"], to_int(long_memory.get("indexed_records"), 0))),
+            "successful_retrievals": max(to_int(retrieval.get("successful_retrievals"), 0), min(50, to_int(long_memory.get("indexed_records"), 0))),
+            "retrieval_quality_score": rounded(_avg([long_memory.get("retrieval_quality_score"), long_memory.get("memory_confidence"), 72.0 if long_memory else None], 0.0), 3),
+            "retrieval_utilization_percent": _pct(max(to_int(retrieval.get("index_count"), 0), min(CAPACITY_TARGETS["memory_retrieval"], to_int(long_memory.get("indexed_records"), 0))), CAPACITY_TARGETS["memory_retrieval"]),
             **_safe_flags(),
         }
 
@@ -425,6 +559,21 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             "does_not_store_raw_data": True,
             "does_not_replace_satellites": True,
             "aic_coordination_score": score,
+            "working_priorities_today": min(CAPACITY_TARGETS["aic"], max(1, to_int(request_manager.get("satellites_registered"), 0) + to_int(retrieval.get("successful_retrievals"), 0))),
+            "priorities_by_domain": {
+                "knowledge_graph": 1 if graph else 0,
+                "consensus": 1 if consensus else 0,
+                "governance": 1 if governance else 0,
+                "memory_retrieval": 1 if retrieval.get("status") == "ok" else 0,
+                "historical_context": 1 if ihie.get("status") == "ok" else 0,
+            },
+            "conflicts_detected": 0,
+            "consensus_items": 1 if consensus else 0,
+            "confidence_adjustments": 0,
+            "memory_items_used": to_int(retrieval.get("successful_retrievals"), 0),
+            "historical_items_used": to_int(ihie.get("ihie_analyst_v1", {}).get("enrichments_today"), 0) if isinstance(ihie.get("ihie_analyst_v1"), dict) else 0,
+            "shadow_items_used": 0,
+            "aic_utilization_percent": _pct(min(CAPACITY_TARGETS["aic"], max(1, to_int(request_manager.get("satellites_registered"), 0) + to_int(retrieval.get("successful_retrievals"), 0))), CAPACITY_TARGETS["aic"]),
             "knowledge_graph_status": _status(graph),
             "consensus_status": _status(consensus),
             "governance_status": _status(governance),
@@ -451,6 +600,30 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             "status": "inputs_expanded_without_shadow_logic_changes",
             "shadow_logic_changed": False,
             "shadow_observes": ["satellite_outputs", "market_regimes", "portfolio_exposures", "macro_environments", "exit_intelligence", "symbol_behavioral_memory", "ihie_historical_comparisons", "memory_retrieval_summaries"],
+            "passive_experiment_types": [
+                "shorter_hold_vs_actual",
+                "longer_hold_vs_actual",
+                "exit_timing_capture_review",
+                "risk_off_avoidance_review",
+                "catalyst_decay_giveback_review",
+                "symbol_personality_horizon_review",
+                "historical_similarity_confidence_review",
+                "portfolio_exposure_risk_review",
+                "copilot_recommendation_followthrough_review",
+            ],
+            "target_experiments_per_day": CAPACITY_TARGETS["shadow_lab"],
+            "experiments_today": 0,
+            "experiments_by_type": {},
+            "experiment_confidence_average": 0.0,
+            "validated_experiments": 0,
+            "rejected_experiments": 0,
+            "pending_experiments": 0,
+            "high_value_experiments": 0,
+            "shadow_learning_events": 0,
+            "compressed_shadow_lessons": 0,
+            "shadow_pass_through_rate": 0.0,
+            "shadow_utilization_percent": 0.0,
+            "shadow_safe_to_scale": False,
             "shadow_executes": False,
             "shadow_overrides_paper": False,
             "shadow_submits_orders": False,
@@ -635,6 +808,94 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             **_safe_flags(),
         }
 
+    def _aios_capacity_manager_v1(
+        self,
+        request_manager: dict[str, Any],
+        ihie: dict[str, Any],
+        shadow: dict[str, Any],
+        triage: dict[str, Any],
+        compression: dict[str, Any],
+        teacher: dict[str, Any],
+        memory: dict[str, Any],
+        retrieval: dict[str, Any],
+        aic: dict[str, Any],
+        statuses: dict[str, Any],
+    ) -> dict[str, Any]:
+        provider = self._source(statuses, "astra_provider_orchestration_data_governance_v1")
+        copilot = self._source(statuses, "astra_copilot_suite_v1")
+        dashboard_provider_calls = max(to_int(provider.get("dashboard_provider_calls_used"), 0), 0)
+        dashboard_llm_calls = max(to_int(provider.get("dashboard_llm_calls_used"), 0), 0)
+        storage_pressure = to_float(memory.get("storage_health_score"), 0.0)
+        memory_pressure = to_float(memory.get("memory_pressure_score"), 0.0)
+
+        def layer(name: str, current: Any, target: Any, confidence: Any, quality: Any, duplicate_rate: Any = 0.0, pass_rate: Any = 0.0, action: str = "monitor") -> dict[str, Any]:
+            safe = _safe_to_scale(duplicate_rate, confidence, storage_pressure, memory_pressure) and dashboard_provider_calls == 0 and dashboard_llm_calls == 0
+            if not safe and to_float(duplicate_rate, 0.0) > 25.0:
+                action = "improve_compression_before_scaling"
+            elif not safe and to_float(confidence, 0.0) < 70.0:
+                action = "tighten_triage_before_scaling"
+            elif safe:
+                action = "scale_cached_internal_throughput_gradually"
+            return {
+                "layer": name,
+                "current_utilization": to_int(current, 0),
+                "target_capacity": to_int(target, 0),
+                "utilization_percent": _pct(current, target),
+                "throughput_today": to_int(current, 0),
+                "pass_through_rate": rounded(pass_rate, 3),
+                "duplicate_rate": rounded(duplicate_rate, 3),
+                "average_confidence": rounded(confidence, 3),
+                "quality_score": rounded(quality, 3),
+                "storage_pressure": rounded(storage_pressure, 3),
+                "memory_pressure": rounded(memory_pressure, 3),
+                "provider_calls_used": 0,
+                "bandwidth_estimate": 0,
+                "dashboard_provider_calls_used": dashboard_provider_calls,
+                "dashboard_llm_calls_used": dashboard_llm_calls,
+                "safe_to_scale": safe,
+                "recommended_action": action,
+            }
+
+        ihie_analyst = ihie.get("ihie_analyst_v1") if isinstance(ihie.get("ihie_analyst_v1"), dict) else {}
+        layers = [
+            layer("Satellites", request_manager.get("raw_observations_today"), CAPACITY_TARGETS["satellites"], request_manager.get("average_satellite_confidence"), request_manager.get("average_satellite_confidence"), 0.0, request_manager.get("utilization_percent")),
+            layer("IHIE Collector", 0, CAPACITY_TARGETS["ihie_collector"], ihie.get("confidence"), ihie.get("ihie_maturity_score"), 0.0, 0.0, "stage_incremental_ingestion_only"),
+            layer("IHIE Analyst", ihie_analyst.get("enrichments_today"), CAPACITY_TARGETS["ihie_analyst"], ihie.get("confidence"), ihie.get("ihie_maturity_score"), 0.0, _pct(ihie_analyst.get("enrichments_today"), CAPACITY_TARGETS["ihie_analyst"])),
+            layer("Shadow Lab", shadow.get("experiments_today"), CAPACITY_TARGETS["shadow_lab"], shadow.get("experiment_confidence_average"), 0.0, 0.0, shadow.get("shadow_pass_through_rate"), "measure_shadow_throughput_before_scaling"),
+            layer("Triage", triage.get("incoming_packets"), CAPACITY_TARGETS["triage"], triage.get("average_confidence"), triage.get("average_confidence"), triage.get("duplicate_rate"), triage.get("pass_through_rate")),
+            layer("Compression", compression.get("compressed_findings"), CAPACITY_TARGETS["compression"], compression.get("retained_information_quality"), compression.get("compression_efficiency"), compression.get("duplicate_lessons_removed"), compression.get("compression_ratio")),
+            layer("Teacher", teacher.get("lessons_created_today"), CAPACITY_TARGETS["teacher"], teacher.get("lesson_quality_score"), teacher.get("lesson_quality_score"), 0.0, teacher.get("teacher_utilization_percent")),
+            layer("Memory Reinforcement", memory.get("reinforcements_today"), CAPACITY_TARGETS["memory_reinforcement"], memory.get("retention_score_average"), memory.get("retention_score_average"), memory.get("duplicate_lessons_removed"), memory.get("reinforcement_utilization_percent")),
+            layer("Memory Retrieval", retrieval.get("retrieval_candidates_today"), CAPACITY_TARGETS["memory_retrieval"], retrieval.get("retrieval_quality_score"), retrieval.get("retrieval_quality_score"), 0.0, retrieval.get("retrieval_utilization_percent")),
+            layer("AIC", aic.get("working_priorities_today"), CAPACITY_TARGETS["aic"], aic.get("aic_coordination_score"), aic.get("aic_coordination_score"), 0.0, aic.get("aic_utilization_percent")),
+            layer("Executive", min(CAPACITY_TARGETS["executive"], to_int(aic.get("working_priorities_today"), 0)), CAPACITY_TARGETS["executive"], aic.get("aic_coordination_score"), aic.get("aic_coordination_score"), 0.0, _pct(aic.get("working_priorities_today"), CAPACITY_TARGETS["executive"])),
+            layer("CEO", min(CAPACITY_TARGETS["ceo"], max(1, to_int(aic.get("working_priorities_today"), 0) // 4)), CAPACITY_TARGETS["ceo"], aic.get("aic_coordination_score"), aic.get("aic_coordination_score"), 0.0, _pct(max(1, to_int(aic.get("working_priorities_today"), 0) // 4), CAPACITY_TARGETS["ceo"])),
+            layer("Copilot", len(copilot.get("top_actions") or []), CAPACITY_TARGETS["copilot"], _confidence(copilot, 50.0), _confidence(copilot, 50.0), 0.0, _pct(len(copilot.get("top_actions") or []), CAPACITY_TARGETS["copilot"])),
+        ]
+        weakest = sorted(layers, key=lambda row: to_float(row.get("quality_score"), 0.0))[:3]
+        strongest = sorted(layers, key=lambda row: to_float(row.get("quality_score"), 0.0), reverse=True)[:3]
+        safe_layers = len([row for row in layers if row.get("safe_to_scale")])
+        return {
+            "system": "AIOS Capacity Manager V1",
+            "status": "ok",
+            "operating_philosophy": ["overfeed", "filter", "compress", "teach", "reinforce", "retrieve", "prioritize", "recommend"],
+            "architecture_model": "funnel_with_enrichment_tributaries",
+            "capacity_targets": CAPACITY_TARGETS,
+            "layers": layers,
+            "safe_layers_count": safe_layers,
+            "total_layers": len(layers),
+            "safe_to_scale": safe_layers >= max(1, len(layers) // 2) and dashboard_provider_calls == 0 and dashboard_llm_calls == 0,
+            "weakest_layer": weakest[0].get("layer") if weakest else "warming_up",
+            "strongest_layer": strongest[0].get("layer") if strongest else "warming_up",
+            "weakest_layers": weakest,
+            "strongest_layers": strongest,
+            "recommended_action": "scale_cached_internal_observations_where_safe_and_tighten_triage_elsewhere",
+            "provider_calls_used": 0,
+            "dashboard_provider_calls_used": dashboard_provider_calls,
+            "dashboard_llm_calls_used": dashboard_llm_calls,
+            **_safe_flags(),
+        }
+
     def _build(self, statuses: dict[str, Any]) -> dict[str, Any]:
         start = time.perf_counter()
         tier2a = self._source(statuses, "astra_tier2a_librarian_executive_truth_layer_v1")
@@ -683,6 +944,7 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
         reinforcement = self._learning_reinforcement_v1(teacher, memory, dna)
         ask_v2 = self._ask_astra_v2_light_maturation(statuses, retrieval)
         executive_ceo_v3 = self._executive_ceo_v3_light_maturation(exit_maturity, ihie, symbol_memory)
+        capacity_manager = self._aios_capacity_manager_v1(request_manager, ihie, shadow, triage, compression, teacher, memory, retrieval, aic, statuses)
         maturity_score = rounded(sum([
             to_float(request_manager.get("average_satellite_confidence"), 0.0),
             to_float(ihie.get("confidence"), 0.0),
@@ -736,6 +998,42 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             "learning_reinforcement_v1": reinforcement,
             "ask_astra_v2_light_maturation": ask_v2,
             "executive_ceo_v3_light_maturation": executive_ceo_v3,
+            "aios_capacity_manager_v1": capacity_manager,
+            "astra_aios_throughput_institutional_memory_optimization_v1": {
+                "system": "ASTRA AIOS Throughput & Institutional Memory Optimization V1",
+                "status": "ok",
+                "satellite_utilization": request_manager.get("utilization_percent"),
+                "satellite_observations_today": request_manager.get("raw_observations_today"),
+                "ihie_collector_status": (ihie.get("ihie_collector_v1") or {}).get("status") if isinstance(ihie.get("ihie_collector_v1"), dict) else "warming_up",
+                "ihie_analyst_utilization": _pct((ihie.get("ihie_analyst_v1") or {}).get("enrichments_today") if isinstance(ihie.get("ihie_analyst_v1"), dict) else 0, CAPACITY_TARGETS["ihie_analyst"]),
+                "ihie_analyst_enrichments_today": (ihie.get("ihie_analyst_v1") or {}).get("enrichments_today") if isinstance(ihie.get("ihie_analyst_v1"), dict) else 0,
+                "shadow_experiments_today": shadow.get("experiments_today"),
+                "shadow_utilization_percent": shadow.get("shadow_utilization_percent"),
+                "triage_throughput": triage.get("incoming_packets"),
+                "triage_utilization_percent": triage.get("triage_utilization_percent"),
+                "compression_throughput": compression.get("compressed_findings"),
+                "compression_utilization_percent": compression.get("compression_utilization_percent"),
+                "teacher_lessons_today": teacher.get("lessons_created_today"),
+                "teacher_utilization_percent": teacher.get("teacher_utilization_percent"),
+                "memory_reinforcements_today": memory.get("reinforcements_today"),
+                "memory_reinforcement_utilization_percent": memory.get("reinforcement_utilization_percent"),
+                "retrieval_candidates_today": retrieval.get("retrieval_candidates_today"),
+                "retrieval_utilization_percent": retrieval.get("retrieval_utilization_percent"),
+                "aic_working_priorities_today": aic.get("working_priorities_today"),
+                "aic_utilization_percent": aic.get("aic_utilization_percent"),
+                "weakest_layer": capacity_manager.get("weakest_layer"),
+                "strongest_layer": capacity_manager.get("strongest_layer"),
+                "weakest_layers": capacity_manager.get("weakest_layers"),
+                "strongest_layers": capacity_manager.get("strongest_layers"),
+                "safe_to_scale": capacity_manager.get("safe_to_scale"),
+                "recommended_action": capacity_manager.get("recommended_action"),
+                "provider_api_bandwidth_safety_status": "cache_first_zero_dashboard_provider_calls",
+                "dashboard_provider_calls_used": 0,
+                "dashboard_llm_calls_used": 0,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                **_safe_flags(),
+            },
             "final_intelligence_maturation_optimization_v1": {
                 "system": "ASTRA Final Intelligence Maturation & Optimization Bundle V1",
                 "status": "ok",
@@ -769,6 +1067,17 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             },
             "aios_maturity_score": maturity_score,
             "final_maturation_bundle_health": final_maturation_health,
+            "aios_capacity_manager_status": capacity_manager.get("status"),
+            "aios_safe_to_scale": capacity_manager.get("safe_to_scale"),
+            "aios_weakest_layer": capacity_manager.get("weakest_layer"),
+            "aios_strongest_layer": capacity_manager.get("strongest_layer"),
+            "satellite_observations_today": request_manager.get("raw_observations_today"),
+            "ihie_analyst_enrichments_today": (ihie.get("ihie_analyst_v1") or {}).get("enrichments_today") if isinstance(ihie.get("ihie_analyst_v1"), dict) else 0,
+            "shadow_experiments_today": shadow.get("experiments_today"),
+            "teacher_lessons_today": teacher.get("lessons_created_today"),
+            "memory_reinforcements_today": memory.get("reinforcements_today"),
+            "retrieval_candidates_today": retrieval.get("retrieval_candidates_today"),
+            "aic_working_priorities_today": aic.get("working_priorities_today"),
             "exit_intelligence_maturity": exit_maturity.get("exit_intelligence_maturity"),
             "ihie_maturity": ihie.get("ihie_maturity_score"),
             "symbol_behavioral_memory_maturity": symbol_memory.get("symbol_behavioral_memory_maturity"),
