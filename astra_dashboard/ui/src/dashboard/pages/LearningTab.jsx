@@ -3224,7 +3224,7 @@ export default function LearningTab({ compact = false }) {
       </details>
 
       <details style={{ ...panelStyle }}>
-        <summary style={{ cursor: "pointer", fontWeight: 700 }}>AIOS Throughput & Institutional Memory</summary>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>AIOS Learning Acceleration & Adaptive Feed Monitor</summary>
         <div style={{ fontSize: 12, color: "#9fb1cc", marginTop: 10 }}>
           Astra is measuring whether AIOS is underfed across satellites, IHIE, Shadow, triage, compression, Teacher, memory, retrieval, AIC, Executive, CEO, and Copilot. This panel is advisory-only, cache-first, and does not change trading, Shadow logic, providers, broker behavior, rankings, entries, exits, sizing, allocation, or thresholds.
         </div>
@@ -3244,6 +3244,7 @@ export default function LearningTab({ compact = false }) {
             ["AIC priorities", safeNumber(astraAiosThroughputInstitutionalMemory?.aic_working_priorities_today).toFixed(0)],
             ["Weakest layer", astraAiosThroughputInstitutionalMemory?.weakest_layer],
             ["Strongest layer", astraAiosThroughputInstitutionalMemory?.strongest_layer],
+            ["Feed monitor", astraAiosThroughputInstitutionalMemory?.adaptive_feed_monitor_status],
             ["Safe to scale", astraAiosThroughputInstitutionalMemory?.safe_to_scale ? "yes" : "no"],
             ["Dashboard provider calls", safeNumber(astraAiosThroughputInstitutionalMemory?.dashboard_provider_calls_used).toFixed(0)],
             ["Dashboard LLM calls", safeNumber(astraAiosThroughputInstitutionalMemory?.dashboard_llm_calls_used).toFixed(0)],
@@ -3255,6 +3256,15 @@ export default function LearningTab({ compact = false }) {
           ))}
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Recommended action: {String(astraAiosThroughputInstitutionalMemory?.recommended_action || "scale cached internal observations only where quality allows").replaceAll("_", " ")}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Underfed layers: {(astraAiosThroughputInstitutionalMemory?.layers_underfed || []).join(" | ") || "none"}; safe-to-scale layers: {(astraAiosThroughputInstitutionalMemory?.layers_safe_to_scale || []).join(" | ") || "none"}; paused layers: {(astraAiosThroughputInstitutionalMemory?.layers_paused || []).join(" | ") || "none"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Feed adjustments applied: {(astraAiosThroughputInstitutionalMemory?.feed_adjustments_applied || []).map((row) => `${String(row?.layer || "layer").replaceAll("_", " ")} ${String(row?.adjustment || "adjusted").replaceAll("_", " ")}`).join(" | ") || "none"}.
+          </div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Safety: {String(astraAiosThroughputInstitutionalMemory?.provider_safety_status || "safe no provider polling increase").replaceAll("_", " ")}; {String(astraAiosThroughputInstitutionalMemory?.dashboard_safety_status || "safe zero dashboard provider and llm calls").replaceAll("_", " ")}.
           </div>
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Capacity manager: {(astraAiosThroughputInstitutionalMemory?.aios_capacity_manager_v1?.layers || []).slice(0, 6).map((row) => `${String(row?.layer || "layer").replaceAll("_", " ")} ${safeNumber(row?.utilization_percent).toFixed(1)}%`).join(" | ") || "warming up"}.
