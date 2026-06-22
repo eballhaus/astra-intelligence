@@ -1768,7 +1768,22 @@ export default function LearningTab({ compact = false }) {
     : `Astra is finding opportunities with buy purity around ${buyPurityScore.toFixed(1)} and current entry quality near ${entryQualityScore.toFixed(1)}. Profit capture and exit quality remain the areas to watch, especially giveback reduction and natural exit timing validation.`;
   const copyText = async (label, text) => {
     try {
-      await navigator.clipboard.writeText(text);
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "true");
+        textarea.style.position = "fixed";
+        textarea.style.left = "-9999px";
+        textarea.style.top = "0";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        const copied = document.execCommand("copy");
+        document.body.removeChild(textarea);
+        if (!copied) throw new Error("clipboard_fallback_failed");
+      }
       setCopyStatus(`${label} copied`);
       window.setTimeout(() => setCopyStatus(""), 2400);
     } catch (_err) {
@@ -1824,6 +1839,37 @@ export default function LearningTab({ compact = false }) {
     "ASTRA ADVANCED DIAGNOSTICS",
     `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
     JSON.stringify(advancedStatuses || {}, null, 2),
+  ].join("\n");
+  const measurementsSnapshotText = () => [
+    "ASTRA DAILY SNAPSHOT",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || new Date().toISOString())}`,
+    "",
+    "Trading:",
+    `Win Rate: ${metricDisplay(performanceSummary?.released_win_rate?.value ?? learningInsights?.released_win_rate, true, 1, "%")}`,
+    `Profit Factor: ${metricDisplay(performanceSummary?.profit_factor?.value ?? learningInsights?.profit_factor, true, 2)}`,
+    `Buy Purity: ${metricDisplay(performanceSummary?.buy_list_purity?.value ?? buyPurityScore, true, 1)}`,
+    `Exit Quality: ${metricDisplay(exitQualityScore, true, 1)}`,
+    `Profit Capture: ${metricDisplay(profitCapturePeakDecayExitValidation?.average_capture_ratio ?? profitCapturePeakDecayExitValidation?.capture_ratio, true, 2)}`,
+    `Portfolio P/L: ${metricDisplay((unified?.portfolio_health_summary || {}).daily_pnl_pct ?? (unified?.portfolio_health_summary || {}).portfolio_pnl_pct, true, 2, "%")}`,
+    "",
+    "Learning:",
+    `Teacher Lessons: ${safeNumber(unified?.teacher_lessons_count ?? unified?.teacher_lessons ?? learningInsights?.teacher_lessons).toFixed(0)}`,
+    `Shadow Experiments: ${safeNumber(realisticShadowLab?.shadow_opportunities_today ?? realisticShadowLab?.shadow_experiments ?? realisticShadowLab?.virtual_paths).toFixed(0)}`,
+    `IHIE Enrichments: ${safeNumber((unified?.institutional_historical_intelligence_engine_v1 || {}).enrichment_count ?? unified?.ihie_enrichments).toFixed(0)}`,
+    `Satellite Observations: ${safeNumber((unified?.astra_satellite_network_v1 || {}).satellite_observations ?? (unified?.astra_satellite_network_v1 || {}).observation_count).toFixed(0)}`,
+    `Memory Reinforcements: ${safeNumber((unified?.long_term_memory_symbol_retrieval_suite_v1 || {}).memory_reinforcements ?? unified?.memory_reinforcements).toFixed(0)}`,
+    `Retrieval Candidates: ${safeNumber((unified?.astra_aios_learning_acceleration_adaptive_feed_monitor_v1 || {}).retrieval_candidates ?? unified?.retrieval_candidates).toFixed(0)}`,
+    `AIC Priorities: ${safeNumber((unified?.astra_aios_learning_acceleration_adaptive_feed_monitor_v1 || {}).aic_working_priorities ?? unified?.aic_working_priorities).toFixed(0)}`,
+    "",
+    "System:",
+    `Adaptive Feed Monitor: ${String((unified?.astra_aios_learning_acceleration_adaptive_feed_monitor_v1 || {}).adaptive_feed_monitor_status || unified?.adaptive_feed_monitor_status || "warming_up").replaceAll("_", " ")}`,
+    `Weakest Layer: ${String((unified?.astra_aios_learning_acceleration_adaptive_feed_monitor_v1 || {}).weakest_layer || intelligenceQualityLearningEfficiency?.summary?.weakest_confidence_component || "warming_up").replaceAll("_", " ")}`,
+    `Strongest Layer: ${String((unified?.astra_aios_learning_acceleration_adaptive_feed_monitor_v1 || {}).strongest_layer || intelligenceQualityLearningEfficiency?.summary?.highest_value_learning_system || "warming_up").replaceAll("_", " ")}`,
+    `Provider Calls: ${safeNumber(unified?.provider_calls_used).toFixed(0)}`,
+    `Dashboard Provider Calls: ${safeNumber(unified?.dashboard_provider_calls_used).toFixed(0)}`,
+    `Dashboard LLM Calls: ${safeNumber(unified?.dashboard_llm_calls_used ?? unified?.dashboard_render_llm_calls).toFixed(0)}`,
+    `Failed Sources Count: ${safeNumber(unified?.failed_sources_count).toFixed(0)}`,
+    `behavior_safe_to_apply: ${String(Boolean(unified?.behavior_safe_to_apply))}`,
   ].join("\n");
   const ChartShell = ({ title, subtitle, children, empty }) => (
     <div style={{ background: "rgba(12,24,42,0.35)", border: "1px solid #2f4a72", borderRadius: 12, padding: 10, minHeight: 240 }}>
@@ -1920,6 +1966,9 @@ export default function LearningTab({ compact = false }) {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <button type="button" onClick={() => copyText("Executive snapshot", executiveSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>
               Copy Executive Snapshot
+            </button>
+            <button type="button" onClick={() => copyText("Measurements", measurementsSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>
+              Copy Measurements
             </button>
             <button type="button" onClick={() => copyText("Full diagnostics", fullDiagnosticSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>
               Copy Full Diagnostic Snapshot
@@ -2306,8 +2355,8 @@ export default function LearningTab({ compact = false }) {
             ["Expansion block", historicalMarketMemory?.fmp_expansion_block_reason],
             ["Storage pressure", safeNumber(historicalMarketMemory?.storage_pressure_score).toFixed(1)],
             ["Memory pressure", safeNumber(historicalMarketMemory?.memory_pressure_score).toFixed(1)],
-          ].map(([label, value]) => (
-            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+          ].map(([label, value], idx) => (
+            <div key={`${label}-${idx}`} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
               <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
               <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
             </div>
@@ -2344,8 +2393,8 @@ export default function LearningTab({ compact = false }) {
             ["Exit maturity", safeNumber(catalystHistoricalExitMaturation?.exit_learning_maturity_score).toFixed(1)],
             ["API impact", catalystHistoricalExitMaturation?.api_impact_estimate],
             ["Bandwidth impact", catalystHistoricalExitMaturation?.bandwidth_impact_estimate],
-          ].map(([label, value]) => (
-            <div key={label} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
+          ].map(([label, value], idx) => (
+            <div key={`${label}-${idx}`} style={{ background: "rgba(12,24,42,0.42)", border: "1px solid #2f4a72", borderRadius: 10, padding: "8px 10px" }}>
               <div style={{ color: "#9fb1cc", fontSize: 11 }}>{label}</div>
               <div style={{ color: "#f2f7ff", fontWeight: 800 }}>{String(value || "warming up").replaceAll("_", " ")}</div>
             </div>
@@ -3125,7 +3174,7 @@ export default function LearningTab({ compact = false }) {
             ["Catalyst improvement", safeNumber(astraHorizonLifecycleCapacityPromotion?.catalyst_improvement_rate).toFixed(1)],
             ["Catalyst gap", astraHorizonLifecycleCapacityPromotion?.catalyst_learning_gap],
             ["Best exit policy", astraHorizonLifecycleCapacityPromotion?.best_exit_policy_candidate],
-            ["Exit readiness", safeNumber(astraHorizonLifecycleCapacityPromotion?.exit_policy_readiness_score).toFixed(1)],
+            ["Exit policy readiness", safeNumber(astraHorizonLifecycleCapacityPromotion?.exit_policy_readiness_score).toFixed(1)],
             ["Giveback opportunity", safeNumber(astraHorizonLifecycleCapacityPromotion?.giveback_reduction_opportunity).toFixed(1)],
             ["Capture improvement", safeNumber(astraHorizonLifecycleCapacityPromotion?.expected_profit_capture_improvement).toFixed(1)],
             ["Promotion score", safeNumber(astraHorizonLifecycleCapacityPromotion?.promotion_readiness_score).toFixed(1)],

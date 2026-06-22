@@ -244,6 +244,50 @@
   box-shadow: 0 10px 24px rgba(24, 48, 80, 0.08);
 }
 
+.astra-current-symbol-context {
+  border: 1px solid rgba(129, 170, 229, 0.22);
+  border-radius: 16px;
+  background: rgba(14, 32, 56, 0.78);
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  max-width: 100%;
+  color: #dcecff;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.14);
+}
+
+.astra-current-symbol-context span,
+.astra-selected-symbol-pill {
+  color: #93acce;
+  font-size: 0.76rem;
+  font-weight: 850;
+}
+
+.astra-current-symbol-context strong,
+.astra-selected-symbol-pill strong {
+  color: #ffffff;
+}
+
+.astra-current-symbol-context button {
+  border: 1px solid rgba(109, 178, 255, 0.38);
+  border-radius: 999px;
+  background: rgba(36, 107, 254, 0.18);
+  color: #b9d5ff;
+  font-weight: 900;
+  padding: 6px 10px;
+}
+
+.astra-selected-symbol-pill {
+  margin-top: 12px;
+  border: 1px solid rgba(182, 211, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 8px 11px;
+  width: fit-content;
+}
+
 .astra-page-grid {
   display: grid;
   gap: 16px;
@@ -424,6 +468,8 @@
   padding: 14px;
   display: grid;
   gap: 6px;
+  text-align: left;
+  cursor: pointer;
 }
 
 .astra-more-tile strong {
@@ -433,6 +479,218 @@
 .astra-more-tile span {
   color: #6b7d95;
   font-size: 0.86rem;
+}
+
+.astra-mobile-bottom-nav {
+  display: none;
+}
+
+.astra-mobile-command-center {
+  display: grid;
+  gap: 14px;
+}
+
+.astra-mobile-section {
+  border-radius: 22px;
+  border: 1px solid rgba(129, 170, 229, 0.24);
+  background:
+    radial-gradient(260px 140px at 96% 0%, rgba(43, 118, 255, 0.22), transparent 72%),
+    linear-gradient(180deg, rgba(13, 31, 55, 0.98), rgba(8, 22, 42, 0.98));
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.28);
+  padding: 16px;
+  color: #eef6ff;
+}
+
+.astra-mobile-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.astra-mobile-section-header.compact {
+  margin-bottom: 10px;
+}
+
+.astra-mobile-section-header span {
+  display: block;
+  color: #6db2ff;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  font-weight: 950;
+}
+
+.astra-mobile-section-header h2 {
+  margin: 3px 0 0;
+  color: #f6faff;
+  font-size: 1.06rem;
+  letter-spacing: -0.03em;
+}
+
+.astra-mobile-section-header small {
+  color: #8ea8cc;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.astra-mobile-section-header button,
+.astra-mobile-context-button {
+  border: 1px solid rgba(109, 178, 255, 0.34);
+  border-radius: 999px;
+  background: rgba(36, 107, 254, 0.16);
+  color: #b9d5ff;
+  font-weight: 950;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+.astra-mobile-market-strip {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(158px, 72%);
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scroll-snap-type: x mandatory;
+}
+
+.astra-mobile-market-card {
+  scroll-snap-align: start;
+  border: 1px solid rgba(129, 170, 229, 0.22);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.07);
+  padding: 12px;
+  display: grid;
+  gap: 7px;
+}
+
+.astra-mobile-market-card div {
+  display: grid;
+  gap: 2px;
+}
+
+.astra-mobile-market-card strong {
+  color: #ffffff;
+  font-size: 1rem;
+}
+
+.astra-mobile-market-card span,
+.astra-mobile-market-card small {
+  color: #93acce;
+  font-size: 0.72rem;
+  font-style: normal;
+}
+
+.astra-mobile-market-card b {
+  color: #ffffff;
+  font-size: 1.22rem;
+}
+
+.astra-mobile-market-card em {
+  font-style: normal;
+  font-weight: 950;
+  font-size: 0.82rem;
+}
+
+.astra-mobile-market-card em.positive {
+  color: #5ee6a8;
+}
+
+.astra-mobile-market-card em.negative {
+  color: #ff7784;
+}
+
+.astra-mobile-copilot-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.astra-mobile-copilot-card {
+  border: 1px solid rgba(129, 170, 229, 0.22);
+  border-left: 5px solid var(--action-color, #28d17c);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.075);
+  padding: 12px;
+  color: #eef6ff;
+  display: grid;
+  gap: 9px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.astra-mobile-copilot-card > span {
+  color: var(--action-color, #28d17c);
+  font-size: 0.72rem;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.astra-mobile-copilot-card > strong {
+  color: #ffffff;
+  font-size: 1.35rem;
+  letter-spacing: -0.03em;
+}
+
+.astra-mobile-copilot-grid,
+.astra-mobile-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.astra-mobile-copilot-grid small,
+.astra-mobile-metric-grid div {
+  border: 1px solid rgba(129, 170, 229, 0.18);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07);
+  padding: 8px;
+  color: #9fb3cf;
+  display: grid;
+  gap: 2px;
+}
+
+.astra-mobile-copilot-grid b,
+.astra-mobile-metric-grid strong {
+  color: #ffffff;
+}
+
+.astra-mobile-copilot-card p,
+.astra-mobile-summary {
+  margin: 0;
+  color: #dce9fb;
+  line-height: 1.5;
+  font-size: 0.9rem;
+}
+
+.astra-mobile-copilot-card em {
+  color: #9fb3cf;
+  font-style: normal;
+  font-size: 0.8rem;
+}
+
+.astra-mobile-priority-list {
+  display: grid;
+  gap: 9px;
+}
+
+.astra-mobile-priority-list div {
+  border: 1px solid rgba(129, 170, 229, 0.18);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.07);
+  padding: 10px;
+  color: #dce9fb;
+  line-height: 1.42;
+}
+
+.astra-mobile-empty {
+  border: 1px dashed rgba(129, 170, 229, 0.24);
+  border-radius: 16px;
+  color: #9fb3cf;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 14px;
 }
 
 .astra-button-row {
@@ -516,6 +774,100 @@
   }
 
   .astra-ai-input-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 767px) {
+  .astra-desktop-shell {
+    min-height: 100dvh;
+    display: block;
+    padding-bottom: 78px;
+  }
+
+  .astra-sidebar {
+    display: none;
+  }
+
+  .astra-main {
+    padding: 16px 12px 18px;
+    gap: 12px;
+  }
+
+  .astra-page-heading {
+    border: 1px solid rgba(129, 170, 229, 0.20);
+    border-radius: 22px;
+    background:
+      radial-gradient(300px 160px at 100% 0%, rgba(43, 118, 255, 0.25), transparent 72%),
+      linear-gradient(180deg, rgba(8, 24, 47, 0.96), rgba(5, 17, 35, 0.96));
+    padding: 15px;
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.20);
+  }
+
+  .astra-page-heading h1 {
+    font-size: 1.42rem;
+  }
+
+  .astra-page-heading p {
+    font-size: 0.82rem;
+  }
+
+  .astra-safe-pill {
+    font-size: 0.7rem;
+    padding: 7px 10px;
+  }
+
+  .astra-current-symbol-context {
+    width: auto;
+    justify-content: space-between;
+  }
+
+  .astra-mobile-bottom-nav {
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    z-index: 50;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 4px;
+    border: 1px solid rgba(129, 170, 229, 0.24);
+    border-radius: 20px;
+    background: rgba(5, 17, 35, 0.94);
+    backdrop-filter: blur(14px);
+    padding: 7px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.34);
+  }
+
+  .astra-mobile-bottom-nav button {
+    border: 0;
+    border-radius: 14px;
+    background: transparent;
+    color: #8ea8cc;
+    display: grid;
+    justify-items: center;
+    gap: 3px;
+    padding: 7px 3px;
+    font-size: 0.62rem;
+    font-weight: 850;
+  }
+
+  .astra-mobile-bottom-nav button.active {
+    background: linear-gradient(135deg, rgba(43, 118, 255, 0.95), rgba(24, 85, 200, 0.95));
+    color: #ffffff;
+  }
+
+  .astra-mobile-bottom-nav svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .astra-ai-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .astra-more-grid,
+  .astra-watchlist-grid {
     grid-template-columns: 1fr;
   }
 }

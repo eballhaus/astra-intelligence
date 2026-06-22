@@ -47,18 +47,22 @@ class AppErrorBoundary extends Component {
 }
 
 const primaryTabs = [
-  { id: "dashboard", label: "🏠 Dashboard", icon: "dashboard" },
-  { id: "copilot", label: "🤖 Copilot", icon: "copilot" },
-  { id: "portfolio", label: "💼 Portfolio", icon: "portfolio" },
-  { id: "watchlists", label: "👀 Watchlists", icon: "watchlists" },
-  { id: "ask", label: "💬 Ask Astra", icon: "ask" },
-  { id: "learning", label: "🧠 Learning Center", icon: "learning" },
-  { id: "alerts", label: "🚨 Alerts", icon: "alerts" },
-  { id: "reports", label: "📄 Reports", icon: "reports" },
-  { id: "settings", label: "⚙️ Settings", icon: "settings" },
+  { id: "dashboard", label: "Dashboard", icon: "dashboard" },
+  { id: "copilot", label: "Copilot", icon: "copilot" },
+  { id: "portfolio", label: "Portfolio", icon: "portfolio" },
+  { id: "watchlists", label: "Watchlists", icon: "watchlists" },
+  { id: "ask", label: "Ask Astra", icon: "ask" },
+  { id: "learning", label: "Learning Center", icon: "learning" },
+  { id: "alerts", label: "Alerts", icon: "alerts" },
+  { id: "reports", label: "Reports", icon: "reports" },
+  { id: "settings", label: "Settings", icon: "settings" },
 ];
 
 const moreLinks = [
+  { title: "Ask Astra", copy: "Open the user-triggered AI assistant with the current selected-symbol context when available.", tab: "ask" },
+  { title: "Radar", copy: "Forward-looking watch items stay on the dashboard and Copilot surfaces without adding endpoint loops.", tab: "dashboard" },
+  { title: "Calendar", copy: "Cached event context remains visible on the executive dashboard when connected.", tab: "dashboard" },
+  { title: "Watchlists", copy: "Safe watchlist shells and cached monitoring context.", tab: "watchlists" },
   { title: "Settings", copy: "Configuration and environment controls remain available through existing backend/admin paths." },
   { title: "Reports", copy: "Performance and diagnostic exports are consolidated in Learning Center copy tools." },
   { title: "Alerts", copy: "Risk, market, and portfolio alerts remain read-only in dashboard diagnostics." },
@@ -137,7 +141,16 @@ function NavIcon({ kind }) {
   return <svg {...common}><path d="M5 12h14" /><path d="M12 5v14" /></svg>;
 }
 
-function AskAstraPage({ initialQuestion = "" }) {
+const mobileTabs = [
+  { id: "dashboard", label: "Dashboard", icon: "dashboard" },
+  { id: "copilot", label: "Copilot", icon: "copilot" },
+  { id: "portfolio", label: "Portfolio", icon: "portfolio" },
+  { id: "learning", label: "Learning", icon: "learning" },
+  { id: "alerts", label: "Alerts", icon: "alerts" },
+  { id: "more", label: "More", icon: "settings" },
+];
+
+function AskAstraPage({ initialQuestion = "", selectedSymbol = "" }) {
   const [question, setQuestion] = useState("");
   const [status, setStatus] = useState("idle");
   const [message, setMessage] = useState("");
@@ -187,7 +200,13 @@ function AskAstraPage({ initialQuestion = "" }) {
       init: {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ question: cleanQuestion, context_scope: "copilot", response_mode: "fast" }),
+        body: JSON.stringify({
+          question: cleanQuestion,
+          context_scope: "copilot",
+          response_mode: "fast",
+          selected_symbol: selectedSymbol || undefined,
+          current_symbol_context: selectedSymbol || undefined,
+        }),
       },
     });
     if (result.ok && result.parsed?.ok) {
@@ -213,6 +232,11 @@ function AskAstraPage({ initialQuestion = "" }) {
           <p>
             Ask Astra remains user-triggered only. Dashboard render never calls a model; submitted questions use local Qwen through Ollama when available, or a structured cached-data fallback.
           </p>
+          {selectedSymbol ? (
+            <div className="astra-selected-symbol-pill">
+              Current symbol context: <strong>{selectedSymbol}</strong>
+            </div>
+          ) : null}
           <div className="astra-ai-status-grid">
             <span>Local AI status <strong>{aiStatusText}</strong></span>
             <span>Ollama reachable <strong>{localStatus?.ollama_reachable ? "yes" : "no"}</strong></span>
@@ -277,10 +301,15 @@ function MorePage({ setActiveTab }) {
         </p>
         <div className="astra-more-grid">
           {moreLinks.map((item) => (
-            <div className="astra-more-tile" key={item.title}>
+            <button
+              type="button"
+              className="astra-more-tile"
+              key={item.title}
+              onClick={() => (item.tab ? setActiveTab(item.tab) : null)}
+            >
               <strong>{item.title}</strong>
               <span>{item.copy}</span>
-            </div>
+            </button>
           ))}
         </div>
       </ShellCard>
@@ -324,20 +353,30 @@ function PageHeading({ activeTab }) {
 function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [askPrefill, setAskPrefill] = useState("");
+  const [selectedSymbol, setSelectedSymbol] = useState("");
 
   const handleNavigate = (tabId, options = {}) => {
     if (tabId === "ask") {
       const question = String(options?.question || "").trim();
       if (question) setAskPrefill(question);
     }
+    const symbol = String(options?.symbol || "").trim().toUpperCase();
+    if (symbol) setSelectedSymbol(symbol);
     setActiveTab(tabId);
   };
 
+  const handleSelectSymbol = (symbol, options = {}) => {
+    const clean = String(symbol || "").trim().toUpperCase();
+    if (!clean) return;
+    setSelectedSymbol(clean);
+    if (options?.navigateTo) handleNavigate(options.navigateTo, { symbol: clean, question: options.question });
+  };
+
   const renderTab = () => {
-    if (activeTab === "dashboard") return <Dashboard onNavigate={handleNavigate} />;
-    if (activeTab === "copilot") return <Dashboard remoteMode remoteSection="copilot" onNavigate={handleNavigate} />;
-    if (activeTab === "portfolio") return <Dashboard remoteMode remoteSection="positions" onNavigate={handleNavigate} />;
-    if (activeTab === "ask") return <AskAstraPage initialQuestion={askPrefill} />;
+    if (activeTab === "dashboard") return <Dashboard onNavigate={handleNavigate} selectedSymbol={selectedSymbol} onSelectSymbol={handleSelectSymbol} />;
+    if (activeTab === "copilot") return <Dashboard remoteMode remoteSection="copilot" onNavigate={handleNavigate} selectedSymbol={selectedSymbol} onSelectSymbol={handleSelectSymbol} />;
+    if (activeTab === "portfolio") return <Dashboard remoteMode remoteSection="positions" onNavigate={handleNavigate} selectedSymbol={selectedSymbol} onSelectSymbol={handleSelectSymbol} />;
+    if (activeTab === "ask") return <AskAstraPage initialQuestion={askPrefill} selectedSymbol={selectedSymbol} />;
     if (activeTab === "watchlists") return <WatchlistsPage />;
     if (activeTab === "learning") return <LearningTab />;
     if (["alerts", "reports", "settings"].includes(activeTab)) return <MorePage setActiveTab={handleNavigate} />;
@@ -381,8 +420,30 @@ function App() {
       </aside>
       <main className="astra-main">
         <PageHeading activeTab={activeTab} />
+        {selectedSymbol ? (
+          <div className="astra-current-symbol-context">
+            <span>Current symbol context</span>
+            <strong>{selectedSymbol}</strong>
+            <button type="button" onClick={() => handleNavigate("ask", { symbol: selectedSymbol, question: `Why does Astra like ${selectedSymbol}?` })}>
+              Ask Astra
+            </button>
+          </div>
+        ) : null}
         {renderTab()}
       </main>
+      <nav className="astra-mobile-bottom-nav" aria-label="Mobile primary">
+        {mobileTabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={activeTab === tab.id ? "active" : ""}
+            onClick={() => handleNavigate(tab.id)}
+          >
+            <span><NavIcon kind={tab.icon} /></span>
+            {tab.label}
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }

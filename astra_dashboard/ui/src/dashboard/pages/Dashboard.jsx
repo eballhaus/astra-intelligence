@@ -325,7 +325,27 @@ function normalizeMarketSummary(systemStatus = {}, unifiedDiagnostics = {}) {
   return mapped;
 }
 
-export default function Dashboard({ remoteSection = "dashboard", remoteMode = false, onNavigate }) {
+function actionColor(action = "") {
+  const key = String(action || "").toUpperCase();
+  if (key.includes("SELL_RECOMMENDED")) return "#ff3b4f";
+  if (key.includes("APPROACHING")) return "#ff9f1a";
+  if (key.includes("WATCH")) return "#f6c453";
+  if (key.includes("HOLD")) return "#4f9dff";
+  return "#28d17c";
+}
+
+function mobileCardStyle(accent = "#2b76ff") {
+  return {
+    borderRadius: 22,
+    border: "1px solid rgba(129, 170, 229, 0.24)",
+    background: `radial-gradient(260px 140px at 96% 0%, ${accent}28, transparent 72%), linear-gradient(180deg, rgba(13, 31, 55, 0.98), rgba(8, 22, 42, 0.98))`,
+    boxShadow: "0 22px 54px rgba(0,0,0,0.28)",
+    padding: 16,
+    color: "#eef6ff",
+  };
+}
+
+export default function Dashboard({ remoteSection = "dashboard", remoteMode = false, onNavigate, selectedSymbol = "", onSelectSymbol }) {
   const [resolvedApiBase, setResolvedApiBase] = useState(getInitialApiBase());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -720,6 +740,20 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     astraExecutive?.consensus_summary || astraExecutive?.needs_attention_summary || `Main weakness ${mainWeakness}`,
     astraCio?.cio_summary || (astraCeo?.what_astra_should_learn_next ? `Next learning: ${astraCeo.what_astra_should_learn_next}` : `Next review ${highConfidenceCount > 0 ? "top ranked candidates" : "wait for fresh opportunity evidence"}`),
   ];
+  const mobilePriorities = [
+    `Opportunity: ${bestOpportunity?.symbol ? `${bestOpportunity.symbol} leads the current opportunity stack` : "Astra is waiting for a cleaner top opportunity"}.`,
+    `Watch: ${breadthStatus}.`,
+    `Caution: ${mainWeakness === "Warming Up" ? "Use confirmation while diagnostics warm up" : mainWeakness}.`,
+  ];
+  const mobileTradingMetrics = [
+    ["Win Rate", metricOrUnavailable(performanceSummary?.released_win_rate?.value ?? systemStatus?.win_rate ?? systemStatus?.released_win_rate, "%")],
+    ["Profit Factor", metricOrUnavailable(performanceSummary?.profit_factor?.value ?? systemStatus?.profit_factor)],
+    ["Buy Purity", metricOrUnavailable(performanceSummary?.buy_list_purity?.value ?? systemStatus?.buy_purity, "%")],
+    ["Active Opps", `${highConfidenceCount}`],
+    ["Market", marketTone],
+    ["Portfolio", portfolioRiskLabel],
+  ];
+  const mobileSummary = `${marketTone} market context with ${strongestTheme} as the main leadership clue. ${bestOpportunity?.symbol ? `${bestOpportunity.symbol} is the top visible opportunity.` : "Astra is waiting for stronger opportunity evidence."} Main watch item: ${breadthStatus}. Astra remains advisory and paper-safe.`;
 
   const refreshPositions = async () => {
     const result = await fetchJsonWithFallback("/api/positions", {
@@ -769,6 +803,12 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     }
   };
 
+  const selectSymbol = (symbol, options = {}) => {
+    const clean = String(symbol || "").trim().toUpperCase();
+    if (!clean) return;
+    if (typeof onSelectSymbol === "function") onSelectSymbol(clean, options);
+  };
+
   const handleRemovePosition = async (item) => {
     const positionId = String(item?.position_id || "").trim();
     const symbol = String(item?.symbol || item?.ticker || "").toUpperCase().trim();
@@ -797,6 +837,120 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
       setPositionRemoveState((prev) => ({ ...(prev || {}), [identifier]: "failed" }));
     }
   };
+
+  if (topSection === "dashboard" && isMobileView) {
+    return (
+      <div className="astra-mobile-command-center">
+        <section className="astra-mobile-section">
+          <div className="astra-mobile-section-header">
+            <div>
+              <span>Market Pulse</span>
+              <h2>What the market is doing</h2>
+            </div>
+            <small>Updated {asOf}</small>
+          </div>
+          <div className="astra-mobile-market-strip">
+            {(marketSummary || []).slice(0, 5).map((market) => {
+              const isScore = market?.valueKind === "score";
+              const value = market?.displayValue || (Number.isFinite(Number(market?.value)) ? Number(market.value).toFixed(isScore ? 1 : 2) : "n/a");
+              const change = Number(market?.change);
+              const positive = isScore ? Number(market?.value) >= 50 : change >= 0;
+              return (
+                <article key={market.id || market.symbol} className="astra-mobile-market-card">
+                  <div>
+                    <strong>{market.symbol}</strong>
+                    <span>{market.name}</span>
+                  </div>
+                  <b>{value}</b>
+                  <em className={positive ? "positive" : "negative"}>{isScore ? (market?.sourceLabel || "Astra Score") : `${positive ? "+" : ""}${Number.isFinite(change) ? change.toFixed(2) : "0.00"}%`}</em>
+                  <small>{market.detail || qualitativeScore(market.value)}</small>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="astra-mobile-section astra-mobile-copilot">
+          <div className="astra-mobile-section-header">
+            <div>
+              <span>Astra Copilot</span>
+              <h2>Top actions right now</h2>
+            </div>
+            <button type="button" onClick={() => (typeof onNavigate === "function" ? onNavigate("copilot") : null)}>View Full Copilot</button>
+          </div>
+          <div className="astra-mobile-copilot-stack">
+            {copilotRows.slice(0, 3).map((row) => (
+              <button
+                key={`${row.symbol}-${row.rank}`}
+                type="button"
+                className="astra-mobile-copilot-card"
+                onClick={() => selectSymbol(row.symbol, { navigateTo: "copilot" })}
+                style={{ "--action-color": actionColor(row.action) }}
+              >
+                <span>{row.actionLabel}</span>
+                <strong>{row.symbol}</strong>
+                <div className="astra-mobile-copilot-grid">
+                  <small>Institutional Score <b>{row.consistency ? row.consistency.toFixed(0) : "n/a"}</b></small>
+                  <small>Confidence <b>{row.confidence.toFixed(0)}%</b></small>
+                  <small>Horizon <b>{row.horizon}</b></small>
+                  <small>Risk <b>{row.risk}</b></small>
+                </div>
+                <p>Why: {row.why}</p>
+                <em>Action: review under existing safety gates.</em>
+              </button>
+            ))}
+            {copilotRows.length === 0 ? (
+              <div className="astra-mobile-empty">Copilot is warming up from cached rankings. No provider or LLM calls were added.</div>
+            ) : null}
+          </div>
+        </section>
+
+        <section style={mobileCardStyle("#f6c453")}>
+          <div className="astra-mobile-section-header compact">
+            <div>
+              <span>Today's Priorities</span>
+              <h2>What deserves attention</h2>
+            </div>
+          </div>
+          <div className="astra-mobile-priority-list">
+            {mobilePriorities.map((item) => <div key={item}>{item}</div>)}
+          </div>
+        </section>
+
+        <section style={mobileCardStyle("#28d17c")}>
+          <div className="astra-mobile-section-header compact">
+            <div>
+              <span>Trading Snapshot</span>
+              <h2>Business metrics</h2>
+            </div>
+          </div>
+          <div className="astra-mobile-metric-grid">
+            {mobileTradingMetrics.map(([label, value]) => (
+              <div key={label}>
+                <span>{label}</span>
+                <strong>{value}</strong>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section style={mobileCardStyle("#6db2ff")}>
+          <div className="astra-mobile-section-header compact">
+            <div>
+              <span>Astra Summary</span>
+              <h2>Plain-English take</h2>
+            </div>
+          </div>
+          <p className="astra-mobile-summary">{mobileSummary}</p>
+          {selectedSymbol ? (
+            <button type="button" className="astra-mobile-context-button" onClick={() => (typeof onNavigate === "function" ? onNavigate("ask", { symbol: selectedSymbol, question: `What is Astra seeing in ${selectedSymbol}?` }) : null)}>
+              Ask Astra about {selectedSymbol}
+            </button>
+          ) : null}
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div style={shellStyle}>
@@ -903,7 +1057,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                   Copilot guidance is warming up from cached rankings. No provider, broker, or model calls are made by this card.
                 </div>
               ) : copilotRows.map((row) => (
-                <div key={`${row.rank}-${row.symbol}`} onClick={() => (typeof onNavigate === "function" ? onNavigate("copilot") : null)} style={{ display: "grid", gridTemplateColumns: "132px minmax(90px, .75fr) minmax(94px, .75fr) minmax(120px, .9fr) minmax(0, 3fr)", gap: 10, padding: "10px 0", alignItems: "center", borderBottom: "1px solid rgba(129, 170, 229, 0.12)", cursor: "pointer" }}>
+                <div key={`${row.rank}-${row.symbol}`} onClick={() => selectSymbol(row.symbol, { navigateTo: "copilot" })} style={{ display: "grid", gridTemplateColumns: "132px minmax(90px, .75fr) minmax(94px, .75fr) minmax(120px, .9fr) minmax(0, 3fr)", gap: 10, padding: "10px 0", alignItems: "center", borderBottom: "1px solid rgba(129, 170, 229, 0.12)", cursor: "pointer" }}>
                   <strong style={{ color: row.action === "BUY_NOW" ? "#5ee6a8" : row.action === "WATCH_CLOSELY" ? "#f6c453" : "#8dbbff", fontSize: 12 }}>{row.signal}</strong>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ color: "#f5f9ff", fontWeight: 950, fontSize: 13 }}>{row.symbol}</div>
@@ -1192,7 +1346,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
             />
           </section>
 
-          {topSection === "copilot" && (
+            {topSection === "copilot" && (
             <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
               {[
                 ["Exit Center", "Approaching sell and sell-recommended categories are visible for review only. Natural exits remain preserved."],
