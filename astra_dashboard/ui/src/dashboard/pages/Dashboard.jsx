@@ -515,6 +515,9 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     : "dashboard";
   const performanceSummary = unifiedDiagnostics?.performance_summary || {};
   const executiveSnapshot = unifiedDiagnostics?.executive_snapshot || {};
+  const tier1bExecutive = unifiedDiagnostics?.astra_truth_controlled_evolution_executive_v1 || {};
+  const officialMetrics = tier1bExecutive?.official_metrics || {};
+  const executiveDepartments = tier1bExecutive?.executive_intelligence_layer_v1?.departments || [];
   const executionQuality = unifiedDiagnostics?.execution_quality_summary || executiveSnapshot?.execution_quality || {};
   const portfolioHealth = unifiedDiagnostics?.portfolio_health_summary || executiveSnapshot?.portfolio_health || {};
   const learningMaturity = unifiedDiagnostics?.learning_maturity_summary || executiveSnapshot?.learning_status || {};
@@ -609,7 +612,13 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     `Astra has ${highConfidenceCount} high-confidence opportunit${highConfidenceCount === 1 ? "y" : "ies"} and ${portfolioRiskText}.`,
     `Next focus: ${nextFocus}.`,
   ].join(" ");
-  const portfolioValue = formatMoney(positionsMeta?.portfolio_value ?? positionsMeta?.total_value ?? systemStatus?.portfolio_value);
+  const portfolioValue = formatMoney(metricObjectValue(officialMetrics?.portfolio_value) ?? positionsMeta?.portfolio_value ?? positionsMeta?.total_value ?? systemStatus?.portfolio_value);
+  const todayPnlValue = officialMetrics?.today_pnl?.available
+    ? formatMoney(metricObjectValue(officialMetrics?.today_pnl))
+    : "Warming Up";
+  const totalPnlValue = officialMetrics?.total_pnl?.available
+    ? formatMoney(metricObjectValue(officialMetrics?.total_pnl))
+    : "Warming Up";
   const cashValue = formatMoney(positionsMeta?.cash ?? positionsMeta?.buying_power ?? systemStatus?.cash);
   const buyingPowerValue = formatMoney(positionsMeta?.buying_power ?? positionsMeta?.cash ?? systemStatus?.buying_power ?? systemStatus?.cash);
   const allocationRows = normalizeAllocationRows(positionsMeta, systemStatus).slice(0, 4);
@@ -752,6 +761,14 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     ["Active Opps", `${highConfidenceCount}`],
     ["Market", marketTone],
     ["Portfolio", portfolioRiskLabel],
+  ];
+  const officialPerformanceRows = [
+    ["Win Rate", performanceSummary?.released_win_rate, "%"],
+    ["Profit Factor", performanceSummary?.profit_factor, ""],
+    ["Avg Return", performanceSummary?.average_return, "%"],
+    ["Total P/L", officialMetrics?.total_pnl, "$"],
+    ["Open Positions", officialMetrics?.open_positions, ""],
+    ["Buy Purity", performanceSummary?.buy_list_purity, "%"],
   ];
   const mobileSummary = `${marketTone} market context with ${strongestTheme} as the main leadership clue. ${bestOpportunity?.symbol ? `${bestOpportunity.symbol} is the top visible opportunity.` : "Astra is waiting for stronger opportunity evidence."} Main watch item: ${breadthStatus}. Astra remains advisory and paper-safe.`;
 
@@ -1081,10 +1098,10 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                 <button type="button" onClick={() => (typeof onNavigate === "function" ? onNavigate("portfolio") : null)} style={{ border: 0, background: "transparent", color: "#8dbbff", fontWeight: 900, cursor: "pointer" }}>View Portfolio</button>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginTop: 14 }}>
-                {[["Total Value", portfolioValue], ["Day's P/L", formatSignedPct(avgPositionPnl)], ["Cash", cashValue]].map(([label, value]) => (
+                {[["Total Value", portfolioValue], ["Day's P/L", todayPnlValue], ["Total P/L", totalPnlValue], ["Cash", cashValue]].map(([label, value]) => (
                   <div key={label}>
                     <div style={{ color: "#9fb3cf", fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>{label}</div>
-                    <div style={{ color: label === "Day's P/L" && avgPositionPnl < 0 ? "#c43d4b" : "#f5f9ff", fontSize: 19, fontWeight: 950 }}>{value}</div>
+                    <div style={{ color: "#f5f9ff", fontSize: 19, fontWeight: 950 }}>{value}</div>
                   </div>
                 ))}
               </div>
@@ -1107,20 +1124,25 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
 
             <div style={panelStyle}>
               <h2 style={panelTitleStyle}>Astra Performance</h2>
-              <p style={{ margin: "8px 0 12px", color: "#dce9fb", fontSize: 13 }}>Verified learning metrics from unified diagnostics.</p>
+              <p style={{ margin: "8px 0 12px", color: "#dce9fb", fontSize: 13 }}>Official broker truth, with diagnostic metrics labeled separately.</p>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-                {[
-                  ["Win Rate", metricOrUnavailable(performanceSummary?.released_win_rate?.value ?? systemStatus?.win_rate ?? systemStatus?.released_win_rate, "%")],
-                  ["Profit Factor", metricOrUnavailable(performanceSummary?.profit_factor?.value ?? systemStatus?.profit_factor)],
-                  ["Avg Return", metricOrUnavailable(performanceSummary?.average_return?.value, "%")],
-                  ["Buy Purity", metricOrUnavailable(performanceSummary?.buy_list_purity?.value ?? systemStatus?.buy_purity, "%")],
-                ].map(([label, value]) => (
+                {officialPerformanceRows.map(([label, metric, suffix]) => (
                   <div key={label} style={{ border: "1px solid rgba(129, 170, 229, 0.20)", borderRadius: 14, padding: "10px 11px", background: "rgba(255,255,255,0.06)" }}>
-                    <div style={{ color: "#079246", fontSize: 20, fontWeight: 950 }}>{value}</div>
-                    <div style={{ color: "#9fb3cf", fontSize: 11, fontWeight: 900 }}>{label}</div>
+                    <div style={{ color: "#079246", fontSize: 20, fontWeight: 950 }}>
+                      {suffix === "$" && metric?.available ? formatMoney(metric?.value) : metricOrUnavailable(metric?.value, suffix)}
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#9fb3cf", fontSize: 11, fontWeight: 900 }}>
+                      <span>{label}</span>
+                      <span style={{ color: metric?.truth_label === "Official" ? "#55d98b" : "#8dbbff" }}>{metric?.truth_label || "Diagnostic"}</span>
+                    </div>
                   </div>
                 ))}
               </div>
+              {executiveDepartments.length ? (
+                <div style={{ marginTop: 10, color: "#9fb3cf", fontSize: 11 }}>
+                  Departments: {executiveDepartments.map((row) => `${row.department} ${Math.round(safeNumber(row.health))}`).join(" | ")}
+                </div>
+              ) : null}
             </div>
 
             <div style={panelStyle}>
@@ -1371,7 +1393,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10, marginTop: 12 }}>
                 {[
                   ["Total value", portfolioValue],
-                  ["Day P/L", formatSignedPct(avgPositionPnl)],
+                  ["Day P/L", todayPnlValue],
                   ["Buying power", buyingPowerValue],
                   ["Active positions", `${brokerActiveCount}`],
                 ].map(([label, value]) => (
@@ -1392,7 +1414,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                   ))}
                 </div>
               </div>
-              <div style={{ color: avgPositionPnl >= 0 ? "#079246" : "#c43d4b", fontSize: 28, fontWeight: 950, marginTop: 8 }}>{formatSignedPct(avgPositionPnl)}</div>
+              <div style={{ color: "#079246", fontSize: 28, fontWeight: 950, marginTop: 8 }}>{todayPnlValue}</div>
               <svg viewBox="0 0 520 160" width="100%" height="160" role="img" aria-label="Portfolio performance overview">
                 <defs>
                   <linearGradient id="astraPortfolioTabFill" x1="0" x2="0" y1="0" y2="1">

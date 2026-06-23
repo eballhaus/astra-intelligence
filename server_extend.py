@@ -2434,6 +2434,7 @@ try:
     from engine.astra_trading_intelligence_foundation_v1 import AstraTradingIntelligenceFoundationV1
     from engine.astra_adaptive_learning_v1 import AstraAdaptiveLearningV1
     from engine.astra_learning_preservation_capacity_v1 import AstraLearningPreservationCapacityV1
+    from engine.astra_truth_controlled_evolution_executive_v1 import AstraTruthControlledEvolutionExecutiveV1
 except Exception:
     class _IntelligenceQualityUnavailable:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -2489,6 +2490,8 @@ except Exception:
     AstraRecoveryCenterV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraTradingIntelligenceFoundationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraAdaptiveLearningV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    AstraLearningPreservationCapacityV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    AstraTruthControlledEvolutionExecutiveV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
@@ -3181,6 +3184,7 @@ ASTRA_RECOVERY_CENTER = AstraRecoveryCenterV1()
 ASTRA_TRADING_INTELLIGENCE_FOUNDATION = AstraTradingIntelligenceFoundationV1(state_dir=STATE)
 ASTRA_ADAPTIVE_LEARNING = AstraAdaptiveLearningV1(state_dir=STATE)
 ASTRA_LEARNING_PRESERVATION_CAPACITY = AstraLearningPreservationCapacityV1(state_dir=STATE)
+ASTRA_TRUTH_CONTROLLED_EVOLUTION_EXECUTIVE = AstraTruthControlledEvolutionExecutiveV1(state_dir=STATE)
 ASTRA_PROVIDER_ORCHESTRATION_DATA_GOVERNANCE = AstraProviderOrchestrationDataGovernanceV1(state_dir=STATE)
 TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
 MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
@@ -42871,6 +42875,7 @@ def _dashboard_data_wiring_summary_v1(unified_payload=None):
         ("Recovery Center", "astra_recovery_center_v1 local system checks", "/api/astra_recovery_center_v1"),
         ("Trading Intelligence Foundation", "astra_trading_intelligence_foundation_v1", "/api/unified_learning_diagnostics_v1"),
         ("Adaptive Learning & Controlled Evolution", "astra_adaptive_learning_v1", "/api/unified_learning_diagnostics_v1"),
+        ("Executive Truth & Controlled Evolution", "astra_truth_controlled_evolution_executive_v1", "/api/unified_learning_diagnostics_v1"),
         ("Portfolio Overview", "Alpaca Paper Broker / Broker Truth Engine", "/api/positions"),
         ("Astra Performance", "broker truth + performance truth", "/api/positions + /api/unified_learning_diagnostics_v1"),
         ("Learning Center", "unified diagnostics", "/api/unified_learning_diagnostics_v1"),
@@ -42891,6 +42896,8 @@ def _dashboard_data_wiring_summary_v1(unified_payload=None):
             missing_fields.append("astra_trading_intelligence_foundation_v1")
         if has_payload and name == "Adaptive Learning & Controlled Evolution" and not p.get("astra_adaptive_learning_v1"):
             missing_fields.append("astra_adaptive_learning_v1")
+        if has_payload and name == "Executive Truth & Controlled Evolution" and not p.get("astra_truth_controlled_evolution_executive_v1"):
+            missing_fields.append("astra_truth_controlled_evolution_executive_v1")
         if has_payload and name == "Astra Executive" and not p.get("astra_executive_polish_v1"):
             missing_fields.append("astra_executive_polish_v1")
         if has_payload and name == "Astra CEO" and not p.get("astra_ceo_polish_v1"):
@@ -42928,6 +42935,7 @@ def _dashboard_data_wiring_summary_v1(unified_payload=None):
         "provider_calls_used": 0,
         "llm_calls_used": 0,
         "dashboard_provider_calls_used": 0,
+        "dashboard_llm_calls_used": 0,
         "behavior_safe_to_apply": False,
         "generated_at": _now_utc_iso(),
     }
@@ -42988,6 +42996,7 @@ def _data_freshness_trust_engine_v1(payload=None):
         ("Recovery Center", "astra_recovery_center_v1", ["astra_recovery_center_v1"]),
         ("Trading Intelligence Foundation", "astra_trading_intelligence_foundation_v1", ["astra_trading_intelligence_foundation_v1"]),
         ("Adaptive Learning", "astra_adaptive_learning_v1", ["astra_adaptive_learning_v1"]),
+        ("Executive Truth & Controlled Evolution", "astra_truth_controlled_evolution_executive_v1", ["astra_truth_controlled_evolution_executive_v1"]),
         ("Dashboard Wiring", "dashboard_data_wiring_v1", ["dashboard_data_wiring_v1"]),
         ("Learning Diagnostics", "unified_learning_diagnostics_v1", ["executive_snapshot", "evidence_maturity_status"]),
     ]
@@ -43852,6 +43861,29 @@ def astra_learning_preservation_capacity_v1(force: bool = False):
     except Exception:
         statuses["astra_adaptive_learning_v1"] = {}
     return ASTRA_LEARNING_PRESERVATION_CAPACITY.status(statuses=statuses, force=bool(force))
+
+
+@router.get("/api/astra_truth_controlled_evolution_executive_v1")
+def astra_truth_controlled_evolution_executive_v1(force: bool = False):
+    statuses = _learning_acceleration_status_bundle()
+    try:
+        cached_alpaca = ((_CACHE.get("alpaca_paper_status_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
+        statuses["alpaca_paper_broker"] = dict(cached_alpaca or {})
+    except Exception:
+        statuses["alpaca_paper_broker"] = {}
+    try:
+        statuses["astra_recovery_center_v1"] = ASTRA_RECOVERY_CENTER.status(force=False)
+    except Exception:
+        statuses["astra_recovery_center_v1"] = {}
+    try:
+        statuses["astra_adaptive_learning_v1"] = ASTRA_ADAPTIVE_LEARNING.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["astra_adaptive_learning_v1"] = {}
+    try:
+        statuses["astra_learning_preservation_capacity_v1"] = ASTRA_LEARNING_PRESERVATION_CAPACITY.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["astra_learning_preservation_capacity_v1"] = {}
+    return ASTRA_TRUTH_CONTROLLED_EVOLUTION_EXECUTIVE.status(statuses=statuses, force=bool(force))
 
 
 @router.post("/api/ask_astra_v1")
@@ -55345,6 +55377,15 @@ def learning_snapshot_fast_v1():
 
 @router.get("/api/unified_learning_diagnostics_v1")
 def unified_learning_diagnostics_v1(force: bool = False):
+    if not force:
+        cached_unified = _CACHE.get("unified_learning_diagnostics_v1") if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+        cached_data = cached_unified.get("data") if isinstance(cached_unified, dict) else None
+        cache_age = max(0.0, time.time() - _to_float(cached_unified.get("ts"), 0.0)) if cached_unified else 9999.0
+        if isinstance(cached_data, dict) and cached_data and cache_age <= 120.0:
+            fast = dict(cached_data)
+            fast["cache_hit"] = True
+            fast["cache_age_seconds"] = round(cache_age, 3)
+            return fast
     sources = {}
     statuses = {}
     try:
@@ -55542,6 +55583,42 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["knowledge_graph_foundation_v1"] = dict(governance_summary.get("knowledge_graph_foundation_v1") or {})
             out["data_freshness_trust_engine_v1"] = dict(governance_summary.get("data_freshness_trust_engine_v1") or {})
             out["data_coverage_engine_v1"] = dict(governance_summary.get("data_coverage_engine_v1") or {})
+            statuses["astra_market_intelligence_v1"] = dict(out.get("astra_market_intelligence_v1") or {})
+            statuses["portfolio_health_summary"] = dict(out.get("portfolio_health_summary") or {})
+            statuses["system_health_summary"] = dict(out.get("system_health_summary") or {})
+            statuses["unified_learning_diagnostics_v1"] = {
+                "failed_sources_count": int(_to_float(out.get("failed_sources_count"), 0.0)),
+            }
+            tier1b = dict(ASTRA_TRUTH_CONTROLLED_EVOLUTION_EXECUTIVE.status(statuses=statuses, force=True) or {})
+            out["astra_truth_controlled_evolution_executive_v1"] = tier1b
+            truth = dict(tier1b.get("executive_snapshot_truth_reconciliation_v1") or {})
+            official_performance = dict(truth.get("official_performance_summary") or {})
+            diagnostic_performance = dict(out.get("performance_summary") or {})
+            if official_performance:
+                for key in ("buy_list_purity", "expectancy_score"):
+                    diagnostic_metric = dict(diagnostic_performance.get(key) or {})
+                    if diagnostic_metric:
+                        diagnostic_metric["truth_label"] = "Diagnostic"
+                        diagnostic_metric["official"] = False
+                        official_performance[key] = diagnostic_metric
+                out["diagnostic_performance_summary"] = diagnostic_performance
+                out["performance_summary"] = official_performance
+                executive_snapshot = dict(out.get("executive_snapshot") or {})
+                executive_snapshot["diagnostic_core_performance"] = dict(executive_snapshot.get("core_performance") or {})
+                executive_snapshot["core_performance"] = {
+                    key: official_performance.get(key)
+                    for key in ("released_win_rate", "profit_factor", "average_return", "buy_list_purity")
+                    if official_performance.get(key)
+                }
+                executive_snapshot["evidence_label"] = str(truth.get("evidence_label") or "warming_up")
+                executive_snapshot["confidence_label"] = str(truth.get("confidence_label") or "warming_up")
+                executive_snapshot["primary_blocker_reason"] = (
+                    "none" if truth.get("status") == "PASS" and int(_to_float(truth.get("closed_paper_trade_count"), 0.0)) >= 20
+                    else "broker_confirmed_closed_trade_evidence_warming_up"
+                )
+                executive_snapshot["truth_reconciliation_status"] = str(truth.get("status") or "WARNING")
+                executive_snapshot["official_metric_source"] = str(truth.get("canonical_source") or "broker_truth")
+                out["executive_snapshot"] = executive_snapshot
             out["astra_executive_polish_v1"] = _astra_executive_summary_v1(out, out.get("astra_copilot_suite_v1") or {})
             out["astra_ceo_polish_v1"] = _astra_ceo_summary_v1(out.get("astra_executive_polish_v1") or {}, out)
             wiring_summary = _dashboard_data_wiring_summary_v1(out)
@@ -55562,6 +55639,9 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["natural_exit_preserved"] = True
             out["forced_trades_enabled"] = False
             out["forced_exits_enabled"] = False
+            out["cache_hit"] = False
+            out["cache_age_seconds"] = 0.0
+            _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(out), "ts": time.time()}
             return out
     except Exception as exc:
         return UNIFIED_LEARNING_DIAGNOSTICS.build(

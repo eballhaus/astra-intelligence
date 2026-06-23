@@ -1635,6 +1635,7 @@ export default function LearningTab({ compact = false }) {
   const astraTradingIntelligenceFoundation = unified?.astra_trading_intelligence_foundation_v1 || {};
   const astraAdaptiveLearning = unified?.astra_adaptive_learning_v1 || {};
   const astraLearningPreservationCapacity = unified?.astra_learning_preservation_capacity_v1 || {};
+  const astraTruthControlledEvolutionExecutive = unified?.astra_truth_controlled_evolution_executive_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -1836,6 +1837,7 @@ export default function LearningTab({ compact = false }) {
       astra_trading_intelligence_foundation_v1: astraTradingIntelligenceFoundation,
       astra_adaptive_learning_v1: astraAdaptiveLearning,
       astra_learning_preservation_capacity_v1: astraLearningPreservationCapacity,
+      astra_truth_controlled_evolution_executive_v1: astraTruthControlledEvolutionExecutive,
       candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
       profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
       realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
@@ -1923,6 +1925,11 @@ export default function LearningTab({ compact = false }) {
     "ASTRA STALE WORKFLOW CLEANUP",
     `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
     JSON.stringify(astraLearningPreservationCapacity?.capacity_recovery_stale_workflow_cleanup_v1 || {}, null, 2),
+  ].join("\n");
+  const tier1bExecutiveSnapshotText = () => [
+    "ASTRA TIER 1B TRUTH, CONTROLLED EVOLUTION & EXECUTIVE INTELLIGENCE",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraTruthControlledEvolutionExecutive || {}, null, 2),
   ].join("\n");
   const measurementsSnapshotText = () => [
     "ASTRA DAILY SNAPSHOT",
@@ -2251,7 +2258,7 @@ export default function LearningTab({ compact = false }) {
                 Source: {String(performanceSummary?.selected_metric_source || performanceSummary?.metric_source || "unknown").replaceAll("_", " ")}
                 {performanceSummary?.legacy_fallback_used ? " | legacy fallback active" : ""}
                 {" | Scope: "}
-                {String(performanceSummary?.dataset_scope_label || "unknown").replaceAll("_", " ")}
+                {String(performanceSummary?.truth_scope || performanceSummary?.dataset_scope_label || "unknown").replaceAll("_", " ")}
               </div>
             ) : null}
             <div style={{ display: "grid", gap: 8 }}>
@@ -2264,7 +2271,7 @@ export default function LearningTab({ compact = false }) {
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
                       <div style={{ fontSize: 11, color: "#9fb1cc" }}>{label}</div>
                       <div style={{ background: tone.badgeBg, border: `1px solid ${tone.badgeBorder}`, color: tone.badgeText, borderRadius: 999, padding: "1px 7px", fontSize: 9, textTransform: "uppercase" }}>
-                        {String(metric?.maturity || metric?.label || "n/a").replaceAll("_", " ")}
+                        {String(metric?.truth_label || metric?.maturity || metric?.label || "n/a").replaceAll("_", " ")}
                       </div>
                     </div>
                     <div style={{ fontSize: 19, color: "#f2f7ff", fontWeight: 800, marginTop: 4 }}>{metricDisplay(metric, suffix)}</div>
@@ -3997,6 +4004,53 @@ export default function LearningTab({ compact = false }) {
           <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
             Shadow recommendation: {String(controlledPaperProfitProtection?.shadow_recommendation || "Keep profit-protection pilot advisory and paper-only.").replaceAll("_", " ")}
           </div>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }} open={false}>
+        <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+          Tier 1B Truth Layer, Controlled Evolution & Executive Intelligence
+        </summary>
+        <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+          Official broker truth is separated from diagnostic metrics. Shadow promotion remains recommendation-first with Stage 0 active and rollback armed.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+          {[
+            ["Truth status", astraTruthControlledEvolutionExecutive?.executive_snapshot_truth_reconciliation_v1?.status],
+            ["Official source", astraTruthControlledEvolutionExecutive?.executive_snapshot_truth_reconciliation_v1?.canonical_source],
+            ["Official metrics", safeNumber(astraTruthControlledEvolutionExecutive?.executive_snapshot_truth_reconciliation_v1?.official_metrics_available).toFixed(0)],
+            ["Closed paper trades", safeNumber(astraTruthControlledEvolutionExecutive?.executive_snapshot_truth_reconciliation_v1?.closed_paper_trade_count).toFixed(0)],
+            ["Evidence", astraTruthControlledEvolutionExecutive?.executive_snapshot_truth_reconciliation_v1?.evidence_label],
+            ["Confidence", astraTruthControlledEvolutionExecutive?.executive_snapshot_truth_reconciliation_v1?.confidence_label],
+            ["Active promotion stage", astraTruthControlledEvolutionExecutive?.shadow_paper_controlled_evolution_bridge_v1?.current_active_stage_label],
+            ["Recommended stage", astraTruthControlledEvolutionExecutive?.shadow_paper_controlled_evolution_bridge_v1?.recommended_next_stage_label],
+            ["Promotion metric", astraTruthControlledEvolutionExecutive?.shadow_paper_controlled_evolution_bridge_v1?.promotion_candidate?.promotion_metric || "none"],
+            ["Rollback", astraTruthControlledEvolutionExecutive?.shadow_paper_controlled_evolution_bridge_v1?.rollback_status],
+            ["Strongest department", astraTruthControlledEvolutionExecutive?.executive_intelligence_layer_v1?.strongest_department],
+            ["Weakest department", astraTruthControlledEvolutionExecutive?.executive_intelligence_layer_v1?.weakest_department],
+            ["Provider calls", safeNumber(astraTruthControlledEvolutionExecutive?.provider_calls_used).toFixed(0)],
+            ["LLM calls", safeNumber(astraTruthControlledEvolutionExecutive?.llm_calls_used).toFixed(0)],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.40)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+              <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+              <strong style={{ color: "#f2f7ff" }}>{String(value || "warming up").replaceAll("_", " ")}</strong>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+          {(astraTruthControlledEvolutionExecutive?.executive_intelligence_layer_v1?.departments || []).map((row) => (
+            <details key={row?.department} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
+              <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+                {row?.department}: {String(row?.status || "warming up").replaceAll("_", " ")} · Health {safeNumber(row?.health).toFixed(0)} · Confidence {safeNumber(row?.confidence).toFixed(0)}
+              </summary>
+              <div style={{ color: "#9fb1cc", marginTop: 7 }}>Concern: {String(row?.top_concern || "warming up").replaceAll("_", " ")}</div>
+              <div style={{ color: "#9fb1cc" }}>Strength: {String(row?.top_strength || "warming up").replaceAll("_", " ")}</div>
+              <div style={{ color: "#9fb1cc" }}>Recommendation: {String(row?.recommendation || "continue monitoring").replaceAll("_", " ")}</div>
+            </details>
+          ))}
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <button type="button" onClick={() => copyText("Tier 1B executive snapshot", tier1bExecutiveSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Tier 1B Snapshot</button>
         </div>
       </details>
 
