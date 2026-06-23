@@ -1633,6 +1633,7 @@ export default function LearningTab({ compact = false }) {
   const astraAiosIntelligenceMaturation = unified?.astra_aios_intelligence_maturation_bundle_v1 || {};
   const astraRecoveryCenter = unified?.astra_recovery_center_v1 || {};
   const astraTradingIntelligenceFoundation = unified?.astra_trading_intelligence_foundation_v1 || {};
+  const astraAdaptiveLearning = unified?.astra_adaptive_learning_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -1832,6 +1833,7 @@ export default function LearningTab({ compact = false }) {
       astra_targeted_maturity_profit_capture_optimization_bundle_v1: astraTargetedMaturityProfitCapture,
       astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1: astraHorizonLifecycleCapacityPromotion,
       astra_trading_intelligence_foundation_v1: astraTradingIntelligenceFoundation,
+      astra_adaptive_learning_v1: astraAdaptiveLearning,
       candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
       profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
       realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
@@ -1876,6 +1878,34 @@ export default function LearningTab({ compact = false }) {
     "ASTRA SHADOW WEAKNESS SUMMARY",
     `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
     JSON.stringify(astraTradingIntelligenceFoundation?.shadow_weakness_detector_v1 || {}, null, 2),
+  ].join("\n");
+  const adaptiveReplaySummaryText = () => [
+    "ASTRA ADAPTIVE LEARNING REPLAY EXPANSION SUMMARY",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraAdaptiveLearning?.replay_expansion_v1 || {}, null, 2),
+  ].join("\n");
+  const adaptiveSuppressionSummaryText = () => [
+    "ASTRA ADAPTIVE LEARNING SUPPRESSION DETECTOR SUMMARY",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraAdaptiveLearning?.suppression_detector_v1 || {}, null, 2),
+  ].join("\n");
+  const adaptiveLearningAcceleratorText = () => [
+    "ASTRA ADAPTIVE LEARNING ACCELERATOR SUMMARY",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraAdaptiveLearning?.learning_accelerator_v2 || {}, null, 2),
+  ].join("\n");
+  const adaptivePromotionCandidatesText = () => [
+    "ASTRA INCREMENTAL SHADOW PROMOTION CANDIDATES",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify({
+      incremental_shadow_promotion_v1: astraAdaptiveLearning?.incremental_shadow_promotion_v1 || {},
+      promotion_governor_v1: astraAdaptiveLearning?.promotion_governor_v1 || {},
+    }, null, 2),
+  ].join("\n");
+  const adaptiveShadowScorecardText = () => [
+    "ASTRA SHADOW PERFORMANCE SCORECARD V2",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraAdaptiveLearning?.shadow_performance_scorecard_v2 || {}, null, 2),
   ].join("\n");
   const measurementsSnapshotText = () => [
     "ASTRA DAILY SNAPSHOT",
@@ -7028,6 +7058,41 @@ export default function LearningTab({ compact = false }) {
           <button type="button" onClick={() => copyText("Symbol memory", symbolMemoryFoundationSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Symbol Memory Summary</button>
           <button type="button" onClick={() => copyText("Evidence flow", evidenceFlowFoundationSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Evidence Flow Summary</button>
           <button type="button" onClick={() => copyText("Shadow weakness", shadowWeaknessFoundationSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Shadow Weakness Summary</button>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }} open={false}>
+        <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+          Adaptive Learning & Controlled Evolution
+        </summary>
+        <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+          Recommendation-only diagnostics for replay expansion, suppression quality, learning acceleration, single-metric Shadow promotion candidates, and Shadow performance readiness.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+          {[
+            ["Replay count", safeNumber(astraAdaptiveLearning?.replay_expansion_v1?.replay_count).toFixed(0)],
+            ["Replay profit delta", safeNumber(astraAdaptiveLearning?.replay_expansion_v1?.replay_profit_delta).toFixed(2)],
+            ["Suppression warning", String(astraAdaptiveLearning?.suppression_detector_v1?.warning_label || "warming up").replaceAll("_", " ")],
+            ["Suppression health", safeNumber(astraAdaptiveLearning?.suppression_detector_v1?.suppression_health_score).toFixed(0)],
+            ["Acceleration score", safeNumber(astraAdaptiveLearning?.learning_accelerator_v2?.acceleration_score).toFixed(0)],
+            ["Retention score", safeNumber(astraAdaptiveLearning?.learning_accelerator_v2?.retention_score).toFixed(0)],
+            ["Promotion status", String(astraAdaptiveLearning?.incremental_shadow_promotion_v1?.promotion_status || "not ready").replaceAll("_", " ")],
+            ["Promotion metric", String(astraAdaptiveLearning?.incremental_shadow_promotion_v1?.promotion_metric || "none").replaceAll("_", " ")],
+            ["Shadow readiness", safeNumber(astraAdaptiveLearning?.shadow_performance_scorecard_v2?.shadow_readiness).toFixed(0)],
+            ["Shadow confidence", safeNumber(astraAdaptiveLearning?.shadow_performance_scorecard_v2?.shadow_confidence).toFixed(0)],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.40)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+              <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+              <strong style={{ color: "#f2f7ff" }}>{value}</strong>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+          <button type="button" onClick={() => copyText("Replay expansion", adaptiveReplaySummaryText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Replay Summary</button>
+          <button type="button" onClick={() => copyText("Suppression detector", adaptiveSuppressionSummaryText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Suppression Summary</button>
+          <button type="button" onClick={() => copyText("Learning accelerator", adaptiveLearningAcceleratorText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Learning Accelerator</button>
+          <button type="button" onClick={() => copyText("Promotion candidates", adaptivePromotionCandidatesText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Promotion Candidates</button>
+          <button type="button" onClick={() => copyText("Shadow scorecard", adaptiveShadowScorecardText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Shadow Scorecard</button>
         </div>
       </details>
 
