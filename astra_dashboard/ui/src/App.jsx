@@ -61,6 +61,7 @@ const primaryTabs = [
 const moreLinks = [
   { title: "Ask Astra", copy: "Open the user-triggered AI assistant with the current selected-symbol context when available.", tab: "ask" },
   { title: "Radar", copy: "Forward-looking watch items stay on the dashboard and Copilot surfaces without adding endpoint loops.", tab: "dashboard" },
+  { title: "Recovery Center", copy: "Check backend, frontend, watchdog, remote access, and learning-protection status.", tab: "recovery" },
   { title: "Calendar", copy: "Cached event context remains visible on the executive dashboard when connected.", tab: "dashboard" },
   { title: "Watchlists", copy: "Safe watchlist shells and cached monitoring context.", tab: "watchlists" },
   { title: "Settings", copy: "Configuration and environment controls remain available through existing backend/admin paths." },
@@ -69,6 +70,15 @@ const moreLinks = [
   { title: "Raw Diagnostics", copy: "Advanced panels stay collapsed inside Learning Center to avoid endpoint storms." },
   { title: "Admin / Dev Utilities", copy: "Operational utilities remain behind existing routes and are not invoked on page load." },
 ];
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(String(text || ""));
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
 
 function ShellCard({ title, eyebrow, children, tone = "light" }) {
   return (
@@ -145,8 +155,8 @@ const mobileTabs = [
   { id: "dashboard", label: "Dashboard", icon: "dashboard" },
   { id: "copilot", label: "Copilot", icon: "copilot" },
   { id: "portfolio", label: "Portfolio", icon: "portfolio" },
+  { id: "watchlists", label: "Watchlist", icon: "watchlists" },
   { id: "learning", label: "Learning", icon: "learning" },
-  { id: "alerts", label: "Alerts", icon: "alerts" },
   { id: "more", label: "More", icon: "settings" },
 ];
 
@@ -274,11 +284,12 @@ function AskAstraPage({ initialQuestion = "", selectedSymbol = "" }) {
 
 function WatchlistsPage() {
   const watchlists = [
-    ["Astra Watchlist", "Symbols Astra is monitoring from cached opportunities."],
-    ["My Watchlist", "Frontend-safe placeholder until user watchlist storage is available."],
-    ["High Conviction", "Candidates with strong confidence or quality when cached data is available."],
-    ["Earnings Watchlist", "Graceful empty state; no provider calls are made here."],
-    ["Theme Watchlist", "AI, quantum, semis, sector rotation, and other cached themes."],
+    ["Emerging Opportunities", "Symbols Astra is observing from cached opportunities before any future promotion decision."],
+    ["Earnings Watch", "Event-aware watch context when already present in cached dashboard data; no provider calls are made here."],
+    ["Catalyst Watch", "Themes, catalysts, and narrative changes Astra is monitoring in read-only mode."],
+    ["Sector Leaders", "Sector and family leaders surfaced from cached market intelligence."],
+    ["Behavioral Changes", "Symbols with changing horizon, catalyst, or profit-capture behavior."],
+    ["Potential Copilot Candidates", "Future Copilot candidates remain observational and do not change ranking or paper execution."],
   ];
   return (
     <div className="astra-page-grid astra-watchlist-grid">
@@ -288,6 +299,103 @@ function WatchlistsPage() {
           <div className="astra-empty-state">Warming up from cached dashboard context.</div>
         </ShellCard>
       ))}
+    </div>
+  );
+}
+
+function RecoveryCenterPage() {
+  const [payload, setPayload] = useState({});
+  const [status, setStatus] = useState("loading");
+  const [copyStatus, setCopyStatus] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+    const loadRecovery = async () => {
+      setStatus("loading");
+      const result = await fetchJsonWithFallback("/api/astra_recovery_center_v1", {
+        preferredBase: getInitialApiBase(),
+        fallbackValue: { ok: false, status: "unavailable" },
+        timeoutMs: 9000,
+      });
+      if (!mounted) return;
+      setPayload(result.parsed || {});
+      setStatus(result.ok ? "ready" : "error");
+    };
+    loadRecovery();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const services = payload?.astra_services || {};
+  const learning = payload?.learning_protection || {};
+  const recovery = payload?.recovery || {};
+  const remote = payload?.remote_access || {};
+  const system = payload?.system || {};
+
+  const snapshotText = [
+    "Astra Recovery Center Snapshot",
+    `Status: ${payload?.status_label || payload?.status || status}`,
+    `Recovery score: ${payload?.recovery_health_score ?? "n/a"}`,
+    `Backend: running=${services?.backend_running} health=${services?.backend_health}`,
+    `Frontend: running=${services?.frontend_running} health=${services?.frontend_health}`,
+    `tmux: backend=${services?.tmux_backend_session} frontend=${services?.tmux_frontend_session}`,
+    `Learning active: ${learning?.learning_active}`,
+    `Learning gap detected: ${learning?.learning_gap_detected}`,
+    `Last learning: ${learning?.last_learning_timestamp || "n/a"}`,
+    `Last recovery action: ${recovery?.last_recovery_action || "none"}`,
+    `SSH open: ${remote?.ssh_port_open}`,
+    `Screen sharing open: ${remote?.screen_sharing_port_open}`,
+    `Tailscale: ${remote?.tailscale_status || "not_available"} ${remote?.tailscale_ip || ""}`.trim(),
+    "Safety: behavior_safe_to_apply=false, no broker/trading/ranking/entry/exit/sizing/allocation changes.",
+  ].join("\n");
+
+  const handleCopy = async (label, text = snapshotText) => {
+    const ok = await copyText(text);
+    setCopyStatus(ok ? `${label} copied.` : `${label} could not be copied by this browser.`);
+  };
+
+  const statusCards = [
+    ["Recovery Health", payload?.status_label || status, `${payload?.recovery_health_score ?? "n/a"} / 100`],
+    ["Backend", services?.backend_health ? "Healthy" : "Needs attention", `Port ${services?.backend_port || 8000}`],
+    ["Frontend", services?.frontend_health ? "Healthy" : "Needs attention", `Port ${services?.frontend_port || 5173}`],
+    ["Learning Protection", learning?.learning_gap_detected ? "Catch-up recommended" : "Active", learning?.last_learning_timestamp || "timestamp warming up"],
+    ["Remote Access", remote?.tailscale_detected ? remote?.tailscale_status : "manual setup", remote?.tailscale_ip || "SSH/Screen Sharing are local checks"],
+    ["Logs", recovery?.logs_available?.astra_recovery_log ? "Recovery log found" : "Recovery log warming up", "Startup/watchdog logs are local only"],
+  ];
+
+  return (
+    <div className="astra-page-grid">
+      <ShellCard title="Recovery Center" eyebrow="Infrastructure reliability">
+        <p>
+          Read-only service recovery diagnostics for backend, frontend, watchdog, remote access, and learning freshness. This page does not trade, call providers, or call an LLM.
+        </p>
+        <div className="astra-recovery-grid">
+          {statusCards.map(([title, value, detail]) => (
+            <div className="astra-recovery-tile" key={title}>
+              <span>{title}</span>
+              <strong>{String(value || "warming up")}</strong>
+              <small>{String(detail || "")}</small>
+            </div>
+          ))}
+        </div>
+        <div className="astra-button-row astra-recovery-actions">
+          <button type="button" onClick={() => handleCopy("Recovery snapshot")}>Copy Recovery Snapshot</button>
+          <button type="button" onClick={() => handleCopy("Startup diagnostics", `Startup diagnostics\nBackend=${services?.backend_health}\nFrontend=${services?.frontend_health}\nLast recovery=${recovery?.last_recovery_action || "none"}\nLogs=${JSON.stringify(recovery?.logs_available || {})}`)}>Copy Startup Diagnostics</button>
+          <button type="button" onClick={() => handleCopy("Remote access status", `Remote access\nSSH=${remote?.ssh_port_open}\nScreenSharing=${remote?.screen_sharing_port_open}\nTailscale=${remote?.tailscale_status || "not_available"}\nTailscaleIP=${remote?.tailscale_ip || ""}`)}>Copy Remote Access Status</button>
+        </div>
+        {copyStatus ? <div className="astra-ai-status astra-ai-status-ready">{copyStatus}</div> : null}
+      </ShellCard>
+      <ShellCard title="System Snapshot" eyebrow="Local only">
+        <div className="astra-ai-status-grid">
+          <span>Host <strong>{system?.hostname || "warming up"}</strong></span>
+          <span>User <strong>{system?.username || "local"}</strong></span>
+          <span>Disk used <strong>{system?.disk_usage?.used_pct ?? "n/a"}%</strong></span>
+          <span>Provider calls <strong>{payload?.provider_calls_used ?? 0}</strong></span>
+          <span>LLM calls <strong>{payload?.llm_calls_used ?? 0}</strong></span>
+          <span>Behavior safe to apply <strong>{String(payload?.behavior_safe_to_apply ?? false)}</strong></span>
+        </div>
+      </ShellCard>
     </div>
   );
 }
@@ -335,6 +443,7 @@ function PageHeading({ activeTab }) {
     alerts: ["Alerts", "Read-only risk, market, and portfolio alerts from existing diagnostics."],
     reports: ["Reports", "Export-ready summaries remain consolidated in Learning Center diagnostics."],
     settings: ["Settings", "Safe frontend shell for configuration awareness; no trading behavior changes."],
+    recovery: ["Recovery Center", "Backend, frontend, watchdog, remote access, and learning-protection health in one read-only view."],
     more: ["More", "Settings, reports, raw diagnostics, alerts, and admin/dev utilities."],
   }), []);
   const [title, subtitle] = copy[activeTab] || copy.dashboard;
@@ -379,6 +488,7 @@ function App() {
     if (activeTab === "ask") return <AskAstraPage initialQuestion={askPrefill} selectedSymbol={selectedSymbol} />;
     if (activeTab === "watchlists") return <WatchlistsPage />;
     if (activeTab === "learning") return <LearningTab />;
+    if (activeTab === "recovery") return <RecoveryCenterPage />;
     if (["alerts", "reports", "settings"].includes(activeTab)) return <MorePage setActiveTab={handleNavigate} />;
     return <MorePage setActiveTab={handleNavigate} />;
   };

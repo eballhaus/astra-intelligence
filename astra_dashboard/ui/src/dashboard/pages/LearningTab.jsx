@@ -1631,6 +1631,7 @@ export default function LearningTab({ compact = false }) {
   const astraHorizonLifecycleCapacityPromotion = unified?.astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1 || {};
   const astraProviderOrchestrationDataGovernance = unified?.astra_provider_orchestration_data_governance_v1 || {};
   const astraAiosIntelligenceMaturation = unified?.astra_aios_intelligence_maturation_bundle_v1 || {};
+  const astraRecoveryCenter = unified?.astra_recovery_center_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -6934,6 +6935,30 @@ export default function LearningTab({ compact = false }) {
           ))}
         </div>
       </div>
+
+      <details style={{ ...panelStyle }} open={false}>
+        <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+          Recovery Center & Infrastructure Reliability
+        </summary>
+        <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+          Unified diagnostics source only. No provider calls, no LLM calls, and no trading behavior changes.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+          {[
+            ["Recovery status", astraRecoveryCenter?.status_label || astraRecoveryCenter?.status || "warming up"],
+            ["Recovery score", safeNumber(astraRecoveryCenter?.recovery_health_score).toFixed(0)],
+            ["Backend health", String((astraRecoveryCenter?.astra_services || {})?.backend_health ?? "warming up")],
+            ["Frontend health", String((astraRecoveryCenter?.astra_services || {})?.frontend_health ?? "warming up")],
+            ["Learning active", String((astraRecoveryCenter?.learning_protection || {})?.learning_active ?? "warming up")],
+            ["Provider/LLM calls", `${safeNumber(astraRecoveryCenter?.provider_calls_used).toFixed(0)} / ${safeNumber(astraRecoveryCenter?.llm_calls_used).toFixed(0)}`],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.40)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+              <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+              <strong style={{ color: "#f2f7ff" }}>{value}</strong>
+            </div>
+          ))}
+        </div>
+      </details>
 
       <div style={{ ...panelStyle }}>
         <h3 style={{ marginTop: 0 }}>Snapshot Graphs</h3>

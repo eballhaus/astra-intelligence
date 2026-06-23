@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 ROOT = Path("/Users/eric/Desktop/astra-intelligence-clean")
 LOG_DIR = ROOT / "logs"
 LOG_PATH = LOG_DIR / "astra_watchdog.log"
+RECOVERY_LOG_PATH = LOG_DIR / "astra_recovery.log"
 START_SCRIPT = ROOT / "scripts" / "start_astra.sh"
 STOP_SCRIPT = ROOT / "scripts" / "stop_astra.sh"
 BACKEND_URL = "http://127.0.0.1:8000/api/health"
@@ -31,6 +32,14 @@ def _log(message: str) -> None:
     with LOG_PATH.open("a", encoding="utf-8") as handle:
         handle.write(line + "\n")
     print(line, flush=True)
+
+
+def _recovery_log(message: str) -> None:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    line = f"{_now()} {message}"
+    with RECOVERY_LOG_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(line + "\n")
+    _log(f"recovery {message}")
 
 
 def _http_ok(url: str, *, expect_html: bool = False, timeout: float = 4.0) -> bool:
@@ -63,13 +72,15 @@ def _port_listening(port: int) -> bool:
         return False
 
 
-def _run_script(script: Path, reason: str) -> int:
+def _run_script(script: Path, reason: str, *, extra_env: dict[str, str] | None = None) -> int:
     if not script.exists():
         _log(f"script_missing path={script} reason={reason}")
         return 127
     _log(f"script_start path={script} reason={reason}")
     env = os.environ.copy()
     env.setdefault("ASTRA_REMOTE_MODE", "1")
+    if extra_env:
+        env.update({str(k): str(v) for k, v in extra_env.items()})
     result = subprocess.run(
         ["/bin/bash", str(script)],
         cwd=str(ROOT),
@@ -86,6 +97,21 @@ def _run_script(script: Path, reason: str) -> int:
     else:
         _log(f"script_output path={script.name} code={result.returncode} no_output")
     return int(result.returncode)
+
+
+def _recover_component(component: str, reason: str) -> int:
+    _recovery_log(f"targeted_recovery_start component={component} reason={reason}")
+    code = _run_script(
+        START_SCRIPT,
+        f"watchdog_targeted_{component}",
+        extra_env={
+            "ASTRA_START_COMPONENT": component,
+            "ASTRA_START_SKIP_CLEANUP": "1",
+            "ASTRA_REMOTE_MODE": "1",
+        },
+    )
+    _recovery_log(f"targeted_recovery_done component={component} code={code}")
+    return code
 
 
 def check_once() -> dict[str, bool]:
@@ -116,8 +142,17 @@ def ensure_running() -> dict[str, bool]:
         f"backend_health={'ok' if status['backend_health'] else 'fail'} "
         f"frontend_health={'ok' if status['frontend_health'] else 'fail'}"
     )
-    _run_script(STOP_SCRIPT, "watchdog_recovery_cleanup")
-    _run_script(START_SCRIPT, "watchdog_recovery_start")
+    backend_ok = bool(status["backend_running"] and status["backend_health"])
+    frontend_ok = bool(status["frontend_running"] and status["frontend_health"])
+    if not backend_ok and frontend_ok:
+        _recover_component("backend", "backend_degraded_frontend_healthy")
+    elif backend_ok and not frontend_ok:
+        _recover_component("frontend", "frontend_degraded_backend_healthy")
+    else:
+        _recovery_log("full_recovery_start reason=both_services_degraded")
+        _run_script(STOP_SCRIPT, "watchdog_recovery_cleanup")
+        _run_script(START_SCRIPT, "watchdog_recovery_start")
+        _recovery_log("full_recovery_done")
     time.sleep(4)
     recovered = check_once()
     _log(

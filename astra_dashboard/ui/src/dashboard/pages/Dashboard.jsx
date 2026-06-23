@@ -1417,6 +1417,35 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
             </div>
           </section>
 
+          <section
+            style={{
+              ...panelStyle,
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+              gap: 12,
+              borderColor: brokerTruthKnown ? "rgba(42, 193, 116, 0.28)" : "rgba(216, 138, 25, 0.30)",
+            }}
+          >
+            <div>
+              <div style={panelTitleStyle}>Portfolio Truth Status</div>
+              <div style={{ color: "#9fb3cf", fontSize: 12, marginTop: 4 }}>
+                Source: {brokerTruthKnown ? "Broker Truth / Alpaca paper positions" : "Workflow cache fallback"}
+              </div>
+            </div>
+            <div style={{ color: "#dce9fb", fontSize: 12.5, lineHeight: 1.45 }}>
+              <strong style={{ color: brokerTruthKnown ? "#2ac174" : "#d88a19" }}>
+                {brokerTruthKnown ? `${brokerActiveCount} broker-confirmed active` : "Broker truth warming up"}
+              </strong>
+              <br />
+              Internal rows hidden from active view: {staleRowsHidden}
+            </div>
+            <div style={{ color: "#dce9fb", fontSize: 12.5, lineHeight: 1.45 }}>
+              Canceled orders compacted: {canceledOrdersCompacted}
+              <br />
+              Display mode: read-only portfolio clarity
+            </div>
+          </section>
+
           <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
             <div style={panelStyle}>
               <h2 style={panelTitleStyle}>Top Movers</h2>

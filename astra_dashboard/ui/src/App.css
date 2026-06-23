@@ -548,16 +548,12 @@
 
 .astra-mobile-market-strip {
   display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(158px, 72%);
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
   gap: 10px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-  scroll-snap-type: x mandatory;
+  overflow: visible;
 }
 
 .astra-mobile-market-card {
-  scroll-snap-align: start;
   border: 1px solid rgba(129, 170, 229, 0.22);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.07);
@@ -741,6 +737,44 @@
   border-radius: 10px;
   padding: 9px 13px;
   font-weight: 800;
+}
+
+.astra-recovery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.astra-recovery-tile {
+  border: 1px solid rgba(129, 170, 229, 0.20);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.07);
+  padding: 12px;
+  display: grid;
+  gap: 5px;
+}
+
+.astra-recovery-tile span {
+  color: #6db2ff;
+  font-size: 0.7rem;
+  font-weight: 950;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.astra-recovery-tile strong {
+  color: #ffffff;
+  font-size: 1rem;
+}
+
+.astra-recovery-tile small {
+  color: #96adc9;
+  line-height: 1.35;
+}
+
+.astra-recovery-actions {
+  margin-top: 14px;
 }
 
 @media (max-width: 900px) {
