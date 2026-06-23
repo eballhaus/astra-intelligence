@@ -2433,6 +2433,7 @@ try:
     from engine.astra_recovery_center_v1 import AstraRecoveryCenterV1
     from engine.astra_trading_intelligence_foundation_v1 import AstraTradingIntelligenceFoundationV1
     from engine.astra_adaptive_learning_v1 import AstraAdaptiveLearningV1
+    from engine.astra_learning_preservation_capacity_v1 import AstraLearningPreservationCapacityV1
 except Exception:
     class _IntelligenceQualityUnavailable:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -3179,6 +3180,7 @@ ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE = AstraAiosIntelligenceMaturationBundl
 ASTRA_RECOVERY_CENTER = AstraRecoveryCenterV1()
 ASTRA_TRADING_INTELLIGENCE_FOUNDATION = AstraTradingIntelligenceFoundationV1(state_dir=STATE)
 ASTRA_ADAPTIVE_LEARNING = AstraAdaptiveLearningV1(state_dir=STATE)
+ASTRA_LEARNING_PRESERVATION_CAPACITY = AstraLearningPreservationCapacityV1(state_dir=STATE)
 ASTRA_PROVIDER_ORCHESTRATION_DATA_GOVERNANCE = AstraProviderOrchestrationDataGovernanceV1(state_dir=STATE)
 TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
 MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
@@ -43834,6 +43836,24 @@ def astra_adaptive_learning_v1(force: bool = False):
     return ASTRA_ADAPTIVE_LEARNING.status(statuses={}, force=bool(force))
 
 
+@router.get("/api/astra_learning_preservation_capacity_v1")
+def astra_learning_preservation_capacity_v1(force: bool = False):
+    statuses = _learning_acceleration_status_bundle()
+    try:
+        statuses["mobile_runtime_compaction"] = _mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False)
+    except Exception:
+        statuses["mobile_runtime_compaction"] = {}
+    try:
+        statuses["astra_recovery_center_v1"] = ASTRA_RECOVERY_CENTER.status(force=False)
+    except Exception:
+        statuses["astra_recovery_center_v1"] = {}
+    try:
+        statuses["astra_adaptive_learning_v1"] = ASTRA_ADAPTIVE_LEARNING.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["astra_adaptive_learning_v1"] = {}
+    return ASTRA_LEARNING_PRESERVATION_CAPACITY.status(statuses=statuses, force=bool(force))
+
+
 @router.post("/api/ask_astra_v1")
 def ask_astra_v1(payload: dict = Body(...)):
     data = payload if isinstance(payload, dict) else {}
@@ -55494,6 +55514,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("astra_recovery_center_v1", lambda: ASTRA_RECOVERY_CENTER.status(force=False))
         _safe_status("astra_trading_intelligence_foundation_v1", lambda: ASTRA_TRADING_INTELLIGENCE_FOUNDATION.status(statuses=statuses, force=False))
         _safe_status("astra_adaptive_learning_v1", lambda: ASTRA_ADAPTIVE_LEARNING.status(statuses=statuses, force=False))
+        _safe_status("astra_learning_preservation_capacity_v1", lambda: ASTRA_LEARNING_PRESERVATION_CAPACITY.status(statuses=statuses, force=False))
         _safe_status("astra_provider_orchestration_data_governance_v1", lambda: _provider_orchestration_data_governance_v1(force=False, statuses=statuses))
         _safe_status("astra_aios_intelligence_maturation_bundle_v1", lambda: ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=statuses, force=False))
         statuses["astra_aios_throughput_institutional_memory_optimization_v1"] = dict((statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {}).get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
@@ -55506,6 +55527,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_recovery_center_v1"] = dict(statuses.get("astra_recovery_center_v1") or {})
             out["astra_trading_intelligence_foundation_v1"] = dict(statuses.get("astra_trading_intelligence_foundation_v1") or {})
             out["astra_adaptive_learning_v1"] = dict(statuses.get("astra_adaptive_learning_v1") or {})
+            out["astra_learning_preservation_capacity_v1"] = dict(statuses.get("astra_learning_preservation_capacity_v1") or {})
             out["astra_provider_orchestration_data_governance_v1"] = dict(statuses.get("astra_provider_orchestration_data_governance_v1") or {})
             out["astra_aios_intelligence_maturation_bundle_v1"] = dict(statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {})
             out["astra_aios_throughput_institutional_memory_optimization_v1"] = dict(statuses.get("astra_aios_throughput_institutional_memory_optimization_v1") or {})

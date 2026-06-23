@@ -1634,6 +1634,7 @@ export default function LearningTab({ compact = false }) {
   const astraRecoveryCenter = unified?.astra_recovery_center_v1 || {};
   const astraTradingIntelligenceFoundation = unified?.astra_trading_intelligence_foundation_v1 || {};
   const astraAdaptiveLearning = unified?.astra_adaptive_learning_v1 || {};
+  const astraLearningPreservationCapacity = unified?.astra_learning_preservation_capacity_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -1834,6 +1835,7 @@ export default function LearningTab({ compact = false }) {
       astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1: astraHorizonLifecycleCapacityPromotion,
       astra_trading_intelligence_foundation_v1: astraTradingIntelligenceFoundation,
       astra_adaptive_learning_v1: astraAdaptiveLearning,
+      astra_learning_preservation_capacity_v1: astraLearningPreservationCapacity,
       candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
       profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
       realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
@@ -1906,6 +1908,21 @@ export default function LearningTab({ compact = false }) {
     "ASTRA SHADOW PERFORMANCE SCORECARD V2",
     `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
     JSON.stringify(astraAdaptiveLearning?.shadow_performance_scorecard_v2 || {}, null, 2),
+  ].join("\n");
+  const learningPreservationSnapshotText = () => [
+    "ASTRA LEARNING PRESERVATION & CAPACITY SNAPSHOT",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraLearningPreservationCapacity || {}, null, 2),
+  ].join("\n");
+  const lifecycleAuditSnapshotText = () => [
+    "ASTRA POSITION LIFECYCLE AUDIT",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraLearningPreservationCapacity?.position_lifecycle_auditor_v1 || {}, null, 2),
+  ].join("\n");
+  const staleCleanupSnapshotText = () => [
+    "ASTRA STALE WORKFLOW CLEANUP",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraLearningPreservationCapacity?.capacity_recovery_stale_workflow_cleanup_v1 || {}, null, 2),
   ].join("\n");
   const measurementsSnapshotText = () => [
     "ASTRA DAILY SNAPSHOT",
@@ -7093,6 +7110,48 @@ export default function LearningTab({ compact = false }) {
           <button type="button" onClick={() => copyText("Learning accelerator", adaptiveLearningAcceleratorText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Learning Accelerator</button>
           <button type="button" onClick={() => copyText("Promotion candidates", adaptivePromotionCandidatesText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Promotion Candidates</button>
           <button type="button" onClick={() => copyText("Shadow scorecard", adaptiveShadowScorecardText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Shadow Scorecard</button>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }} open={false}>
+        <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+          Learning Preservation, Horizon Intelligence & Capacity Stabilization
+        </summary>
+        <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+          Broker-truth lifecycle auditing and relative horizon-diversity diagnostics. Advisory only: no fixed horizon caps, forced trades, forced exits, or execution changes.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+          {[
+            ["Suite status", astraLearningPreservationCapacity?.status],
+            ["Throughput score", safeNumber(astraLearningPreservationCapacity?.learning_throughput_preservation_engine_v1?.learning_throughput_score).toFixed(1)],
+            ["Evidence age", `${safeNumber(astraLearningPreservationCapacity?.learning_throughput_preservation_engine_v1?.evidence_age_hours).toFixed(1)}h`],
+            ["Opportunity utilization", `${safeNumber(astraLearningPreservationCapacity?.learning_throughput_preservation_engine_v1?.opportunity_utilization_pct).toFixed(1)}%`],
+            ["Learning participation", `${safeNumber(astraLearningPreservationCapacity?.learning_throughput_preservation_engine_v1?.learning_participation_pct).toFixed(1)}%`],
+            ["Horizon diversity", safeNumber(astraLearningPreservationCapacity?.dynamic_horizon_allocation_diversity_engine_v1?.horizon_diversity_score).toFixed(1)],
+            ["Dominant horizon", astraLearningPreservationCapacity?.dynamic_horizon_allocation_diversity_engine_v1?.dominant_horizon],
+            ["Swing saturation", astraLearningPreservationCapacity?.dynamic_horizon_allocation_diversity_engine_v1?.swing_saturation_detected ? "detected" : "not detected"],
+            ["Protected focus", astraLearningPreservationCapacity?.dynamic_horizon_allocation_diversity_engine_v1?.protected_learning_focus],
+            ["Broker positions", safeNumber(astraLearningPreservationCapacity?.position_lifecycle_auditor_v1?.broker_confirmed_count).toFixed(0)],
+            ["Rows audited", safeNumber(astraLearningPreservationCapacity?.position_lifecycle_auditor_v1?.lifecycle_rows_audited).toFixed(0)],
+            ["Healthy", safeNumber(astraLearningPreservationCapacity?.position_lifecycle_auditor_v1?.classification_counts?.healthy).toFixed(0)],
+            ["Watch", safeNumber(astraLearningPreservationCapacity?.position_lifecycle_auditor_v1?.classification_counts?.watch).toFixed(0)],
+            ["Overheld", safeNumber(astraLearningPreservationCapacity?.position_lifecycle_auditor_v1?.classification_counts?.overheld).toFixed(0)],
+            ["Thesis broken", safeNumber(astraLearningPreservationCapacity?.position_lifecycle_auditor_v1?.classification_counts?.thesis_broken).toFixed(0)],
+            ["Stale rows hidden", safeNumber(astraLearningPreservationCapacity?.capacity_recovery_stale_workflow_cleanup_v1?.stale_workflow_rows_hidden).toFixed(0)],
+            ["Quarantine", astraLearningPreservationCapacity?.capacity_recovery_stale_workflow_cleanup_v1?.quarantine_effective ? "effective" : "review"],
+            ["Provider calls", safeNumber(astraLearningPreservationCapacity?.provider_calls_used).toFixed(0)],
+            ["LLM calls", safeNumber(astraLearningPreservationCapacity?.llm_calls_used).toFixed(0)],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.40)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+              <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+              <strong style={{ color: "#f2f7ff" }}>{String(value || "warming up").replaceAll("_", " ")}</strong>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+          <button type="button" onClick={() => copyText("Learning preservation", learningPreservationSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Preservation Snapshot</button>
+          <button type="button" onClick={() => copyText("Lifecycle audit", lifecycleAuditSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Lifecycle Audit</button>
+          <button type="button" onClick={() => copyText("Stale cleanup", staleCleanupSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Stale Cleanup</button>
         </div>
       </details>
 
