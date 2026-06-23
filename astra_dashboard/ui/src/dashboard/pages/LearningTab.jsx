@@ -1632,6 +1632,7 @@ export default function LearningTab({ compact = false }) {
   const astraProviderOrchestrationDataGovernance = unified?.astra_provider_orchestration_data_governance_v1 || {};
   const astraAiosIntelligenceMaturation = unified?.astra_aios_intelligence_maturation_bundle_v1 || {};
   const astraRecoveryCenter = unified?.astra_recovery_center_v1 || {};
+  const astraTradingIntelligenceFoundation = unified?.astra_trading_intelligence_foundation_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -1830,6 +1831,7 @@ export default function LearningTab({ compact = false }) {
       astra_final_intelligence_maturation_bundle_v1: astraFinalIntelligenceMaturation,
       astra_targeted_maturity_profit_capture_optimization_bundle_v1: astraTargetedMaturityProfitCapture,
       astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1: astraHorizonLifecycleCapacityPromotion,
+      astra_trading_intelligence_foundation_v1: astraTradingIntelligenceFoundation,
       candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
       profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
       realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
@@ -1840,6 +1842,40 @@ export default function LearningTab({ compact = false }) {
     "ASTRA ADVANCED DIAGNOSTICS",
     `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
     JSON.stringify(advancedStatuses || {}, null, 2),
+  ].join("\n");
+  const tradingFoundationSnapshotText = () => [
+    "ASTRA TRADING INTELLIGENCE FOUNDATION SNAPSHOT",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify({
+      executive_trading_snapshot_v1: astraTradingIntelligenceFoundation?.executive_trading_snapshot_v1,
+      summary: astraTradingIntelligenceFoundation?.summary,
+      safety: {
+        behavior_safe_to_apply: astraTradingIntelligenceFoundation?.behavior_safe_to_apply,
+        broker_execution_added: astraTradingIntelligenceFoundation?.broker_execution_added,
+        provider_calls_used: astraTradingIntelligenceFoundation?.provider_calls_used,
+        llm_calls_used: astraTradingIntelligenceFoundation?.llm_calls_used,
+      },
+    }, null, 2),
+  ].join("\n");
+  const lifecycleFoundationSnapshotText = () => [
+    "ASTRA LIFECYCLE INTELLIGENCE SUMMARY",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraTradingIntelligenceFoundation?.trade_lifecycle_intelligence_v1 || {}, null, 2),
+  ].join("\n");
+  const symbolMemoryFoundationSnapshotText = () => [
+    "ASTRA SYMBOL BEHAVIORAL MEMORY SUMMARY",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraTradingIntelligenceFoundation?.symbol_behavioral_memory_v1 || {}, null, 2),
+  ].join("\n");
+  const evidenceFlowFoundationSnapshotText = () => [
+    "ASTRA EVIDENCE FLOW SUMMARY",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraTradingIntelligenceFoundation?.data_preservation_layer_v1 || {}, null, 2),
+  ].join("\n");
+  const shadowWeaknessFoundationSnapshotText = () => [
+    "ASTRA SHADOW WEAKNESS SUMMARY",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraTradingIntelligenceFoundation?.shadow_weakness_detector_v1 || {}, null, 2),
   ].join("\n");
   const measurementsSnapshotText = () => [
     "ASTRA DAILY SNAPSHOT",
@@ -6957,6 +6993,41 @@ export default function LearningTab({ compact = false }) {
               <strong style={{ color: "#f2f7ff" }}>{value}</strong>
             </div>
           ))}
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }} open={false}>
+        <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+          Trading Intelligence Foundation
+        </summary>
+        <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+          Observation-only diagnostics for lifecycle quality, MFE/MAE, profit capture, horizon accuracy, symbol behavior, evidence preservation, Shadow weaknesses, and executive trading truth.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+          {[
+            ["Trades reviewed", safeNumber(astraTradingIntelligenceFoundation?.trade_lifecycle_intelligence_v1?.trades_reviewed).toFixed(0)],
+            ["Avg MFE", `${safeNumber(astraTradingIntelligenceFoundation?.trade_lifecycle_intelligence_v1?.avg_mfe).toFixed(2)}%`],
+            ["Avg MAE", `${safeNumber(astraTradingIntelligenceFoundation?.trade_lifecycle_intelligence_v1?.avg_mae).toFixed(2)}%`],
+            ["Avg giveback", `${safeNumber(astraTradingIntelligenceFoundation?.trade_lifecycle_intelligence_v1?.avg_giveback).toFixed(2)}%`],
+            ["Best horizon", String(astraTradingIntelligenceFoundation?.horizon_intelligence_v2?.best_horizon || "warming up").replaceAll("_", " ")],
+            ["Weakest horizon", String(astraTradingIntelligenceFoundation?.horizon_intelligence_v2?.worst_horizon || "warming up").replaceAll("_", " ")],
+            ["Symbol profiles", safeNumber(astraTradingIntelligenceFoundation?.symbol_behavioral_memory_v1?.symbol_profiles_created).toFixed(0)],
+            ["Evidence warning", String(astraTradingIntelligenceFoundation?.data_preservation_layer_v1?.warning_label || "warming up").replaceAll("_", " ")],
+            ["Shadow gap", String(astraTradingIntelligenceFoundation?.shadow_weakness_detector_v1?.dominant_shadow_gap || "warming up").replaceAll("_", " ")],
+            ["Truth status", String(astraTradingIntelligenceFoundation?.executive_trading_snapshot_v1?.truth_status || "warming up").replaceAll("_", " ")],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.40)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+              <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+              <strong style={{ color: "#f2f7ff" }}>{value}</strong>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+          <button type="button" onClick={() => copyText("Trading snapshot", tradingFoundationSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Trading Snapshot</button>
+          <button type="button" onClick={() => copyText("Lifecycle summary", lifecycleFoundationSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Lifecycle Summary</button>
+          <button type="button" onClick={() => copyText("Symbol memory", symbolMemoryFoundationSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Symbol Memory Summary</button>
+          <button type="button" onClick={() => copyText("Evidence flow", evidenceFlowFoundationSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Evidence Flow Summary</button>
+          <button type="button" onClick={() => copyText("Shadow weakness", shadowWeaknessFoundationSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Shadow Weakness Summary</button>
         </div>
       </details>
 

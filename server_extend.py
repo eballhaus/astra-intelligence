@@ -2431,6 +2431,7 @@ try:
     from engine.astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1 import AstraHorizonLifecycleCapacityPromotionReadinessBundleV1
     from engine.astra_aios_intelligence_maturation_bundle_v1 import AstraAiosIntelligenceMaturationBundleV1
     from engine.astra_recovery_center_v1 import AstraRecoveryCenterV1
+    from engine.astra_trading_intelligence_foundation_v1 import AstraTradingIntelligenceFoundationV1
 except Exception:
     class _IntelligenceQualityUnavailable:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -2484,6 +2485,7 @@ except Exception:
     AstraHorizonLifecycleCapacityPromotionReadinessBundleV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraAiosIntelligenceMaturationBundleV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraRecoveryCenterV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    AstraTradingIntelligenceFoundationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
@@ -3173,6 +3175,7 @@ ASTRA_TARGETED_MATURITY_PROFIT_CAPTURE_OPTIMIZATION_BUNDLE = AstraTargetedMaturi
 ASTRA_HORIZON_LIFECYCLE_CAPACITY_PROMOTION_READINESS_BUNDLE = AstraHorizonLifecycleCapacityPromotionReadinessBundleV1(state_dir=STATE)
 ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE = AstraAiosIntelligenceMaturationBundleV1(state_dir=STATE)
 ASTRA_RECOVERY_CENTER = AstraRecoveryCenterV1()
+ASTRA_TRADING_INTELLIGENCE_FOUNDATION = AstraTradingIntelligenceFoundationV1(state_dir=STATE)
 ASTRA_PROVIDER_ORCHESTRATION_DATA_GOVERNANCE = AstraProviderOrchestrationDataGovernanceV1(state_dir=STATE)
 TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
 MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
@@ -42861,6 +42864,7 @@ def _dashboard_data_wiring_summary_v1(unified_payload=None):
         ("Radar", "catalyst + market watch diagnostics", "/api/unified_learning_diagnostics_v1"),
         ("Ask Astra", "local_ai_status_v1", "/api/ask_astra_v1 user-triggered only"),
         ("Recovery Center", "astra_recovery_center_v1 local system checks", "/api/astra_recovery_center_v1"),
+        ("Trading Intelligence Foundation", "astra_trading_intelligence_foundation_v1", "/api/unified_learning_diagnostics_v1"),
         ("Portfolio Overview", "Alpaca Paper Broker / Broker Truth Engine", "/api/positions"),
         ("Astra Performance", "broker truth + performance truth", "/api/positions + /api/unified_learning_diagnostics_v1"),
         ("Learning Center", "unified diagnostics", "/api/unified_learning_diagnostics_v1"),
@@ -42877,6 +42881,8 @@ def _dashboard_data_wiring_summary_v1(unified_payload=None):
             missing_fields.append("ask_astra_local_ai_status_v1")
         if has_payload and name == "Recovery Center" and not p.get("astra_recovery_center_v1"):
             missing_fields.append("astra_recovery_center_v1")
+        if has_payload and name == "Trading Intelligence Foundation" and not p.get("astra_trading_intelligence_foundation_v1"):
+            missing_fields.append("astra_trading_intelligence_foundation_v1")
         if has_payload and name == "Astra Executive" and not p.get("astra_executive_polish_v1"):
             missing_fields.append("astra_executive_polish_v1")
         if has_payload and name == "Astra CEO" and not p.get("astra_ceo_polish_v1"):
@@ -42972,6 +42978,7 @@ def _data_freshness_trust_engine_v1(payload=None):
         ("Catalyst Intelligence", "catalyst_lifecycle_intelligence_v1", ["catalyst_lifecycle_intelligence_v1", "catalyst_persistence_decay_curves_v2"]),
         ("Shadow Learning", "realistic_shadow_evidence_learning_lab_v1", ["realistic_shadow_evidence_learning_lab_v1", "shadow_vs_paper_performance_attribution_v1"]),
         ("Recovery Center", "astra_recovery_center_v1", ["astra_recovery_center_v1"]),
+        ("Trading Intelligence Foundation", "astra_trading_intelligence_foundation_v1", ["astra_trading_intelligence_foundation_v1"]),
         ("Dashboard Wiring", "dashboard_data_wiring_v1", ["dashboard_data_wiring_v1"]),
         ("Learning Diagnostics", "unified_learning_diagnostics_v1", ["executive_snapshot", "evidence_maturity_status"]),
     ]
@@ -43808,6 +43815,11 @@ def dashboard_data_wiring_v1():
 @router.get("/api/astra_recovery_center_v1")
 def astra_recovery_center_v1(force: bool = False):
     return ASTRA_RECOVERY_CENTER.status(force=bool(force))
+
+
+@router.get("/api/astra_trading_intelligence_foundation_v1")
+def astra_trading_intelligence_foundation_v1(force: bool = False):
+    return ASTRA_TRADING_INTELLIGENCE_FOUNDATION.status(statuses={}, force=bool(force))
 
 
 @router.post("/api/ask_astra_v1")
@@ -55468,6 +55480,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("astra_copilot_suite_v1", lambda: _astra_copilot_suite_v1(limit=12, force=False))
         _safe_status("ask_astra_local_ai_status_v1", lambda: _astra_local_ai_status_v1(force=False))
         _safe_status("astra_recovery_center_v1", lambda: ASTRA_RECOVERY_CENTER.status(force=False))
+        _safe_status("astra_trading_intelligence_foundation_v1", lambda: ASTRA_TRADING_INTELLIGENCE_FOUNDATION.status(statuses=statuses, force=False))
         _safe_status("astra_provider_orchestration_data_governance_v1", lambda: _provider_orchestration_data_governance_v1(force=False, statuses=statuses))
         _safe_status("astra_aios_intelligence_maturation_bundle_v1", lambda: ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=statuses, force=False))
         statuses["astra_aios_throughput_institutional_memory_optimization_v1"] = dict((statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {}).get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
@@ -55478,6 +55491,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_copilot_suite_v1"] = dict(statuses.get("astra_copilot_suite_v1") or {})
             out["ask_astra_local_ai_status_v1"] = dict(statuses.get("ask_astra_local_ai_status_v1") or {})
             out["astra_recovery_center_v1"] = dict(statuses.get("astra_recovery_center_v1") or {})
+            out["astra_trading_intelligence_foundation_v1"] = dict(statuses.get("astra_trading_intelligence_foundation_v1") or {})
             out["astra_provider_orchestration_data_governance_v1"] = dict(statuses.get("astra_provider_orchestration_data_governance_v1") or {})
             out["astra_aios_intelligence_maturation_bundle_v1"] = dict(statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {})
             out["astra_aios_throughput_institutional_memory_optimization_v1"] = dict(statuses.get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
