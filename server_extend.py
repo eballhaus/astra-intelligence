@@ -2435,6 +2435,7 @@ try:
     from engine.astra_adaptive_learning_v1 import AstraAdaptiveLearningV1
     from engine.astra_learning_preservation_capacity_v1 import AstraLearningPreservationCapacityV1
     from engine.astra_truth_controlled_evolution_executive_v1 import AstraTruthControlledEvolutionExecutiveV1
+    from engine.astra_performance_optimization_suite_v1 import AstraPerformanceOptimizationSuiteV1
 except Exception:
     class _IntelligenceQualityUnavailable:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -2492,6 +2493,7 @@ except Exception:
     AstraAdaptiveLearningV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraLearningPreservationCapacityV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraTruthControlledEvolutionExecutiveV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    AstraPerformanceOptimizationSuiteV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
@@ -3185,6 +3187,7 @@ ASTRA_TRADING_INTELLIGENCE_FOUNDATION = AstraTradingIntelligenceFoundationV1(sta
 ASTRA_ADAPTIVE_LEARNING = AstraAdaptiveLearningV1(state_dir=STATE)
 ASTRA_LEARNING_PRESERVATION_CAPACITY = AstraLearningPreservationCapacityV1(state_dir=STATE)
 ASTRA_TRUTH_CONTROLLED_EVOLUTION_EXECUTIVE = AstraTruthControlledEvolutionExecutiveV1(state_dir=STATE)
+ASTRA_PERFORMANCE_OPTIMIZATION_SUITE = AstraPerformanceOptimizationSuiteV1(state_dir=STATE)
 ASTRA_PROVIDER_ORCHESTRATION_DATA_GOVERNANCE = AstraProviderOrchestrationDataGovernanceV1(state_dir=STATE)
 TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
 MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
@@ -43886,6 +43889,29 @@ def astra_truth_controlled_evolution_executive_v1(force: bool = False):
     return ASTRA_TRUTH_CONTROLLED_EVOLUTION_EXECUTIVE.status(statuses=statuses, force=bool(force))
 
 
+@router.get("/api/astra_performance_optimization_suite_v1")
+def astra_performance_optimization_suite_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    statuses = dict(cached_unified or {})
+    try:
+        statuses["astra_trading_intelligence_foundation_v1"] = ASTRA_TRADING_INTELLIGENCE_FOUNDATION.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["astra_trading_intelligence_foundation_v1"] = {}
+    try:
+        statuses["astra_learning_preservation_capacity_v1"] = ASTRA_LEARNING_PRESERVATION_CAPACITY.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["astra_learning_preservation_capacity_v1"] = {}
+    try:
+        statuses["astra_adaptive_learning_v1"] = ASTRA_ADAPTIVE_LEARNING.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["astra_adaptive_learning_v1"] = {}
+    try:
+        statuses["astra_truth_controlled_evolution_executive_v1"] = ASTRA_TRUTH_CONTROLLED_EVOLUTION_EXECUTIVE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["astra_truth_controlled_evolution_executive_v1"] = {}
+    return ASTRA_PERFORMANCE_OPTIMIZATION_SUITE.status(statuses=statuses, force=bool(force))
+
+
 @router.post("/api/ask_astra_v1")
 def ask_astra_v1(payload: dict = Body(...)):
     data = payload if isinstance(payload, dict) else {}
@@ -55556,6 +55582,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("astra_trading_intelligence_foundation_v1", lambda: ASTRA_TRADING_INTELLIGENCE_FOUNDATION.status(statuses=statuses, force=False))
         _safe_status("astra_adaptive_learning_v1", lambda: ASTRA_ADAPTIVE_LEARNING.status(statuses=statuses, force=False))
         _safe_status("astra_learning_preservation_capacity_v1", lambda: ASTRA_LEARNING_PRESERVATION_CAPACITY.status(statuses=statuses, force=False))
+        _safe_status("astra_performance_optimization_suite_v1", lambda: ASTRA_PERFORMANCE_OPTIMIZATION_SUITE.status(statuses=statuses, force=False))
         _safe_status("astra_provider_orchestration_data_governance_v1", lambda: _provider_orchestration_data_governance_v1(force=False, statuses=statuses))
         _safe_status("astra_aios_intelligence_maturation_bundle_v1", lambda: ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=statuses, force=False))
         statuses["astra_aios_throughput_institutional_memory_optimization_v1"] = dict((statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {}).get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
@@ -55569,6 +55596,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_trading_intelligence_foundation_v1"] = dict(statuses.get("astra_trading_intelligence_foundation_v1") or {})
             out["astra_adaptive_learning_v1"] = dict(statuses.get("astra_adaptive_learning_v1") or {})
             out["astra_learning_preservation_capacity_v1"] = dict(statuses.get("astra_learning_preservation_capacity_v1") or {})
+            out["astra_performance_optimization_suite_v1"] = dict(statuses.get("astra_performance_optimization_suite_v1") or {})
             out["astra_provider_orchestration_data_governance_v1"] = dict(statuses.get("astra_provider_orchestration_data_governance_v1") or {})
             out["astra_aios_intelligence_maturation_bundle_v1"] = dict(statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {})
             out["astra_aios_throughput_institutional_memory_optimization_v1"] = dict(statuses.get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
@@ -55589,6 +55617,9 @@ def unified_learning_diagnostics_v1(force: bool = False):
             statuses["unified_learning_diagnostics_v1"] = {
                 "failed_sources_count": int(_to_float(out.get("failed_sources_count"), 0.0)),
             }
+            tier2 = dict(ASTRA_PERFORMANCE_OPTIMIZATION_SUITE.status(statuses=statuses, force=True) or {})
+            out["astra_performance_optimization_suite_v1"] = tier2
+            statuses["astra_performance_optimization_suite_v1"] = tier2
             tier1b = dict(ASTRA_TRUTH_CONTROLLED_EVOLUTION_EXECUTIVE.status(statuses=statuses, force=True) or {})
             out["astra_truth_controlled_evolution_executive_v1"] = tier1b
             truth = dict(tier1b.get("executive_snapshot_truth_reconciliation_v1") or {})

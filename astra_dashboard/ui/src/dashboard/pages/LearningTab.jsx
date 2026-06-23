@@ -1636,6 +1636,7 @@ export default function LearningTab({ compact = false }) {
   const astraAdaptiveLearning = unified?.astra_adaptive_learning_v1 || {};
   const astraLearningPreservationCapacity = unified?.astra_learning_preservation_capacity_v1 || {};
   const astraTruthControlledEvolutionExecutive = unified?.astra_truth_controlled_evolution_executive_v1 || {};
+  const astraPerformanceOptimizationSuite = unified?.astra_performance_optimization_suite_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -1838,6 +1839,7 @@ export default function LearningTab({ compact = false }) {
       astra_adaptive_learning_v1: astraAdaptiveLearning,
       astra_learning_preservation_capacity_v1: astraLearningPreservationCapacity,
       astra_truth_controlled_evolution_executive_v1: astraTruthControlledEvolutionExecutive,
+      astra_performance_optimization_suite_v1: astraPerformanceOptimizationSuite,
       candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
       profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
       realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
@@ -1930,6 +1932,16 @@ export default function LearningTab({ compact = false }) {
     "ASTRA TIER 1B TRUTH, CONTROLLED EVOLUTION & EXECUTIVE INTELLIGENCE",
     `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
     JSON.stringify(astraTruthControlledEvolutionExecutive || {}, null, 2),
+  ].join("\n");
+  const tier2SummaryText = () => [
+    "ASTRA TIER 2 PERFORMANCE OPTIMIZATION SUMMARY",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraPerformanceOptimizationSuite?.executive_summary || {}, null, 2),
+  ].join("\n");
+  const tier2SectionText = (label, key) => [
+    `ASTRA TIER 2 ${label.toUpperCase()}`,
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraPerformanceOptimizationSuite?.[key] || {}, null, 2),
   ].join("\n");
   const measurementsSnapshotText = () => [
     "ASTRA DAILY SNAPSHOT",
@@ -4051,6 +4063,65 @@ export default function LearningTab({ compact = false }) {
         </div>
         <div style={{ marginTop: 12 }}>
           <button type="button" onClick={() => copyText("Tier 1B executive snapshot", tier1bExecutiveSnapshotText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Tier 1B Snapshot</button>
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }} open={false}>
+        <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+          Tier 2 Performance Optimization
+        </summary>
+        <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+          Tracks correction persistence, repeated mistakes, profit leaks, horizon context, and asset behavior without changing Paper, Shadow, ranking, or execution.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+          {[
+            ["Persistent weakness", astraPerformanceOptimizationSuite?.executive_summary?.persistent_weakness],
+            ["Correction status", astraPerformanceOptimizationSuite?.executive_summary?.correction_status],
+            ["Profit leak", astraPerformanceOptimizationSuite?.executive_summary?.profit_leak],
+            ["Repeated mistake", astraPerformanceOptimizationSuite?.executive_summary?.repeated_mistake],
+            ["Best horizon context", astraPerformanceOptimizationSuite?.executive_summary?.best_horizon_context],
+            ["Weakest asset type", astraPerformanceOptimizationSuite?.executive_summary?.weakest_asset_type],
+            ["Recommended focus", astraPerformanceOptimizationSuite?.executive_summary?.recommended_focus],
+            ["Evolution candidate", astraPerformanceOptimizationSuite?.executive_summary?.controlled_evolution_candidate],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.40)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+              <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+              <strong style={{ color: "#f2f7ff" }}>{String(value || "warming up").replaceAll("_", " ")}</strong>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+          {[
+            ["Performance Corrections", "performance_correction_engine_v1"],
+            ["Learning Persistence", "learning_persistence_engine_v1"],
+            ["Repeated Mistakes", "repeated_mistake_detector_v1"],
+            ["Profit Optimization", "profit_optimization_engine_v1"],
+            ["Horizon Optimization", "horizon_optimization_engine_v1"],
+            ["Asset Intelligence", "market_context_asset_intelligence_v1"],
+          ].map(([label, key]) => {
+            const row = astraPerformanceOptimizationSuite?.[key] || {};
+            return (
+              <details key={key} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
+                <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+                  {label}: {String(row?.status || "warming up").replaceAll("_", " ")}
+                </summary>
+                <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
+                  {JSON.stringify(row, null, 2)}
+                </pre>
+              </details>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+          <button type="button" onClick={() => copyText("Tier 2 summary", tier2SummaryText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Tier 2 Summary</button>
+          {[
+            ["Performance Corrections", "performance_correction_engine_v1"],
+            ["Profit Optimization", "profit_optimization_engine_v1"],
+            ["Horizon Optimization", "horizon_optimization_engine_v1"],
+            ["Asset Intelligence", "market_context_asset_intelligence_v1"],
+          ].map(([label, key]) => (
+            <button key={key} type="button" onClick={() => copyText(label, tier2SectionText(label, key))} style={{ border: "1px solid #2f4a72", background: "#102746", color: "#dce9fb", borderRadius: 12, padding: "8px 11px", fontWeight: 800, cursor: "pointer" }}>Copy {label}</button>
+          ))}
         </div>
       </details>
 

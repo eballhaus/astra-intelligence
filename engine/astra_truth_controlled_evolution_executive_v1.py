@@ -199,6 +199,23 @@ class AstraTruthControlledEvolutionExecutiveV1(CachedDiagnosticModule):
         promotion = dict(adaptive.get("incremental_shadow_promotion_v1") or {})
         governor = dict(adaptive.get("promotion_governor_v1") or {})
         reviews = [dict(row) for row in (promotion.get("all_metric_reviews") or []) if isinstance(row, dict)]
+        tier2 = status_value(statuses, "astra_performance_optimization_suite_v1")
+        tier2_candidate = dict(tier2.get("controlled_evolution_integration") or {})
+        if tier2_candidate.get("controlled_evolution_candidate"):
+            reviews.append({
+                "promotion_candidate": True,
+                "promotion_metric": text(tier2_candidate.get("candidate_metric"), "Profit Capture"),
+                "promotion_delta": to_float(tier2_candidate.get("candidate_delta"), 0.0),
+                "promotion_confidence": to_float(tier2_candidate.get("candidate_confidence"), 0.0),
+                "promotion_evidence": to_int(tier2_candidate.get("candidate_evidence_count"), 0),
+                "promotion_stability": to_float(
+                    (tier2.get("learning_persistence_engine_v1") or {}).get("lesson_retention_score"),
+                    0.0,
+                ),
+                "promotion_status": "candidate",
+                "promotion_reason": "tier2_advisory_correction_candidate_routed_through_existing_bridge",
+                "source_suite": "astra_performance_optimization_suite_v1",
+            })
         eligible = [
             row for row in reviews
             if to_float(row.get("promotion_delta"), 0.0) >= 10.0
@@ -240,6 +257,8 @@ class AstraTruthControlledEvolutionExecutiveV1(CachedDiagnosticModule):
             "promotion_candidate_count": min(1, len(eligible)),
             "metrics_reviewed": len(reviews),
             "eligible_metrics": list(promotion.get("eligible_metrics") or []),
+            "tier2_candidate_reviewed": bool(tier2_candidate),
+            "tier2_candidate_eligible": bool(tier2_candidate.get("controlled_evolution_candidate")),
             "minimum_improvement_pct": 10.0,
             "stable_required": True,
             "sufficient_evidence_required": True,
