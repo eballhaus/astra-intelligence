@@ -43975,6 +43975,11 @@ def astra_adaptive_occupancy_evolution_suite_v1(force: bool = False):
     return ASTRA_ADAPTIVE_OCCUPANCY_EVOLUTION_SUITE.status(statuses=statuses, force=bool(force))
 
 
+@router.get("/api/astra_learning_continuity_controlled_evolution_self_governance_v1")
+def astra_learning_continuity_controlled_evolution_self_governance_v1(force: bool = False):
+    return astra_adaptive_occupancy_evolution_suite_v1(force=force)
+
+
 @router.post("/api/ask_astra_v1")
 def ask_astra_v1(payload: dict = Body(...)):
     data = payload if isinstance(payload, dict) else {}
@@ -44143,6 +44148,11 @@ def ask_astra_v1(payload: dict = Body(...)):
             "what_changed_today",
             "approaching_sell_review",
             "what_astra_is_learning",
+            "why_learning_is_slow",
+            "why_capacity_is_full",
+            "why_shadow_has_not_reached_paper",
+            "what_is_blocking_improvement",
+            "what_needs_to_happen_next",
             "biggest_opportunity",
             "today_market_explanation",
         ],
@@ -44213,9 +44223,34 @@ def ask_astra_v1(payload: dict = Body(...)):
             )
         elif "capacity" in q_lc or "occupancy" in q_lc or "no trades" in q_lc or "portfolio full" in q_lc:
             occupancy_summary = occupancy_evolution.get("executive_summary") or {}
+            explanation = occupancy_evolution.get("executive_explanation_engine_v1") or {}
             fast_short = (
-                f"Paper-learning occupancy is {str(occupancy_summary.get('occupancy_status') or 'warming up').replace('_', ' ')}. "
-                f"Astra recommends {str(occupancy_summary.get('recommended_action') or 'preserving learning reserve').replace('_', ' ')}."
+                explanation.get("plain_english_summary")
+                or (
+                    f"Paper-learning occupancy is {str(occupancy_summary.get('occupancy_status') or 'warming up').replace('_', ' ')}. "
+                    f"Astra recommends {str(occupancy_summary.get('recommended_action') or 'preserving learning reserve').replace('_', ' ')}."
+                )
+            )
+        elif "shadow" in q_lc or "paper promotion" in q_lc or "reached paper" in q_lc or "reach paper" in q_lc:
+            persistence = occupancy_evolution.get("persistence_explanation_engine_v1") or {}
+            evolution = occupancy_evolution.get("controlled_shadow_paper_evolution_v2") or {}
+            fast_short = (
+                f"Shadow remains at {str(evolution.get('promotion_stage_label') or 'shadow observation').replace('_', ' ')}. "
+                f"{persistence.get('plain_english_explanation') or 'Astra still needs persistent, repeatable evidence before a paper micro-test can be recommended.'}"
+            )
+        elif "learning faster" in q_lc or "not learning" in q_lc or "learning slow" in q_lc:
+            continuity = occupancy_evolution.get("learning_continuity_engine_v1") or {}
+            fast_short = (
+                f"Learning continuity is {str(continuity.get('status') or 'warming up').replace('_', ' ')} "
+                f"with a score of {continuity.get('learning_continuity_score', 'n/a')}. "
+                f"The main constraint is {str(continuity.get('continuity_bottleneck') or 'insufficient evidence').replace('_', ' ')}."
+            )
+        elif "blocking improvement" in q_lc or "what is blocking" in q_lc or "what needs to happen next" in q_lc:
+            self_governance = occupancy_evolution.get("self_governance_engine_v1") or {}
+            persistence = occupancy_evolution.get("persistence_explanation_engine_v1") or {}
+            fast_short = (
+                f"The main governance blocker is {str(self_governance.get('recommended_correction') or 'continued validation').replace('_', ' ')}. "
+                f"{persistence.get('plain_english_explanation') or 'Astra is collecting the remaining repeatable evidence.'}"
             )
         else:
             fast_short = compressed_context.get("highest_priority_signals", ["Astra is using cached intelligence and remains advisory-only."])[0]
@@ -55720,7 +55755,9 @@ def unified_learning_diagnostics_v1(force: bool = False):
             statuses["astra_intelligence_maturation_suite_v1"] = tier3
             tier4 = dict(ASTRA_ADAPTIVE_OCCUPANCY_EVOLUTION_SUITE.status(statuses=statuses, force=True) or {})
             out["astra_adaptive_occupancy_evolution_suite_v1"] = tier4
+            out["astra_learning_continuity_controlled_evolution_self_governance_v1"] = tier4
             statuses["astra_adaptive_occupancy_evolution_suite_v1"] = tier4
+            statuses["astra_learning_continuity_controlled_evolution_self_governance_v1"] = tier4
             truth = dict(tier1b.get("executive_snapshot_truth_reconciliation_v1") or {})
             official_performance = dict(truth.get("official_performance_summary") or {})
             diagnostic_performance = dict(out.get("performance_summary") or {})

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 import time
 from typing import Any
@@ -273,6 +274,85 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             **_safe_flags(),
         }
 
+    def _learning_continuity(
+        self,
+        statuses: dict[str, Any],
+        occupancy: dict[str, Any],
+        throughput: dict[str, Any],
+    ) -> dict[str, Any]:
+        exposure = dict(occupancy.get("current_horizon_exposure") or {})
+        active_shares = [
+            max(0.0, to_float(exposure.get(key), 0.0)) / 100.0
+            for key in ("scalp", "day_trade", "multi_day", "swing", "longer_hold")
+        ]
+        hhi = sum(share * share for share in active_shares)
+        diversity = clamp((1.0 - hhi) / 0.8 * 100.0) if sum(active_shares) > 0 else 0.0
+        flow = clamp(throughput.get("learning_throughput_score"))
+        turnover = clamp(to_float(throughput.get("open_trade_turnover"), 0.0) * 5.0)
+        copilot = status_value(statuses, "astra_copilot_suite_v1")
+        opportunity_count = len(copilot.get("top_actions") or [])
+        opportunity_flow = clamp(opportunity_count / 5.0 * 100.0)
+        occupancy_penalty = {
+            "healthy": 0.0,
+            "elevated": 5.0,
+            "constrained": 12.0,
+            "saturated": 22.0,
+            "learning_blocked": 35.0,
+        }.get(text(occupancy.get("occupancy_status"), "healthy"), 10.0)
+        continuity = clamp(
+            flow * 0.35
+            + diversity * 0.30
+            + turnover * 0.15
+            + opportunity_flow * 0.20
+            - occupancy_penalty
+        )
+        if continuity >= 70:
+            status = "healthy"
+        elif continuity >= 50:
+            status = "constrained"
+        elif continuity >= 30:
+            status = "at_risk"
+        else:
+            status = "learning_starved"
+        capacity_recommendation_needed = bool(
+            status != "healthy"
+            and opportunity_count >= 3
+            and occupancy.get("occupancy_status") in {"constrained", "saturated", "learning_blocked"}
+        )
+        return {
+            "module": "Learning Continuity Engine V1",
+            "status": status,
+            "learning_continuity_score": rounded(continuity, 3),
+            "learning_diversity_score": rounded(diversity, 3),
+            "learning_flow_score": rounded(flow, 3),
+            "trade_turnover_score": rounded(turnover, 3),
+            "opportunity_flow_score": rounded(opportunity_flow, 3),
+            "current_capacity": occupancy.get("total_capacity"),
+            "capacity_used": occupancy.get("broker_confirmed_positions"),
+            "capacity_recommendation_needed": capacity_recommendation_needed,
+            "continuity_bottleneck": (
+                "horizon_concentration_and_low_turnover"
+                if diversity < 35 and turnover < 35
+                else "occupancy_pressure"
+                if occupancy_penalty >= 12
+                else "opportunity_flow"
+                if opportunity_flow < 40
+                else "none"
+            ),
+            "learning_benefit": "restore_horizon_diversity_and_fresh_validation_opportunities",
+            "potential_risks": [
+                "higher_correlation_or_concentration_if_existing_risk_gates_are_ignored",
+                "more_open_positions_without_more_closed_outcome_evidence",
+            ],
+            "recommended_action": (
+                "review_bounded_adaptive_capacity_and_lower_occupancy_candidates_through_existing_gates"
+                if capacity_recommendation_needed
+                else "maintain_existing_capacity_and_monitor_learning_flow"
+            ),
+            "silent_learning_stop_detected": bool(flow < 20 or status == "learning_starved"),
+            **_safe_flags(),
+        }
+
     def _opportunity_cost(
         self,
         statuses: dict[str, Any],
@@ -384,7 +464,24 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "dominant_horizon": dominant,
             "underrepresented_horizon": under,
             "horizon_monopolization_risk": rounded(monopolization, 3),
+            "horizon_diversity_score": rounded(clamp(
+                (
+                    1.0
+                    - sum((max(0.0, to_float(current.get(key), 0.0)) / 100.0) ** 2 for key in HORIZONS[:-1])
+                )
+                / 0.8
+                * 100.0
+            ), 3) if sum(to_float(current.get(key), 0.0) for key in HORIZONS[:-1]) > 0 else 0.0,
+            "horizon_learning_contribution": {
+                key: rounded(max(0.0, to_float(current.get(key), 0.0)) * (100.0 - pressure) / 100.0, 3)
+                for key in HORIZONS
+            },
             "recommended_horizon_bias": bias,
+            "plain_english_explanation": (
+                f"{dominant.replace('_', ' ').title()} currently dominates horizon exposure. "
+                f"Astra should favor qualified {under.replace('_', ' ')} opportunities when all existing gates pass, "
+                "without quotas or automatic rejection of elite opportunities."
+            ),
             "elite_opportunity_may_override_advisory_bias": True,
             "fixed_horizon_quotas_enabled": False,
             "forced_diversification_enabled": False,
@@ -397,6 +494,7 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
         occupancy: dict[str, Any],
         throughput: dict[str, Any],
         horizon: dict[str, Any],
+        continuity: dict[str, Any],
     ) -> dict[str, Any]:
         capacity = self._capacity(statuses)
         portfolio = status_value(statuses, "portfolio_health_summary")
@@ -410,7 +508,10 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
         paper_verified = bool(broker.get("paper_mode_verified", False))
         risk_ok = max(heat, concentration, correlation) < 65
         opportunity_flow = len(copilot.get("top_actions") or [])
-        throughput_slow = throughput.get("learning_flow_status") in {"slowing", "stalled", "critical"}
+        throughput_slow = (
+            throughput.get("learning_flow_status") in {"slowing", "stalled", "critical"}
+            or continuity.get("status") in {"constrained", "at_risk", "learning_starved"}
+        )
         underdeveloped = horizon.get("underrepresented_horizon") in {"scalp", "day_trade", "multi_day"}
         occupancy_critical = occupancy.get("occupancy_status") in {"saturated", "learning_blocked"}
         expansion_allowed = bool(
@@ -445,6 +546,10 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "recommended_adaptive_capacity": recommended,
             "capacity_expansion_status": status,
             "capacity_expansion_reason": expansion_reason,
+            "learning_continuity_score": continuity.get("learning_continuity_score"),
+            "learning_diversity_score": continuity.get("learning_diversity_score"),
+            "learning_benefit": continuity.get("learning_benefit"),
+            "potential_risks": continuity.get("potential_risks"),
             "capacity_contraction_reason": contraction_reasons or ["none"],
             "adaptive_capacity_used": max(0, used - base),
             "adaptive_capacity_available": max(0, recommended - used),
@@ -456,11 +561,84 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             **_safe_flags(),
         }
 
+    def _improvement_classifier(self, statuses: dict[str, Any]) -> dict[str, Any]:
+        tier1b = status_value(statuses, "astra_truth_controlled_evolution_executive_v1")
+        bridge = dict(tier1b.get("shadow_paper_controlled_evolution_bridge_v1") or {})
+        tier2 = status_value(statuses, "astra_performance_optimization_suite_v1")
+        candidate = dict(tier2.get("controlled_evolution_integration") or {})
+        shadow = status_value(statuses, "shadow_correction_validation_attribution_v1")
+        reviews = []
+        raw_rows = list(shadow.get("category_validation") or shadow.get("categories") or [])
+        for row in raw_rows:
+            if not isinstance(row, dict):
+                continue
+            improvement = to_float(first(row.get("expectancy_delta"), row.get("improvement_rate"), 0.0), 0.0)
+            reviews.append({
+                "category": text(first(row.get("category"), row.get("recommendation_category")), "unknown"),
+                "improvement_delta": rounded(improvement, 3),
+                "confidence": rounded(to_float(first(row.get("confidence_score"), row.get("confidence")), 0.0), 3),
+                "evidence_count": to_int(first(row.get("validation_count"), row.get("evidence_count")), 0),
+                "source": "shadow_correction_validation_attribution_v1",
+            })
+        candidate_metric = text(first(candidate.get("candidate_metric"), (bridge.get("promotion_candidate") or {}).get("promotion_metric")), "")
+        if candidate_metric and candidate_metric.lower() != "none":
+            reviews.append({
+                "category": candidate_metric.lower().replace(" ", "_"),
+                "improvement_delta": rounded(max(
+                    to_float(candidate.get("candidate_delta"), 0.0),
+                    to_float((bridge.get("promotion_candidate") or {}).get("promotion_delta"), 0.0),
+                ), 3),
+                "confidence": rounded(max(
+                    to_float(candidate.get("candidate_confidence"), 0.0),
+                    to_float((bridge.get("promotion_candidate") or {}).get("promotion_confidence"), 0.0),
+                ), 3),
+                "evidence_count": max(
+                    to_int(candidate.get("candidate_evidence_count"), 0),
+                    to_int((bridge.get("promotion_candidate") or {}).get("promotion_evidence"), 0),
+                ),
+                "source": "tier1b_tier2_controlled_evolution",
+            })
+        aliases = {
+            "panic_exit_reduction": "exit_quality",
+            "opportunity_cost": "overfiltering_reduction",
+            "horizon_selection": "horizon_accuracy",
+            "risk_adjusted_returns": "risk_adjusted_return",
+        }
+        classified = []
+        for row in reviews:
+            category = aliases.get(row["category"], row["category"])
+            classified.append({
+                **row,
+                "category": category,
+                "eligible_category": category in ELIGIBLE_CATEGORIES,
+                "consistently_better_than_paper": bool(
+                    row["improvement_delta"] >= 10.0
+                    and row["confidence"] >= 60.0
+                    and row["evidence_count"] >= 25
+                ),
+            })
+        strongest = max(classified, key=lambda row: row["improvement_delta"], default={})
+        return {
+            "module": "Improvement Classifier V1",
+            "status": "ok" if classified else "insufficient_evidence",
+            "improvements_reviewed": len(classified),
+            "classified_improvements": classified,
+            "paper_test_candidates": [
+                row for row in classified
+                if row["eligible_category"] and row["consistently_better_than_paper"]
+            ][:1],
+            "strongest_improvement_category": strongest.get("category", "none"),
+            "strongest_improvement_delta": strongest.get("improvement_delta", 0.0),
+            "candidate_creation_is_advisory_only": True,
+            **_safe_flags(),
+        }
+
     def _controlled_evolution(
         self,
         statuses: dict[str, Any],
         occupancy: dict[str, Any],
         throughput: dict[str, Any],
+        classifier: dict[str, Any],
     ) -> dict[str, Any]:
         tier1b = status_value(statuses, "astra_truth_controlled_evolution_executive_v1")
         bridge = dict(tier1b.get("shadow_paper_controlled_evolution_bridge_v1") or {})
@@ -468,19 +646,28 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
         candidate = dict(tier2.get("controlled_evolution_integration") or {})
         learned_exit = status_value(statuses, "controlled_paper_learned_exit_validation_v1")
         broker = status_value(statuses, "alpaca_paper_broker") or status_value(statuses, "alpaca_paper_status_v1")
-        candidate_metric = text(first(candidate.get("candidate_metric"), (bridge.get("promotion_candidate") or {}).get("promotion_metric"), "none"))
+        classified_candidate = (classifier.get("paper_test_candidates") or [{}])[0]
+        candidate_metric = text(first(
+            classified_candidate.get("category"),
+            candidate.get("candidate_metric"),
+            (bridge.get("promotion_candidate") or {}).get("promotion_metric"),
+            "none",
+        ))
         normalized_category = candidate_metric.lower().replace(" ", "_")
         evidence = max(
             to_int(candidate.get("candidate_evidence_count"), 0),
             to_int((bridge.get("promotion_candidate") or {}).get("promotion_evidence"), 0),
+            to_int(classified_candidate.get("evidence_count"), 0),
         )
         confidence = max(
             to_float(candidate.get("candidate_confidence"), 0.0),
             to_float((bridge.get("promotion_candidate") or {}).get("promotion_confidence"), 0.0),
+            to_float(classified_candidate.get("confidence"), 0.0),
         )
         improvement = max(
             to_float(candidate.get("candidate_delta"), 0.0),
             to_float((bridge.get("promotion_candidate") or {}).get("promotion_delta"), 0.0),
+            to_float(classified_candidate.get("improvement_delta"), 0.0),
         )
         paper_verified = bool(broker.get("paper_mode_verified", False))
         live_disabled = not bool(broker.get("live_endpoint_detected", False)) and not bool(broker.get("broker_live_endpoint_allowed", False))
@@ -527,6 +714,7 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "status": "micro_test_active" if active_stage else "advisory_only",
             "promotion_ladder": [{"stage": stage, "label": label, "automatic": False} for stage, label in EVOLUTION_STAGES.items()],
             "eligible_improvement_categories": list(ELIGIBLE_CATEGORIES),
+            "improvement_classifier_status": classifier.get("status"),
             "eligible_candidates": eligible_candidates,
             "active_micro_tests": [learned_exit] if active_stage else [],
             "recommended_micro_test": eligible_candidates[0] if all_gates and eligible_candidates else {},
@@ -542,6 +730,58 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "existing_micro_test_infrastructure": infrastructure_exists,
             "micro_test_activated_by_tier4": False,
             "paper_execution_changed": False,
+            **_safe_flags(),
+        }
+
+    def _persistence_explanation(
+        self,
+        statuses: dict[str, Any],
+        evolution: dict[str, Any],
+        throughput: dict[str, Any],
+    ) -> dict[str, Any]:
+        tier2 = status_value(statuses, "astra_performance_optimization_suite_v1")
+        persistence = dict(tier2.get("learning_persistence_engine_v1") or {})
+        candidates = list(evolution.get("eligible_candidates") or [])
+        candidate = candidates[0] if candidates else {}
+        current_evidence = to_int(candidate.get("evidence_count"), 0)
+        current_confidence = to_float(candidate.get("confidence"), 0.0)
+        current_persistence = to_float(persistence.get("lesson_retention_score"), 0.0)
+        required_evidence = 25
+        required_confidence = 60.0
+        required_persistence = 55.0
+        remaining_evidence = max(0, required_evidence - current_evidence)
+        remaining_trades = remaining_evidence
+        recent_pace = max(1, to_int(throughput.get("trades_opened"), 0) // 5)
+        remaining_market_days = int(math.ceil(remaining_trades / recent_pace)) if remaining_trades else 0
+        blockers = list(evolution.get("promotion_blocker") or [])
+        plain = (
+            f"Astra has not found a classified Shadow improvement ready for Paper testing yet. "
+            f"A candidate will need at least {required_evidence} observations, {required_confidence:.0f}% confidence, "
+            f"and a persistence score of {required_persistence:.0f}. Current persistence is {current_persistence:.1f}, "
+            f"so {max(0.0, required_persistence - current_persistence):.1f} persistence points remain."
+            if not candidate
+            else
+            f"Astra has {current_evidence} of {required_evidence} required observations, "
+            f"{current_confidence:.1f}% of {required_confidence:.0f}% required confidence, and "
+            f"{current_persistence:.1f} of {required_persistence:.0f} required persistence. "
+            f"At the recent evidence pace, about {remaining_market_days} market day(s) remain."
+        )
+        return {
+            "module": "Persistence Explanation Engine V1",
+            "status": "ready" if not blockers and candidate else "collecting_evidence",
+            "required_evidence": required_evidence,
+            "current_evidence": current_evidence,
+            "remaining_evidence": remaining_evidence,
+            "required_confidence": required_confidence,
+            "current_confidence": rounded(current_confidence, 3),
+            "required_persistence_score": required_persistence,
+            "current_persistence_score": rounded(current_persistence, 3),
+            "remaining_persistence_score": rounded(max(0.0, required_persistence - current_persistence), 3),
+            "remaining_trades": remaining_trades,
+            "remaining_market_days_estimate": remaining_market_days,
+            "current_blockers": blockers,
+            "plain_english_explanation": plain,
+            "estimate_is_advisory": True,
             **_safe_flags(),
         }
 
@@ -582,16 +822,302 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             **_safe_flags(),
         }
 
+    @staticmethod
+    def _completion_row(
+        name: str,
+        payload: dict[str, Any],
+        *,
+        can_safely_act: bool = False,
+        detects: bool | None = None,
+        explains: bool | None = None,
+        recommends: bool | None = None,
+    ) -> dict[str, Any]:
+        present = bool(payload)
+        detects_value = present and payload.get("status") not in {None, "unknown"} if detects is None else detects
+        explains_value = present and any(
+            key in payload
+            for key in (
+                "executive_summary",
+                "plain_english_explanation",
+                "promotion_reason",
+                "occupancy_recommendation",
+                "recommended_action",
+                "recommended_throughput_action",
+            )
+        ) if explains is None else explains
+        recommends_value = present and any(
+            key in payload
+            for key in (
+                "recommended_action",
+                "recommended_throughput_action",
+                "occupancy_recommendation",
+                "next_safe_evolution_step",
+                "recommended_next_focus",
+            )
+        ) if recommends is None else recommends
+        connections = {
+            "connected_to_learning_center": True,
+            "connected_to_ask_astra": True,
+            "connected_to_executive_dashboard": True,
+        }
+        score = sum([detects_value, explains_value, recommends_value, *connections.values()])
+        if score >= 6:
+            completion = "complete"
+        elif score >= 4:
+            completion = "mostly_complete"
+        elif score >= 3:
+            completion = "partial"
+        elif present:
+            completion = "disconnected"
+        else:
+            completion = "unknown"
+        return {
+            "subsystem": name,
+            "completion_status": completion,
+            "detects_problem": detects_value,
+            "explains_problem": explains_value,
+            "can_recommend_correction": recommends_value,
+            "can_safely_act": can_safely_act,
+            **connections,
+        }
+
+    def _completion_audit(
+        self,
+        statuses: dict[str, Any],
+        continuity: dict[str, Any],
+        occupancy: dict[str, Any],
+        horizon: dict[str, Any],
+        evolution: dict[str, Any],
+        governance: dict[str, Any],
+        persistence: dict[str, Any],
+    ) -> dict[str, Any]:
+        rows = [
+            self._completion_row("learning_continuity", continuity),
+            self._completion_row("adaptive_capacity", occupancy),
+            self._completion_row("horizon_balance", horizon),
+            self._completion_row(
+                "shadow_to_paper_evolution",
+                evolution,
+                can_safely_act=bool(evolution.get("existing_micro_test_infrastructure")),
+                explains=True,
+                recommends=True,
+            ),
+            self._completion_row("evolution_governance", governance, explains=True, recommends=True),
+            self._completion_row("persistence_explanation", persistence, recommends=True),
+            self._completion_row(
+                "broker_truth",
+                status_value(statuses, "alpaca_paper_broker") or status_value(statuses, "alpaca_paper_status_v1"),
+                can_safely_act=True,
+                detects=True,
+                explains=True,
+                recommends=False,
+            ),
+            self._completion_row(
+                "copilot",
+                status_value(statuses, "astra_copilot_suite_v1"),
+                detects=True,
+                explains=True,
+                recommends=True,
+            ),
+            self._completion_row(
+                "unified_truth",
+                status_value(statuses, "astra_truth_controlled_evolution_executive_v1"),
+                detects=True,
+                explains=True,
+                recommends=True,
+            ),
+            self._completion_row(
+                "learning_preservation",
+                status_value(statuses, "astra_learning_preservation_capacity_v1"),
+                detects=True,
+                explains=True,
+                recommends=True,
+            ),
+        ]
+        counts = {
+            status: sum(1 for row in rows if row["completion_status"] == status)
+            for status in ("complete", "mostly_complete", "partial", "disconnected", "blocked", "unknown")
+        }
+        gaps = [
+            {
+                "subsystem": row["subsystem"],
+                "completion_status": row["completion_status"],
+                "missing_capabilities": [
+                    label
+                    for label, value in (
+                        ("problem_detection", row["detects_problem"]),
+                        ("plain_explanation", row["explains_problem"]),
+                        ("correction_recommendation", row["can_recommend_correction"]),
+                        ("learning_center_connection", row["connected_to_learning_center"]),
+                        ("ask_astra_connection", row["connected_to_ask_astra"]),
+                        ("executive_dashboard_connection", row["connected_to_executive_dashboard"]),
+                    )
+                    if not value
+                ],
+            }
+            for row in rows
+            if row["completion_status"] not in {"complete", "mostly_complete"}
+        ]
+        return {
+            "module": "Implementation Completion Auditor V1",
+            "status": "healthy" if not gaps else "needs_attention",
+            "subsystem_audit": rows,
+            "completion_counts": counts,
+            "completion_gaps": gaps,
+            "partial_implementations_detected": len(gaps),
+            "disconnected_systems_detected": counts["disconnected"],
+            "next_completion_priority": gaps[0]["subsystem"] if gaps else "maintain_integration_contracts",
+            **_safe_flags(),
+        }
+
+    def _self_governance(
+        self,
+        statuses: dict[str, Any],
+        continuity: dict[str, Any],
+        occupancy: dict[str, Any],
+        horizon: dict[str, Any],
+        evolution: dict[str, Any],
+        completion: dict[str, Any],
+    ) -> dict[str, Any]:
+        tier3 = status_value(statuses, "astra_intelligence_maturation_suite_v1")
+        memory = dict(tier3.get("unified_memory_governance_v1") or {})
+        provider = status_value(statuses, "astra_provider_orchestration_data_governance_v1")
+        unified = status_value(statuses, "unified_learning_diagnostics_v1")
+        bottlenecks = {
+            "learning": continuity.get("continuity_bottleneck"),
+            "capacity": occupancy.get("occupancy_status"),
+            "horizon": horizon.get("dominant_horizon"),
+            "trade": "low_turnover" if to_float(continuity.get("trade_turnover_score"), 0.0) < 35 else "none",
+            "shadow": (evolution.get("promotion_blocker") or ["none"])[0],
+            "memory": text(first(memory.get("status"), memory.get("memory_health")), "warming_up"),
+            "performance": text(
+                (status_value(statuses, "astra_performance_optimization_suite_v1").get("executive_summary") or {}).get("persistent_weakness"),
+                "warming_up",
+            ),
+            "provider": text(first(provider.get("status"), provider.get("bandwidth_budget_status")), "warming_up"),
+            "dashboard": "healthy" if to_int(unified.get("failed_sources_count"), 0) == 0 else "failed_sources",
+            "integration": text(completion.get("status"), "warming_up"),
+        }
+        active = [f"{key}:{value}" for key, value in bottlenecks.items() if value not in {"none", "healthy", "ok", "active"}]
+        return {
+            "module": "Self-Governance Engine V1",
+            "status": "healthy" if len(active) <= 2 else "needs_attention",
+            "bottlenecks": bottlenecks,
+            "active_bottleneck_count": len(active),
+            "active_bottlenecks": active,
+            "partial_implementation_detected": bool(completion.get("partial_implementations_detected")),
+            "disconnected_system_detected": bool(completion.get("disconnected_systems_detected")),
+            "broken_data_flow_detected": bool(to_int(unified.get("failed_sources_count"), 0)),
+            "detecting_without_explaining": [
+                row["subsystem"]
+                for row in completion.get("subsystem_audit") or []
+                if row.get("detects_problem") and not row.get("explains_problem")
+            ],
+            "correcting_without_reporting": [],
+            "recommended_correction": (
+                f"complete_{completion.get('next_completion_priority')}_integration"
+                if completion.get("partial_implementations_detected")
+                else "preserve_learning_continuity_and_monitor_promotion_gates"
+            ),
+            **_safe_flags(),
+        }
+
+    @staticmethod
+    def _executive_explanation(
+        continuity: dict[str, Any],
+        occupancy: dict[str, Any],
+        horizon: dict[str, Any],
+        evolution: dict[str, Any],
+        persistence: dict[str, Any],
+        governance: dict[str, Any],
+    ) -> dict[str, Any]:
+        dominant = text(horizon.get("dominant_horizon"), "unknown").replace("_", " ")
+        under = text(horizon.get("underrepresented_horizon"), "unknown").replace("_", " ")
+        position_count = to_int(occupancy.get("broker_confirmed_positions"), 0)
+        if position_count:
+            what_happened = (
+                f"Most of Astra's paper-learning capacity is tied to {dominant} positions; "
+                f"{position_count} positions currently use a "
+                f"{occupancy.get('total_capacity', 20)}-position learning baseline."
+            )
+            why = (
+                f"{dominant.title()} exposure is {to_float((occupancy.get('current_horizon_exposure') or {}).get(horizon.get('dominant_horizon')), 0.0):.1f}%, "
+                "so fresh shorter-duration outcomes arrive more slowly."
+            )
+        else:
+            what_happened = "Astra does not yet have enough broker-confirmed position evidence to diagnose capacity concentration."
+            why = "The continuity engine is waiting for broker truth and horizon labels rather than inventing an occupancy explanation."
+        effect = (
+            f"Learning continuity is {text(continuity.get('status'), 'warming up').replace('_', ' ')} "
+            f"and {under} evidence is underrepresented. "
+            "The best qualified opportunity still wins; Astra does not impose quotas."
+        )
+        safe_correction = (
+            "Astra can safely recommend lower-occupancy candidates and a bounded capacity target, "
+            "but existing ranking, risk, entry, and broker gates remain in control."
+        )
+        return {
+            "module": "Executive Explanation Engine V1",
+            "status": "ok",
+            "what_happened": what_happened,
+            "why_it_happened": why,
+            "what_it_affects": effect,
+            "can_astra_safely_correct_it": safe_correction,
+            "evidence_still_required": persistence.get("plain_english_explanation"),
+            "shadow_to_paper_status": (
+                f"Shadow promotion remains at {text(evolution.get('promotion_stage_label'), 'shadow observation').replace('_', ' ')} "
+                f"because {', '.join(text(item).replace('_', ' ') for item in (evolution.get('promotion_blocker') or ['no blocker']))}."
+            ),
+            "plain_english_summary": f"{what_happened} {effect} {safe_correction}",
+            "recommended_next_step": governance.get("next_safe_evolution_step"),
+            **_safe_flags(),
+        }
+
     def _build(self, statuses: dict[str, Any]) -> dict[str, Any]:
         start = time.perf_counter()
         occupancy = self._occupancy(statuses)
         throughput = self._throughput(statuses, occupancy)
+        continuity = self._learning_continuity(statuses, occupancy, throughput)
         opportunity = self._opportunity_cost(statuses, occupancy, throughput)
         horizon = self._horizon_evolution(statuses, occupancy, throughput)
-        expansion = self._capacity_expansion(statuses, occupancy, throughput, horizon)
-        evolution = self._controlled_evolution(statuses, occupancy, throughput)
+        expansion = self._capacity_expansion(statuses, occupancy, throughput, horizon, continuity)
+        classifier = self._improvement_classifier(statuses)
+        evolution = self._controlled_evolution(statuses, occupancy, throughput, classifier)
+        persistence = self._persistence_explanation(statuses, evolution, throughput)
         governance = self._governance(evolution)
+        completion = self._completion_audit(
+            statuses,
+            continuity,
+            occupancy,
+            horizon,
+            evolution,
+            governance,
+            persistence,
+        )
+        self_governance = self._self_governance(
+            statuses,
+            continuity,
+            occupancy,
+            horizon,
+            evolution,
+            completion,
+        )
+        explanation = self._executive_explanation(
+            continuity,
+            occupancy,
+            horizon,
+            evolution,
+            persistence,
+            governance,
+        )
         summary = {
+            "learning_flow": continuity.get("status"),
+            "learning_diversity": continuity.get("learning_diversity_score"),
+            "capacity_status": occupancy.get("occupancy_status"),
+            "shadow_readiness": evolution.get("candidate_status"),
+            "paper_promotion_readiness": evolution.get("promotion_stage_label"),
+            "current_bottleneck": continuity.get("continuity_bottleneck"),
+            "recommended_next_step": explanation.get("recommended_next_step"),
             "occupancy_status": occupancy.get("occupancy_status"),
             "learning_throughput": throughput.get("learning_flow_status"),
             "opportunity_cost": text((opportunity.get("highest_opportunity_cost_context") or {}).get("symbol"), "warming_up"),
@@ -599,26 +1125,36 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "adaptive_capacity": expansion.get("recommended_adaptive_capacity"),
             "controlled_evolution_candidate": governance.get("top_evolution_candidate"),
             "evolution_governance": governance.get("adoption_safety_status"),
+            "self_governance": self_governance.get("status"),
+            "completion_audit": completion.get("status"),
+            "plain_english_summary": explanation.get("plain_english_summary"),
             "recommended_action": (
-                throughput.get("recommended_throughput_action")
-                if throughput.get("learning_flow_status") != "healthy"
-                else occupancy.get("occupancy_recommendation")
+                continuity.get("recommended_action")
+                if continuity.get("status") != "healthy"
+                else throughput.get("recommended_throughput_action")
             ),
         }
         return with_safety({
             "enabled": True,
             "version": VERSION,
-            "suite": "ASTRA Tier 4 - Adaptive Occupancy, Learning Throughput & Controlled Evolution Suite V1",
+            "suite": "ASTRA Learning Continuity, Controlled Evolution & Self-Governance Suite V1",
+            "extends_suite": "ASTRA Tier 4 - Adaptive Occupancy, Learning Throughput & Controlled Evolution Suite V1",
             "status": "ok",
             "mode": self.mode,
             "generated_at": now_iso(),
+            "learning_continuity_engine_v1": continuity,
             "adaptive_occupancy_management_v1": occupancy,
             "learning_throughput_protection_v1": throughput,
             "opportunity_cost_intelligence_v1": opportunity,
             "dynamic_horizon_evolution_v1": horizon,
             "adaptive_learning_expansion_v1": expansion,
+            "improvement_classifier_v1": classifier,
             "controlled_shadow_paper_evolution_v2": evolution,
+            "persistence_explanation_engine_v1": persistence,
             "evolution_governance_v1": governance,
+            "self_governance_engine_v1": self_governance,
+            "implementation_completion_auditor_v1": completion,
+            "executive_explanation_engine_v1": explanation,
             "executive_summary": summary,
             "bounded_cached_sources_only": True,
             "full_history_scan_performed": False,
