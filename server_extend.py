@@ -2437,6 +2437,7 @@ try:
     from engine.astra_truth_controlled_evolution_executive_v1 import AstraTruthControlledEvolutionExecutiveV1
     from engine.astra_performance_optimization_suite_v1 import AstraPerformanceOptimizationSuiteV1
     from engine.astra_intelligence_maturation_suite_v1 import AstraIntelligenceMaturationSuiteV1
+    from engine.astra_adaptive_occupancy_evolution_suite_v1 import AstraAdaptiveOccupancyEvolutionSuiteV1
 except Exception:
     class _IntelligenceQualityUnavailable:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -2496,6 +2497,7 @@ except Exception:
     AstraTruthControlledEvolutionExecutiveV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraPerformanceOptimizationSuiteV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraIntelligenceMaturationSuiteV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    AstraAdaptiveOccupancyEvolutionSuiteV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
@@ -3191,6 +3193,7 @@ ASTRA_LEARNING_PRESERVATION_CAPACITY = AstraLearningPreservationCapacityV1(state
 ASTRA_TRUTH_CONTROLLED_EVOLUTION_EXECUTIVE = AstraTruthControlledEvolutionExecutiveV1(state_dir=STATE)
 ASTRA_PERFORMANCE_OPTIMIZATION_SUITE = AstraPerformanceOptimizationSuiteV1(state_dir=STATE)
 ASTRA_INTELLIGENCE_MATURATION_SUITE = AstraIntelligenceMaturationSuiteV1(state_dir=STATE)
+ASTRA_ADAPTIVE_OCCUPANCY_EVOLUTION_SUITE = AstraAdaptiveOccupancyEvolutionSuiteV1(state_dir=STATE)
 ASTRA_PROVIDER_ORCHESTRATION_DATA_GOVERNANCE = AstraProviderOrchestrationDataGovernanceV1(state_dir=STATE)
 TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
 MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
@@ -43357,6 +43360,7 @@ def _ask_astra_context_compression_v1(context=None):
     aios = c.get("aios_intelligence") if isinstance(c.get("aios_intelligence"), dict) else {}
     performance_optimization = c.get("performance_optimization") if isinstance(c.get("performance_optimization"), dict) else {}
     maturation = c.get("intelligence_maturation") if isinstance(c.get("intelligence_maturation"), dict) else {}
+    occupancy_evolution = c.get("occupancy_evolution") if isinstance(c.get("occupancy_evolution"), dict) else {}
     signals = []
     for value in [
         executive.get("market_outlook_summary"),
@@ -43379,6 +43383,7 @@ def _ask_astra_context_compression_v1(context=None):
         aios.get("symbol_behavior_summary"),
         (performance_optimization.get("executive_summary") or {}).get("recommended_focus") if isinstance(performance_optimization.get("executive_summary"), dict) else None,
         (maturation.get("executive_summary") or {}).get("recommended_focus") if isinstance(maturation.get("executive_summary"), dict) else None,
+        (occupancy_evolution.get("executive_summary") or {}).get("recommended_action") if isinstance(occupancy_evolution.get("executive_summary"), dict) else None,
     ]:
         if value:
             signals.append(_safe_text(str(value), 220))
@@ -43443,6 +43448,7 @@ def _ask_astra_context_compression_v1(context=None):
         },
         "performance_optimization": performance_optimization.get("executive_summary") or {},
         "intelligence_maturation": maturation.get("executive_summary") or {},
+        "occupancy_evolution": occupancy_evolution.get("executive_summary") or {},
         "safety": c.get("safety") or {},
     }
     return {
@@ -43958,6 +43964,17 @@ def astra_intelligence_maturation_suite_v1(force: bool = False):
     return ASTRA_INTELLIGENCE_MATURATION_SUITE.status(statuses=statuses, force=bool(force))
 
 
+@router.get("/api/astra_adaptive_occupancy_evolution_suite_v1")
+def astra_adaptive_occupancy_evolution_suite_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    statuses = dict(cached_unified or {})
+    try:
+        statuses["astra_copilot_suite_v1"] = _astra_copilot_suite_v1(limit=12, force=False)
+    except Exception:
+        statuses["astra_copilot_suite_v1"] = {}
+    return ASTRA_ADAPTIVE_OCCUPANCY_EVOLUTION_SUITE.status(statuses=statuses, force=bool(force))
+
+
 @router.post("/api/ask_astra_v1")
 def ask_astra_v1(payload: dict = Body(...)):
     data = payload if isinstance(payload, dict) else {}
@@ -44002,8 +44019,10 @@ def ask_astra_v1(payload: dict = Body(...)):
     ask_context_seed["astra_aios_intelligence_maturation_bundle_v1"] = aios
     performance_optimization = dict((cached_unified or {}).get("astra_performance_optimization_suite_v1") or {})
     intelligence_maturation = dict((cached_unified or {}).get("astra_intelligence_maturation_suite_v1") or {})
+    occupancy_evolution = dict((cached_unified or {}).get("astra_adaptive_occupancy_evolution_suite_v1") or {})
     ask_context_seed["astra_performance_optimization_suite_v1"] = performance_optimization
     ask_context_seed["astra_intelligence_maturation_suite_v1"] = intelligence_maturation
+    ask_context_seed["astra_adaptive_occupancy_evolution_suite_v1"] = occupancy_evolution
     executive = _astra_executive_summary_v1(ask_context_seed, copilot)
     ceo = _astra_ceo_summary_v1(executive, ask_context_seed)
     top_actions = copilot.get("top_actions") or []
@@ -44116,6 +44135,7 @@ def ask_astra_v1(payload: dict = Body(...)):
         },
         "performance_optimization": performance_optimization,
         "intelligence_maturation": intelligence_maturation,
+        "occupancy_evolution": occupancy_evolution,
         "key_supporting_astra_signals": key_signals,
         "supported_question_types": [
             "explain_status",
@@ -44190,6 +44210,12 @@ def ask_astra_v1(payload: dict = Body(...)):
             fast_short = (
                 f"Astra's main weakness is {str(perf_summary.get('persistent_weakness') or 'profit capture').replace('_', ' ')}. "
                 f"The next focus is {str(perf_summary.get('recommended_focus') or 'reduce giveback and wait for confirmation').replace('_', ' ')}."
+            )
+        elif "capacity" in q_lc or "occupancy" in q_lc or "no trades" in q_lc or "portfolio full" in q_lc:
+            occupancy_summary = occupancy_evolution.get("executive_summary") or {}
+            fast_short = (
+                f"Paper-learning occupancy is {str(occupancy_summary.get('occupancy_status') or 'warming up').replace('_', ' ')}. "
+                f"Astra recommends {str(occupancy_summary.get('recommended_action') or 'preserving learning reserve').replace('_', ' ')}."
             )
         else:
             fast_short = compressed_context.get("highest_priority_signals", ["Astra is using cached intelligence and remains advisory-only."])[0]
@@ -55469,7 +55495,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         cached_unified = _CACHE.get("unified_learning_diagnostics_v1") if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
         cached_data = cached_unified.get("data") if isinstance(cached_unified, dict) else None
         cache_age = max(0.0, time.time() - _to_float(cached_unified.get("ts"), 0.0)) if cached_unified else 9999.0
-        if isinstance(cached_data, dict) and cached_data and cache_age <= 120.0:
+        if isinstance(cached_data, dict) and cached_data and cache_age <= 1800.0:
             fast = dict(cached_data)
             fast["cache_hit"] = True
             fast["cache_age_seconds"] = round(cache_age, 3)
@@ -55646,6 +55672,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("astra_learning_preservation_capacity_v1", lambda: ASTRA_LEARNING_PRESERVATION_CAPACITY.status(statuses=statuses, force=False))
         _safe_status("astra_performance_optimization_suite_v1", lambda: ASTRA_PERFORMANCE_OPTIMIZATION_SUITE.status(statuses=statuses, force=False))
         _safe_status("astra_intelligence_maturation_suite_v1", lambda: ASTRA_INTELLIGENCE_MATURATION_SUITE.status(statuses=statuses, force=False))
+        _safe_status("astra_adaptive_occupancy_evolution_suite_v1", lambda: ASTRA_ADAPTIVE_OCCUPANCY_EVOLUTION_SUITE.status(statuses=statuses, force=False))
         _safe_status("astra_provider_orchestration_data_governance_v1", lambda: _provider_orchestration_data_governance_v1(force=False, statuses=statuses))
         _safe_status("astra_aios_intelligence_maturation_bundle_v1", lambda: ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=statuses, force=False))
         statuses["astra_aios_throughput_institutional_memory_optimization_v1"] = dict((statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {}).get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
@@ -55661,6 +55688,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_learning_preservation_capacity_v1"] = dict(statuses.get("astra_learning_preservation_capacity_v1") or {})
             out["astra_performance_optimization_suite_v1"] = dict(statuses.get("astra_performance_optimization_suite_v1") or {})
             out["astra_intelligence_maturation_suite_v1"] = dict(statuses.get("astra_intelligence_maturation_suite_v1") or {})
+            out["astra_adaptive_occupancy_evolution_suite_v1"] = dict(statuses.get("astra_adaptive_occupancy_evolution_suite_v1") or {})
             out["astra_provider_orchestration_data_governance_v1"] = dict(statuses.get("astra_provider_orchestration_data_governance_v1") or {})
             out["astra_aios_intelligence_maturation_bundle_v1"] = dict(statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {})
             out["astra_aios_throughput_institutional_memory_optimization_v1"] = dict(statuses.get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
@@ -55690,6 +55718,9 @@ def unified_learning_diagnostics_v1(force: bool = False):
             tier3 = dict(ASTRA_INTELLIGENCE_MATURATION_SUITE.status(statuses=statuses, force=True) or {})
             out["astra_intelligence_maturation_suite_v1"] = tier3
             statuses["astra_intelligence_maturation_suite_v1"] = tier3
+            tier4 = dict(ASTRA_ADAPTIVE_OCCUPANCY_EVOLUTION_SUITE.status(statuses=statuses, force=True) or {})
+            out["astra_adaptive_occupancy_evolution_suite_v1"] = tier4
+            statuses["astra_adaptive_occupancy_evolution_suite_v1"] = tier4
             truth = dict(tier1b.get("executive_snapshot_truth_reconciliation_v1") or {})
             official_performance = dict(truth.get("official_performance_summary") or {})
             diagnostic_performance = dict(out.get("performance_summary") or {})

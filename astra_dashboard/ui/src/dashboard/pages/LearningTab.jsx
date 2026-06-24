@@ -1638,6 +1638,7 @@ export default function LearningTab({ compact = false }) {
   const astraTruthControlledEvolutionExecutive = unified?.astra_truth_controlled_evolution_executive_v1 || {};
   const astraPerformanceOptimizationSuite = unified?.astra_performance_optimization_suite_v1 || {};
   const astraIntelligenceMaturationSuite = unified?.astra_intelligence_maturation_suite_v1 || {};
+  const astraAdaptiveOccupancyEvolutionSuite = unified?.astra_adaptive_occupancy_evolution_suite_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -1842,6 +1843,7 @@ export default function LearningTab({ compact = false }) {
       astra_truth_controlled_evolution_executive_v1: astraTruthControlledEvolutionExecutive,
       astra_performance_optimization_suite_v1: astraPerformanceOptimizationSuite,
       astra_intelligence_maturation_suite_v1: astraIntelligenceMaturationSuite,
+      astra_adaptive_occupancy_evolution_suite_v1: astraAdaptiveOccupancyEvolutionSuite,
       candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
       profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
       realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
@@ -1954,6 +1956,16 @@ export default function LearningTab({ compact = false }) {
     `ASTRA TIER 3 ${label.toUpperCase()}`,
     `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
     JSON.stringify(astraIntelligenceMaturationSuite?.[key] || {}, null, 2),
+  ].join("\n");
+  const tier4SummaryText = () => [
+    "ASTRA TIER 4 ADAPTIVE OCCUPANCY & CONTROLLED EVOLUTION SUMMARY",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraAdaptiveOccupancyEvolutionSuite?.executive_summary || {}, null, 2),
+  ].join("\n");
+  const tier4SectionText = (label, key) => [
+    `ASTRA TIER 4 ${label.toUpperCase()}`,
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraAdaptiveOccupancyEvolutionSuite?.[key] || {}, null, 2),
   ].join("\n");
   const measurementsSnapshotText = () => [
     "ASTRA DAILY SNAPSHOT",
@@ -4190,6 +4202,67 @@ export default function LearningTab({ compact = false }) {
             ["Learning Governance", "autonomous_learning_governance_v1"],
           ].map(([label, key]) => (
             <button key={key} type="button" onClick={() => copyText(label, tier3SectionText(label, key))} style={{ border: "1px solid #2f4a72", background: "#102746", color: "#dce9fb", borderRadius: 12, padding: "8px 11px", fontWeight: 800, cursor: "pointer" }}>Copy {label}</button>
+          ))}
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }} open={false}>
+        <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+          Tier 4 Adaptive Occupancy & Controlled Evolution
+        </summary>
+        <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+          Protects paper-learning throughput, prices capacity lockup, and evaluates reversible shadow-to-paper evolution without changing trading behavior.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+          {[
+            ["Occupancy Status", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.occupancy_status],
+            ["Learning Throughput", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.learning_throughput],
+            ["Opportunity Cost", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.opportunity_cost],
+            ["Dynamic Horizon Bias", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.dynamic_horizon_bias],
+            ["Adaptive Capacity", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.adaptive_capacity],
+            ["Evolution Candidate", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.controlled_evolution_candidate],
+            ["Evolution Governance", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.evolution_governance],
+            ["Recommended Action", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.recommended_action],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.40)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+              <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+              <strong style={{ color: "#f2f7ff" }}>{String(value ?? "warming up").replaceAll("_", " ")}</strong>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+          {[
+            ["Adaptive Occupancy", "adaptive_occupancy_management_v1"],
+            ["Learning Throughput", "learning_throughput_protection_v1"],
+            ["Opportunity Cost", "opportunity_cost_intelligence_v1"],
+            ["Dynamic Horizon Evolution", "dynamic_horizon_evolution_v1"],
+            ["Adaptive Learning Expansion", "adaptive_learning_expansion_v1"],
+            ["Controlled Evolution", "controlled_shadow_paper_evolution_v2"],
+            ["Evolution Governance", "evolution_governance_v1"],
+          ].map(([label, key]) => {
+            const row = astraAdaptiveOccupancyEvolutionSuite?.[key] || {};
+            return (
+              <details key={key} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
+                <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+                  {label}: {String(row?.status || "warming up").replaceAll("_", " ")}
+                </summary>
+                <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
+                  {JSON.stringify(row, null, 2)}
+                </pre>
+              </details>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+          <button type="button" onClick={() => copyText("Tier 4 summary", tier4SummaryText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Tier 4 Summary</button>
+          {[
+            ["Occupancy", "adaptive_occupancy_management_v1"],
+            ["Learning Throughput", "learning_throughput_protection_v1"],
+            ["Opportunity Cost", "opportunity_cost_intelligence_v1"],
+            ["Adaptive Capacity", "adaptive_learning_expansion_v1"],
+            ["Evolution", "controlled_shadow_paper_evolution_v2"],
+          ].map(([label, key]) => (
+            <button key={key} type="button" onClick={() => copyText(label, tier4SectionText(label, key))} style={{ border: "1px solid #2f4a72", background: "#102746", color: "#dce9fb", borderRadius: 12, padding: "8px 11px", fontWeight: 800, cursor: "pointer" }}>Copy {label}</button>
           ))}
         </div>
       </details>
