@@ -221,7 +221,7 @@ function AskAstraPage({ initialQuestion = "", selectedSymbol = "" }) {
     });
     if (result.ok && result.parsed?.ok) {
       setStatus("ready");
-      setMessage(`Mode: ${result.parsed?.ask_astra_mode || "fast"} · Response: ${result.parsed?.response_mode || result.parsed?.local_ai_status?.response_mode || "structured_fallback"} · ${result.parsed?.generation_ms ?? 0}ms.`);
+      setMessage(`Grounded in Astra context · Confidence ${result.parsed?.confidence ?? "warming up"} · Advisory only.`);
       setAnswer(String(result.parsed?.answer || ""));
       setLocalStatus(result.parsed?.local_ai_status || localStatus || {});
     } else {
@@ -230,9 +230,6 @@ function AskAstraPage({ initialQuestion = "", selectedSymbol = "" }) {
     }
   };
 
-  const aiStatusText = localStatus?.local_ai_status || "checking";
-  const modelText = localStatus?.selected_model || localStatus?.primary_model || "qwen3:8b";
-
   return (
     <div className="astra-page-grid">
       <form className="astra-ai-panel astra-ai-panel-page" onSubmit={handleSubmit}>
@@ -240,7 +237,7 @@ function AskAstraPage({ initialQuestion = "", selectedSymbol = "" }) {
           <span className="astra-ai-kicker">Premium AI Panel</span>
           <h1>Ask Astra</h1>
           <p>
-            Ask Astra remains user-triggered only. Dashboard render never calls a model; submitted questions use local Qwen through Ollama when available, or a structured cached-data fallback.
+            Ask Astra is your context-first executive assistant. It explains what matters, why it matters, what Astra is watching, and what deserves attention next.
           </p>
           {selectedSymbol ? (
             <div className="astra-selected-symbol-pill">
@@ -248,12 +245,9 @@ function AskAstraPage({ initialQuestion = "", selectedSymbol = "" }) {
             </div>
           ) : null}
           <div className="astra-ai-status-grid">
-            <span>Local AI status <strong>{aiStatusText}</strong></span>
-            <span>Ollama reachable <strong>{localStatus?.ollama_reachable ? "yes" : "no"}</strong></span>
-            <span>Primary model <strong>{localStatus?.primary_model || "qwen3:8b"}</strong></span>
-            <span>Fallback model <strong>{localStatus?.fallback_model || "qwen3:14b"}</strong></span>
-            <span>Active model <strong>{modelText}</strong></span>
-            <span>Response mode <strong>{localStatus?.response_mode || "structured_fallback"}</strong></span>
+            <span>Context <strong>Astra intelligence first</strong></span>
+            <span>Interaction <strong>User-triggered only</strong></span>
+            <span>Safety <strong>Advisory and paper-safe</strong></span>
           </div>
         </div>
         <div className="astra-ai-input-row">
@@ -273,10 +267,14 @@ function AskAstraPage({ initialQuestion = "", selectedSymbol = "" }) {
         ) : null}
         {answer ? <div className="astra-ai-answer">{answer}</div> : null}
       </form>
-      <ShellCard title="Safe Interaction Model" eyebrow="No automatic AI calls">
+      <ShellCard title="Executive Question Guide" eyebrow="Ask in plain English">
         <p>
-          Astra only contacts local AI after you submit a question. If Ollama or Qwen is offline, the page returns a safe structured answer from cached Astra data.
+          Try: How is Astra doing? What changed today? What is hurting performance? Why are there no trades? What should I focus on tomorrow?
         </p>
+        <div className="astra-ai-status-grid">
+          <span>Technical model details <strong>Advanced Diagnostics</strong></span>
+          <span>Automatic AI calls <strong>Disabled</strong></span>
+        </div>
       </ShellCard>
     </div>
   );

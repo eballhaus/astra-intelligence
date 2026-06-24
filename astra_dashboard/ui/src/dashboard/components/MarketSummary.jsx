@@ -164,7 +164,7 @@ export default function MarketSummary({ markets = [], asOf = "n/a", marketSessio
                     <div style={{ height: 6, borderRadius: 999, background: "#e3ebf5", overflow: "hidden" }}>
                       <div style={{ width: `${score}%`, height: "100%", borderRadius: 999, background: tone.bar }} />
                     </div>
-                    <span style={{ color: tone.fg, fontSize: 10, fontWeight: 900, textAlign: "right" }}>Score</span>
+                    <span style={{ color: tone.fg, fontSize: 10, fontWeight: 900, textAlign: "right" }}>Context</span>
                   </div>
                 ) : (
                   <span style={{ color: "#92a3b8", fontSize: 11, fontWeight: 800 }}>Unavailable</span>

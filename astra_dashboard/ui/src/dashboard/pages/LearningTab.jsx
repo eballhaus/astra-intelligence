@@ -1637,6 +1637,7 @@ export default function LearningTab({ compact = false }) {
   const astraLearningPreservationCapacity = unified?.astra_learning_preservation_capacity_v1 || {};
   const astraTruthControlledEvolutionExecutive = unified?.astra_truth_controlled_evolution_executive_v1 || {};
   const astraPerformanceOptimizationSuite = unified?.astra_performance_optimization_suite_v1 || {};
+  const astraIntelligenceMaturationSuite = unified?.astra_intelligence_maturation_suite_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -1840,6 +1841,7 @@ export default function LearningTab({ compact = false }) {
       astra_learning_preservation_capacity_v1: astraLearningPreservationCapacity,
       astra_truth_controlled_evolution_executive_v1: astraTruthControlledEvolutionExecutive,
       astra_performance_optimization_suite_v1: astraPerformanceOptimizationSuite,
+      astra_intelligence_maturation_suite_v1: astraIntelligenceMaturationSuite,
       candidate_ranking_attribution_promotion_intelligence_v1: candidateRankingAttributionPromotion,
       profit_capture_peak_decay_exit_validation_suite_v1: profitCapturePeakDecayExitValidation,
       realistic_shadow_evidence_learning_lab_v1: realisticShadowLab,
@@ -1942,6 +1944,16 @@ export default function LearningTab({ compact = false }) {
     `ASTRA TIER 2 ${label.toUpperCase()}`,
     `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
     JSON.stringify(astraPerformanceOptimizationSuite?.[key] || {}, null, 2),
+  ].join("\n");
+  const tier3SummaryText = () => [
+    "ASTRA TIER 3 INTELLIGENCE MATURATION SUMMARY",
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraIntelligenceMaturationSuite?.executive_summary || {}, null, 2),
+  ].join("\n");
+  const tier3SectionText = (label, key) => [
+    `ASTRA TIER 3 ${label.toUpperCase()}`,
+    `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
+    JSON.stringify(astraIntelligenceMaturationSuite?.[key] || {}, null, 2),
   ].join("\n");
   const measurementsSnapshotText = () => [
     "ASTRA DAILY SNAPSHOT",
@@ -4121,6 +4133,63 @@ export default function LearningTab({ compact = false }) {
             ["Asset Intelligence", "market_context_asset_intelligence_v1"],
           ].map(([label, key]) => (
             <button key={key} type="button" onClick={() => copyText(label, tier2SectionText(label, key))} style={{ border: "1px solid #2f4a72", background: "#102746", color: "#dce9fb", borderRadius: 12, padding: "8px 11px", fontWeight: 800, cursor: "pointer" }}>Copy {label}</button>
+          ))}
+        </div>
+      </details>
+
+      <details style={{ ...panelStyle }} open={false}>
+        <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+          Tier 3 Intelligence Maturation
+        </summary>
+        <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+          Coordinates memory retention, executive communication, maturity readiness, Copilot consistency, and learning governance without changing trading behavior.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+          {[
+            ["Memory Governance", astraIntelligenceMaturationSuite?.executive_summary?.memory_governance],
+            ["Executive Experience", astraIntelligenceMaturationSuite?.executive_summary?.executive_experience],
+            ["Maturity Score", astraIntelligenceMaturationSuite?.executive_summary?.maturity_score],
+            ["Learning Governance", astraIntelligenceMaturationSuite?.executive_summary?.learning_governance],
+            ["Ask Astra Quality", astraIntelligenceMaturationSuite?.executive_summary?.ask_astra_quality],
+            ["Copilot Consistency", astraIntelligenceMaturationSuite?.executive_summary?.copilot_consistency],
+            ["Market Context Status", astraIntelligenceMaturationSuite?.executive_summary?.market_context_status],
+            ["Recommended Focus", astraIntelligenceMaturationSuite?.executive_summary?.recommended_focus],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: "rgba(12,24,42,0.40)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+              <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+              <strong style={{ color: "#f2f7ff" }}>{String(value ?? "warming up").replaceAll("_", " ")}</strong>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+          {[
+            ["Memory Governance", "unified_memory_governance_v1"],
+            ["Executive Experience", "information_architecture_executive_experience_v1"],
+            ["Maturity Gate", "trading_maturity_gate_v1"],
+            ["Learning Governance", "autonomous_learning_governance_v1"],
+          ].map(([label, key]) => {
+            const row = astraIntelligenceMaturationSuite?.[key] || {};
+            return (
+              <details key={key} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
+                <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+                  {label}: {String(row?.status || "warming up").replaceAll("_", " ")}
+                </summary>
+                <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
+                  {JSON.stringify(row, null, 2)}
+                </pre>
+              </details>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+          <button type="button" onClick={() => copyText("Tier 3 summary", tier3SummaryText())} style={{ border: "1px solid #c9d8eb", background: "#f7fbff", color: "#1b4f9c", borderRadius: 12, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Copy Tier 3 Summary</button>
+          {[
+            ["Memory Governance", "unified_memory_governance_v1"],
+            ["Executive Experience", "information_architecture_executive_experience_v1"],
+            ["Maturity Gate", "trading_maturity_gate_v1"],
+            ["Learning Governance", "autonomous_learning_governance_v1"],
+          ].map(([label, key]) => (
+            <button key={key} type="button" onClick={() => copyText(label, tier3SectionText(label, key))} style={{ border: "1px solid #2f4a72", background: "#102746", color: "#dce9fb", borderRadius: 12, padding: "8px 11px", fontWeight: 800, cursor: "pointer" }}>Copy {label}</button>
           ))}
         </div>
       </details>

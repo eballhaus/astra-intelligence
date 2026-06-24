@@ -285,52 +285,93 @@ function normalizeMarketSummary(systemStatus = {}, unifiedDiagnostics = {}) {
     };
   };
   const rows = [
-    map("sp500", "SPX", "S&P 500", ["sp500", "spx", "s_and_p_500"]),
-    map("nasdaq", "NDX", "NASDAQ", ["nasdaq", "ndx"]),
-    map("dow", "DJI", "DOW", ["dow", "dji"]),
-    map("vix", "VIX", "VIX", ["vix", "volatility_index"]),
-    map("bitcoin", "BTC", "Bitcoin", ["bitcoin", "btc"]),
+    map("spy", "SPY", "Broad Market", ["spy", "sp500", "spx", "s_and_p_500"]),
+    map("qqq", "QQQ", "Growth / Technology", ["qqq", "nasdaq", "ndx"]),
+    map("iwm", "IWM", "Small Caps", ["iwm", "russell_2000", "small_caps"]),
+    map("dia", "DIA", "Large Caps", ["dia", "dow", "dji"]),
+    map("vix", "VIX", "Volatility", ["vix", "volatility_index"]),
+    map("bitcoin", "BTC", "Risk Appetite", ["bitcoin", "btc"]),
   ];
   const hasReal = rows.some((r) => Number.isFinite(Number(r.value)) && Number(r.value) > 0);
-  if (hasReal) return rows.filter((r) => Number.isFinite(Number(r.value)) && Number(r.value) > 0);
+  if (hasReal) {
+    const realRows = rows.map((row) => ({
+      ...row,
+      detail: row.symbol === "VIX" ? "Volatility" : row.symbol === "BTC" ? "Risk Appetite" : row.name,
+      sourceLabel: "Last known market data",
+    }));
+    try {
+      window.localStorage.setItem("astra_market_context_lkg_v1", JSON.stringify(realRows));
+    } catch {
+      // Storage is optional; the dashboard still uses the current cached payload.
+    }
+    return realRows;
+  }
 
   const marketBreadth = unifiedDiagnostics?.market_breadth_index_intelligence_v1 || {};
   const proxyRows = Array.isArray(marketBreadth?.index_signal_rows) ? marketBreadth.index_signal_rows : [];
   const proxyLabels = {
-    SPY: ["sp500_proxy", "S&P 500 / SPY Proxy", "SPY"],
-    QQQ: ["nasdaq_proxy", "Nasdaq / QQQ Proxy", "QQQ"],
-    DIA: ["dow_proxy", "Dow / DIA Proxy", "DIA"],
-    IWM: ["small_cap_proxy", "Small Caps / IWM Proxy", "IWM"],
-    VIX: ["vix_pressure", "VIX Pressure", "VIX"],
+    SPY: ["sp500_proxy", "Broad Market", "SPY", "Trend"],
+    QQQ: ["nasdaq_proxy", "Growth / Technology", "QQQ", "Leadership"],
+    IWM: ["small_cap_proxy", "Small Caps", "IWM", "Participation"],
+    DIA: ["dow_proxy", "Large Caps", "DIA", "Trend"],
+    VIX: ["vix_pressure", "Volatility", "VIX", "Volatility"],
   };
   const mapped = proxyRows
     .filter((row) => proxyLabels[String(row?.symbol || "").toUpperCase()])
     .slice(0, 5)
     .map((row) => {
       const symbol = String(row.symbol || "").toUpperCase();
-      const [id, name, displaySymbol] = proxyLabels[symbol];
+      const [id, name, displaySymbol, contextLabel] = proxyLabels[symbol];
       const signal = Number(row.signal);
+      const posture = qualitativeScore(signal);
       return {
         id,
         symbol: displaySymbol,
         name,
         value: signal,
         valueKind: "score",
-        displayValue: Number.isFinite(signal) ? `${signal.toFixed(1)}` : "Score unavailable",
-        detail: labelize(row.role || "context proxy"),
-        sourceLabel: "Astra Score",
+        displayValue: posture,
+        detail: `${contextLabel}: ${labelize(row.role || posture)}`,
+        sourceLabel: contextLabel,
         type: "context",
       };
     });
-  return mapped;
+  const crypto = unifiedDiagnostics?.crypto_shadow_learning_v1 || {};
+  const cryptoRisk = Number(crypto?.crypto_risk_appetite_score);
+  mapped.push({
+    id: "bitcoin_risk_appetite",
+    symbol: "BTC",
+    name: "Risk Appetite",
+    value: cryptoRisk,
+    valueKind: "score",
+    displayValue: Number.isFinite(cryptoRisk) ? qualitativeScore(cryptoRisk) : "Unavailable",
+    detail: Number.isFinite(cryptoRisk) ? `Risk Appetite: ${qualitativeScore(cryptoRisk)}` : "Risk Appetite: cached context unavailable",
+    sourceLabel: "Risk Appetite",
+    type: "context",
+  });
+  if (mapped.length) {
+    try {
+      window.localStorage.setItem("astra_market_context_lkg_v1", JSON.stringify(mapped));
+    } catch {
+      // Last-known-good persistence is best effort.
+    }
+    return mapped;
+  }
+  try {
+    const cachedRows = JSON.parse(window.localStorage.getItem("astra_market_context_lkg_v1") || "[]");
+    if (Array.isArray(cachedRows) && cachedRows.length) return cachedRows;
+  } catch {
+    // Graceful unavailable state below.
+  }
+  return rows.map((row) => ({ ...row, displayValue: "Unavailable", detail: `${row.name}: cached context unavailable`, sourceLabel: row.name }));
 }
 
 function actionColor(action = "") {
   const key = String(action || "").toUpperCase();
-  if (key.includes("SELL_RECOMMENDED")) return "#ff3b4f";
-  if (key.includes("APPROACHING")) return "#ff9f1a";
+  if (key.includes("EXIT_CANDIDATE")) return "#ff3b4f";
+  if (key.includes("STRONG_CANDIDATE")) return "#ff9f1a";
   if (key.includes("WATCH")) return "#f6c453";
-  if (key.includes("HOLD")) return "#4f9dff";
+  if (key.includes("MANAGE_POSITION")) return "#4f9dff";
   return "#28d17c";
 }
 
@@ -516,6 +557,8 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
   const performanceSummary = unifiedDiagnostics?.performance_summary || {};
   const executiveSnapshot = unifiedDiagnostics?.executive_snapshot || {};
   const tier1bExecutive = unifiedDiagnostics?.astra_truth_controlled_evolution_executive_v1 || {};
+  const tier2Optimization = unifiedDiagnostics?.astra_performance_optimization_suite_v1 || {};
+  const tier3Maturation = unifiedDiagnostics?.astra_intelligence_maturation_suite_v1 || {};
   const officialMetrics = tier1bExecutive?.official_metrics || {};
   const executiveDepartments = tier1bExecutive?.executive_intelligence_layer_v1?.departments || [];
   const executionQuality = unifiedDiagnostics?.execution_quality_summary || executiveSnapshot?.execution_quality || {};
@@ -665,22 +708,43 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
       : null,
     risk: labelize(row.portfolio_risk_label || row.risk_label || "Risk Warming Up"),
     consistency: safeNumber(row.rolling_conviction_10r ?? row.conviction_display_score ?? row.buy_quality_score, 0),
+    primaryDriver: String(row.primary_driver || row.setup || row.archetype || row.why_this_is_a_buy || "setup quality and participation"),
+    catalystTheme: String(row.catalyst || row.theme || row.sector || "cached catalyst context is developing"),
+    marketFit: String(row.market_fit || row.market_regime || row.regime || "best when participation and follow-through remain supportive"),
+    invalidation: String(row.invalidation || row.invalidation_reason || row.what_would_invalidate || "momentum, catalyst support, or market participation weakens"),
   }));
   const copilotStatus = unifiedDiagnostics?.astra_copilot_suite_v1 || {};
-  const askLocalAiStatus = unifiedDiagnostics?.ask_astra_local_ai_status_v1 || {};
   const astraExecutive = unifiedDiagnostics?.astra_executive_polish_v1 || {};
   const astraCeo = unifiedDiagnostics?.astra_ceo_polish_v1 || {};
   const astraGovernance = unifiedDiagnostics?.astra_intelligence_governance_v1 || {};
   const astraMarketIntelligence = unifiedDiagnostics?.astra_market_intelligence_v1 || {};
   const astraCio = unifiedDiagnostics?.astra_cio_intelligence_v1 || {};
-  const copilotRows = opportunityRows.map((row) => {
-    const action = row.confidence >= 82 ? "BUY_NOW" : row.confidence >= 68 ? "WATCH_CLOSELY" : "HOLD";
-    const signalLabel = action === "BUY_NOW" ? "🟢 Buy Now" : action === "WATCH_CLOSELY" ? "🟡 Watch Closely" : "🔵 Hold";
+  const sharedCopilotActions = Array.isArray(copilotStatus?.top_actions) ? copilotStatus.top_actions : [];
+  const copilotRows = (sharedCopilotActions.length ? sharedCopilotActions : opportunityRows).slice(0, 5).map((source, idx) => {
+    const fallback = opportunityRows.find((row) => row.symbol === source.symbol) || opportunityRows[idx] || {};
+    const action = String(source.action || (fallback.confidence >= 82 ? "BUY_NOW" : fallback.confidence >= 72 ? "STRONG_CANDIDATE" : "WATCH")).toUpperCase();
+    const actionLabels = {
+      BUY_NOW: "Buy Now",
+      STRONG_CANDIDATE: "Strong Candidate",
+      WATCH: "Watch",
+      MANAGE_POSITION: "Manage Position",
+      EXIT_CANDIDATE: "Exit Candidate",
+    };
     return {
-      ...row,
+      ...fallback,
+      rank: safeNumber(source.rank, idx + 1),
+      symbol: source.symbol || fallback.symbol || "N/A",
       action,
-      actionLabel: action === "BUY_NOW" ? "Buy Now" : action === "WATCH_CLOSELY" ? "Watch Closely" : "Hold",
-      signal: signalLabel,
+      actionLabel: actionLabels[action] || labelize(action),
+      signal: actionLabels[action] || labelize(action),
+      confidence: safeNumber(source.confidence, fallback.confidence),
+      horizon: labelize(source.horizon || source.expected_hold_window || fallback.horizon),
+      why: String(source.simple_why || source.why_astra_chose_it || fallback.why || "Astra is waiting for clearer supporting evidence."),
+      risk: labelize(source.risk_level || fallback.risk),
+      primaryDriver: String(source.primary_driver || fallback.primaryDriver || "setup quality and participation"),
+      catalystTheme: String(source.catalyst_theme || source.catalyst_context || fallback.catalystTheme || "cached context is developing"),
+      marketFit: String(source.market_fit || source.market_regime_context || fallback.marketFit || "selective market fit"),
+      invalidation: String(source.what_would_invalidate_it || fallback.invalidation || "supporting evidence weakens"),
     };
   });
   const leadingThemes = Array.isArray(systemStatus?.current_themes)
@@ -743,11 +807,15 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
     `CIO Watch: ${astraCio?.weakest_cio_area || "CIO context warming up"}`,
     `Governance Watch: ${astraGovernance?.biggest_blind_spot || "blind spots warming up"}`,
   ];
+  const tier2Summary = tier2Optimization?.executive_summary || {};
+  const tier3Experience = tier3Maturation?.information_architecture_executive_experience_v1 || {};
+  const executiveDecision = tier3Experience?.executive_decision_summary_engine_v2 || {};
   const decisionSummary = [
-    astraCeo?.strategic_posture ? `Posture: ${astraCeo.strategic_posture}` : `Market tone ${marketTone}${marketBiasSource ? ` / ${labelize(marketBiasSource)}` : ""}`,
-    astraExecutive?.top_opportunity_summary || `Best opportunity ${bestOpportunity?.symbol || "Warming Up"}`,
-    astraExecutive?.consensus_summary || astraExecutive?.needs_attention_summary || `Main weakness ${mainWeakness}`,
-    astraCio?.cio_summary || (astraCeo?.what_astra_should_learn_next ? `Next learning: ${astraCeo.what_astra_should_learn_next}` : `Next review ${highConfidenceCount > 0 ? "top ranked candidates" : "wait for fresh opportunity evidence"}`),
+    `Today's Posture: ${executiveDecision?.today_posture || astraCeo?.strategic_posture || "Selective and evidence-led."}`,
+    `Best Opportunity: ${executiveDecision?.best_opportunity || copilotRows[0]?.symbol || "Warming Up"}`,
+    `Biggest Weakness: ${labelize(executiveDecision?.biggest_weakness || tier2Summary?.persistent_weakness || mainWeakness)}`,
+    `Biggest Risk: ${labelize(executiveDecision?.biggest_risk || `${tier2Summary?.profit_leak || "giveback"} and ${tier2Summary?.repeated_mistake || "overfiltering"}`)}`,
+    `Tomorrow's Focus: ${labelize(executiveDecision?.tomorrows_focus || tier2Summary?.recommended_focus || nextFocus)}`,
   ];
   const mobilePriorities = [
     `Opportunity: ${bestOpportunity?.symbol ? `${bestOpportunity.symbol} leads the current opportunity stack` : "Astra is waiting for a cleaner top opportunity"}.`,
@@ -867,7 +935,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
             <small>Updated {asOf}</small>
           </div>
           <div className="astra-mobile-market-strip">
-            {(marketSummary || []).slice(0, 5).map((market) => {
+            {(marketSummary || []).slice(0, 6).map((market) => {
               const isScore = market?.valueKind === "score";
               const value = market?.displayValue || (Number.isFinite(Number(market?.value)) ? Number(market.value).toFixed(isScore ? 1 : 2) : "n/a");
               const change = Number(market?.change);
@@ -879,7 +947,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                     <span>{market.name}</span>
                   </div>
                   <b>{value}</b>
-                  <em className={positive ? "positive" : "negative"}>{isScore ? (market?.sourceLabel || "Astra Score") : `${positive ? "+" : ""}${Number.isFinite(change) ? change.toFixed(2) : "0.00"}%`}</em>
+                  <em className={positive ? "positive" : "negative"}>{isScore ? (market?.sourceLabel || "Market Context") : `${positive ? "+" : ""}${Number.isFinite(change) ? change.toFixed(2) : "0.00"}%`}</em>
                   <small>{market.detail || qualitativeScore(market.value)}</small>
                 </article>
               );
@@ -907,7 +975,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                 <span>{row.actionLabel}</span>
                 <strong>{row.symbol}</strong>
                 <div className="astra-mobile-copilot-grid">
-                  <small>Institutional Score <b>{row.consistency ? row.consistency.toFixed(0) : "n/a"}</b></small>
+                  <small>Consistency <b>{row.consistency ? row.consistency.toFixed(0) : "n/a"}</b></small>
                   <small>Confidence <b>{row.confidence.toFixed(0)}%</b></small>
                   <small>Horizon <b>{row.horizon}</b></small>
                   <small>Risk <b>{row.risk}</b></small>
@@ -1030,13 +1098,13 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
 
             <div onClick={() => (typeof onNavigate === "function" ? onNavigate("ask", { question: "What are the best short-term opportunities today?" }) : null)} style={{ borderRadius: 22, padding: 16, background: "radial-gradient(260px 150px at 80% 0%, rgba(45, 119, 255, 0.36), transparent 70%), linear-gradient(135deg, #071a33, #08244b)", boxShadow: "0 22px 54px rgba(0, 0, 0, 0.26)", color: "#ffffff", minHeight: 246, display: "grid", gap: 12, cursor: "pointer", border: "1px solid rgba(129, 170, 229, 0.24)" }}>
               <h2 style={{ margin: 0, fontSize: "1rem", color: "#ffffff" }}>Ask Astra</h2>
-              <p style={{ margin: 0, color: "#c8d8ef", fontSize: 13 }}>Local AI executive assistant. Fast mode uses Qwen only after you submit.</p>
+              <p style={{ margin: 0, color: "#c8d8ef", fontSize: 13 }}>Ask what is happening, why it matters, what Astra is watching, and what deserves attention next.</p>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
                 {[
-                  ["Local AI", askLocalAiStatus?.local_ai_status || "warming up"],
-                  ["Primary", "Qwen3:8B"],
-                  ["Fallback", "Qwen3:14B"],
-                  ["Mode", askLocalAiStatus?.response_mode || "fast fallback"],
+                  ["Context", "Astra intelligence first"],
+                  ["Answers", "Plain English"],
+                  ["Interaction", "User triggered"],
+                  ["Safety", "Advisory only"],
                 ].map(([label, value]) => (
                   <div key={label} style={{ borderRadius: 10, border: "1px solid rgba(180, 209, 255, 0.18)", background: "rgba(255,255,255,0.07)", padding: "7px 8px" }}>
                     <div style={{ color: "#8fb1df", fontSize: 9, fontWeight: 900, textTransform: "uppercase" }}>{label}</div>
@@ -1075,7 +1143,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                 </div>
               ) : copilotRows.map((row) => (
                 <div key={`${row.rank}-${row.symbol}`} onClick={() => selectSymbol(row.symbol, { navigateTo: "copilot" })} style={{ display: "grid", gridTemplateColumns: "132px minmax(90px, .75fr) minmax(94px, .75fr) minmax(120px, .9fr) minmax(0, 3fr)", gap: 10, padding: "10px 0", alignItems: "center", borderBottom: "1px solid rgba(129, 170, 229, 0.12)", cursor: "pointer" }}>
-                  <strong style={{ color: row.action === "BUY_NOW" ? "#5ee6a8" : row.action === "WATCH_CLOSELY" ? "#f6c453" : "#8dbbff", fontSize: 12 }}>{row.signal}</strong>
+                  <strong style={{ color: row.action === "BUY_NOW" ? "#5ee6a8" : row.action === "WATCH" || row.action === "STRONG_CANDIDATE" ? "#f6c453" : row.action === "EXIT_CANDIDATE" ? "#ff8a98" : "#8dbbff", fontSize: 12 }}>{row.signal}</strong>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ color: "#f5f9ff", fontWeight: 950, fontSize: 13 }}>{row.symbol}</div>
                     <div style={{ color: execMutedText, fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.company || row.risk}</div>
@@ -1300,8 +1368,8 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10, marginTop: 12 }}>
                 {(topSection === "copilot" ? [
                   ["Buy Now", `${copilotRows.filter((r) => r.action === "BUY_NOW").length}`],
-                  ["Hold", `${copilotRows.filter((r) => r.action === "HOLD").length}`],
-                  ["Watch Closely", `${copilotRows.filter((r) => r.action === "WATCH_CLOSELY").length}`],
+                  ["Strong Candidates", `${copilotRows.filter((r) => r.action === "STRONG_CANDIDATE").length}`],
+                  ["Watch", `${copilotRows.filter((r) => r.action === "WATCH").length}`],
                   ["System Status", copilotStatus?.status || "cached"],
                 ] : opportunitySummary).map(([label, value]) => (
                   <div key={label} style={{ borderRadius: 14, border: "1px solid rgba(129, 170, 229, 0.20)", background: "rgba(255,255,255,0.06)", padding: "11px 12px" }}>
@@ -1326,10 +1394,10 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
             <section style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10 }}>
               {[
                 ["BUY_NOW", "Buy Now"],
-                ["HOLD", "Hold"],
-                ["WATCH_CLOSELY", "Watch Closely"],
-                ["APPROACHING_SELL", "Approaching Sell"],
-                ["SELL_RECOMMENDED", "Sell Recommended"],
+                ["STRONG_CANDIDATE", "Strong Candidate"],
+                ["WATCH", "Watch"],
+                ["MANAGE_POSITION", "Manage Position"],
+                ["EXIT_CANDIDATE", "Exit Candidate"],
               ].map(([action, label]) => (
                 <div key={action} style={{ ...panelStyle, padding: 14, minHeight: 120 }}>
                   <h2 style={{ ...panelTitleStyle, fontSize: 13 }}>{label}</h2>
@@ -1337,7 +1405,7 @@ export default function Dashboard({ remoteSection = "dashboard", remoteMode = fa
                     {copilotRows.filter((r) => r.action === action).length}
                   </div>
                   <div style={{ color: "#9fb3cf", fontSize: 11, marginTop: 6 }}>
-                    {action === "APPROACHING_SELL" || action === "SELL_RECOMMENDED"
+                    {action === "EXIT_CANDIDATE"
                       ? "Exit center remains advisory. No paper sell behavior is enabled."
                       : "Derived from existing cached rankings."}
                   </div>

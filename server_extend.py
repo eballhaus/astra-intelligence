@@ -2436,6 +2436,7 @@ try:
     from engine.astra_learning_preservation_capacity_v1 import AstraLearningPreservationCapacityV1
     from engine.astra_truth_controlled_evolution_executive_v1 import AstraTruthControlledEvolutionExecutiveV1
     from engine.astra_performance_optimization_suite_v1 import AstraPerformanceOptimizationSuiteV1
+    from engine.astra_intelligence_maturation_suite_v1 import AstraIntelligenceMaturationSuiteV1
 except Exception:
     class _IntelligenceQualityUnavailable:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -2494,6 +2495,7 @@ except Exception:
     AstraLearningPreservationCapacityV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraTruthControlledEvolutionExecutiveV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraPerformanceOptimizationSuiteV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    AstraIntelligenceMaturationSuiteV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
@@ -3188,6 +3190,7 @@ ASTRA_ADAPTIVE_LEARNING = AstraAdaptiveLearningV1(state_dir=STATE)
 ASTRA_LEARNING_PRESERVATION_CAPACITY = AstraLearningPreservationCapacityV1(state_dir=STATE)
 ASTRA_TRUTH_CONTROLLED_EVOLUTION_EXECUTIVE = AstraTruthControlledEvolutionExecutiveV1(state_dir=STATE)
 ASTRA_PERFORMANCE_OPTIMIZATION_SUITE = AstraPerformanceOptimizationSuiteV1(state_dir=STATE)
+ASTRA_INTELLIGENCE_MATURATION_SUITE = AstraIntelligenceMaturationSuiteV1(state_dir=STATE)
 ASTRA_PROVIDER_ORCHESTRATION_DATA_GOVERNANCE = AstraProviderOrchestrationDataGovernanceV1(state_dir=STATE)
 TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
 MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
@@ -42738,13 +42741,28 @@ def _copilot_action_from_row(row, idx=0, action=None, active_symbols=None):
     selected_action = action
     if not selected_action:
         if symbol in active:
-            selected_action = "HOLD"
+            selected_action = "MANAGE_POSITION"
         elif confidence >= 82:
             selected_action = "BUY_NOW"
-        elif confidence >= 68:
-            selected_action = "WATCH_CLOSELY"
+        elif confidence >= 72:
+            selected_action = "STRONG_CANDIDATE"
         else:
-            selected_action = "HOLD"
+            selected_action = "WATCH"
+    selected_action = {
+        "HOLD": "MANAGE_POSITION",
+        "WATCH_CLOSELY": "WATCH",
+        "APPROACHING_SELL": "EXIT_CANDIDATE",
+        "SELL_RECOMMENDED": "EXIT_CANDIDATE",
+    }.get(str(selected_action).upper(), str(selected_action).upper())
+    catalyst = str(r.get("catalyst") or r.get("theme") or r.get("sector") or "cached context is still developing")
+    market_fit = str(r.get("market_fit") or r.get("market_regime") or r.get("regime") or "best when participation and follow-through remain supportive")
+    risk = str(r.get("portfolio_risk_label") or r.get("risk_label") or "volatility and follow-through uncertainty")
+    invalidation = str(
+        r.get("invalidation")
+        or r.get("invalidation_reason")
+        or r.get("what_would_invalidate")
+        or "momentum, catalyst support, or market participation weakens"
+    )
     return {
         "rank": int(idx) + 1,
         "symbol": symbol,
@@ -42755,8 +42773,13 @@ def _copilot_action_from_row(row, idx=0, action=None, active_symbols=None):
         "expected_hold_window": str(r.get("expected_hold_window") or r.get("best_hold_window") or horizon),
         "simple_why": simple_why,
         "why_astra_chose_it": _safe_text(why, 240),
+        "primary_driver": _safe_text(str(r.get("primary_driver") or r.get("setup") or r.get("archetype") or simple_why), 180),
+        "catalyst_theme": _safe_text(catalyst, 160),
+        "market_fit": _safe_text(market_fit, 180),
+        "main_risk": _safe_text(risk, 160),
+        "what_would_invalidate_it": _safe_text(invalidation, 180),
         "simple_summary": _safe_text(f"{symbol}: {selected_action.replace('_', ' ').title()} with {confidence:.0f}% confidence on a {horizon} horizon.", 220),
-        "risk_level": str(r.get("portfolio_risk_label") or r.get("risk_label") or "risk_warming_up"),
+        "risk_level": risk,
         "contributing_systems": [
             "cached_top_buys",
             "candidate_ranking_attribution",
@@ -42821,11 +42844,13 @@ def _astra_copilot_suite_v1(limit=12, force=False):
         "actions_by_type": actions_by_type,
         "action_labels": {
             "BUY_NOW": "Buy Now",
-            "HOLD": "Hold",
-            "WATCH_CLOSELY": "Watch Closely",
-            "APPROACHING_SELL": "Approaching Sell",
-            "SELL_RECOMMENDED": "Sell Recommended",
+            "STRONG_CANDIDATE": "Strong Candidate",
+            "WATCH": "Watch",
+            "MANAGE_POSITION": "Manage Position",
+            "EXIT_CANDIDATE": "Exit Candidate",
         },
+        "ordering_source": "astra_copilot_suite_v1.top_actions",
+        "shared_ordering_enabled": True,
         "source_summary": {
             "top_buys_rows_seen": int(len(rows or [])),
             "broker_truth_source": "cached_alpaca_paper_status_v1",
@@ -43330,6 +43355,8 @@ def _ask_astra_context_compression_v1(context=None):
     cio = c.get("cio_intelligence") if isinstance(c.get("cio_intelligence"), dict) else {}
     institutional = c.get("institutional_intelligence") if isinstance(c.get("institutional_intelligence"), dict) else {}
     aios = c.get("aios_intelligence") if isinstance(c.get("aios_intelligence"), dict) else {}
+    performance_optimization = c.get("performance_optimization") if isinstance(c.get("performance_optimization"), dict) else {}
+    maturation = c.get("intelligence_maturation") if isinstance(c.get("intelligence_maturation"), dict) else {}
     signals = []
     for value in [
         executive.get("market_outlook_summary"),
@@ -43350,6 +43377,8 @@ def _ask_astra_context_compression_v1(context=None):
         aios.get("exit_warning_summary"),
         aios.get("historical_comparison_summary"),
         aios.get("symbol_behavior_summary"),
+        (performance_optimization.get("executive_summary") or {}).get("recommended_focus") if isinstance(performance_optimization.get("executive_summary"), dict) else None,
+        (maturation.get("executive_summary") or {}).get("recommended_focus") if isinstance(maturation.get("executive_summary"), dict) else None,
     ]:
         if value:
             signals.append(_safe_text(str(value), 220))
@@ -43412,6 +43441,8 @@ def _ask_astra_context_compression_v1(context=None):
             "weakest_remaining_areas": aios.get("weakest_remaining_areas"),
             "highest_priority_focus": aios.get("highest_priority_focus"),
         },
+        "performance_optimization": performance_optimization.get("executive_summary") or {},
+        "intelligence_maturation": maturation.get("executive_summary") or {},
         "safety": c.get("safety") or {},
     }
     return {
@@ -43912,6 +43943,21 @@ def astra_performance_optimization_suite_v1(force: bool = False):
     return ASTRA_PERFORMANCE_OPTIMIZATION_SUITE.status(statuses=statuses, force=bool(force))
 
 
+@router.get("/api/astra_intelligence_maturation_suite_v1")
+def astra_intelligence_maturation_suite_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    statuses = dict(cached_unified or {})
+    try:
+        statuses["astra_copilot_suite_v1"] = _astra_copilot_suite_v1(limit=12, force=False)
+    except Exception:
+        statuses["astra_copilot_suite_v1"] = {}
+    try:
+        statuses["astra_recovery_center_v1"] = ASTRA_RECOVERY_CENTER.status(force=False)
+    except Exception:
+        statuses["astra_recovery_center_v1"] = {}
+    return ASTRA_INTELLIGENCE_MATURATION_SUITE.status(statuses=statuses, force=bool(force))
+
+
 @router.post("/api/ask_astra_v1")
 def ask_astra_v1(payload: dict = Body(...)):
     data = payload if isinstance(payload, dict) else {}
@@ -43925,7 +43971,10 @@ def ask_astra_v1(payload: dict = Body(...)):
     if response_mode not in {"fast", "normal", "deep"}:
         response_mode = "fast"
     local_status = _astra_local_ai_status_v1(force=False)
-    copilot = _astra_copilot_suite_v1(limit=5, force=False)
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    copilot = dict((cached_unified or {}).get("astra_copilot_suite_v1") or {})
+    if not copilot:
+        copilot = _astra_copilot_suite_v1(limit=5, force=False)
     ask_context_seed = {"astra_copilot_suite_v1": copilot, "ask_astra_local_ai_status_v1": local_status}
     try:
         recovery_center = ASTRA_RECOVERY_CENTER.status(force=False)
@@ -43951,6 +44000,10 @@ def ask_astra_v1(payload: dict = Body(...)):
     except Exception:
         aios = {}
     ask_context_seed["astra_aios_intelligence_maturation_bundle_v1"] = aios
+    performance_optimization = dict((cached_unified or {}).get("astra_performance_optimization_suite_v1") or {})
+    intelligence_maturation = dict((cached_unified or {}).get("astra_intelligence_maturation_suite_v1") or {})
+    ask_context_seed["astra_performance_optimization_suite_v1"] = performance_optimization
+    ask_context_seed["astra_intelligence_maturation_suite_v1"] = intelligence_maturation
     executive = _astra_executive_summary_v1(ask_context_seed, copilot)
     ceo = _astra_ceo_summary_v1(executive, ask_context_seed)
     top_actions = copilot.get("top_actions") or []
@@ -44061,6 +44114,8 @@ def ask_astra_v1(payload: dict = Body(...)):
             "historical_comparison_summary": (aios.get("institutional_historical_intelligence_engine_v1") or {}).get("top_historical_lesson") if isinstance(aios.get("institutional_historical_intelligence_engine_v1"), dict) else None,
             "symbol_behavior_summary": (aios.get("symbol_behavioral_memory_expansion_v1") or {}).get("strongest_symbol_memory") if isinstance(aios.get("symbol_behavioral_memory_expansion_v1"), dict) else None,
         },
+        "performance_optimization": performance_optimization,
+        "intelligence_maturation": intelligence_maturation,
         "key_supporting_astra_signals": key_signals,
         "supported_question_types": [
             "explain_status",
@@ -44130,19 +44185,24 @@ def ask_astra_v1(payload: dict = Body(...)):
             fast_short = (aios.get("institutional_historical_intelligence_engine_v1") or {}).get("top_historical_lesson") if isinstance(aios.get("institutional_historical_intelligence_engine_v1"), dict) else "Historical comparison is warming up from cached evidence."
         elif "personality" in q_lc or "symbol behavior" in q_lc:
             fast_short = (aios.get("symbol_behavioral_memory_expansion_v1") or {}).get("strongest_symbol_memory") if isinstance(aios.get("symbol_behavioral_memory_expansion_v1"), dict) else "Symbol behavioral memory is warming up."
+        elif "performance" in q_lc or "hurting" in q_lc or "tomorrow" in q_lc or "focus" in q_lc:
+            perf_summary = performance_optimization.get("executive_summary") or {}
+            fast_short = (
+                f"Astra's main weakness is {str(perf_summary.get('persistent_weakness') or 'profit capture').replace('_', ' ')}. "
+                f"The next focus is {str(perf_summary.get('recommended_focus') or 'reduce giveback and wait for confirmation').replace('_', ' ')}."
+            )
         else:
             fast_short = compressed_context.get("highest_priority_signals", ["Astra is using cached intelligence and remains advisory-only."])[0]
+        perf_summary = performance_optimization.get("executive_summary") or {}
+        maturity_summary = intelligence_maturation.get("executive_summary") or {}
         answer = "\n".join([
-            f"Short answer: {fast_short}",
-            f"Plain-English explanation: The current market regime is {compressed_context.get('current_market_regime') or 'warming up'}, with tailwinds from {market_intel.get('market_tailwind_summary')} and headwinds from {market_intel.get('market_headwind_summary')}.",
-            "Key Astra signals:",
-            f"- Top Copilot item: {first.get('action', 'warming_up')} {first.get('symbol', '')} ({first.get('confidence', 'n/a')}% confidence).",
-            f"- Consensus score: {governance.get('consensus_score')}.",
-            f"- Market intelligence score: {market_intel.get('market_intelligence_score')}.",
-            f"- CIO intelligence score: {cio.get('overall_cio_intelligence_score')}.",
-            f"- AIOS final maturation health: {aios.get('final_maturation_bundle_health')}.",
-            f"- Weakest CIO area: {cio.get('weakest_cio_area')}.",
-            f"- Biggest risk/data gap: {governance.get('biggest_blind_spot')}.",
+            f"Direct answer: {fast_short}",
+            f"Why it matters: Astra's main constraint is {str(perf_summary.get('persistent_weakness') or 'profit capture').replace('_', ' ')}, and the current market context is {compressed_context.get('current_market_regime') or 'still developing'}.",
+            "What Astra is watching:",
+            f"- {first.get('symbol') or 'The leading opportunity'}: {str(first.get('action') or 'watch').replace('_', ' ').title()} with {first.get('confidence', 'n/a')}% confidence.",
+            f"- Profit leak: {str(perf_summary.get('profit_leak') or 'giveback').replace('_', ' ')}.",
+            f"- Memory/maturity focus: {str(maturity_summary.get('recommended_focus') or 'reinforce high-value lessons').replace('_', ' ')}.",
+            f"What to do next: {str(perf_summary.get('recommended_focus') or governance.get('highest_priority_fix') or 'Stay selective and wait for confirmation').replace('_', ' ')}.",
             "Safety note: This is cached, advisory-only intelligence. Astra did not change rankings, entries, exits, sizing, allocation, thresholds, or broker behavior.",
         ])
         mode_used = "cached_intelligence"
@@ -44151,7 +44211,7 @@ def ask_astra_v1(payload: dict = Body(...)):
             "You are Ask Astra, a paper-safe investment intelligence copilot. "
             "Use only the compressed Astra JSON context. Keep it simple, plain-English, and grounded in Astra's data. "
             "Do not suggest live trading, broker actions, forced exits, sizing changes, allocation changes, or threshold changes. "
-            "Answer in four concise sections under 150 words unless deep mode is requested: Short answer, Plain-English explanation, Key Astra signals, Safety note.\n\n"
+            "Answer in four concise sections under 150 words unless deep mode is requested: Direct answer, Why it matters, What Astra is watching, What to do next. Add one short safety note.\n\n"
             f"Question: {question}\n\n"
             f"Compressed Astra context JSON:\n{json.dumps(compressed_context, ensure_ascii=True)}"
         )
@@ -44182,24 +44242,26 @@ def ask_astra_v1(payload: dict = Body(...)):
         first = actions[0] if actions else {}
         if first:
             answer = "\n".join([
-                f"Short answer: Astra's strongest current Copilot item is {first.get('action')} for {first.get('symbol')}.",
-                f"Plain-English explanation: Astra likes it because {first.get('simple_why') or first.get('why_astra_chose_it')}. The current expected horizon is {first.get('horizon')}.",
-                "Key Astra signals:",
+                f"Direct answer: Astra's strongest current Copilot item is {first.get('action')} for {first.get('symbol')}.",
+                f"Why it matters: Astra likes it because {first.get('simple_why') or first.get('why_astra_chose_it')}. The current expected horizon is {first.get('horizon')}.",
+                "What Astra is watching:",
                 f"- Confidence: {first.get('confidence')}%",
                 f"- Risk level: {first.get('risk_level')}",
                 f"- Supporting systems: {', '.join(first.get('contributing_systems') or [])}",
+                "What to do next: Review the setup under existing confirmation and safety gates.",
                 "Safety note: This is advisory-only. Astra did not change rankings, entries, exits, sizing, allocation, thresholds, or broker behavior.",
             ])
         else:
             answer = "\n".join([
-                "Short answer: Astra's Copilot context is still warming up.",
-                "Plain-English explanation: There is not enough cached Copilot data to explain a specific action yet.",
-                "Key Astra signals:",
+                "Direct answer: Astra's Copilot context is still warming up.",
+                "Why it matters: There is not enough cached Copilot data to explain a specific action yet.",
+                "What Astra is watching:",
                 "- Cached Copilot top actions are unavailable.",
                 "- Structured fallback is working.",
+                "What to do next: Wait for fresh opportunity evidence and keep the current safety posture.",
                 "Safety note: Astra remains paper-safe and advisory-only; no trading behavior was changed.",
             ])
-    short_answer = answer.splitlines()[0].replace("Short answer:", "").strip() if answer else ""
+    short_answer = answer.splitlines()[0].replace("Short answer:", "").replace("Direct answer:", "").strip() if answer else ""
     safety_note = "Advisory-only. No live trading, broker behavior, ranking, entry, exit, sizing, allocation, or threshold changes."
     return {
         "ok": True,
@@ -55583,6 +55645,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("astra_adaptive_learning_v1", lambda: ASTRA_ADAPTIVE_LEARNING.status(statuses=statuses, force=False))
         _safe_status("astra_learning_preservation_capacity_v1", lambda: ASTRA_LEARNING_PRESERVATION_CAPACITY.status(statuses=statuses, force=False))
         _safe_status("astra_performance_optimization_suite_v1", lambda: ASTRA_PERFORMANCE_OPTIMIZATION_SUITE.status(statuses=statuses, force=False))
+        _safe_status("astra_intelligence_maturation_suite_v1", lambda: ASTRA_INTELLIGENCE_MATURATION_SUITE.status(statuses=statuses, force=False))
         _safe_status("astra_provider_orchestration_data_governance_v1", lambda: _provider_orchestration_data_governance_v1(force=False, statuses=statuses))
         _safe_status("astra_aios_intelligence_maturation_bundle_v1", lambda: ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=statuses, force=False))
         statuses["astra_aios_throughput_institutional_memory_optimization_v1"] = dict((statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {}).get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
@@ -55597,6 +55660,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_adaptive_learning_v1"] = dict(statuses.get("astra_adaptive_learning_v1") or {})
             out["astra_learning_preservation_capacity_v1"] = dict(statuses.get("astra_learning_preservation_capacity_v1") or {})
             out["astra_performance_optimization_suite_v1"] = dict(statuses.get("astra_performance_optimization_suite_v1") or {})
+            out["astra_intelligence_maturation_suite_v1"] = dict(statuses.get("astra_intelligence_maturation_suite_v1") or {})
             out["astra_provider_orchestration_data_governance_v1"] = dict(statuses.get("astra_provider_orchestration_data_governance_v1") or {})
             out["astra_aios_intelligence_maturation_bundle_v1"] = dict(statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {})
             out["astra_aios_throughput_institutional_memory_optimization_v1"] = dict(statuses.get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
@@ -55622,6 +55686,10 @@ def unified_learning_diagnostics_v1(force: bool = False):
             statuses["astra_performance_optimization_suite_v1"] = tier2
             tier1b = dict(ASTRA_TRUTH_CONTROLLED_EVOLUTION_EXECUTIVE.status(statuses=statuses, force=True) or {})
             out["astra_truth_controlled_evolution_executive_v1"] = tier1b
+            statuses["astra_truth_controlled_evolution_executive_v1"] = tier1b
+            tier3 = dict(ASTRA_INTELLIGENCE_MATURATION_SUITE.status(statuses=statuses, force=True) or {})
+            out["astra_intelligence_maturation_suite_v1"] = tier3
+            statuses["astra_intelligence_maturation_suite_v1"] = tier3
             truth = dict(tier1b.get("executive_snapshot_truth_reconciliation_v1") or {})
             official_performance = dict(truth.get("official_performance_summary") or {})
             diagnostic_performance = dict(out.get("performance_summary") or {})

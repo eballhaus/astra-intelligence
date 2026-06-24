@@ -159,6 +159,12 @@ export default function TickerCard({
   const statusToneColor = isPaperReady ? "#1f8b53" : isWatchOrMonitor ? "#a67418" : "#22497d";
 
   const summaryText = rationale || rankedActionExplanation || whyNotLiveReady || whatWouldUpgrade || nearThresholdBlocker || "Remote monitor card";
+  const primaryDriver = String(item?.primary_driver || item?.setup || item?.archetype || summaryText || "setup quality and participation").trim();
+  const catalystTheme = String(item?.catalyst || item?.theme || item?.sector || "Cached catalyst context is developing").trim();
+  const marketFit = String(item?.market_fit || item?.market_regime || item?.regime || "Best when participation and follow-through remain supportive").trim();
+  const expectedHorizon = String(item?.best_horizon_style || item?.best_profit_horizon || item?.trade_horizon_style || item?.horizon || "Warming up").replaceAll("_", " ");
+  const mainRisk = String(item?.portfolio_risk_label || item?.risk_label || "Volatility and follow-through uncertainty").replaceAll("_", " ");
+  const invalidation = String(item?.invalidation || item?.invalidation_reason || item?.what_would_invalidate || "Momentum, catalyst support, or market participation weakens").trim();
   const intelligenceText = String(
     item?.ollama_buy_explanation
       || item?.ollama_explanation
@@ -335,6 +341,14 @@ export default function TickerCard({
           {canonicalState ? <div style={{ ...labelStyle, color: "#3f5f8b" }}>Astra status: {canonicalState.replaceAll("_", " ")}</div> : null}
           <div style={{ fontSize: "0.7rem", lineHeight: 1.35, color: "#3a5375" }}>
             <strong style={{ color: "#27456d" }}>Why Astra likes it:</strong> {summaryText.slice(0, 110)}
+          </div>
+          <div style={{ display: "grid", gap: 3, border: "1px solid #d8e2f0", borderRadius: 9, background: "#f7faff", padding: "0.4rem 0.48rem", fontSize: "0.66rem", color: "#4a6388" }}>
+            <div><strong>Primary Driver:</strong> {primaryDriver.slice(0, 150)}</div>
+            <div><strong>Catalyst / Theme:</strong> {catalystTheme.slice(0, 120)}</div>
+            <div><strong>Market Fit:</strong> {marketFit.slice(0, 140)}</div>
+            <div><strong>Expected Horizon:</strong> {expectedHorizon}</div>
+            <div><strong>Main Risk:</strong> {mainRisk}</div>
+            <div><strong>Invalidation:</strong> {invalidation.slice(0, 150)}</div>
           </div>
           <details style={{ border: "1px solid #d8e2f0", borderRadius: "8px", padding: "0.25rem 0.4rem", background: "#f8fbff" }}>
             <summary style={{ cursor: "pointer", fontSize: "0.66rem", color: "#315078", fontWeight: 700 }}>View Details</summary>
