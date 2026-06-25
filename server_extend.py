@@ -44237,15 +44237,28 @@ def ask_astra_v1(payload: dict = Body(...)):
                 f"Astra's main weakness is {str(perf_summary.get('persistent_weakness') or 'profit capture').replace('_', ' ')}. "
                 f"The next focus is {str(perf_summary.get('recommended_focus') or 'reduce giveback and wait for confirmation').replace('_', ' ')}."
             )
-        elif "capacity" in q_lc or "occupancy" in q_lc or "no trades" in q_lc or "portfolio full" in q_lc:
+        elif (
+            "capacity" in q_lc
+            or "occupancy" in q_lc
+            or "no trades" in q_lc
+            or "portfolio full" in q_lc
+            or "paper trading full" in q_lc
+            or "swing trades" in q_lc
+            or "forcing trades" in q_lc
+            or "return toward baseline" in q_lc
+            or "return to baseline" in q_lc
+        ):
             occupancy_summary = occupancy_evolution.get("executive_summary") or {}
-            explanation = occupancy_evolution.get("executive_explanation_engine_v1") or {}
+            correction = occupancy_evolution.get("paper_learning_capacity_correction_v1") or {}
+            reserve = occupancy_evolution.get("learning_reserve_engine_v1") or {}
             fast_short = (
-                explanation.get("plain_english_summary")
-                or (
-                    f"Paper-learning occupancy is {str(occupancy_summary.get('occupancy_status') or 'warming up').replace('_', ' ')}. "
-                    f"Astra recommends {str(occupancy_summary.get('recommended_action') or 'preserving learning reserve').replace('_', ' ')}."
-                )
+                f"Paper learning reserve is {str(correction.get('learning_reserve_status') or 'warming up').replace('_', ' ')} "
+                f"with a score of {correction.get('learning_reserve_score', 'n/a')}. "
+                f"Astra safely recommends {correction.get('recommended_adaptive_capacity', occupancy_summary.get('adaptive_capacity', 'n/a'))} "
+                f"temporary Paper slots versus a {correction.get('baseline_capacity', 20)}-slot baseline, capped at "
+                f"{correction.get('absolute_safety_ceiling', 40)}. "
+                f"This does not force trades or exits and is not live trading. "
+                f"Astra returns toward baseline as {str(reserve.get('reserve_recovery_plan') or 'natural turnover restores learning reserve').replace('_', ' ')}."
             )
         elif "shadow" in q_lc or "paper promotion" in q_lc or "reached paper" in q_lc or "reach paper" in q_lc:
             persistence = occupancy_evolution.get("persistence_explanation_engine_v1") or {}
@@ -55805,6 +55818,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_adaptive_occupancy_evolution_suite_v1"] = tier4
             out["astra_learning_continuity_controlled_evolution_self_governance_v1"] = tier4
             out["astra_autonomous_intelligence_maturation_v1"] = dict(tier4.get("astra_autonomous_intelligence_maturation_v1") or {})
+            out["astra_paper_learning_capacity_correction_v1"] = dict(tier4.get("paper_learning_capacity_correction_v1") or {})
             out["self_correction_decision_memory_v1"] = dict(statuses.get("self_correction_decision_memory_v1") or {})
             out["self_correction_decision_memory_write_v1"] = memory_update
             statuses["astra_adaptive_occupancy_evolution_suite_v1"] = tier4

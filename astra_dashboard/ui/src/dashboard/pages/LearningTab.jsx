@@ -1958,7 +1958,7 @@ export default function LearningTab({ compact = false }) {
     JSON.stringify(astraIntelligenceMaturationSuite?.[key] || {}, null, 2),
   ].join("\n");
   const tier4SummaryText = () => [
-    "ASTRA LEARNING CONTINUITY, CONTROLLED EVOLUTION & SELF-GOVERNANCE SUMMARY",
+    "ASTRA AUTONOMOUS INTELLIGENCE MATURATION & PAPER LEARNING CAPACITY SUMMARY",
     `Generated: ${String(unified?.generated_at || lastFetchAt || "n/a")}`,
     JSON.stringify(astraAdaptiveOccupancyEvolutionSuite?.executive_summary || {}, null, 2),
   ].join("\n");
@@ -4228,6 +4228,10 @@ export default function LearningTab({ compact = false }) {
             ["Current Bottleneck", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.current_bottleneck],
             ["Self-Governance", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.self_governance],
             ["Paper Learning Velocity", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.paper_learning_velocity_score],
+            ["Learning Reserve", astraAdaptiveOccupancyEvolutionSuite?.learning_reserve_engine_v1?.learning_reserve_status],
+            ["Adaptive Capacity", `${safeNumber(astraAdaptiveOccupancyEvolutionSuite?.adaptive_learning_expansion_v1?.recommended_adaptive_capacity).toFixed(0)} / ${safeNumber(astraAdaptiveOccupancyEvolutionSuite?.adaptive_learning_expansion_v1?.absolute_safety_ceiling, 40).toFixed(0)} max`],
+            ["Capacity Drag", astraAdaptiveOccupancyEvolutionSuite?.position_age_capacity_drag_v1?.capacity_drag_score],
+            ["Missed Learning Pressure", astraAdaptiveOccupancyEvolutionSuite?.horizon_opportunity_queue_v1?.missed_learning_opportunity_score],
             ["Saturation Risk", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.paper_saturation_risk],
             ["Root Cause Confidence", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.root_cause_confidence],
             ["Behavior Verification", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.behavior_verification_score],
@@ -4248,6 +4252,10 @@ export default function LearningTab({ compact = false }) {
             ["Opportunity Cost", "opportunity_cost_intelligence_v1"],
             ["Dynamic Horizon Evolution", "dynamic_horizon_evolution_v1"],
             ["Adaptive Learning Expansion", "adaptive_learning_expansion_v1"],
+            ["Paper Learning Reserve", "learning_reserve_engine_v1"],
+            ["Position Age & Capacity Drag", "position_age_capacity_drag_v1"],
+            ["Horizon Opportunity Queue", "horizon_opportunity_queue_v1"],
+            ["Paper Learning Capacity Correction", "paper_learning_capacity_correction_v1"],
             ["Improvement Classifier", "improvement_classifier_v1"],
             ["Controlled Evolution", "controlled_shadow_paper_evolution_v2"],
             ["Persistence Explanation", "persistence_explanation_engine_v1"],

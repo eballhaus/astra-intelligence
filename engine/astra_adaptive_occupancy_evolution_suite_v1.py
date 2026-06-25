@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 import re
 import time
 from typing import Any
@@ -505,55 +506,100 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
         throughput: dict[str, Any],
         horizon: dict[str, Any],
         continuity: dict[str, Any],
+        reserve: dict[str, Any],
+        drag: dict[str, Any],
+        queue: dict[str, Any],
     ) -> dict[str, Any]:
         capacity = self._capacity(statuses)
         portfolio = status_value(statuses, "portfolio_health_summary")
         broker = status_value(statuses, "alpaca_paper_broker") or status_value(statuses, "alpaca_paper_status_v1")
         copilot = status_value(statuses, "astra_copilot_suite_v1")
         base = max(1, to_int(capacity.get("total_capacity"), 20))
+        configured_ceiling = to_int(os.getenv("ASTRA_PAPER_ADAPTIVE_CAPACITY_CEILING", "40"), 40)
+        absolute_ceiling = max(base, min(40, configured_ceiling))
+        operating_ceiling = min(35, absolute_ceiling)
         used = to_int(occupancy.get("broker_confirmed_positions"), 0)
         heat = _metric_value(portfolio.get("portfolio_heat"))
         concentration = _metric_value(portfolio.get("concentration_risk"))
         correlation = _metric_value(portfolio.get("correlation_risk"))
         paper_verified = bool(broker.get("paper_mode_verified", False))
-        risk_ok = max(heat, concentration, correlation) < 65
+        risk_ok = bool(
+            max(heat, concentration, correlation) < 75
+            and text(portfolio.get("current_portfolio_balance_label"), "controlled") not in {"critical", "unsafe"}
+        )
         opportunity_flow = len(copilot.get("top_actions") or [])
         throughput_slow = (
             throughput.get("learning_flow_status") in {"slowing", "stalled", "critical"}
             or continuity.get("status") in {"constrained", "at_risk", "learning_starved"}
         )
         underdeveloped = horizon.get("underrepresented_horizon") in {"scalp", "day_trade", "multi_day"}
-        occupancy_critical = occupancy.get("occupancy_status") in {"saturated", "learning_blocked"}
+        reserve_depleted = reserve.get("learning_reserve_status") in {"depleted", "critical"}
+        capacity_full = used >= max(1, base - 1)
+        duration_drag = to_float(drag.get("capacity_drag_score"), 0.0)
+        missed_pressure = to_float(queue.get("missed_learning_opportunity_score"), 0.0)
         expansion_allowed = bool(
             throughput_slow
-            and underdeveloped
+            and reserve_depleted
+            and capacity_full
             and opportunity_flow >= 3
             and risk_ok
             and paper_verified
-            and not occupancy_critical
         )
-        step = min(5, max(2, opportunity_flow // 2)) if expansion_allowed else 0
-        recommended = min(30, base + step) if expansion_allowed else base
+        fresh_slots_needed = max(0, to_int(reserve.get("fresh_learning_slots_needed"), 0))
+        learning_buffer = max(0, to_int(reserve.get("recommended_learning_capacity_buffer"), 0))
+        pressure_step = int(math.ceil((duration_drag + missed_pressure) / 40.0))
+        meaningful_step = max(5, fresh_slots_needed, learning_buffer, pressure_step)
+        recommended = (
+            min(operating_ceiling, max(base + meaningful_step, used + max(3, learning_buffer)))
+            if expansion_allowed
+            else base
+        )
         status = "recommended_advisory" if recommended > base else "base_capacity_preserved"
         expansion_reason = (
-            "learning_flow_slow_underdeveloped_low_occupancy_horizons_strong_flow_risk_controlled"
+            "learning_reserve_depleted_capacity_full_turnover_weak_opportunity_flow_present_risk_controlled"
             if expansion_allowed else "expansion_gates_not_all_satisfied"
         )
         contraction_reasons = []
-        if occupancy_critical:
-            contraction_reasons.append("occupancy_pressure_critical")
         if not risk_ok:
             contraction_reasons.append("portfolio_risk_pressure")
         if not throughput_slow:
             contraction_reasons.append("evidence_flow_normal")
+        if not reserve_depleted:
+            contraction_reasons.append("learning_reserve_recovered")
+        if used < base:
+            contraction_reasons.append("position_count_below_baseline")
         if opportunity_flow < 3:
             contraction_reasons.append("opportunity_flow_weak")
+        meaningful_test = bool(
+            recommended >= min(operating_ceiling, max(25, used + 3))
+            if reserve_depleted and capacity_full
+            else True
+        )
+        test_blocker = "none"
+        if not expansion_allowed:
+            blockers = []
+            if not paper_verified:
+                blockers.append("paper_mode_not_verified")
+            if not risk_ok:
+                blockers.append("portfolio_risk_not_controlled")
+            if not throughput_slow:
+                blockers.append("paper_learning_velocity_not_weak")
+            if not reserve_depleted:
+                blockers.append("learning_reserve_not_depleted")
+            if not capacity_full:
+                blockers.append("capacity_not_full")
+            if opportunity_flow < 3:
+                blockers.append("opportunity_flow_below_three")
+            test_blocker = ",".join(blockers) or "expansion_not_required"
         return {
             "module": "Adaptive Learning Expansion Engine V1",
             "status": "ok",
+            "baseline_capacity": base,
             "base_capacity": base,
             "current_effective_capacity": base,
             "recommended_adaptive_capacity": recommended,
+            "absolute_safety_ceiling": absolute_ceiling,
+            "adaptive_operating_range": [base, operating_ceiling],
             "capacity_expansion_status": status,
             "capacity_expansion_reason": expansion_reason,
             "learning_continuity_score": continuity.get("learning_continuity_score"),
@@ -563,11 +609,251 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "capacity_contraction_reason": contraction_reasons or ["none"],
             "adaptive_capacity_used": max(0, used - base),
             "adaptive_capacity_available": max(0, recommended - used),
+            "learning_capacity_status": reserve.get("learning_reserve_status"),
+            "capacity_recommendation_summary": (
+                f"Temporarily recommend {recommended} paper-learning slots, up from the {base}-slot baseline, "
+                f"while reserve is {reserve.get('learning_reserve_status')} and existing ranking, entry, risk, "
+                "duplicate-symbol, buying-power, and session gates remain mandatory."
+                if recommended > base
+                else f"Keep the {base}-slot baseline because one or more expansion safety gates are not satisfied."
+            ),
+            "meaningful_capacity_test_passed": meaningful_test,
+            "expected_capacity_range": [25, operating_ceiling] if expansion_allowed else [base, operating_ceiling],
+            "actual_recommended_capacity": recommended,
+            "capacity_test_reason": (
+                "recommendation_is_meaningfully_above_baseline_for_depleted_learning_reserve"
+                if meaningful_test and recommended > base
+                else "baseline_preserved_by_safety_or_recovery_conditions"
+            ),
+            "capacity_test_blocker": test_blocker,
             "expansion_risk_status": "controlled" if risk_ok else "blocked_by_risk",
             "configured_capacity_changed": False,
             "extra_capacity_creates_trades": False,
             "existing_entry_gates_required": True,
             "preferred_extra_capacity_context": "high_learning_value_lower_occupancy_risk_controlled_paper_only",
+            **_safe_flags(),
+        }
+
+    def _position_capacity_drag(
+        self,
+        statuses: dict[str, Any],
+        occupancy: dict[str, Any],
+        horizon: dict[str, Any],
+    ) -> dict[str, Any]:
+        tier1a = status_value(statuses, "astra_learning_preservation_capacity_v1")
+        lifecycle = dict(tier1a.get("position_lifecycle_auditor_v1") or {})
+        rows = [dict(row) for row in lifecycle.get("position_rows") or [] if isinstance(row, dict)]
+        ages = [
+            max(0.0, to_float(row.get("position_age_hours"), 0.0) / 24.0)
+            for row in rows
+            if to_float(row.get("position_age_hours"), 0.0) > 0.0
+        ]
+        expected_lock = to_float(occupancy.get("expected_capacity_lock_days"), 0.0)
+        average_age = sum(ages) / len(ages) if ages else expected_lock
+        oldest_age = max(ages) if ages else expected_lock
+        exposure = dict(occupancy.get("current_horizon_exposure") or {})
+        long_share = clamp(
+            to_float(exposure.get("multi_day"), 0.0)
+            + to_float(exposure.get("swing"), 0.0)
+            + to_float(exposure.get("longer_hold"), 0.0)
+            + to_float(exposure.get("unknown"), 0.0)
+        )
+        rotation = dict(
+            horizon.get("adaptive_portfolio_rotation_engine_v1")
+            or (horizon.get("modules") or {}).get("adaptive_portfolio_rotation_engine_v1")
+            or {}
+        )
+        trapped = to_float(first(rotation.get("trapped_capital_score"), horizon.get("trapped_capital_score")), 0.0)
+        learning_per_slot = rounded(
+            max(0.0, 100.0 - to_float(occupancy.get("occupancy_pressure_score"), 0.0))
+            / max(1.0, expected_lock),
+            3,
+        )
+        detail_gap = to_int(lifecycle.get("broker_positions_pending_detail"), 0)
+        active = max(1, to_int(lifecycle.get("broker_confirmed_count"), 0))
+        stale_drag = clamp(
+            trapped * 0.35
+            + long_share * 0.30
+            + min(100.0, expected_lock * 8.0) * 0.20
+            + detail_gap / active * 100.0 * 0.15
+        )
+        drag_score = clamp(
+            stale_drag * 0.65
+            + max(0.0, average_age - 1.0) * 5.0
+            + max(0.0, long_share - 35.0) * 0.25
+        )
+        return {
+            "module": "Position Age and Capacity Drag V1",
+            "status": "estimated_from_cached_horizon_and_lifecycle_evidence" if not ages else "measured",
+            "average_position_age_days": rounded(average_age, 3),
+            "oldest_position_age_days": rounded(oldest_age, 3),
+            "long_duration_position_share": rounded(long_share, 3),
+            "capacity_drag_score": rounded(drag_score, 3),
+            "stale_position_learning_drag": rounded(stale_drag, 3),
+            "expected_capacity_lock_days": rounded(expected_lock, 3),
+            "learning_generated_per_occupied_slot": learning_per_slot,
+            "position_age_detail_coverage_pct": rounded(len(ages) / active * 100.0, 3),
+            "position_age_source": (
+                "broker_reconciled_lifecycle_rows"
+                if ages
+                else "horizon_weighted_expected_lock_proxy_active_entry_timestamps_unavailable"
+            ),
+            "capacity_drag_summary": (
+                f"Positions are expected to lock capacity for about {expected_lock:.1f} days on average. "
+                f"Long-duration exposure is {long_share:.1f}% and capacity drag is {drag_score:.1f}; "
+                "this supports temporary capacity expansion but never forced exits."
+            ),
+            **_safe_flags(),
+        }
+
+    def _horizon_opportunity_queue(
+        self,
+        statuses: dict[str, Any],
+        horizon: dict[str, Any],
+    ) -> dict[str, Any]:
+        audit = status_value(statuses, "execution_participation_audit")
+        throughput = status_value(statuses, "paper_throughput_exit_validation_catalyst_intelligence_v1")
+        copilot = status_value(statuses, "astra_copilot_suite_v1")
+        reasons = dict(audit.get("top_rejection_reasons") or {})
+        capacity_blocks = sum(
+            to_int(count, 0)
+            for reason, count in reasons.items()
+            if "capacity" in text(reason, "").lower() or "max_concurrent_positions" in text(reason, "").lower()
+        )
+        missed_high = max(
+            to_int(audit.get("missed_high_expectancy_candidates"), 0),
+            to_int(throughput.get("missed_evidence_estimate"), 0),
+        )
+        underfed = [
+            item for item in [
+                text(first(horizon.get("underrepresented_horizon"), horizon.get("underexposed_horizon")), ""),
+                "scalp" if bool(horizon.get("scalp_learning_blocked")) else "",
+                "day_trade" if bool(horizon.get("day_learning_blocked")) else "",
+            ] if item
+        ]
+        underfed = list(dict.fromkeys(underfed))
+        contexts = []
+        for row in (horizon.get("best_replacement_candidates") or []):
+            if not isinstance(row, dict):
+                continue
+            reason = text(row.get("reason"), "")
+            if "capacity" not in reason and "max_concurrent" not in reason:
+                continue
+            h = _horizon(row.get("horizon"))
+            contexts.append({
+                "symbol": text(row.get("symbol"), "UNKNOWN"),
+                "horizon": h,
+                "quality_confidence": rounded(to_float(row.get("replacement_score"), 0.0), 3),
+                "reason_not_selected": reason,
+                "would_improve_learning_diversity": h in underfed,
+                "later_usefulness_status": "awaiting_outcome",
+            })
+        if not contexts and capacity_blocks:
+            for row in (copilot.get("top_actions") or [])[:5]:
+                if not isinstance(row, dict):
+                    continue
+                h = _horizon(first(row.get("horizon"), row.get("expected_hold_window"), "unknown"))
+                if h not in underfed:
+                    continue
+                contexts.append({
+                    "symbol": text(row.get("symbol"), "UNKNOWN"),
+                    "horizon": h,
+                    "quality_confidence": rounded(to_float(row.get("confidence"), 0.0), 3),
+                    "reason_not_selected": "capacity_constrained_context_not_automatic_trade_queue",
+                    "would_improve_learning_diversity": True,
+                    "later_usefulness_status": "awaiting_outcome",
+                })
+        missed_count = max(capacity_blocks, min(missed_high, capacity_blocks + len(contexts)))
+        score = clamp(
+            to_float(audit.get("missed_opportunity_pressure"), 0.0) * 0.45
+            + min(100.0, capacity_blocks * 3.0) * 0.35
+            + min(100.0, missed_high) * 0.20
+        )
+        return {
+            "module": "Horizon Opportunity Queue V1",
+            "status": "capacity_pressure_detected" if capacity_blocks else "monitoring",
+            "missed_learning_opportunities_count": missed_count,
+            "missed_learning_opportunity_score": rounded(score, 3),
+            "underfed_horizons": underfed,
+            "top_missed_learning_contexts": contexts[:5],
+            "capacity_specific_block_count": capacity_blocks,
+            "high_expectancy_candidates_missed_or_deferred": missed_high,
+            "horizon_opportunity_queue_summary": (
+                f"Capacity pressure accounts for {capacity_blocks} recorded blocks and {missed_high} high-expectancy "
+                f"missed/deferred candidates. Underfed horizons: {', '.join(underfed) or 'none identified'}. "
+                "The queue is diagnostic only and never submits trades."
+            ),
+            "automatic_trade_submission_enabled": False,
+            **_safe_flags(),
+        }
+
+    def _learning_reserve(
+        self,
+        occupancy: dict[str, Any],
+        throughput: dict[str, Any],
+        continuity: dict[str, Any],
+        drag: dict[str, Any],
+        queue: dict[str, Any],
+    ) -> dict[str, Any]:
+        available = to_int(occupancy.get("capacity_available"), 0)
+        capacity = max(1, to_int(occupancy.get("total_capacity"), 20))
+        free_slot_score = clamp(available / max(1.0, capacity * 0.25) * 100.0)
+        turnover = clamp(to_float(throughput.get("open_trade_turnover"), 0.0) * 5.0)
+        diversity = clamp(continuity.get("learning_diversity_score"))
+        velocity = clamp(throughput.get("paper_learning_velocity_score"))
+        drag_score = clamp(drag.get("capacity_drag_score"))
+        missed_score = clamp(queue.get("missed_learning_opportunity_score"))
+        reserve_score = clamp(
+            free_slot_score * 0.30
+            + turnover * 0.20
+            + diversity * 0.18
+            + velocity * 0.17
+            + (100.0 - drag_score) * 0.08
+            + (100.0 - missed_score) * 0.07
+        )
+        if reserve_score >= 70:
+            status = "healthy"
+        elif reserve_score >= 45:
+            status = "low"
+        elif reserve_score >= 20:
+            status = "depleted"
+        else:
+            status = "critical"
+        fresh_slots_needed = max(
+            0,
+            int(math.ceil((60.0 - reserve_score) / 7.0)),
+            3 if status == "depleted" else 0,
+            6 if status == "critical" else 0,
+        )
+        buffer = min(15, max(0, fresh_slots_needed + (2 if available <= 0 else 0)))
+        reasons = []
+        if available <= 0:
+            reasons.append("no_free_baseline_slots")
+        if turnover < 25:
+            reasons.append("zero_or_weak_position_turnover")
+        if diversity < 45:
+            reasons.append("horizon_diversity_weak")
+        if drag_score >= 45:
+            reasons.append("position_duration_capacity_drag")
+        if missed_score >= 45:
+            reasons.append("missed_learning_opportunity_pressure")
+        return {
+            "module": "Learning Reserve Engine V1",
+            "status": status,
+            "learning_reserve_status": status,
+            "learning_reserve_score": rounded(reserve_score, 3),
+            "reserve_depletion_reason": reasons or ["reserve_healthy"],
+            "reserve_recovery_plan": (
+                "temporarily_expand_advisory_capacity_then_contract_toward_baseline_as_natural_closures_restore_reserve"
+                if status in {"depleted", "critical"}
+                else "maintain_baseline_and_monitor_turnover"
+            ),
+            "fresh_learning_slots_needed": fresh_slots_needed,
+            "recommended_learning_capacity_buffer": buffer,
+            "free_baseline_slots": available,
+            "turnover_component_score": rounded(turnover, 3),
+            "diversity_component_score": rounded(diversity, 3),
+            "velocity_component_score": rounded(velocity, 3),
             **_safe_flags(),
         }
 
@@ -1100,15 +1386,11 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
         occupancy: dict[str, Any],
         throughput: dict[str, Any],
         opportunity: dict[str, Any],
+        expansion: dict[str, Any],
+        reserve: dict[str, Any],
+        drag: dict[str, Any],
+        queue: dict[str, Any],
     ) -> dict[str, Any]:
-        tier1a = status_value(statuses, "astra_learning_preservation_capacity_v1")
-        lifecycle = dict(tier1a.get("position_lifecycle_auditor_v1") or {})
-        classifications = dict(lifecycle.get("classification_counts") or {})
-        overheld = to_int(classifications.get("overheld"), 0)
-        thesis_broken = to_int(classifications.get("thesis_broken"), 0)
-        pending_detail = to_int(lifecycle.get("broker_positions_pending_detail"), 0)
-        active = max(1, to_int(lifecycle.get("broker_confirmed_count"), 0))
-        stale_drag = clamp((overheld + thesis_broken) / active * 100.0 + pending_detail / active * 25.0)
         pressure = to_float(occupancy.get("occupancy_pressure_score"), 0.0)
         capacity_score = clamp(100.0 - pressure)
         saturation = clamp(
@@ -1116,34 +1398,37 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             + to_float(occupancy.get("portfolio_monopolization_risk"), 0.0) * 0.45
         )
         highest_cost = dict(opportunity.get("highest_opportunity_cost_context") or {})
-        reserve = (
-            "depleted"
-            if to_int(occupancy.get("capacity_available"), 0) <= 0
-            else "thin"
-            if to_int(occupancy.get("capacity_available"), 0) <= 2
-            else "available"
-        )
+        reserve_status = text(reserve.get("learning_reserve_status"), "critical")
         bottleneck = (
             "all_broker_confirmed_positions_are_swing_and_no_closed_outcomes_are_recycling_capacity"
             if saturation >= 75 and to_int(throughput.get("trades_closed"), 0) == 0
             else f"capacity_reserve_depleted_and_{text(throughput.get('learning_blocker'), 'natural_turnover_required')}"
-            if reserve == "depleted"
+            if reserve_status in {"depleted", "critical"}
             else text(throughput.get("learning_blocker"), "none")
         )
+        recommended_capacity = to_int(expansion.get("recommended_adaptive_capacity"), to_int(occupancy.get("total_capacity"), 20))
         return {
             "module": "Paper Trading Learning Completion V1",
-            "status": "blocked_by_natural_position_turnover" if reserve == "depleted" else "operational",
+            "status": (
+                "adaptive_capacity_recommended"
+                if recommended_capacity > to_int(expansion.get("baseline_capacity"), 20)
+                else "blocked_by_natural_position_turnover"
+                if reserve_status in {"depleted", "critical"}
+                else "operational"
+            ),
             "paper_learning_capacity_score": rounded(capacity_score, 3),
             "paper_learning_velocity_score": throughput.get("paper_learning_velocity_score"),
             "paper_saturation_risk": rounded(saturation, 3),
-            "learning_reserve_status": reserve,
-            "stale_position_learning_drag": rounded(stale_drag, 3),
+            "learning_reserve_status": reserve_status,
+            "learning_reserve_score": reserve.get("learning_reserve_score"),
+            "stale_position_learning_drag": drag.get("stale_position_learning_drag"),
+            "capacity_drag_score": drag.get("capacity_drag_score"),
             "opportunity_cost_score": highest_cost.get("opportunity_cost_score", 0.0),
-            "capacity_recommendation": (
-                "wait_for_natural_closures_then_prefer_qualified_lower_occupancy_horizons_through_existing_gates"
-                if reserve == "depleted"
-                else "preserve_available_learning_reserve"
-            ),
+            "missed_learning_opportunity_score": queue.get("missed_learning_opportunity_score"),
+            "baseline_capacity": expansion.get("baseline_capacity"),
+            "recommended_adaptive_capacity": recommended_capacity,
+            "absolute_safety_ceiling": expansion.get("absolute_safety_ceiling"),
+            "capacity_recommendation": expansion.get("capacity_recommendation_summary"),
             "paper_learning_bottleneck_summary": bottleneck,
             "historical_evidence_is_not_counted_as_fresh_paper_turnover": True,
             **_safe_flags(),
@@ -1391,8 +1676,10 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
         checks = {
             "paper_broker_truth_available": bool(broker.get("paper_mode_verified")),
             "fresh_paper_learning_flow_active": to_float(paper.get("paper_learning_velocity_score"), 0.0) >= 45.0,
-            "paper_learning_reserve_available": paper.get("learning_reserve_status") != "depleted",
-            "paper_learning_not_blocked": paper.get("status") != "blocked_by_natural_position_turnover",
+            "paper_learning_capacity_correction_meaningful": bool(
+                to_int(paper.get("recommended_adaptive_capacity"), 0)
+                >= min(35, max(25, to_int(paper.get("baseline_capacity"), 20) + 5))
+            ),
             "horizon_diversity_adequate": to_float(continuity.get("horizon_diversity_score"), 0.0) >= 35.0,
             "shadow_promotion_governed": bool(shadow.get("rollback_readiness") == "armed"),
             "root_cause_identified": inspection.get("status") == "root_cause_identified",
@@ -1426,8 +1713,7 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
                 "fresh_paper_outcomes_require_natural_position_closures_or_separately_approved_behavior_change"
                 if any(key in incomplete for key in (
                     "fresh_paper_learning_flow_active",
-                    "paper_learning_reserve_available",
-                    "paper_learning_not_blocked",
+                    "paper_learning_capacity_correction_meaningful",
                 ))
                 else incomplete[0] if incomplete else "none"
             ),
@@ -1443,7 +1729,19 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
         continuity = self._learning_continuity(statuses, occupancy, throughput)
         opportunity = self._opportunity_cost(statuses, occupancy, throughput)
         horizon = self._horizon_evolution(statuses, occupancy, throughput)
-        expansion = self._capacity_expansion(statuses, occupancy, throughput, horizon, continuity)
+        drag = self._position_capacity_drag(statuses, occupancy, horizon)
+        queue = self._horizon_opportunity_queue(statuses, horizon)
+        reserve = self._learning_reserve(occupancy, throughput, continuity, drag, queue)
+        expansion = self._capacity_expansion(
+            statuses,
+            occupancy,
+            throughput,
+            horizon,
+            continuity,
+            reserve,
+            drag,
+            queue,
+        )
         classifier = self._improvement_classifier(statuses)
         evolution = self._controlled_evolution(statuses, occupancy, throughput, classifier)
         persistence = self._persistence_explanation(statuses, evolution, throughput)
@@ -1474,7 +1772,16 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             governance,
         )
         prior_memory = status_value(statuses, "self_correction_decision_memory_v1")
-        paper_completion = self._paper_learning_completion(statuses, occupancy, throughput, opportunity)
+        paper_completion = self._paper_learning_completion(
+            statuses,
+            occupancy,
+            throughput,
+            opportunity,
+            expansion,
+            reserve,
+            drag,
+            queue,
+        )
         shadow_completion = self._shadow_paper_completion(classifier, evolution, governance, persistence)
         horizon_completion = self._learning_horizon_completion(statuses, continuity, throughput, horizon)
         inspection = self._autonomous_inspection(statuses, paper_completion, prior_memory)
@@ -1506,6 +1813,11 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "opportunity_cost": text((opportunity.get("highest_opportunity_cost_context") or {}).get("symbol"), "warming_up"),
             "dynamic_horizon_bias": horizon.get("recommended_horizon_bias"),
             "adaptive_capacity": expansion.get("recommended_adaptive_capacity"),
+            "learning_reserve_status": reserve.get("learning_reserve_status"),
+            "learning_reserve_score": reserve.get("learning_reserve_score"),
+            "capacity_drag_score": drag.get("capacity_drag_score"),
+            "missed_learning_opportunity_score": queue.get("missed_learning_opportunity_score"),
+            "meaningful_capacity_test_passed": expansion.get("meaningful_capacity_test_passed"),
             "controlled_evolution_candidate": governance.get("top_evolution_candidate"),
             "evolution_governance": governance.get("adoption_safety_status"),
             "self_governance": self_governance.get("status"),
@@ -1560,6 +1872,22 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "opportunity_cost_intelligence_v1": opportunity,
             "dynamic_horizon_evolution_v1": horizon,
             "adaptive_learning_expansion_v1": expansion,
+            "learning_reserve_engine_v1": reserve,
+            "position_age_capacity_drag_v1": drag,
+            "horizon_opportunity_queue_v1": queue,
+            "paper_learning_capacity_correction_v1": {
+                "paper_learning_capacity_correction_enabled": True,
+                "baseline_capacity": expansion.get("baseline_capacity"),
+                "recommended_adaptive_capacity": expansion.get("recommended_adaptive_capacity"),
+                "absolute_safety_ceiling": expansion.get("absolute_safety_ceiling"),
+                "learning_reserve_status": reserve.get("learning_reserve_status"),
+                "learning_reserve_score": reserve.get("learning_reserve_score"),
+                "capacity_drag_score": drag.get("capacity_drag_score"),
+                "missed_learning_opportunity_score": queue.get("missed_learning_opportunity_score"),
+                "meaningful_capacity_test_passed": expansion.get("meaningful_capacity_test_passed"),
+                "paper_learning_capacity_summary": expansion.get("capacity_recommendation_summary"),
+                **_safe_flags(),
+            },
             "improvement_classifier_v1": classifier,
             "controlled_shadow_paper_evolution_v2": evolution,
             "persistence_explanation_engine_v1": persistence,
