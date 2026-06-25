@@ -753,36 +753,78 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
                 or raw.get("elapsed_hold_hours") is not None
                 or raw.get("position_age") is not None
             )
-            hold_days = measured_hold_days if exact_age else expected_days * 0.75
+            hold_days = measured_hold_days if exact_age else 0.0
             age_ratio = hold_days / expected_days if hold_days > 0 else 0.0
             pnl = to_float(first(raw.get("pnl_percent"), raw.get("unrealized_pnl_percent"), raw.get("unrealized_plpc"), 0.0), 0.0)
             if abs(pnl) <= 2.0 and raw.get("unrealized_plpc") is not None and raw.get("pnl_percent") is None:
                 pnl *= 100.0
+            daily_move = to_float(
+                first(
+                    raw.get("daily_change_percent"),
+                    raw.get("day_change_percent"),
+                    raw.get("daily_pnl_percent"),
+                    raw.get("change_today_percent"),
+                    0.0,
+                ),
+                0.0,
+            )
+            if abs(daily_move) <= 2.0 and any(
+                raw.get(key) is not None
+                for key in ("daily_plpc", "day_plpc", "change_today_plpc")
+            ):
+                daily_move = to_float(
+                    first(raw.get("daily_plpc"), raw.get("day_plpc"), raw.get("change_today_plpc"), 0.0),
+                    0.0,
+                ) * 100.0
             continuation = clamp(first(raw.get("continuation_probability"), 50.0))
             sell_confidence = clamp(first(raw.get("sell_confidence"), raw.get("exit_readiness"), 0.0))
             giveback = clamp(first(raw.get("giveback_risk"), 0.0))
-            thesis = clamp(first(raw.get("thesis_health"), 100.0 - to_float(raw.get("catalyst_decay_risk"), 45.0)))
+            thesis = clamp(
+                first(
+                    raw.get("thesis_health"),
+                    100.0 - to_float(raw.get("catalyst_decay_risk"), 0.0)
+                    if raw.get("catalyst_decay_risk") is not None
+                    else 65.0,
+                )
+            )
             should_sell = bool(raw.get("should_have_sold"))
             profit_protect = bool(raw.get("should_have_profit_protected"))
             conversion = bool(raw.get("should_have_converted_horizon"))
-            if should_sell or (sell_confidence >= 68 and continuation < 45):
-                stage = "exit_review_candidate"
-            elif profit_protect or (sell_confidence >= 60 and giveback >= 60):
-                stage = "near_exit"
-            elif age_ratio >= 1.75 and thesis < 55:
-                stage = "stale"
-            elif age_ratio >= 1.0 and pnl > 0:
-                stage = "mature_winner"
-            elif age_ratio >= 1.0 and pnl <= 0:
-                stage = "mature_loser"
-            elif age_ratio >= 0.65 or conversion:
-                stage = "waiting"
-            elif age_ratio >= 0.25:
-                stage = "active_learning" if continuation >= 50 else "developing"
-            elif hold_days > 0:
-                stage = "developing"
+            if exact_age:
+                if should_sell or (sell_confidence >= 68 and continuation < 45):
+                    stage = "exit_review_candidate"
+                elif profit_protect or (sell_confidence >= 60 and giveback >= 60):
+                    stage = "near_exit"
+                elif age_ratio >= 1.75 and thesis < 55:
+                    stage = "stale"
+                elif age_ratio >= 1.0 and pnl > 0:
+                    stage = "mature_winner"
+                elif age_ratio >= 1.0 and pnl <= 0:
+                    stage = "mature_loser"
+                elif age_ratio >= 0.65 or conversion:
+                    stage = "waiting"
+                elif age_ratio >= 0.25:
+                    stage = "active_learning" if continuation >= 50 else "developing"
+                elif hold_days > 0:
+                    stage = "developing"
+                else:
+                    stage = "new"
             else:
-                stage = "new"
+                # Classify from observable behavior without pretending a proxy timestamp is exact.
+                if should_sell or (pnl <= -7.0 and (continuation < 45 or thesis < 55)):
+                    stage = "exit_review_candidate"
+                elif profit_protect or (pnl >= 7.0 and (giveback >= 50 or daily_move < -1.0)):
+                    stage = "near_exit"
+                elif pnl >= 4.0:
+                    stage = "mature_winner"
+                elif pnl <= -4.0:
+                    stage = "mature_loser"
+                elif conversion or (abs(pnl) < 0.75 and abs(daily_move) < 0.5 and continuation < 55):
+                    stage = "waiting"
+                elif continuation >= 58 or abs(pnl) >= 1.5 or abs(daily_move) >= 1.0:
+                    stage = "active_learning"
+                else:
+                    stage = "developing"
             learning_weight = learning_weights[stage]
             learning_value = rounded(learning_weight * 100.0, 3)
             blocks_learning = bool(learning_weight >= 0.75)
@@ -806,7 +848,21 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
                 "expected_hold_relevance": rounded(clamp(100.0 - max(0.0, age_ratio - 1.0) * 55.0), 3),
                 "position_age_days": rounded(hold_days, 3),
                 "position_age_is_exact": exact_age,
-                "position_age_source": "broker_reconciled_timestamp" if exact_age else "horizon_weighted_proxy",
+                "position_age_source": "broker_reconciled_timestamp" if exact_age else "horizon_and_market_behavior_proxy",
+                "classification_basis": "exact_age_and_position_evidence" if exact_age else "proxy_position_evidence",
+                "classification_confidence": rounded(
+                    clamp(
+                        (
+                            78.0 + (8.0 if should_sell or profit_protect else 0.0)
+                            if exact_age
+                            else 42.0
+                            + min(18.0, abs(pnl) * 1.5)
+                            + min(10.0, abs(daily_move) * 2.0)
+                            + (8.0 if should_sell or profit_protect else 0.0)
+                        )
+                    ),
+                    3,
+                ),
                 "expected_hold_days": rounded(expected_days, 3),
                 "current_thesis_status": "healthy" if thesis >= 60 else "weakening" if thesis >= 35 else "broken",
                 "classification_reason": reason,
@@ -814,6 +870,7 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
                 "should_be_reviewed_for_exit": review_exit,
                 "still_valuable_for_learning": still_valuable,
                 "pnl_percent": rounded(pnl, 3),
+                "daily_movement_percent": rounded(daily_move, 3),
                 "continuation_probability": rounded(continuation, 3),
                 "sell_confidence": rounded(sell_confidence, 3),
                 "giveback_risk": rounded(giveback, 3),
@@ -839,19 +896,34 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "module": "Trade Lifecycle Intelligence Completion V1",
             "status": "ok" if raw_count else "insufficient_evidence",
             "trade_lifecycle_summary": classified,
+            "position_lifecycle_details": classified,
             "lifecycle_stage_counts": stage_counts,
             "high_learning_value_positions": high_value,
             "low_learning_value_positions": low_value,
             "exit_review_candidates": exit_review,
             "stale_positions": stale,
+            "mature_winners": [row for row in classified if row.get("lifecycle_stage") == "mature_winner"],
+            "mature_losers": [row for row in classified if row.get("lifecycle_stage") == "mature_loser"],
+            "near_exit_positions": [row for row in classified if row.get("lifecycle_stage") == "near_exit"],
             "positions_pending_detail": detail_gap,
             "lifecycle_classification_confidence": rounded(confidence, 3),
+            "classification_confidence": rounded(confidence, 3),
+            "lifecycle_refinement_score": rounded(
+                clamp(confidence * 0.65 + len(stage_counts) / max(1, len(learning_weights)) * 35.0),
+                3,
+            ),
+            "proxy_classification_used": bool(len(classified) - exact_age_rows),
             "lifecycle_summary_plain_english": (
                 f"Astra classified {len(classified)} of {raw_count} broker-confirmed positions. "
                 f"{len(high_value)} are still producing strong learning, {len(low_value) + detail_gap} are mostly waiting "
                 f"or low-learning, and {len(exit_review)} deserve exit review. No exit is forced."
             ),
             "proxy_age_rows": len(classified) - exact_age_rows,
+            "lifecycle_refinement_summary": (
+                f"{len(classified)} broker-confirmed positions are separated across {len(stage_counts)} lifecycle "
+                f"stage(s). {len(classified) - exact_age_rows} classification(s) use clearly labeled P/L, movement, "
+                "horizon, and cached-evidence proxies because exact entry times are unavailable."
+            ),
             **_safe_flags(),
         }
 
@@ -912,6 +984,21 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
         rows = list(lifecycle.get("trade_lifecycle_summary") or [])
         review = [dict(row) for row in rows if row.get("should_be_reviewed_for_exit")]
         valid = [dict(row) for row in rows if not row.get("should_be_reviewed_for_exit")]
+        profit_protection = [
+            dict(row) for row in rows
+            if row.get("lifecycle_stage") in {"near_exit", "mature_winner"}
+            and to_float(row.get("pnl_percent"), 0.0) > 0
+        ]
+        loss_containment = [
+            dict(row) for row in rows
+            if row.get("lifecycle_stage") in {"mature_loser", "exit_review_candidate", "stale"}
+            and to_float(row.get("pnl_percent"), 0.0) < 0
+        ]
+        thesis_expiration = [
+            dict(row) for row in rows
+            if row.get("current_thesis_status") in {"weakening", "broken"}
+            or row.get("lifecycle_stage") == "stale"
+        ]
         overdue = [
             row for row in review
             if to_float(row.get("position_age_days"), 0.0) >= to_float(row.get("expected_hold_days"), 999.0)
@@ -931,6 +1018,19 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             + len(overdue) / max(1, len(rows)) * 30.0
             + loss_aversion * 0.15
         )
+        giveback_risk = clamp(
+            sum(
+                max(
+                    to_float(row.get("giveback_risk"), 0.0),
+                    55.0
+                    if to_float(row.get("pnl_percent"), 0.0) > 0
+                    and to_float(row.get("daily_movement_percent"), 0.0) < 0
+                    else 0.0,
+                )
+                for row in profit_protection
+            )
+            / max(1, len(profit_protection))
+        )
         reasons: dict[str, int] = {}
         for row in review:
             reason = text(row.get("classification_reason"), "mixed_exit_review_evidence")
@@ -941,13 +1041,19 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "exit_decision_intelligence_score": rounded(score, 3),
             "overdue_position_count": len(overdue),
             "exit_review_candidates": review,
+            "profit_protection_candidates": profit_protection,
+            "loss_containment_candidates": loss_containment,
+            "thesis_expiration_candidates": thesis_expiration,
+            "hold_still_valid_positions": valid,
             "hold_still_valid_count": len(valid),
             "hold_validation_reasons": sorted(set(text(row.get("classification_reason"), "monitor") for row in valid)),
             "overdue_position_reasons": reasons,
             "loss_aversion_risk_score": rounded(loss_aversion, 3),
+            "giveback_risk_score": rounded(giveback_risk, 3),
             "exit_review_summary": (
-                f"{len(review)} open position(s) merit human exit review and {len(overdue)} are beyond their expected "
-                "hold window. Natural exits remain the default and no sell is forced."
+                f"{len(review)} open position(s) merit human exit review, with {len(profit_protection)} profit "
+                f"protection, {len(loss_containment)} loss containment, and {len(thesis_expiration)} thesis-expiration "
+                "review signal(s). Natural exits remain the default and no sell is forced."
             ),
             **_safe_flags(),
         }
@@ -1192,7 +1298,20 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
     ) -> dict[str, Any]:
         profit = status_value(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
         learned = status_value(statuses, "controlled_paper_learned_exit_validation_v1")
-        candidates = list(exit_review.get("exit_review_candidates") or [])
+        candidates = []
+        seen = set()
+        for group in (
+            exit_review.get("exit_review_candidates") or [],
+            exit_review.get("profit_protection_candidates") or [],
+            exit_review.get("loss_containment_candidates") or [],
+            exit_review.get("thesis_expiration_candidates") or [],
+        ):
+            for row in group:
+                symbol = text((row or {}).get("symbol"), "UNKNOWN")
+                if symbol in seen:
+                    continue
+                seen.add(symbol)
+                candidates.append(dict(row))
         watched = [
             {
                 "symbol": row.get("symbol"),
@@ -1212,10 +1331,22 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             and learned.get("paper_exit_path_verified")
             and not learned.get("learned_exit_bucket_auto_disabled", False)
         )
+        blockers = []
+        if not shadow_completion.get("micro_test_readiness"):
+            blockers.append("shadow_evidence_gate_not_ready")
+        if not learned.get("paper_exit_path_verified"):
+            blockers.append("paper_exit_path_not_verified")
+        if learned.get("learned_exit_bucket_auto_disabled", False):
+            blockers.append("learned_exit_bucket_auto_disabled")
         return {
             "module": "Shadow to Paper Feedback Connection V1",
             "status": "candidate_watchlist_active" if watched else "monitoring",
+            "shadow_feedback_routing_enabled": True,
             "shadow_exit_candidates_to_watch": watched,
+            "shadow_candidates_to_watch": watched,
+            "paper_micro_test_candidates": watched[:1] if readiness else [],
+            "promotion_blockers": blockers,
+            "evidence_needed": blockers or ["continue_comparable_shadow_and_paper_outcome_validation"],
             "profit_capture_candidate_status": "candidate_to_watch" if any(row["pattern"] == "profit_capture" for row in watched) else "insufficient_current_open_position_evidence",
             "giveback_reduction_candidate_status": "candidate_to_watch" if to_float(profit.get("giveback_risk_score"), 0.0) >= 50 else "monitoring",
             "overdue_hold_candidate_status": "candidate_to_watch" if any(row["pattern"] == "overdue_hold" for row in watched) else "monitoring",
@@ -1223,6 +1354,10 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "shadow_paper_feedback_summary": (
                 f"{len(watched)} open-position pattern(s) now feed the existing Shadow-to-Paper candidate watchlist. "
                 "No Shadow logic changed and no Paper behavior is promoted automatically."
+            ),
+            "shadow_feedback_summary": (
+                f"{len(watched)} weakness pattern(s) are routed into the existing Shadow watchlist; "
+                f"Paper micro-testing is {'eligible for human review' if readiness else 'blocked pending evidence and safety gates'}."
             ),
             "automatic_promotion_enabled": False,
             **_safe_flags(),
@@ -2010,26 +2145,88 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
         statuses: dict[str, Any],
         paper: dict[str, Any],
         memory: dict[str, Any],
+        lifecycle: dict[str, Any],
+        exit_review: dict[str, Any],
+        continuity: dict[str, Any],
+        effective: dict[str, Any],
+        shadow_feedback: dict[str, Any],
+        trading_governance: dict[str, Any],
     ) -> dict[str, Any]:
         research = status_value(statuses, "autonomous_research_self_regulation_status_v1")
         validation = status_value(statuses, "autonomous_intelligence_validation_governance_v1")
-        root_causes = list(research.get("likely_root_causes") or [])
-        root_cause = text(first(root_causes[0] if root_causes else None, validation.get("top_root_cause")), "insufficient_evidence")
-        issue = text(first(research.get("primary_trading_weakness"), paper.get("paper_learning_bottleneck_summary")), "unknown")
+        recovery = status_value(statuses, "astra_recovery_center_v1")
+        provider = status_value(statuses, "astra_provider_orchestration_data_governance_v1")
+        ask = status_value(statuses, "ask_astra_local_ai_status_v1")
+        unified = status_value(statuses, "unified_learning_diagnostics_v1")
+        broker = status_value(statuses, "alpaca_paper_broker") or status_value(statuses, "alpaca_paper_status_v1")
+        aios = status_value(statuses, "astra_aios_intelligence_maturation_bundle_v1")
+        tier1a = status_value(statuses, "astra_learning_preservation_capacity_v1")
+        dashboard_safe = bool(
+            to_int(provider.get("dashboard_provider_calls_used"), 0) == 0
+            and to_int(provider.get("dashboard_llm_calls_used"), 0) == 0
+        )
+        lifecycle_score = to_float(lifecycle.get("lifecycle_refinement_score"), 0.0)
+        exit_score = clamp(100.0 - to_float(exit_review.get("exit_decision_intelligence_score"), 0.0))
+        department_inputs = [
+            ("Trading Brain", trading_governance.get("autonomous_trading_governance_score"), trading_governance.get("top_trading_bottleneck"), trading_governance.get("root_cause"), trading_governance.get("recommended_safe_correction")),
+            ("Paper Trading", paper.get("paper_learning_capacity_score"), paper.get("paper_learning_bottleneck_summary"), "position_turnover_and_gate_constraints", paper.get("capacity_recommendation")),
+            ("Shadow Learning", first(aios.get("shadow_learning_score"), 70.0 if shadow_feedback.get("shadow_exit_candidates_to_watch") else 55.0), shadow_feedback.get("promotion_blockers"), "evidence_must_pass_existing_promotion_gates", "continue_shadow_candidate_validation"),
+            ("Learning Continuity", continuity.get("learning_continuity_score"), continuity.get("continuity_bottleneck"), "fresh_paper_turnover_is_below_cached_evidence_flow", continuity.get("recommended_action")),
+            ("Adaptive Capacity", clamp(100.0 - to_float(effective.get("learning_occupancy_pressure"), 0.0)), effective.get("learning_occupancy_pressure"), "risk_positions_and_learning_positions_have_unequal_value", "use_effective_learning_occupancy_with_existing_risk_gates"),
+            ("Horizon Diversity", continuity.get("learning_diversity_score"), first(continuity.get("underfed_horizon"), "horizon_concentration"), "current_positions_do_not_evenly_generate_horizon_evidence", continuity.get("dynamic_horizon_recommendation")),
+            ("Exit Intelligence", exit_score, f"{len(exit_review.get('exit_review_candidates') or [])}_positions_need_review", "exit_review_evidence_is_advisory_and_age_detail_is_partial", "review_profit_protection_loss_containment_and_thesis_expiration_candidates"),
+            ("Profit Capture", clamp(100.0 - to_float(exit_review.get("giveback_risk_score"), 0.0)), "profit_capture_and_giveback", "winners_can_decay_before_natural_exit_evidence_matures", "route_profit_protection_patterns_to_shadow"),
+            ("Giveback", clamp(100.0 - to_float(exit_review.get("giveback_risk_score"), 0.0)), exit_review.get("giveback_risk_score"), "open_winner_retracement_requires_review_not_forced_execution", "monitor_mature_winners_and_near_exit_positions"),
+            ("Decision Memory", memory.get("knowledge_retention_score"), memory.get("latest_root_cause"), "correction_outcomes_need_more_comparable_snapshots", "retain_and_compare_the_next_behavior_snapshot"),
+            ("Provider Governance", first(provider.get("provider_health_score"), 85.0 if dashboard_safe else 35.0), provider.get("weakest_area"), "provider_use_must_remain_budgeted_and_cache_first", "preserve_zero_dashboard_provider_calls"),
+            ("Recovery Center", first(recovery.get("recovery_health_score"), 70.0), recovery.get("status_label"), "runtime_health_depends_on_persistent_service_checks", "continue_recovery_monitoring"),
+            ("Ask Astra", first(ask.get("health_score"), 80.0 if ask.get("ollama_reachable") else 55.0), "local_model_or_cached_fallback_quality", "answers_depend_on_cached_unified_context", "keep_plain_english_grounding_and_structured_fallback"),
+            ("Learning Center", 100.0 if to_int(unified.get("initial_learning_tab_endpoint_count"), 1) == 1 else 40.0, "single_endpoint_and_compact_explanation_quality", "all_panels_depend_on_unified_cached_payload", "retain_one_initial_endpoint"),
+            ("Dashboard Safety", 100.0 if dashboard_safe else 25.0, "provider_or_llm_render_calls" if not dashboard_safe else "none", "dashboard_must_not_compute_or_fetch_provider_intelligence", "preserve_cached_summary_only_rendering"),
+            ("Broker/Paper Safety", 100.0 if broker.get("paper_mode_verified") and not broker.get("broker_live_endpoint_allowed") else 20.0, "paper_mode_verification", "broker_truth_and_paper_endpoint_are_mandatory", "keep_broker_truth_and_live_endpoint_block"),
+        ]
+        departments: list[dict[str, Any]] = []
         prior_root = text(memory.get("latest_root_cause"), "insufficient_evidence")
+        for name, raw_score, bottleneck, root, action in department_inputs:
+            score = clamp(raw_score)
+            status = "healthy" if score >= 75 else "watch" if score >= 50 else "needs_attention"
+            departments.append({
+                "department": name,
+                "current_status": status,
+                "score": rounded(score, 3),
+                "trend": "stable" if score >= 60 else "needs_improvement",
+                "strongest_area": "safety_and_cached_diagnostics" if score >= 75 else "existing_observability",
+                "weakest_area": text(bottleneck, "insufficient_evidence"),
+                "primary_bottleneck": text(bottleneck, "insufficient_evidence"),
+                "root_cause": text(root, "insufficient_evidence"),
+                "repeated_issue": bool(prior_root == text(root, "")),
+                "prior_correction_exists": bool(memory.get("latest_recommendation")),
+                "recommended_next_action": text(action, "continue_safe_observation"),
+                "confidence": rounded(clamp(45.0 + score * 0.45), 3),
+            })
+        weakest = min(departments, key=lambda row: row["score"], default={})
+        root_causes = list(research.get("likely_root_causes") or [])
+        root_cause = text(first(weakest.get("root_cause"), root_causes[0] if root_causes else None, validation.get("top_root_cause")), "insufficient_evidence")
+        issue = text(first(weakest.get("primary_bottleneck"), research.get("primary_trading_weakness"), paper.get("paper_learning_bottleneck_summary")), "unknown")
         repeated = bool(prior_root == root_cause or memory.get("repeated_observations_retained"))
-        action = text(first(research.get("next_best_action_summary"), validation.get("recommended_virtual_test")), "continue_shadow_validation")
+        action = text(first(weakest.get("recommended_next_action"), research.get("next_best_action_summary"), validation.get("recommended_virtual_test")), "continue_shadow_validation")
         confidence = max(
             to_float(research.get("root_cause_confidence"), 0.0),
             to_float(validation.get("confidence"), 0.0),
+            to_float(weakest.get("confidence"), 0.0),
         )
+        platform_score = sum(row["score"] for row in departments) / max(1, len(departments))
         return {
-            "module": "Autonomous Inspection and Root Cause Completion V1",
+            "module": "Platform-Wide Autonomous Inspection V1",
             "status": "root_cause_identified" if root_cause != "insufficient_evidence" else "insufficient_evidence",
-            "autonomous_inspection_score": rounded(confidence, 3),
+            "autonomous_inspection_enabled": True,
+            "autonomous_inspection_score": rounded(platform_score, 3),
+            "platform_inspection_score": rounded(platform_score, 3),
+            "department_scores": departments,
             "issue_detected": issue,
             "top_detected_issue": issue,
             "root_cause": root_cause,
+            "primary_root_cause": root_cause,
             "root_cause_chain": root_causes or [root_cause],
             "repeated_issue": repeated,
             "repeated_issue_detected": repeated,
@@ -2039,6 +2236,11 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "recommended_action": action,
             "recommended_next_action": action,
             "inspection_confidence": rounded(confidence, 3),
+            "plain_english_inspection_summary": (
+                f"Astra inspected {len(departments)} departments. The clearest weakness is "
+                f"{issue.replace('_', ' ')}, mainly because {root_cause.replace('_', ' ')}. "
+                f"The safest next step is to {action.replace('_', ' ')}; no trading behavior changes."
+            ),
             "inspection_summary": (
                 f"Astra traced {issue.replace('_', ' ')} to {root_cause.replace('_', ' ')}. "
                 "The correction remains advisory and will be measured against the next comparable snapshot."
@@ -2046,7 +2248,15 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             **_safe_flags(),
         }
 
-    def _autonomous_improvement(self, statuses: dict[str, Any]) -> dict[str, Any]:
+    def _autonomous_improvement(
+        self,
+        statuses: dict[str, Any],
+        inspection: dict[str, Any],
+        lifecycle: dict[str, Any],
+        exit_review: dict[str, Any],
+        paper: dict[str, Any],
+        shadow_feedback: dict[str, Any],
+    ) -> dict[str, Any]:
         prioritization = status_value(statuses, "adaptive_learning_prioritization_resource_allocation_v1")
         rows = [dict(row) for row in prioritization.get("weakness_rankings") or [] if isinstance(row, dict)]
         for row in rows:
@@ -2056,10 +2266,87 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
                 * (1.0 - to_float(row.get("noise_risk_score"), 0.0) / 140.0),
                 3,
             )
-        best = max(rows, key=lambda row: row.get("evidence_adjusted_roi", 0.0), default={})
+        candidates = [
+            {
+                "weakness": "exit_decision_intelligence",
+                "business_value_score": 88.0,
+                "trading_impact_score": 82.0,
+                "learning_impact_score": 76.0,
+                "safety_risk_score": 12.0,
+                "evidence_support_score": clamp(45.0 + len(exit_review.get("exit_review_candidates") or []) * 6.0),
+                "implementation_complexity": "low_existing_review_path",
+                "urgency_score": clamp(45.0 + to_float(exit_review.get("exit_decision_intelligence_score"), 0.0)),
+                "shadow_testable": True,
+                "paper_micro_test_ready": bool(shadow_feedback.get("paper_micro_test_readiness")),
+            },
+            {
+                "weakness": "trade_lifecycle_classification",
+                "business_value_score": 80.0,
+                "trading_impact_score": 65.0,
+                "learning_impact_score": 90.0,
+                "safety_risk_score": 8.0,
+                "evidence_support_score": lifecycle.get("classification_confidence", 0.0),
+                "implementation_complexity": "low_existing_classifier_refinement",
+                "urgency_score": 78.0 if lifecycle.get("proxy_classification_used") else 55.0,
+                "shadow_testable": True,
+                "paper_micro_test_ready": False,
+            },
+            {
+                "weakness": "paper_learning_velocity",
+                "business_value_score": 84.0,
+                "trading_impact_score": 70.0,
+                "learning_impact_score": 94.0,
+                "safety_risk_score": 20.0,
+                "evidence_support_score": clamp(100.0 - to_float(paper.get("paper_learning_velocity_score"), 0.0)),
+                "implementation_complexity": "medium_existing_capacity_and_gate_pipeline",
+                "urgency_score": 85.0,
+                "shadow_testable": True,
+                "paper_micro_test_ready": False,
+            },
+            {
+                "weakness": "decision_memory_reinforcement",
+                "business_value_score": 58.0,
+                "trading_impact_score": 30.0,
+                "learning_impact_score": 80.0,
+                "safety_risk_score": 5.0,
+                "evidence_support_score": inspection.get("inspection_confidence", 0.0),
+                "implementation_complexity": "low_existing_bounded_memory",
+                "urgency_score": 52.0,
+                "shadow_testable": False,
+                "paper_micro_test_ready": False,
+            },
+        ]
+        for row in candidates:
+            row["evidence_adjusted_roi"] = rounded(
+                (
+                    row["business_value_score"] * 0.25
+                    + row["trading_impact_score"] * 0.20
+                    + row["learning_impact_score"] * 0.20
+                    + row["evidence_support_score"] * 0.20
+                    + row["urgency_score"] * 0.15
+                )
+                * (1.0 - row["safety_risk_score"] / 150.0),
+                3,
+            )
+        for row in rows:
+            candidates.append({
+                "weakness": row.get("weakness", "unknown"),
+                "business_value_score": row.get("performance_impact_score", 0.0),
+                "trading_impact_score": row.get("performance_impact_score", 0.0),
+                "learning_impact_score": row.get("expected_learning_value", 0.0),
+                "safety_risk_score": row.get("noise_risk_score", 100.0),
+                "evidence_support_score": row.get("sample_size_confidence", 0.0),
+                "implementation_complexity": "existing_prioritization_worker",
+                "urgency_score": row.get("improvement_potential_score", 0.0),
+                "shadow_testable": True,
+                "paper_micro_test_ready": False,
+                "evidence_adjusted_roi": row.get("evidence_adjusted_roi", 0.0),
+            })
+        candidates.sort(key=lambda row: to_float(row.get("evidence_adjusted_roi"), 0.0), reverse=True)
+        best = candidates[0] if candidates else {}
         safe = bool(
-            to_float(best.get("sample_size_confidence"), 0.0) >= 60.0
-            and to_float(best.get("noise_risk_score"), 100.0) <= 40.0
+            to_float(best.get("evidence_support_score"), 0.0) >= 45.0
+            and to_float(best.get("safety_risk_score"), 100.0) <= 30.0
         )
         return {
             "module": "Autonomous Improvement Prioritization Completion V1",
@@ -2067,16 +2354,22 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "autonomous_improvement_score": best.get("evidence_adjusted_roi", 0.0),
             "highest_roi_improvement": best.get("weakness", "insufficient_evidence"),
             "top_improvement_candidate": best.get("weakness", "insufficient_evidence"),
-            "expected_improvement_score": best.get("improvement_potential_score", 0.0),
-            "expected_benefit": best.get("improvement_potential_score", 0.0),
-            "implementation_complexity": "low_existing_worker_and_replay_focus_only",
-            "safety_risk": "low_advisory_only",
-            "business_value_score": best.get("performance_impact_score", 0.0),
-            "evidence_support_score": best.get("sample_size_confidence", 0.0),
-            "improvement_priority_rankings": rows[:5],
+            "safest_next_improvement": min(candidates, key=lambda row: row.get("safety_risk_score", 100.0), default={}).get("weakness", "insufficient_evidence"),
+            "expected_improvement_score": best.get("business_value_score", 0.0),
+            "expected_benefit": {
+                "business_value": best.get("business_value_score", 0.0),
+                "trading_impact": best.get("trading_impact_score", 0.0),
+                "learning_impact": best.get("learning_impact_score", 0.0),
+            },
+            "implementation_complexity": best.get("implementation_complexity", "unknown"),
+            "safety_risk": best.get("safety_risk_score", 100.0),
+            "business_value_score": best.get("business_value_score", 0.0),
+            "evidence_support_score": best.get("evidence_support_score", 0.0),
+            "ranked_improvement_queue": candidates[:8],
+            "improvement_priority_rankings": candidates[:8],
             "evidence_adjusted_roi_score": best.get("evidence_adjusted_roi", 0.0),
-            "improvement_confidence": best.get("sample_size_confidence", 0.0),
-            "noise_risk_score": best.get("noise_risk_score", 100.0),
+            "improvement_confidence": best.get("evidence_support_score", 0.0),
+            "noise_risk_score": best.get("safety_risk_score", 100.0),
             "safe_to_recommend": safe,
             "recommended_worker_focus": (
                 "confidence_calibration_worker"
@@ -2091,9 +2384,17 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "recommended_memory_focus": (
                 f"retain_high_confidence_{best.get('weakness', 'learning')}_lessons"
             ),
+            "why_this_is_priority": (
+                f"{best.get('weakness', 'No area')} has the strongest combined business, trading, learning, "
+                "urgency, evidence, and safety-adjusted value."
+            ),
             "why_this_priority": (
-                f"{best.get('weakness', 'No area')} has the strongest evidence-adjusted ROI after "
-                "penalizing low sample confidence and noise."
+                f"{best.get('weakness', 'No area')} has the strongest combined business, trading, learning, "
+                "urgency, evidence, and safety-adjusted value."
+            ),
+            "plain_english_improvement_summary": (
+                f"Astra's highest-value safe improvement is {text(best.get('weakness'), 'continued validation').replace('_', ' ')}. "
+                "It should be refined through existing diagnostics and Shadow validation before any Paper micro-test."
             ),
             "improvement_summary": (
                 f"{best.get('weakness', 'No area')} has the strongest evidence-adjusted ROI after "
@@ -2118,8 +2419,10 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
         return {
             "module": "Decision Memory and Knowledge Retention Completion V1",
             "status": memory.get("status", "insufficient_evidence"),
+            "decision_memory_enabled": True,
             "decision_memory_score": rounded(retention, 3),
             "decision_memory_entries": memory.get("active_memory_entries", 0),
+            "correction_memories_stored": memory.get("active_memory_entries", 0),
             "retained_corrections_count": memory.get("active_memory_entries", 0),
             "retained_failed_experiments_count": max(
                 0,
@@ -2127,6 +2430,18 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
                 - to_int(memory.get("recommendations_improved_later"), 0),
             ),
             "repeated_issue_memory_hits": memory.get("repeated_observations_retained", 0),
+            "recurring_issue_memory_hits": memory.get("repeated_observations_retained", 0),
+            "prior_correction_matches": int(bool(inspection.get("prior_correction_found"))),
+            "successful_corrections": memory.get("recommendations_improved_later", 0),
+            "failed_corrections": max(
+                0,
+                to_int(memory.get("outcomes_evaluated"), 0)
+                - to_int(memory.get("recommendations_improved_later"), 0),
+            ),
+            "memory_reinforcement_needed": bool(
+                to_int(memory.get("outcomes_evaluated"), 0)
+                < max(3, to_int(memory.get("active_memory_entries"), 0) // 4)
+            ),
             "useful_memory_retrieval_rate": (
                 rounded(
                     to_int(memory.get("outcomes_evaluated"), 0)
@@ -2152,6 +2467,150 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
                 "Repeated snapshots are compacted, prior recommendations are scored against later comparable states, "
                 "and the current root-cause/priority/recommendation DNA is retained."
             ),
+            "decision_memory_summary": (
+                f"{to_int(memory.get('active_memory_entries'), 0)} bounded correction memories are retained; "
+                f"{to_int(memory.get('outcomes_evaluated'), 0)} have comparable later outcomes and "
+                f"{to_int(memory.get('recommendations_improved_later'), 0)} improved."
+            ),
+            **_safe_flags(),
+        }
+
+    def _root_cause_intelligence(
+        self,
+        inspection: dict[str, Any],
+        lifecycle: dict[str, Any],
+        exit_review: dict[str, Any],
+        effective: dict[str, Any],
+        memory: dict[str, Any],
+    ) -> dict[str, Any]:
+        symptom = text(inspection.get("top_detected_issue"), "insufficient_evidence")
+        waiting = to_int((lifecycle.get("lifecycle_stage_counts") or {}).get("waiting"), 0)
+        review_count = len(exit_review.get("exit_review_candidates") or [])
+        immediate = (
+            "open_positions_have_unequal_learning_value_and_some_require_exit_review"
+            if waiting or review_count
+            else "fresh_paper_outcomes_are_arriving_slower_than_cached_learning"
+        )
+        underlying = text(
+            inspection.get("primary_root_cause"),
+            "risk_bearing_positions_can_remain_open_while_generating_limited_fresh_learning",
+        )
+        affected = [
+            row.get("department")
+            for row in inspection.get("department_scores") or []
+            if isinstance(row, dict) and to_float(row.get("score"), 100.0) < 60.0
+        ]
+        evidence = {
+            "waiting_positions": waiting,
+            "exit_review_candidates": review_count,
+            "effective_learning_occupancy": effective.get("effective_learning_occupancy"),
+            "raw_open_positions": effective.get("raw_open_positions"),
+            "proxy_lifecycle_rows": lifecycle.get("proxy_age_rows"),
+        }
+        return {
+            "module": "Autonomous Root-Cause Intelligence V1",
+            "status": "root_cause_identified" if underlying != "insufficient_evidence" else "insufficient_evidence",
+            "symptom": symptom,
+            "immediate_cause": immediate,
+            "underlying_cause": underlying,
+            "root_cause_chain": [symptom, immediate, underlying],
+            "affected_systems": affected or ["Paper Trading", "Learning Continuity", "Exit Intelligence"],
+            "supporting_evidence": evidence,
+            "prior_similar_issue": bool(inspection.get("repeated_issue_detected")),
+            "prior_correction_outcome": memory.get("recommendation_effectiveness_score"),
+            "recommended_safe_correction": inspection.get("recommended_next_action"),
+            "root_cause_confidence": inspection.get("inspection_confidence"),
+            **_safe_flags(),
+        }
+
+    def _daily_autonomous_brief(
+        self,
+        inspection: dict[str, Any],
+        root_cause: dict[str, Any],
+        improvement: dict[str, Any],
+        lifecycle: dict[str, Any],
+        exit_review: dict[str, Any],
+        shadow_feedback: dict[str, Any],
+    ) -> dict[str, Any]:
+        stage_counts = dict(lifecycle.get("lifecycle_stage_counts") or {})
+        improved = (
+            "Lifecycle classifications now distinguish developing, active, mature, waiting, and review states "
+            "without inventing entry timestamps."
+        )
+        worsened = (
+            f"{len(exit_review.get('exit_review_candidates') or [])} position(s) currently merit human exit review."
+            if exit_review.get("exit_review_candidates")
+            else "No clear deterioration is confirmed; fresh Paper turnover remains the main evidence gap."
+        )
+        weakness = text(inspection.get("top_detected_issue"), "fresh_paper_learning_velocity")
+        correction = text(root_cause.get("recommended_safe_correction"), "continue_safe_shadow_validation")
+        shadow_test = (
+            "Compare earlier profit protection, loss containment, and stale-hold reviews against natural exits."
+            if shadow_feedback.get("shadow_exit_candidates_to_watch")
+            else "Collect more complete lifecycle and exit evidence before proposing a micro-test."
+        )
+        paper_watch = (
+            f"Watch {len(exit_review.get('profit_protection_candidates') or [])} profit-protection and "
+            f"{len(exit_review.get('loss_containment_candidates') or [])} loss-containment candidate(s); do not auto-exit."
+        )
+        daily = (
+            f"Astra inspected its platform and found {weakness.replace('_', ' ')} as the main weakness. "
+            f"The underlying cause is {text(root_cause.get('underlying_cause'), 'still being validated').replace('_', ' ')}. "
+            f"The safest next improvement is {text(improvement.get('highest_roi_improvement'), 'continued evidence collection').replace('_', ' ')}. "
+            f"Paper should {paper_watch.lower()} Shadow should {shadow_test.lower()} "
+            "All recommendations remain advisory and paper-safe."
+        )
+        return {
+            "module": "Autonomous Daily Executive Brief V1",
+            "status": "ok",
+            "daily_autonomous_brief": daily,
+            "what_improved": improved,
+            "what_worsened": worsened,
+            "biggest_current_weakness": weakness,
+            "root_cause": root_cause.get("underlying_cause"),
+            "safest_next_correction": correction,
+            "shadow_test_recommendation": shadow_test,
+            "paper_watch_item": paper_watch,
+            "what_eric_should_know": (
+                f"Lifecycle evidence spans {len(stage_counts)} stage(s), but proxy-based rows remain clearly labeled "
+                "and no automatic action was enabled."
+            ),
+            "next_highest_value_improvement": improvement.get("highest_roi_improvement"),
+            **_safe_flags(),
+        }
+
+    def _autonomous_intelligence_behavior_tests(
+        self,
+        inspection: dict[str, Any],
+        root_cause: dict[str, Any],
+        improvement: dict[str, Any],
+        memory: dict[str, Any],
+        lifecycle: dict[str, Any],
+        exit_review: dict[str, Any],
+        shadow_feedback: dict[str, Any],
+        brief: dict[str, Any],
+    ) -> dict[str, Any]:
+        stage_counts = dict(lifecycle.get("lifecycle_stage_counts") or {})
+        tests = {
+            "test_a_platform_inspection": len(inspection.get("department_scores") or []) >= 16 and bool(inspection.get("top_detected_issue")),
+            "test_b_root_cause": len(root_cause.get("root_cause_chain") or []) >= 3 and bool(root_cause.get("supporting_evidence")),
+            "test_c_improvement_queue": bool(improvement.get("ranked_improvement_queue")) and improvement.get("safety_risk") is not None,
+            "test_d_decision_memory": bool(memory.get("decision_memory_enabled")) and "correction_memories_stored" in memory,
+            "test_e_lifecycle_refinement": bool(stage_counts) and (len(stage_counts) > 1 or len(lifecycle.get("trade_lifecycle_summary") or []) <= 1) and "proxy_classification_used" in lifecycle,
+            "test_f_exit_decision": all(key in exit_review for key in ("profit_protection_candidates", "loss_containment_candidates", "hold_still_valid_positions")) and exit_review.get("forced_exits_enabled") is False,
+            "test_g_shadow_feedback": "shadow_exit_candidates_to_watch" in shadow_feedback and shadow_feedback.get("automatic_promotion_enabled") is False,
+            "test_h_plain_english_brief": len(text(brief.get("daily_autonomous_brief"), "")) >= 80 and "_" not in text(brief.get("daily_autonomous_brief"), ""),
+        }
+        passed = sum(bool(value) for value in tests.values())
+        return {
+            "module": "Autonomous Intelligence Behavior Verification V1",
+            "status": "PASS" if passed == len(tests) else "WARNING",
+            "tests": tests,
+            "tests_passed": passed,
+            "tests_total": len(tests),
+            "behavior_verification_score": rounded(passed / len(tests) * 100.0, 3),
+            "critical_failures": [key for key, value in tests.items() if not value],
+            "business_objective_achieved": passed == len(tests),
             **_safe_flags(),
         }
 
@@ -2356,9 +2815,51 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             prior_memory,
         )
         horizon_completion = self._learning_horizon_completion(statuses, continuity, throughput, horizon)
-        inspection = self._autonomous_inspection(statuses, paper_completion, prior_memory)
-        improvement = self._autonomous_improvement(statuses)
+        inspection = self._autonomous_inspection(
+            statuses,
+            paper_completion,
+            prior_memory,
+            lifecycle,
+            exit_review,
+            continuity,
+            effective,
+            shadow_feedback,
+            trading_governance,
+        )
+        improvement = self._autonomous_improvement(
+            statuses,
+            inspection,
+            lifecycle,
+            exit_review,
+            paper_completion,
+            shadow_feedback,
+        )
         decision_memory = self._decision_memory(statuses, inspection, improvement)
+        root_cause = self._root_cause_intelligence(
+            inspection,
+            lifecycle,
+            exit_review,
+            effective,
+            prior_memory,
+        )
+        daily_brief = self._daily_autonomous_brief(
+            inspection,
+            root_cause,
+            improvement,
+            lifecycle,
+            exit_review,
+            shadow_feedback,
+        )
+        autonomous_behavior_tests = self._autonomous_intelligence_behavior_tests(
+            inspection,
+            root_cause,
+            improvement,
+            decision_memory,
+            lifecycle,
+            exit_review,
+            shadow_feedback,
+            daily_brief,
+        )
         behavior_verification = self._behavior_verification(
             statuses,
             paper_completion,
@@ -2416,10 +2917,18 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "paper_saturation_risk": paper_completion.get("paper_saturation_risk"),
             "fresh_learning_score": horizon_completion.get("fresh_learning_score"),
             "horizon_diversity_score": horizon_completion.get("horizon_diversity_score"),
+            "autonomous_intelligence_enabled": True,
             "autonomous_inspection_score": inspection.get("autonomous_inspection_score"),
+            "platform_inspection_score": inspection.get("platform_inspection_score"),
+            "top_detected_issue": inspection.get("top_detected_issue"),
+            "primary_root_cause": inspection.get("primary_root_cause"),
             "autonomous_improvement_score": improvement.get("autonomous_improvement_score"),
             "decision_memory_score": decision_memory.get("decision_memory_score"),
-            "behavior_verification_score": behavior_verification.get("behavior_verification_score"),
+            "lifecycle_refinement_score": lifecycle.get("lifecycle_refinement_score"),
+            "exit_decision_intelligence_score": exit_review.get("exit_decision_intelligence_score"),
+            "shadow_feedback_routing_enabled": shadow_feedback.get("shadow_feedback_routing_enabled"),
+            "daily_autonomous_brief": daily_brief.get("daily_autonomous_brief"),
+            "behavior_verification_score": autonomous_behavior_tests.get("behavior_verification_score"),
             "core_completion_score": behavior_verification.get("core_completion_score"),
             "strongest_autonomous_area": "broker_truth_and_cached_shadow_evidence",
             "weakest_autonomous_area": "fresh_paper_turnover_and_capacity_reserve",
@@ -2444,6 +2953,7 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
                 if continuity.get("status") != "healthy"
                 else throughput.get("recommended_throughput_action")
             ),
+            "autonomous_intelligence_summary": daily_brief.get("daily_autonomous_brief"),
         }
         return with_safety({
             "enabled": True,
@@ -2501,9 +3011,26 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "shadow_paper_controlled_evolution_completion_v1": shadow_completion,
             "learning_continuity_horizon_completion_v1": horizon_completion,
             "autonomous_inspection_root_cause_completion_v1": inspection,
+            "autonomous_root_cause_intelligence_v1": root_cause,
             "autonomous_improvement_prioritization_completion_v1": improvement,
             "decision_memory_knowledge_retention_completion_v1": decision_memory,
+            "autonomous_daily_executive_brief_v1": daily_brief,
+            "autonomous_intelligence_behavior_verification_v1": autonomous_behavior_tests,
             "behavior_verification_core_completion_v1": behavior_verification,
+            "astra_autonomous_intelligence_v1": {
+                "autonomous_intelligence_enabled": True,
+                "platform_inspection": inspection,
+                "root_cause_intelligence": root_cause,
+                "improvement_prioritization": improvement,
+                "decision_memory": decision_memory,
+                "trade_lifecycle_refinement": lifecycle,
+                "exit_decision_intelligence": exit_review,
+                "shadow_feedback_routing": shadow_feedback,
+                "daily_executive_brief": daily_brief,
+                "behavior_verification": autonomous_behavior_tests,
+                "autonomous_intelligence_summary": daily_brief.get("daily_autonomous_brief"),
+                **_safe_flags(),
+            },
             "astra_autonomous_intelligence_maturation_v1": summary,
             "executive_summary": summary,
             "bounded_cached_sources_only": True,

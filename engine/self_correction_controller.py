@@ -185,13 +185,19 @@ class SelfCorrectionController:
         )
         return {
             "status": "ok" if entries else "insufficient_evidence",
+            "decision_memory_enabled": True,
             "memory_path": self.history_path,
             "active_memory_entries": len(entries),
+            "correction_memories_stored": len(entries),
             "compressed_archive_count": _to_int((history or {}).get("compressed_archive_count"), 0),
             "duplicate_snapshots_suppressed": _to_int((history or {}).get("duplicate_snapshots_suppressed"), 0),
             "repeated_observations_retained": repeated,
             "outcomes_evaluated": len(resolved),
             "recommendations_improved_later": len(improved),
+            "successful_corrections": len(improved),
+            "failed_corrections": max(0, len(resolved) - len(improved)),
+            "prior_correction_matches": int(bool(entries and latest.get("repeat_count", 1) > 1)),
+            "recurring_issue_memory_hits": repeated,
             "recommendation_effectiveness_score": round(effectiveness, 3),
             "knowledge_retention_score": round(retention, 3),
             "latest_memory_age_hours": round(age_hours, 3) if age_hours is not None else None,
@@ -204,6 +210,11 @@ class SelfCorrectionController:
             "latest_intelligence_dna": dict(latest.get("intelligence_dna") or {}),
             "decision_memory_prevents_duplicate_research": bool(
                 _to_int((history or {}).get("duplicate_snapshots_suppressed"), 0) > 0
+            ),
+            "memory_reinforcement_needed": len(resolved) < max(3, len(entries) // 4),
+            "decision_memory_summary": (
+                f"{len(entries)} bounded correction memories retained; {len(resolved)} have comparable outcomes, "
+                f"{len(improved)} improved, and {max(0, len(resolved) - len(improved))} did not."
             ),
             "behavior_safe_to_apply": False,
             "paper_only_preserved": True,
@@ -220,7 +231,16 @@ class SelfCorrectionController:
             "expected_benefit": dict(snapshot.get("expected_benefit") or {}),
         }
         evidence = {
+            "issue_detected": str(snapshot.get("issue_detected") or snapshot.get("primary_blocker") or "none"),
             "root_cause": str(snapshot.get("root_cause") or "insufficient_evidence"),
+            "correction_applied": str(snapshot.get("correction_applied") or "advisory_recommendation_only"),
+            "correction_worked": snapshot.get("correction_worked"),
+            "behavior_test_result": str(snapshot.get("behavior_test_result") or "not_yet_evaluated"),
+            "learning_impact": snapshot.get("learning_impact"),
+            "paper_trading_impact": snapshot.get("paper_trading_impact"),
+            "shadow_readiness_impact": snapshot.get("shadow_readiness_impact"),
+            "issue_recurred": bool(snapshot.get("issue_recurred")),
+            "future_recommendation": str(snapshot.get("future_recommendation") or snapshot.get("recommended_action") or "continue_collecting"),
             "primary_blocker": str(snapshot.get("primary_blocker") or "none"),
             "paper_learning_bottleneck": str(snapshot.get("paper_learning_bottleneck") or "none"),
             "behavior_verification_score": _to_float(snapshot.get("behavior_verification_score"), 0.0),

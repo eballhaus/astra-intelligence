@@ -4240,6 +4240,12 @@ export default function LearningTab({ compact = false }) {
             ["Root Cause Confidence", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.root_cause_confidence],
             ["Behavior Verification", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.behavior_verification_score],
             ["Highest ROI Improvement", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.highest_roi_improvement],
+            ["Platform Inspection", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.platform_inspection_score],
+            ["Top Detected Issue", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.top_detected_issue],
+            ["Primary Root Cause", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.primary_root_cause],
+            ["Lifecycle Refinement", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.lifecycle_refinement_score],
+            ["Exit Intelligence", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.exit_decision_intelligence_score],
+            ["Shadow Feedback", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.shadow_feedback_routing_enabled ? "active" : "warming up"],
             ["Recommended Next Step", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.recommended_next_step],
           ].map(([label, value]) => (
             <div key={label} style={{ background: "rgba(12,24,42,0.40)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
@@ -4248,6 +4254,12 @@ export default function LearningTab({ compact = false }) {
             </div>
           ))}
         </div>
+        {astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.daily_autonomous_brief ? (
+          <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, border: "1px solid #34577f", background: "rgba(6,28,52,0.72)", color: "#dce9fb", fontSize: 12, lineHeight: 1.55 }}>
+            <strong style={{ color: "#7dd3fc" }}>Autonomous Intelligence:</strong>{" "}
+            {astraAdaptiveOccupancyEvolutionSuite.executive_summary.daily_autonomous_brief}
+          </div>
+        ) : null}
         <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
           {[
             ["Learning Continuity", "learning_continuity_engine_v1"],
@@ -4280,8 +4292,11 @@ export default function LearningTab({ compact = false }) {
             ["Shadow to Paper Completion", "shadow_paper_controlled_evolution_completion_v1"],
             ["Horizon Completion", "learning_continuity_horizon_completion_v1"],
             ["Autonomous Root Cause", "autonomous_inspection_root_cause_completion_v1"],
+            ["Platform Root-Cause Intelligence", "autonomous_root_cause_intelligence_v1"],
             ["Improvement Priority", "autonomous_improvement_prioritization_completion_v1"],
             ["Decision Memory", "decision_memory_knowledge_retention_completion_v1"],
+            ["Autonomous Daily Brief", "autonomous_daily_executive_brief_v1"],
+            ["Autonomous Intelligence Verification", "autonomous_intelligence_behavior_verification_v1"],
             ["Behavior Verification", "behavior_verification_core_completion_v1"],
           ].map(([label, key]) => {
             const row = astraAdaptiveOccupancyEvolutionSuite?.[key] || {};

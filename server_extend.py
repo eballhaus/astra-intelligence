@@ -44044,6 +44044,9 @@ def ask_astra_v1(payload: dict = Body(...)):
     ask_context_seed["astra_autonomous_intelligence_maturation_v1"] = dict(
         occupancy_evolution.get("astra_autonomous_intelligence_maturation_v1") or {}
     )
+    ask_context_seed["astra_autonomous_intelligence_v1"] = dict(
+        occupancy_evolution.get("astra_autonomous_intelligence_v1") or {}
+    )
     executive = _astra_executive_summary_v1(ask_context_seed, copilot)
     ceo = _astra_ceo_summary_v1(executive, ask_context_seed)
     top_actions = copilot.get("top_actions") or []
@@ -44166,6 +44169,7 @@ def ask_astra_v1(payload: dict = Body(...)):
             "decision_memory": occupancy_evolution.get("decision_memory_knowledge_retention_completion_v1") or {},
             "behavior_verification": occupancy_evolution.get("behavior_verification_core_completion_v1") or {},
         },
+        "autonomous_intelligence": occupancy_evolution.get("astra_autonomous_intelligence_v1") or {},
         "key_supporting_astra_signals": key_signals,
         "supported_question_types": [
             "explain_status",
@@ -44178,6 +44182,11 @@ def ask_astra_v1(payload: dict = Body(...)):
             "why_shadow_has_not_reached_paper",
             "what_is_blocking_improvement",
             "what_needs_to_happen_next",
+            "biggest_weakness_and_root_cause",
+            "what_shadow_should_test",
+            "what_paper_should_watch",
+            "trades_needing_review",
+            "next_safest_improvement",
             "biggest_opportunity",
             "today_market_explanation",
         ],
@@ -44293,7 +44302,21 @@ def ask_astra_v1(payload: dict = Body(...)):
                 f"This does not force trades or exits and is not live trading. "
                 f"Astra returns toward baseline as {str(reserve.get('reserve_recovery_plan') or 'natural turnover restores learning reserve').replace('_', ' ')}."
             )
-        elif "shadow" in q_lc or "paper promotion" in q_lc or "reached paper" in q_lc or "reach paper" in q_lc:
+        elif (
+            ("shadow" in q_lc or "paper promotion" in q_lc or "reached paper" in q_lc or "reach paper" in q_lc)
+            and not any(
+                phrase in q_lc
+                for phrase in (
+                    "biggest weakness",
+                    "why is it happening",
+                    "doing about it",
+                    "shadow test",
+                    "paper watch",
+                    "need review",
+                    "safest improvement",
+                )
+            )
+        ):
             persistence = occupancy_evolution.get("persistence_explanation_engine_v1") or {}
             evolution = occupancy_evolution.get("controlled_shadow_paper_evolution_v2") or {}
             fast_short = (
@@ -44307,6 +44330,20 @@ def ask_astra_v1(payload: dict = Body(...)):
                 f"Learning continuity is {str(continuity.get('status') or 'warming up').replace('_', ' ')} "
                 f"with a score of {continuity.get('learning_continuity_score', 'n/a')}. "
                 f"The main constraint is {str(maturation.get('current_bottleneck') or continuity.get('continuity_bottleneck') or 'insufficient evidence').replace('_', ' ')}."
+            )
+        elif (
+            "biggest weakness" in q_lc
+            or "why is it happening" in q_lc
+            or "doing about it" in q_lc
+            or "shadow test" in q_lc
+            or "paper watch" in q_lc
+            or "need review" in q_lc
+            or "safest improvement" in q_lc
+        ):
+            autonomous = occupancy_evolution.get("astra_autonomous_intelligence_v1") or {}
+            brief = autonomous.get("daily_executive_brief") or {}
+            fast_short = brief.get("daily_autonomous_brief") or (
+                "Astra's autonomous inspection is still warming up from cached diagnostics."
             )
         elif "blocking improvement" in q_lc or "what is blocking" in q_lc or "what needs to happen next" in q_lc:
             self_governance = occupancy_evolution.get("self_governance_engine_v1") or {}
@@ -55833,9 +55870,20 @@ def unified_learning_diagnostics_v1(force: bool = False):
             inspection = dict(tier4.get("autonomous_inspection_root_cause_completion_v1") or {})
             improvement = dict(tier4.get("autonomous_improvement_prioritization_completion_v1") or {})
             behavior = dict(tier4.get("behavior_verification_core_completion_v1") or {})
+            autonomous_behavior = dict(tier4.get("autonomous_intelligence_behavior_verification_v1") or {})
+            autonomous_root = dict(tier4.get("autonomous_root_cause_intelligence_v1") or {})
             memory_update = SELF_CORRECTION_CONTROLLER.record_maturation_snapshot({
                 "recommended_action": inspection.get("recommended_action"),
+                "issue_detected": inspection.get("top_detected_issue"),
                 "root_cause": inspection.get("root_cause"),
+                "correction_applied": "advisory_recommendation_and_shadow_routing_only",
+                "correction_worked": autonomous_behavior.get("business_objective_achieved"),
+                "behavior_test_result": autonomous_behavior.get("status"),
+                "learning_impact": (tier4.get("learning_continuity_engine_v1") or {}).get("learning_continuity_score"),
+                "paper_trading_impact": (tier4.get("paper_trading_learning_completion_v1") or {}).get("paper_learning_velocity_score"),
+                "shadow_readiness_impact": (tier4.get("shadow_paper_controlled_evolution_completion_v1") or {}).get("shadow_paper_readiness_score"),
+                "issue_recurred": inspection.get("repeated_issue_detected"),
+                "future_recommendation": autonomous_root.get("recommended_safe_correction"),
                 "primary_blocker": behavior.get("remaining_blocker"),
                 "paper_learning_bottleneck": (
                     (tier4.get("paper_trading_learning_completion_v1") or {}).get("paper_learning_bottleneck_summary")
@@ -55859,6 +55907,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_adaptive_occupancy_evolution_suite_v1"] = tier4
             out["astra_learning_continuity_controlled_evolution_self_governance_v1"] = tier4
             out["astra_autonomous_intelligence_maturation_v1"] = dict(tier4.get("astra_autonomous_intelligence_maturation_v1") or {})
+            out["astra_autonomous_intelligence_v1"] = dict(tier4.get("astra_autonomous_intelligence_v1") or {})
             out["astra_paper_learning_capacity_correction_v1"] = dict(tier4.get("paper_learning_capacity_correction_v1") or {})
             out["astra_trading_intelligence_completion_v1"] = {
                 "effective_learning_capacity_v1": dict(tier4.get("effective_learning_capacity_v1") or {}),
