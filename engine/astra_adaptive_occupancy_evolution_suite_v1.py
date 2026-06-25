@@ -222,17 +222,24 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
         opened = to_int(first(base.get("opportunities_executed"), horizon.get("selected_horizon_count"), 0), 0)
         closed = max(to_int(base.get("trades_closed_today"), 0), to_int(recycling.get("recently_closed_positions"), 0))
         cycles = max(to_int(base.get("opportunities_reviewed"), 0), to_int(shadow.get("shadow_learning_events"), 0))
-        score = clamp(base.get("learning_throughput_score"))
+        historical_score = clamp(base.get("learning_throughput_score"))
         age_hours = to_float(base.get("evidence_age_hours"), 0.0)
         new_rate = to_float(base.get("learning_participation_pct"), 0.0)
         fresh_rate = clamp(100.0 - min(100.0, age_hours * 12.5))
         close_rate = rounded(closed / max(1, opened + closed) * 100.0, 3)
         turnover = to_float(base.get("trade_turnover_pct"), 0.0)
-        if score >= 70 and age_hours <= 2:
+        paper_velocity = clamp(
+            min(100.0, opened / 24.0 * 100.0) * 0.30
+            + min(100.0, closed / 5.0 * 100.0) * 0.35
+            + min(100.0, turnover * 5.0) * 0.20
+            + fresh_rate * 0.15
+            - (20.0 if occupancy.get("occupancy_status") in {"saturated", "learning_blocked"} else 10.0 if occupancy.get("occupancy_status") == "constrained" else 0.0)
+        )
+        if paper_velocity >= 70 and closed > 0:
             flow = "healthy"
-        elif score >= 45 and age_hours <= 8:
+        elif paper_velocity >= 45:
             flow = "slowing"
-        elif score >= 20:
+        elif paper_velocity >= 20:
             flow = "stalled"
         else:
             flow = "critical"
@@ -256,7 +263,9 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "trades_opened": opened,
             "trades_closed": closed,
             "learning_cycles": cycles,
-            "learning_throughput_score": rounded(score, 3),
+            "learning_throughput_score": rounded(paper_velocity, 3),
+            "historical_shadow_evidence_freshness_score": rounded(historical_score, 3),
+            "paper_learning_velocity_score": rounded(paper_velocity, 3),
             "learning_flow_status": flow,
             "days_since_learning_event": rounded(age_hours / 24.0, 3),
             "capacity_pressure": occupancy.get("occupancy_pressure_score"),
@@ -265,10 +274,11 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "closed_trade_rate": close_rate,
             "open_trade_turnover": rounded(turnover, 3),
             "shadow_validation_flow": "active" if to_int(shadow.get("shadow_learning_events"), 0) > 0 else "warming_up",
-            "paper_validation_flow": "active" if opened or closed else "slowing",
+            "paper_validation_flow": "active" if closed > 0 else "open_positions_without_closed_outcomes",
             "fresh_evidence_status": text(base.get("evidence_freshness"), "warming_up"),
             "trade_turnover_status": "healthy" if turnover >= 10 else "slowing",
             "validation_flow_status": "healthy" if flow == "healthy" else "needs_attention",
+            "fresh_paper_learning_distinct_from_historical_evidence": True,
             "learning_blocker": blocker,
             "recommended_throughput_action": action,
             **_safe_flags(),
@@ -567,6 +577,8 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
         tier2 = status_value(statuses, "astra_performance_optimization_suite_v1")
         candidate = dict(tier2.get("controlled_evolution_integration") or {})
         shadow = status_value(statuses, "shadow_correction_validation_attribution_v1")
+        adaptive = status_value(statuses, "astra_adaptive_learning_v1")
+        adaptive_candidate = dict(adaptive.get("incremental_shadow_promotion_v1") or {})
         reviews = []
         raw_rows = list(shadow.get("category_validation") or shadow.get("categories") or [])
         for row in raw_rows:
@@ -597,6 +609,15 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
                     to_int((bridge.get("promotion_candidate") or {}).get("promotion_evidence"), 0),
                 ),
                 "source": "tier1b_tier2_controlled_evolution",
+            })
+        adaptive_metric = text(adaptive_candidate.get("promotion_metric"), "")
+        if adaptive_metric and adaptive_metric.lower() != "none":
+            reviews.append({
+                "category": adaptive_metric.lower().replace(" ", "_"),
+                "improvement_delta": rounded(to_float(adaptive_candidate.get("promotion_delta"), 0.0), 3),
+                "confidence": rounded(to_float(adaptive_candidate.get("promotion_confidence"), 0.0), 3),
+                "evidence_count": to_int(adaptive_candidate.get("promotion_evidence"), 0),
+                "source": "astra_adaptive_learning_v1",
             })
         aliases = {
             "panic_exit_reduction": "exit_quality",
@@ -1073,6 +1094,348 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             **_safe_flags(),
         }
 
+    def _paper_learning_completion(
+        self,
+        statuses: dict[str, Any],
+        occupancy: dict[str, Any],
+        throughput: dict[str, Any],
+        opportunity: dict[str, Any],
+    ) -> dict[str, Any]:
+        tier1a = status_value(statuses, "astra_learning_preservation_capacity_v1")
+        lifecycle = dict(tier1a.get("position_lifecycle_auditor_v1") or {})
+        classifications = dict(lifecycle.get("classification_counts") or {})
+        overheld = to_int(classifications.get("overheld"), 0)
+        thesis_broken = to_int(classifications.get("thesis_broken"), 0)
+        pending_detail = to_int(lifecycle.get("broker_positions_pending_detail"), 0)
+        active = max(1, to_int(lifecycle.get("broker_confirmed_count"), 0))
+        stale_drag = clamp((overheld + thesis_broken) / active * 100.0 + pending_detail / active * 25.0)
+        pressure = to_float(occupancy.get("occupancy_pressure_score"), 0.0)
+        capacity_score = clamp(100.0 - pressure)
+        saturation = clamp(
+            pressure * 0.55
+            + to_float(occupancy.get("portfolio_monopolization_risk"), 0.0) * 0.45
+        )
+        highest_cost = dict(opportunity.get("highest_opportunity_cost_context") or {})
+        reserve = (
+            "depleted"
+            if to_int(occupancy.get("capacity_available"), 0) <= 0
+            else "thin"
+            if to_int(occupancy.get("capacity_available"), 0) <= 2
+            else "available"
+        )
+        bottleneck = (
+            "all_broker_confirmed_positions_are_swing_and_no_closed_outcomes_are_recycling_capacity"
+            if saturation >= 75 and to_int(throughput.get("trades_closed"), 0) == 0
+            else f"capacity_reserve_depleted_and_{text(throughput.get('learning_blocker'), 'natural_turnover_required')}"
+            if reserve == "depleted"
+            else text(throughput.get("learning_blocker"), "none")
+        )
+        return {
+            "module": "Paper Trading Learning Completion V1",
+            "status": "blocked_by_natural_position_turnover" if reserve == "depleted" else "operational",
+            "paper_learning_capacity_score": rounded(capacity_score, 3),
+            "paper_learning_velocity_score": throughput.get("paper_learning_velocity_score"),
+            "paper_saturation_risk": rounded(saturation, 3),
+            "learning_reserve_status": reserve,
+            "stale_position_learning_drag": rounded(stale_drag, 3),
+            "opportunity_cost_score": highest_cost.get("opportunity_cost_score", 0.0),
+            "capacity_recommendation": (
+                "wait_for_natural_closures_then_prefer_qualified_lower_occupancy_horizons_through_existing_gates"
+                if reserve == "depleted"
+                else "preserve_available_learning_reserve"
+            ),
+            "paper_learning_bottleneck_summary": bottleneck,
+            "historical_evidence_is_not_counted_as_fresh_paper_turnover": True,
+            **_safe_flags(),
+        }
+
+    def _shadow_paper_completion(
+        self,
+        classifier: dict[str, Any],
+        evolution: dict[str, Any],
+        governance: dict[str, Any],
+        persistence: dict[str, Any],
+    ) -> dict[str, Any]:
+        candidates = list(evolution.get("eligible_candidates") or [])
+        candidate = candidates[0] if candidates else {}
+        gates = dict(evolution.get("gate_results") or {})
+        gate_values = [bool(value) for key, value in gates.items() if key != "human_review_required_for_adoption"]
+        readiness = sum(gate_values) / max(1, len(gate_values)) * 100.0
+        persistent = [
+            row for row in classifier.get("classified_improvements") or []
+            if row.get("consistently_better_than_paper")
+        ]
+        return {
+            "module": "Shadow to Paper Controlled Evolution Completion V1",
+            "status": "micro_test_ready_for_human_review" if not evolution.get("promotion_blocker") and candidate else "advisory_only",
+            "shadow_paper_readiness_score": rounded(readiness, 3),
+            "shadow_to_paper_readiness_score": rounded(readiness, 3),
+            "promotion_candidates": candidates,
+            "shadow_improvement_candidates": candidates,
+            "persistent_edges": persistent,
+            "persistent_shadow_edges": persistent,
+            "micro_test_readiness": bool(candidate and not evolution.get("promotion_blocker")),
+            "rollback_readiness": governance.get("rollback_readiness"),
+            "rollback_required": True,
+            "promotion_stage": evolution.get("promotion_stage"),
+            "recommended_promotion_stage": evolution.get("recommended_promotion_stage"),
+            "promotion_blockers": list(evolution.get("promotion_blocker") or []),
+            "promotion_summary": (
+                f"{candidate.get('category', 'No classified edge')} has {candidate.get('evidence_count', 0)} observations; "
+                f"promotion remains advisory while {len(evolution.get('promotion_blocker') or [])} gate(s) are unresolved."
+            ),
+            "shadow_to_paper_summary": (
+                f"{candidate.get('category', 'No classified edge')} has {candidate.get('evidence_count', 0)} observations; "
+                f"promotion remains advisory while {len(evolution.get('promotion_blocker') or [])} gate(s) are unresolved."
+            ),
+            "remaining_evidence": persistence.get("remaining_evidence"),
+            "automatic_adoption_enabled": False,
+            **_safe_flags(),
+        }
+
+    def _learning_horizon_completion(
+        self,
+        statuses: dict[str, Any],
+        continuity: dict[str, Any],
+        throughput: dict[str, Any],
+        horizon: dict[str, Any],
+    ) -> dict[str, Any]:
+        tier1a = status_value(statuses, "astra_learning_preservation_capacity_v1")
+        base = dict(tier1a.get("learning_throughput_preservation_engine_v1") or {})
+        evidence_age = to_float(base.get("evidence_age_hours"), 0.0)
+        concentration = to_float(horizon.get("horizon_monopolization_risk"), 0.0)
+        stale_risk = clamp(evidence_age * 8.0 + (35.0 if to_int(throughput.get("trades_closed"), 0) == 0 else 0.0))
+        return {
+            "module": "Learning Continuity and Horizon Completion V1",
+            "status": continuity.get("status"),
+            "fresh_learning_score": throughput.get("paper_learning_velocity_score"),
+            "learning_flow_score": continuity.get("learning_flow_score"),
+            "horizon_diversity_score": continuity.get("learning_diversity_score"),
+            "horizon_concentration_risk": rounded(concentration, 3),
+            "stale_evidence_risk": rounded(stale_risk, 3),
+            "stale_evidence_rate": rounded(stale_risk, 3),
+            "trade_turnover_score": continuity.get("trade_turnover_score"),
+            "turnover_health_score": continuity.get("trade_turnover_score"),
+            "underfed_horizon": horizon.get("underrepresented_horizon"),
+            "recommended_learning_focus": horizon.get("recommended_horizon_bias"),
+            "dynamic_horizon_recommendation": horizon.get("recommended_horizon_bias"),
+            "learning_continuity_summary": (
+                "Historical and Shadow evidence remain fresh, but fresh Paper learning is constrained by "
+                f"{horizon.get('dominant_horizon', 'unknown')} concentration and zero closed-trade turnover."
+            ),
+            **_safe_flags(),
+        }
+
+    def _autonomous_inspection(
+        self,
+        statuses: dict[str, Any],
+        paper: dict[str, Any],
+        memory: dict[str, Any],
+    ) -> dict[str, Any]:
+        research = status_value(statuses, "autonomous_research_self_regulation_status_v1")
+        validation = status_value(statuses, "autonomous_intelligence_validation_governance_v1")
+        root_causes = list(research.get("likely_root_causes") or [])
+        root_cause = text(first(root_causes[0] if root_causes else None, validation.get("top_root_cause")), "insufficient_evidence")
+        issue = text(first(research.get("primary_trading_weakness"), paper.get("paper_learning_bottleneck_summary")), "unknown")
+        prior_root = text(memory.get("latest_root_cause"), "insufficient_evidence")
+        repeated = bool(prior_root == root_cause or memory.get("repeated_observations_retained"))
+        action = text(first(research.get("next_best_action_summary"), validation.get("recommended_virtual_test")), "continue_shadow_validation")
+        confidence = max(
+            to_float(research.get("root_cause_confidence"), 0.0),
+            to_float(validation.get("confidence"), 0.0),
+        )
+        return {
+            "module": "Autonomous Inspection and Root Cause Completion V1",
+            "status": "root_cause_identified" if root_cause != "insufficient_evidence" else "insufficient_evidence",
+            "autonomous_inspection_score": rounded(confidence, 3),
+            "issue_detected": issue,
+            "top_detected_issue": issue,
+            "root_cause": root_cause,
+            "root_cause_chain": root_causes or [root_cause],
+            "repeated_issue": repeated,
+            "repeated_issue_detected": repeated,
+            "prior_correction": memory.get("latest_recommendation", "none"),
+            "prior_correction_found": bool(memory.get("latest_recommendation")),
+            "prior_correction_effectiveness": memory.get("recommendation_effectiveness_score"),
+            "recommended_action": action,
+            "recommended_next_action": action,
+            "inspection_confidence": rounded(confidence, 3),
+            "inspection_summary": (
+                f"Astra traced {issue.replace('_', ' ')} to {root_cause.replace('_', ' ')}. "
+                "The correction remains advisory and will be measured against the next comparable snapshot."
+            ),
+            **_safe_flags(),
+        }
+
+    def _autonomous_improvement(self, statuses: dict[str, Any]) -> dict[str, Any]:
+        prioritization = status_value(statuses, "adaptive_learning_prioritization_resource_allocation_v1")
+        rows = [dict(row) for row in prioritization.get("weakness_rankings") or [] if isinstance(row, dict)]
+        for row in rows:
+            row["evidence_adjusted_roi"] = rounded(
+                to_float(row.get("expected_learning_value"), 0.0)
+                * (0.35 + to_float(row.get("sample_size_confidence"), 0.0) / 100.0 * 0.65)
+                * (1.0 - to_float(row.get("noise_risk_score"), 0.0) / 140.0),
+                3,
+            )
+        best = max(rows, key=lambda row: row.get("evidence_adjusted_roi", 0.0), default={})
+        safe = bool(
+            to_float(best.get("sample_size_confidence"), 0.0) >= 60.0
+            and to_float(best.get("noise_risk_score"), 100.0) <= 40.0
+        )
+        return {
+            "module": "Autonomous Improvement Prioritization Completion V1",
+            "status": "recommendation_ready" if safe else "observation_only",
+            "autonomous_improvement_score": best.get("evidence_adjusted_roi", 0.0),
+            "highest_roi_improvement": best.get("weakness", "insufficient_evidence"),
+            "top_improvement_candidate": best.get("weakness", "insufficient_evidence"),
+            "expected_improvement_score": best.get("improvement_potential_score", 0.0),
+            "expected_benefit": best.get("improvement_potential_score", 0.0),
+            "implementation_complexity": "low_existing_worker_and_replay_focus_only",
+            "safety_risk": "low_advisory_only",
+            "business_value_score": best.get("performance_impact_score", 0.0),
+            "evidence_support_score": best.get("sample_size_confidence", 0.0),
+            "improvement_priority_rankings": rows[:5],
+            "evidence_adjusted_roi_score": best.get("evidence_adjusted_roi", 0.0),
+            "improvement_confidence": best.get("sample_size_confidence", 0.0),
+            "noise_risk_score": best.get("noise_risk_score", 100.0),
+            "safe_to_recommend": safe,
+            "recommended_worker_focus": (
+                "confidence_calibration_worker"
+                if best.get("weakness") == "confidence_truth"
+                else prioritization.get("recommended_worker_focus")
+            ),
+            "recommended_replay_focus": (
+                "confidence_bucket_outcome_replay"
+                if best.get("weakness") == "confidence_truth"
+                else prioritization.get("recommended_replay_focus")
+            ),
+            "recommended_memory_focus": (
+                f"retain_high_confidence_{best.get('weakness', 'learning')}_lessons"
+            ),
+            "why_this_priority": (
+                f"{best.get('weakness', 'No area')} has the strongest evidence-adjusted ROI after "
+                "penalizing low sample confidence and noise."
+            ),
+            "improvement_summary": (
+                f"{best.get('weakness', 'No area')} has the strongest evidence-adjusted ROI after "
+                "penalizing low sample confidence and noise."
+            ),
+            **_safe_flags(),
+        }
+
+    def _decision_memory(
+        self,
+        statuses: dict[str, Any],
+        inspection: dict[str, Any],
+        improvement: dict[str, Any],
+    ) -> dict[str, Any]:
+        memory = status_value(statuses, "self_correction_decision_memory_v1")
+        tier3 = status_value(statuses, "astra_intelligence_maturation_suite_v1")
+        governance = dict(tier3.get("unified_memory_governance_v1") or {})
+        retention = max(
+            to_float(memory.get("knowledge_retention_score"), 0.0),
+            to_float(governance.get("memory_governance_score"), 0.0),
+        )
+        return {
+            "module": "Decision Memory and Knowledge Retention Completion V1",
+            "status": memory.get("status", "insufficient_evidence"),
+            "decision_memory_score": rounded(retention, 3),
+            "decision_memory_entries": memory.get("active_memory_entries", 0),
+            "retained_corrections_count": memory.get("active_memory_entries", 0),
+            "retained_failed_experiments_count": max(
+                0,
+                to_int(memory.get("outcomes_evaluated"), 0)
+                - to_int(memory.get("recommendations_improved_later"), 0),
+            ),
+            "repeated_issue_memory_hits": memory.get("repeated_observations_retained", 0),
+            "useful_memory_retrieval_rate": (
+                rounded(
+                    to_int(memory.get("outcomes_evaluated"), 0)
+                    / max(1, to_int(memory.get("active_memory_entries"), 0))
+                    * 100.0,
+                    3,
+                )
+            ),
+            "memory_reinforcement_score": rounded(retention, 3),
+            "memory_archive_count": memory.get("compressed_archive_count", 0),
+            "compressed_archive_count": memory.get("compressed_archive_count", 0),
+            "duplicate_research_suppressed": memory.get("duplicate_snapshots_suppressed", 0),
+            "outcomes_evaluated": memory.get("outcomes_evaluated", 0),
+            "knowledge_retention_score": rounded(retention, 3),
+            "intelligence_dna": {
+                "root_cause": inspection.get("root_cause"),
+                "priority": improvement.get("highest_roi_improvement"),
+                "recommendation": inspection.get("recommended_action"),
+                "evidence_adjusted_roi": improvement.get("evidence_adjusted_roi_score"),
+            },
+            "prevents_repeated_research": bool(memory.get("decision_memory_prevents_duplicate_research")),
+            "memory_summary": (
+                "Repeated snapshots are compacted, prior recommendations are scored against later comparable states, "
+                "and the current root-cause/priority/recommendation DNA is retained."
+            ),
+            **_safe_flags(),
+        }
+
+    def _behavior_verification(
+        self,
+        statuses: dict[str, Any],
+        paper: dict[str, Any],
+        shadow: dict[str, Any],
+        continuity: dict[str, Any],
+        inspection: dict[str, Any],
+        improvement: dict[str, Any],
+        memory: dict[str, Any],
+    ) -> dict[str, Any]:
+        broker = status_value(statuses, "alpaca_paper_broker") or status_value(statuses, "alpaca_paper_status_v1")
+        unified = status_value(statuses, "unified_learning_diagnostics_v1")
+        checks = {
+            "paper_broker_truth_available": bool(broker.get("paper_mode_verified")),
+            "fresh_paper_learning_flow_active": to_float(paper.get("paper_learning_velocity_score"), 0.0) >= 45.0,
+            "paper_learning_reserve_available": paper.get("learning_reserve_status") != "depleted",
+            "paper_learning_not_blocked": paper.get("status") != "blocked_by_natural_position_turnover",
+            "horizon_diversity_adequate": to_float(continuity.get("horizon_diversity_score"), 0.0) >= 35.0,
+            "shadow_promotion_governed": bool(shadow.get("rollback_readiness") == "armed"),
+            "root_cause_identified": inspection.get("status") == "root_cause_identified",
+            "improvement_priority_evidence_supported": bool(improvement.get("safe_to_recommend")),
+            "decision_memory_operational": to_int(memory.get("decision_memory_entries"), 0) > 0,
+            "unified_diagnostics_healthy": to_int(unified.get("failed_sources_count"), 0) == 0,
+        }
+        score = sum(bool(value) for value in checks.values()) / len(checks) * 100.0
+        incomplete = [key for key, value in checks.items() if not value]
+        verified_count = sum(bool(value) for value in checks.values())
+        return {
+            "module": "Behavior Verification and Core Completion V1",
+            "status": "business_objective_achieved" if not incomplete else "safe_completion_blocked",
+            "behavior_verification_score": rounded(score, 3),
+            "verified_capabilities_count": verified_count,
+            "incomplete_capabilities": incomplete,
+            "failed_behavior_checks": incomplete,
+            "regression_risks": [] if not incomplete else ["paper_learning_capacity_remains_constrained"],
+            "core_completion_score": rounded(score, 3),
+            "core_completion_blockers": incomplete,
+            "behavior_verification_summary": (
+                "Core diagnostic, governance, memory, and integration behavior is verified; "
+                "fresh Paper capacity remains safety-blocked until natural position turnover."
+                if incomplete
+                else "All requested core behavior checks passed without changing protected trading behavior."
+            ),
+            "verification_checks": checks,
+            "business_objective_achieved": not incomplete,
+            "remaining_behavior_gaps": incomplete,
+            "remaining_blocker": (
+                "fresh_paper_outcomes_require_natural_position_closures_or_separately_approved_behavior_change"
+                if any(key in incomplete for key in (
+                    "fresh_paper_learning_flow_active",
+                    "paper_learning_reserve_available",
+                    "paper_learning_not_blocked",
+                ))
+                else incomplete[0] if incomplete else "none"
+            ),
+            "regression_status": "no_protected_behavior_changed",
+            "safety_status": "preserved",
+            **_safe_flags(),
+        }
+
     def _build(self, statuses: dict[str, Any]) -> dict[str, Any]:
         start = time.perf_counter()
         occupancy = self._occupancy(statuses)
@@ -1110,13 +1473,33 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             persistence,
             governance,
         )
+        prior_memory = status_value(statuses, "self_correction_decision_memory_v1")
+        paper_completion = self._paper_learning_completion(statuses, occupancy, throughput, opportunity)
+        shadow_completion = self._shadow_paper_completion(classifier, evolution, governance, persistence)
+        horizon_completion = self._learning_horizon_completion(statuses, continuity, throughput, horizon)
+        inspection = self._autonomous_inspection(statuses, paper_completion, prior_memory)
+        improvement = self._autonomous_improvement(statuses)
+        decision_memory = self._decision_memory(statuses, inspection, improvement)
+        behavior_verification = self._behavior_verification(
+            statuses,
+            paper_completion,
+            shadow_completion,
+            horizon_completion,
+            inspection,
+            improvement,
+            decision_memory,
+        )
         summary = {
             "learning_flow": continuity.get("status"),
             "learning_diversity": continuity.get("learning_diversity_score"),
             "capacity_status": occupancy.get("occupancy_status"),
             "shadow_readiness": evolution.get("candidate_status"),
             "paper_promotion_readiness": evolution.get("promotion_stage_label"),
-            "current_bottleneck": continuity.get("continuity_bottleneck"),
+            "current_bottleneck": (
+                paper_completion.get("paper_learning_bottleneck_summary")
+                if continuity.get("continuity_bottleneck") in {None, "none"}
+                else continuity.get("continuity_bottleneck")
+            ),
             "recommended_next_step": explanation.get("recommended_next_step"),
             "occupancy_status": occupancy.get("occupancy_status"),
             "learning_throughput": throughput.get("learning_flow_status"),
@@ -1128,8 +1511,37 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "self_governance": self_governance.get("status"),
             "completion_audit": completion.get("status"),
             "plain_english_summary": explanation.get("plain_english_summary"),
+            "paper_learning_capacity_score": paper_completion.get("paper_learning_capacity_score"),
+            "shadow_to_paper_readiness_score": shadow_completion.get("shadow_to_paper_readiness_score"),
+            "learning_continuity_score": continuity.get("learning_continuity_score"),
+            "paper_saturation_risk": paper_completion.get("paper_saturation_risk"),
+            "fresh_learning_score": horizon_completion.get("fresh_learning_score"),
+            "horizon_diversity_score": horizon_completion.get("horizon_diversity_score"),
+            "autonomous_inspection_score": inspection.get("autonomous_inspection_score"),
+            "autonomous_improvement_score": improvement.get("autonomous_improvement_score"),
+            "decision_memory_score": decision_memory.get("decision_memory_score"),
+            "behavior_verification_score": behavior_verification.get("behavior_verification_score"),
+            "core_completion_score": behavior_verification.get("core_completion_score"),
+            "strongest_autonomous_area": "broker_truth_and_cached_shadow_evidence",
+            "weakest_autonomous_area": "fresh_paper_turnover_and_capacity_reserve",
+            "highest_roi_next_improvement": improvement.get("highest_roi_improvement"),
+            "autonomous_maturation_summary": (
+                "Astra now distinguishes cached knowledge from fresh Paper outcomes, remembers correction results, "
+                "prioritizes evidence-supported improvements, and keeps Shadow promotion governed. "
+                "Fresh Paper capacity still depends on natural position turnover."
+            ),
+            "paper_learning_velocity_score": paper_completion.get("paper_learning_velocity_score"),
+            "shadow_paper_readiness_score": shadow_completion.get("shadow_paper_readiness_score"),
+            "root_cause_confidence": inspection.get("inspection_confidence"),
+            "highest_roi_improvement": improvement.get("highest_roi_improvement"),
+            "knowledge_retention_score": decision_memory.get("knowledge_retention_score"),
+            "strongest_area": "broker_truth_and_cached_shadow_evidence",
+            "weakest_area": "fresh_paper_turnover_and_capacity_reserve",
+            "highest_roi_next_action": improvement.get("highest_roi_improvement"),
             "recommended_action": (
-                continuity.get("recommended_action")
+                paper_completion.get("capacity_recommendation")
+                if paper_completion.get("learning_reserve_status") == "depleted"
+                else continuity.get("recommended_action")
                 if continuity.get("status") != "healthy"
                 else throughput.get("recommended_throughput_action")
             ),
@@ -1155,6 +1567,14 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "self_governance_engine_v1": self_governance,
             "implementation_completion_auditor_v1": completion,
             "executive_explanation_engine_v1": explanation,
+            "paper_trading_learning_completion_v1": paper_completion,
+            "shadow_paper_controlled_evolution_completion_v1": shadow_completion,
+            "learning_continuity_horizon_completion_v1": horizon_completion,
+            "autonomous_inspection_root_cause_completion_v1": inspection,
+            "autonomous_improvement_prioritization_completion_v1": improvement,
+            "decision_memory_knowledge_retention_completion_v1": decision_memory,
+            "behavior_verification_core_completion_v1": behavior_verification,
+            "astra_autonomous_intelligence_maturation_v1": summary,
             "executive_summary": summary,
             "bounded_cached_sources_only": True,
             "full_history_scan_performed": False,

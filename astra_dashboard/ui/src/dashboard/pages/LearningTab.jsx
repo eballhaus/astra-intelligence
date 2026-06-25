@@ -4208,10 +4208,10 @@ export default function LearningTab({ compact = false }) {
 
       <details style={{ ...panelStyle }} open={false}>
         <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
-          Learning Continuity & Controlled Evolution
+          Astra Autonomous Intelligence Maturation
         </summary>
         <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
-          Protects continuous learning, explains capacity and promotion blockers, and audits whether Astra's major learning systems are complete and connected.
+          Verifies fresh Paper learning, controlled Shadow promotion, root-cause inspection, evidence-adjusted priorities, decision memory, and real business-objective completion.
         </div>
         {astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.plain_english_summary ? (
           <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, border: "1px solid #34577f", background: "rgba(16,39,70,0.62)", color: "#dce9fb", fontSize: 12, lineHeight: 1.55 }}>
@@ -4227,6 +4227,11 @@ export default function LearningTab({ compact = false }) {
             ["Paper Promotion Readiness", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.paper_promotion_readiness],
             ["Current Bottleneck", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.current_bottleneck],
             ["Self-Governance", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.self_governance],
+            ["Paper Learning Velocity", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.paper_learning_velocity_score],
+            ["Saturation Risk", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.paper_saturation_risk],
+            ["Root Cause Confidence", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.root_cause_confidence],
+            ["Behavior Verification", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.behavior_verification_score],
+            ["Highest ROI Improvement", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.highest_roi_improvement],
             ["Recommended Next Step", astraAdaptiveOccupancyEvolutionSuite?.executive_summary?.recommended_next_step],
           ].map(([label, value]) => (
             <div key={label} style={{ background: "rgba(12,24,42,0.40)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
@@ -4250,6 +4255,13 @@ export default function LearningTab({ compact = false }) {
             ["Self-Governance", "self_governance_engine_v1"],
             ["Implementation Completion Audit", "implementation_completion_auditor_v1"],
             ["Executive Explanation", "executive_explanation_engine_v1"],
+            ["Paper Learning Completion", "paper_trading_learning_completion_v1"],
+            ["Shadow to Paper Completion", "shadow_paper_controlled_evolution_completion_v1"],
+            ["Horizon Completion", "learning_continuity_horizon_completion_v1"],
+            ["Autonomous Root Cause", "autonomous_inspection_root_cause_completion_v1"],
+            ["Improvement Priority", "autonomous_improvement_prioritization_completion_v1"],
+            ["Decision Memory", "decision_memory_knowledge_retention_completion_v1"],
+            ["Behavior Verification", "behavior_verification_core_completion_v1"],
           ].map(([label, key]) => {
             const row = astraAdaptiveOccupancyEvolutionSuite?.[key] || {};
             return (

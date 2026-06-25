@@ -141,6 +141,99 @@ class SelfCorrectionController:
         except Exception:
             return False
 
+    @staticmethod
+    def _evidence_score(evidence: dict[str, Any]) -> float:
+        values = [
+            _to_float(evidence.get("learning_pipeline_health_score"), 0.0),
+            _to_float(evidence.get("runtime_health_score"), 0.0),
+            _to_float(evidence.get("provider_health_score"), 0.0),
+            _to_float(evidence.get("behavior_verification_score"), 0.0),
+            _to_float(evidence.get("learning_continuity_score"), 0.0),
+        ]
+        present = [value for value in values if value > 0.0]
+        return sum(present) / max(1, len(present))
+
+    @staticmethod
+    def _entry_signature(recommendation: str, evidence: dict[str, Any]) -> str:
+        root_cause = str(evidence.get("root_cause") or evidence.get("primary_blocker") or "")
+        bottleneck = str(evidence.get("paper_learning_bottleneck") or "")
+        return f"{recommendation}|{root_cause}|{bottleneck}"
+
+    def decision_memory_summary(self) -> dict[str, Any]:
+        history = self._safe_read_json(self.history_path, {})
+        entries = list((history or {}).get("entries") or []) if isinstance(history, dict) else []
+        resolved = [row for row in entries if row.get("recommendation_effectiveness_score") is not None]
+        improved = [row for row in resolved if row.get("improved_later") is True]
+        repeated = sum(max(0, _to_int(row.get("repeat_count"), 1) - 1) for row in entries)
+        latest = entries[-1] if entries else {}
+        latest_ts = _parse_iso(latest.get("last_seen_at") or latest.get("timestamp"))
+        age_hours = (
+            max(0.0, time.time() - latest_ts.timestamp()) / 3600.0
+            if latest_ts is not None
+            else None
+        )
+        retention = min(
+            100.0,
+            (35.0 if entries else 0.0)
+            + min(25.0, len(resolved) * 2.5)
+            + (20.0 if (history or {}).get("compressed_archive_count") else 0.0)
+            + (20.0 if latest.get("intelligence_dna") else 0.0),
+        )
+        effectiveness = (
+            sum(_to_float(row.get("recommendation_effectiveness_score"), 0.0) for row in resolved)
+            / max(1, len(resolved))
+        )
+        return {
+            "status": "ok" if entries else "insufficient_evidence",
+            "memory_path": self.history_path,
+            "active_memory_entries": len(entries),
+            "compressed_archive_count": _to_int((history or {}).get("compressed_archive_count"), 0),
+            "duplicate_snapshots_suppressed": _to_int((history or {}).get("duplicate_snapshots_suppressed"), 0),
+            "repeated_observations_retained": repeated,
+            "outcomes_evaluated": len(resolved),
+            "recommendations_improved_later": len(improved),
+            "recommendation_effectiveness_score": round(effectiveness, 3),
+            "knowledge_retention_score": round(retention, 3),
+            "latest_memory_age_hours": round(age_hours, 3) if age_hours is not None else None,
+            "latest_root_cause": str(
+                (latest.get("evidence_metrics") or {}).get("root_cause")
+                or (latest.get("evidence_metrics") or {}).get("primary_blocker")
+                or "insufficient_evidence"
+            ),
+            "latest_recommendation": str(latest.get("recommendation") or "insufficient_evidence"),
+            "latest_intelligence_dna": dict(latest.get("intelligence_dna") or {}),
+            "decision_memory_prevents_duplicate_research": bool(
+                _to_int((history or {}).get("duplicate_snapshots_suppressed"), 0) > 0
+            ),
+            "behavior_safe_to_apply": False,
+            "paper_only_preserved": True,
+            "broker_behavior_changed": False,
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+        }
+
+    def record_maturation_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        recommendation = {
+            "recommendation": str(snapshot.get("recommended_action") or "continue_collecting"),
+            "severity": str(snapshot.get("severity") or "info"),
+            "expected_benefit": dict(snapshot.get("expected_benefit") or {}),
+        }
+        evidence = {
+            "root_cause": str(snapshot.get("root_cause") or "insufficient_evidence"),
+            "primary_blocker": str(snapshot.get("primary_blocker") or "none"),
+            "paper_learning_bottleneck": str(snapshot.get("paper_learning_bottleneck") or "none"),
+            "behavior_verification_score": _to_float(snapshot.get("behavior_verification_score"), 0.0),
+            "learning_continuity_score": _to_float(snapshot.get("learning_continuity_score"), 0.0),
+            "promotion_readiness_score": _to_float(snapshot.get("promotion_readiness_score"), 0.0),
+            "improvement_priority": str(snapshot.get("improvement_priority") or "none"),
+        }
+        return self._write_and_summarize_history(
+            recommendation=recommendation,
+            evidence=evidence,
+            intelligence_dna=dict(snapshot.get("intelligence_dna") or {}),
+        )
+
     def _runtime_health_score(self) -> float:
         heartbeat_path = os.path.join(self.state_dir, "backend_watchdog_heartbeat")
         if not os.path.exists(heartbeat_path):
@@ -505,26 +598,74 @@ class SelfCorrectionController:
                     ]
         return ranked
 
-    def _write_and_summarize_history(self, *, recommendation: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    def _write_and_summarize_history(
+        self,
+        *,
+        recommendation: dict[str, Any],
+        evidence: dict[str, Any],
+        intelligence_dna: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         history = self._safe_read_json(self.history_path, {})
         if not isinstance(history, dict):
             history = {}
         entries = list(history.get("entries") or [])
-        entries.append(
-            {
-                "timestamp": _now_iso(),
-                "recommendation": str(recommendation.get("recommendation") or "insufficient_data"),
-                "severity": str(recommendation.get("severity") or "info"),
-                "evidence_metrics": dict(evidence),
-                "expected_benefit": dict(recommendation.get("expected_benefit") or {}),
-                "improved_later": None,
-                "recommendation_effectiveness_score": None,
-            }
-        )
-        if len(entries) > 2000:
-            entries = entries[-2000:]
+        now_iso = _now_iso()
+        recommendation_name = str(recommendation.get("recommendation") or "insufficient_data")
+        signature = self._entry_signature(recommendation_name, evidence)
+        current_score = self._evidence_score(evidence)
+
+        for prior in reversed(entries):
+            if prior.get("recommendation_effectiveness_score") is not None:
+                continue
+            prior_score = self._evidence_score(dict(prior.get("evidence_metrics") or {}))
+            if prior_score <= 0.0 or current_score <= 0.0:
+                continue
+            delta = current_score - prior_score
+            prior["improved_later"] = bool(delta > 1.0)
+            prior["recommendation_effectiveness_score"] = round(max(-100.0, min(100.0, delta)), 3)
+            prior["evaluated_at"] = now_iso
+            break
+
+        duplicate = False
+        if entries:
+            latest = entries[-1]
+            latest_ts = _parse_iso(latest.get("last_seen_at") or latest.get("timestamp"))
+            duplicate = bool(
+                latest.get("signature") == signature
+                and latest_ts is not None
+                and (time.time() - latest_ts.timestamp()) <= 21600
+            )
+        if duplicate:
+            entries[-1]["last_seen_at"] = now_iso
+            entries[-1]["repeat_count"] = _to_int(entries[-1].get("repeat_count"), 1) + 1
+            entries[-1]["evidence_metrics"] = dict(evidence)
+            if intelligence_dna:
+                entries[-1]["intelligence_dna"] = dict(intelligence_dna)
+            history["duplicate_snapshots_suppressed"] = _to_int(
+                history.get("duplicate_snapshots_suppressed"), 0
+            ) + 1
+        else:
+            entries.append(
+                {
+                    "timestamp": now_iso,
+                    "last_seen_at": now_iso,
+                    "signature": signature,
+                    "repeat_count": 1,
+                    "recommendation": recommendation_name,
+                    "severity": str(recommendation.get("severity") or "info"),
+                    "evidence_metrics": dict(evidence),
+                    "intelligence_dna": dict(intelligence_dna or {}),
+                    "expected_benefit": dict(recommendation.get("expected_benefit") or {}),
+                    "improved_later": None,
+                    "recommendation_effectiveness_score": None,
+                }
+            )
+        if len(entries) > 300:
+            removed = len(entries) - 300
+            history["compressed_archive_count"] = _to_int(history.get("compressed_archive_count"), 0) + removed
+            entries = entries[-300:]
         history["entries"] = entries
-        history["last_updated_utc"] = _now_iso()
+        history["last_updated_utc"] = now_iso
         self._safe_write_json(self.history_path, history)
 
         recent = entries[-100:]
@@ -538,6 +679,8 @@ class SelfCorrectionController:
         return {
             "history_path": self.history_path,
             "entries_total": int(len(entries)),
+            "compressed_archive_count": _to_int(history.get("compressed_archive_count"), 0),
+            "duplicate_snapshots_suppressed": _to_int(history.get("duplicate_snapshots_suppressed"), 0),
             "entries_recent_100": int(len(recent)),
             "recommendation_distribution_recent_100": dist,
             "severity_distribution_recent_100": sev,

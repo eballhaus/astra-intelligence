@@ -43968,6 +43968,10 @@ def astra_intelligence_maturation_suite_v1(force: bool = False):
 def astra_adaptive_occupancy_evolution_suite_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
     statuses = dict(cached_unified or {})
+    cached_alpaca = ((_CACHE.get("alpaca_paper_status_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
+    if isinstance(cached_alpaca, dict) and cached_alpaca:
+        statuses["alpaca_paper_broker"] = dict(cached_alpaca)
+        statuses["alpaca_paper_status_v1"] = dict(cached_alpaca)
     try:
         statuses["astra_copilot_suite_v1"] = _astra_copilot_suite_v1(limit=12, force=False)
     except Exception:
@@ -44028,6 +44032,9 @@ def ask_astra_v1(payload: dict = Body(...)):
     ask_context_seed["astra_performance_optimization_suite_v1"] = performance_optimization
     ask_context_seed["astra_intelligence_maturation_suite_v1"] = intelligence_maturation
     ask_context_seed["astra_adaptive_occupancy_evolution_suite_v1"] = occupancy_evolution
+    ask_context_seed["astra_autonomous_intelligence_maturation_v1"] = dict(
+        occupancy_evolution.get("astra_autonomous_intelligence_maturation_v1") or {}
+    )
     executive = _astra_executive_summary_v1(ask_context_seed, copilot)
     ceo = _astra_ceo_summary_v1(executive, ask_context_seed)
     top_actions = copilot.get("top_actions") or []
@@ -44141,6 +44148,15 @@ def ask_astra_v1(payload: dict = Body(...)):
         "performance_optimization": performance_optimization,
         "intelligence_maturation": intelligence_maturation,
         "occupancy_evolution": occupancy_evolution,
+        "autonomous_intelligence_maturation": {
+            "summary": occupancy_evolution.get("astra_autonomous_intelligence_maturation_v1") or {},
+            "paper_learning": occupancy_evolution.get("paper_trading_learning_completion_v1") or {},
+            "controlled_evolution": occupancy_evolution.get("shadow_paper_controlled_evolution_completion_v1") or {},
+            "root_cause": occupancy_evolution.get("autonomous_inspection_root_cause_completion_v1") or {},
+            "improvement_priority": occupancy_evolution.get("autonomous_improvement_prioritization_completion_v1") or {},
+            "decision_memory": occupancy_evolution.get("decision_memory_knowledge_retention_completion_v1") or {},
+            "behavior_verification": occupancy_evolution.get("behavior_verification_core_completion_v1") or {},
+        },
         "key_supporting_astra_signals": key_signals,
         "supported_question_types": [
             "explain_status",
@@ -44240,10 +44256,11 @@ def ask_astra_v1(payload: dict = Body(...)):
             )
         elif "learning faster" in q_lc or "not learning" in q_lc or "learning slow" in q_lc:
             continuity = occupancy_evolution.get("learning_continuity_engine_v1") or {}
+            maturation = occupancy_evolution.get("astra_autonomous_intelligence_maturation_v1") or {}
             fast_short = (
                 f"Learning continuity is {str(continuity.get('status') or 'warming up').replace('_', ' ')} "
                 f"with a score of {continuity.get('learning_continuity_score', 'n/a')}. "
-                f"The main constraint is {str(continuity.get('continuity_bottleneck') or 'insufficient evidence').replace('_', ' ')}."
+                f"The main constraint is {str(maturation.get('current_bottleneck') or continuity.get('continuity_bottleneck') or 'insufficient evidence').replace('_', ' ')}."
             )
         elif "blocking improvement" in q_lc or "what is blocking" in q_lc or "what needs to happen next" in q_lc:
             self_governance = occupancy_evolution.get("self_governance_engine_v1") or {}
@@ -55627,6 +55644,8 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("controlled_paper_profit_protection_pilot_v1", lambda: CONTROLLED_PAPER_PROFIT_PROTECTION_PILOT.status(statuses=statuses, force=False))
         _safe_status("adaptive_learning_prioritization_resource_allocation_v1", lambda: ADAPTIVE_LEARNING_PRIORITIZATION_RESOURCE_ALLOCATION.status(statuses=statuses, force=False))
         _safe_status("autonomous_intelligence_validation_governance_v1", lambda: AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE.status(statuses=statuses, force=False))
+        _safe_status("autonomous_research_self_regulation_status_v1", lambda: autonomous_research_self_regulation_status_v1())
+        _safe_status("self_correction_decision_memory_v1", lambda: SELF_CORRECTION_CONTROLLER.decision_memory_summary())
         _safe_status("trade_archetype_regime", lambda: TRADE_ARCHETYPE_REGIME_INTELLIGENCE.status(force=False))
         _safe_status("replay_counterfactual_learning_v2", lambda: REPLAY_COUNTERFACTUAL_LEARNING_V2.status(force=False))
         _safe_status("opportunity_cost_learning", lambda: OPPORTUNITY_COST_LEARNING.status(force=False))
@@ -55724,6 +55743,8 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_performance_optimization_suite_v1"] = dict(statuses.get("astra_performance_optimization_suite_v1") or {})
             out["astra_intelligence_maturation_suite_v1"] = dict(statuses.get("astra_intelligence_maturation_suite_v1") or {})
             out["astra_adaptive_occupancy_evolution_suite_v1"] = dict(statuses.get("astra_adaptive_occupancy_evolution_suite_v1") or {})
+            out["autonomous_research_self_regulation_status_v1"] = dict(statuses.get("autonomous_research_self_regulation_status_v1") or {})
+            out["self_correction_decision_memory_v1"] = dict(statuses.get("self_correction_decision_memory_v1") or {})
             out["astra_provider_orchestration_data_governance_v1"] = dict(statuses.get("astra_provider_orchestration_data_governance_v1") or {})
             out["astra_aios_intelligence_maturation_bundle_v1"] = dict(statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {})
             out["astra_aios_throughput_institutional_memory_optimization_v1"] = dict(statuses.get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
@@ -55754,8 +55775,38 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_intelligence_maturation_suite_v1"] = tier3
             statuses["astra_intelligence_maturation_suite_v1"] = tier3
             tier4 = dict(ASTRA_ADAPTIVE_OCCUPANCY_EVOLUTION_SUITE.status(statuses=statuses, force=True) or {})
+            maturation_summary = dict(tier4.get("astra_autonomous_intelligence_maturation_v1") or {})
+            inspection = dict(tier4.get("autonomous_inspection_root_cause_completion_v1") or {})
+            improvement = dict(tier4.get("autonomous_improvement_prioritization_completion_v1") or {})
+            behavior = dict(tier4.get("behavior_verification_core_completion_v1") or {})
+            memory_update = SELF_CORRECTION_CONTROLLER.record_maturation_snapshot({
+                "recommended_action": inspection.get("recommended_action"),
+                "root_cause": inspection.get("root_cause"),
+                "primary_blocker": behavior.get("remaining_blocker"),
+                "paper_learning_bottleneck": (
+                    (tier4.get("paper_trading_learning_completion_v1") or {}).get("paper_learning_bottleneck_summary")
+                ),
+                "behavior_verification_score": behavior.get("behavior_verification_score"),
+                "learning_continuity_score": (
+                    (tier4.get("learning_continuity_engine_v1") or {}).get("learning_continuity_score")
+                ),
+                "promotion_readiness_score": (
+                    (tier4.get("shadow_paper_controlled_evolution_completion_v1") or {}).get("shadow_paper_readiness_score")
+                ),
+                "improvement_priority": improvement.get("highest_roi_improvement"),
+                "intelligence_dna": {
+                    "strongest_area": maturation_summary.get("strongest_area"),
+                    "weakest_area": maturation_summary.get("weakest_area"),
+                    "highest_roi_next_action": maturation_summary.get("highest_roi_next_action"),
+                },
+            })
+            statuses["self_correction_decision_memory_v1"] = SELF_CORRECTION_CONTROLLER.decision_memory_summary()
+            tier4 = dict(ASTRA_ADAPTIVE_OCCUPANCY_EVOLUTION_SUITE.status(statuses=statuses, force=True) or tier4)
             out["astra_adaptive_occupancy_evolution_suite_v1"] = tier4
             out["astra_learning_continuity_controlled_evolution_self_governance_v1"] = tier4
+            out["astra_autonomous_intelligence_maturation_v1"] = dict(tier4.get("astra_autonomous_intelligence_maturation_v1") or {})
+            out["self_correction_decision_memory_v1"] = dict(statuses.get("self_correction_decision_memory_v1") or {})
+            out["self_correction_decision_memory_write_v1"] = memory_update
             statuses["astra_adaptive_occupancy_evolution_suite_v1"] = tier4
             statuses["astra_learning_continuity_controlled_evolution_self_governance_v1"] = tier4
             truth = dict(tier1b.get("executive_snapshot_truth_reconciliation_v1") or {})
