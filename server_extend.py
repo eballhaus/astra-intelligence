@@ -43976,7 +43976,16 @@ def astra_adaptive_occupancy_evolution_suite_v1(force: bool = False):
         statuses["astra_copilot_suite_v1"] = _astra_copilot_suite_v1(limit=12, force=False)
     except Exception:
         statuses["astra_copilot_suite_v1"] = {}
-    return ASTRA_ADAPTIVE_OCCUPANCY_EVOLUTION_SUITE.status(statuses=statuses, force=bool(force))
+    result = dict(ASTRA_ADAPTIVE_OCCUPANCY_EVOLUTION_SUITE.status(statuses=statuses, force=bool(force)) or {})
+    try:
+        PAPER_AUTOPILOT.update_adaptive_learning_capacity_policy(
+            result.get("paper_learning_capacity_correction_v1") or {}
+        )
+        statuses["paper_execution_trace"] = _paper_execution_trace_payload()
+        result = dict(ASTRA_ADAPTIVE_OCCUPANCY_EVOLUTION_SUITE.status(statuses=statuses, force=True) or result)
+    except Exception:
+        pass
+    return result
 
 
 @router.get("/api/astra_learning_continuity_controlled_evolution_self_governance_v1")
@@ -44236,6 +44245,30 @@ def ask_astra_v1(payload: dict = Body(...)):
             fast_short = (
                 f"Astra's main weakness is {str(perf_summary.get('persistent_weakness') or 'profit capture').replace('_', ' ')}. "
                 f"The next focus is {str(perf_summary.get('recommended_focus') or 'reduce giveback and wait for confirmation').replace('_', ' ')}."
+            )
+        elif (
+            "actively teaching" in q_lc
+            or "mostly waiting" in q_lc
+            or "may be overdue" in q_lc
+            or "holding losers too long" in q_lc
+            or "blocking new paper trades" in q_lc
+            or "paper trading still learning" in q_lc
+            or "open learning slots" in q_lc
+        ):
+            effective = occupancy_evolution.get("effective_learning_capacity_v1") or {}
+            lifecycle = occupancy_evolution.get("trade_lifecycle_intelligence_completion_v1") or {}
+            exit_review = occupancy_evolution.get("exit_decision_intelligence_v1") or {}
+            pipeline = occupancy_evolution.get("adaptive_capacity_utilization_pipeline_v1") or {}
+            active_rows = lifecycle.get("high_learning_value_positions") or []
+            waiting_rows = lifecycle.get("low_learning_value_positions") or []
+            overdue_rows = exit_review.get("exit_review_candidates") or []
+            fast_short = (
+                f"Astra has {effective.get('raw_open_positions', 'n/a')} broker-confirmed positions, but only "
+                f"{effective.get('effective_learning_occupancy', 'n/a')} effective learning positions after lifecycle weighting. "
+                f"{len(active_rows)} positions are actively teaching, {len(waiting_rows)} are mostly waiting or low-learning, "
+                f"and {len(overdue_rows)} need exit review. New Paper trades are currently explained by "
+                f"{str(pipeline.get('why_no_new_paper_trades') or 'existing entry and session gates').replace('_', ' ')}. "
+                "No trade or exit is forced."
             )
         elif (
             "capacity" in q_lc
@@ -55788,6 +55821,14 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_intelligence_maturation_suite_v1"] = tier3
             statuses["astra_intelligence_maturation_suite_v1"] = tier3
             tier4 = dict(ASTRA_ADAPTIVE_OCCUPANCY_EVOLUTION_SUITE.status(statuses=statuses, force=True) or {})
+            try:
+                PAPER_AUTOPILOT.update_adaptive_learning_capacity_policy(
+                    tier4.get("paper_learning_capacity_correction_v1") or {}
+                )
+                statuses["paper_execution_trace"] = _paper_execution_trace_payload()
+                tier4 = dict(ASTRA_ADAPTIVE_OCCUPANCY_EVOLUTION_SUITE.status(statuses=statuses, force=True) or tier4)
+            except Exception:
+                pass
             maturation_summary = dict(tier4.get("astra_autonomous_intelligence_maturation_v1") or {})
             inspection = dict(tier4.get("autonomous_inspection_root_cause_completion_v1") or {})
             improvement = dict(tier4.get("autonomous_improvement_prioritization_completion_v1") or {})
@@ -55819,6 +55860,21 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_learning_continuity_controlled_evolution_self_governance_v1"] = tier4
             out["astra_autonomous_intelligence_maturation_v1"] = dict(tier4.get("astra_autonomous_intelligence_maturation_v1") or {})
             out["astra_paper_learning_capacity_correction_v1"] = dict(tier4.get("paper_learning_capacity_correction_v1") or {})
+            out["astra_trading_intelligence_completion_v1"] = {
+                "effective_learning_capacity_v1": dict(tier4.get("effective_learning_capacity_v1") or {}),
+                "trade_lifecycle_intelligence_completion_v1": dict(tier4.get("trade_lifecycle_intelligence_completion_v1") or {}),
+                "exit_decision_intelligence_v1": dict(tier4.get("exit_decision_intelligence_v1") or {}),
+                "adaptive_capacity_utilization_pipeline_v1": dict(tier4.get("adaptive_capacity_utilization_pipeline_v1") or {}),
+                "opportunity_utilization_missed_learning_v1": dict(tier4.get("opportunity_utilization_missed_learning_v1") or {}),
+                "horizon_diversity_without_quotas_v1": dict(tier4.get("horizon_diversity_without_quotas_v1") or {}),
+                "autonomous_trading_governance_v1": dict(tier4.get("autonomous_trading_governance_v1") or {}),
+                "shadow_paper_feedback_connection_v1": dict(tier4.get("shadow_paper_feedback_connection_v1") or {}),
+                "behavior_verification": dict(tier4.get("trading_intelligence_completion_behavior_verification_v1") or {}),
+                "behavior_safe_to_apply": False,
+                "paper_only_preserved": True,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+            }
             out["self_correction_decision_memory_v1"] = dict(statuses.get("self_correction_decision_memory_v1") or {})
             out["self_correction_decision_memory_write_v1"] = memory_update
             statuses["astra_adaptive_occupancy_evolution_suite_v1"] = tier4

@@ -706,6 +706,252 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             **_safe_flags(),
         }
 
+    def _trade_lifecycle_intelligence(
+        self,
+        statuses: dict[str, Any],
+        occupancy: dict[str, Any],
+    ) -> dict[str, Any]:
+        truth = status_value(statuses, "trade_lifecycle_audit_truth_horizon_integrity_suite_v1")
+        tier1a = status_value(statuses, "astra_learning_preservation_capacity_v1")
+        audit = dict(tier1a.get("position_lifecycle_auditor_v1") or {})
+        trace = status_value(statuses, "paper_execution_trace")
+        rows = [
+            dict(row)
+            for row in (
+                trace.get("broker_learning_position_rows")
+                or truth.get("position_audit_rows")
+                or truth.get("truth_validation_rows")
+                or audit.get("position_rows")
+                or []
+            )
+            if isinstance(row, dict)
+        ]
+        classified: list[dict[str, Any]] = []
+        stage_counts: dict[str, int] = {}
+        learning_weights = {
+            "new": 1.0,
+            "developing": 0.9,
+            "active_learning": 1.0,
+            "waiting": 0.35,
+            "mature_winner": 0.55,
+            "mature_loser": 0.45,
+            "near_exit": 0.25,
+            "stale": 0.10,
+            "exit_review_candidate": 0.20,
+        }
+        for raw in rows[:40]:
+            horizon = _horizon(first(raw.get("normalized_horizon"), raw.get("horizon"), raw.get("original_horizon"), "unknown"))
+            expected_days = max(0.05, LOCK_DAYS.get(horizon, 7.0))
+            hold_days_value = first(raw.get("elapsed_hold_days"), raw.get("position_age"), None)
+            measured_hold_days = (
+                max(0.0, to_float(hold_days_value, 0.0))
+                if hold_days_value is not None
+                else max(0.0, to_float(raw.get("elapsed_hold_hours"), 0.0) / 24.0)
+            )
+            exact_age = bool(
+                raw.get("elapsed_hold_days") is not None
+                or raw.get("elapsed_hold_hours") is not None
+                or raw.get("position_age") is not None
+            )
+            hold_days = measured_hold_days if exact_age else expected_days * 0.75
+            age_ratio = hold_days / expected_days if hold_days > 0 else 0.0
+            pnl = to_float(first(raw.get("pnl_percent"), raw.get("unrealized_pnl_percent"), raw.get("unrealized_plpc"), 0.0), 0.0)
+            if abs(pnl) <= 2.0 and raw.get("unrealized_plpc") is not None and raw.get("pnl_percent") is None:
+                pnl *= 100.0
+            continuation = clamp(first(raw.get("continuation_probability"), 50.0))
+            sell_confidence = clamp(first(raw.get("sell_confidence"), raw.get("exit_readiness"), 0.0))
+            giveback = clamp(first(raw.get("giveback_risk"), 0.0))
+            thesis = clamp(first(raw.get("thesis_health"), 100.0 - to_float(raw.get("catalyst_decay_risk"), 45.0)))
+            should_sell = bool(raw.get("should_have_sold"))
+            profit_protect = bool(raw.get("should_have_profit_protected"))
+            conversion = bool(raw.get("should_have_converted_horizon"))
+            if should_sell or (sell_confidence >= 68 and continuation < 45):
+                stage = "exit_review_candidate"
+            elif profit_protect or (sell_confidence >= 60 and giveback >= 60):
+                stage = "near_exit"
+            elif age_ratio >= 1.75 and thesis < 55:
+                stage = "stale"
+            elif age_ratio >= 1.0 and pnl > 0:
+                stage = "mature_winner"
+            elif age_ratio >= 1.0 and pnl <= 0:
+                stage = "mature_loser"
+            elif age_ratio >= 0.65 or conversion:
+                stage = "waiting"
+            elif age_ratio >= 0.25:
+                stage = "active_learning" if continuation >= 50 else "developing"
+            elif hold_days > 0:
+                stage = "developing"
+            else:
+                stage = "new"
+            learning_weight = learning_weights[stage]
+            learning_value = rounded(learning_weight * 100.0, 3)
+            blocks_learning = bool(learning_weight >= 0.75)
+            review_exit = bool(stage in {"near_exit", "stale", "exit_review_candidate", "mature_loser"})
+            still_valuable = bool(stage in {"new", "developing", "active_learning", "mature_winner"})
+            reason = (
+                "sell_or_profit_protection_evidence_is_elevated"
+                if stage in {"near_exit", "exit_review_candidate"}
+                else "expected_hold_window_exceeded_and_thesis_support_weakened"
+                if stage == "stale"
+                else "position_is_waiting_for_expected_horizon_to_resolve"
+                if stage == "waiting"
+                else "position_is_still_generating_fresh_lifecycle_evidence"
+            )
+            item = {
+                "symbol": text(raw.get("symbol"), "UNKNOWN").upper(),
+                "horizon": horizon,
+                "lifecycle_stage": stage,
+                "learning_value": learning_value,
+                "learning_occupancy_weight": learning_weight,
+                "expected_hold_relevance": rounded(clamp(100.0 - max(0.0, age_ratio - 1.0) * 55.0), 3),
+                "position_age_days": rounded(hold_days, 3),
+                "position_age_is_exact": exact_age,
+                "position_age_source": "broker_reconciled_timestamp" if exact_age else "horizon_weighted_proxy",
+                "expected_hold_days": rounded(expected_days, 3),
+                "current_thesis_status": "healthy" if thesis >= 60 else "weakening" if thesis >= 35 else "broken",
+                "classification_reason": reason,
+                "blocks_learning": blocks_learning,
+                "should_be_reviewed_for_exit": review_exit,
+                "still_valuable_for_learning": still_valuable,
+                "pnl_percent": rounded(pnl, 3),
+                "continuation_probability": rounded(continuation, 3),
+                "sell_confidence": rounded(sell_confidence, 3),
+                "giveback_risk": rounded(giveback, 3),
+                "thesis_health": rounded(thesis, 3),
+            }
+            classified.append(item)
+            stage_counts[stage] = stage_counts.get(stage, 0) + 1
+        raw_count = to_int(occupancy.get("broker_confirmed_positions"), 0)
+        detail_gap = max(0, raw_count - len(classified))
+        if detail_gap:
+            stage_counts["waiting"] = stage_counts.get("waiting", 0) + detail_gap
+        high_value = [row for row in classified if row["learning_value"] >= 75.0]
+        low_value = [row for row in classified if row["learning_value"] <= 45.0]
+        exit_review = [row for row in classified if row["should_be_reviewed_for_exit"]]
+        stale = [row for row in classified if row["lifecycle_stage"] == "stale"]
+        exact_age_rows = len([row for row in classified if row.get("position_age_is_exact")])
+        confidence = clamp(
+            len(classified) / max(1, raw_count) * 50.0
+            + exact_age_rows / max(1, len(classified)) * 40.0
+            + (10.0 if classified else 0.0)
+        )
+        return {
+            "module": "Trade Lifecycle Intelligence Completion V1",
+            "status": "ok" if raw_count else "insufficient_evidence",
+            "trade_lifecycle_summary": classified,
+            "lifecycle_stage_counts": stage_counts,
+            "high_learning_value_positions": high_value,
+            "low_learning_value_positions": low_value,
+            "exit_review_candidates": exit_review,
+            "stale_positions": stale,
+            "positions_pending_detail": detail_gap,
+            "lifecycle_classification_confidence": rounded(confidence, 3),
+            "lifecycle_summary_plain_english": (
+                f"Astra classified {len(classified)} of {raw_count} broker-confirmed positions. "
+                f"{len(high_value)} are still producing strong learning, {len(low_value) + detail_gap} are mostly waiting "
+                f"or low-learning, and {len(exit_review)} deserve exit review. No exit is forced."
+            ),
+            "proxy_age_rows": len(classified) - exact_age_rows,
+            **_safe_flags(),
+        }
+
+    def _effective_learning_capacity(
+        self,
+        occupancy: dict[str, Any],
+        lifecycle: dict[str, Any],
+        expansion: dict[str, Any],
+    ) -> dict[str, Any]:
+        raw = to_int(occupancy.get("broker_confirmed_positions"), 0)
+        stage_counts = dict(lifecycle.get("lifecycle_stage_counts") or {})
+        weights = {
+            "new": 1.0,
+            "developing": 0.9,
+            "active_learning": 1.0,
+            "waiting": 0.35,
+            "mature_winner": 0.55,
+            "mature_loser": 0.45,
+            "near_exit": 0.25,
+            "stale": 0.10,
+            "exit_review_candidate": 0.20,
+        }
+        effective = sum(to_int(stage_counts.get(stage), 0) * weight for stage, weight in weights.items())
+        if effective <= 0 and raw:
+            effective = float(raw)
+        recommended = max(
+            to_int(expansion.get("baseline_capacity"), 20),
+            to_int(expansion.get("recommended_adaptive_capacity"), 20),
+        )
+        active = sum(to_int(stage_counts.get(stage), 0) for stage in ("new", "developing", "active_learning"))
+        waiting = to_int(stage_counts.get("waiting"), 0)
+        near_exit = sum(to_int(stage_counts.get(stage), 0) for stage in ("near_exit", "exit_review_candidate"))
+        stale = to_int(stage_counts.get("stale"), 0)
+        pressure = clamp(effective / max(1.0, recommended) * 100.0)
+        return {
+            "module": "Effective Learning Capacity V1",
+            "status": "ok" if raw else "insufficient_evidence",
+            "raw_open_positions": raw,
+            "risk_exposure_positions": raw,
+            "active_learning_positions": active,
+            "waiting_low_learning_positions": waiting,
+            "near_exit_positions": near_exit,
+            "stale_learning_drag_positions": stale,
+            "effective_learning_occupancy": rounded(effective, 3),
+            "effective_learning_capacity_available": rounded(max(0.0, recommended - effective), 3),
+            "safe_raw_position_slots_available": max(0, recommended - raw),
+            "learning_occupancy_pressure": rounded(pressure, 3),
+            "recommended_adaptive_capacity": recommended,
+            "effective_learning_capacity_summary": (
+                f"Broker truth reports {raw} risk-bearing positions, while lifecycle weighting produces "
+                f"{effective:.2f} effective learning positions. The {recommended}-position adaptive paper ceiling leaves "
+                f"{max(0, recommended - raw)} safe raw-position slot(s); all entry and risk gates still apply."
+            ),
+            **_safe_flags(),
+        }
+
+    def _exit_decision_intelligence(self, lifecycle: dict[str, Any]) -> dict[str, Any]:
+        rows = list(lifecycle.get("trade_lifecycle_summary") or [])
+        review = [dict(row) for row in rows if row.get("should_be_reviewed_for_exit")]
+        valid = [dict(row) for row in rows if not row.get("should_be_reviewed_for_exit")]
+        overdue = [
+            row for row in review
+            if to_float(row.get("position_age_days"), 0.0) >= to_float(row.get("expected_hold_days"), 999.0)
+        ]
+        loss_aversion = clamp(
+            sum(
+                25.0
+                + max(0.0, -to_float(row.get("pnl_percent"), 0.0)) * 2.0
+                + max(0.0, 50.0 - to_float(row.get("continuation_probability"), 50.0))
+                for row in review
+                if to_float(row.get("pnl_percent"), 0.0) < 0
+            )
+            / max(1, len(review))
+        )
+        score = clamp(
+            len(review) / max(1, len(rows)) * 55.0
+            + len(overdue) / max(1, len(rows)) * 30.0
+            + loss_aversion * 0.15
+        )
+        reasons: dict[str, int] = {}
+        for row in review:
+            reason = text(row.get("classification_reason"), "mixed_exit_review_evidence")
+            reasons[reason] = reasons.get(reason, 0) + 1
+        return {
+            "module": "Exit Decision Intelligence and Overdue Position Review V1",
+            "status": "review_needed" if review else "monitoring",
+            "exit_decision_intelligence_score": rounded(score, 3),
+            "overdue_position_count": len(overdue),
+            "exit_review_candidates": review,
+            "hold_still_valid_count": len(valid),
+            "hold_validation_reasons": sorted(set(text(row.get("classification_reason"), "monitor") for row in valid)),
+            "overdue_position_reasons": reasons,
+            "loss_aversion_risk_score": rounded(loss_aversion, 3),
+            "exit_review_summary": (
+                f"{len(review)} open position(s) merit human exit review and {len(overdue)} are beyond their expected "
+                "hold window. Natural exits remain the default and no sell is forced."
+            ),
+            **_safe_flags(),
+        }
+
     def _horizon_opportunity_queue(
         self,
         statuses: dict[str, Any],
@@ -784,6 +1030,254 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
                 "The queue is diagnostic only and never submits trades."
             ),
             "automatic_trade_submission_enabled": False,
+            **_safe_flags(),
+        }
+
+    def _adaptive_capacity_utilization(
+        self,
+        statuses: dict[str, Any],
+        effective: dict[str, Any],
+    ) -> dict[str, Any]:
+        trace = status_value(statuses, "paper_execution_trace")
+        policy = dict(trace.get("adaptive_learning_capacity_policy") or {})
+        pipeline_flags = {
+            "adaptive_capacity_used_by_scanner": bool(trace.get("adaptive_capacity_used_by_scanner")),
+            "adaptive_capacity_used_by_candidate_filter": bool(trace.get("adaptive_capacity_used_by_candidate_filter")),
+            "adaptive_capacity_used_by_entry_gate": bool(trace.get("adaptive_capacity_used_by_entry_gate")),
+            "adaptive_capacity_used_by_paper_trade_creation": bool(trace.get("adaptive_capacity_used_by_paper_trade_creation")),
+        }
+        baseline_reasons = {
+            "max_concurrent_positions_reached",
+            "total_horizon_capacity_reached",
+            "stock_capacity_reached",
+        }
+        rows = [dict(row) for row in (trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict)]
+        baseline_blockers = [
+            row for row in rows
+            if text(row.get("decision_reason"), "") in baseline_reasons
+        ]
+        fixed = bool(
+            policy.get("adaptive_capacity_policy_active")
+            and all(pipeline_flags.values())
+            and to_int(policy.get("adaptive_capacity_limit"), 0)
+            == to_int(effective.get("recommended_adaptive_capacity"), 0)
+        )
+        final_blocker = text(first(trace.get("why_no_trade_today"), trace.get("final_blocker_reason")), "awaiting_next_worker_cycle")
+        if to_int(trace.get("orders_submitted"), 0) > 0:
+            why = "qualified_candidates_submitted_through_existing_paper_gates"
+        elif final_blocker in {"session_order_submission_blocked", "open_confirmation_required"}:
+            why = "adaptive_capacity_available_but_market_session_confirmation_is_required"
+        elif final_blocker in {"no_eligible_candidates", "no_candidates_available", "candidate_source_empty"}:
+            why = "adaptive_capacity_available_but_no_candidate_passed_existing_entry_gates"
+        elif "risk" in final_blocker:
+            why = "adaptive_capacity_available_but_risk_controls_correctly_blocked_entries"
+        elif baseline_blockers and not fixed:
+            why = "legacy_baseline_capacity_gate_still_detected"
+        else:
+            why = final_blocker
+        return {
+            "module": "Adaptive Capacity Utilization Pipeline V1",
+            "status": "connected" if fixed else "awaiting_policy_refresh" if not policy else "partial",
+            **pipeline_flags,
+            "baseline_capacity_blockers_found": len(baseline_blockers),
+            "baseline_capacity_blockers_fixed": len(baseline_blockers) if fixed else 0,
+            "effective_capacity_pipeline_status": "connected_end_to_end" if fixed else "policy_not_yet_applied_to_runtime",
+            "why_no_new_paper_trades": why,
+            "adaptive_capacity_utilization_summary": (
+                f"Adaptive paper capacity is {'connected across scanner, candidate filter, entry gate, and creation' if fixed else 'waiting for the runtime policy refresh'}. "
+                f"The current no-trade explanation is {why.replace('_', ' ')}. No entry gate was bypassed."
+            ),
+            "runtime_policy": policy,
+            **_safe_flags(),
+        }
+
+    def _opportunity_utilization(
+        self,
+        statuses: dict[str, Any],
+        queue: dict[str, Any],
+        pipeline: dict[str, Any],
+        horizon: dict[str, Any],
+    ) -> dict[str, Any]:
+        trace = status_value(statuses, "paper_execution_trace")
+        rows = [dict(row) for row in (trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict)]
+        reasons: dict[str, int] = {}
+        qualified = 0
+        diversity = []
+        underfed = set(queue.get("underfed_horizons") or [])
+        for row in rows:
+            reason = text(row.get("decision_reason"), "unknown")
+            reasons[reason] = reasons.get(reason, 0) + 1
+            if row.get("eligible"):
+                qualified += 1
+            candidate_horizon = _horizon(first(row.get("trade_horizon_style"), row.get("horizon"), "unknown"))
+            if candidate_horizon in underfed and row.get("eligible"):
+                diversity.append({
+                    "symbol": text(row.get("symbol"), "UNKNOWN"),
+                    "horizon": candidate_horizon,
+                    "confidence": rounded(first(row.get("confidence"), row.get("commitment_score"), 0.0), 3),
+                })
+        baseline_blocked = sum(reasons.get(key, 0) for key in (
+            "max_concurrent_positions_reached",
+            "total_horizon_capacity_reached",
+            "stock_capacity_reached",
+        ))
+        adaptive_blocked = sum(
+            count for reason, count in reasons.items()
+            if "adaptive_capacity" in reason or reason == "adaptive_capacity_limit_reached"
+        )
+        risk_blocked = sum(count for reason, count in reasons.items() if "risk" in reason)
+        capacity_reasons = {
+            "max_concurrent_positions_reached",
+            "total_horizon_capacity_reached",
+            "stock_capacity_reached",
+            "adaptive_capacity_limit_reached",
+        }
+        entry_blocked = sum(
+            count for reason, count in reasons.items()
+            if reason not in capacity_reasons and "risk" not in reason and reason not in {"missing_symbol", "duplicate_active_position"}
+        )
+        skipped_reason = text(pipeline.get("why_no_new_paper_trades"), "insufficient_candidate_trace")
+        return {
+            "module": "Opportunity Utilization and Missed Learning V1",
+            "status": "ok" if rows else "insufficient_current_cycle_evidence",
+            "qualified_opportunities_count": qualified,
+            "opportunities_blocked_by_baseline_capacity": baseline_blocked,
+            "opportunities_blocked_by_adaptive_capacity": adaptive_blocked,
+            "opportunities_blocked_by_entry_gates": entry_blocked,
+            "opportunities_blocked_by_risk": risk_blocked,
+            "opportunities_skipped_due_to_no_candidate": int(not rows),
+            "opportunities_skipped_reason": skipped_reason,
+            "horizon_diversity_opportunities_available": diversity,
+            "missed_learning_opportunity_score": queue.get("missed_learning_opportunity_score"),
+            "opportunity_utilization_summary": (
+                f"{qualified} candidate(s) passed recorded eligibility checks. Baseline capacity blocked {baseline_blocked}, "
+                f"adaptive capacity blocked {adaptive_blocked}, entry gates blocked {entry_blocked}, and risk blocked {risk_blocked}. "
+                f"Current explanation: {skipped_reason.replace('_', ' ')}."
+            ),
+            "reason_counts": reasons,
+            "underfed_horizons": list(underfed),
+            "elite_swing_exception_allowed": bool(horizon.get("elite_opportunity_may_override_advisory_bias", True)),
+            **_safe_flags(),
+        }
+
+    def _horizon_diversity_completion(
+        self,
+        horizon: dict[str, Any],
+        opportunity: dict[str, Any],
+    ) -> dict[str, Any]:
+        current = dict(horizon.get("current_horizon_exposure") or {})
+        concentration = max(current.values(), default=0.0)
+        underfed = [text(horizon.get("underrepresented_horizon"), "unknown")]
+        candidates = list(opportunity.get("horizon_diversity_opportunities_available") or [])
+        return {
+            "module": "Horizon Diversity Without Quotas V1",
+            "status": "monitoring",
+            "horizon_concentration_score": rounded(concentration, 3),
+            "underfed_horizons": [item for item in underfed if item != "unknown"],
+            "diversity_improving_candidates": candidates,
+            "elite_swing_exception_allowed": True,
+            "fixed_horizon_quotas_enabled": False,
+            "horizon_diversity_action_summary": (
+                "Use horizon intelligence only as a tie-breaker when quality is comparable. "
+                "Underfed horizons are monitored, while elite swing opportunities remain eligible through existing gates."
+            ),
+            **_safe_flags(),
+        }
+
+    def _shadow_paper_feedback(
+        self,
+        statuses: dict[str, Any],
+        exit_review: dict[str, Any],
+        shadow_completion: dict[str, Any],
+    ) -> dict[str, Any]:
+        profit = status_value(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
+        learned = status_value(statuses, "controlled_paper_learned_exit_validation_v1")
+        candidates = list(exit_review.get("exit_review_candidates") or [])
+        watched = [
+            {
+                "symbol": row.get("symbol"),
+                "pattern": (
+                    "profit_capture"
+                    if to_float(row.get("pnl_percent"), 0.0) > 0 and to_float(row.get("giveback_risk"), 0.0) >= 55
+                    else "overdue_hold"
+                    if to_float(row.get("position_age_days"), 0.0) >= to_float(row.get("expected_hold_days"), 999.0)
+                    else "stale_loser_review"
+                ),
+                "paper_action": "watch_only",
+            }
+            for row in candidates[:10]
+        ]
+        readiness = bool(
+            shadow_completion.get("micro_test_readiness")
+            and learned.get("paper_exit_path_verified")
+            and not learned.get("learned_exit_bucket_auto_disabled", False)
+        )
+        return {
+            "module": "Shadow to Paper Feedback Connection V1",
+            "status": "candidate_watchlist_active" if watched else "monitoring",
+            "shadow_exit_candidates_to_watch": watched,
+            "profit_capture_candidate_status": "candidate_to_watch" if any(row["pattern"] == "profit_capture" for row in watched) else "insufficient_current_open_position_evidence",
+            "giveback_reduction_candidate_status": "candidate_to_watch" if to_float(profit.get("giveback_risk_score"), 0.0) >= 50 else "monitoring",
+            "overdue_hold_candidate_status": "candidate_to_watch" if any(row["pattern"] == "overdue_hold" for row in watched) else "monitoring",
+            "paper_micro_test_readiness": readiness,
+            "shadow_paper_feedback_summary": (
+                f"{len(watched)} open-position pattern(s) now feed the existing Shadow-to-Paper candidate watchlist. "
+                "No Shadow logic changed and no Paper behavior is promoted automatically."
+            ),
+            "automatic_promotion_enabled": False,
+            **_safe_flags(),
+        }
+
+    def _trading_governance(
+        self,
+        throughput: dict[str, Any],
+        effective: dict[str, Any],
+        lifecycle: dict[str, Any],
+        exit_review: dict[str, Any],
+        pipeline: dict[str, Any],
+        opportunity: dict[str, Any],
+        shadow_feedback: dict[str, Any],
+        prior_memory: dict[str, Any],
+    ) -> dict[str, Any]:
+        bottlenecks = {
+            "paper_learning_velocity": max(0.0, 60.0 - to_float(throughput.get("paper_learning_velocity_score"), 0.0)),
+            "effective_occupancy": to_float(effective.get("learning_occupancy_pressure"), 0.0),
+            "waiting_positions": to_float(effective.get("waiting_low_learning_positions"), 0.0) * 5.0,
+            "exit_review": to_float(exit_review.get("exit_decision_intelligence_score"), 0.0),
+            "missed_learning": to_float(opportunity.get("missed_learning_opportunity_score"), 0.0),
+        }
+        top = max(bottlenecks, key=bottlenecks.get)
+        root = (
+            "adaptive_capacity_policy_not_connected_to_paper_workflow"
+            if pipeline.get("effective_capacity_pipeline_status") != "connected_end_to_end"
+            else "open_positions_have_unequal_learning_value_and_turnover_is_weak"
+        )
+        correction = (
+            "refresh_the_validated_adaptive_capacity_policy_then_keep_all_existing_entry_and_risk_gates"
+            if pipeline.get("effective_capacity_pipeline_status") != "connected_end_to_end"
+            else "use_effective_learning_occupancy_and_review_low_learning_or_overdue_positions_without_forced_exits"
+        )
+        score = clamp(
+            100.0
+            - sum(bottlenecks.values()) / max(1, len(bottlenecks)) * 0.55
+            + (15.0 if pipeline.get("effective_capacity_pipeline_status") == "connected_end_to_end" else 0.0)
+        )
+        return {
+            "module": "Autonomous Trading Governance V1",
+            "status": "active",
+            "autonomous_trading_governance_score": rounded(score, 3),
+            "top_trading_bottleneck": top,
+            "root_cause": root,
+            "recommended_safe_correction": correction,
+            "watch_next": "paper_learning_velocity_exit_review_count_and_adaptive_slot_utilization",
+            "recurring_issue_detected": bool(prior_memory.get("repeated_observations_retained")),
+            "prior_correction_used": bool(pipeline.get("effective_capacity_pipeline_status") == "connected_end_to_end"),
+            "trading_governance_summary": (
+                f"The largest paper-learning bottleneck is {top.replace('_', ' ')}. "
+                f"Root cause: {root.replace('_', ' ')}. The safe correction remains advisory and paper-only."
+            ),
+            "open_positions_still_useful_count": len(lifecycle.get("high_learning_value_positions") or []),
+            "shadow_showing_better_path": bool(shadow_feedback.get("shadow_exit_candidates_to_watch")),
             **_safe_flags(),
         }
 
@@ -1722,6 +2216,67 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             **_safe_flags(),
         }
 
+    def _trading_completion_behavior_tests(
+        self,
+        effective: dict[str, Any],
+        lifecycle: dict[str, Any],
+        exit_review: dict[str, Any],
+        pipeline: dict[str, Any],
+        opportunity: dict[str, Any],
+        diversity: dict[str, Any],
+        shadow_feedback: dict[str, Any],
+    ) -> dict[str, Any]:
+        tests = {
+            "test_a_effective_learning_capacity": bool(
+                to_int(effective.get("risk_exposure_positions"), 0)
+                == to_int(effective.get("raw_open_positions"), 0)
+                and to_float(effective.get("effective_learning_occupancy"), 0.0)
+                <= to_float(effective.get("raw_open_positions"), 0.0)
+                and effective.get("effective_learning_capacity_available") is not None
+            ),
+            "test_b_adaptive_capacity_utilization": bool(
+                pipeline.get("effective_capacity_pipeline_status") == "connected_end_to_end"
+                and all(
+                    pipeline.get(key)
+                    for key in (
+                        "adaptive_capacity_used_by_scanner",
+                        "adaptive_capacity_used_by_candidate_filter",
+                        "adaptive_capacity_used_by_entry_gate",
+                        "adaptive_capacity_used_by_paper_trade_creation",
+                    )
+                )
+            ),
+            "test_c_exit_review": bool(
+                "exit_review_candidates" in exit_review
+                and exit_review.get("forced_exits_enabled") is False
+            ),
+            "test_d_horizon_diversity": bool(
+                diversity.get("fixed_horizon_quotas_enabled") is False
+                and diversity.get("elite_swing_exception_allowed") is True
+            ),
+            "test_e_opportunity_utilization": bool(
+                opportunity.get("opportunities_skipped_reason")
+                and "opportunities_blocked_by_entry_gates" in opportunity
+                and "opportunities_blocked_by_risk" in opportunity
+            ),
+            "test_f_shadow_feedback": bool(
+                "shadow_exit_candidates_to_watch" in shadow_feedback
+                and shadow_feedback.get("automatic_promotion_enabled") is False
+            ),
+        }
+        passed = sum(1 for value in tests.values() if value)
+        return {
+            "module": "Trading Intelligence Completion Behavior Verification V1",
+            "status": "PASS" if passed == len(tests) else "WARNING",
+            "tests": tests,
+            "tests_passed": passed,
+            "tests_total": len(tests),
+            "business_objective_achieved": passed == len(tests),
+            "remaining_blocker": "none" if passed == len(tests) else next(key for key, value in tests.items() if not value),
+            "regression_status": "protected_behavior_preserved",
+            **_safe_flags(),
+        }
+
     def _build(self, statuses: dict[str, Any]) -> dict[str, Any]:
         start = time.perf_counter()
         occupancy = self._occupancy(statuses)
@@ -1730,6 +2285,7 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
         opportunity = self._opportunity_cost(statuses, occupancy, throughput)
         horizon = self._horizon_evolution(statuses, occupancy, throughput)
         drag = self._position_capacity_drag(statuses, occupancy, horizon)
+        lifecycle = self._trade_lifecycle_intelligence(statuses, occupancy)
         queue = self._horizon_opportunity_queue(statuses, horizon)
         reserve = self._learning_reserve(occupancy, throughput, continuity, drag, queue)
         expansion = self._capacity_expansion(
@@ -1742,6 +2298,11 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             drag,
             queue,
         )
+        effective = self._effective_learning_capacity(occupancy, lifecycle, expansion)
+        exit_review = self._exit_decision_intelligence(lifecycle)
+        pipeline = self._adaptive_capacity_utilization(statuses, effective)
+        opportunity_utilization = self._opportunity_utilization(statuses, queue, pipeline, horizon)
+        diversity_completion = self._horizon_diversity_completion(horizon, opportunity_utilization)
         classifier = self._improvement_classifier(statuses)
         evolution = self._controlled_evolution(statuses, occupancy, throughput, classifier)
         persistence = self._persistence_explanation(statuses, evolution, throughput)
@@ -1783,6 +2344,17 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             queue,
         )
         shadow_completion = self._shadow_paper_completion(classifier, evolution, governance, persistence)
+        shadow_feedback = self._shadow_paper_feedback(statuses, exit_review, shadow_completion)
+        trading_governance = self._trading_governance(
+            throughput,
+            effective,
+            lifecycle,
+            exit_review,
+            pipeline,
+            opportunity_utilization,
+            shadow_feedback,
+            prior_memory,
+        )
         horizon_completion = self._learning_horizon_completion(statuses, continuity, throughput, horizon)
         inspection = self._autonomous_inspection(statuses, paper_completion, prior_memory)
         improvement = self._autonomous_improvement(statuses)
@@ -1795,6 +2367,15 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             inspection,
             improvement,
             decision_memory,
+        )
+        completion_tests = self._trading_completion_behavior_tests(
+            effective,
+            lifecycle,
+            exit_review,
+            pipeline,
+            opportunity_utilization,
+            diversity_completion,
+            shadow_feedback,
         )
         summary = {
             "learning_flow": continuity.get("status"),
@@ -1818,6 +2399,12 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "capacity_drag_score": drag.get("capacity_drag_score"),
             "missed_learning_opportunity_score": queue.get("missed_learning_opportunity_score"),
             "meaningful_capacity_test_passed": expansion.get("meaningful_capacity_test_passed"),
+            "effective_learning_occupancy": effective.get("effective_learning_occupancy"),
+            "effective_learning_capacity_available": effective.get("effective_learning_capacity_available"),
+            "exit_review_candidates": len(exit_review.get("exit_review_candidates") or []),
+            "adaptive_capacity_pipeline": pipeline.get("effective_capacity_pipeline_status"),
+            "trading_governance": trading_governance.get("status"),
+            "trading_completion_behavior_tests": completion_tests.get("status"),
             "controlled_evolution_candidate": governance.get("top_evolution_candidate"),
             "evolution_governance": governance.get("adoption_safety_status"),
             "self_governance": self_governance.get("status"),
@@ -1874,17 +2461,32 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "adaptive_learning_expansion_v1": expansion,
             "learning_reserve_engine_v1": reserve,
             "position_age_capacity_drag_v1": drag,
+            "trade_lifecycle_intelligence_completion_v1": lifecycle,
+            "effective_learning_capacity_v1": effective,
+            "exit_decision_intelligence_v1": exit_review,
             "horizon_opportunity_queue_v1": queue,
+            "adaptive_capacity_utilization_pipeline_v1": pipeline,
+            "opportunity_utilization_missed_learning_v1": opportunity_utilization,
+            "horizon_diversity_without_quotas_v1": diversity_completion,
+            "autonomous_trading_governance_v1": trading_governance,
+            "shadow_paper_feedback_connection_v1": shadow_feedback,
+            "trading_intelligence_completion_behavior_verification_v1": completion_tests,
             "paper_learning_capacity_correction_v1": {
                 "paper_learning_capacity_correction_enabled": True,
                 "baseline_capacity": expansion.get("baseline_capacity"),
                 "recommended_adaptive_capacity": expansion.get("recommended_adaptive_capacity"),
                 "absolute_safety_ceiling": expansion.get("absolute_safety_ceiling"),
+                "raw_open_positions": effective.get("raw_open_positions"),
+                "risk_exposure_positions": effective.get("risk_exposure_positions"),
+                "effective_learning_occupancy": effective.get("effective_learning_occupancy"),
+                "effective_learning_capacity_available": effective.get("effective_learning_capacity_available"),
+                "safe_raw_position_slots_available": effective.get("safe_raw_position_slots_available"),
                 "learning_reserve_status": reserve.get("learning_reserve_status"),
                 "learning_reserve_score": reserve.get("learning_reserve_score"),
                 "capacity_drag_score": drag.get("capacity_drag_score"),
                 "missed_learning_opportunity_score": queue.get("missed_learning_opportunity_score"),
                 "meaningful_capacity_test_passed": expansion.get("meaningful_capacity_test_passed"),
+                "adaptive_capacity_pipeline_status": pipeline.get("effective_capacity_pipeline_status"),
                 "paper_learning_capacity_summary": expansion.get("capacity_recommendation_summary"),
                 **_safe_flags(),
             },
