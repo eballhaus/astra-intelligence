@@ -126,6 +126,11 @@ def _status_from_pressure(score: float, throughput: float) -> str:
     return "healthy"
 
 
+def _avg(values: list[float]) -> float:
+    clean = [to_float(value, 0.0) for value in values if value is not None]
+    return sum(clean) / max(1, len(clean))
+
+
 class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
     """Advisory occupancy, learning-throughput, and controlled-evolution governance."""
 
@@ -1039,21 +1044,380 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "module": "Exit Decision Intelligence and Overdue Position Review V1",
             "status": "review_needed" if review else "monitoring",
             "exit_decision_intelligence_score": rounded(score, 3),
+            "open_positions_reviewed": len(rows),
+            "valid_hold_count": len(valid),
             "overdue_position_count": len(overdue),
             "exit_review_candidates": review,
+            "exit_review_candidate_count": len(review),
             "profit_protection_candidates": profit_protection,
+            "profit_protection_candidate_count": len(profit_protection),
             "loss_containment_candidates": loss_containment,
+            "loss_containment_candidate_count": len(loss_containment),
             "thesis_expiration_candidates": thesis_expiration,
+            "thesis_expiration_candidate_count": len(thesis_expiration),
+            "stale_hold_candidates": [dict(row) for row in rows if row.get("lifecycle_stage") == "stale"],
+            "stale_hold_candidate_count": len([row for row in rows if row.get("lifecycle_stage") == "stale"]),
             "hold_still_valid_positions": valid,
             "hold_still_valid_count": len(valid),
             "hold_validation_reasons": sorted(set(text(row.get("classification_reason"), "monitor") for row in valid)),
             "overdue_position_reasons": reasons,
             "loss_aversion_risk_score": rounded(loss_aversion, 3),
             "giveback_risk_score": rounded(giveback_risk, 3),
+            "automatic_exits_enabled": False,
+            "forced_partial_sells_enabled": False,
+            "trailing_stops_enabled": False,
             "exit_review_summary": (
                 f"{len(review)} open position(s) merit human exit review, with {len(profit_protection)} profit "
                 f"protection, {len(loss_containment)} loss containment, and {len(thesis_expiration)} thesis-expiration "
                 "review signal(s). Natural exits remain the default and no sell is forced."
+            ),
+            "exit_decision_summary": (
+                f"Astra reviewed {len(rows)} open Paper position(s): {len(valid)} remain valid holds, "
+                f"{len(review)} need human exit review, {len(profit_protection)} have profit-protection pressure, "
+                f"and {len(loss_containment)} have loss-containment pressure. No automatic exit is enabled."
+            ),
+            **_safe_flags(),
+        }
+
+    def _trade_thesis_tracking(self, lifecycle: dict[str, Any]) -> dict[str, Any]:
+        rows = [dict(row) for row in (lifecycle.get("trade_lifecycle_summary") or []) if isinstance(row, dict)]
+        records = []
+        for row in rows:
+            status = text(row.get("current_thesis_status"), "unknown")
+            proxy = not bool(row.get("position_age_is_exact"))
+            horizon = text(row.get("horizon"), "unknown")
+            pnl = to_float(row.get("pnl_percent"), 0.0)
+            continuation = to_float(row.get("continuation_probability"), 50.0)
+            thesis_health = to_float(row.get("thesis_health"), 0.0)
+            if status == "healthy":
+                invalidation = "continuation drops below 45, thesis health weakens, or giveback/loss pressure rises"
+            elif status == "weakening":
+                invalidation = "thesis is weakening and should be reviewed against catalyst, momentum, and opportunity cost"
+            elif status == "broken":
+                invalidation = "cached thesis support appears broken; human review is warranted"
+            else:
+                invalidation = "entry thesis unavailable; use current broker truth and cached lifecycle evidence"
+            records.append({
+                "symbol": row.get("symbol"),
+                "entry_reason": "proxy_from_cached_entry_and_lifecycle_evidence" if proxy else "broker_reconciled_entry_context",
+                "signal_type": text(row.get("classification_reason"), "lifecycle_position_evidence"),
+                "horizon": horizon,
+                "confidence_at_entry": "unavailable" if proxy else row.get("classification_confidence"),
+                "expected_holding_window_days": row.get("expected_hold_days"),
+                "key_supporting_factors": [
+                    f"horizon:{horizon}",
+                    f"continuation:{rounded(continuation, 1)}",
+                    f"current_pnl:{rounded(pnl, 2)}%",
+                    f"thesis_health:{rounded(thesis_health, 1)}",
+                ],
+                "invalidation_conditions": invalidation,
+                "thesis_freshness": "proxy_based" if proxy else "broker_reconciled",
+                "thesis_confidence": row.get("classification_confidence"),
+                "thesis_status": status,
+                "proxy_thesis_used": proxy,
+                "fabricated_entry_thesis": False,
+            })
+        valid = [row for row in records if row.get("thesis_status") == "healthy"]
+        weakened = [row for row in records if row.get("thesis_status") == "weakening"]
+        expired = [row for row in records if row.get("thesis_status") == "broken"]
+        unknown = [row for row in records if row.get("thesis_status") not in {"healthy", "weakening", "broken"}]
+        return {
+            "module": "Trade Thesis Tracking V1",
+            "status": "ok" if records else "insufficient_evidence",
+            "trade_thesis_tracking_enabled": True,
+            "thesis_records": records,
+            "thesis_records_count": len(records),
+            "thesis_valid_count": len(valid),
+            "thesis_weakened_count": len(weakened),
+            "thesis_expired_count": len(expired),
+            "thesis_unknown_count": len(unknown),
+            "proxy_thesis_used": bool([row for row in records if row.get("proxy_thesis_used")]),
+            "exact_thesis_available_count": len([row for row in records if not row.get("proxy_thesis_used")]),
+            "trade_thesis_summary": (
+                f"Astra has lightweight thesis records for {len(records)} open Paper position(s). "
+                f"{len(valid)} look intact, {len(weakened)} are weakening, {len(expired)} look expired, "
+                f"and {len(unknown)} remain unknown. Proxy records are labeled; no entry reason is fabricated."
+            ),
+            **_safe_flags(),
+        }
+
+    def _open_position_opportunity_cost(
+        self,
+        lifecycle: dict[str, Any],
+        opportunity: dict[str, Any],
+        effective: dict[str, Any],
+    ) -> dict[str, Any]:
+        rows = [dict(row) for row in (lifecycle.get("trade_lifecycle_summary") or []) if isinstance(row, dict)]
+        replacement_count = len(opportunity.get("candidate_rows") or []) + len(opportunity.get("horizon_diversity_opportunities_available") or [])
+        capacity_pressure = clamp(effective.get("learning_occupancy_pressure"))
+        scored = []
+        for row in rows:
+            learning_value = to_float(row.get("learning_value"), 0.0)
+            age_ratio = to_float(row.get("position_age_days"), 0.0) / max(0.05, to_float(row.get("expected_hold_days"), 7.0))
+            pnl = to_float(row.get("pnl_percent"), 0.0)
+            score = clamp(
+                capacity_pressure * 0.35
+                + max(0.0, 70.0 - learning_value) * 0.30
+                + min(100.0, age_ratio * 55.0) * 0.20
+                + (15.0 if replacement_count else 0.0)
+                + (10.0 if pnl < 0 and row.get("should_be_reviewed_for_exit") else 0.0)
+            )
+            scored.append({
+                "symbol": row.get("symbol"),
+                "horizon": row.get("horizon"),
+                "current_hold_value": rounded(learning_value, 3),
+                "learning_value": rounded(learning_value, 3),
+                "opportunity_cost_score": rounded(score, 3),
+                "capacity_drag": bool(score >= 60),
+                "still_worth_learning_space": bool(learning_value >= 55 or score < 60),
+                "review_reason": (
+                    "capacity_or_learning_drag_review"
+                    if score >= 60 else "hold_value_still_reasonable"
+                ),
+            })
+        high = [row for row in scored if row["opportunity_cost_score"] >= 60]
+        low = [row for row in scored if row["opportunity_cost_score"] < 40]
+        tradeoff_score = _avg([row["opportunity_cost_score"] for row in scored])
+        return {
+            "module": "Open Position Opportunity Cost Intelligence V1",
+            "status": "ok" if scored else "insufficient_evidence",
+            "opportunity_cost_intelligence_score": rounded(tradeoff_score, 3),
+            "open_position_opportunity_cost_rows": scored,
+            "high_opportunity_cost_positions": high,
+            "low_opportunity_cost_positions": low,
+            "replacement_opportunities_detected": replacement_count,
+            "learning_capacity_tradeoff_score": rounded(clamp(tradeoff_score * 0.65 + capacity_pressure * 0.35), 3),
+            "capacity_drag_positions": [row for row in scored if row.get("capacity_drag")],
+            "automatic_replacements_enabled": False,
+            "opportunity_cost_summary": (
+                f"Astra found {len(high)} open position(s) with elevated opportunity-cost or learning-drag pressure. "
+                f"{replacement_count} cached replacement context(s) are visible, but no replacement trade is forced."
+            ),
+            **_safe_flags(),
+        }
+
+    def _exit_learning_feedback_loop(self, statuses: dict[str, Any], exit_review: dict[str, Any]) -> dict[str, Any]:
+        truth = status_value(statuses, "astra_truth_controlled_evolution_executive_v1")
+        official = dict((truth.get("executive_snapshot_truth_reconciliation_v1") or {}).get("official_performance_summary") or {})
+        broker = status_value(statuses, "alpaca_paper_broker") or status_value(statuses, "alpaca_paper_status_v1")
+        lifecycle = status_value(statuses, "trade_lifecycle_excursion_exit_learning_v2")
+        profit = status_value(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
+        closed = max(
+            to_int((truth.get("executive_snapshot_truth_reconciliation_v1") or {}).get("closed_paper_trade_count"), 0),
+            to_int(broker.get("true_paper_closed_trade_count"), 0),
+            to_int(lifecycle.get("closed_trade_count"), 0),
+            to_int(profit.get("evidence_count"), 0),
+        )
+        capture = to_float(first(profit.get("capture_ratio"), profit.get("average_capture_ratio"), profit.get("shadow_capture_ratio"), 0.0), 0.0)
+        giveback = to_float(first(profit.get("giveback_pct"), profit.get("average_giveback"), profit.get("shadow_giveback_pct"), 0.0), 0.0)
+        if capture > 1.5:
+            capture_ratio = capture / 100.0
+        else:
+            capture_ratio = capture
+        if closed <= 0:
+            blocker = "closed_paper_exit_records_not_available"
+            score = 0.0
+            too_late = too_early = good = 0
+        else:
+            blocker = "none"
+            score = clamp(min(100.0, closed / 50.0 * 45.0) + max(0.0, capture_ratio * 100.0) * 0.35 + max(0.0, 30.0 - giveback) * 0.20)
+            too_late = len(exit_review.get("profit_protection_candidates") or []) + len(exit_review.get("loss_containment_candidates") or [])
+            too_early = to_int(first(profit.get("false_exit_rate"), 0.0), 0)
+            good = max(0, closed - too_late - too_early)
+        return {
+            "module": "Exit Learning Feedback Loop V1",
+            "status": "ok" if closed > 0 else "insufficient_evidence",
+            "exit_learning_feedback_score": rounded(score, 3),
+            "closed_trades_reviewed": closed,
+            "too_early_exit_count": too_early,
+            "too_late_exit_count": too_late,
+            "good_exit_count": good,
+            "avg_profit_capture": rounded(capture_ratio, 4),
+            "avg_giveback": rounded(giveback, 3),
+            "shadow_exit_advantage_score": rounded(to_float(first(profit.get("improvement_delta"), profit.get("shadow_exit_advantage_score"), 0.0), 0.0), 3),
+            "best_exit_behavior_observed": text(first(profit.get("best_shadow_exit_policy"), profit.get("best_exit_policy"), "warming_up"), "warming_up"),
+            "feedback_blocker": blocker,
+            "exit_learning_feedback_summary": (
+                f"Astra reviewed {closed} closed/exit-learning record(s). Capture is {capture_ratio:.2f}, "
+                f"giveback is {giveback:.2f}, and {too_late} current pattern(s) suggest exits may have been late."
+                if closed > 0
+                else "Closed Paper exit evidence is still warming up, so Astra prepared the feedback structure without inventing exit outcomes."
+            ),
+            **_safe_flags(),
+        }
+
+    def _controlled_exit_micro_test_readiness(
+        self,
+        statuses: dict[str, Any],
+        evolution: dict[str, Any],
+        persistence: dict[str, Any],
+        shadow_feedback: dict[str, Any],
+        exit_review: dict[str, Any],
+    ) -> dict[str, Any]:
+        learned = status_value(statuses, "controlled_paper_learned_exit_validation_v1")
+        broker = status_value(statuses, "alpaca_paper_broker") or status_value(statuses, "alpaca_paper_status_v1")
+        candidates = list(evolution.get("eligible_candidates") or [])
+        watched = list(shadow_feedback.get("shadow_exit_candidates_to_watch") or [])
+        gates = dict(evolution.get("gate_results") or {})
+        readiness_components = [
+            100.0 if gates.get("minimum_evidence_count") else max(0.0, 100.0 - to_float(persistence.get("remaining_evidence"), 25.0) * 4.0),
+            100.0 if gates.get("minimum_confidence") else to_float(persistence.get("current_confidence"), 0.0),
+            100.0 if gates.get("minimum_persistence_window") else to_float(persistence.get("current_persistence_score"), 0.0),
+            100.0 if gates.get("broker_truth_healthy") or broker.get("paper_mode_verified") else 0.0,
+            100.0 if gates.get("rollback_available") else 35.0,
+        ]
+        readiness_score = clamp(_avg(readiness_components))
+        blockers = list(evolution.get("promotion_blocker") or shadow_feedback.get("promotion_blockers") or [])
+        if learned.get("learned_exit_bucket_enabled"):
+            stage = "stage_2_paper_micro_test_active_only_if_existing_safe_path_exists"
+        elif candidates and not blockers:
+            stage = "stage_1_paper_micro_test_recommended"
+        elif candidates or watched:
+            stage = "stage_0_shadow_observe"
+        else:
+            stage = "stage_0_shadow_observe"
+        top_pattern = text((watched[0] if watched else {}).get("pattern"), "")
+        recommended = {
+            "policy": (
+                "profit_protection_review"
+                if top_pattern == "profit_capture" or exit_review.get("profit_protection_candidates")
+                else "loss_containment_review"
+                if exit_review.get("loss_containment_candidates")
+                else "thesis_expiration_review"
+                if exit_review.get("thesis_expiration_candidates")
+                else "continue_shadow_observation"
+            ),
+            "paper_action": "human_review_recommendation_only",
+            "max_positions": "1_to_2_if_future_safe_path_is_explicitly_approved",
+        }
+        return {
+            "module": "Controlled Paper Exit Micro-Test Readiness V1",
+            "status": "ready_for_human_review" if stage.startswith("stage_1") else "advisory_observation",
+            "controlled_exit_micro_test_readiness_score": rounded(readiness_score, 3),
+            "exit_micro_test_candidates": candidates or watched[:1],
+            "recommended_micro_test": recommended if candidates or watched else {},
+            "promotion_stage": stage,
+            "promotion_blockers": blockers,
+            "remaining_evidence_needed": persistence.get("remaining_evidence"),
+            "remaining_persistence_needed": persistence.get("remaining_persistence_score"),
+            "rollback_status": evolution.get("rollback_status", "not_ready"),
+            "paper_mode_verified": bool(broker.get("paper_mode_verified")),
+            "paper_exit_path_verified": bool(learned.get("paper_exit_path_verified")),
+            "automatic_micro_test_activation_enabled": False,
+            "micro_test_readiness_summary": (
+                f"Exit micro-test readiness is {readiness_score:.1f}/100 at {stage.replace('_', ' ')}. "
+                f"Blockers: {', '.join(blockers) if blockers else 'none'}. This is recommendation-only."
+            ),
+            **_safe_flags(),
+        }
+
+    def _trading_brain_behavior_verification(
+        self,
+        lifecycle: dict[str, Any],
+        exit_review: dict[str, Any],
+        micro: dict[str, Any],
+        thesis: dict[str, Any],
+        open_cost: dict[str, Any],
+        feedback: dict[str, Any],
+    ) -> dict[str, Any]:
+        tests = {
+            "test_a_exit_decision": (
+                to_int(exit_review.get("open_positions_reviewed"), 0) >= 0
+                and "valid_hold_count" in exit_review
+                and "exit_review_candidates" in exit_review
+                and exit_review.get("forced_exits_enabled") is False
+            ),
+            "test_b_micro_test_readiness": (
+                "controlled_exit_micro_test_readiness_score" in micro
+                and "promotion_blockers" in micro
+                and micro.get("automatic_micro_test_activation_enabled") is False
+            ),
+            "test_c_trade_thesis": (
+                thesis.get("trade_thesis_tracking_enabled") is True
+                and all(row.get("fabricated_entry_thesis") is False for row in thesis.get("thesis_records") or [])
+            ),
+            "test_d_opportunity_cost": (
+                "learning_capacity_tradeoff_score" in open_cost
+                and open_cost.get("automatic_replacements_enabled") is False
+            ),
+            "test_e_exit_feedback": (
+                "closed_trades_reviewed" in feedback
+                and "feedback_blocker" in feedback
+            ),
+            "test_f_diagnostic_consistency": (
+                to_int(exit_review.get("open_positions_reviewed"), 0) == len(lifecycle.get("trade_lifecycle_summary") or [])
+                and to_int(thesis.get("thesis_records_count"), 0) == len(thesis.get("thesis_records") or [])
+                and exit_review.get("automatic_exits_enabled") is False
+            ),
+        }
+        passed = sum(bool(value) for value in tests.values())
+        failed = [key for key, value in tests.items() if not value]
+        return {
+            "module": "Trading Brain Behavior Verification V1",
+            "status": "PASS" if not failed else "WARNING",
+            "behavior_verification_score": rounded(passed / max(1, len(tests)) * 100.0, 3),
+            "behavior_tests": tests,
+            "behavior_tests_passed": passed,
+            "behavior_tests_failed": failed,
+            "diagnostic_consistency_score": 100.0 if not failed else rounded((passed / max(1, len(tests))) * 100.0, 3),
+            "diagnostic_mismatches": failed,
+            "remaining_blockers": failed,
+            "behavior_verification_summary": (
+                "Trading Brain exit, thesis, opportunity-cost, feedback, and micro-test readiness diagnostics are internally consistent."
+                if not failed else
+                f"Trading Brain diagnostics are safe but need attention: {', '.join(failed)}."
+            ),
+            **_safe_flags(),
+        }
+
+    def _trading_brain_completion(
+        self,
+        exit_review: dict[str, Any],
+        micro: dict[str, Any],
+        thesis: dict[str, Any],
+        open_cost: dict[str, Any],
+        feedback: dict[str, Any],
+        verification: dict[str, Any],
+    ) -> dict[str, Any]:
+        candidates = {
+            "profit_protection": len(exit_review.get("profit_protection_candidates") or []),
+            "loss_containment": len(exit_review.get("loss_containment_candidates") or []),
+            "thesis_expiration": len(exit_review.get("thesis_expiration_candidates") or []),
+            "opportunity_cost": len(open_cost.get("high_opportunity_cost_positions") or []),
+        }
+        highest = max(candidates, key=candidates.get) if candidates else "profit_protection"
+        next_step = (
+            "review_profit_protection_candidates_and_compare_shadow_exit_paths"
+            if highest == "profit_protection"
+            else "review_loss_containment_candidates_without_forcing_exits"
+            if highest == "loss_containment"
+            else "refresh_trade_thesis_context_and_review_expired_theses"
+            if highest == "thesis_expiration"
+            else "monitor_capacity_drag_and_learning_space_tradeoffs"
+        )
+        return {
+            "module": "ASTRA Trading Brain Completion V1",
+            "status": "ok" if verification.get("status") == "PASS" else "safe_needs_attention",
+            "trading_brain_completion_enabled": True,
+            "exit_decision_intelligence_score": exit_review.get("exit_decision_intelligence_score"),
+            "controlled_exit_micro_test_readiness_score": micro.get("controlled_exit_micro_test_readiness_score"),
+            "trade_thesis_tracking_enabled": thesis.get("trade_thesis_tracking_enabled"),
+            "opportunity_cost_intelligence_score": open_cost.get("opportunity_cost_intelligence_score"),
+            "exit_learning_feedback_score": feedback.get("exit_learning_feedback_score"),
+            "behavior_verification_score": verification.get("behavior_verification_score"),
+            "highest_value_exit_improvement": highest,
+            "next_safe_exit_learning_step": next_step,
+            "exit_decision_intelligence_v1": exit_review,
+            "controlled_paper_exit_micro_test_readiness_v1": micro,
+            "trade_thesis_tracking_v1": thesis,
+            "open_position_opportunity_cost_intelligence_v1": open_cost,
+            "exit_learning_feedback_loop_v1": feedback,
+            "trading_brain_behavior_verification_v1": verification,
+            "trading_brain_completion_summary": (
+                f"Astra reviewed {exit_review.get('open_positions_reviewed', 0)} open Paper position(s), "
+                f"found {exit_review.get('valid_hold_count', 0)} valid holds and "
+                f"{len(exit_review.get('exit_review_candidates') or [])} human exit-review candidate(s). "
+                f"The next safe learning step is {next_step.replace('_', ' ')}. No trading behavior changed."
             ),
             **_safe_flags(),
         }
@@ -2759,8 +3123,10 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
         )
         effective = self._effective_learning_capacity(occupancy, lifecycle, expansion)
         exit_review = self._exit_decision_intelligence(lifecycle)
+        trade_thesis = self._trade_thesis_tracking(lifecycle)
         pipeline = self._adaptive_capacity_utilization(statuses, effective)
         opportunity_utilization = self._opportunity_utilization(statuses, queue, pipeline, horizon)
+        open_position_opportunity_cost = self._open_position_opportunity_cost(lifecycle, opportunity, effective)
         diversity_completion = self._horizon_diversity_completion(horizon, opportunity_utilization)
         classifier = self._improvement_classifier(statuses)
         evolution = self._controlled_evolution(statuses, occupancy, throughput, classifier)
@@ -2804,6 +3170,30 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
         )
         shadow_completion = self._shadow_paper_completion(classifier, evolution, governance, persistence)
         shadow_feedback = self._shadow_paper_feedback(statuses, exit_review, shadow_completion)
+        exit_micro_test_readiness = self._controlled_exit_micro_test_readiness(
+            statuses,
+            evolution,
+            persistence,
+            shadow_feedback,
+            exit_review,
+        )
+        exit_learning_feedback = self._exit_learning_feedback_loop(statuses, exit_review)
+        trading_brain_behavior = self._trading_brain_behavior_verification(
+            lifecycle,
+            exit_review,
+            exit_micro_test_readiness,
+            trade_thesis,
+            open_position_opportunity_cost,
+            exit_learning_feedback,
+        )
+        trading_brain_completion = self._trading_brain_completion(
+            exit_review,
+            exit_micro_test_readiness,
+            trade_thesis,
+            open_position_opportunity_cost,
+            exit_learning_feedback,
+            trading_brain_behavior,
+        )
         trading_governance = self._trading_governance(
             throughput,
             effective,
@@ -2903,6 +3293,13 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "effective_learning_occupancy": effective.get("effective_learning_occupancy"),
             "effective_learning_capacity_available": effective.get("effective_learning_capacity_available"),
             "exit_review_candidates": len(exit_review.get("exit_review_candidates") or []),
+            "trading_brain_completion_enabled": trading_brain_completion.get("trading_brain_completion_enabled"),
+            "controlled_exit_micro_test_readiness_score": exit_micro_test_readiness.get("controlled_exit_micro_test_readiness_score"),
+            "trade_thesis_tracking_enabled": trade_thesis.get("trade_thesis_tracking_enabled"),
+            "opportunity_cost_intelligence_score": open_position_opportunity_cost.get("opportunity_cost_intelligence_score"),
+            "exit_learning_feedback_score": exit_learning_feedback.get("exit_learning_feedback_score"),
+            "highest_value_exit_improvement": trading_brain_completion.get("highest_value_exit_improvement"),
+            "next_safe_exit_learning_step": trading_brain_completion.get("next_safe_exit_learning_step"),
             "adaptive_capacity_pipeline": pipeline.get("effective_capacity_pipeline_status"),
             "trading_governance": trading_governance.get("status"),
             "trading_completion_behavior_tests": completion_tests.get("status"),
@@ -2974,6 +3371,13 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "trade_lifecycle_intelligence_completion_v1": lifecycle,
             "effective_learning_capacity_v1": effective,
             "exit_decision_intelligence_v1": exit_review,
+            "trade_thesis_tracking_v1": trade_thesis,
+            "open_position_opportunity_cost_intelligence_v1": open_position_opportunity_cost,
+            "controlled_paper_exit_micro_test_readiness_v1": exit_micro_test_readiness,
+            "exit_learning_feedback_loop_v1": exit_learning_feedback,
+            "trading_brain_behavior_verification_v1": trading_brain_behavior,
+            "trading_brain_completion_v1": trading_brain_completion,
+            "astra_trading_brain_completion_v1": trading_brain_completion,
             "horizon_opportunity_queue_v1": queue,
             "adaptive_capacity_utilization_pipeline_v1": pipeline,
             "opportunity_utilization_missed_learning_v1": opportunity_utilization,
@@ -3025,6 +3429,7 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
                 "decision_memory": decision_memory,
                 "trade_lifecycle_refinement": lifecycle,
                 "exit_decision_intelligence": exit_review,
+                "trading_brain_completion": trading_brain_completion,
                 "shadow_feedback_routing": shadow_feedback,
                 "daily_executive_brief": daily_brief,
                 "behavior_verification": autonomous_behavior_tests,

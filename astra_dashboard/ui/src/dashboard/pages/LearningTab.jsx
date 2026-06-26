@@ -1639,6 +1639,7 @@ export default function LearningTab({ compact = false }) {
   const astraPerformanceOptimizationSuite = unified?.astra_performance_optimization_suite_v1 || {};
   const astraIntelligenceMaturationSuite = unified?.astra_intelligence_maturation_suite_v1 || {};
   const astraAdaptiveOccupancyEvolutionSuite = unified?.astra_adaptive_occupancy_evolution_suite_v1 || {};
+  const astraTradingBrainCompletion = unified?.astra_trading_brain_completion_v1 || astraAdaptiveOccupancyEvolutionSuite?.astra_trading_brain_completion_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -4260,6 +4261,41 @@ export default function LearningTab({ compact = false }) {
             {astraAdaptiveOccupancyEvolutionSuite.executive_summary.daily_autonomous_brief}
           </div>
         ) : null}
+        <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
+          <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
+            Trading Brain Completion: {String(astraTradingBrainCompletion?.status || "warming up").replaceAll("_", " ")}
+          </summary>
+          <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+            Advisory-only review of open Paper positions, trade thesis health, opportunity cost, exit feedback, and controlled exit micro-test readiness.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+            {[
+              ["Exit Decision Score", safeNumber(astraTradingBrainCompletion?.exit_decision_intelligence_score).toFixed(1)],
+              ["Exit Review Candidates", safeNumber(astraTradingBrainCompletion?.exit_decision_intelligence_v1?.exit_review_candidate_count).toFixed(0)],
+              ["Profit Protection", safeNumber(astraTradingBrainCompletion?.exit_decision_intelligence_v1?.profit_protection_candidate_count).toFixed(0)],
+              ["Loss Containment", safeNumber(astraTradingBrainCompletion?.exit_decision_intelligence_v1?.loss_containment_candidate_count).toFixed(0)],
+              ["Thesis Records", safeNumber(astraTradingBrainCompletion?.trade_thesis_tracking_v1?.thesis_records_count).toFixed(0)],
+              ["Thesis Valid / Weak / Expired", `${safeNumber(astraTradingBrainCompletion?.trade_thesis_tracking_v1?.thesis_valid_count).toFixed(0)} / ${safeNumber(astraTradingBrainCompletion?.trade_thesis_tracking_v1?.thesis_weakened_count).toFixed(0)} / ${safeNumber(astraTradingBrainCompletion?.trade_thesis_tracking_v1?.thesis_expired_count).toFixed(0)}`],
+              ["Opportunity Cost Score", safeNumber(astraTradingBrainCompletion?.opportunity_cost_intelligence_score).toFixed(1)],
+              ["Micro-Test Readiness", safeNumber(astraTradingBrainCompletion?.controlled_exit_micro_test_readiness_score).toFixed(1)],
+              ["Promotion Stage", astraTradingBrainCompletion?.controlled_paper_exit_micro_test_readiness_v1?.promotion_stage],
+              ["Exit Feedback Score", safeNumber(astraTradingBrainCompletion?.exit_learning_feedback_score).toFixed(1)],
+              ["Behavior Verification", safeNumber(astraTradingBrainCompletion?.behavior_verification_score).toFixed(1)],
+              ["Next Safe Step", astraTradingBrainCompletion?.next_safe_exit_learning_step],
+            ].map(([label, value]) => (
+              <div key={label} style={{ background: "rgba(12,24,42,0.46)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+                <strong style={{ color: "#f2f7ff" }}>{String(value ?? "warming up").replaceAll("_", " ")}</strong>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 10, color: "#dce9fb", fontSize: 12, lineHeight: 1.55 }}>
+            {String(astraTradingBrainCompletion?.trading_brain_completion_summary || "Trading Brain completion diagnostics are warming up from unified diagnostics.")}
+          </div>
+          <pre style={{ margin: "10px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
+            {JSON.stringify(astraTradingBrainCompletion, null, 2)}
+          </pre>
+        </details>
         <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
           {[
             ["Learning Continuity", "learning_continuity_engine_v1"],
@@ -4273,6 +4309,12 @@ export default function LearningTab({ compact = false }) {
             ["Effective Learning Capacity", "effective_learning_capacity_v1"],
             ["Trade Lifecycle Intelligence", "trade_lifecycle_intelligence_completion_v1"],
             ["Exit Decision Intelligence", "exit_decision_intelligence_v1"],
+            ["Trade Thesis Tracking", "trade_thesis_tracking_v1"],
+            ["Open Position Opportunity Cost", "open_position_opportunity_cost_intelligence_v1"],
+            ["Controlled Exit Micro-Test Readiness", "controlled_paper_exit_micro_test_readiness_v1"],
+            ["Exit Learning Feedback", "exit_learning_feedback_loop_v1"],
+            ["Trading Brain Behavior Verification", "trading_brain_behavior_verification_v1"],
+            ["Trading Brain Completion", "astra_trading_brain_completion_v1"],
             ["Horizon Opportunity Queue", "horizon_opportunity_queue_v1"],
             ["Adaptive Capacity Utilization", "adaptive_capacity_utilization_pipeline_v1"],
             ["Opportunity Utilization", "opportunity_utilization_missed_learning_v1"],

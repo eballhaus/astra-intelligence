@@ -43972,6 +43972,26 @@ def astra_adaptive_occupancy_evolution_suite_v1(force: bool = False):
     if isinstance(cached_alpaca, dict) and cached_alpaca:
         statuses["alpaca_paper_broker"] = dict(cached_alpaca)
         statuses["alpaca_paper_status_v1"] = dict(cached_alpaca)
+    else:
+        try:
+            broker_safety = dict(ALPACA_PAPER_BROKER.safety_status() or {})
+        except Exception:
+            broker_safety = {}
+        statuses["alpaca_paper_broker"] = {
+            "enabled": bool(broker_safety.get("enabled_requested")),
+            "paper_mode_verified": bool(broker_safety.get("paper_mode_verified")),
+            "broker_execution_enabled": bool(broker_safety.get("broker_execution_enabled")),
+            "broker_execution_ready": bool(broker_safety.get("broker_execution_enabled")),
+            "safety_status": "summary_only_no_broker_fetch",
+            "safety_reasons": list(broker_safety.get("safety_reasons") or []),
+            "paper_endpoint_detected": bool(broker_safety.get("paper_endpoint_detected")),
+            "live_endpoint_detected": bool(broker_safety.get("live_endpoint_detected")),
+            "broker_live_endpoint_allowed": False,
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "live_trading_changed": False,
+        }
+        statuses["alpaca_paper_status_v1"] = dict(statuses["alpaca_paper_broker"])
     try:
         statuses["astra_copilot_suite_v1"] = _astra_copilot_suite_v1(limit=12, force=False)
     except Exception:
@@ -43991,6 +44011,16 @@ def astra_adaptive_occupancy_evolution_suite_v1(force: bool = False):
 @router.get("/api/astra_learning_continuity_controlled_evolution_self_governance_v1")
 def astra_learning_continuity_controlled_evolution_self_governance_v1(force: bool = False):
     return astra_adaptive_occupancy_evolution_suite_v1(force=force)
+
+
+@router.get("/api/astra_trading_brain_completion_v1")
+def astra_trading_brain_completion_v1(force: bool = False):
+    suite = astra_adaptive_occupancy_evolution_suite_v1(force=force)
+    return dict(
+        (suite or {}).get("astra_trading_brain_completion_v1")
+        or (suite or {}).get("trading_brain_completion_v1")
+        or {}
+    )
 
 
 @router.post("/api/ask_astra_v1")
@@ -44041,6 +44071,12 @@ def ask_astra_v1(payload: dict = Body(...)):
     ask_context_seed["astra_performance_optimization_suite_v1"] = performance_optimization
     ask_context_seed["astra_intelligence_maturation_suite_v1"] = intelligence_maturation
     ask_context_seed["astra_adaptive_occupancy_evolution_suite_v1"] = occupancy_evolution
+    trading_brain_completion = dict(
+        occupancy_evolution.get("astra_trading_brain_completion_v1")
+        or occupancy_evolution.get("trading_brain_completion_v1")
+        or {}
+    )
+    ask_context_seed["astra_trading_brain_completion_v1"] = trading_brain_completion
     ask_context_seed["astra_autonomous_intelligence_maturation_v1"] = dict(
         occupancy_evolution.get("astra_autonomous_intelligence_maturation_v1") or {}
     )
@@ -44168,8 +44204,38 @@ def ask_astra_v1(payload: dict = Body(...)):
             "improvement_priority": occupancy_evolution.get("autonomous_improvement_prioritization_completion_v1") or {},
             "decision_memory": occupancy_evolution.get("decision_memory_knowledge_retention_completion_v1") or {},
             "behavior_verification": occupancy_evolution.get("behavior_verification_core_completion_v1") or {},
+            "trading_brain_completion": trading_brain_completion,
         },
         "autonomous_intelligence": occupancy_evolution.get("astra_autonomous_intelligence_v1") or {},
+        "trading_brain_completion": {
+            "summary": trading_brain_completion.get("trading_brain_completion_summary"),
+            "exit_review_candidates": (
+                (trading_brain_completion.get("exit_decision_intelligence_v1") or {}).get("exit_review_candidate_count")
+            ),
+            "valid_hold_count": (
+                (trading_brain_completion.get("exit_decision_intelligence_v1") or {}).get("valid_hold_count")
+            ),
+            "profit_protection_candidates": (
+                (trading_brain_completion.get("exit_decision_intelligence_v1") or {}).get("profit_protection_candidate_count")
+            ),
+            "loss_containment_candidates": (
+                (trading_brain_completion.get("exit_decision_intelligence_v1") or {}).get("loss_containment_candidate_count")
+            ),
+            "thesis_status": {
+                "valid": (trading_brain_completion.get("trade_thesis_tracking_v1") or {}).get("thesis_valid_count"),
+                "weakening": (trading_brain_completion.get("trade_thesis_tracking_v1") or {}).get("thesis_weakened_count"),
+                "expired": (trading_brain_completion.get("trade_thesis_tracking_v1") or {}).get("thesis_expired_count"),
+                "unknown": (trading_brain_completion.get("trade_thesis_tracking_v1") or {}).get("thesis_unknown_count"),
+            },
+            "micro_test_stage": (
+                (trading_brain_completion.get("controlled_paper_exit_micro_test_readiness_v1") or {}).get("promotion_stage")
+            ),
+            "micro_test_blockers": (
+                (trading_brain_completion.get("controlled_paper_exit_micro_test_readiness_v1") or {}).get("promotion_blockers")
+            ),
+            "next_safe_exit_learning_step": trading_brain_completion.get("next_safe_exit_learning_step"),
+            "behavior_verification_score": trading_brain_completion.get("behavior_verification_score"),
+        },
         "key_supporting_astra_signals": key_signals,
         "supported_question_types": [
             "explain_status",
@@ -44223,7 +44289,35 @@ def ask_astra_v1(payload: dict = Body(...)):
     if response_mode == "fast":
         first = (compressed_context.get("copilot_actions") or [{}])[0] if isinstance(compressed_context.get("copilot_actions"), list) else {}
         q_lc = question.lower()
-        if "portfolio" in q_lc or "risk" in q_lc:
+        if (
+            "thesis" in q_lc
+            or "holding losers" in q_lc
+            or "giving back" in q_lc
+            or "give back" in q_lc
+            or "micro-test" in q_lc
+            or "micro test" in q_lc
+            or "need review" in q_lc
+            or "should i keep holding" in q_lc
+            or "original reason" in q_lc
+        ):
+            brain = trading_brain_completion
+            exit_review = brain.get("exit_decision_intelligence_v1") or {}
+            thesis = brain.get("trade_thesis_tracking_v1") or {}
+            micro = brain.get("controlled_paper_exit_micro_test_readiness_v1") or {}
+            feedback = brain.get("exit_learning_feedback_loop_v1") or {}
+            fast_short = (
+                f"Trading Brain reviewed {exit_review.get('open_positions_reviewed', 'n/a')} open Paper position(s): "
+                f"{exit_review.get('valid_hold_count', 'n/a')} still look like valid holds and "
+                f"{exit_review.get('exit_review_candidate_count', 'n/a')} need human exit review. "
+                f"Thesis tracking shows {thesis.get('thesis_valid_count', 0)} valid, "
+                f"{thesis.get('thesis_weakened_count', 0)} weakening, and {thesis.get('thesis_expired_count', 0)} expired thesis record(s). "
+                f"Exit micro-test readiness is {micro.get('controlled_exit_micro_test_readiness_score', 'n/a')} at "
+                f"{str(micro.get('promotion_stage') or 'shadow observe').replace('_', ' ')}; blockers are "
+                f"{', '.join(micro.get('promotion_blockers') or ['none'])}. "
+                f"Exit feedback: {feedback.get('exit_learning_feedback_summary') or 'warming up'}. "
+                "No automatic exits or Paper promotions are enabled."
+            )
+        elif "portfolio" in q_lc or "risk" in q_lc:
             fast_short = cio.get("portfolio_risk_summary") or cio.get("portfolio_health_summary") or "Portfolio risk is warming up from cached diagnostics."
         elif "exit" in q_lc or "sell" in q_lc:
             fast_short = cio.get("exit_readiness_summary") or cio.get("exit_maturity_summary") or "Exit intelligence remains advisory-only."
@@ -55909,16 +56003,29 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_autonomous_intelligence_maturation_v1"] = dict(tier4.get("astra_autonomous_intelligence_maturation_v1") or {})
             out["astra_autonomous_intelligence_v1"] = dict(tier4.get("astra_autonomous_intelligence_v1") or {})
             out["astra_paper_learning_capacity_correction_v1"] = dict(tier4.get("paper_learning_capacity_correction_v1") or {})
+            trading_brain_completion = dict(
+                tier4.get("astra_trading_brain_completion_v1")
+                or tier4.get("trading_brain_completion_v1")
+                or {}
+            )
+            out["astra_trading_brain_completion_v1"] = trading_brain_completion
             out["astra_trading_intelligence_completion_v1"] = {
                 "effective_learning_capacity_v1": dict(tier4.get("effective_learning_capacity_v1") or {}),
                 "trade_lifecycle_intelligence_completion_v1": dict(tier4.get("trade_lifecycle_intelligence_completion_v1") or {}),
                 "exit_decision_intelligence_v1": dict(tier4.get("exit_decision_intelligence_v1") or {}),
+                "trade_thesis_tracking_v1": dict(tier4.get("trade_thesis_tracking_v1") or {}),
+                "open_position_opportunity_cost_intelligence_v1": dict(tier4.get("open_position_opportunity_cost_intelligence_v1") or {}),
+                "controlled_paper_exit_micro_test_readiness_v1": dict(tier4.get("controlled_paper_exit_micro_test_readiness_v1") or {}),
+                "exit_learning_feedback_loop_v1": dict(tier4.get("exit_learning_feedback_loop_v1") or {}),
+                "trading_brain_behavior_verification_v1": dict(tier4.get("trading_brain_behavior_verification_v1") or {}),
+                "trading_brain_completion_v1": trading_brain_completion,
                 "adaptive_capacity_utilization_pipeline_v1": dict(tier4.get("adaptive_capacity_utilization_pipeline_v1") or {}),
                 "opportunity_utilization_missed_learning_v1": dict(tier4.get("opportunity_utilization_missed_learning_v1") or {}),
                 "horizon_diversity_without_quotas_v1": dict(tier4.get("horizon_diversity_without_quotas_v1") or {}),
                 "autonomous_trading_governance_v1": dict(tier4.get("autonomous_trading_governance_v1") or {}),
                 "shadow_paper_feedback_connection_v1": dict(tier4.get("shadow_paper_feedback_connection_v1") or {}),
                 "behavior_verification": dict(tier4.get("trading_intelligence_completion_behavior_verification_v1") or {}),
+                "trading_brain_completion_enabled": trading_brain_completion.get("trading_brain_completion_enabled"),
                 "behavior_safe_to_apply": False,
                 "paper_only_preserved": True,
                 "provider_calls_used": 0,
