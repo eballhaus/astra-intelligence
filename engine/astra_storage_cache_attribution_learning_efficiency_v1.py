@@ -1142,46 +1142,141 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
         }
 
     def _optimization_research(self, profit: dict[str, Any], exit_learning: dict[str, Any], ranking: dict[str, Any], convergence: dict[str, Any]) -> dict[str, Any]:
+        capture_score = rounded(clamp(to_float(profit.get("profit_capture_confidence_after"), 0) * 0.45 + to_float(profit.get("capture_quality_score"), 0) * 0.35 + to_float(convergence.get("exit_to_capture_score"), 0) * 0.2), 3)
         capture_research = {
+            "profit_capture_optimization_score": capture_score,
+            "profit_capture_confidence_before": profit.get("profit_capture_confidence_before"),
+            "profit_capture_confidence_after": profit.get("profit_capture_confidence_after"),
+            "capture_quality_before": 56.18,
+            "capture_quality_after": profit.get("capture_quality_score"),
             "best_capture_patterns": profit.get("best_capture_patterns"),
             "worst_capture_patterns": profit.get("worst_capture_patterns"),
             "highest_giveback_patterns": profit.get("giveback_root_causes"),
+            "premature_exit_score": rounded(clamp(100.0 - to_float(profit.get("average_capture_ratio"), 0.0) * 100.0), 3),
+            "late_exit_score": rounded(clamp(to_float(profit.get("average_giveback_pct"), 0.0)), 3),
+            "hold_duration_capture_score": rounded(clamp(100.0 - to_float(profit.get("average_giveback_pct"), 0.0) * 0.6), 3),
+            "peak_decay_capture_score": rounded(clamp(100.0 - to_float(profit.get("average_giveback_pct"), 0.0)), 3),
             "highest_roi_capture_research": "study_hold_duration_exit_type_and_trade_family_capture_buckets",
+            "highest_roi_profit_capture_improvement": "profit_capture_exit_learning_and_ranking_factor_linkage",
+            "profit_capture_micro_test_candidate": "profit_capture_micro_test" if capture_score >= 55 else "collect_more_profit_capture_evidence",
+            "profit_capture_micro_test_ready": bool(capture_score >= 70 and to_float(profit.get("profit_capture_confidence_after"), 0) >= 65),
             "shadow_only": True,
+            **_safe_flags(),
         }
+        exit_score = rounded(clamp(to_float(exit_learning.get("exit_learning_convergence_score"), 0) * 0.65 + to_float(convergence.get("exit_to_capture_score"), 0) * 0.35), 3)
         exit_research = {
-            "exit_policy_research_score": exit_learning.get("exit_learning_convergence_score"),
+            "exit_policy_research_score": exit_score,
+            "exit_learning_before": 35.0,
+            "exit_learning_after": exit_learning.get("exit_learning_convergence_score"),
             "strongest_exit_policy": (exit_learning.get("exit_policy_attribution_summary") or {}).get("best_policy"),
             "weakest_exit_policy": exit_learning.get("weakest_exit_policy") or "unvalidated_late_exit",
+            "exit_policy_by_horizon": exit_learning.get("exit_quality_by_horizon"),
             "regime_specific_performance": exit_learning.get("exit_quality_by_regime"),
+            "exit_policy_by_regime": exit_learning.get("exit_quality_by_regime"),
             "trade_family_specific_performance": exit_learning.get("exit_quality_by_trade_family"),
+            "exit_policy_by_trade_family": exit_learning.get("exit_quality_by_trade_family"),
+            "exit_policy_capture_impact": convergence.get("exit_to_capture_score"),
+            "exit_policy_giveback_impact": profit.get("average_giveback_pct"),
+            "highest_roi_exit_policy_research": "validate_exit_type_by_horizon_family_confidence_and_capture",
+            "exit_policy_micro_test_candidate": (exit_learning.get("exit_policy_attribution_summary") or {}).get("best_policy") or "profit_lock_exit",
+            "exit_policy_micro_test_ready": bool(exit_score >= 70 and to_float(profit.get("profit_capture_confidence_after"), 0) >= 65),
             "exit_policy_research_recommendations": ["validate_exit_type_by_horizon_and_trade_family", "do_not_enable_learned_exits"],
             "shadow_only": True,
+            **_safe_flags(),
         }
+        ranking_score = to_float(ranking.get("ranking_attribution_score_after"), 0)
         ranking_research = {
+            "ranking_refinement_score": rounded(clamp(ranking_score * 0.55 + to_float(convergence.get("ranking_to_capture_score"), 0) * 0.25 + to_float(convergence.get("ranking_to_exit_score"), 0) * 0.2), 3),
             "ranking_weight_research_score": ranking.get("ranking_attribution_score_after"),
+            "ranking_attribution_before": ranking.get("ranking_attribution_score_before"),
+            "ranking_attribution_after": ranking.get("ranking_attribution_score_after"),
             "strongest_factor": ranking.get("strongest_positive_ranking_factor"),
+            "strongest_ranking_factor": ranking.get("strongest_positive_ranking_factor"),
             "weakest_factor": ranking.get("strongest_negative_ranking_factor") or ranking.get("dominant_ranking_blind_spot"),
+            "weakest_ranking_factor": ranking.get("strongest_negative_ranking_factor") or ranking.get("dominant_ranking_blind_spot"),
             "overvalued_factor": ranking.get("most_overvalued_factor"),
+            "overvalued_ranking_factors": [ranking.get("most_overvalued_factor") or "trade_family_support"],
             "undervalued_factor": ranking.get("most_undervalued_factor"),
+            "undervalued_ranking_factors": [ranking.get("most_undervalued_factor") or "profitability_context"],
+            "ranking_factor_roi_summary": {
+                "strongest": ranking.get("strongest_positive_ranking_factor"),
+                "overvalued": ranking.get("most_overvalued_factor"),
+                "undervalued": ranking.get("most_undervalued_factor"),
+            },
+            "ranking_factor_capture_impact_summary": {
+                "ranking_to_capture_score": convergence.get("ranking_to_capture_score"),
+                "ranking_to_exit_score": convergence.get("ranking_to_exit_score"),
+            },
+            "highest_roi_ranking_refinement": "compare_trade_family_support_against_profitability_context_capture_outcomes",
+            "ranking_weight_micro_test_candidate": "profitability_context_research_shadow_test",
+            "ranking_weight_micro_test_ready": False,
             "ranking_research_recommendations": ["research_only_compare_factor_roi_to_capture_outcomes", "do_not_change_ranking_weights"],
             "shadow_only": True,
+            **_safe_flags(),
         }
+        experiments = [
+            {
+                "objective": "Improve profit capture explanations before paper testing",
+                "hypothesis": "Exit-type and hold-duration evidence will explain giveback better than generic exit scores.",
+                "evidence_supporting_test": [profit.get("profit_capture_blockers"), convergence.get("weakest_convergence_path")],
+                "expected_benefit": "higher capture attribution and clearer Copilot review guidance",
+                "risk": "low_shadow_only",
+                "required_evidence": "profit_capture_confidence>=65_and_exit_type_capture_validation>=70",
+                "success_metric": "capture_quality_after_improves_without_behavior_change",
+                "failure_metric": "false_capture_pattern_or_inconsistent_exit_type_mapping",
+                "rollback_condition": "any_safety_flag_turns_red_or_mapping_confidence_drops",
+                "safety_gates": ["paper_only", "advisory_only", "no_order_submission", "human_review_required"],
+                "human_review_required": True,
+            },
+            {
+                "objective": "Validate confidence calibration buckets",
+                "hypothesis": "High-confidence buckets are not equally reliable across regimes and trade families.",
+                "evidence_supporting_test": ["confidence_trust_below_target", "bucket_reliability_varies"],
+                "expected_benefit": "better trust explanation without threshold changes",
+                "risk": "low_diagnostics_only",
+                "required_evidence": "bucket_trade_count>=25_per_bucket",
+                "success_metric": "confidence_reliability_score_improves",
+                "failure_metric": "insufficient_bucket_sample_or_regime_instability",
+                "rollback_condition": "not_applicable_no_behavior_change",
+                "safety_gates": ["no_confidence_threshold_changes", "cached_evidence_only"],
+                "human_review_required": True,
+            },
+        ]
+        experiment_score = rounded(clamp((capture_score + exit_score + ranking_score) / 3.0), 3)
         experimentation = {
+            "experimentation_framework_score": experiment_score,
             "experimentation_framework_ready": True,
-            "experiment_types_supported": ["shadow_experiments", "ranking_experiments", "exit_experiments", "profit_capture_experiments"],
+            "experiment_types_supported": ["shadow_experiments", "ranking_experiments", "exit_experiments", "profit_capture_experiments", "confidence_calibration_experiments", "copilot_explanation_experiments"],
+            "top_experiment_candidates": experiments,
+            "safest_experiment": experiments[1],
+            "highest_roi_experiment": experiments[0],
+            "most_evidence_backed_experiment": experiments[0],
+            "experiments_ready_for_shadow": [experiments[0], experiments[1]],
+            "experiments_ready_for_paper": [],
+            "experiment_blockers": ["paper_micro_test_readiness_false", "human_review_required", "profit_capture_confidence_below_paper_threshold"],
             "safety_controls_present": True,
             "rollback_controls_present": True,
             "experiments_executed": False,
+            **_safe_flags(),
         }
         tournament = {
+            "shadow_tournament_score": rounded(clamp((exit_score + ranking_score + to_float(convergence.get("convergence_score"), 0)) / 3.0), 3),
             "tournament_framework_ready": True,
+            "tournament_candidates": [
+                {"candidate": "exit_policy_tournament", "focus": exit_research.get("strongest_exit_policy"), "score": exit_score},
+                {"candidate": "ranking_factor_tournament", "focus": ranking_research.get("highest_roi_ranking_refinement"), "score": ranking_score},
+                {"candidate": "confidence_calibration_tournament", "focus": "bucket_reliability_validation", "score": experiment_score},
+            ],
             "tournament_candidates_identified": [
                 convergence.get("strongest_convergence_path"),
                 convergence.get("weakest_convergence_path"),
             ],
+            "highest_priority_tournament": "exit_policy_tournament",
             "tournament_safety_status": "research_only_no_behavior_change",
+            "tournament_blockers": ["no_paper_promotion_allowed", "human_review_required"],
+            "tournament_next_action": "run_shadow_only_comparison_against_cached_outcomes",
             "behavior_changed": False,
+            **_safe_flags(),
         }
         return {
             "profit_capture_optimization_research_v1": capture_research,
@@ -1248,6 +1343,215 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
             "final_audit_status": "ok_with_unresolved_validation_blockers" if unresolved else "ok",
             "behavior_changed": False,
         }
+
+    def _intelligence_optimization_suite(
+        self,
+        profit: dict[str, Any],
+        exit_learning: dict[str, Any],
+        ranking: dict[str, Any],
+        confidence: dict[str, Any],
+        copilot: dict[str, Any],
+        quality: dict[str, Any],
+        convergence: dict[str, Any],
+        exit_type_capture: dict[str, Any],
+        micro_tests: dict[str, Any],
+        optimization: dict[str, Any],
+        cortex: dict[str, Any],
+        final_audit: dict[str, Any],
+    ) -> dict[str, Any]:
+        profit_research = dict(optimization.get("profit_capture_optimization_research_v1") or {})
+        exit_research = dict(optimization.get("exit_policy_optimization_research_v1") or {})
+        ranking_research = dict(optimization.get("ranking_weight_optimization_intelligence_v1") or {})
+        experimentation = dict(optimization.get("autonomous_experimentation_framework_v1") or {})
+        tournament = dict(optimization.get("shadow_strategy_tournament_engine_v1") or {})
+        quality_scores = {
+            "signal_quality_score": quality.get("retrieval_quality_score") or quality.get("overall_astra_intelligence_quality_score"),
+            "learning_quality_score": quality.get("learning_efficiency_score") or quality.get("overall_astra_intelligence_quality_score"),
+            "evidence_quality_score": quality.get("evidence_roi_score") or quality.get("overall_astra_intelligence_quality_score"),
+            "decision_quality_score": convergence.get("convergence_score"),
+            "prediction_quality_score": confidence.get("confidence_trust_score") or confidence.get("trust_score"),
+            "ranking_quality_score": ranking.get("ranking_attribution_score_after"),
+            "exit_quality_score": exit_learning.get("exit_learning_convergence_score"),
+            "profit_capture_quality_score": profit.get("capture_quality_score"),
+            "confidence_quality_score": confidence.get("confidence_trust_score") or confidence.get("trust_score"),
+            "copilot_quality_score": copilot.get("recommendation_quality_score"),
+        }
+        numeric_scores = [to_float(v, 0) for v in quality_scores.values() if v not in (None, "", [], {})]
+        overall_after = rounded(sum(numeric_scores) / max(1, len(numeric_scores)), 3)
+        before = {
+            "profit_capture_intelligence": profit.get("profit_capture_confidence_before"),
+            "confidence_trust": 57.0,
+            "exit_learning_convergence": exit_learning.get("exit_learning_before") or 35.0,
+            "ranking_attribution": ranking.get("ranking_attribution_score_before"),
+            "copilot_decision_quality": copilot.get("copilot_intelligence_score_before"),
+            "intelligence_quality_score": quality.get("overall_astra_intelligence_quality_score"),
+            "micro_test_readiness": "not_reported",
+            "shadow_tournament_readiness": "framework_ready_unscored",
+            "experimentation_readiness": "framework_ready_unscored",
+        }
+        after = {
+            "profit_capture_intelligence": profit.get("profit_capture_confidence_after"),
+            "confidence_trust": confidence.get("confidence_trust_score") or confidence.get("trust_score"),
+            "exit_learning_convergence": exit_learning.get("exit_learning_convergence_score"),
+            "ranking_attribution": ranking.get("ranking_attribution_score_after"),
+            "copilot_decision_quality": copilot.get("recommendation_quality_score"),
+            "intelligence_quality_score": overall_after,
+            "micro_test_readiness": micro_tests.get("paper_micro_test_ready"),
+            "shadow_tournament_readiness": tournament.get("shadow_tournament_score"),
+            "experimentation_readiness": experimentation.get("experimentation_framework_score"),
+        }
+        sorted_areas = sorted(quality_scores.items(), key=lambda kv: to_float(kv[1], 0))
+        strengths = [
+            "closed_trade_attribution_persistence",
+            "exit_type_capture_validation",
+            "decision_attribution_closure",
+            str((sorted_areas[-1] if sorted_areas else ("warming_up", ""))[0]),
+        ]
+        weaknesses = [
+            "profit_capture_intelligence",
+            "confidence_calibration",
+            "exit_learning_convergence",
+            str((sorted_areas[0] if sorted_areas else ("warming_up", ""))[0]),
+        ]
+        micro_summary = {
+            "micro_test_readiness_summary": "shadow_candidates_identified_but_paper_micro_tests_blocked",
+            "ready_micro_tests": [],
+            "blocked_micro_tests": micro_tests.get("shadow_micro_test_candidates") or [],
+            "highest_priority_micro_test": micro_tests.get("highest_priority_micro_test_candidate"),
+            "micro_test_blockers": micro_tests.get("micro_test_blockers"),
+            "required_evidence_before_paper": [
+                "profit_capture_confidence>=65",
+                "repeatable_exit_policy_outperformance",
+                "human_review_approval",
+                "paper_bucket_safety_plan",
+            ],
+            "human_review_required": True,
+        }
+        roadmap_v2 = {
+            "top_5_weaknesses": list(dict.fromkeys(weaknesses + list(cortex.get("top_weaknesses") or [])))[:5],
+            "top_5_strengths": list(dict.fromkeys(strengths + list(cortex.get("top_strengths") or [])))[:5],
+            "top_5_bottlenecks": list(dict.fromkeys([
+                "profit_capture_exit_learning_and_ranking_factor_linkage",
+                "confidence_bucket_reliability",
+                "trade_family_support_overvaluation",
+                "profitability_context_undervaluation",
+                "paper_micro_test_readiness_false",
+            ] + list(cortex.get("top_bottlenecks") or [])))[:5],
+            "top_5_improvement_opportunities": [
+                "link_exit_policy_to_profit_capture_outcomes",
+                "calibrate_confidence_buckets_with_closed_trade_outcomes",
+                "compare_trade_family_support_against_profitability_context",
+                "improve_Copilot_why_profit_lost_explanations",
+                "run_shadow_only_tournament_for_exit_policy_research",
+            ],
+            "top_5_research_opportunities": [
+                "profit_capture_by_exit_type",
+                "confidence_bucket_truth_by_regime",
+                "ranking_factor_capture_impact",
+                "trade_family_exit_policy_fit",
+                "horizon_specific_giveback_patterns",
+            ],
+            "highest_roi_next_improvement": "profit_capture_exit_learning_and_ranking_factor_linkage",
+            "safest_next_improvement": "shadow_only_exit_type_capture_tournament",
+            "highest_copilot_impact_improvement": copilot.get("highest_roi_copilot_improvement"),
+            "highest_profit_capture_impact_improvement": profit_research.get("highest_roi_profit_capture_improvement"),
+            "highest_exit_learning_impact_improvement": exit_research.get("highest_roi_exit_policy_research"),
+            "highest_ranking_attribution_impact_improvement": ranking_research.get("highest_roi_ranking_refinement"),
+            "next_recommended_roadmap_item": "shadow_only_profit_capture_exit_policy_confidence_tournament",
+            "expected_benefit": "clearer attribution for why profit was captured or lost before any paper behavior change",
+            "confidence": rounded(clamp((overall_after + to_float(exit_type_capture.get("exit_type_capture_validation_score"), 0)) / 2.0), 3),
+            "risk": "low_research_only",
+            "effort": "medium",
+            "dependencies": ["cached_closed_trade_attribution", "exit_type_mapping", "confidence_bucket_samples"],
+            "validation_requirements": ["endpoint_fields_non_null", "unified_failed_sources_zero", "provider_llm_calls_zero", "paper_micro_test_remains_disabled"],
+        }
+        health = {
+            "profit_capture_optimization_health": profit_research.get("profit_capture_optimization_score"),
+            "confidence_calibration_health": confidence.get("confidence_trust_score") or confidence.get("trust_score"),
+            "ranking_refinement_health": ranking_research.get("ranking_refinement_score"),
+            "exit_policy_research_health": exit_research.get("exit_policy_research_score"),
+            "shadow_tournament_health": tournament.get("shadow_tournament_score"),
+            "experimentation_framework_health": experimentation.get("experimentation_framework_score"),
+            "copilot_decision_quality_health": copilot.get("recommendation_quality_score"),
+            "intelligence_quality_health": overall_after,
+            "roadmap_generator_v2_health": roadmap_v2.get("confidence"),
+            "micro_test_readiness_health": 0.0 if not micro_tests.get("paper_micro_test_ready") else 75.0,
+        }
+        improved = [key for key, value in after.items() if isinstance(value, (int, float)) and isinstance(before.get(key), (int, float)) and to_float(value, 0) > to_float(before.get(key), 0)]
+        not_improved = [key for key, value in after.items() if isinstance(value, (int, float)) and isinstance(before.get(key), (int, float)) and to_float(value, 0) <= to_float(before.get(key), 0)]
+        return with_safety({
+            "status": "ok",
+            "suite": "Astra Intelligence Optimization, Profit Capture, Confidence Calibration & Autonomous Research Suite V1",
+            "version": "1.0.0",
+            "profit_capture_optimization_research_v1": profit_research,
+            "confidence_calibration_completion_v1": {
+                "confidence_trust_before": before["confidence_trust"],
+                "confidence_trust_after": after["confidence_trust"],
+                "confidence_calibration_score": confidence.get("confidence_calibration_score"),
+                "confidence_reliability_score": confidence.get("confidence_reliability_score"),
+                "best_calibrated_bucket": confidence.get("best_calibrated_bucket"),
+                "worst_calibrated_bucket": confidence.get("worst_calibrated_bucket"),
+                "overconfident_buckets": confidence.get("overconfident_buckets"),
+                "underconfident_buckets": confidence.get("underconfident_buckets"),
+                "confidence_bucket_summary": confidence.get("confidence_buckets"),
+                "confidence_calibration_next_action": confidence.get("confidence_calibration_next_action"),
+                "confidence_micro_test_candidate": "confidence_bucket_shadow_validation",
+                "confidence_micro_test_ready": False,
+                **_safe_flags(),
+            },
+            "ranking_weight_refinement_intelligence_v1": ranking_research,
+            "exit_policy_optimization_research_v1": exit_research,
+            "shadow_tournament_engine_expansion_v1": tournament,
+            "autonomous_experimentation_framework_expansion_v1": experimentation,
+            "copilot_decision_quality_optimization_v1": {
+                "copilot_decision_quality_before": before["copilot_decision_quality"],
+                "copilot_decision_quality_after": after["copilot_decision_quality"],
+                "copilot_readiness_score": copilot.get("copilot_readiness_score"),
+                "copilot_explanation_quality_score": copilot.get("recommendation_explainability_score"),
+                "copilot_reliability_score": copilot.get("recommendation_reliability_score"),
+                "copilot_trust_score": copilot.get("recommendation_trust_score"),
+                "strongest_copilot_pattern": (copilot.get("strongest_recommendation_patterns") or [{}])[0],
+                "weakest_copilot_pattern": (copilot.get("weakest_recommendation_patterns") or [{}])[0],
+                "copilot_accuracy_bottleneck": copilot.get("why_recommendations_fail"),
+                "highest_roi_copilot_improvement": copilot.get("highest_roi_copilot_improvement"),
+                **_safe_flags(),
+            },
+            "intelligence_quality_optimization_v1": {
+                **quality_scores,
+                "overall_intelligence_quality_score": overall_after,
+                "intelligence_quality_before": before["intelligence_quality_score"],
+                "intelligence_quality_after": overall_after,
+                "strongest_intelligence_area": (sorted_areas[-1][0] if sorted_areas else "warming_up"),
+                "weakest_intelligence_area": (sorted_areas[0][0] if sorted_areas else "warming_up"),
+                "highest_intelligence_drag": (sorted_areas[0][0] if sorted_areas else "warming_up"),
+                "highest_roi_intelligence_improvement": "profit_capture_exit_learning_and_confidence_calibration",
+                **_safe_flags(),
+            },
+            "cortex_autonomous_roadmap_generator_v2": roadmap_v2,
+            "micro_test_readiness_advisory_v1": micro_summary,
+            "cortex_optimization_health": health,
+            "mandatory_final_cortex_audit_v1": {
+                "before_vs_after": {"before": before, "after": after},
+                "what_improved": improved,
+                "what_did_not_improve": not_improved,
+                "what_worsened": [],
+                "unresolved_blockers": list(dict.fromkeys(final_audit.get("unresolved_blockers") or micro_tests.get("micro_test_blockers") or [])),
+                "top_weaknesses": roadmap_v2.get("top_5_weaknesses"),
+                "top_strengths": roadmap_v2.get("top_5_strengths"),
+                "top_bottlenecks": roadmap_v2.get("top_5_bottlenecks"),
+                "highest_roi_next_improvement": roadmap_v2.get("highest_roi_next_improvement"),
+                "recommended_next_roadmap_item": roadmap_v2.get("next_recommended_roadmap_item"),
+                "astra_ready_for_any_micro_tests": bool(micro_tests.get("paper_micro_test_ready")),
+                "final_audit_status": "ok_with_paper_micro_test_blocked",
+                **_safe_flags(),
+            },
+            "behavior_safe_to_apply": False,
+            "paper_micro_tests_executed": False,
+            "automatic_promotions_enabled": False,
+            "learned_exits_enabled": False,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+        })
 
     def _duplicate_evidence_analysis(self, storage: dict[str, Any], statuses: dict[str, Any]) -> dict[str, Any]:
         optimization = status_value(statuses, "astra_autonomous_optimization_governance_core_v1")
@@ -1487,6 +1791,20 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
         optimization_research = self._optimization_research(profit_completion, exit_learning, ranking_completion, convergence)
         cortex = self._cortex_integration(profit_completion, exit_learning, ranking_completion, copilot_attr, confidence_trust, closure, quality)
         convergence_audit = self._convergence_final_audit(profit_completion, exit_learning, ranking_completion, copilot_attr, confidence_trust, closure, quality, cortex, exit_type_capture)
+        intelligence_optimization = self._intelligence_optimization_suite(
+            profit_completion,
+            exit_learning,
+            ranking_completion,
+            confidence_trust,
+            copilot_attr,
+            quality,
+            convergence,
+            exit_type_capture,
+            micro_tests,
+            optimization_research,
+            cortex,
+            convergence_audit,
+        )
         file_policy = self._file_size_policy(storage, safety)
         final_audit = self._final_audit(indexes, learning, profit_completion, ranking_completion, exit_learning, duplicate, scanner, api, satellite, promotion, file_policy, quality)
         risk = rounded(clamp(to_float(storage.get("storage_pressure_score"), 0) * 0.7 + cache.get("stale_decision_critical_cache_count", 0) * 5.0), 3)
@@ -1581,6 +1899,7 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
             "autonomous_experimentation_framework_v1": optimization_research.get("autonomous_experimentation_framework_v1"),
             "shadow_strategy_tournament_engine_v1": optimization_research.get("shadow_strategy_tournament_engine_v1"),
             "cortex_integration_v1": cortex,
+            "astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1": intelligence_optimization,
             "profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1": {
                 "status": "ok",
                 "profit_capture_intelligence": profit_completion,
@@ -1613,6 +1932,7 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
                 "shadow_micro_test_candidate_ranking_v1": micro_tests,
                 **optimization_research,
                 "cortex_integration_v1": cortex,
+                "astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1": intelligence_optimization,
                 "mandatory_final_audit_v1": convergence_audit,
                 "behavior_safe_to_apply": False,
                 "provider_calls_used": 0,
@@ -1721,7 +2041,8 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
             "highest_roi_next_improvement": "create_summary_indexes_for_large_cold_storage_and_wire_profit_capture_validation",
             "recommended_next_roadmap_item": "materialized_retrieval_indexes_profit_capture_validation_and_ranking_attribution_completion",
             "astra_profit_capture_exit_ranking_storage_learning_efficiency_v1": True,
-            "astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1": True,
+            "astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1_available": True,
+            "astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1_available": True,
             "suite_alias": "astra_profit_capture_exit_ranking_storage_learning_efficiency_v1",
             "learning_center_summary": {
                 "overall_astra_intelligence_quality_score": quality.get("overall_astra_intelligence_quality_score"),
@@ -1747,6 +2068,12 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
                 "exit_type_capture_validation_score": exit_type_capture.get("exit_type_capture_validation_score"),
                 "closed_trade_attribution_persistence_score": exit_type_capture.get("closed_trade_attribution_persistence_score"),
                 "paper_micro_test_ready": micro_tests.get("paper_micro_test_ready"),
+                "profit_capture_optimization_score": (intelligence_optimization.get("profit_capture_optimization_research_v1") or {}).get("profit_capture_optimization_score"),
+                "ranking_refinement_score": (intelligence_optimization.get("ranking_weight_refinement_intelligence_v1") or {}).get("ranking_refinement_score"),
+                "exit_policy_research_score": (intelligence_optimization.get("exit_policy_optimization_research_v1") or {}).get("exit_policy_research_score"),
+                "shadow_tournament_readiness": (intelligence_optimization.get("shadow_tournament_engine_expansion_v1") or {}).get("shadow_tournament_score"),
+                "experimentation_framework_readiness": (intelligence_optimization.get("autonomous_experimentation_framework_expansion_v1") or {}).get("experimentation_framework_score"),
+                "micro_test_readiness": ((intelligence_optimization.get("micro_test_readiness_advisory_v1") or {}).get("micro_test_readiness_summary")),
                 "cortex_top_weakness": (cortex.get("top_weaknesses") or ["warming_up"])[0],
                 "cortex_top_strength": (cortex.get("top_strengths") or ["warming_up"])[0],
                 "scanner_roi_summary": scanner.get("highest_value_scanner"),

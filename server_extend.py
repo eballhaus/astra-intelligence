@@ -44313,6 +44313,28 @@ def astra_exit_capture_confidence_copilot_readiness_v1(force: bool = False):
     return astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1(force=force)
 
 
+@router.get("/api/astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1")
+def astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1(force: bool = False):
+    payload = astra_storage_cache_attribution_learning_efficiency_v1(force=force)
+    if isinstance(payload, dict):
+        nested = payload.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1")
+        if not isinstance(nested, dict) or not nested:
+            convergence = payload.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1")
+            nested = (convergence or {}).get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1") if isinstance(convergence, dict) else {}
+        if (not isinstance(nested, dict) or not nested) and not force:
+            payload = astra_storage_cache_attribution_learning_efficiency_v1(force=True)
+            nested = payload.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1") if isinstance(payload, dict) else {}
+            if not isinstance(nested, dict) or not nested:
+                convergence = payload.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") if isinstance(payload, dict) else {}
+                nested = (convergence or {}).get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1") if isinstance(convergence, dict) else {}
+        if isinstance(nested, dict) and nested:
+            out = dict(nested)
+            out.setdefault("parent_suite", "astra_storage_cache_attribution_learning_efficiency_v1")
+            out.setdefault("learning_center_summary", payload.get("learning_center_summary") or {})
+            return out
+    return payload
+
+
 @router.post("/api/ask_astra_v1")
 def ask_astra_v1(payload: dict = Body(...)):
     data = payload if isinstance(payload, dict) else {}
@@ -44845,6 +44867,14 @@ def ask_astra_v1(payload: dict = Body(...)):
             or "ranking factors hurt profit capture" in q_lc
             or "ranking factors are helping" in q_lc
             or "ranking factors are hurting" in q_lc
+            or "biggest remaining weakness" in q_lc
+            or "what improved after the optimization suite" in q_lc
+            or "optimization suite" in q_lc
+            or "what should astra research next" in q_lc
+            or "ready for paper micro-tests" in q_lc
+            or "ready for paper micro tests" in q_lc
+            or "which ranking factors are overvalued" in q_lc
+            or "which ranking factors are undervalued" in q_lc
             or "which scanners" in q_lc
             or "scanner" in q_lc
             or "which apis" in q_lc
@@ -44873,21 +44903,33 @@ def ask_astra_v1(payload: dict = Body(...)):
             convergence = storage.get("profit_capture_exit_ranking_convergence_v1") or {}
             closure = storage.get("decision_attribution_closure_v1") or {}
             confidence_trust = storage.get("confidence_calibration_trust_scoring_v1") or {}
+            convergence_payload = storage.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1")
+            if not isinstance(convergence_payload, dict):
+                convergence_payload = {}
             exit_type_capture = (
                 storage.get("attribution_closure_exit_type_capture_validation_v1")
-                or (storage.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or {}).get("exit_type_capture_validation")
+                or convergence_payload.get("exit_type_capture_validation")
                 or {}
             )
             profit_root = (
                 storage.get("profit_capture_root_cause_analysis_v1")
-                or (storage.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or {}).get("profit_capture_root_cause")
+                or convergence_payload.get("profit_capture_root_cause")
                 or {}
             )
             micro_tests = (
                 storage.get("shadow_micro_test_candidate_ranking_v1")
-                or (storage.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or {}).get("shadow_micro_test_candidate_ranking")
+                or convergence_payload.get("shadow_micro_test_candidate_ranking")
                 or {}
             )
+            optimization_suite = storage.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1")
+            if not isinstance(optimization_suite, dict):
+                optimization_suite = convergence_payload.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1")
+            if not isinstance(optimization_suite, dict):
+                optimization_suite = {}
+            roadmap_v2 = optimization_suite.get("cortex_autonomous_roadmap_generator_v2") or {}
+            opt_audit = optimization_suite.get("mandatory_final_cortex_audit_v1") or {}
+            ranking_refinement = optimization_suite.get("ranking_weight_refinement_intelligence_v1") or {}
+            exit_policy_research = optimization_suite.get("exit_policy_optimization_research_v1") or {}
             copilot_research = storage.get("copilot_attribution_intelligence_v1") or {}
             cortex = storage.get("cortex_integration_v1") or {}
             final_audit = storage.get("mandatory_final_audit_v1") or {}
@@ -44909,14 +44951,26 @@ def ask_astra_v1(payload: dict = Body(...)):
                 or "biggest copilot weakness" in q_lc
                 or "biggest exit learning weakness" in q_lc
                 or "hurting profit capture" in q_lc
+                or "what improved after the optimization suite" in q_lc
+                or "optimization suite" in q_lc
+                or "what should astra research next" in q_lc
+                or "ready for paper micro-tests" in q_lc
+                or "ready for paper micro tests" in q_lc
+                or "which ranking factors are overvalued" in q_lc
+                or "which ranking factors are undervalued" in q_lc
             ):
                 fast_short = (
                     f"Profit capture is mainly hurt by {', '.join([str(x).replace('_', ' ') for x in (profit_root.get('top_profit_capture_blockers') or profit.get('profit_capture_blockers') or ['validation still building'])[:3]])}. "
                     f"The best cached exit type for capture is {str(exit_type_capture.get('best_exit_type_for_capture') or 'warming up').replace('_', ' ')}, "
                     f"while the weakest is {str(exit_type_capture.get('worst_exit_type_for_capture') or 'warming up').replace('_', ' ')} and the highest-giveback exit type is {str(exit_type_capture.get('highest_giveback_exit_type') or 'warming up').replace('_', ' ')}. "
+                    f"Strongest exit policy: {str(exit_policy_research.get('strongest_exit_policy') or 'warming up').replace('_', ' ')}; weakest exit policy: {str(exit_policy_research.get('weakest_exit_policy') or 'warming up').replace('_', ' ')}. "
+                    f"Overvalued ranking factors: {', '.join([str(x).replace('_', ' ') for x in (ranking_refinement.get('overvalued_ranking_factors') or [])]) or 'warming up'}; "
+                    f"undervalued ranking factors: {', '.join([str(x).replace('_', ' ') for x in (ranking_refinement.get('undervalued_ranking_factors') or [])]) or 'warming up'}. "
                     f"Exit-type capture validation is {exit_type_capture.get('exit_type_capture_validation_score', 'n/a')} and closed-trade attribution persistence is {(exit_type_capture.get('closed_trade_attribution_persistence_score') or (storage.get('closed_trade_attribution_persistence') or {}).get('score') or 'n/a')}. "
                     f"Confidence trust is {confidence_trust.get('confidence_trust_score', confidence_trust.get('trust_score', 'n/a'))}; overconfident buckets: {', '.join([str(x).replace('_', ' ') for x in (confidence_trust.get('overconfident_buckets') or [])]) or 'none proven'}; "
                     f"underconfident buckets: {', '.join([str(x).replace('_', ' ') for x in (confidence_trust.get('underconfident_buckets') or [])]) or 'none proven'}. "
+                    f"Optimization improved: {', '.join([str(x).replace('_', ' ') for x in (opt_audit.get('what_improved') or [])]) or 'no paper-applicable improvement proven yet'}. "
+                    f"Research next: {', '.join([str(x).replace('_', ' ') for x in (roadmap_v2.get('top_5_research_opportunities') or [])[:3]]) or 'profit capture and exit policy attribution'}. "
                     f"Copilot's biggest weakness is {str(copilot_research.get('why_recommendations_fail') or 'incomplete profit capture and exit attribution').replace('_', ' ')}. "
                     f"Paper micro-test ready: {micro_tests.get('paper_micro_test_ready', False)}; top candidate is {str((micro_tests.get('highest_priority_micro_test_candidate') or {}).get('candidate') or 'none ready').replace('_', ' ')}; "
                     f"blockers are {', '.join([str(x).replace('_', ' ') for x in (micro_tests.get('micro_test_blockers') or [])]) or 'human review required'}. "
@@ -56581,6 +56635,12 @@ def learning_snapshot_fast_v1():
 
 @router.get("/api/unified_learning_diagnostics_v1")
 def unified_learning_diagnostics_v1(force: bool = False):
+    def _first_mapping(*values):
+        for value in values:
+            if isinstance(value, dict):
+                return dict(value)
+        return {}
+
     if not force:
         cached_unified = _CACHE.get("unified_learning_diagnostics_v1") if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
         cached_data = cached_unified.get("data") if isinstance(cached_unified, dict) else None
@@ -56611,6 +56671,28 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 storage_alias = dict(fast.get("astra_storage_cache_attribution_learning_efficiency_v1") or {})
                 fast["astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1"] = dict(
                     storage_alias.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or storage_alias
+                )
+            fast_optimization_alias = fast.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1")
+            if not isinstance(fast_optimization_alias, dict) or not fast_optimization_alias:
+                storage_alias = dict(fast.get("astra_storage_cache_attribution_learning_efficiency_v1") or {})
+                convergence_alias = dict(fast.get("astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or {})
+                if not storage_alias.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"):
+                    try:
+                        refreshed_storage = ASTRA_STORAGE_CACHE_ATTRIBUTION_LEARNING_EFFICIENCY.status(
+                            statuses=_cached_autonomous_completion_statuses(fast),
+                            force=False,
+                        )
+                    except Exception:
+                        refreshed_storage = {}
+                    if isinstance(refreshed_storage, dict) and refreshed_storage:
+                        fast["astra_storage_cache_attribution_learning_efficiency_v1"] = dict(refreshed_storage)
+                        storage_alias = dict(refreshed_storage)
+                        convergence_alias = dict(
+                            refreshed_storage.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or convergence_alias
+                        )
+                fast["astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"] = _first_mapping(
+                    storage_alias.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
+                    convergence_alias.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
                 )
             fast["cache_hit"] = True
             fast["cache_age_seconds"] = round(cache_age, 3)
@@ -56647,6 +56729,28 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 disk_cached["astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1"] = dict(
                     storage_alias.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or storage_alias
                 )
+            disk_optimization_alias = disk_cached.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1")
+            if not isinstance(disk_optimization_alias, dict) or not disk_optimization_alias:
+                storage_alias = dict(disk_cached.get("astra_storage_cache_attribution_learning_efficiency_v1") or {})
+                convergence_alias = dict(disk_cached.get("astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or {})
+                if not storage_alias.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"):
+                    try:
+                        refreshed_storage = ASTRA_STORAGE_CACHE_ATTRIBUTION_LEARNING_EFFICIENCY.status(
+                            statuses=_cached_autonomous_completion_statuses(disk_cached),
+                            force=False,
+                        )
+                    except Exception:
+                        refreshed_storage = {}
+                    if isinstance(refreshed_storage, dict) and refreshed_storage:
+                        disk_cached["astra_storage_cache_attribution_learning_efficiency_v1"] = dict(refreshed_storage)
+                        storage_alias = dict(refreshed_storage)
+                        convergence_alias = dict(
+                            refreshed_storage.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or convergence_alias
+                        )
+                disk_cached["astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"] = _first_mapping(
+                    storage_alias.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
+                    convergence_alias.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
+                )
             disk_cached["cache_hit"] = True
             disk_cached["cache_source"] = "dashboard_cache_disk"
             disk_cached["api_calls_used"] = 0
@@ -56665,6 +56769,10 @@ def unified_learning_diagnostics_v1(force: bool = False):
             fallback["astra_profit_capture_exit_ranking_storage_learning_efficiency_v1"] = dict(storage_suite or {})
             fallback["astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1"] = dict(
                 (storage_suite or {}).get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or storage_suite or {}
+            )
+            fallback["astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"] = _first_mapping(
+                (storage_suite or {}).get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
+                ((storage_suite or {}).get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or {}).get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
             )
             fallback["astra_autonomous_improvement_performance_attribution_completion_v1"] = dict(completion or {})
             fallback.update({
@@ -56991,6 +57099,10 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 (out.get("astra_storage_cache_attribution_learning_efficiency_v1") or {}).get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1")
                 or out.get("astra_storage_cache_attribution_learning_efficiency_v1")
                 or {}
+            )
+            out["astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"] = _first_mapping(
+                (out.get("astra_storage_cache_attribution_learning_efficiency_v1") or {}).get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
+                (out.get("astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or {}).get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
             )
             try:
                 statuses["astra_autonomous_optimization_governance_core_v1"] = ASTRA_AUTONOMOUS_OPTIMIZATION_GOVERNANCE_CORE.status(

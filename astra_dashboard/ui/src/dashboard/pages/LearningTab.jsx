@@ -1648,6 +1648,7 @@ export default function LearningTab({ compact = false }) {
   const astraStorageCacheAttributionLearningEfficiency = unified?.astra_storage_cache_attribution_learning_efficiency_v1 || {};
   const astraProfitCaptureExitRankingStorageLearningEfficiency = unified?.astra_profit_capture_exit_ranking_storage_learning_efficiency_v1 || astraStorageCacheAttributionLearningEfficiency || {};
   const astraProfitExitRankingCopilotConvergence = unified?.astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1 || {};
+  const astraIntelligenceOptimizationResearch = unified?.astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1 || astraProfitExitRankingCopilotConvergence?.astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -4385,7 +4386,7 @@ export default function LearningTab({ compact = false }) {
         </details>
         <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
           <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
-            Exit Capture, Confidence & Copilot Readiness: {String(astraProfitExitRankingCopilotConvergence?.status || "warming up").replaceAll("_", " ")}
+            Intelligence Optimization & Micro-Test Readiness: {String(astraIntelligenceOptimizationResearch?.status || astraProfitExitRankingCopilotConvergence?.status || "warming up").replaceAll("_", " ")}
           </summary>
           <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
             Research-only convergence layer explaining why trades are selected, held, exited, captured, lost, and how those attribution links affect Copilot recommendations. Shadow-only and advisory-only.
@@ -4393,6 +4394,11 @@ export default function LearningTab({ compact = false }) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
             {[
               ["Convergence", safeNumber(astraProfitExitRankingCopilotConvergence?.profit_capture_exit_ranking_convergence_v1?.convergence_score).toFixed(1)],
+              ["Profit Capture Optimization", safeNumber(astraIntelligenceOptimizationResearch?.profit_capture_optimization_research_v1?.profit_capture_optimization_score).toFixed(1)],
+              ["Ranking Refinement", safeNumber(astraIntelligenceOptimizationResearch?.ranking_weight_refinement_intelligence_v1?.ranking_refinement_score).toFixed(1)],
+              ["Exit Policy Research", safeNumber(astraIntelligenceOptimizationResearch?.exit_policy_optimization_research_v1?.exit_policy_research_score).toFixed(1)],
+              ["Shadow Tournament", safeNumber(astraIntelligenceOptimizationResearch?.shadow_tournament_engine_expansion_v1?.shadow_tournament_score).toFixed(1)],
+              ["Experiment Readiness", safeNumber(astraIntelligenceOptimizationResearch?.autonomous_experimentation_framework_expansion_v1?.experimentation_framework_score).toFixed(1)],
               ["Ranking→Capture", safeNumber(astraProfitExitRankingCopilotConvergence?.profit_capture_exit_ranking_convergence_v1?.ranking_to_capture_score).toFixed(1)],
               ["Exit→Capture", safeNumber(astraProfitExitRankingCopilotConvergence?.profit_capture_exit_ranking_convergence_v1?.exit_to_capture_score).toFixed(1)],
               ["Ranking→Exit", safeNumber(astraProfitExitRankingCopilotConvergence?.profit_capture_exit_ranking_convergence_v1?.ranking_to_exit_score).toFixed(1)],
@@ -4407,6 +4413,8 @@ export default function LearningTab({ compact = false }) {
               ["Best Capture Exit", astraProfitExitRankingCopilotConvergence?.attribution_closure_exit_type_capture_validation_v1?.best_exit_type_for_capture ?? astraProfitExitRankingCopilotConvergence?.exit_type_capture_validation?.best_exit_type_for_capture],
               ["Highest Giveback Exit", astraProfitExitRankingCopilotConvergence?.attribution_closure_exit_type_capture_validation_v1?.highest_giveback_exit_type ?? astraProfitExitRankingCopilotConvergence?.exit_type_capture_validation?.highest_giveback_exit_type],
               ["Paper Micro-Test Ready", astraProfitExitRankingCopilotConvergence?.shadow_micro_test_candidate_ranking_v1?.paper_micro_test_ready ?? astraProfitExitRankingCopilotConvergence?.shadow_micro_test_candidate_ranking?.paper_micro_test_ready ? "yes" : "no"],
+              ["Micro-Test Readiness", astraIntelligenceOptimizationResearch?.micro_test_readiness_advisory_v1?.micro_test_readiness_summary],
+              ["Recommended Roadmap", astraIntelligenceOptimizationResearch?.cortex_autonomous_roadmap_generator_v2?.next_recommended_roadmap_item],
               ["Cortex Weakness", (astraProfitExitRankingCopilotConvergence?.cortex_integration_v1?.top_weaknesses || [])[0]],
               ["Cortex Strength", (astraProfitExitRankingCopilotConvergence?.cortex_integration_v1?.top_strengths || [])[0]],
               ["Highest ROI", astraProfitExitRankingCopilotConvergence?.cortex_integration_v1?.highest_roi_improvement],
@@ -4426,6 +4434,10 @@ export default function LearningTab({ compact = false }) {
               ["Profit Capture Root Cause", astraProfitExitRankingCopilotConvergence?.profit_capture_root_cause_analysis_v1 || astraProfitExitRankingCopilotConvergence?.profit_capture_root_cause],
               ["Copilot Attribution", astraProfitExitRankingCopilotConvergence?.copilot_attribution_intelligence_v1],
               ["Shadow Micro-Test Candidates", astraProfitExitRankingCopilotConvergence?.shadow_micro_test_candidate_ranking_v1 || astraProfitExitRankingCopilotConvergence?.shadow_micro_test_candidate_ranking],
+              ["Intelligence Optimization Suite", astraIntelligenceOptimizationResearch],
+              ["Roadmap Generator V2", astraIntelligenceOptimizationResearch?.cortex_autonomous_roadmap_generator_v2],
+              ["Micro-Test Readiness Advisory", astraIntelligenceOptimizationResearch?.micro_test_readiness_advisory_v1],
+              ["Final Cortex Optimization Audit", astraIntelligenceOptimizationResearch?.mandatory_final_cortex_audit_v1],
               ["Profit Capture Research", astraProfitExitRankingCopilotConvergence?.profit_capture_optimization_research_v1],
               ["Exit Policy Research", astraProfitExitRankingCopilotConvergence?.exit_policy_optimization_research_v1],
               ["Ranking Weight Research", astraProfitExitRankingCopilotConvergence?.ranking_weight_optimization_intelligence_v1],
