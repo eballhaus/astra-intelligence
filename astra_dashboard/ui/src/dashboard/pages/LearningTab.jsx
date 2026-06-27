@@ -1643,6 +1643,8 @@ export default function LearningTab({ compact = false }) {
   const astraAutonomousGovernanceCore = unified?.astra_autonomous_governance_core_v1 || astraAdaptiveOccupancyEvolutionSuite?.astra_autonomous_governance_core_v1 || {};
   const astraAutonomousResearchPlanningRanking = unified?.astra_autonomous_research_planning_ranking_intelligence_v1 || astraAdaptiveOccupancyEvolutionSuite?.astra_autonomous_research_planning_ranking_intelligence_v1 || {};
   const astraControlledRankingEvolution = unified?.astra_controlled_ranking_evolution_executive_layer_v1 || astraAdaptiveOccupancyEvolutionSuite?.astra_controlled_ranking_evolution_executive_layer_v1 || {};
+  const astraAutonomousOptimizationGovernance = unified?.astra_autonomous_optimization_governance_core_v1 || {};
+  const astraAutonomousImprovementCompletion = unified?.astra_autonomous_improvement_performance_attribution_completion_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -4298,6 +4300,141 @@ export default function LearningTab({ compact = false }) {
           <pre style={{ margin: "10px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
             {JSON.stringify(astraTradingBrainCompletion, null, 2)}
           </pre>
+        </details>
+        <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
+          <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
+            Autonomous Optimization & Governance Core: {String(astraAutonomousOptimizationGovernance?.status || "warming up").replaceAll("_", " ")}
+          </summary>
+          <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+            Systemwide oversight for stale systems, truth mismatches, redundancy, resource pressure, API safety, information compression, and highest-ROI next improvements. Advisory-only and cache-first.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+            {[
+              ["System Health", safeNumber(astraAutonomousOptimizationGovernance?.system_health_score).toFixed(1)],
+              ["Reliability", safeNumber(astraAutonomousOptimizationGovernance?.reliability_score).toFixed(1)],
+              ["Optimization", safeNumber(astraAutonomousOptimizationGovernance?.optimization_score).toFixed(1)],
+              ["Truth Consistency", safeNumber(astraAutonomousOptimizationGovernance?.truth_consistency_score).toFixed(1)],
+              ["Conflicts", safeNumber(astraAutonomousOptimizationGovernance?.redundancy_conflict_summary?.conflict_count).toFixed(0)],
+              ["Redundancy", safeNumber(astraAutonomousOptimizationGovernance?.redundancy_conflict_summary?.redundant_system_count).toFixed(0)],
+              ["Slowest Endpoint", astraAutonomousOptimizationGovernance?.resource_allocation_summary?.slowest_endpoint?.system_name],
+              ["Largest State File", astraAutonomousOptimizationGovernance?.resource_allocation_summary?.largest_state_file?.name],
+              ["Highest Value", astraAutonomousOptimizationGovernance?.resource_allocation_summary?.highest_value_low_cost_system?.system_name],
+              ["Lowest Value High Cost", astraAutonomousOptimizationGovernance?.resource_allocation_summary?.lowest_value_high_cost_system?.system_name],
+              ["Highest ROI Next", astraAutonomousOptimizationGovernance?.highest_roi_next_improvement],
+              ["Dashboard Provider Calls", safeNumber(astraAutonomousOptimizationGovernance?.api_governance_summary?.dashboard_provider_calls_used).toFixed(0)],
+            ].map(([label, value]) => (
+              <div key={label} style={{ background: "rgba(12,24,42,0.46)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+                <strong style={{ color: "#f2f7ff" }}>{String(value ?? "warming up").replaceAll("_", " ")}</strong>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginTop: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "10px 12px" }}>
+              <div style={{ color: "#7dd3fc", fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Top Weaknesses</div>
+              {(astraAutonomousOptimizationGovernance?.top_weaknesses || []).slice(0, 5).map((item, idx) => (
+                <div key={`${item}-${idx}`} style={{ color: "#dce9fb", fontSize: 12, marginTop: 6 }}>{idx + 1}. {String(item).replaceAll("_", " ")}</div>
+              ))}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "10px 12px" }}>
+              <div style={{ color: "#7dd3fc", fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Top Recommendations</div>
+              {(astraAutonomousOptimizationGovernance?.top_recommendations || []).slice(0, 5).map((item, idx) => (
+                <div key={`${item}-${idx}`} style={{ color: "#dce9fb", fontSize: 12, marginTop: 6 }}>{idx + 1}. {String(item).replaceAll("_", " ")}</div>
+              ))}
+            </div>
+          </div>
+          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+            {[
+              ["Conflict Summary", astraAutonomousOptimizationGovernance?.redundancy_conflict_summary],
+              ["Resource Allocation", astraAutonomousOptimizationGovernance?.resource_allocation_summary],
+              ["API Governance", astraAutonomousOptimizationGovernance?.api_governance_summary],
+              ["Information Compression", astraAutonomousOptimizationGovernance?.information_compression_summary],
+              ["Improvement Attribution", astraAutonomousOptimizationGovernance?.improvement_attribution_summary],
+              ["Dependency Map", astraAutonomousOptimizationGovernance?.dependency_map],
+            ].map(([label, row]) => (
+              <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
+                <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+                  {label}: {String(row?.status || row?.recommendation || "available").replaceAll("_", " ")}
+                </summary>
+                <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
+                  {JSON.stringify(row || {}, null, 2)}
+                </pre>
+              </details>
+            ))}
+          </div>
+          <div style={{ marginTop: 10, color: "#dce9fb", fontSize: 12, lineHeight: 1.55 }}>
+            This core is observational only. It does not change trading, ranking, entries, exits, sizing, allocation, thresholds, broker behavior, provider usage, or LLM behavior.
+          </div>
+        </details>
+        <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
+          <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
+            Autonomous Improvement, Performance & Attribution Completion: {String(astraAutonomousImprovementCompletion?.status || "warming up").replaceAll("_", " ")}
+          </summary>
+          <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+            Evidence-backed improvement planning for what helps Astra, what slows it down, what should be compressed, and what most improves Copilot accuracy. Advisory-only and cache-first.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+            {[
+              ["Improvement Loop", astraAutonomousImprovementCompletion?.learning_center_summary?.improvement_loop_status],
+              ["Slowest System", astraAutonomousImprovementCompletion?.learning_center_summary?.slowest_system || astraAutonomousImprovementCompletion?.slowest_system],
+              ["Storage Pressure", safeNumber(astraAutonomousImprovementCompletion?.learning_center_summary?.storage_pressure).toFixed(1)],
+              ["Ranking Attribution", safeNumber(astraAutonomousImprovementCompletion?.learning_center_summary?.ranking_attribution_score).toFixed(1)],
+              ["Profit Capture Confidence", safeNumber(astraAutonomousImprovementCompletion?.learning_center_summary?.profit_capture_confidence).toFixed(1)],
+              ["Regime Validation", astraAutonomousImprovementCompletion?.learning_center_summary?.regime_validation_status],
+              ["Symbol Memory", astraAutonomousImprovementCompletion?.learning_center_summary?.symbol_memory_status],
+              ["Opportunity Cost", safeNumber(astraAutonomousImprovementCompletion?.learning_center_summary?.opportunity_cost_score).toFixed(1)],
+              ["Learning Efficiency", safeNumber(astraAutonomousImprovementCompletion?.learning_center_summary?.learning_efficiency_score).toFixed(1)],
+              ["Copilot Accuracy", safeNumber(astraAutonomousImprovementCompletion?.learning_center_summary?.copilot_accuracy_attribution_score).toFixed(1)],
+              ["Highest ROI Next", astraAutonomousImprovementCompletion?.learning_center_summary?.highest_roi_next_improvement || astraAutonomousImprovementCompletion?.highest_roi_next_improvement],
+            ].map(([label, value]) => (
+              <div key={label} style={{ background: "rgba(12,24,42,0.46)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+                <strong style={{ color: "#f2f7ff" }}>{String(value ?? "warming up").replaceAll("_", " ")}</strong>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginTop: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "10px 12px" }}>
+              <div style={{ color: "#7dd3fc", fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Top Weaknesses</div>
+              {(astraAutonomousImprovementCompletion?.top_weaknesses || []).slice(0, 5).map((item, idx) => (
+                <div key={`${item}-${idx}`} style={{ color: "#dce9fb", fontSize: 12, marginTop: 6 }}>{idx + 1}. {String(item).replaceAll("_", " ")}</div>
+              ))}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "10px 12px" }}>
+              <div style={{ color: "#7dd3fc", fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Top 5 Recommendations</div>
+              {(astraAutonomousImprovementCompletion?.top_5_recommendations || []).slice(0, 5).map((item, idx) => (
+                <div key={`${item?.recommendation || item}-${idx}`} style={{ color: "#dce9fb", fontSize: 12, marginTop: 6 }}>
+                  {idx + 1}. {String(item?.recommendation || item).replaceAll("_", " ")}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+            {[
+              ["Performance & Storage", astraAutonomousImprovementCompletion?.performance_storage_optimization_suite_v1],
+              ["Ranking Attribution", astraAutonomousImprovementCompletion?.ranking_attribution_completion_v1],
+              ["Profit Capture", astraAutonomousImprovementCompletion?.profit_capture_validation_completion_v1],
+              ["Regime Validation", astraAutonomousImprovementCompletion?.regime_intelligence_validation_calibration_v1],
+              ["Symbol Memory", astraAutonomousImprovementCompletion?.symbol_intelligence_validation_behavioral_memory_v1],
+              ["Opportunity Cost", astraAutonomousImprovementCompletion?.opportunity_cost_non_selection_intelligence_v1],
+              ["Learning Efficiency", astraAutonomousImprovementCompletion?.autonomous_knowledge_quality_learning_efficiency_v1],
+              ["Shadow Promotion", astraAutonomousImprovementCompletion?.shadow_promotion_readiness_intelligence_v1],
+              ["Copilot Accuracy", astraAutonomousImprovementCompletion?.autonomous_copilot_accuracy_attribution_v1],
+              ["Executive Prioritization", astraAutonomousImprovementCompletion?.executive_improvement_prioritization_engine_v1],
+            ].map(([label, row]) => (
+              <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
+                <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+                  {label}: {String(row?.status || row?.recommendation || "available").replaceAll("_", " ")}
+                </summary>
+                <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
+                  {JSON.stringify(row || {}, null, 2)}
+                </pre>
+              </details>
+            ))}
+          </div>
+          <div style={{ marginTop: 10, color: "#dce9fb", fontSize: 12, lineHeight: 1.55 }}>
+            This completion suite is diagnostic and prioritization-only. It does not change Paper trading, ranking, entries, exits, sizing, allocation, thresholds, broker behavior, provider usage, or LLM behavior.
+          </div>
         </details>
         <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
           <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
