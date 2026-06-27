@@ -86,10 +86,10 @@
       "xrp": 28
     },
     "trade_family": {
-      "unknown": 1200
+      "behavior_family_evidence": 1200
     }
   },
-  "generated_at": "2026-06-27T17:33:19.136036Z",
+  "generated_at": "2026-06-27T19:51:27.845908Z",
   "index_schema_version": "1.0.0",
   "indexed_dimensions": [
     "symbol",

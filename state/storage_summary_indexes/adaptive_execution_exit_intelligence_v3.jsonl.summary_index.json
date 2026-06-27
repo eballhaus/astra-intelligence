@@ -12,7 +12,7 @@
       "low_confidence": 1200
     },
     "exit_type": {
-      "unknown": 1200
+      "exit_learning_evidence": 1200
     },
     "horizon": {
       "unknown": 1200
@@ -70,7 +70,7 @@
       "unknown": 1200
     }
   },
-  "generated_at": "2026-06-27T17:33:19.820683Z",
+  "generated_at": "2026-06-27T19:51:28.073153Z",
   "index_schema_version": "1.0.0",
   "indexed_dimensions": [
     "symbol",

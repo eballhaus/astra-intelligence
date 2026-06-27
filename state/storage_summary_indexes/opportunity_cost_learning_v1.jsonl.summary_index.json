@@ -24,7 +24,7 @@
       "low_capture": 1200
     },
     "ranking_factor": {
-      "unknown": 1200
+      "candidate_ranking_evidence": 1200
     },
     "regime": {
       "unknown": 1200
@@ -36,7 +36,7 @@
       "unknown": 1200
     }
   },
-  "generated_at": "2026-06-27T17:33:18.420637Z",
+  "generated_at": "2026-06-27T19:51:27.618623Z",
   "index_schema_version": "1.0.0",
   "indexed_dimensions": [
     "symbol",

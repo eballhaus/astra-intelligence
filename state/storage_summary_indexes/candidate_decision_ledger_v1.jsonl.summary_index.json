@@ -9,8 +9,8 @@
       "unknown": 1200
     },
     "confidence_bucket": {
-      "high_confidence": 1180,
-      "medium_confidence": 20
+      "high_confidence": 1181,
+      "medium_confidence": 19
     },
     "exit_type": {
       "unknown": 1200
@@ -25,50 +25,50 @@
       "low_capture": 1200
     },
     "ranking_factor": {
-      "unknown": 1200
+      "candidate_ranking_evidence": 1200
     },
     "regime": {
       "unknown": 983,
-      "unknown_day_trade_paper": 115,
-      "unknown_scalp_paper": 65,
+      "unknown_day_trade_paper": 113,
+      "unknown_scalp_paper": 67,
       "unknown_swing_trade_paper": 37
     },
     "symbol": {
-      "aapl": 92,
+      "aapl": 93,
       "abnb": 10,
       "alny": 10,
-      "amzn": 103,
-      "biib": 10,
-      "btc": 87,
+      "amzn": 104,
+      "biib": 9,
+      "btc": 89,
       "ccl": 10,
       "cost": 10,
       "crsp": 1,
-      "dal": 5,
-      "dfs": 10,
-      "eth": 113,
-      "fslr": 9,
+      "dal": 7,
+      "dfs": 9,
+      "eth": 114,
+      "fslr": 10,
       "gehc": 10,
-      "goog": 8,
+      "goog": 9,
       "meta": 99,
-      "msft": 90,
-      "nvda": 120,
-      "pton": 10,
-      "race": 7,
-      "rcl": 10,
+      "msft": 89,
+      "nvda": 117,
+      "pton": 9,
+      "race": 9,
+      "rcl": 9,
       "riot": 10,
-      "rivn": 10,
+      "rivn": 9,
       "sg": 10,
       "sol": 90,
-      "tsla": 93,
-      "ual": 10,
-      "wday": 10,
-      "xrp": 143
+      "tsla": 92,
+      "ual": 9,
+      "wday": 9,
+      "xrp": 144
     },
     "trade_family": {
       "unknown": 1200
     }
   },
-  "generated_at": "2026-06-27T17:33:20.203369Z",
+  "generated_at": "2026-06-27T19:51:28.305106Z",
   "index_schema_version": "1.0.0",
   "indexed_dimensions": [
     "symbol",
@@ -88,11 +88,11 @@
   "sample_rows": 1200,
   "source_available": true,
   "source_file": "candidate_decision_ledger_v1.jsonl",
-  "source_line_count_estimate": 64408,
+  "source_line_count_estimate": 64568,
   "source_line_count_exact": null,
-  "source_mtime": 1782581581.664348,
-  "source_mtime_marker": "8e9cb84abdf84ce4",
+  "source_mtime": 1782586808.3835263,
+  "source_mtime_marker": "4ceacdc9c323333c",
   "source_path": "state/candidate_decision_ledger_v1.jsonl",
-  "source_size_bytes": 99649636,
-  "source_size_mb": 99.65
+  "source_size_bytes": 99892982,
+  "source_size_mb": 99.893
 }

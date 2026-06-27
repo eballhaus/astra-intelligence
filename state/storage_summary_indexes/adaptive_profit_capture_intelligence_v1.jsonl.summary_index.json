@@ -15,7 +15,7 @@
       "low_confidence": 1200
     },
     "exit_type": {
-      "unknown": 1200
+      "exit_learning_evidence": 1200
     },
     "horizon": {
       "day_trade": 432,
@@ -76,7 +76,7 @@
       "unknown": 1200
     }
   },
-  "generated_at": "2026-06-27T17:33:19.694021Z",
+  "generated_at": "2026-06-27T19:51:27.985159Z",
   "index_schema_version": "1.0.0",
   "indexed_dimensions": [
     "symbol",

@@ -1646,6 +1646,7 @@ export default function LearningTab({ compact = false }) {
   const astraAutonomousOptimizationGovernance = unified?.astra_autonomous_optimization_governance_core_v1 || {};
   const astraAutonomousImprovementCompletion = unified?.astra_autonomous_improvement_performance_attribution_completion_v1 || {};
   const astraStorageCacheAttributionLearningEfficiency = unified?.astra_storage_cache_attribution_learning_efficiency_v1 || {};
+  const astraProfitCaptureExitRankingStorageLearningEfficiency = unified?.astra_profit_capture_exit_ranking_storage_learning_efficiency_v1 || astraStorageCacheAttributionLearningEfficiency || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -4304,26 +4305,26 @@ export default function LearningTab({ compact = false }) {
         </details>
         <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
           <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
-            Intelligence Infrastructure & Learning Efficiency: {String(astraStorageCacheAttributionLearningEfficiency?.status || "warming up").replaceAll("_", " ")}
+            Profit Capture, Ranking, Storage & Intelligence Quality: {String(astraProfitCaptureExitRankingStorageLearningEfficiency?.status || "warming up").replaceAll("_", " ")}
           </summary>
           <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
-            Cold storage summaries, retrieval indexes, hot/warm/cold governance, smart cache trust, Profit Capture wiring, Ranking Attribution wiring, and fast-load protection. Advisory-only; no data is deleted or archived automatically.
+            Consolidated Profit Capture validation, Exit Learning convergence, Ranking Attribution, storage governance, retrieval acceleration, scanner/API/satellite audits, promotion readiness, and intelligence quality. Advisory-only; no trading behavior changes and no data is deleted or archived automatically.
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
             {[
-              ["Storage Risk", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.storage_risk_score || astraStorageCacheAttributionLearningEfficiency?.storage_risk_score).toFixed(1)],
-              ["Storage Pressure", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.storage_pressure_score || astraStorageCacheAttributionLearningEfficiency?.storage_pressure_score).toFixed(1)],
-              ["Hot/Warm/Cold", astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.hot_warm_cold_status],
-              ["Cache Trust", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.cache_trust_score || astraStorageCacheAttributionLearningEfficiency?.cache_trust_score).toFixed(1)],
-              ["Summary Coverage", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.summary_coverage_score || astraStorageCacheAttributionLearningEfficiency?.summary_coverage_score).toFixed(1)],
-              ["Retrieval Health", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.retrieval_index_health || astraStorageCacheAttributionLearningEfficiency?.index_retrieval_health_score).toFixed(1)],
-              ["Evidence ROI", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.evidence_roi_score || astraStorageCacheAttributionLearningEfficiency?.evidence_roi_score).toFixed(1)],
-              ["Stale Critical Caches", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.stale_decision_critical_cache_count || astraStorageCacheAttributionLearningEfficiency?.stale_decision_critical_cache_count).toFixed(0)],
-              ["Profit Capture Confidence", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.profit_capture_confidence || astraStorageCacheAttributionLearningEfficiency?.profit_capture_confidence).toFixed(1)],
-              ["Ranking Attribution", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.ranking_attribution_score || astraStorageCacheAttributionLearningEfficiency?.ranking_attribution_score).toFixed(1)],
-              ["Learning Efficiency", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.learning_efficiency_score || astraStorageCacheAttributionLearningEfficiency?.learning_efficiency_score).toFixed(1)],
-              ["Dashboard Fast Load", astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.dashboard_fast_load_status],
-              ["Highest ROI Next", astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.highest_roi_next_improvement || astraStorageCacheAttributionLearningEfficiency?.highest_roi_next_improvement],
+              ["Astra IQ Score", safeNumber(astraProfitCaptureExitRankingStorageLearningEfficiency?.learning_center_summary?.overall_astra_intelligence_quality_score || astraProfitCaptureExitRankingStorageLearningEfficiency?.autonomous_intelligence_quality_score_v1?.overall_astra_intelligence_quality_score).toFixed(1)],
+              ["Storage Pressure", safeNumber(astraProfitCaptureExitRankingStorageLearningEfficiency?.learning_center_summary?.storage_pressure_score || astraProfitCaptureExitRankingStorageLearningEfficiency?.storage_pressure_score).toFixed(1)],
+              ["Retrieval Quality", safeNumber(astraProfitCaptureExitRankingStorageLearningEfficiency?.learning_center_summary?.retrieval_quality_score || astraProfitCaptureExitRankingStorageLearningEfficiency?.knowledge_retrieval_acceleration_v1?.retrieval_quality_score).toFixed(1)],
+              ["Learning Efficiency", safeNumber(astraProfitCaptureExitRankingStorageLearningEfficiency?.learning_center_summary?.learning_efficiency_score || astraProfitCaptureExitRankingStorageLearningEfficiency?.learning_efficiency_score).toFixed(1)],
+              ["Profit Capture Confidence", safeNumber(astraProfitCaptureExitRankingStorageLearningEfficiency?.learning_center_summary?.profit_capture_confidence || astraProfitCaptureExitRankingStorageLearningEfficiency?.profit_capture_validation_completion_v1?.profit_capture_confidence_after).toFixed(1)],
+              ["Exit Convergence", safeNumber(astraProfitCaptureExitRankingStorageLearningEfficiency?.learning_center_summary?.exit_learning_convergence_score || astraProfitCaptureExitRankingStorageLearningEfficiency?.exit_learning_completion_convergence_v1?.exit_learning_convergence_score).toFixed(1)],
+              ["Ranking Attribution", safeNumber(astraProfitCaptureExitRankingStorageLearningEfficiency?.learning_center_summary?.ranking_attribution_score || astraProfitCaptureExitRankingStorageLearningEfficiency?.ranking_attribution_completion_v1?.ranking_attribution_score_after).toFixed(1)],
+              ["Ranking/Capture Link", safeNumber(astraProfitCaptureExitRankingStorageLearningEfficiency?.learning_center_summary?.ranking_profit_capture_link_score || astraProfitCaptureExitRankingStorageLearningEfficiency?.ranking_profit_capture_linkage_v1?.ranking_profit_capture_link_score).toFixed(1)],
+              ["Scanner ROI", astraProfitCaptureExitRankingStorageLearningEfficiency?.learning_center_summary?.scanner_roi_summary || astraProfitCaptureExitRankingStorageLearningEfficiency?.scanner_yield_learning_roi_attribution_v1?.highest_value_scanner],
+              ["API Efficiency", safeNumber(astraProfitCaptureExitRankingStorageLearningEfficiency?.learning_center_summary?.api_efficiency_score || astraProfitCaptureExitRankingStorageLearningEfficiency?.api_efficiency_utilization_audit_v1?.api_efficiency_score).toFixed(1)],
+              ["Satellite/Librarian", safeNumber(astraProfitCaptureExitRankingStorageLearningEfficiency?.learning_center_summary?.satellite_librarian_score || astraProfitCaptureExitRankingStorageLearningEfficiency?.satellite_librarian_utilization_audit_v1?.librarian_retrieval_score).toFixed(1)],
+              ["Promotion Continuity", astraProfitCaptureExitRankingStorageLearningEfficiency?.learning_center_summary?.promotion_readiness_continuity || astraProfitCaptureExitRankingStorageLearningEfficiency?.promotion_readiness_continuity_v1?.promotion_readiness_continuity_status],
+              ["Highest ROI Next", astraProfitCaptureExitRankingStorageLearningEfficiency?.learning_center_summary?.highest_roi_next_improvement || astraProfitCaptureExitRankingStorageLearningEfficiency?.mandatory_final_audit_v1?.highest_roi_next_improvement],
             ].map(([label, value]) => (
               <div key={label} style={{ background: "rgba(12,24,42,0.46)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
                 <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
@@ -4334,7 +4335,7 @@ export default function LearningTab({ compact = false }) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginTop: 12 }}>
             <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "10px 12px" }}>
               <div style={{ color: "#7dd3fc", fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Largest State Files</div>
-              {((astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.largest_state_files || astraStorageCacheAttributionLearningEfficiency?.oversized_state_items || [])).slice(0, 5).map((item, idx) => (
+              {((astraProfitCaptureExitRankingStorageLearningEfficiency?.learning_center_summary?.largest_state_files || astraProfitCaptureExitRankingStorageLearningEfficiency?.oversized_state_items || [])).slice(0, 5).map((item, idx) => (
                 <div key={`${item?.name || idx}-${idx}`} style={{ color: "#dce9fb", fontSize: 12, marginTop: 6 }}>
                   {idx + 1}. {String(item?.name || "warming up").replaceAll("_", " ")} {item?.size_mb ? `(${item.size_mb} MB)` : ""}
                 </div>
@@ -4342,24 +4343,30 @@ export default function LearningTab({ compact = false }) {
             </div>
             <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "10px 12px" }}>
               <div style={{ color: "#7dd3fc", fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Top Recommendations</div>
-              {((astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.top_recommendations || astraStorageCacheAttributionLearningEfficiency?.storage_recommendations || [])).slice(0, 5).map((item, idx) => (
+              {((astraProfitCaptureExitRankingStorageLearningEfficiency?.learning_center_summary?.top_recommendations || astraProfitCaptureExitRankingStorageLearningEfficiency?.storage_recommendations || [])).slice(0, 5).map((item, idx) => (
                 <div key={`${item}-${idx}`} style={{ color: "#dce9fb", fontSize: 12, marginTop: 6 }}>{idx + 1}. {String(item).replaceAll("_", " ")}</div>
               ))}
             </div>
           </div>
           <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
             {[
-              ["Storage Architecture", astraStorageCacheAttributionLearningEfficiency?.storage_architecture_governance_v1],
-              ["Cold Summary Indexes", astraStorageCacheAttributionLearningEfficiency?.cold_storage_indexing_summary_architecture_v1],
-              ["Retrieval Indexing", astraStorageCacheAttributionLearningEfficiency?.retrieval_indexing_engine_v1],
-              ["Smart Cache Freshness", astraStorageCacheAttributionLearningEfficiency?.smart_cache_freshness_trust_v1],
-              ["Profit Capture Wiring", astraStorageCacheAttributionLearningEfficiency?.profit_capture_summary_validation_wiring_v1],
-              ["Ranking Attribution Wiring", astraStorageCacheAttributionLearningEfficiency?.ranking_attribution_summary_validation_wiring_v1],
-              ["Learning Efficiency", astraStorageCacheAttributionLearningEfficiency?.learning_efficiency_evidence_roi_v1],
-              ["Infrastructure Audit", astraStorageCacheAttributionLearningEfficiency?.autonomous_infrastructure_audit_v1],
-              ["Roadmap Generator", astraStorageCacheAttributionLearningEfficiency?.autonomous_roadmap_generator_v1],
-              ["Compaction Safety", astraStorageCacheAttributionLearningEfficiency?.compaction_archive_cleanup_safety_analysis_v1],
-              ["Fast Load Protection", astraStorageCacheAttributionLearningEfficiency?.fast_load_protection_v1],
+              ["Missing Index Dimensions", astraProfitCaptureExitRankingStorageLearningEfficiency?.missing_index_dimension_completion_v1],
+              ["Historical Condensation", astraProfitCaptureExitRankingStorageLearningEfficiency?.historical_intelligence_condensation_v1],
+              ["Retrieval Acceleration", astraProfitCaptureExitRankingStorageLearningEfficiency?.knowledge_retrieval_acceleration_v1],
+              ["Profit Capture Completion", astraProfitCaptureExitRankingStorageLearningEfficiency?.profit_capture_validation_completion_v1],
+              ["Exit Learning Convergence", astraProfitCaptureExitRankingStorageLearningEfficiency?.exit_learning_completion_convergence_v1],
+              ["Ranking Completion", astraProfitCaptureExitRankingStorageLearningEfficiency?.ranking_attribution_completion_v1],
+              ["Ranking + Profit Capture", astraProfitCaptureExitRankingStorageLearningEfficiency?.ranking_profit_capture_linkage_v1],
+              ["Duplicate Evidence", astraProfitCaptureExitRankingStorageLearningEfficiency?.duplicate_evidence_elimination_analysis_v1],
+              ["Scanner ROI", astraProfitCaptureExitRankingStorageLearningEfficiency?.scanner_yield_learning_roi_attribution_v1],
+              ["API Efficiency", astraProfitCaptureExitRankingStorageLearningEfficiency?.api_efficiency_utilization_audit_v1],
+              ["Satellite/Librarian", astraProfitCaptureExitRankingStorageLearningEfficiency?.satellite_librarian_utilization_audit_v1],
+              ["Intelligence Quality", astraProfitCaptureExitRankingStorageLearningEfficiency?.autonomous_intelligence_quality_score_v1],
+              ["Promotion Continuity", astraProfitCaptureExitRankingStorageLearningEfficiency?.promotion_readiness_continuity_v1],
+              ["File Size Governance", astraProfitCaptureExitRankingStorageLearningEfficiency?.file_size_governance_partitioning_v1],
+              ["Compaction Readiness", astraProfitCaptureExitRankingStorageLearningEfficiency?.compaction_archive_readiness_v1],
+              ["Final Audit", astraProfitCaptureExitRankingStorageLearningEfficiency?.mandatory_final_audit_v1],
+              ["Fast Load Protection", astraProfitCaptureExitRankingStorageLearningEfficiency?.fast_load_protection_v1],
             ].map(([label, row]) => (
               <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
                 <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
@@ -4372,7 +4379,7 @@ export default function LearningTab({ compact = false }) {
             ))}
           </div>
           <div style={{ marginTop: 10, color: "#dce9fb", fontSize: 12, lineHeight: 1.55 }}>
-            This suite blocks raw giant scans from UI paths and recommends summary/index work only. It does not delete, archive, compact, trade, rank, enter, exit, size, allocate, or change thresholds.
+            This suite blocks raw giant scans from UI paths and recommends summary/index work only. It does not delete, archive, compact, trade, rank, enter, exit, size, allocate, promote, enable learned exits, or change thresholds.
           </div>
         </details>
         <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
