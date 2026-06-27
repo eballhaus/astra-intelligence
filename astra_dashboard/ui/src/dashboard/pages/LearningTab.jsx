@@ -1647,6 +1647,7 @@ export default function LearningTab({ compact = false }) {
   const astraAutonomousImprovementCompletion = unified?.astra_autonomous_improvement_performance_attribution_completion_v1 || {};
   const astraStorageCacheAttributionLearningEfficiency = unified?.astra_storage_cache_attribution_learning_efficiency_v1 || {};
   const astraProfitCaptureExitRankingStorageLearningEfficiency = unified?.astra_profit_capture_exit_ranking_storage_learning_efficiency_v1 || astraStorageCacheAttributionLearningEfficiency || {};
+  const astraProfitExitRankingCopilotConvergence = unified?.astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -4380,6 +4381,62 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ marginTop: 10, color: "#dce9fb", fontSize: 12, lineHeight: 1.55 }}>
             This suite blocks raw giant scans from UI paths and recommends summary/index work only. It does not delete, archive, compact, trade, rank, enter, exit, size, allocate, promote, enable learned exits, or change thresholds.
+          </div>
+        </details>
+        <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
+          <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
+            Profit Capture, Exit Intelligence & Copilot Convergence: {String(astraProfitExitRankingCopilotConvergence?.status || "warming up").replaceAll("_", " ")}
+          </summary>
+          <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+            Research-only convergence layer explaining why trades are selected, held, exited, captured, lost, and how those attribution links affect Copilot recommendations. Shadow-only and advisory-only.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+            {[
+              ["Convergence", safeNumber(astraProfitExitRankingCopilotConvergence?.profit_capture_exit_ranking_convergence_v1?.convergence_score).toFixed(1)],
+              ["Ranking→Capture", safeNumber(astraProfitExitRankingCopilotConvergence?.profit_capture_exit_ranking_convergence_v1?.ranking_to_capture_score).toFixed(1)],
+              ["Exit→Capture", safeNumber(astraProfitExitRankingCopilotConvergence?.profit_capture_exit_ranking_convergence_v1?.exit_to_capture_score).toFixed(1)],
+              ["Ranking→Exit", safeNumber(astraProfitExitRankingCopilotConvergence?.profit_capture_exit_ranking_convergence_v1?.ranking_to_exit_score).toFixed(1)],
+              ["Attribution Closure", safeNumber(astraProfitExitRankingCopilotConvergence?.decision_attribution_closure_v1?.attribution_closure_score).toFixed(1)],
+              ["Explained Trades", `${safeNumber(astraProfitExitRankingCopilotConvergence?.decision_attribution_closure_v1?.fully_explained_trade_pct).toFixed(1)}%`],
+              ["Confidence Trust", safeNumber(astraProfitExitRankingCopilotConvergence?.confidence_calibration_trust_scoring_v1?.trust_score).toFixed(1)],
+              ["Copilot Intelligence", safeNumber(astraProfitExitRankingCopilotConvergence?.copilot_attribution_intelligence_v1?.copilot_intelligence_score_after).toFixed(1)],
+              ["Recommendation Quality", safeNumber(astraProfitExitRankingCopilotConvergence?.copilot_attribution_intelligence_v1?.recommendation_quality_score).toFixed(1)],
+              ["Cortex Weakness", (astraProfitExitRankingCopilotConvergence?.cortex_integration_v1?.top_weaknesses || [])[0]],
+              ["Cortex Strength", (astraProfitExitRankingCopilotConvergence?.cortex_integration_v1?.top_strengths || [])[0]],
+              ["Highest ROI", astraProfitExitRankingCopilotConvergence?.cortex_integration_v1?.highest_roi_improvement],
+            ].map(([label, value]) => (
+              <div key={label} style={{ background: "rgba(12,24,42,0.46)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+                <strong style={{ color: "#f2f7ff" }}>{String(value ?? "warming up").replaceAll("_", " ")}</strong>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+            {[
+              ["Convergence Chain", astraProfitExitRankingCopilotConvergence?.profit_capture_exit_ranking_convergence_v1],
+              ["Decision Attribution Closure", astraProfitExitRankingCopilotConvergence?.decision_attribution_closure_v1],
+              ["Confidence Calibration & Trust", astraProfitExitRankingCopilotConvergence?.confidence_calibration_trust_scoring_v1],
+              ["Copilot Attribution", astraProfitExitRankingCopilotConvergence?.copilot_attribution_intelligence_v1],
+              ["Profit Capture Research", astraProfitExitRankingCopilotConvergence?.profit_capture_optimization_research_v1],
+              ["Exit Policy Research", astraProfitExitRankingCopilotConvergence?.exit_policy_optimization_research_v1],
+              ["Ranking Weight Research", astraProfitExitRankingCopilotConvergence?.ranking_weight_optimization_intelligence_v1],
+              ["Experiment Framework", astraProfitExitRankingCopilotConvergence?.autonomous_experimentation_framework_v1],
+              ["Shadow Tournament", astraProfitExitRankingCopilotConvergence?.shadow_strategy_tournament_engine_v1],
+              ["Cortex Integration", astraProfitExitRankingCopilotConvergence?.cortex_integration_v1],
+              ["Final Audit", astraProfitExitRankingCopilotConvergence?.mandatory_final_audit_v1],
+            ].map(([label, row]) => (
+              <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
+                <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+                  {label}: {String(row?.status || row?.final_audit_status || row?.cortex_integration_status || "available").replaceAll("_", " ")}
+                </summary>
+                <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
+                  {JSON.stringify(row || {}, null, 2)}
+                </pre>
+              </details>
+            ))}
+          </div>
+          <div style={{ marginTop: 10, color: "#dce9fb", fontSize: 12, lineHeight: 1.55 }}>
+            Frameworks are ready for future shadow experiments only. No experiment was executed, no ranking weights changed, no exits changed, and no Copilot recommendation is allowed to trade autonomously.
           </div>
         </details>
         <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
