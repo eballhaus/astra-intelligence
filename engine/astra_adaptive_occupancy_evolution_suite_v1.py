@@ -2471,6 +2471,479 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             **_safe_flags(),
         }
 
+    def _autonomous_correction_validation(
+        self,
+        statuses: dict[str, Any],
+        continuity: dict[str, Any],
+        occupancy: dict[str, Any],
+        horizon: dict[str, Any],
+        effective: dict[str, Any],
+        exit_review: dict[str, Any],
+        trading_brain: dict[str, Any],
+        paper: dict[str, Any],
+        shadow_completion: dict[str, Any],
+        memory: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Evaluate whether previous advisory corrections appear to be working."""
+        profit = status_value(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
+        opportunity = trading_brain.get("open_position_opportunity_cost_intelligence_v1") or {}
+        feedback = trading_brain.get("exit_learning_feedback_loop_v1") or {}
+        memory_effectiveness = to_float(memory.get("recommendation_effectiveness_score"), 0.0)
+        memory_outcomes = to_int(memory.get("outcomes_evaluated"), 0)
+        items = [
+            {
+                "correction": "Horizon Diversity",
+                "date_implemented": "tracked_in_recent_horizon_lifecycle_capacity_bundles",
+                "baseline_metric": "prior_baseline_not_stored",
+                "baseline_source": "decision_memory_missing_exact_pre_fix_snapshot",
+                "expected_outcome": "higher_learning_diversity_and_lower_horizon_concentration",
+                "current_metric": rounded(continuity.get("learning_diversity_score"), 3),
+                "actual_improvement": None,
+                "confidence_score": rounded(clamp(45.0 + to_float(continuity.get("learning_diversity_score"), 0.0) * 0.35), 3),
+                "classification": (
+                    "Partially Successful"
+                    if to_float(continuity.get("learning_diversity_score"), 0.0) >= 45
+                    else "Inconclusive"
+                ),
+                "remaining_unresolved": horizon.get("dominant_horizon"),
+                "likely_remaining_root_cause": "capacity_and_current_position_mix_still_bias_learning_evidence",
+            },
+            {
+                "correction": "Adaptive Capacity",
+                "date_implemented": "tracked_in_adaptive_occupancy_evolution_suite",
+                "baseline_metric": to_int(occupancy.get("total_capacity"), 20),
+                "baseline_source": "current_capacity_policy_baseline",
+                "expected_outcome": "effective_learning_capacity_room_without_forcing_trades",
+                "current_metric": rounded(effective.get("effective_learning_capacity_available"), 3),
+                "actual_improvement": rounded(effective.get("effective_learning_capacity_available"), 3),
+                "confidence_score": rounded(clamp(55.0 + max(0.0, to_float(effective.get("effective_learning_capacity_available"), 0.0)) * 2.0), 3),
+                "classification": (
+                    "Successful"
+                    if to_float(effective.get("effective_learning_capacity_available"), 0.0) > 0
+                    else "Partially Successful"
+                ),
+                "remaining_unresolved": paper.get("paper_learning_bottleneck_summary"),
+                "likely_remaining_root_cause": "raw_risk_positions_still_need_natural_turnover_or_existing_gate_approval",
+            },
+            {
+                "correction": "Effective Occupancy",
+                "date_implemented": "tracked_in_paper_learning_capacity_correction",
+                "baseline_metric": effective.get("raw_open_positions"),
+                "baseline_source": "broker_confirmed_raw_positions",
+                "expected_outcome": "separate_risk_exposure_from_learning_value",
+                "current_metric": effective.get("effective_learning_occupancy"),
+                "actual_improvement": rounded(
+                    to_float(effective.get("raw_open_positions"), 0.0)
+                    - to_float(effective.get("effective_learning_occupancy"), 0.0),
+                    3,
+                ),
+                "confidence_score": 90.0 if effective.get("effective_learning_occupancy") is not None else 35.0,
+                "classification": "Successful" if effective.get("effective_learning_occupancy") is not None else "Inconclusive",
+                "remaining_unresolved": "effective_room_does_not_itself_create_new_qualified_entries",
+                "likely_remaining_root_cause": "capacity_truth_is_fixed_but_entry_gates_and_market_session_still_control_execution",
+            },
+            {
+                "correction": "Exit Intelligence",
+                "date_implemented": "tracked_in_trading_brain_completion_v1",
+                "baseline_metric": "prior_exit_review_quality_baseline_not_stored",
+                "baseline_source": "no_exact_pre_fix_exit_baseline",
+                "expected_outcome": "valid_holds_separated_from_exit_review_candidates",
+                "current_metric": exit_review.get("exit_decision_intelligence_score"),
+                "actual_improvement": None,
+                "confidence_score": trading_brain.get("behavior_verification_score"),
+                "classification": (
+                    "Partially Successful"
+                    if to_int(exit_review.get("open_positions_reviewed"), 0) > 0
+                    and to_float(trading_brain.get("behavior_verification_score"), 0.0) >= 90
+                    else "Inconclusive"
+                ),
+                "remaining_unresolved": f"{len(exit_review.get('exit_review_candidates') or [])}_positions_still_need_human_review",
+                "likely_remaining_root_cause": "review_path_is_advisory_and_closed_exit_sample_is_still_small",
+            },
+            {
+                "correction": "Profit Capture",
+                "date_implemented": "tracked_in_profit_capture_and_exit_validation_suites",
+                "baseline_metric": "prior_profit_capture_baseline_not_stored",
+                "baseline_source": "profit_capture_diagnostics_only",
+                "expected_outcome": "reduced_giveback_and_higher_capture_ratio",
+                "current_metric": first(profit.get("capture_ratio"), profit.get("average_capture_ratio"), "warming_up"),
+                "actual_improvement": None,
+                "confidence_score": rounded(first(profit.get("policy_confidence"), profit.get("readiness_score"), 0.0), 3),
+                "classification": "Inconclusive" if to_int(feedback.get("closed_trades_reviewed"), 0) < 20 else "Partially Successful",
+                "remaining_unresolved": "closed_trade_sample_or_capture_baseline_insufficient",
+                "likely_remaining_root_cause": "profit_capture_requires_more_completed_paper_exits_before_validation",
+            },
+            {
+                "correction": "Opportunity Cost Intelligence",
+                "date_implemented": "tracked_in_trading_brain_completion_v1",
+                "baseline_metric": "prior_open_position_opportunity_cost_baseline_not_stored",
+                "baseline_source": "diagnostic_first_pass",
+                "expected_outcome": "identify_capacity_drag_without_forcing_replacement_trades",
+                "current_metric": opportunity.get("opportunity_cost_intelligence_score"),
+                "actual_improvement": None,
+                "confidence_score": 70.0 if opportunity.get("open_position_opportunity_cost_rows") else 35.0,
+                "classification": "Partially Successful" if opportunity.get("open_position_opportunity_cost_rows") else "Inconclusive",
+                "remaining_unresolved": f"{len(opportunity.get('high_opportunity_cost_positions') or [])}_positions_with_elevated_cost",
+                "likely_remaining_root_cause": "diagnostic_identifies_drag_but_does_not_replace_positions",
+            },
+            {
+                "correction": "Trading Brain Completion",
+                "date_implemented": "2026-06-26_commit_28944ed",
+                "baseline_metric": "pre_completion_governance_lacked_single_trading_brain_contract",
+                "baseline_source": "previous_bundle_gap",
+                "expected_outcome": "one_coherent_exit_thesis_opportunity_cost_feedback_contract",
+                "current_metric": trading_brain.get("behavior_verification_score"),
+                "actual_improvement": trading_brain.get("behavior_verification_score"),
+                "confidence_score": trading_brain.get("behavior_verification_score"),
+                "classification": "Successful" if to_float(trading_brain.get("behavior_verification_score"), 0.0) >= 95 else "Partially Successful",
+                "remaining_unresolved": trading_brain.get("next_safe_exit_learning_step"),
+                "likely_remaining_root_cause": "micro_test_promotion_still_blocked_by_governance_gates",
+            },
+            {
+                "correction": "Shadow to Paper Promotion",
+                "date_implemented": "tracked_in_controlled_evolution_bridge",
+                "baseline_metric": "shadow_only",
+                "baseline_source": "controlled_evolution_ladder",
+                "expected_outcome": "validated_shadow_edges_progress_to_human_review_micro_tests",
+                "current_metric": shadow_completion.get("shadow_paper_readiness_score"),
+                "actual_improvement": None,
+                "confidence_score": shadow_completion.get("shadow_paper_readiness_score"),
+                "classification": "Partially Successful" if shadow_completion.get("promotion_blockers") else "Successful",
+                "remaining_unresolved": shadow_completion.get("promotion_blockers"),
+                "likely_remaining_root_cause": "promotion_gates_require_persistence_capacity_and_risk_confirmation",
+            },
+        ]
+        best = max(items, key=lambda row: to_float(row.get("confidence_score"), 0.0), default={})
+        failed = [row for row in items if row.get("classification") == "Failed"]
+        inconclusive = [row for row in items if row.get("classification") == "Inconclusive"]
+        return {
+            "module": "Autonomous Root Cause and Correction Validation V1",
+            "status": "ok",
+            "corrections_reviewed": len(items),
+            "correction_validation_rows": items,
+            "successful_corrections": len([row for row in items if row.get("classification") == "Successful"]),
+            "partially_successful_corrections": len([row for row in items if row.get("classification") == "Partially Successful"]),
+            "inconclusive_corrections": len(inconclusive),
+            "failed_corrections": len(failed),
+            "best_validated_correction": best.get("correction", "warming_up"),
+            "correction_with_weakest_evidence": (inconclusive[0] if inconclusive else {}).get("correction", "none"),
+            "decision_memory_effectiveness_score": rounded(memory_effectiveness, 3),
+            "decision_memory_outcomes_evaluated": memory_outcomes,
+            "correction_validation_summary": (
+                f"Astra reviewed {len(items)} prior correction areas. "
+                f"{len([row for row in items if row.get('classification') == 'Successful'])} look successful, "
+                f"{len([row for row in items if row.get('classification') == 'Partially Successful'])} are partial, "
+                f"and {len(inconclusive)} still need comparable before/after evidence."
+            ),
+            **_safe_flags(),
+        }
+
+    def _autonomous_learning_pipeline_transparency(
+        self,
+        classifier: dict[str, Any],
+        evolution: dict[str, Any],
+        governance: dict[str, Any],
+        shadow_completion: dict[str, Any],
+        persistence: dict[str, Any],
+        shadow_feedback: dict[str, Any],
+        memory: dict[str, Any],
+    ) -> dict[str, Any]:
+        classified = list(classifier.get("classified_improvements") or [])
+        candidates = list(evolution.get("eligible_candidates") or [])
+        active = list(evolution.get("active_micro_tests") or [])
+        blockers = list(evolution.get("promotion_blocker") or shadow_completion.get("promotion_blockers") or [])
+        blocked = [
+            {
+                "blocking_gate": blocker,
+                "required_evidence": persistence.get("required_evidence"),
+                "remaining_gap": (
+                    persistence.get("remaining_evidence")
+                    if "evidence" in text(blocker, "")
+                    else persistence.get("remaining_persistence_score")
+                    if "persistence" in text(blocker, "")
+                    else "gate_specific_safety_requirement"
+                ),
+            }
+            for blocker in blockers
+        ]
+        completed = to_int(memory.get("outcomes_evaluated"), 0)
+        validated = len([row for row in classified if row.get("consistently_better_than_paper")])
+        return {
+            "module": "Autonomous Learning Pipeline Transparency V1",
+            "status": "ok",
+            "experiments_generated": len(classified) + len(shadow_feedback.get("shadow_exit_candidates_to_watch") or []),
+            "experiments_completed": completed,
+            "experiments_validated": validated,
+            "promotion_candidates": len(candidates),
+            "paper_tests": len(active),
+            "successful_promotions": 0,
+            "failed_promotions": 0,
+            "blocked_promotions": len(blockers),
+            "blocked_promotion_details": blocked,
+            "shadow_to_validation_count": len(classified),
+            "validation_to_candidate_count": len(candidates),
+            "candidate_to_paper_test_count": len(active),
+            "paper_test_to_promotion_count": 0,
+            "why_not_reaching_paper": (
+                f"Promotion is blocked by {', '.join(blockers)}."
+                if blockers else "No current blocker; human review is still required before any Paper adoption."
+            ),
+            "promotion_pipeline_summary": (
+                f"{len(classified)} Shadow/validation row(s), {len(candidates)} promotion candidate(s), "
+                f"{len(active)} active Paper micro-test(s), and {len(blockers)} unresolved promotion gate(s)."
+            ),
+            "automatic_promotion_enabled": False,
+            **_safe_flags(),
+        }
+
+    def _shadow_performance_attribution_governance(
+        self,
+        statuses: dict[str, Any],
+        shadow_completion: dict[str, Any],
+        classifier: dict[str, Any],
+        evolution: dict[str, Any],
+    ) -> dict[str, Any]:
+        shadow_vs_paper = status_value(statuses, "shadow_vs_paper_performance_attribution_v1")
+        shadow_correction = status_value(statuses, "shadow_correction_validation_attribution_v1")
+        paper_pf = first(shadow_vs_paper.get("paper_profit_factor_verified"), shadow_vs_paper.get("paper_profit_factor"))
+        shadow_pf = first(shadow_vs_paper.get("shadow_profit_factor_verified"), shadow_vs_paper.get("shadow_profit_factor"))
+        pf_delta = to_float(shadow_vs_paper.get("profit_factor_delta"), 0.0)
+        win_delta = to_float(shadow_vs_paper.get("win_rate_delta"), 0.0)
+        capture_delta = to_float(shadow_vs_paper.get("profit_capture_delta"), 0.0)
+        exit_delta = to_float(shadow_vs_paper.get("exit_quality_delta"), 0.0)
+        available = bool(shadow_vs_paper.get("shadow_alpha_available") or shadow_vs_paper.get("shadow_profit_factor_available"))
+        weighted_components = [
+            clamp(50.0 + pf_delta * 15.0),
+            clamp(50.0 + win_delta * 0.8),
+            clamp(50.0 + capture_delta * 0.8),
+            clamp(50.0 + exit_delta * 0.8),
+            clamp(shadow_completion.get("shadow_paper_readiness_score")),
+            clamp(first(shadow_correction.get("readiness_score"), shadow_correction.get("validated_improvement_score"), 0.0)),
+        ]
+        shadow_readiness = _avg(weighted_components)
+        promotion_readiness = clamp(
+            shadow_readiness * 0.42
+            + clamp(shadow_completion.get("shadow_paper_readiness_score")) * 0.33
+            + (25.0 if not evolution.get("promotion_blocker") else 0.0)
+        )
+        outperforming_areas = []
+        underperforming_areas = []
+        for label, value in (
+            ("profit_factor", pf_delta),
+            ("win_rate", win_delta),
+            ("profit_capture", capture_delta),
+            ("exit_quality", exit_delta),
+        ):
+            if value > 0:
+                outperforming_areas.append(label)
+            elif value < 0:
+                underperforming_areas.append(label)
+        return {
+            "module": "Shadow Performance Attribution and Promotion Readiness V1",
+            "status": "ok" if available else "insufficient_evidence",
+            "paper_profit_factor": paper_pf,
+            "shadow_profit_factor": shadow_pf,
+            "paper_win_rate": shadow_vs_paper.get("paper_win_rate"),
+            "shadow_win_rate": shadow_vs_paper.get("shadow_win_rate"),
+            "profit_factor_delta": rounded(pf_delta, 4),
+            "win_rate_delta": rounded(win_delta, 4),
+            "profit_capture_delta": rounded(capture_delta, 4),
+            "exit_quality_delta": rounded(exit_delta, 4),
+            "shadow_readiness_score": rounded(shadow_readiness, 3),
+            "promotion_readiness_score": rounded(promotion_readiness, 3),
+            "shadow_outperforming_paper": bool(outperforming_areas and not underperforming_areas and available),
+            "shadow_outperforming_areas": outperforming_areas,
+            "shadow_underperforming_areas": underperforming_areas,
+            "weighted_governance_used": True,
+            "single_metric_promotion_allowed": False,
+            "promotion_candidates": list(classifier.get("paper_test_candidates") or []),
+            "recommended_promotion": "none" if evolution.get("promotion_blocker") else (classifier.get("paper_test_candidates") or [{}])[0].get("category", "none"),
+            "shadow_attribution_summary": (
+                "Shadow attribution is still evidence-gated."
+                if not available else
+                f"Shadow is stronger in {', '.join(outperforming_areas) or 'no verified metric yet'} and weaker in "
+                f"{', '.join(underperforming_areas) or 'no verified metric yet'}."
+            ),
+            **_safe_flags(),
+        }
+
+    def _autonomous_executive_governance_accountability(
+        self,
+        correction: dict[str, Any],
+        inspection: dict[str, Any],
+        shadow_attr: dict[str, Any],
+        trading_brain: dict[str, Any],
+    ) -> dict[str, Any]:
+        correction_map = {
+            row.get("correction"): row
+            for row in correction.get("correction_validation_rows") or []
+            if isinstance(row, dict)
+        }
+        subsystem_specs = [
+            ("Horizon Diversity", "Improve horizon learning balance", "higher diversity and fewer concentration warnings"),
+            ("Exit Intelligence", "Separate valid holds from exit-review candidates", "clear review candidates and feedback loop"),
+            ("Profit Capture", "Reduce giveback and improve capture", "higher capture ratio after enough closed trades"),
+            ("Adaptive Capacity", "Protect fresh learning capacity", "effective room without forced trades"),
+            ("Trading Brain", "Unify exit/thesis/opportunity-cost feedback", "behavior-verified coherent diagnostics"),
+            ("Shadow Learning", "Validate Shadow edges before promotion", "promotion candidates with rollback-ready gates"),
+            ("Opportunity Cost Intelligence", "Reveal capacity drag", "high-cost positions identified without forced replacement"),
+        ]
+        rows = []
+        for name, purpose, expected in subsystem_specs:
+            corr = correction_map.get(name) or correction_map.get("Trading Brain Completion" if name == "Trading Brain" else name) or {}
+            score = to_float(first(corr.get("confidence_score"), trading_brain.get("behavior_verification_score") if name == "Trading Brain" else None, 0.0), 0.0)
+            if corr.get("classification") == "Successful":
+                status = "Working"
+            elif corr.get("classification") == "Partially Successful":
+                status = "Partially Working"
+            elif corr.get("classification") == "Failed":
+                status = "Failed"
+            elif name == "Shadow Learning" and shadow_attr.get("promotion_readiness_score"):
+                status = "Needs Investigation" if shadow_attr.get("promotion_readiness_score", 0) < 70 else "Ready For Promotion"
+            else:
+                status = "Needs Investigation"
+            rows.append({
+                "subsystem": name,
+                "purpose": purpose,
+                "expected_benefit": expected,
+                "actual_benefit": corr.get("actual_improvement"),
+                "success_score": rounded(score, 3),
+                "confidence_score": rounded(score, 3),
+                "status": status,
+                "top_concern": corr.get("remaining_unresolved") or inspection.get("top_detected_issue"),
+                "top_strength": corr.get("classification") or "diagnostic_visibility",
+                "recommendation": corr.get("likely_remaining_root_cause") or inspection.get("recommended_action"),
+            })
+        weakest = min(rows, key=lambda row: to_float(row.get("success_score"), 100.0), default={})
+        strongest = max(rows, key=lambda row: to_float(row.get("success_score"), 0.0), default={})
+        return {
+            "module": "Autonomous Executive Governance and Accountability V1",
+            "status": "ok",
+            "subsystems_reviewed": len(rows),
+            "subsystem_accountability": rows,
+            "working_count": len([row for row in rows if row.get("status") == "Working"]),
+            "partially_working_count": len([row for row in rows if row.get("status") == "Partially Working"]),
+            "needs_investigation_count": len([row for row in rows if row.get("status") == "Needs Investigation"]),
+            "failed_count": len([row for row in rows if row.get("status") == "Failed"]),
+            "strongest_subsystem": strongest.get("subsystem", "warming_up"),
+            "weakest_subsystem": weakest.get("subsystem", "warming_up"),
+            "governance_accountability_summary": (
+                f"{len(rows)} subsystems were reviewed for value. Strongest: {strongest.get('subsystem', 'warming up')}; "
+                f"weakest/most uncertain: {weakest.get('subsystem', 'warming up')}."
+            ),
+            **_safe_flags(),
+        }
+
+    def _horizon_exit_governance_investigations(
+        self,
+        continuity: dict[str, Any],
+        horizon: dict[str, Any],
+        occupancy: dict[str, Any],
+        exit_review: dict[str, Any],
+        trading_brain: dict[str, Any],
+        shadow_attr: dict[str, Any],
+    ) -> dict[str, Any]:
+        concentration = to_float(horizon.get("horizon_monopolization_risk"), 0.0)
+        diversity = to_float(continuity.get("learning_diversity_score"), 0.0)
+        exposure = dict(horizon.get("current_horizon_exposure") or {})
+        root_causes = [
+            ("Capacity Bias", to_float(occupancy.get("occupancy_pressure_score"), 0.0), "open_position_capacity_pressure_limits_fresh_horizon_turnover"),
+            ("Regime Bias", max(0.0, concentration - 10.0), "current_market_regime_may_favor_specific_hold_windows"),
+            ("Promotion Bias", 100.0 - to_float(shadow_attr.get("promotion_readiness_score"), 0.0), "validated_shadow_edges_are_not_yet_ready_for_paper"),
+            ("Scanner Bias", max(0.0, 70.0 - diversity), "candidate_flow_may_not_supply_enough_underfed_horizon_examples"),
+            ("Ranking Bias", max(0.0, concentration - diversity), "existing_ranking_may_prefer_stronger_longer_duration_setups"),
+        ]
+        ranked_roots = [
+            {"root_cause": name, "confidence": rounded(clamp(score), 3), "explanation": explanation}
+            for name, score, explanation in sorted(root_causes, key=lambda item: item[1], reverse=True)
+        ]
+        feedback = trading_brain.get("exit_learning_feedback_loop_v1") or {}
+        opportunity = trading_brain.get("open_position_opportunity_cost_intelligence_v1") or {}
+        exit_quality_improved = to_float(feedback.get("exit_learning_feedback_score"), 0.0) >= 50.0
+        profit_capture_improved = to_float(shadow_attr.get("profit_capture_delta"), 0.0) > 0.0
+        opportunity_cost_improved = to_float(opportunity.get("opportunity_cost_intelligence_score"), 0.0) < 50.0
+        lifecycle_improved = to_float(trading_brain.get("behavior_verification_score"), 0.0) >= 90.0
+        missing = []
+        if to_int(feedback.get("closed_trades_reviewed"), 0) < 20:
+            missing.append("closed_exit_sample_size")
+        if shadow_attr.get("status") == "insufficient_evidence":
+            missing.append("verified_shadow_vs_paper_sample")
+        if shadow_attr.get("promotion_readiness_score", 0) < 70:
+            missing.append("promotion_readiness")
+        return {
+            "module": "Horizon and Exit Governance Investigations V1",
+            "status": "ok",
+            "horizon_investigation": {
+                "did_horizon_diversity_improve_results": "partially" if diversity >= 45 else "inconclusive",
+                "did_horizon_allocation_improve": "partially" if exposure else "insufficient_evidence",
+                "did_horizon_balance_improve": "partially" if concentration < 70 else "not_yet",
+                "did_learning_diversity_improve": "partially" if diversity >= 45 else "not_yet",
+                "horizon_concentration_score": rounded(concentration, 3),
+                "learning_diversity_score": rounded(diversity, 3),
+                "confidence_ranked_root_causes": ranked_roots,
+            },
+            "exit_intelligence_investigation": {
+                "did_exit_intelligence_improve_exit_quality": exit_quality_improved,
+                "did_profit_capture_improve": profit_capture_improved,
+                "did_opportunity_cost_improve": opportunity_cost_improved,
+                "did_lifecycle_decisions_improve": lifecycle_improved,
+                "missing_evidence": missing,
+                "missing_validation": [item for item in missing if item != "promotion_readiness"],
+                "missing_promotion_pathway": bool("promotion_readiness" in missing),
+                "why_not": (
+                    "Exit intelligence is behavior-verified, but promotion still needs more closed-trade and Shadow-vs-Paper evidence."
+                    if missing else "Exit intelligence has enough evidence for continued governed review."
+                ),
+            },
+            "highest_confidence_remaining_bottleneck": ranked_roots[0] if ranked_roots else {},
+            **_safe_flags(),
+        }
+
+    def _autonomous_governance_core(
+        self,
+        correction: dict[str, Any],
+        pipeline: dict[str, Any],
+        shadow_attr: dict[str, Any],
+        accountability: dict[str, Any],
+        investigations: dict[str, Any],
+        improvement: dict[str, Any],
+    ) -> dict[str, Any]:
+        rows = correction.get("correction_validation_rows") or []
+        successful = [row for row in rows if row.get("classification") == "Successful"]
+        failed = [row for row in rows if row.get("classification") == "Failed"]
+        partial = [row for row in rows if row.get("classification") == "Partially Successful"]
+        best = max(rows, key=lambda row: to_float(row.get("confidence_score"), 0.0), default={})
+        horizon_inv = investigations.get("horizon_investigation") or {}
+        exit_inv = investigations.get("exit_intelligence_investigation") or {}
+        bottleneck = (investigations.get("highest_confidence_remaining_bottleneck") or {}).get("root_cause")
+        return {
+            "module": "ASTRA Autonomous Governance Core V1",
+            "status": "ok",
+            "autonomous_governance_core_enabled": True,
+            "correction_validation": correction,
+            "learning_pipeline_transparency": pipeline,
+            "shadow_performance_attribution_promotion_readiness": shadow_attr,
+            "executive_governance_accountability": accountability,
+            "horizon_exit_governance_investigations": investigations,
+            "did_horizon_diversity_work": horizon_inv.get("did_horizon_diversity_improve_results"),
+            "did_adaptive_capacity_work": "yes" if any(row.get("correction") == "Adaptive Capacity" and row.get("classification") in {"Successful", "Partially Successful"} for row in rows) else "inconclusive",
+            "did_exit_intelligence_work": "partially" if exit_inv.get("did_lifecycle_decisions_improve") else "inconclusive",
+            "is_shadow_outperforming_paper": shadow_attr.get("shadow_outperforming_paper"),
+            "why_promotions_blocked": pipeline.get("why_not_reaching_paper"),
+            "correction_produced_most_benefit": best.get("correction", "warming_up"),
+            "correction_failed": (failed[0] if failed else {}).get("correction", "none"),
+            "highest_confidence_remaining_bottleneck": bottleneck or "warming_up",
+            "highest_roi_next_improvement": improvement.get("highest_roi_improvement"),
+            "governance_brief": (
+                f"Astra reviewed {len(rows)} corrections: {len(successful)} successful, {len(partial)} partial, "
+                f"{len(failed)} failed, and {correction.get('inconclusive_corrections', 0)} inconclusive. "
+                f"Promotions are blocked because {pipeline.get('why_not_reaching_paper')}. "
+                f"The highest-ROI next improvement is {text(improvement.get('highest_roi_improvement'), 'continued validation').replace('_', ' ')}."
+            ),
+            "automatic_promotion_enabled": False,
+            **_safe_flags(),
+        }
+
     def _learning_horizon_completion(
         self,
         statuses: dict[str, Any],
@@ -3225,6 +3698,55 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             shadow_feedback,
         )
         decision_memory = self._decision_memory(statuses, inspection, improvement)
+        correction_validation = self._autonomous_correction_validation(
+            statuses,
+            continuity,
+            occupancy,
+            horizon,
+            effective,
+            exit_review,
+            trading_brain_completion,
+            paper_completion,
+            shadow_completion,
+            decision_memory,
+        )
+        learning_pipeline = self._autonomous_learning_pipeline_transparency(
+            classifier,
+            evolution,
+            governance,
+            shadow_completion,
+            persistence,
+            shadow_feedback,
+            decision_memory,
+        )
+        shadow_attribution_readiness = self._shadow_performance_attribution_governance(
+            statuses,
+            shadow_completion,
+            classifier,
+            evolution,
+        )
+        executive_governance_accountability = self._autonomous_executive_governance_accountability(
+            correction_validation,
+            inspection,
+            shadow_attribution_readiness,
+            trading_brain_completion,
+        )
+        horizon_exit_investigations = self._horizon_exit_governance_investigations(
+            continuity,
+            horizon,
+            occupancy,
+            exit_review,
+            trading_brain_completion,
+            shadow_attribution_readiness,
+        )
+        autonomous_governance_core = self._autonomous_governance_core(
+            correction_validation,
+            learning_pipeline,
+            shadow_attribution_readiness,
+            executive_governance_accountability,
+            horizon_exit_investigations,
+            improvement,
+        )
         root_cause = self._root_cause_intelligence(
             inspection,
             lifecycle,
@@ -3343,6 +3865,13 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "strongest_area": "broker_truth_and_cached_shadow_evidence",
             "weakest_area": "fresh_paper_turnover_and_capacity_reserve",
             "highest_roi_next_action": improvement.get("highest_roi_improvement"),
+            "autonomous_governance_status": autonomous_governance_core.get("status"),
+            "correction_produced_most_benefit": autonomous_governance_core.get("correction_produced_most_benefit"),
+            "promotion_bottleneck": autonomous_governance_core.get("why_promotions_blocked"),
+            "shadow_governance_readiness_score": shadow_attribution_readiness.get("shadow_readiness_score"),
+            "promotion_governance_readiness_score": shadow_attribution_readiness.get("promotion_readiness_score"),
+            "highest_confidence_remaining_bottleneck": autonomous_governance_core.get("highest_confidence_remaining_bottleneck"),
+            "autonomous_governance_brief": autonomous_governance_core.get("governance_brief"),
             "recommended_action": (
                 paper_completion.get("capacity_recommendation")
                 if paper_completion.get("learning_reserve_status") == "depleted"
@@ -3418,6 +3947,12 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "autonomous_root_cause_intelligence_v1": root_cause,
             "autonomous_improvement_prioritization_completion_v1": improvement,
             "decision_memory_knowledge_retention_completion_v1": decision_memory,
+            "autonomous_correction_validation_v1": correction_validation,
+            "autonomous_learning_pipeline_transparency_v1": learning_pipeline,
+            "shadow_performance_attribution_promotion_readiness_v1": shadow_attribution_readiness,
+            "autonomous_executive_governance_accountability_v1": executive_governance_accountability,
+            "horizon_exit_governance_investigations_v1": horizon_exit_investigations,
+            "astra_autonomous_governance_core_v1": autonomous_governance_core,
             "autonomous_daily_executive_brief_v1": daily_brief,
             "autonomous_intelligence_behavior_verification_v1": autonomous_behavior_tests,
             "behavior_verification_core_completion_v1": behavior_verification,
@@ -3430,6 +3965,7 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
                 "trade_lifecycle_refinement": lifecycle,
                 "exit_decision_intelligence": exit_review,
                 "trading_brain_completion": trading_brain_completion,
+                "autonomous_governance_core": autonomous_governance_core,
                 "shadow_feedback_routing": shadow_feedback,
                 "daily_executive_brief": daily_brief,
                 "behavior_verification": autonomous_behavior_tests,

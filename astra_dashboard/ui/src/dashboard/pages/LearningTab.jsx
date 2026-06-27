@@ -1640,6 +1640,7 @@ export default function LearningTab({ compact = false }) {
   const astraIntelligenceMaturationSuite = unified?.astra_intelligence_maturation_suite_v1 || {};
   const astraAdaptiveOccupancyEvolutionSuite = unified?.astra_adaptive_occupancy_evolution_suite_v1 || {};
   const astraTradingBrainCompletion = unified?.astra_trading_brain_completion_v1 || astraAdaptiveOccupancyEvolutionSuite?.astra_trading_brain_completion_v1 || {};
+  const astraAutonomousGovernanceCore = unified?.astra_autonomous_governance_core_v1 || astraAdaptiveOccupancyEvolutionSuite?.astra_autonomous_governance_core_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -4296,6 +4297,60 @@ export default function LearningTab({ compact = false }) {
             {JSON.stringify(astraTradingBrainCompletion, null, 2)}
           </pre>
         </details>
+        <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
+          <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
+            Autonomous Governance Core: {String(astraAutonomousGovernanceCore?.status || "warming up").replaceAll("_", " ")}
+          </summary>
+          <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+            Verifies whether prior corrections worked, explains Shadow-to-Paper blockers, and keeps promotion readiness advisory-only.
+          </div>
+          {astraAutonomousGovernanceCore?.governance_brief ? (
+            <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, border: "1px solid #34577f", background: "rgba(6,28,52,0.72)", color: "#dce9fb", fontSize: 12, lineHeight: 1.55 }}>
+              {astraAutonomousGovernanceCore.governance_brief}
+            </div>
+          ) : null}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+            {[
+              ["Best Validated Correction", astraAutonomousGovernanceCore?.correction_produced_most_benefit],
+              ["Failed Correction", astraAutonomousGovernanceCore?.correction_failed],
+              ["Horizon Diversity Worked", astraAutonomousGovernanceCore?.did_horizon_diversity_work],
+              ["Adaptive Capacity Worked", astraAutonomousGovernanceCore?.did_adaptive_capacity_work],
+              ["Exit Intelligence Worked", astraAutonomousGovernanceCore?.did_exit_intelligence_work],
+              ["Shadow Outperforming Paper", astraAutonomousGovernanceCore?.is_shadow_outperforming_paper ? "yes" : "not verified"],
+              ["Shadow Readiness", safeNumber(astraAutonomousGovernanceCore?.shadow_performance_attribution_promotion_readiness?.shadow_readiness_score).toFixed(1)],
+              ["Promotion Readiness", safeNumber(astraAutonomousGovernanceCore?.shadow_performance_attribution_promotion_readiness?.promotion_readiness_score).toFixed(1)],
+              ["Remaining Bottleneck", astraAutonomousGovernanceCore?.highest_confidence_remaining_bottleneck],
+              ["Highest ROI Next", astraAutonomousGovernanceCore?.highest_roi_next_improvement],
+            ].map(([label, value]) => (
+              <div key={label} style={{ background: "rgba(12,24,42,0.46)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+                <strong style={{ color: "#f2f7ff" }}>{String(value ?? "warming up").replaceAll("_", " ")}</strong>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+            {[
+              ["Correction Validation", astraAutonomousGovernanceCore?.correction_validation],
+              ["Learning Pipeline", astraAutonomousGovernanceCore?.learning_pipeline_transparency],
+              ["Shadow Attribution", astraAutonomousGovernanceCore?.shadow_performance_attribution_promotion_readiness],
+              ["Promotion Readiness", astraAutonomousGovernanceCore?.shadow_performance_attribution_promotion_readiness],
+              ["Governance Status", astraAutonomousGovernanceCore?.executive_governance_accountability],
+              ["Horizon & Exit Investigation", astraAutonomousGovernanceCore?.horizon_exit_governance_investigations],
+            ].map(([label, row]) => (
+              <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
+                <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+                  {label}: {String(row?.status || "warming up").replaceAll("_", " ")}
+                </summary>
+                <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
+                  {JSON.stringify(row || {}, null, 2)}
+                </pre>
+              </details>
+            ))}
+          </div>
+          <div style={{ marginTop: 10, color: "#dce9fb", fontSize: 12, lineHeight: 1.55 }}>
+            Promotions remain recommendation-first. No ranking, entry, exit, sizing, allocation, threshold, broker, or live-trading behavior is changed by this panel.
+          </div>
+        </details>
         <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
           {[
             ["Learning Continuity", "learning_continuity_engine_v1"],
@@ -4337,6 +4392,12 @@ export default function LearningTab({ compact = false }) {
             ["Platform Root-Cause Intelligence", "autonomous_root_cause_intelligence_v1"],
             ["Improvement Priority", "autonomous_improvement_prioritization_completion_v1"],
             ["Decision Memory", "decision_memory_knowledge_retention_completion_v1"],
+            ["Autonomous Correction Validation", "autonomous_correction_validation_v1"],
+            ["Autonomous Learning Pipeline", "autonomous_learning_pipeline_transparency_v1"],
+            ["Shadow Attribution & Promotion Readiness", "shadow_performance_attribution_promotion_readiness_v1"],
+            ["Executive Governance Accountability", "autonomous_executive_governance_accountability_v1"],
+            ["Horizon & Exit Governance Investigations", "horizon_exit_governance_investigations_v1"],
+            ["Autonomous Governance Core", "astra_autonomous_governance_core_v1"],
             ["Autonomous Daily Brief", "autonomous_daily_executive_brief_v1"],
             ["Autonomous Intelligence Verification", "autonomous_intelligence_behavior_verification_v1"],
             ["Behavior Verification", "behavior_verification_core_completion_v1"],

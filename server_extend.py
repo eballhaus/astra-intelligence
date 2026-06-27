@@ -44023,6 +44023,12 @@ def astra_trading_brain_completion_v1(force: bool = False):
     )
 
 
+@router.get("/api/astra_autonomous_governance_core_v1")
+def astra_autonomous_governance_core_v1(force: bool = False):
+    suite = astra_adaptive_occupancy_evolution_suite_v1(force=force)
+    return dict((suite or {}).get("astra_autonomous_governance_core_v1") or {})
+
+
 @router.post("/api/ask_astra_v1")
 def ask_astra_v1(payload: dict = Body(...)):
     data = payload if isinstance(payload, dict) else {}
@@ -44077,6 +44083,10 @@ def ask_astra_v1(payload: dict = Body(...)):
         or {}
     )
     ask_context_seed["astra_trading_brain_completion_v1"] = trading_brain_completion
+    autonomous_governance_core = dict(
+        occupancy_evolution.get("astra_autonomous_governance_core_v1") or {}
+    )
+    ask_context_seed["astra_autonomous_governance_core_v1"] = autonomous_governance_core
     ask_context_seed["astra_autonomous_intelligence_maturation_v1"] = dict(
         occupancy_evolution.get("astra_autonomous_intelligence_maturation_v1") or {}
     )
@@ -44206,6 +44216,28 @@ def ask_astra_v1(payload: dict = Body(...)):
             "behavior_verification": occupancy_evolution.get("behavior_verification_core_completion_v1") or {},
             "trading_brain_completion": trading_brain_completion,
         },
+        "autonomous_governance_core": {
+            "governance_brief": autonomous_governance_core.get("governance_brief"),
+            "correction_produced_most_benefit": autonomous_governance_core.get("correction_produced_most_benefit"),
+            "correction_failed": autonomous_governance_core.get("correction_failed"),
+            "why_promotions_blocked": autonomous_governance_core.get("why_promotions_blocked"),
+            "highest_confidence_remaining_bottleneck": autonomous_governance_core.get("highest_confidence_remaining_bottleneck"),
+            "highest_roi_next_improvement": autonomous_governance_core.get("highest_roi_next_improvement"),
+            "did_horizon_diversity_work": autonomous_governance_core.get("did_horizon_diversity_work"),
+            "did_adaptive_capacity_work": autonomous_governance_core.get("did_adaptive_capacity_work"),
+            "did_exit_intelligence_work": autonomous_governance_core.get("did_exit_intelligence_work"),
+            "is_shadow_outperforming_paper": autonomous_governance_core.get("is_shadow_outperforming_paper"),
+            "shadow_readiness_score": (
+                (autonomous_governance_core.get("shadow_performance_attribution_promotion_readiness") or {}).get("shadow_readiness_score")
+                if isinstance(autonomous_governance_core.get("shadow_performance_attribution_promotion_readiness"), dict)
+                else None
+            ),
+            "promotion_readiness_score": (
+                (autonomous_governance_core.get("shadow_performance_attribution_promotion_readiness") or {}).get("promotion_readiness_score")
+                if isinstance(autonomous_governance_core.get("shadow_performance_attribution_promotion_readiness"), dict)
+                else None
+            ),
+        },
         "autonomous_intelligence": occupancy_evolution.get("astra_autonomous_intelligence_v1") or {},
         "trading_brain_completion": {
             "summary": trading_brain_completion.get("trading_brain_completion_summary"),
@@ -44253,6 +44285,11 @@ def ask_astra_v1(payload: dict = Body(...)):
             "what_paper_should_watch",
             "trades_needing_review",
             "next_safest_improvement",
+            "autonomous_governance_brief",
+            "which_fixes_worked",
+            "which_fixes_failed",
+            "shadow_vs_paper_readiness",
+            "promotion_bottlenecks",
             "biggest_opportunity",
             "today_market_explanation",
         ],
@@ -44290,6 +44327,33 @@ def ask_astra_v1(payload: dict = Body(...)):
         first = (compressed_context.get("copilot_actions") or [{}])[0] if isinstance(compressed_context.get("copilot_actions"), list) else {}
         q_lc = question.lower()
         if (
+            "governance brief" in q_lc
+            or "fixes worked" in q_lc
+            or "fixes failed" in q_lc
+            or "did corrections work" in q_lc
+            or "did the fix work" in q_lc
+            or "what remains unresolved" in q_lc
+            or "promotion blocked" in q_lc
+            or "promotions blocked" in q_lc
+            or "shadow outperforming" in q_lc
+            or "shadow vs paper" in q_lc
+            or "highest roi" in q_lc
+            or "active bottleneck" in q_lc
+        ):
+            shadow_ready = autonomous_governance_core.get("shadow_performance_attribution_promotion_readiness") or {}
+            correction = autonomous_governance_core.get("correction_validation") or {}
+            fast_short = (
+                f"{autonomous_governance_core.get('governance_brief') or 'Autonomous Governance is warming up from cached diagnostics.'} "
+                f"Best validated correction: {autonomous_governance_core.get('correction_produced_most_benefit', 'warming_up')}. "
+                f"Failed correction: {autonomous_governance_core.get('correction_failed', 'none')}. "
+                f"Shadow readiness is {shadow_ready.get('shadow_readiness_score', 'n/a')} and promotion readiness is "
+                f"{shadow_ready.get('promotion_readiness_score', 'n/a')}. "
+                f"Remaining bottleneck: {str(autonomous_governance_core.get('highest_confidence_remaining_bottleneck') or 'warming up').replace('_', ' ')}. "
+                f"Correction evidence: {correction.get('successful_corrections', 0)} successful, "
+                f"{correction.get('partially_successful_corrections', 0)} partial, "
+                f"{correction.get('inconclusive_corrections', 0)} inconclusive."
+            )
+        elif (
             "thesis" in q_lc
             or "holding losers" in q_lc
             or "giving back" in q_lc
@@ -56002,6 +56066,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_learning_continuity_controlled_evolution_self_governance_v1"] = tier4
             out["astra_autonomous_intelligence_maturation_v1"] = dict(tier4.get("astra_autonomous_intelligence_maturation_v1") or {})
             out["astra_autonomous_intelligence_v1"] = dict(tier4.get("astra_autonomous_intelligence_v1") or {})
+            out["astra_autonomous_governance_core_v1"] = dict(tier4.get("astra_autonomous_governance_core_v1") or {})
             out["astra_paper_learning_capacity_correction_v1"] = dict(tier4.get("paper_learning_capacity_correction_v1") or {})
             trading_brain_completion = dict(
                 tier4.get("astra_trading_brain_completion_v1")
@@ -56024,6 +56089,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 "horizon_diversity_without_quotas_v1": dict(tier4.get("horizon_diversity_without_quotas_v1") or {}),
                 "autonomous_trading_governance_v1": dict(tier4.get("autonomous_trading_governance_v1") or {}),
                 "shadow_paper_feedback_connection_v1": dict(tier4.get("shadow_paper_feedback_connection_v1") or {}),
+                "autonomous_governance_core_v1": dict(tier4.get("astra_autonomous_governance_core_v1") or {}),
                 "behavior_verification": dict(tier4.get("trading_intelligence_completion_behavior_verification_v1") or {}),
                 "trading_brain_completion_enabled": trading_brain_completion.get("trading_brain_completion_enabled"),
                 "behavior_safe_to_apply": False,
