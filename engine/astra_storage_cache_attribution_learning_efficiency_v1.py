@@ -796,6 +796,117 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
             "no_behavior_changed": True,
         }
 
+    def _bounded_attribution_rows(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for name in TARGET_COLD_FILES:
+            sampled, _meta = self._sample_jsonl_rows(os.path.join(self.state_dir, name))
+            for row in sampled:
+                if isinstance(row, dict):
+                    item = dict(row)
+                    item["_source_file"] = name
+                    rows.append(item)
+        return rows[: MAX_SAMPLE_ROWS_PER_FILE * 3]
+
+    def _capture_value(self, row: dict[str, Any]) -> float:
+        raw = first(
+            row.get("capture_ratio"),
+            row.get("profit_capture"),
+            row.get("average_capture_ratio"),
+            row.get("profit_capture_ratio"),
+            row.get("return_pct"),
+            row.get("pnl_pct"),
+            default=0,
+        )
+        value = to_float(raw, 0.0)
+        if abs(value) > 1.5:
+            value = value / 100.0
+        return clamp(value, -1.0, 1.0)
+
+    def _giveback_value(self, row: dict[str, Any]) -> float:
+        raw = first(
+            row.get("giveback_pct"),
+            row.get("average_giveback_pct"),
+            row.get("avg_giveback"),
+            row.get("profit_giveback"),
+            row.get("giveback"),
+            default=0,
+        )
+        value = to_float(raw, 0.0)
+        if abs(value) <= 1.5:
+            value = value * 100.0
+        return clamp(value, 0.0, 100.0)
+
+    def _group_capture_metrics(self, rows: list[dict[str, Any]], dimension: str, limit: int = 8) -> dict[str, Any]:
+        grouped: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            dims = self._dimensions_for_row(row, source_name=str(row.get("_source_file") or ""))
+            key = text(dims.get(dimension), "unknown")
+            if key == "unknown":
+                continue
+            entry = grouped.setdefault(key, {"count": 0, "capture_sum": 0.0, "giveback_sum": 0.0, "positive": 0})
+            capture = self._capture_value(row)
+            giveback = self._giveback_value(row)
+            entry["count"] += 1
+            entry["capture_sum"] += capture
+            entry["giveback_sum"] += giveback
+            if capture > 0:
+                entry["positive"] += 1
+        scored: dict[str, Any] = {}
+        for key, entry in grouped.items():
+            count = max(1, to_int(entry.get("count"), 0))
+            scored[key] = {
+                "evidence_count": count,
+                "average_capture_ratio": rounded(entry.get("capture_sum", 0.0) / count, 4),
+                "average_giveback_pct": rounded(entry.get("giveback_sum", 0.0) / count, 3),
+                "positive_capture_rate": rounded((entry.get("positive", 0) / count) * 100.0, 3),
+                "status": "validated_sample" if count >= 5 else "warming_up",
+            }
+        return dict(sorted(scored.items(), key=lambda kv: (to_int(kv[1].get("evidence_count"), 0), to_float(kv[1].get("average_capture_ratio"), 0)), reverse=True)[:limit])
+
+    def _exit_type_capture_validation(self, profit: dict[str, Any], ranking: dict[str, Any], indexes: dict[str, Any]) -> dict[str, Any]:
+        rows = self._bounded_attribution_rows()
+        capture_by_exit = self._group_capture_metrics(rows, "exit_type")
+        capture_by_family = self._group_capture_metrics(rows, "trade_family")
+        capture_by_factor = self._group_capture_metrics(rows, "ranking_factor")
+        capture_by_outcome = self._group_capture_metrics(rows, "outcome_label")
+        def _best(mapping: dict[str, Any], metric: str = "average_capture_ratio", reverse: bool = True) -> str:
+            if not mapping:
+                return "insufficient_evidence"
+            return sorted(mapping.items(), key=lambda kv: to_float((kv[1] or {}).get(metric), 0.0), reverse=reverse)[0][0]
+        missing = list(indexes.get("missing_index_dimensions") or [])
+        evidence = sum(to_int((row or {}).get("evidence_count"), 0) for row in capture_by_exit.values())
+        mapping_ready = all(dim not in missing for dim in ("exit_type", "trade_family", "ranking_factor", "outcome_label"))
+        validation_score = rounded(clamp((100.0 if mapping_ready else 55.0) * 0.45 + min(100.0, evidence / 10.0) * 0.35 + to_float(profit.get("capture_quality_score"), 0) * 0.2), 3)
+        best_exit = _best(capture_by_exit)
+        worst_exit = _best(capture_by_exit, reverse=False)
+        highest_giveback = _best(capture_by_exit, metric="average_giveback_pct", reverse=True)
+        return {
+            "exit_type_capture_mapping": "ready" if mapping_ready else "partial",
+            "closed_trade_attribution_persistence": "ready" if evidence >= 25 else "warming_up",
+            "capture_by_exit_type": capture_by_exit,
+            "capture_by_trade_family": capture_by_family,
+            "capture_by_ranking_factor": capture_by_factor,
+            "capture_by_outcome_label": capture_by_outcome,
+            "giveback_by_exit_type": {key: value.get("average_giveback_pct") for key, value in capture_by_exit.items()},
+            "giveback_by_trade_family": {key: value.get("average_giveback_pct") for key, value in capture_by_family.items()},
+            "giveback_by_ranking_factor": {key: value.get("average_giveback_pct") for key, value in capture_by_factor.items()},
+            "final_outcome_by_exit_type": {
+                key: ("positive_capture" if to_float(value.get("average_capture_ratio"), 0) > 0 else "needs_validation")
+                for key, value in capture_by_exit.items()
+            },
+            "exit_type_capture_validation_score": validation_score,
+            "closed_trade_attribution_persistence_score": rounded(clamp(min(100.0, evidence / 8.0) + (15.0 if mapping_ready else 0.0)), 3),
+            "largest_attribution_gap": "none" if mapping_ready and evidence >= 25 else "closed_trade_exit_type_capture_mapping_needs_more_persistence",
+            "best_exit_type_for_capture": best_exit,
+            "worst_exit_type_for_capture": worst_exit,
+            "highest_giveback_exit_type": highest_giveback,
+            "best_trade_family_capture_pattern": _best(capture_by_family),
+            "worst_trade_family_capture_pattern": _best(capture_by_family, reverse=False),
+            "evidence_count": evidence,
+            "source": "bounded_cached_learning_samples",
+            **_safe_flags(),
+        }
+
     def _profit_exit_ranking_convergence(self, ranking: dict[str, Any], profit: dict[str, Any], exit_learning: dict[str, Any], linkage: dict[str, Any], statuses: dict[str, Any]) -> dict[str, Any]:
         family = status_value(statuses, "trade_family_intelligence_v1")
         confidence = status_value(statuses, "confidence_calibration_performance_attribution_v1")
@@ -874,23 +985,137 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
         raw_score = to_float(first(confidence.get("confidence_calibration_score"), confidence.get("calibration_score"), 0), 0)
         reliability = to_float(first(confidence.get("confidence_reliability_score"), confidence.get("confidence_reliability"), raw_score), raw_score)
         buckets = confidence.get("confidence_bucket_stats") or confidence.get("bucket_stats") or {}
+        if not buckets:
+            sampled = self._bounded_attribution_rows()
+            bucket_ranges = {
+                "90-100": (90, 100),
+                "80-90": (80, 90),
+                "70-80": (70, 80),
+                "60-70": (60, 70),
+                "50-60": (50, 60),
+                "under_50": (0, 50),
+            }
+            built: dict[str, Any] = {}
+            for label, (lo, hi) in bucket_ranges.items():
+                selected = []
+                for row in sampled:
+                    conf = to_float(first(row.get("confidence"), row.get("confidence_score"), row.get("score"), row.get("rank_score"), default=-1), -1)
+                    if conf > 0 and conf <= 1:
+                        conf *= 100.0
+                    if conf >= lo and (conf < hi or label == "90-100" and conf <= hi):
+                        selected.append(row)
+                captures = [self._capture_value(row) for row in selected]
+                avg_capture = sum(captures) / max(1, len(captures))
+                win_rate = sum(1 for value in captures if value > 0) / max(1, len(captures)) * 100.0
+                expected = (lo + hi) / 2.0
+                gap = rounded(expected - win_rate, 3) if selected else None
+                built[label] = {
+                    "trade_count": len(selected),
+                    "win_rate": rounded(win_rate, 3) if selected else "insufficient_evidence",
+                    "average_return": rounded(avg_capture, 4) if selected else "insufficient_evidence",
+                    "profit_capture": rounded(avg_capture, 4) if selected else "insufficient_evidence",
+                    "drawdown_risk_proxy": rounded(sum(self._giveback_value(row) for row in selected) / max(1, len(selected)), 3) if selected else "insufficient_evidence",
+                    "calibration_gap": gap if gap is not None else "insufficient_evidence",
+                    "overconfidence": bool(gap is not None and gap > 8),
+                    "underconfidence": bool(gap is not None and gap < -8),
+                }
+            buckets = built
         over = confidence.get("overconfident_regions") or ([] if raw_score >= 55 else ["70-100"])
         under = confidence.get("underconfident_regions") or []
+        if isinstance(buckets, dict):
+            over = over or [k for k, v in buckets.items() if isinstance(v, dict) and v.get("overconfidence")]
+            under = under or [k for k, v in buckets.items() if isinstance(v, dict) and v.get("underconfidence")]
+        calibrated = [
+            (k, abs(to_float(v.get("calibration_gap"), 999.0)))
+            for k, v in (buckets or {}).items()
+            if isinstance(v, dict) and v.get("calibration_gap") not in (None, "insufficient_evidence")
+        ]
+        best_bucket = min(calibrated, key=lambda kv: kv[1])[0] if calibrated else "insufficient_evidence"
+        worst_bucket = max(calibrated, key=lambda kv: kv[1])[0] if calibrated else "insufficient_evidence"
         return {
             "confidence_calibration_score": rounded(raw_score, 3),
             "confidence_reliability_score": rounded(reliability, 3),
+            "confidence_trust_score": rounded(clamp(raw_score * 0.55 + reliability * 0.45), 3),
             "overconfident_regions": over,
+            "overconfident_buckets": over,
             "underconfident_regions": under,
+            "underconfident_buckets": under,
+            "best_calibrated_bucket": best_bucket,
+            "worst_calibrated_bucket": worst_bucket,
             "trust_score": rounded(clamp(raw_score * 0.55 + reliability * 0.45), 3),
-            "confidence_buckets": buckets or {
-                "90-100": "warming_up",
-                "80-90": "warming_up",
-                "70-80": "warming_up",
-                "60-70": "warming_up",
-                "50-60": "warming_up",
-            },
+            "confidence_buckets": buckets,
+            "confidence_calibration_next_action": "continue_bucket_validation_without_threshold_changes",
             "calibration_recommendations": ["continue_observational_confidence_bucket_validation", "do_not_change_confidence_thresholds"],
             "no_confidence_behavior_changed": True,
+        }
+
+    def _profit_capture_root_cause_analysis(self, profit: dict[str, Any], exit_validation: dict[str, Any], ranking: dict[str, Any], statuses: dict[str, Any]) -> dict[str, Any]:
+        capture = to_float(profit.get("average_capture_ratio"), 0.0)
+        giveback = to_float(profit.get("average_giveback_pct"), 0.0)
+        blockers = list(profit.get("profit_capture_blockers") or [])
+        if giveback >= 8:
+            blockers.insert(0, "excessive_giveback")
+        if capture < 0.45:
+            blockers.insert(0, "low_peak_capture_ratio")
+        weakest_exit = exit_validation.get("worst_exit_type_for_capture") or "exit_type_mapping_warming_up"
+        highest_giveback = exit_validation.get("highest_giveback_exit_type") or "giveback_mapping_warming_up"
+        return {
+            "profit_capture_root_cause_score": rounded(clamp(to_float(profit.get("capture_quality_score"), 0) * 0.5 + to_float(exit_validation.get("exit_type_capture_validation_score"), 0) * 0.3 + to_float(ranking.get("ranking_attribution_score_after"), 0) * 0.2), 3),
+            "top_profit_capture_blockers": list(dict.fromkeys([b for b in blockers if b]))[:5] or ["profit_capture_validation_still_building"],
+            "highest_giveback_root_cause": highest_giveback,
+            "premature_exit_score": rounded(clamp(100.0 - capture * 100.0), 3),
+            "late_exit_score": rounded(clamp(giveback), 3),
+            "hold_duration_capture_score": rounded(clamp(to_float(status_value(statuses, "trade_lifecycle_excursion_v2").get("average_hold_duration_quality"), 0)), 3),
+            "peak_decay_capture_score": rounded(clamp(100.0 - giveback), 3),
+            "best_capture_pattern": exit_validation.get("best_exit_type_for_capture"),
+            "worst_capture_pattern": weakest_exit,
+            "profit_capture_next_action": "validate_exit_type_capture_and_giveback_roots_before_any_micro_test",
+            **_safe_flags(),
+        }
+
+    def _shadow_micro_test_candidates(self, profit: dict[str, Any], exit_validation: dict[str, Any], confidence: dict[str, Any], ranking: dict[str, Any]) -> dict[str, Any]:
+        candidates = [
+            {
+                "candidate": "profit_capture_micro_test",
+                "readiness_score": rounded(min(to_float(profit.get("profit_capture_confidence_after"), 0), to_float(exit_validation.get("exit_type_capture_validation_score"), 0)), 3),
+                "reason": "profit_capture_and_exit_type_capture_validation",
+            },
+            {
+                "candidate": "exit_type_capture_validation",
+                "readiness_score": exit_validation.get("exit_type_capture_validation_score"),
+                "reason": f"best={exit_validation.get('best_exit_type_for_capture')}; worst={exit_validation.get('worst_exit_type_for_capture')}",
+            },
+            {
+                "candidate": "confidence_calibration_micro_test",
+                "readiness_score": confidence.get("confidence_trust_score"),
+                "reason": f"overconfident={confidence.get('overconfident_buckets')}; underconfident={confidence.get('underconfident_buckets')}",
+            },
+            {
+                "candidate": "ranking_factor_micro_test",
+                "readiness_score": ranking.get("ranking_attribution_score_after"),
+                "reason": f"focus={ranking.get('next_ranking_focus')}",
+            },
+            {
+                "candidate": "trade_family_capture_validation",
+                "readiness_score": exit_validation.get("closed_trade_attribution_persistence_score"),
+                "reason": f"best_family={exit_validation.get('best_trade_family_capture_pattern')}",
+            },
+        ]
+        ranked = sorted(candidates, key=lambda row: to_float(row.get("readiness_score"), 0), reverse=True)
+        ready = bool(ranked and to_float(ranked[0].get("readiness_score"), 0) >= 70 and to_float(profit.get("profit_capture_confidence_after"), 0) >= 65)
+        blockers = []
+        if to_float(profit.get("profit_capture_confidence_after"), 0) < 65:
+            blockers.append("profit_capture_confidence_below_65")
+        if to_float(exit_validation.get("exit_type_capture_validation_score"), 0) < 60:
+            blockers.append("exit_type_capture_validation_below_60")
+        return {
+            "shadow_micro_test_candidates": ranked,
+            "paper_micro_test_ready": ready,
+            "micro_test_blockers": blockers or ["human_review_required_before_any_future_paper_test"],
+            "highest_priority_micro_test_candidate": ranked[0] if ranked else {},
+            "human_review_required": True,
+            "promotion_allowed": False,
+            **_safe_flags(),
         }
 
     def _copilot_attribution_intelligence(self, convergence: dict[str, Any], closure: dict[str, Any], confidence: dict[str, Any], quality: dict[str, Any], statuses: dict[str, Any]) -> dict[str, Any]:
@@ -903,8 +1128,10 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
         return {
             "copilot_intelligence_score_before": before,
             "copilot_intelligence_score_after": after,
+            "copilot_readiness_score": after,
             "recommendation_explainability_score": explainability,
             "recommendation_reliability_score": reliability,
+            "recommendation_trust_score": reliability,
             "recommendation_quality_score": quality_score,
             "strongest_recommendation_patterns": [convergence.get("strongest_convergence_path")],
             "weakest_recommendation_patterns": [convergence.get("weakest_convergence_path")],
@@ -988,7 +1215,8 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
             "behavior_safe_to_apply": False,
         }
 
-    def _convergence_final_audit(self, profit: dict[str, Any], exit_learning: dict[str, Any], ranking: dict[str, Any], copilot: dict[str, Any], confidence: dict[str, Any], closure: dict[str, Any], quality_before: dict[str, Any], cortex: dict[str, Any]) -> dict[str, Any]:
+    def _convergence_final_audit(self, profit: dict[str, Any], exit_learning: dict[str, Any], ranking: dict[str, Any], copilot: dict[str, Any], confidence: dict[str, Any], closure: dict[str, Any], quality_before: dict[str, Any], cortex: dict[str, Any], exit_type_capture: dict[str, Any] | None = None) -> dict[str, Any]:
+        exit_type_capture = dict(exit_type_capture or {})
         before_after = {
             "profit_capture_intelligence": {"before": 56.18, "after": profit.get("profit_capture_confidence_after")},
             "exit_learning_convergence": {"before": 35.0, "after": exit_learning.get("exit_learning_convergence_score")},
@@ -996,6 +1224,8 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
             "copilot_intelligence": {"before": copilot.get("copilot_intelligence_score_before"), "after": copilot.get("copilot_intelligence_score_after")},
             "confidence_calibration": {"before": "cached_current", "after": confidence.get("confidence_calibration_score")},
             "attribution_closure": {"before": "not_reported", "after": closure.get("attribution_closure_score")},
+            "exit_type_capture_validation": {"before": "not_reported", "after": exit_type_capture.get("exit_type_capture_validation_score")},
+            "closed_trade_attribution_persistence": {"before": "not_reported", "after": exit_type_capture.get("closed_trade_attribution_persistence_score")},
             "astra_intelligence_quality_score": {"before": quality_before.get("overall_astra_intelligence_quality_score"), "after": quality_before.get("overall_astra_intelligence_quality_score")},
         }
         unresolved = []
@@ -1005,6 +1235,8 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
             unresolved.append("profit_capture_confidence_below_micro_test_threshold")
         if to_float(closure.get("attribution_closure_score"), 0) < 75:
             unresolved.append("completed_trade_attribution_not_fully_closed")
+        if to_float(exit_type_capture.get("exit_type_capture_validation_score"), 0) < 60:
+            unresolved.append("exit_type_capture_validation_below_target")
         return {
             "before_vs_after": before_after,
             "top_strengths": cortex.get("top_strengths"),
@@ -1239,6 +1471,7 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
         exit_learning = self._exit_learning_completion(profit, indexes, statuses)
         ranking_completion = self._ranking_completion(ranking, indexes)
         ranking_capture_linkage = self._ranking_profit_capture_linkage(ranking_completion, profit)
+        exit_type_capture = self._exit_type_capture_validation(profit_completion, ranking_completion, indexes)
         duplicate = self._duplicate_evidence_analysis(storage, statuses)
         scanner = self._scanner_yield_roi(statuses)
         api = self._api_efficiency(statuses)
@@ -1248,10 +1481,12 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
         convergence = self._profit_exit_ranking_convergence(ranking_completion, profit_completion, exit_learning, ranking_capture_linkage, statuses)
         closure = self._decision_attribution_closure(ranking_completion, profit_completion, exit_learning, indexes, statuses)
         confidence_trust = self._confidence_trust_scoring(statuses)
+        profit_root_cause = self._profit_capture_root_cause_analysis(profit_completion, exit_type_capture, ranking_completion, statuses)
         copilot_attr = self._copilot_attribution_intelligence(convergence, closure, confidence_trust, quality, statuses)
+        micro_tests = self._shadow_micro_test_candidates(profit_completion, exit_type_capture, confidence_trust, ranking_completion)
         optimization_research = self._optimization_research(profit_completion, exit_learning, ranking_completion, convergence)
         cortex = self._cortex_integration(profit_completion, exit_learning, ranking_completion, copilot_attr, confidence_trust, closure, quality)
-        convergence_audit = self._convergence_final_audit(profit_completion, exit_learning, ranking_completion, copilot_attr, confidence_trust, closure, quality, cortex)
+        convergence_audit = self._convergence_final_audit(profit_completion, exit_learning, ranking_completion, copilot_attr, confidence_trust, closure, quality, cortex, exit_type_capture)
         file_policy = self._file_size_policy(storage, safety)
         final_audit = self._final_audit(indexes, learning, profit_completion, ranking_completion, exit_learning, duplicate, scanner, api, satellite, promotion, file_policy, quality)
         risk = rounded(clamp(to_float(storage.get("storage_pressure_score"), 0) * 0.7 + cache.get("stale_decision_critical_cache_count", 0) * 5.0), 3)
@@ -1335,8 +1570,11 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
             "ranking_profit_capture_linkage_v1": ranking_capture_linkage,
             "profit_capture_exit_ranking_convergence_v1": convergence,
             "decision_attribution_closure_v1": closure,
+            "attribution_closure_exit_type_capture_validation_v1": exit_type_capture,
             "confidence_calibration_trust_scoring_v1": confidence_trust,
+            "profit_capture_root_cause_analysis_v1": profit_root_cause,
             "copilot_attribution_intelligence_v1": copilot_attr,
+            "shadow_micro_test_candidate_ranking_v1": micro_tests,
             "profit_capture_optimization_research_v1": optimization_research.get("profit_capture_optimization_research_v1"),
             "exit_policy_optimization_research_v1": optimization_research.get("exit_policy_optimization_research_v1"),
             "ranking_weight_optimization_intelligence_v1": optimization_research.get("ranking_weight_optimization_intelligence_v1"),
@@ -1345,10 +1583,34 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
             "cortex_integration_v1": cortex,
             "profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1": {
                 "status": "ok",
+                "profit_capture_intelligence": profit_completion,
+                "exit_learning_convergence": exit_learning,
+                "ranking_attribution": ranking_completion,
+                "copilot_intelligence": copilot_attr,
+                "confidence_trust": confidence_trust,
+                "attribution_closure": closure,
+                "exit_type_capture_validation": exit_type_capture,
+                "closed_trade_attribution_persistence": {
+                    "status": exit_type_capture.get("closed_trade_attribution_persistence"),
+                    "score": exit_type_capture.get("closed_trade_attribution_persistence_score"),
+                    "evidence_count": exit_type_capture.get("evidence_count"),
+                    "largest_attribution_gap": exit_type_capture.get("largest_attribution_gap"),
+                },
+                "profit_capture_root_cause": profit_root_cause,
+                "shadow_micro_test_candidate_ranking": micro_tests,
+                "final_audit_status": convergence_audit.get("final_audit_status"),
+                "top_weaknesses": cortex.get("top_weaknesses"),
+                "top_strengths": cortex.get("top_strengths"),
+                "top_bottlenecks": cortex.get("top_bottlenecks"),
+                "highest_roi_improvement": cortex.get("highest_roi_improvement"),
+                "recommended_roadmap_item": cortex.get("recommended_roadmap_item"),
                 "profit_capture_exit_ranking_convergence_v1": convergence,
                 "decision_attribution_closure_v1": closure,
+                "attribution_closure_exit_type_capture_validation_v1": exit_type_capture,
                 "confidence_calibration_trust_scoring_v1": confidence_trust,
+                "profit_capture_root_cause_analysis_v1": profit_root_cause,
                 "copilot_attribution_intelligence_v1": copilot_attr,
+                "shadow_micro_test_candidate_ranking_v1": micro_tests,
                 **optimization_research,
                 "cortex_integration_v1": cortex,
                 "mandatory_final_audit_v1": convergence_audit,
@@ -1482,6 +1744,9 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
                 "confidence_trust_score": confidence_trust.get("trust_score"),
                 "copilot_intelligence_score": copilot_attr.get("copilot_intelligence_score_after"),
                 "recommendation_explainability_score": copilot_attr.get("recommendation_explainability_score"),
+                "exit_type_capture_validation_score": exit_type_capture.get("exit_type_capture_validation_score"),
+                "closed_trade_attribution_persistence_score": exit_type_capture.get("closed_trade_attribution_persistence_score"),
+                "paper_micro_test_ready": micro_tests.get("paper_micro_test_ready"),
                 "cortex_top_weakness": (cortex.get("top_weaknesses") or ["warming_up"])[0],
                 "cortex_top_strength": (cortex.get("top_strengths") or ["warming_up"])[0],
                 "scanner_roi_summary": scanner.get("highest_value_scanner"),

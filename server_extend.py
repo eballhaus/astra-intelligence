@@ -44237,11 +44237,22 @@ def astra_autonomous_improvement_performance_attribution_completion_v1(force: bo
 def astra_storage_cache_attribution_learning_efficiency_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
     cached_payload = dict((cached_unified or {}).get("astra_storage_cache_attribution_learning_efficiency_v1") or {})
+    cached_nested = cached_payload.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") if isinstance(cached_payload.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1"), dict) else {}
+    convergence_required = (
+        "profit_capture_intelligence",
+        "exit_learning_convergence",
+        "ranking_attribution",
+        "copilot_intelligence",
+        "confidence_trust",
+        "attribution_closure",
+        "final_audit_status",
+    )
     if (
         cached_payload
         and not force
         and cached_payload.get("summary_coverage_score") is not None
-        and cached_payload.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1")
+        and cached_nested
+        and all(cached_nested.get(key) not in (None, "", [], {}) for key in convergence_required)
     ):
         return cached_payload
     statuses = _cached_autonomous_completion_statuses(cached_unified)
@@ -44249,7 +44260,8 @@ def astra_storage_cache_attribution_learning_efficiency_v1(force: bool = False):
         cached_payload
         and (
             cached_payload.get("summary_coverage_score") is None
-            or not cached_payload.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1")
+            or not cached_nested
+            or any(cached_nested.get(key) in (None, "", [], {}) for key in convergence_required)
         )
     )
     return ASTRA_STORAGE_CACHE_ATTRIBUTION_LEARNING_EFFICIENCY.status(statuses=statuses, force=bool(force or needs_phase_a_refresh))
@@ -44270,7 +44282,22 @@ def astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attributi
     payload = astra_storage_cache_attribution_learning_efficiency_v1(force=force)
     if isinstance(payload, dict):
         nested = payload.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1")
-        if not nested and not force:
+        required = (
+            "profit_capture_intelligence",
+            "exit_learning_convergence",
+            "ranking_attribution",
+            "copilot_intelligence",
+            "confidence_trust",
+            "attribution_closure",
+            "final_audit_status",
+            "top_weaknesses",
+            "top_strengths",
+            "top_bottlenecks",
+            "highest_roi_improvement",
+            "recommended_roadmap_item",
+        )
+        needs_refresh = not isinstance(nested, dict) or any(nested.get(key) in (None, "", [], {}) for key in required)
+        if needs_refresh and not force:
             payload = astra_storage_cache_attribution_learning_efficiency_v1(force=True)
             nested = payload.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") if isinstance(payload, dict) else {}
         if isinstance(nested, dict) and nested:
@@ -44279,6 +44306,11 @@ def astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attributi
             out.setdefault("learning_center_summary", payload.get("learning_center_summary") or {})
             return out
     return payload
+
+
+@router.get("/api/astra_exit_capture_confidence_copilot_readiness_v1")
+def astra_exit_capture_confidence_copilot_readiness_v1(force: bool = False):
+    return astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1(force=force)
 
 
 @router.post("/api/ask_astra_v1")
@@ -44795,11 +44827,21 @@ def ask_astra_v1(payload: dict = Body(...)):
             or "why profit lost" in q_lc
             or "biggest remaining weakness" in q_lc
             or "which exit types work" in q_lc
+            or "which exit type captures profit best" in q_lc
+            or "captures profit best" in q_lc
+            or "gives back the most profit" in q_lc
             or "exit types work best" in q_lc
             or "strongest exits" in q_lc
             or "weakest exits" in q_lc
             or "exits are strongest" in q_lc
             or "exits are weakest" in q_lc
+            or "confidence buckets" in q_lc
+            or "overconfident" in q_lc
+            or "underconfident" in q_lc
+            or "biggest copilot weakness" in q_lc
+            or "biggest exit learning weakness" in q_lc
+            or "paper micro-test ready" in q_lc
+            or "paper micro test ready" in q_lc
             or "ranking factors hurt profit capture" in q_lc
             or "ranking factors are helping" in q_lc
             or "ranking factors are hurting" in q_lc
@@ -44831,6 +44873,21 @@ def ask_astra_v1(payload: dict = Body(...)):
             convergence = storage.get("profit_capture_exit_ranking_convergence_v1") or {}
             closure = storage.get("decision_attribution_closure_v1") or {}
             confidence_trust = storage.get("confidence_calibration_trust_scoring_v1") or {}
+            exit_type_capture = (
+                storage.get("attribution_closure_exit_type_capture_validation_v1")
+                or (storage.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or {}).get("exit_type_capture_validation")
+                or {}
+            )
+            profit_root = (
+                storage.get("profit_capture_root_cause_analysis_v1")
+                or (storage.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or {}).get("profit_capture_root_cause")
+                or {}
+            )
+            micro_tests = (
+                storage.get("shadow_micro_test_candidate_ranking_v1")
+                or (storage.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or {}).get("shadow_micro_test_candidate_ranking")
+                or {}
+            )
             copilot_research = storage.get("copilot_attribution_intelligence_v1") or {}
             cortex = storage.get("cortex_integration_v1") or {}
             final_audit = storage.get("mandatory_final_audit_v1") or {}
@@ -44840,7 +44897,33 @@ def ask_astra_v1(payload: dict = Body(...)):
             roadmap = storage.get("autonomous_roadmap_generator_v1") or {}
             recs = comp.get("top_5_recommendations") or []
             top_rec = recs[0] if recs else {}
-            fast_short = (
+            if (
+                "which exit type captures profit best" in q_lc
+                or "captures profit best" in q_lc
+                or "gives back the most profit" in q_lc
+                or "confidence buckets" in q_lc
+                or "overconfident" in q_lc
+                or "underconfident" in q_lc
+                or "paper micro-test ready" in q_lc
+                or "paper micro test ready" in q_lc
+                or "biggest copilot weakness" in q_lc
+                or "biggest exit learning weakness" in q_lc
+                or "hurting profit capture" in q_lc
+            ):
+                fast_short = (
+                    f"Profit capture is mainly hurt by {', '.join([str(x).replace('_', ' ') for x in (profit_root.get('top_profit_capture_blockers') or profit.get('profit_capture_blockers') or ['validation still building'])[:3]])}. "
+                    f"The best cached exit type for capture is {str(exit_type_capture.get('best_exit_type_for_capture') or 'warming up').replace('_', ' ')}, "
+                    f"while the weakest is {str(exit_type_capture.get('worst_exit_type_for_capture') or 'warming up').replace('_', ' ')} and the highest-giveback exit type is {str(exit_type_capture.get('highest_giveback_exit_type') or 'warming up').replace('_', ' ')}. "
+                    f"Exit-type capture validation is {exit_type_capture.get('exit_type_capture_validation_score', 'n/a')} and closed-trade attribution persistence is {(exit_type_capture.get('closed_trade_attribution_persistence_score') or (storage.get('closed_trade_attribution_persistence') or {}).get('score') or 'n/a')}. "
+                    f"Confidence trust is {confidence_trust.get('confidence_trust_score', confidence_trust.get('trust_score', 'n/a'))}; overconfident buckets: {', '.join([str(x).replace('_', ' ') for x in (confidence_trust.get('overconfident_buckets') or [])]) or 'none proven'}; "
+                    f"underconfident buckets: {', '.join([str(x).replace('_', ' ') for x in (confidence_trust.get('underconfident_buckets') or [])]) or 'none proven'}. "
+                    f"Copilot's biggest weakness is {str(copilot_research.get('why_recommendations_fail') or 'incomplete profit capture and exit attribution').replace('_', ' ')}. "
+                    f"Paper micro-test ready: {micro_tests.get('paper_micro_test_ready', False)}; top candidate is {str((micro_tests.get('highest_priority_micro_test_candidate') or {}).get('candidate') or 'none ready').replace('_', ' ')}; "
+                    f"blockers are {', '.join([str(x).replace('_', ' ') for x in (micro_tests.get('micro_test_blockers') or [])]) or 'human review required'}. "
+                    "This is advisory-only: no learned exits, forced exits, ranking changes, broker behavior changes, or Paper behavior changes were enabled."
+                )
+            else:
+                fast_short = (
                 f"Astra's highest-ROI next improvement is {str(final_audit.get('highest_roi_next_improvement') or roadmap.get('highest_roi_next_improvement') or storage.get('highest_roi_next_improvement') or comp.get('highest_roi_next_improvement') or top_rec.get('recommendation') or 'continue validation').replace('_', ' ')}. "
                 f"The slowest system is {str(comp.get('slowest_system') or perf_storage.get('slowest_system') or 'warming up').replace('_', ' ')}; "
                 f"storage risk is {storage.get('storage_risk_score', 'n/a')} and cache trust is {storage.get('cache_trust_score', cache_summary.get('cache_trust_score', 'n/a'))}. "
@@ -44852,7 +44935,12 @@ def ask_astra_v1(payload: dict = Body(...)):
                 f"Ranking attribution score is {ranking.get('ranking_attribution_score_after', ranking.get('ranking_attribution_score', 'n/a'))} with confidence {ranking.get('ranking_confidence_score', ranking.get('ranking_confidence', 'n/a'))}; "
                 f"the ranking factor needing work is {str(ranking.get('most_overvalued_factor') or ranking.get('dominant_ranking_blind_spot') or 'warming up').replace('_', ' ')}. "
                 f"Profit-capture confidence is {profit.get('profit_capture_confidence_after', profit.get('profit_capture_confidence', 'n/a'))}; exit convergence is {exit_learning.get('exit_learning_convergence_score', 'n/a')}; "
-                f"the main issue is {str((profit.get('profit_capture_blockers') or ['validation still building'])[0]).replace('_', ' ')}. "
+                f"the main issue is {str((profit_root.get('top_profit_capture_blockers') or profit.get('profit_capture_blockers') or ['validation still building'])[0]).replace('_', ' ')}. "
+                f"Best exit type for capture is {str(exit_type_capture.get('best_exit_type_for_capture') or 'warming up').replace('_', ' ')}; "
+                f"weakest exit type is {str(exit_type_capture.get('worst_exit_type_for_capture') or 'warming up').replace('_', ' ')}; "
+                f"highest-giveback exit type is {str(exit_type_capture.get('highest_giveback_exit_type') or 'warming up').replace('_', ' ')}. "
+                f"Overconfident buckets: {', '.join([str(x).replace('_', ' ') for x in (confidence_trust.get('overconfident_buckets') or [])]) or 'none proven'}; "
+                f"underconfident buckets: {', '.join([str(x).replace('_', ' ') for x in (confidence_trust.get('underconfident_buckets') or [])]) or 'none proven'}. "
                 f"Strongest path: {str((convergence.get('strongest_convergence_path') or {}).get('ranking_factor') or 'warming up').replace('_', ' ')} through {str((convergence.get('strongest_convergence_path') or {}).get('exit_type') or 'warming up').replace('_', ' ')}. "
                 f"Weakest path: {str((convergence.get('weakest_convergence_path') or {}).get('ranking_factor') or 'warming up').replace('_', ' ')} through {str((convergence.get('weakest_convergence_path') or {}).get('exit_type') or 'warming up').replace('_', ' ')}. "
                 f"Ranking/capture linkage is {linkage.get('ranking_profit_capture_link_score', 'n/a')}; scanners show highest value from {str(scanner.get('highest_value_scanner') or 'warming up').replace('_', ' ')}. "
@@ -44861,10 +44949,13 @@ def ask_astra_v1(payload: dict = Body(...)):
                 f"Learning efficiency is {learning_eff.get('learning_efficiency_score', storage.get('learning_efficiency_score', 'n/a'))}; evidence ROI is {learning_eff.get('evidence_roi_score', storage.get('evidence_roi_score', 'n/a'))}; collecting too much={learning_eff.get('is_collecting_too_much', 'n/a')}. "
                 f"Infrastructure bottleneck: {str((infra.get('top_bottlenecks') or ['warming up'])[0]).replace('_', ' ')}. "
                 f"Copilot accuracy is helped most by {str(copilot_attr.get('what_most_improves_copilot_accuracy') or 'ranking attribution').replace('_', ' ')} "
-                f"and hurt most by {str(copilot_attr.get('what_most_hurts_copilot_accuracy') or 'profit capture').replace('_', ' ')}. "
+                f"and hurt most by {str(copilot_research.get('why_recommendations_fail') or copilot_attr.get('what_most_hurts_copilot_accuracy') or 'profit capture').replace('_', ' ')}. "
+                f"Paper micro-test ready: {micro_tests.get('paper_micro_test_ready', False)}; "
+                f"top candidate is {str((micro_tests.get('highest_priority_micro_test_candidate') or {}).get('candidate') or 'none ready').replace('_', ' ')}; "
+                f"blockers are {', '.join([str(x).replace('_', ' ') for x in (micro_tests.get('micro_test_blockers') or [])]) or 'human review required'}. "
                 f"Next proof required: {str(top_rec.get('validation_requirement') or final_audit.get('recommended_next_roadmap_item') or 'evidence-backed validation without behavior changes').replace('_', ' ')}. "
                 "This remains advisory-only with no paper, broker, ranking, entry, exit, sizing, allocation, or threshold behavior changes."
-            )
+                )
         elif (
             "systemwide" in q_lc
             or "system wide" in q_lc
@@ -45816,6 +45907,39 @@ def profit_capture_peak_decay_exit_validation_suite_v1(force: bool = False):
                 cached_out = {}
             if isinstance(cached_out, dict) and cached_out:
                 cached_out = dict(cached_out)
+                summary = cached_out.get("summary") if isinstance(cached_out.get("summary"), dict) else {}
+                for key in (
+                    "tracked_trades",
+                    "average_capture_ratio",
+                    "average_giveback_pct",
+                    "capture_quality_score",
+                    "readiness_score",
+                    "readiness_blocker",
+                    "policy_confidence",
+                    "best_exit_policy",
+                    "weakest_policy",
+                    "strongest_horizon",
+                    "weakest_horizon",
+                    "highest_giveback_trade",
+                    "best_capture_trade",
+                    "closest_exit_policy_to_readiness",
+                    "shadow_recommendation",
+                ):
+                    if cached_out.get(key) in (None, "") and summary.get(key) not in (None, ""):
+                        cached_out[key] = summary.get(key)
+                cached_out.setdefault("average_capture_ratio", 0.0)
+                cached_out.setdefault("average_giveback_pct", 0.0)
+                cached_out.setdefault("capture_quality_score", 0.0)
+                cached_out.setdefault("readiness_score", 0.0)
+                cached_out.setdefault("readiness_blocker", "cached_summary_missing_full_readiness_detail")
+                cached_out.setdefault("policy_confidence", 0.0)
+                cached_out.setdefault("best_exit_policy", "cached_summary_missing_best_exit_policy")
+                cached_out.setdefault("weakest_policy", "cached_summary_missing_weakest_policy")
+                cached_out.setdefault("strongest_horizon", "cached_summary_missing_strongest_horizon")
+                cached_out.setdefault("weakest_horizon", "cached_summary_missing_weakest_horizon")
+                cached_out.setdefault("highest_giveback_trade", "cached_summary_missing_highest_giveback_trade")
+                cached_out.setdefault("best_capture_trade", "cached_summary_missing_best_capture_trade")
+            if isinstance(cached_out, dict) and cached_out:
                 cached_out["profit_capture_peak_decay_exit_validation_suite_v1"] = True
                 cached_out["cache_first_endpoint_return"] = True
                 cached_out["api_calls_used"] = int(_to_float(cached_out.get("api_calls_used"), 0.0))

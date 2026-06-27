@@ -4385,7 +4385,7 @@ export default function LearningTab({ compact = false }) {
         </details>
         <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
           <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
-            Profit Capture, Exit Intelligence & Copilot Convergence: {String(astraProfitExitRankingCopilotConvergence?.status || "warming up").replaceAll("_", " ")}
+            Exit Capture, Confidence & Copilot Readiness: {String(astraProfitExitRankingCopilotConvergence?.status || "warming up").replaceAll("_", " ")}
           </summary>
           <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
             Research-only convergence layer explaining why trades are selected, held, exited, captured, lost, and how those attribution links affect Copilot recommendations. Shadow-only and advisory-only.
@@ -4399,8 +4399,14 @@ export default function LearningTab({ compact = false }) {
               ["Attribution Closure", safeNumber(astraProfitExitRankingCopilotConvergence?.decision_attribution_closure_v1?.attribution_closure_score).toFixed(1)],
               ["Explained Trades", `${safeNumber(astraProfitExitRankingCopilotConvergence?.decision_attribution_closure_v1?.fully_explained_trade_pct).toFixed(1)}%`],
               ["Confidence Trust", safeNumber(astraProfitExitRankingCopilotConvergence?.confidence_calibration_trust_scoring_v1?.trust_score).toFixed(1)],
+              ["Exit Type Validation", safeNumber(astraProfitExitRankingCopilotConvergence?.attribution_closure_exit_type_capture_validation_v1?.exit_type_capture_validation_score ?? astraProfitExitRankingCopilotConvergence?.exit_type_capture_validation?.exit_type_capture_validation_score).toFixed(1)],
+              ["Closed Trade Persistence", safeNumber(astraProfitExitRankingCopilotConvergence?.attribution_closure_exit_type_capture_validation_v1?.closed_trade_attribution_persistence_score ?? astraProfitExitRankingCopilotConvergence?.closed_trade_attribution_persistence?.score).toFixed(1)],
               ["Copilot Intelligence", safeNumber(astraProfitExitRankingCopilotConvergence?.copilot_attribution_intelligence_v1?.copilot_intelligence_score_after).toFixed(1)],
+              ["Copilot Readiness", safeNumber(astraProfitExitRankingCopilotConvergence?.copilot_attribution_intelligence_v1?.copilot_readiness_score ?? astraProfitExitRankingCopilotConvergence?.copilot_attribution_intelligence_v1?.recommendation_quality_score).toFixed(1)],
               ["Recommendation Quality", safeNumber(astraProfitExitRankingCopilotConvergence?.copilot_attribution_intelligence_v1?.recommendation_quality_score).toFixed(1)],
+              ["Best Capture Exit", astraProfitExitRankingCopilotConvergence?.attribution_closure_exit_type_capture_validation_v1?.best_exit_type_for_capture ?? astraProfitExitRankingCopilotConvergence?.exit_type_capture_validation?.best_exit_type_for_capture],
+              ["Highest Giveback Exit", astraProfitExitRankingCopilotConvergence?.attribution_closure_exit_type_capture_validation_v1?.highest_giveback_exit_type ?? astraProfitExitRankingCopilotConvergence?.exit_type_capture_validation?.highest_giveback_exit_type],
+              ["Paper Micro-Test Ready", astraProfitExitRankingCopilotConvergence?.shadow_micro_test_candidate_ranking_v1?.paper_micro_test_ready ?? astraProfitExitRankingCopilotConvergence?.shadow_micro_test_candidate_ranking?.paper_micro_test_ready ? "yes" : "no"],
               ["Cortex Weakness", (astraProfitExitRankingCopilotConvergence?.cortex_integration_v1?.top_weaknesses || [])[0]],
               ["Cortex Strength", (astraProfitExitRankingCopilotConvergence?.cortex_integration_v1?.top_strengths || [])[0]],
               ["Highest ROI", astraProfitExitRankingCopilotConvergence?.cortex_integration_v1?.highest_roi_improvement],
@@ -4415,8 +4421,11 @@ export default function LearningTab({ compact = false }) {
             {[
               ["Convergence Chain", astraProfitExitRankingCopilotConvergence?.profit_capture_exit_ranking_convergence_v1],
               ["Decision Attribution Closure", astraProfitExitRankingCopilotConvergence?.decision_attribution_closure_v1],
+              ["Exit Type Capture Validation", astraProfitExitRankingCopilotConvergence?.attribution_closure_exit_type_capture_validation_v1 || astraProfitExitRankingCopilotConvergence?.exit_type_capture_validation],
               ["Confidence Calibration & Trust", astraProfitExitRankingCopilotConvergence?.confidence_calibration_trust_scoring_v1],
+              ["Profit Capture Root Cause", astraProfitExitRankingCopilotConvergence?.profit_capture_root_cause_analysis_v1 || astraProfitExitRankingCopilotConvergence?.profit_capture_root_cause],
               ["Copilot Attribution", astraProfitExitRankingCopilotConvergence?.copilot_attribution_intelligence_v1],
+              ["Shadow Micro-Test Candidates", astraProfitExitRankingCopilotConvergence?.shadow_micro_test_candidate_ranking_v1 || astraProfitExitRankingCopilotConvergence?.shadow_micro_test_candidate_ranking],
               ["Profit Capture Research", astraProfitExitRankingCopilotConvergence?.profit_capture_optimization_research_v1],
               ["Exit Policy Research", astraProfitExitRankingCopilotConvergence?.exit_policy_optimization_research_v1],
               ["Ranking Weight Research", astraProfitExitRankingCopilotConvergence?.ranking_weight_optimization_intelligence_v1],
