@@ -1641,6 +1641,7 @@ export default function LearningTab({ compact = false }) {
   const astraAdaptiveOccupancyEvolutionSuite = unified?.astra_adaptive_occupancy_evolution_suite_v1 || {};
   const astraTradingBrainCompletion = unified?.astra_trading_brain_completion_v1 || astraAdaptiveOccupancyEvolutionSuite?.astra_trading_brain_completion_v1 || {};
   const astraAutonomousGovernanceCore = unified?.astra_autonomous_governance_core_v1 || astraAdaptiveOccupancyEvolutionSuite?.astra_autonomous_governance_core_v1 || {};
+  const astraAutonomousResearchPlanningRanking = unified?.astra_autonomous_research_planning_ranking_intelligence_v1 || astraAdaptiveOccupancyEvolutionSuite?.astra_autonomous_research_planning_ranking_intelligence_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -4351,6 +4352,57 @@ export default function LearningTab({ compact = false }) {
             Promotions remain recommendation-first. No ranking, entry, exit, sizing, allocation, threshold, broker, or live-trading behavior is changed by this panel.
           </div>
         </details>
+        <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
+          <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
+            Autonomous Research, Planning & Ranking Intelligence: {String(astraAutonomousResearchPlanningRanking?.status || "warming up").replaceAll("_", " ")}
+          </summary>
+          <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+            Investigates the remaining ranking/horizon bottleneck, identifies knowledge gaps, and maintains an advisory roadmap without changing rankings or trading behavior.
+          </div>
+          {astraAutonomousResearchPlanningRanking?.research_planning_brief ? (
+            <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, border: "1px solid #34577f", background: "rgba(6,28,52,0.72)", color: "#dce9fb", fontSize: 12, lineHeight: 1.55 }}>
+              {astraAutonomousResearchPlanningRanking.research_planning_brief}
+            </div>
+          ) : null}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+            {[
+              ["Ranking Bias True Bottleneck", astraAutonomousResearchPlanningRanking?.is_ranking_bias_true_bottleneck ? "yes" : "not verified"],
+              ["Ranking Bias Confidence", safeNumber(astraAutonomousResearchPlanningRanking?.ranking_bias_investigation?.ranking_bias_confidence_score).toFixed(1)],
+              ["Underrepresented Horizon", astraAutonomousResearchPlanningRanking?.which_horizon_is_underrepresented],
+              ["Top Bias Component", (astraAutonomousResearchPlanningRanking?.which_ranking_components_create_bias || [])[0]],
+              ["Research Next", astraAutonomousResearchPlanningRanking?.what_astra_should_research_next],
+              ["Knowledge Gap", astraAutonomousResearchPlanningRanking?.autonomous_knowledge_gap_detection?.weakest_knowledge_domain],
+              ["Improve Next", astraAutonomousResearchPlanningRanking?.what_astra_should_improve_next],
+              ["Highest ROI", astraAutonomousResearchPlanningRanking?.highest_roi_remaining_improvement],
+            ].map(([label, value]) => (
+              <div key={label} style={{ background: "rgba(12,24,42,0.46)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+                <strong style={{ color: "#f2f7ff" }}>{String(value ?? "warming up").replaceAll("_", " ")}</strong>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+            {[
+              ["Ranking Bias Investigation", astraAutonomousResearchPlanningRanking?.ranking_bias_investigation],
+              ["Research Director", astraAutonomousResearchPlanningRanking?.autonomous_research_director],
+              ["Knowledge Gaps", astraAutonomousResearchPlanningRanking?.autonomous_knowledge_gap_detection],
+              ["Strategic Planning", astraAutonomousResearchPlanningRanking?.autonomous_strategic_planning],
+              ["Initiative ROI", astraAutonomousResearchPlanningRanking?.autonomous_initiative_roi_engine],
+            ].map(([label, row]) => (
+              <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
+                <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+                  {label}: {String(row?.status || "warming up").replaceAll("_", " ")}
+                </summary>
+                <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
+                  {JSON.stringify(row || {}, null, 2)}
+                </pre>
+              </details>
+            ))}
+          </div>
+          <div style={{ marginTop: 10, color: "#dce9fb", fontSize: 12, lineHeight: 1.55 }}>
+            This section is investigation, planning, attribution, and prioritization only. It does not alter candidate generation, ranking scores, promotions, entries, exits, sizing, allocation, or thresholds.
+          </div>
+        </details>
         <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
           {[
             ["Learning Continuity", "learning_continuity_engine_v1"],
@@ -4398,6 +4450,12 @@ export default function LearningTab({ compact = false }) {
             ["Executive Governance Accountability", "autonomous_executive_governance_accountability_v1"],
             ["Horizon & Exit Governance Investigations", "horizon_exit_governance_investigations_v1"],
             ["Autonomous Governance Core", "astra_autonomous_governance_core_v1"],
+            ["Ranking Bias Horizon Selection Correction", "ranking_bias_horizon_selection_correction_v1"],
+            ["Autonomous Research Director", "autonomous_research_director_v1"],
+            ["Autonomous Knowledge Gap Detection", "autonomous_knowledge_gap_detection_v1"],
+            ["Autonomous Strategic Planning", "autonomous_strategic_planning_v1"],
+            ["Autonomous Initiative ROI", "autonomous_initiative_roi_engine_v1"],
+            ["Autonomous Research Planning Ranking", "astra_autonomous_research_planning_ranking_intelligence_v1"],
             ["Autonomous Daily Brief", "autonomous_daily_executive_brief_v1"],
             ["Autonomous Intelligence Verification", "autonomous_intelligence_behavior_verification_v1"],
             ["Behavior Verification", "behavior_verification_core_completion_v1"],

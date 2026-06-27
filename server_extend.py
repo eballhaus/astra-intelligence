@@ -44029,6 +44029,16 @@ def astra_autonomous_governance_core_v1(force: bool = False):
     return dict((suite or {}).get("astra_autonomous_governance_core_v1") or {})
 
 
+@router.get("/api/astra_autonomous_research_planning_ranking_intelligence_v1")
+def astra_autonomous_research_planning_ranking_intelligence_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_autonomous_research_planning_ranking_intelligence_v1") or {})
+    if cached_payload:
+        return cached_payload
+    suite = astra_adaptive_occupancy_evolution_suite_v1(force=force)
+    return dict((suite or {}).get("astra_autonomous_research_planning_ranking_intelligence_v1") or {})
+
+
 @router.post("/api/ask_astra_v1")
 def ask_astra_v1(payload: dict = Body(...)):
     data = payload if isinstance(payload, dict) else {}
@@ -44087,6 +44097,10 @@ def ask_astra_v1(payload: dict = Body(...)):
         occupancy_evolution.get("astra_autonomous_governance_core_v1") or {}
     )
     ask_context_seed["astra_autonomous_governance_core_v1"] = autonomous_governance_core
+    autonomous_research_planning = dict(
+        occupancy_evolution.get("astra_autonomous_research_planning_ranking_intelligence_v1") or {}
+    )
+    ask_context_seed["astra_autonomous_research_planning_ranking_intelligence_v1"] = autonomous_research_planning
     ask_context_seed["astra_autonomous_intelligence_maturation_v1"] = dict(
         occupancy_evolution.get("astra_autonomous_intelligence_maturation_v1") or {}
     )
@@ -44238,6 +44252,17 @@ def ask_astra_v1(payload: dict = Body(...)):
                 else None
             ),
         },
+        "autonomous_research_planning_ranking": {
+            "research_planning_brief": autonomous_research_planning.get("research_planning_brief"),
+            "why_horizon_concentration_still_exists": autonomous_research_planning.get("why_horizon_concentration_still_exists"),
+            "is_ranking_bias_true_bottleneck": autonomous_research_planning.get("is_ranking_bias_true_bottleneck"),
+            "which_ranking_components_create_bias": autonomous_research_planning.get("which_ranking_components_create_bias"),
+            "which_horizon_is_underrepresented": autonomous_research_planning.get("which_horizon_is_underrepresented"),
+            "what_knowledge_is_missing": autonomous_research_planning.get("what_knowledge_is_missing"),
+            "what_astra_should_research_next": autonomous_research_planning.get("what_astra_should_research_next"),
+            "what_astra_should_improve_next": autonomous_research_planning.get("what_astra_should_improve_next"),
+            "highest_roi_remaining_improvement": autonomous_research_planning.get("highest_roi_remaining_improvement"),
+        },
         "autonomous_intelligence": occupancy_evolution.get("astra_autonomous_intelligence_v1") or {},
         "trading_brain_completion": {
             "summary": trading_brain_completion.get("trading_brain_completion_summary"),
@@ -44290,6 +44315,12 @@ def ask_astra_v1(payload: dict = Body(...)):
             "which_fixes_failed",
             "shadow_vs_paper_readiness",
             "promotion_bottlenecks",
+            "what_astra_is_researching",
+            "why_ranking_bias_is_occurring",
+            "underrepresented_horizon",
+            "knowledge_gaps",
+            "strategic_roadmap",
+            "initiative_roi",
             "biggest_opportunity",
             "today_market_explanation",
         ],
@@ -44352,6 +44383,35 @@ def ask_astra_v1(payload: dict = Body(...)):
                 f"Correction evidence: {correction.get('successful_corrections', 0)} successful, "
                 f"{correction.get('partially_successful_corrections', 0)} partial, "
                 f"{correction.get('inconclusive_corrections', 0)} inconclusive."
+            )
+        elif (
+            "what is astra researching" in q_lc
+            or "what astra is researching" in q_lc
+            or "why ranking bias" in q_lc
+            or "ranking bias" in q_lc
+            or "which horizon is underrepresented" in q_lc
+            or "underrepresented horizon" in q_lc
+            or "knowledge gap" in q_lc
+            or "knowledge is astra missing" in q_lc
+            or "what knowledge" in q_lc
+            or "30/90/365" in q_lc
+            or "roadmap" in q_lc
+            or "initiative roi" in q_lc
+            or "what should astra research next" in q_lc
+            or "what should astra improve next" in q_lc
+        ):
+            ranking_bias = autonomous_research_planning.get("ranking_bias_investigation") or {}
+            gaps = autonomous_research_planning.get("autonomous_knowledge_gap_detection") or {}
+            planning = autonomous_research_planning.get("autonomous_strategic_planning") or {}
+            initiative = autonomous_research_planning.get("autonomous_initiative_roi_engine") or {}
+            fast_short = (
+                f"{autonomous_research_planning.get('research_planning_brief') or 'Astra research planning is warming up from cached diagnostics.'} "
+                f"Ranking bias confidence is {ranking_bias.get('ranking_bias_confidence_score', 'n/a')}; "
+                f"top root cause is {((ranking_bias.get('remaining_horizon_concentration_root_cause_ranking') or [{}])[0]).get('root_cause', 'warming_up')}. "
+                f"Underrepresented horizon: {ranking_bias.get('underrepresented_horizon', 'n/a')}. "
+                f"Weakest knowledge domain: {gaps.get('weakest_knowledge_domain', 'n/a')}. "
+                f"Highest-ROI initiative: {initiative.get('highest_roi_remaining_improvement', planning.get('highest_roi_remaining_improvement', 'n/a'))}. "
+                "This is research and planning only; Astra did not change rankings or trading behavior."
             )
         elif (
             "thesis" in q_lc
@@ -56067,6 +56127,9 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_autonomous_intelligence_maturation_v1"] = dict(tier4.get("astra_autonomous_intelligence_maturation_v1") or {})
             out["astra_autonomous_intelligence_v1"] = dict(tier4.get("astra_autonomous_intelligence_v1") or {})
             out["astra_autonomous_governance_core_v1"] = dict(tier4.get("astra_autonomous_governance_core_v1") or {})
+            out["astra_autonomous_research_planning_ranking_intelligence_v1"] = dict(
+                tier4.get("astra_autonomous_research_planning_ranking_intelligence_v1") or {}
+            )
             out["astra_paper_learning_capacity_correction_v1"] = dict(tier4.get("paper_learning_capacity_correction_v1") or {})
             trading_brain_completion = dict(
                 tier4.get("astra_trading_brain_completion_v1")
@@ -56090,6 +56153,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 "autonomous_trading_governance_v1": dict(tier4.get("autonomous_trading_governance_v1") or {}),
                 "shadow_paper_feedback_connection_v1": dict(tier4.get("shadow_paper_feedback_connection_v1") or {}),
                 "autonomous_governance_core_v1": dict(tier4.get("astra_autonomous_governance_core_v1") or {}),
+                "autonomous_research_planning_ranking_intelligence_v1": dict(tier4.get("astra_autonomous_research_planning_ranking_intelligence_v1") or {}),
                 "behavior_verification": dict(tier4.get("trading_intelligence_completion_behavior_verification_v1") or {}),
                 "trading_brain_completion_enabled": trading_brain_completion.get("trading_brain_completion_enabled"),
                 "behavior_safe_to_apply": False,

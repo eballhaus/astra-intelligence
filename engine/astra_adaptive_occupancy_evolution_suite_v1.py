@@ -2944,6 +2944,413 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             **_safe_flags(),
         }
 
+    def _ranking_bias_horizon_selection_correction(
+        self,
+        statuses: dict[str, Any],
+        governance_core: dict[str, Any],
+        horizon: dict[str, Any],
+        opportunity_utilization: dict[str, Any],
+        diversity_completion: dict[str, Any],
+    ) -> dict[str, Any]:
+        ranking = status_value(statuses, "candidate_ranking_attribution_promotion_intelligence_v1")
+        tournament = status_value(statuses, "ranking_tournament_engine_v1")
+        trace = status_value(statuses, "paper_execution_trace")
+        horizon_bundle = status_value(statuses, "astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1")
+        factors = [dict(row) for row in (ranking.get("ranking_factor_rows") or []) if isinstance(row, dict)]
+        factor_bias_rows = []
+        for row in factors:
+            support = to_float(row.get("support_score"), 50.0)
+            predictive = to_float(row.get("predictive_score"), 50.0)
+            factor_bias_rows.append({
+                "factor": text(row.get("factor"), "unknown"),
+                "support_score": rounded(support, 3),
+                "predictive_score": rounded(predictive, 3),
+                "bias_direction": "overweighted" if support - predictive > 5 else "underweighted" if predictive - support > 5 else "balanced",
+                "bias_pressure": rounded(abs(support - predictive), 3),
+                "horizon_bias_risk": rounded(clamp(abs(support - predictive) + to_float(row.get("mistake_risk_score"), 0.0) * 0.35), 3),
+                "evidence_count": to_int(row.get("factor_evidence"), 0),
+            })
+        factor_bias_rows.sort(key=lambda row: to_float(row.get("horizon_bias_risk"), 0.0), reverse=True)
+        current = dict(horizon.get("current_horizon_exposure") or {})
+        supported = dict(horizon.get("market_supported_horizon_mix") or {})
+        underrepresented = text(first(horizon.get("underrepresented_horizon"), horizon_bundle.get("underexposed_horizon")), "unknown")
+        dominant = text(horizon.get("dominant_horizon"), "unknown")
+        concentration = to_float(horizon.get("horizon_monopolization_risk"), 0.0)
+        diversity = to_float(horizon.get("horizon_diversity_score"), 0.0)
+        eligible_diversity = len(opportunity_utilization.get("horizon_diversity_opportunities_available") or [])
+        reason_counts = dict(opportunity_utilization.get("reason_counts") or {})
+        capacity_blocks = to_int(opportunity_utilization.get("opportunities_blocked_by_baseline_capacity"), 0) + to_int(opportunity_utilization.get("opportunities_blocked_by_adaptive_capacity"), 0)
+        entry_blocks = to_int(opportunity_utilization.get("opportunities_blocked_by_entry_gates"), 0)
+        risk_blocks = to_int(opportunity_utilization.get("opportunities_blocked_by_risk"), 0)
+        ranking_quality = to_float(ranking.get("ranking_quality_score"), 0.0)
+        ranking_regret = to_float(tournament.get("average_ranking_regret"), 0.0)
+        promotion_accuracy = to_float(ranking.get("promotion_accuracy"), 0.0)
+        root_rows = [
+            {
+                "root_cause": "Ranking Bias",
+                "confidence": rounded(clamp(concentration * 0.35 + max(0.0, 75.0 - ranking_quality) * 0.55 + ranking_regret * 0.55), 3),
+                "evidence": "ranking_quality_regret_and_factor_bias",
+                "explanation": "Existing ranking factors may still prefer stronger longer-duration setups when quality is close.",
+            },
+            {
+                "root_cause": "Scanner Bias",
+                "confidence": rounded(clamp(max(0.0, 3 - eligible_diversity) * 18.0 + max(0.0, 60.0 - diversity) * 0.45), 3),
+                "evidence": "few_underfed_horizon_candidates_visible",
+                "explanation": "The candidate stream may not be producing enough comparable scalp/day candidates for the ranking engine to choose.",
+            },
+            {
+                "root_cause": "Promotion Bias",
+                "confidence": rounded(clamp(max(0.0, 75.0 - promotion_accuracy) * 0.55 + (15.0 if governance_core.get("why_promotions_blocked") else 0.0)), 3),
+                "evidence": "promotion_accuracy_and_governance_blockers",
+                "explanation": "Validated alternatives are not yet crossing governed promotion gates into paper micro-tests.",
+            },
+            {
+                "root_cause": "Capacity Bias",
+                "confidence": rounded(clamp(capacity_blocks * 4.5 + concentration * 0.25), 3),
+                "evidence": "capacity_blocks_and_horizon_concentration",
+                "explanation": "Existing positions and capacity pressure can slow replacement opportunities for underrepresented horizons.",
+            },
+            {
+                "root_cause": "Regime Bias",
+                "confidence": rounded(clamp(abs(to_float(supported.get(dominant), 0.0) - to_float(current.get(dominant), 0.0)) + risk_blocks * 3.0), 3),
+                "evidence": "market_supported_mix_vs_current_exposure",
+                "explanation": "The current market regime may naturally favor the dominant horizon, so diversity should remain evidence-led rather than quota-led.",
+            },
+        ]
+        root_rows.sort(key=lambda row: to_float(row.get("confidence"), 0.0), reverse=True)
+        before_after = {
+            "before_baseline_source": "exact_pre_correction_horizon_ranking_snapshot_not_available",
+            "after_horizon_diversity_score": rounded(diversity, 3),
+            "after_horizon_concentration_risk": rounded(concentration, 3),
+            "after_underrepresented_horizon": underrepresented,
+            "after_ranking_quality_score": rounded(ranking_quality, 3),
+            "after_average_ranking_regret": rounded(ranking_regret, 3),
+            "horizon_diversity_correction_effect": governance_core.get("did_horizon_diversity_work"),
+            "ranking_still_limiting_diversification": root_rows[0].get("root_cause") == "Ranking Bias",
+        }
+        return {
+            "module": "Ranking Bias and Horizon Selection Correction V1",
+            "status": "ok" if ranking or current else "insufficient_evidence",
+            "ranking_bias_confidence_score": root_rows[0].get("confidence", 0.0) if root_rows else 0.0,
+            "remaining_horizon_concentration_root_cause_ranking": root_rows,
+            "dominant_horizon": dominant,
+            "underrepresented_horizon": underrepresented,
+            "current_horizon_exposure": current,
+            "market_supported_horizon_mix": supported,
+            "ranking_component_bias_rows": factor_bias_rows[:10],
+            "strongest_bias_component": (factor_bias_rows[0] if factor_bias_rows else {}).get("factor", "warming_up"),
+            "most_overvalued_factor": ranking.get("most_overvalued_factor"),
+            "most_undervalued_factor": ranking.get("most_undervalued_factor"),
+            "non_swing_opportunities_suppressed": bool(underrepresented in {"scalp", "day_trade", "multi_day"} and (entry_blocks or capacity_blocks)),
+            "elite_swing_opportunities_dominating": bool(dominant in {"swing", "longer_hold"} and concentration >= 35),
+            "horizon_diversity_improving": governance_core.get("did_horizon_diversity_work") in {"partially", "yes"},
+            "before_vs_after_measurements": before_after,
+            "reason_counts": reason_counts,
+            "recommendation": (
+                f"Use {underrepresented.replace('_', ' ')} as a small tie-breaker only when existing ranking and safety gates already pass; "
+                "do not suppress elite opportunities or enforce fixed quotas."
+            ),
+            "hard_horizon_quotas_enabled": False,
+            "elite_opportunity_suppression_enabled": False,
+            **_safe_flags(),
+        }
+
+    def _autonomous_research_director(
+        self,
+        statuses: dict[str, Any],
+        governance_core: dict[str, Any],
+        ranking_bias: dict[str, Any],
+    ) -> dict[str, Any]:
+        legacy = status_value(statuses, "autonomous_research_self_regulation_status_v1")
+        final_maturation = status_value(statuses, "astra_final_intelligence_maturation_bundle_v1")
+        research_rows = [
+            {
+                "study": "historical_replay_analysis",
+                "target_weakness": governance_core.get("highest_confidence_remaining_bottleneck"),
+                "confidence_score": rounded(first(legacy.get("root_cause_confidence"), 55.0), 3),
+                "evidence_quality": "cached_bounded_replay_available",
+                "expected_improvement": "separate_true_ranking_bias_from_market_regime_bias",
+                "status": "recommended",
+            },
+            {
+                "study": "counterfactual_horizon_ranking_analysis",
+                "target_weakness": "horizon_selection_bias",
+                "confidence_score": ranking_bias.get("ranking_bias_confidence_score"),
+                "evidence_quality": "uses_ranking_tournament_and_candidate_attribution",
+                "expected_improvement": "estimate_what_underrepresented_horizon_candidates_would_have_done",
+                "status": "recommended",
+            },
+            {
+                "study": "similar_symbol_analysis",
+                "target_weakness": "symbol_family_transfer",
+                "confidence_score": rounded(first(final_maturation.get("trade_family_confidence"), 50.0), 3),
+                "evidence_quality": "cached_symbol_and_family_memory",
+                "expected_improvement": "find symbols where scalp_day_behavior_transfers_without_new_provider_calls",
+                "status": "queued_shadow_only",
+            },
+            {
+                "study": "similar_regime_analysis",
+                "target_weakness": "regime_bias",
+                "confidence_score": (ranking_bias.get("remaining_horizon_concentration_root_cause_ranking") or [{}])[-1].get("confidence", 45.0),
+                "evidence_quality": "cached_market_condition_and_breadth_context",
+                "expected_improvement": "avoid_overcorrecting_horizon_mix_when_regime_legitimately_favors_swing",
+                "status": "queued_shadow_only",
+            },
+            {
+                "study": "similar_catalyst_analysis",
+                "target_weakness": "catalyst_horizon_quality",
+                "confidence_score": rounded(first(final_maturation.get("catalyst_confidence"), 50.0), 3),
+                "evidence_quality": "cached_catalyst_lifecycle_and_decay_curves",
+                "expected_improvement": "map_catalyst_types_to_best_horizon_and_hold_duration",
+                "status": "queued_shadow_only",
+            },
+        ]
+        research_rows.sort(key=lambda row: to_float(row.get("confidence_score"), 0.0), reverse=True)
+        return {
+            "module": "Autonomous Research Director V1",
+            "status": "ok",
+            "research_findings": research_rows,
+            "highest_roi_investigation": research_rows[0].get("study", "warming_up") if research_rows else "warming_up",
+            "research_priority_score": rounded(max([to_float(row.get("confidence_score"), 0.0) for row in research_rows] or [0.0]), 3),
+            "persistent_weakness_being_researched": governance_core.get("highest_confidence_remaining_bottleneck"),
+            "legacy_research_summary": legacy.get("suite_4_summary"),
+            "automatic_research_provider_calls_enabled": False,
+            **_safe_flags(),
+        }
+
+    def _autonomous_knowledge_gap_detection(
+        self,
+        statuses: dict[str, Any],
+        ranking_bias: dict[str, Any],
+    ) -> dict[str, Any]:
+        domains = [
+            ("technical_knowledge", "candidate_ranking_attribution_promotion_intelligence_v1", ["ranking_quality_score", "ranking_predictive_power"]),
+            ("fundamental_knowledge", "fundamental_data_intelligence_v1", ["fundamental_coverage_score", "fundamental_confidence"]),
+            ("catalyst_knowledge", "catalyst_lifecycle_intelligence_v1", ["catalyst_lifecycle_confidence", "continuation_probability"]),
+            ("market_context", "market_breadth_index_intelligence_v1", ["index_confidence_score", "market_support_for_equity_trades"]),
+            ("regime_intelligence", "market_condition_attribution_v1", ["condition_confidence_score"]),
+            ("exit_intelligence", "profit_capture_peak_decay_exit_validation_suite_v1", ["policy_confidence", "profit_capture_score"]),
+            ("symbol_intelligence", "accelerated_learning_symbol_intelligence_suite_v1", ["symbol_personality_quality_score", "transferable_learning_confidence"]),
+        ]
+        rows = []
+        for domain, key, fields in domains:
+            payload = status_value(statuses, key)
+            values = [to_float(payload.get(field), 0.0) for field in fields if payload.get(field) is not None]
+            score = rounded(sum(values) / max(1, len(values)), 3) if values else 0.0
+            rows.append({
+                "domain": domain,
+                "source": key,
+                "knowledge_coverage_score": score,
+                "coverage_status": "healthy" if score >= 70 else "building" if score >= 45 else "gap",
+                "missing_evidence_area": "bounded_cached_evidence" if score >= 45 else f"{domain}_needs_more_cached_validation",
+            })
+        rows.sort(key=lambda row: to_float(row.get("knowledge_coverage_score"), 0.0))
+        weakest = rows[0] if rows else {}
+        return {
+            "module": "Autonomous Knowledge Gap Detection V1",
+            "status": "ok" if rows else "insufficient_evidence",
+            "knowledge_domain_rows": rows,
+            "weakest_knowledge_domain": weakest.get("domain", "warming_up"),
+            "weakest_knowledge_score": weakest.get("knowledge_coverage_score", 0.0),
+            "missing_evidence_areas": [row.get("missing_evidence_area") for row in rows if row.get("coverage_status") == "gap"],
+            "recommended_research_priorities": [
+                f"improve_{row.get('domain')}" for row in rows[:3]
+            ],
+            "ranking_specific_gap": ranking_bias.get("strongest_bias_component"),
+            **_safe_flags(),
+        }
+
+    def _autonomous_initiative_roi_engine(
+        self,
+        statuses: dict[str, Any],
+        ranking_bias: dict[str, Any],
+        research: dict[str, Any],
+        gaps: dict[str, Any],
+        improvement: dict[str, Any],
+    ) -> dict[str, Any]:
+        learning_roi = status_value(statuses, "learning_roi_engine_v1")
+        base_rows = [
+            {
+                "initiative": "ranking_bias_horizon_tie_breaker_validation",
+                "expected_performance_impact": 78.0,
+                "learning_impact": 86.0,
+                "risk_reduction": 70.0,
+                "development_complexity": 28.0,
+                "confidence": ranking_bias.get("ranking_bias_confidence_score"),
+            },
+            {
+                "initiative": "counterfactual_horizon_replay_batch",
+                "expected_performance_impact": 72.0,
+                "learning_impact": 88.0,
+                "risk_reduction": 64.0,
+                "development_complexity": 34.0,
+                "confidence": research.get("research_priority_score"),
+            },
+            {
+                "initiative": "knowledge_gap_research_sprint",
+                "expected_performance_impact": 58.0,
+                "learning_impact": 82.0,
+                "risk_reduction": 72.0,
+                "development_complexity": 22.0,
+                "confidence": 100.0 - to_float(gaps.get("weakest_knowledge_score"), 0.0),
+            },
+            {
+                "initiative": "exit_decision_intelligence_validation",
+                "expected_performance_impact": 84.0,
+                "learning_impact": 76.0,
+                "risk_reduction": 74.0,
+                "development_complexity": 24.0,
+                "confidence": improvement.get("improvement_confidence"),
+            },
+            {
+                "initiative": "profit_capture_closed_trade_evidence_collection",
+                "expected_performance_impact": 86.0,
+                "learning_impact": 72.0,
+                "risk_reduction": 80.0,
+                "development_complexity": 30.0,
+                "confidence": first(learning_roi.get("highest_value_learning_confidence"), 55.0),
+            },
+        ]
+        for row in base_rows:
+            row["initiative_roi_score"] = rounded(
+                (
+                    to_float(row.get("expected_performance_impact"), 0.0) * 0.30
+                    + to_float(row.get("learning_impact"), 0.0) * 0.25
+                    + to_float(row.get("risk_reduction"), 0.0) * 0.20
+                    + to_float(row.get("confidence"), 0.0) * 0.15
+                    + (100.0 - to_float(row.get("development_complexity"), 100.0)) * 0.10
+                ),
+                3,
+            )
+            row["behavior_change_required"] = False
+        base_rows.sort(key=lambda row: to_float(row.get("initiative_roi_score"), 0.0), reverse=True)
+        return {
+            "module": "Autonomous Initiative ROI Engine V1",
+            "status": "ok",
+            "initiative_priority_rankings": base_rows[:10],
+            "top_10_recommended_improvements": base_rows[:10],
+            "highest_roi_remaining_improvement": (base_rows[0] if base_rows else {}).get("initiative", "warming_up"),
+            "highest_roi_score": (base_rows[0] if base_rows else {}).get("initiative_roi_score", 0.0),
+            "behavior_change_required": False,
+            **_safe_flags(),
+        }
+
+    def _autonomous_strategic_planning(
+        self,
+        research: dict[str, Any],
+        gaps: dict[str, Any],
+        initiative_roi: dict[str, Any],
+        governance_core: dict[str, Any],
+    ) -> dict[str, Any]:
+        top = initiative_roi.get("initiative_priority_rankings") or []
+        def initiative_row(name: str, purpose: str, benefit: str, status: str, remaining: str, confidence: Any, roi: Any) -> dict[str, Any]:
+            return {
+                "initiative": name,
+                "purpose": purpose,
+                "expected_benefit": benefit,
+                "current_status": status,
+                "remaining_work": remaining,
+                "confidence": rounded(confidence, 3),
+                "roi": rounded(roi, 3),
+            }
+        plan_30 = [
+            initiative_row(
+                (top[0] if top else {}).get("initiative", "ranking_bias_horizon_tie_breaker_validation"),
+                "prove whether ranking bias is still limiting horizon diversity",
+                "better horizon diversity without quotas or elite opportunity suppression",
+                "shadow_research_ready",
+                "run bounded counterfactual and ranking tournament comparisons",
+                (top[0] if top else {}).get("confidence", 50.0),
+                (top[0] if top else {}).get("initiative_roi_score", 50.0),
+            ),
+            initiative_row(
+                "knowledge_gap_research_sprint",
+                "fill weakest knowledge domain",
+                "reduce blind spots before any controlled evolution",
+                "advisory_only",
+                f"prioritize {gaps.get('weakest_knowledge_domain', 'warming_up')}",
+                65.0,
+                70.0,
+            ),
+        ]
+        plan_90 = [
+            initiative_row(
+                "shadow_to_paper_promotion_evidence_ladder",
+                "move only repeatable validated Shadow findings toward human-reviewed paper micro-tests",
+                "shorten learning loop while preserving rollback",
+                "blocked_by_governance_gates",
+                governance_core.get("why_promotions_blocked", "collect_more_evidence"),
+                58.0,
+                73.0,
+            )
+        ]
+        plan_365 = [
+            initiative_row(
+                "institutional_research_memory_compounding",
+                "preserve correction outcomes and avoid repeated investigations",
+                "faster future improvement cycles",
+                "active_advisory_foundation",
+                "continue bounded memory, replay, and research compaction",
+                62.0,
+                68.0,
+            )
+        ]
+        return {
+            "module": "Autonomous Strategic Planning V1",
+            "status": "ok",
+            "thirty_day_plan": plan_30,
+            "ninety_day_plan": plan_90,
+            "three_sixty_five_day_plan": plan_365,
+            "highest_roi_remaining_improvement": initiative_roi.get("highest_roi_remaining_improvement"),
+            "highest_risk_remaining_weakness": gaps.get("weakest_knowledge_domain"),
+            "roadmap_summary": (
+                f"Next 30 days: investigate {initiative_roi.get('highest_roi_remaining_improvement', 'ranking bias')}. "
+                f"Primary knowledge gap: {str(gaps.get('weakest_knowledge_domain', 'warming up')).replace('_', ' ')}. "
+                "All work remains advisory and shadow-only."
+            ),
+            **_safe_flags(),
+        }
+
+    def _autonomous_research_planning_ranking_intelligence(
+        self,
+        ranking_bias: dict[str, Any],
+        research: dict[str, Any],
+        gaps: dict[str, Any],
+        planning: dict[str, Any],
+        initiative_roi: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "module": "ASTRA Autonomous Research, Planning and Ranking Intelligence V1",
+            "status": "ok",
+            "ranking_bias_investigation": ranking_bias,
+            "autonomous_research_director": research,
+            "autonomous_knowledge_gap_detection": gaps,
+            "autonomous_strategic_planning": planning,
+            "autonomous_initiative_roi_engine": initiative_roi,
+            "why_horizon_concentration_still_exists": (
+                (ranking_bias.get("remaining_horizon_concentration_root_cause_ranking") or [{}])[0].get("explanation")
+            ),
+            "is_ranking_bias_true_bottleneck": (
+                (ranking_bias.get("remaining_horizon_concentration_root_cause_ranking") or [{}])[0].get("root_cause") == "Ranking Bias"
+            ),
+            "which_ranking_components_create_bias": [
+                row.get("factor") for row in (ranking_bias.get("ranking_component_bias_rows") or [])[:3]
+            ],
+            "which_horizon_is_underrepresented": ranking_bias.get("underrepresented_horizon"),
+            "what_knowledge_is_missing": gaps.get("missing_evidence_areas"),
+            "what_astra_should_research_next": research.get("highest_roi_investigation"),
+            "what_astra_should_improve_next": initiative_roi.get("highest_roi_remaining_improvement"),
+            "highest_roi_remaining_improvement": initiative_roi.get("highest_roi_remaining_improvement"),
+            "research_planning_brief": (
+                f"Astra's next research focus is {str(research.get('highest_roi_investigation', 'ranking bias')).replace('_', ' ')}. "
+                f"The underrepresented horizon is {str(ranking_bias.get('underrepresented_horizon', 'warming up')).replace('_', ' ')}. "
+                f"The highest-ROI improvement is {str(initiative_roi.get('highest_roi_remaining_improvement', 'warming up')).replace('_', ' ')}."
+            ),
+            "ranking_behavior_changed": False,
+            "automatic_promotion_enabled": False,
+            **_safe_flags(),
+        }
+
     def _learning_horizon_completion(
         self,
         statuses: dict[str, Any],
@@ -3747,6 +4154,42 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             horizon_exit_investigations,
             improvement,
         )
+        ranking_bias_investigation = self._ranking_bias_horizon_selection_correction(
+            statuses,
+            autonomous_governance_core,
+            horizon,
+            opportunity_utilization,
+            diversity_completion,
+        )
+        autonomous_research_director = self._autonomous_research_director(
+            statuses,
+            autonomous_governance_core,
+            ranking_bias_investigation,
+        )
+        autonomous_knowledge_gaps = self._autonomous_knowledge_gap_detection(
+            statuses,
+            ranking_bias_investigation,
+        )
+        autonomous_initiative_roi = self._autonomous_initiative_roi_engine(
+            statuses,
+            ranking_bias_investigation,
+            autonomous_research_director,
+            autonomous_knowledge_gaps,
+            improvement,
+        )
+        autonomous_strategic_planning = self._autonomous_strategic_planning(
+            autonomous_research_director,
+            autonomous_knowledge_gaps,
+            autonomous_initiative_roi,
+            autonomous_governance_core,
+        )
+        autonomous_research_planning_ranking = self._autonomous_research_planning_ranking_intelligence(
+            ranking_bias_investigation,
+            autonomous_research_director,
+            autonomous_knowledge_gaps,
+            autonomous_strategic_planning,
+            autonomous_initiative_roi,
+        )
         root_cause = self._root_cause_intelligence(
             inspection,
             lifecycle,
@@ -3872,6 +4315,13 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "promotion_governance_readiness_score": shadow_attribution_readiness.get("promotion_readiness_score"),
             "highest_confidence_remaining_bottleneck": autonomous_governance_core.get("highest_confidence_remaining_bottleneck"),
             "autonomous_governance_brief": autonomous_governance_core.get("governance_brief"),
+            "ranking_bias_confidence_score": ranking_bias_investigation.get("ranking_bias_confidence_score"),
+            "underrepresented_horizon": ranking_bias_investigation.get("underrepresented_horizon"),
+            "highest_roi_research_investigation": autonomous_research_director.get("highest_roi_investigation"),
+            "weakest_knowledge_domain": autonomous_knowledge_gaps.get("weakest_knowledge_domain"),
+            "strategic_roadmap_focus": autonomous_strategic_planning.get("highest_roi_remaining_improvement"),
+            "initiative_roi_next_improvement": autonomous_initiative_roi.get("highest_roi_remaining_improvement"),
+            "research_planning_brief": autonomous_research_planning_ranking.get("research_planning_brief"),
             "recommended_action": (
                 paper_completion.get("capacity_recommendation")
                 if paper_completion.get("learning_reserve_status") == "depleted"
@@ -3953,6 +4403,12 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "autonomous_executive_governance_accountability_v1": executive_governance_accountability,
             "horizon_exit_governance_investigations_v1": horizon_exit_investigations,
             "astra_autonomous_governance_core_v1": autonomous_governance_core,
+            "ranking_bias_horizon_selection_correction_v1": ranking_bias_investigation,
+            "autonomous_research_director_v1": autonomous_research_director,
+            "autonomous_knowledge_gap_detection_v1": autonomous_knowledge_gaps,
+            "autonomous_strategic_planning_v1": autonomous_strategic_planning,
+            "autonomous_initiative_roi_engine_v1": autonomous_initiative_roi,
+            "astra_autonomous_research_planning_ranking_intelligence_v1": autonomous_research_planning_ranking,
             "autonomous_daily_executive_brief_v1": daily_brief,
             "autonomous_intelligence_behavior_verification_v1": autonomous_behavior_tests,
             "behavior_verification_core_completion_v1": behavior_verification,
@@ -3966,6 +4422,7 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
                 "exit_decision_intelligence": exit_review,
                 "trading_brain_completion": trading_brain_completion,
                 "autonomous_governance_core": autonomous_governance_core,
+                "autonomous_research_planning_ranking_intelligence": autonomous_research_planning_ranking,
                 "shadow_feedback_routing": shadow_feedback,
                 "daily_executive_brief": daily_brief,
                 "behavior_verification": autonomous_behavior_tests,
