@@ -3351,6 +3351,322 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             **_safe_flags(),
         }
 
+    def _ranking_bias_horizon_tie_breaker_validation(
+        self,
+        statuses: dict[str, Any],
+        ranking_bias: dict[str, Any],
+        horizon: dict[str, Any],
+        opportunity_utilization: dict[str, Any],
+    ) -> dict[str, Any]:
+        ranking = status_value(statuses, "candidate_ranking_attribution_promotion_intelligence_v1")
+        shadow_vs_paper = status_value(statuses, "shadow_vs_paper_performance_attribution_v1")
+        profit = status_value(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
+        tournament = status_value(statuses, "ranking_tournament_engine_v1")
+        underrepresented = text(ranking_bias.get("underrepresented_horizon"), "unknown")
+        candidates = list(opportunity_utilization.get("horizon_diversity_opportunities_available") or [])
+        comparable_candidates = [
+            row for row in candidates
+            if text(row.get("horizon"), "") == underrepresented
+            and to_float(row.get("confidence"), row.get("quality_confidence", 0.0)) >= 60.0
+        ]
+        evidence_count = max(
+            to_int(ranking.get("evidence_count"), 0),
+            to_int(shadow_vs_paper.get("canonical_closed_trade_count"), 0),
+            to_int(shadow_vs_paper.get("paper_trade_count"), 0),
+            to_int(tournament.get("tournament_count"), 0),
+        )
+        completed_shadow = max(
+            to_int(shadow_vs_paper.get("shadow_completed_lifecycle_count"), 0),
+            to_int(shadow_vs_paper.get("shadow_trade_count"), 0),
+        )
+        loss_bearing = bool(
+            to_float(first(shadow_vs_paper.get("paper_gross_loss"), shadow_vs_paper.get("shadow_gross_loss"), 0.0), 0.0) > 0
+        )
+        sufficient_performance_evidence = bool(evidence_count >= 50 and completed_shadow >= 25 and loss_bearing)
+        baseline = {
+            "profit_factor": first(shadow_vs_paper.get("paper_profit_factor_verified"), shadow_vs_paper.get("paper_profit_factor"), "insufficient_evidence"),
+            "win_rate": first(shadow_vs_paper.get("paper_win_rate"), "insufficient_evidence"),
+            "average_return": first(shadow_vs_paper.get("paper_avg_return"), "insufficient_evidence"),
+            "exit_quality": first(shadow_vs_paper.get("paper_exit_quality"), profit.get("current_policy_exit_quality"), "insufficient_evidence"),
+            "profit_capture": first(shadow_vs_paper.get("paper_profit_capture"), profit.get("current_policy_capture_ratio"), "insufficient_evidence"),
+            "drawdown": first(shadow_vs_paper.get("paper_drawdown"), "insufficient_evidence"),
+            "opportunity_cost": first(ranking.get("opportunity_ranking_gap"), "insufficient_evidence"),
+            "horizon_diversity": horizon.get("horizon_diversity_score"),
+            "learning_diversity": horizon.get("horizon_learning_contribution"),
+        }
+        diversity_gain = clamp(
+            len(comparable_candidates) * 8.0
+            + max(0.0, 70.0 - to_float(horizon.get("horizon_diversity_score"), 0.0)) * 0.22
+            + (12.0 if underrepresented in {"scalp", "day_trade", "multi_day"} else 0.0)
+        )
+        bias_reduction = clamp(
+            to_float(ranking_bias.get("ranking_bias_confidence_score"), 0.0) * 0.35
+            + max(0.0, to_float(tournament.get("average_ranking_regret"), 0.0)) * 0.45
+            + diversity_gain * 0.20
+        )
+        tie_breaker = {
+            "profit_factor": "not_proven_until_closed_shadow_and_paper_comparison" if not sufficient_performance_evidence else first(shadow_vs_paper.get("shadow_profit_factor_verified"), shadow_vs_paper.get("shadow_profit_factor")),
+            "win_rate": "not_proven_until_closed_shadow_and_paper_comparison" if not sufficient_performance_evidence else shadow_vs_paper.get("shadow_win_rate"),
+            "average_return": "not_proven_until_closed_shadow_and_paper_comparison" if not sufficient_performance_evidence else shadow_vs_paper.get("shadow_avg_return"),
+            "exit_quality": "not_proven_until_closed_shadow_and_paper_comparison" if not sufficient_performance_evidence else shadow_vs_paper.get("shadow_exit_quality"),
+            "profit_capture": "not_proven_until_closed_shadow_and_paper_comparison" if not sufficient_performance_evidence else shadow_vs_paper.get("shadow_profit_capture"),
+            "drawdown": "not_proven_until_closed_shadow_and_paper_comparison" if not sufficient_performance_evidence else shadow_vs_paper.get("shadow_drawdown"),
+            "opportunity_cost": rounded(max(0.0, to_float(ranking.get("opportunity_ranking_gap"), 0.0) - diversity_gain * 0.08), 3),
+            "horizon_diversity": rounded(clamp(to_float(horizon.get("horizon_diversity_score"), 0.0) + diversity_gain), 3),
+            "learning_diversity": f"projected_boost_for_{underrepresented}_only_when_candidates_are_score_similar",
+        }
+        performance_comparison = []
+        lower_is_better = {"drawdown", "opportunity_cost"}
+        for metric in ("profit_factor", "win_rate", "average_return", "exit_quality", "profit_capture", "drawdown", "opportunity_cost", "horizon_diversity"):
+            base = baseline.get(metric)
+            alt = tie_breaker.get(metric)
+            if isinstance(base, (int, float)) and isinstance(alt, (int, float)):
+                delta = rounded(to_float(alt) - to_float(base), 4)
+                if metric in lower_is_better:
+                    verdict = "improves" if delta < 0 else "harms" if delta > 0 else "maintains"
+                else:
+                    verdict = "improves" if delta > 0 else "harms" if delta < 0 else "maintains"
+            else:
+                delta = None
+                verdict = "insufficient_evidence"
+            performance_comparison.append({
+                "metric": metric,
+                "baseline": base,
+                "tie_breaker": alt,
+                "delta": delta,
+                "verdict": verdict,
+            })
+        missing = []
+        if not comparable_candidates:
+            missing.append("score_similar_underrepresented_horizon_candidates")
+        if evidence_count < 50:
+            missing.append("minimum_50_closed_or_ranked_validation_events")
+        if completed_shadow < 25:
+            missing.append("minimum_25_completed_shadow_lifecycles")
+        if not loss_bearing:
+            missing.append("loss_bearing_sample_for_profit_factor_and_drawdown")
+        if not sufficient_performance_evidence:
+            missing.append("baseline_vs_tie_breaker_closed_outcome_comparison")
+        effectiveness = clamp(diversity_gain * 0.42 + bias_reduction * 0.38 + (20.0 if not missing else 0.0))
+        status = "shadow_validated" if effectiveness >= 70 and not missing else "continue_collecting_evidence" if effectiveness >= 45 else "insufficient_evidence"
+        return {
+            "module": "Ranking Bias Horizon Tie-Breaker Validation V1",
+            "status": status,
+            "shadow_only_validation": True,
+            "baseline_ranking": baseline,
+            "horizon_tie_breaker_ranking": tie_breaker,
+            "performance_comparison": performance_comparison,
+            "tie_breaker_effectiveness_score": rounded(effectiveness, 3),
+            "ranking_bias_reduction_score": rounded(bias_reduction, 3),
+            "horizon_diversity_projected_delta": rounded(diversity_gain, 3),
+            "does_tie_breaker_improve_diversity": bool(diversity_gain > 0 and comparable_candidates),
+            "does_tie_breaker_improve_performance": "insufficient_evidence" if not sufficient_performance_evidence else any(row.get("verdict") == "improves" for row in performance_comparison[:6]),
+            "does_tie_breaker_harm_performance": "insufficient_evidence" if not sufficient_performance_evidence else any(row.get("verdict") == "harms" for row in performance_comparison[:6]),
+            "statistically_similar_candidate_rule": "only_when_ranking_confidence_and_opportunity_quality_are_similar",
+            "underrepresented_horizon": underrepresented,
+            "comparable_underrepresented_candidates": comparable_candidates[:5],
+            "evidence_count": evidence_count,
+            "completed_shadow_lifecycles": completed_shadow,
+            "sufficient_performance_evidence": sufficient_performance_evidence,
+            "missing_evidence": missing,
+            "persistence_window_remaining": "minimum_persistence_window" if missing else "none",
+            "validation_required": [
+                "closed_shadow_outcomes_for_tie_breaker_paths",
+                "paper_baseline_outcomes_over_same_window",
+                "loss_bearing_sample",
+                "repeatability_across_market_regimes",
+            ],
+            "future_paper_micro_test_deserved": bool(status == "shadow_validated"),
+            "micro_test_recommendation": "not_ready_continue_shadow_validation" if status != "shadow_validated" else "ready_for_human_reviewed_paper_micro_test_candidate",
+            "hard_horizon_quotas_enabled": False,
+            "forced_day_trades_enabled": False,
+            "elite_opportunity_suppression_enabled": False,
+            **_safe_flags(),
+        }
+
+    def _autonomous_improvement_program_manager(
+        self,
+        governance_core: dict[str, Any],
+        ranking_bias: dict[str, Any],
+        tie_breaker: dict[str, Any],
+        initiative_roi: dict[str, Any],
+    ) -> dict[str, Any]:
+        rows = []
+        for row in (governance_core.get("correction_validation") or {}).get("correction_validation_rows") or []:
+            if not isinstance(row, dict):
+                continue
+            rows.append({
+                "correction": row.get("correction"),
+                "goal": row.get("expected_outcome"),
+                "expected_benefit": row.get("expected_outcome"),
+                "actual_benefit": row.get("actual_improvement"),
+                "confidence": row.get("confidence_score"),
+                "status": {
+                    "Successful": "Working",
+                    "Partially Successful": "Partially Working",
+                    "Inconclusive": "Needs Investigation",
+                    "Failed": "Failed",
+                }.get(row.get("classification"), "Needs Investigation"),
+                "remaining_work": row.get("remaining_unresolved"),
+            })
+        rows.append({
+            "correction": "Ranking Bias Validation",
+            "goal": "prove whether horizon-aware tie-breakers reduce concentration without hurting performance",
+            "expected_benefit": "higher horizon diversity with stable PF/win-rate/returns",
+            "actual_benefit": tie_breaker.get("tie_breaker_effectiveness_score"),
+            "confidence": ranking_bias.get("ranking_bias_confidence_score"),
+            "status": "Needs Investigation" if tie_breaker.get("missing_evidence") else "Promotion Candidate",
+            "remaining_work": tie_breaker.get("missing_evidence"),
+        })
+        most = max(
+            rows,
+            key=lambda item: (
+                1 if item.get("actual_benefit") is not None else 0,
+                to_float(item.get("actual_benefit"), 0.0),
+                to_float(item.get("confidence"), 0.0),
+            ),
+            default={},
+        )
+        least = min(rows, key=lambda item: to_float(item.get("confidence"), 100.0), default={})
+        return {
+            "module": "Autonomous Improvement Program Manager V1",
+            "status": "ok",
+            "corrections_tracked": len(rows),
+            "correction_program_rows": rows,
+            "most_successful_correction": most,
+            "least_successful_correction": least,
+            "highest_roi_remaining_improvement": initiative_roi.get("highest_roi_remaining_improvement"),
+            "program_manager_summary": (
+                f"Most measurable correction: {most.get('correction', 'warming up')}; "
+                f"least measurable correction: {least.get('correction', 'warming up')}."
+            ),
+            **_safe_flags(),
+        }
+
+    def _controlled_self_promotion_readiness_engine(
+        self,
+        tie_breaker: dict[str, Any],
+        shadow_attr: dict[str, Any],
+        governance_core: dict[str, Any],
+    ) -> dict[str, Any]:
+        blockers = list(tie_breaker.get("missing_evidence") or [])
+        if governance_core.get("why_promotions_blocked"):
+            blockers.append(governance_core.get("why_promotions_blocked"))
+        readiness_score = rounded(
+            clamp(
+                to_float(tie_breaker.get("tie_breaker_effectiveness_score"), 0.0) * 0.35
+                + to_float(tie_breaker.get("ranking_bias_reduction_score"), 0.0) * 0.25
+                + to_float(shadow_attr.get("shadow_readiness_score"), 0.0) * 0.20
+                + to_float(shadow_attr.get("promotion_readiness_score"), 0.0) * 0.20
+                - len(blockers) * 4.0
+            ),
+            3,
+        )
+        if blockers:
+            status = "Continue Collecting Evidence" if readiness_score >= 45 else "Not Ready"
+        elif readiness_score >= 80:
+            status = "Ready For Paper Micro-Test"
+        elif readiness_score >= 65:
+            status = "Shadow Validated"
+        else:
+            status = "Continue Collecting Evidence"
+        return {
+            "module": "Controlled Self-Promotion Readiness Engine V1",
+            "status": status,
+            "promotion_readiness_score": readiness_score,
+            "persistence": "insufficient" if blockers else "sufficient",
+            "statistical_confidence": tie_breaker.get("sufficient_performance_evidence"),
+            "replay_validation": "required",
+            "shadow_validation": tie_breaker.get("status"),
+            "governance_approval": "human_review_required",
+            "promotion_blockers": blockers,
+            "paper_micro_test_ready": bool(status == "Ready For Paper Micro-Test"),
+            "automatic_promotion_enabled": False,
+            **_safe_flags(),
+        }
+
+    def _autonomous_executive_briefing(
+        self,
+        governance_core: dict[str, Any],
+        research_planning: dict[str, Any],
+        tie_breaker: dict[str, Any],
+        program: dict[str, Any],
+        promotion: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "module": "Autonomous Executive Briefing V1",
+            "status": "ok",
+            "daily_brief": {
+                "biggest_risk": governance_core.get("highest_confidence_remaining_bottleneck"),
+                "biggest_opportunity": research_planning.get("what_astra_should_research_next"),
+                "biggest_weakness": research_planning.get("what_knowledge_is_missing"),
+                "biggest_improvement": (program.get("most_successful_correction") or {}).get("correction"),
+                "highest_roi_action": research_planning.get("highest_roi_remaining_improvement"),
+            },
+            "weekly_brief": {
+                "improvements": (program.get("most_successful_correction") or {}).get("correction"),
+                "failures": (program.get("least_successful_correction") or {}).get("correction"),
+                "learning_progress": tie_breaker.get("status"),
+                "promotion_candidates": promotion.get("status"),
+            },
+            "monthly_brief": {
+                "correction_effectiveness": program.get("program_manager_summary"),
+                "research_results": research_planning.get("research_planning_brief"),
+                "roadmap_status": (research_planning.get("autonomous_strategic_planning") or {}).get("roadmap_summary"),
+                "remaining_bottlenecks": governance_core.get("highest_confidence_remaining_bottleneck"),
+            },
+            "executive_brief_summary": (
+                f"Ranking tie-breaker validation is {str(tie_breaker.get('status', 'warming up')).replace('_', ' ')}. "
+                f"Promotion readiness is {promotion.get('status', 'warming up')}. "
+                f"Highest ROI action is {research_planning.get('highest_roi_remaining_improvement', 'warming up')}."
+            ),
+            **_safe_flags(),
+        }
+
+    def _controlled_ranking_evolution_executive_layer(
+        self,
+        ranking_bias: dict[str, Any],
+        tie_breaker: dict[str, Any],
+        program: dict[str, Any],
+        executive: dict[str, Any],
+        promotion: dict[str, Any],
+        research_planning: dict[str, Any],
+    ) -> dict[str, Any]:
+        root = (ranking_bias.get("remaining_horizon_concentration_root_cause_ranking") or [{}])[0]
+        return {
+            "module": "ASTRA Controlled Ranking Evolution and Autonomous Executive Layer V1",
+            "status": "ok",
+            "ranking_bias_horizon_tie_breaker_validation_v1": tie_breaker,
+            "autonomous_improvement_program_manager_v1": program,
+            "autonomous_executive_briefing_v1": executive,
+            "controlled_self_promotion_readiness_engine_v1": promotion,
+            "executive_intelligence_dashboard_layer": {
+                "current_bottlenecks": root,
+                "current_research": research_planning.get("what_astra_should_research_next"),
+                "current_promotion_candidates": promotion.get("status"),
+                "current_roadmap_status": (research_planning.get("autonomous_strategic_planning") or {}).get("roadmap_summary"),
+                "highest_roi_improvements": research_planning.get("highest_roi_remaining_improvement"),
+                "most_successful_corrections": program.get("most_successful_correction"),
+                "least_successful_corrections": program.get("least_successful_correction"),
+            },
+            "did_ranking_bias_cause_horizon_concentration": root.get("root_cause") == "Ranking Bias",
+            "did_tie_breaker_improve_diversity": tie_breaker.get("does_tie_breaker_improve_diversity"),
+            "did_tie_breaker_improve_or_harm_performance": {
+                row.get("metric"): row.get("verdict")
+                for row in tie_breaker.get("performance_comparison") or []
+            },
+            "future_paper_micro_test_readiness": promotion.get("status"),
+            "most_successful_correction": program.get("most_successful_correction"),
+            "least_successful_correction": program.get("least_successful_correction"),
+            "highest_roi_remaining_improvement": research_planning.get("highest_roi_remaining_improvement"),
+            "remaining_unknowns": tie_breaker.get("missing_evidence"),
+            "controlled_ranking_evolution_summary": executive.get("executive_brief_summary"),
+            "ranking_behavior_changed": False,
+            "paper_behavior_changed": False,
+            "automatic_promotion_enabled": False,
+            **_safe_flags(),
+        }
+
     def _learning_horizon_completion(
         self,
         statuses: dict[str, Any],
@@ -4190,6 +4506,38 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             autonomous_strategic_planning,
             autonomous_initiative_roi,
         )
+        tie_breaker_validation = self._ranking_bias_horizon_tie_breaker_validation(
+            statuses,
+            ranking_bias_investigation,
+            horizon,
+            opportunity_utilization,
+        )
+        improvement_program_manager = self._autonomous_improvement_program_manager(
+            autonomous_governance_core,
+            ranking_bias_investigation,
+            tie_breaker_validation,
+            autonomous_initiative_roi,
+        )
+        self_promotion_readiness = self._controlled_self_promotion_readiness_engine(
+            tie_breaker_validation,
+            shadow_attribution_readiness,
+            autonomous_governance_core,
+        )
+        executive_briefing = self._autonomous_executive_briefing(
+            autonomous_governance_core,
+            autonomous_research_planning_ranking,
+            tie_breaker_validation,
+            improvement_program_manager,
+            self_promotion_readiness,
+        )
+        controlled_ranking_evolution = self._controlled_ranking_evolution_executive_layer(
+            ranking_bias_investigation,
+            tie_breaker_validation,
+            improvement_program_manager,
+            executive_briefing,
+            self_promotion_readiness,
+            autonomous_research_planning_ranking,
+        )
         root_cause = self._root_cause_intelligence(
             inspection,
             lifecycle,
@@ -4322,6 +4670,13 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "strategic_roadmap_focus": autonomous_strategic_planning.get("highest_roi_remaining_improvement"),
             "initiative_roi_next_improvement": autonomous_initiative_roi.get("highest_roi_remaining_improvement"),
             "research_planning_brief": autonomous_research_planning_ranking.get("research_planning_brief"),
+            "tie_breaker_effectiveness_score": tie_breaker_validation.get("tie_breaker_effectiveness_score"),
+            "ranking_bias_reduction_score": tie_breaker_validation.get("ranking_bias_reduction_score"),
+            "tie_breaker_validation_status": tie_breaker_validation.get("status"),
+            "self_promotion_readiness": self_promotion_readiness.get("status"),
+            "most_successful_correction": (improvement_program_manager.get("most_successful_correction") or {}).get("correction"),
+            "least_successful_correction": (improvement_program_manager.get("least_successful_correction") or {}).get("correction"),
+            "executive_briefing_summary": executive_briefing.get("executive_brief_summary"),
             "recommended_action": (
                 paper_completion.get("capacity_recommendation")
                 if paper_completion.get("learning_reserve_status") == "depleted"
@@ -4409,6 +4764,11 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "autonomous_strategic_planning_v1": autonomous_strategic_planning,
             "autonomous_initiative_roi_engine_v1": autonomous_initiative_roi,
             "astra_autonomous_research_planning_ranking_intelligence_v1": autonomous_research_planning_ranking,
+            "ranking_bias_horizon_tie_breaker_validation_v1": tie_breaker_validation,
+            "autonomous_improvement_program_manager_v1": improvement_program_manager,
+            "controlled_self_promotion_readiness_engine_v1": self_promotion_readiness,
+            "autonomous_executive_briefing_v1": executive_briefing,
+            "astra_controlled_ranking_evolution_executive_layer_v1": controlled_ranking_evolution,
             "autonomous_daily_executive_brief_v1": daily_brief,
             "autonomous_intelligence_behavior_verification_v1": autonomous_behavior_tests,
             "behavior_verification_core_completion_v1": behavior_verification,
@@ -4423,6 +4783,7 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
                 "trading_brain_completion": trading_brain_completion,
                 "autonomous_governance_core": autonomous_governance_core,
                 "autonomous_research_planning_ranking_intelligence": autonomous_research_planning_ranking,
+                "controlled_ranking_evolution_executive_layer": controlled_ranking_evolution,
                 "shadow_feedback_routing": shadow_feedback,
                 "daily_executive_brief": daily_brief,
                 "behavior_verification": autonomous_behavior_tests,

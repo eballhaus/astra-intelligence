@@ -1642,6 +1642,7 @@ export default function LearningTab({ compact = false }) {
   const astraTradingBrainCompletion = unified?.astra_trading_brain_completion_v1 || astraAdaptiveOccupancyEvolutionSuite?.astra_trading_brain_completion_v1 || {};
   const astraAutonomousGovernanceCore = unified?.astra_autonomous_governance_core_v1 || astraAdaptiveOccupancyEvolutionSuite?.astra_autonomous_governance_core_v1 || {};
   const astraAutonomousResearchPlanningRanking = unified?.astra_autonomous_research_planning_ranking_intelligence_v1 || astraAdaptiveOccupancyEvolutionSuite?.astra_autonomous_research_planning_ranking_intelligence_v1 || {};
+  const astraControlledRankingEvolution = unified?.astra_controlled_ranking_evolution_executive_layer_v1 || astraAdaptiveOccupancyEvolutionSuite?.astra_controlled_ranking_evolution_executive_layer_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -4403,6 +4404,57 @@ export default function LearningTab({ compact = false }) {
             This section is investigation, planning, attribution, and prioritization only. It does not alter candidate generation, ranking scores, promotions, entries, exits, sizing, allocation, or thresholds.
           </div>
         </details>
+        <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
+          <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
+            Controlled Ranking Evolution & Executive Layer: {String(astraControlledRankingEvolution?.status || "warming up").replaceAll("_", " ")}
+          </summary>
+          <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+            Shadow-only validation of whether a horizon-aware tie-breaker reduces ranking bias without harming performance.
+          </div>
+          {astraControlledRankingEvolution?.controlled_ranking_evolution_summary ? (
+            <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, border: "1px solid #34577f", background: "rgba(6,28,52,0.72)", color: "#dce9fb", fontSize: 12, lineHeight: 1.55 }}>
+              {astraControlledRankingEvolution.controlled_ranking_evolution_summary}
+            </div>
+          ) : null}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+            {[
+              ["Ranking Bias Caused Concentration", astraControlledRankingEvolution?.did_ranking_bias_cause_horizon_concentration ? "yes" : "not proven"],
+              ["Tie-Breaker Improves Diversity", astraControlledRankingEvolution?.did_tie_breaker_improve_diversity ? "yes" : "not proven"],
+              ["Tie-Breaker Effectiveness", safeNumber(astraControlledRankingEvolution?.ranking_bias_horizon_tie_breaker_validation_v1?.tie_breaker_effectiveness_score).toFixed(1)],
+              ["Bias Reduction", safeNumber(astraControlledRankingEvolution?.ranking_bias_horizon_tie_breaker_validation_v1?.ranking_bias_reduction_score).toFixed(1)],
+              ["Paper Micro-Test Readiness", astraControlledRankingEvolution?.future_paper_micro_test_readiness],
+              ["Most Successful Correction", astraControlledRankingEvolution?.most_successful_correction?.correction],
+              ["Least Successful Correction", astraControlledRankingEvolution?.least_successful_correction?.correction],
+              ["Highest ROI Remaining", astraControlledRankingEvolution?.highest_roi_remaining_improvement],
+            ].map(([label, value]) => (
+              <div key={label} style={{ background: "rgba(12,24,42,0.46)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+                <strong style={{ color: "#f2f7ff" }}>{String(value ?? "warming up").replaceAll("_", " ")}</strong>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+            {[
+              ["Ranking Bias Validation", astraControlledRankingEvolution?.ranking_bias_horizon_tie_breaker_validation_v1],
+              ["Improvement Program Manager", astraControlledRankingEvolution?.autonomous_improvement_program_manager_v1],
+              ["Executive Briefing", astraControlledRankingEvolution?.autonomous_executive_briefing_v1],
+              ["Promotion Readiness", astraControlledRankingEvolution?.controlled_self_promotion_readiness_engine_v1],
+              ["Executive Intelligence", astraControlledRankingEvolution?.executive_intelligence_dashboard_layer],
+            ].map(([label, row]) => (
+              <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
+                <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+                  {label}: {String(row?.status || "warming up").replaceAll("_", " ")}
+                </summary>
+                <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
+                  {JSON.stringify(row || {}, null, 2)}
+                </pre>
+              </details>
+            ))}
+          </div>
+          <div style={{ marginTop: 10, color: "#dce9fb", fontSize: 12, lineHeight: 1.55 }}>
+            Missing evidence: {(astraControlledRankingEvolution?.remaining_unknowns || []).join(", ") || "none reported"}. This remains shadow-only and does not alter ranking, entries, exits, sizing, allocations, thresholds, broker behavior, or Paper execution.
+          </div>
+        </details>
         <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
           {[
             ["Learning Continuity", "learning_continuity_engine_v1"],
@@ -4456,6 +4508,11 @@ export default function LearningTab({ compact = false }) {
             ["Autonomous Strategic Planning", "autonomous_strategic_planning_v1"],
             ["Autonomous Initiative ROI", "autonomous_initiative_roi_engine_v1"],
             ["Autonomous Research Planning Ranking", "astra_autonomous_research_planning_ranking_intelligence_v1"],
+            ["Ranking Bias Tie-Breaker Validation", "ranking_bias_horizon_tie_breaker_validation_v1"],
+            ["Autonomous Improvement Program Manager", "autonomous_improvement_program_manager_v1"],
+            ["Controlled Self-Promotion Readiness", "controlled_self_promotion_readiness_engine_v1"],
+            ["Autonomous Executive Briefing", "autonomous_executive_briefing_v1"],
+            ["Controlled Ranking Evolution Executive Layer", "astra_controlled_ranking_evolution_executive_layer_v1"],
             ["Autonomous Daily Brief", "autonomous_daily_executive_brief_v1"],
             ["Autonomous Intelligence Verification", "autonomous_intelligence_behavior_verification_v1"],
             ["Behavior Verification", "behavior_verification_core_completion_v1"],

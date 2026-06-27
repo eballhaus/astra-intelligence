@@ -44039,6 +44039,16 @@ def astra_autonomous_research_planning_ranking_intelligence_v1(force: bool = Fal
     return dict((suite or {}).get("astra_autonomous_research_planning_ranking_intelligence_v1") or {})
 
 
+@router.get("/api/astra_controlled_ranking_evolution_executive_layer_v1")
+def astra_controlled_ranking_evolution_executive_layer_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_controlled_ranking_evolution_executive_layer_v1") or {})
+    if cached_payload:
+        return cached_payload
+    suite = astra_adaptive_occupancy_evolution_suite_v1(force=force)
+    return dict((suite or {}).get("astra_controlled_ranking_evolution_executive_layer_v1") or {})
+
+
 @router.post("/api/ask_astra_v1")
 def ask_astra_v1(payload: dict = Body(...)):
     data = payload if isinstance(payload, dict) else {}
@@ -44101,6 +44111,10 @@ def ask_astra_v1(payload: dict = Body(...)):
         occupancy_evolution.get("astra_autonomous_research_planning_ranking_intelligence_v1") or {}
     )
     ask_context_seed["astra_autonomous_research_planning_ranking_intelligence_v1"] = autonomous_research_planning
+    controlled_ranking_evolution = dict(
+        occupancy_evolution.get("astra_controlled_ranking_evolution_executive_layer_v1") or {}
+    )
+    ask_context_seed["astra_controlled_ranking_evolution_executive_layer_v1"] = controlled_ranking_evolution
     ask_context_seed["astra_autonomous_intelligence_maturation_v1"] = dict(
         occupancy_evolution.get("astra_autonomous_intelligence_maturation_v1") or {}
     )
@@ -44263,6 +44277,17 @@ def ask_astra_v1(payload: dict = Body(...)):
             "what_astra_should_improve_next": autonomous_research_planning.get("what_astra_should_improve_next"),
             "highest_roi_remaining_improvement": autonomous_research_planning.get("highest_roi_remaining_improvement"),
         },
+        "controlled_ranking_evolution": {
+            "summary": controlled_ranking_evolution.get("controlled_ranking_evolution_summary"),
+            "did_ranking_bias_cause_horizon_concentration": controlled_ranking_evolution.get("did_ranking_bias_cause_horizon_concentration"),
+            "did_tie_breaker_improve_diversity": controlled_ranking_evolution.get("did_tie_breaker_improve_diversity"),
+            "did_tie_breaker_improve_or_harm_performance": controlled_ranking_evolution.get("did_tie_breaker_improve_or_harm_performance"),
+            "future_paper_micro_test_readiness": controlled_ranking_evolution.get("future_paper_micro_test_readiness"),
+            "most_successful_correction": controlled_ranking_evolution.get("most_successful_correction"),
+            "least_successful_correction": controlled_ranking_evolution.get("least_successful_correction"),
+            "highest_roi_remaining_improvement": controlled_ranking_evolution.get("highest_roi_remaining_improvement"),
+            "remaining_unknowns": controlled_ranking_evolution.get("remaining_unknowns"),
+        },
         "autonomous_intelligence": occupancy_evolution.get("astra_autonomous_intelligence_v1") or {},
         "trading_brain_completion": {
             "summary": trading_brain_completion.get("trading_brain_completion_summary"),
@@ -44321,6 +44346,10 @@ def ask_astra_v1(payload: dict = Body(...)):
             "knowledge_gaps",
             "strategic_roadmap",
             "initiative_roi",
+            "is_tie_breaker_helping",
+            "ranking_bias_improving",
+            "which_correction_delivered_value",
+            "which_improvements_ready_for_paper",
             "biggest_opportunity",
             "today_market_explanation",
         ],
@@ -44358,6 +44387,32 @@ def ask_astra_v1(payload: dict = Body(...)):
         first = (compressed_context.get("copilot_actions") or [{}])[0] if isinstance(compressed_context.get("copilot_actions"), list) else {}
         q_lc = question.lower()
         if (
+            "tie-breaker" in q_lc
+            or "tie breaker" in q_lc
+            or "is ranking bias improving" in q_lc
+            or "ranking bias improving" in q_lc
+            or "which correction has delivered" in q_lc
+            or "most value" in q_lc
+            or "improvements worked" in q_lc
+            or "improvements failed" in q_lc
+            or "ready for paper testing" in q_lc
+            or "ready for paper" in q_lc
+            or "micro-test" in q_lc and "ranking" in q_lc
+        ):
+            tie = controlled_ranking_evolution.get("ranking_bias_horizon_tie_breaker_validation_v1") or {}
+            promotion = controlled_ranking_evolution.get("controlled_self_promotion_readiness_engine_v1") or {}
+            fast_short = (
+                f"{controlled_ranking_evolution.get('controlled_ranking_evolution_summary') or 'Controlled ranking evolution is warming up.'} "
+                f"Ranking bias caused horizon concentration: {controlled_ranking_evolution.get('did_ranking_bias_cause_horizon_concentration')}. "
+                f"Tie-breaker diversity effect: {controlled_ranking_evolution.get('did_tie_breaker_improve_diversity')}; "
+                f"performance proof: {controlled_ranking_evolution.get('did_tie_breaker_improve_or_harm_performance')}. "
+                f"Effectiveness score: {tie.get('tie_breaker_effectiveness_score', 'n/a')}; "
+                f"bias reduction score: {tie.get('ranking_bias_reduction_score', 'n/a')}. "
+                f"Paper readiness: {promotion.get('status', controlled_ranking_evolution.get('future_paper_micro_test_readiness', 'n/a'))}. "
+                f"Missing evidence: {', '.join(tie.get('missing_evidence') or controlled_ranking_evolution.get('remaining_unknowns') or ['none'])}. "
+                "No ranking or Paper behavior changed."
+            )
+        elif (
             "governance brief" in q_lc
             or "fixes worked" in q_lc
             or "fixes failed" in q_lc
@@ -56130,6 +56185,9 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_autonomous_research_planning_ranking_intelligence_v1"] = dict(
                 tier4.get("astra_autonomous_research_planning_ranking_intelligence_v1") or {}
             )
+            out["astra_controlled_ranking_evolution_executive_layer_v1"] = dict(
+                tier4.get("astra_controlled_ranking_evolution_executive_layer_v1") or {}
+            )
             out["astra_paper_learning_capacity_correction_v1"] = dict(tier4.get("paper_learning_capacity_correction_v1") or {})
             trading_brain_completion = dict(
                 tier4.get("astra_trading_brain_completion_v1")
@@ -56154,6 +56212,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 "shadow_paper_feedback_connection_v1": dict(tier4.get("shadow_paper_feedback_connection_v1") or {}),
                 "autonomous_governance_core_v1": dict(tier4.get("astra_autonomous_governance_core_v1") or {}),
                 "autonomous_research_planning_ranking_intelligence_v1": dict(tier4.get("astra_autonomous_research_planning_ranking_intelligence_v1") or {}),
+                "controlled_ranking_evolution_executive_layer_v1": dict(tier4.get("astra_controlled_ranking_evolution_executive_layer_v1") or {}),
                 "behavior_verification": dict(tier4.get("trading_intelligence_completion_behavior_verification_v1") or {}),
                 "trading_brain_completion_enabled": trading_brain_completion.get("trading_brain_completion_enabled"),
                 "behavior_safe_to_apply": False,
