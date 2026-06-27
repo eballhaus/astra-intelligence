@@ -544,6 +544,9 @@ class AstraAutonomousOptimizationGovernanceCoreV1(CachedDiagnosticModule):
         compression = self._compression_summary(inventory, state, statuses)
         promotion = self._promotion_oversight(statuses)
         dependency = self._dependency_map(statuses, conflicts)
+        storage_cache = status_value(statuses, "astra_storage_cache_attribution_learning_efficiency_v1")
+        profit_capture_summary = dict(storage_cache.get("profit_capture_summary_validation_wiring_v1") or {})
+        ranking_attribution_summary = dict(storage_cache.get("ranking_attribution_summary_validation_wiring_v1") or {})
 
         active = [row for row in inventory if row.get("active")]
         healthy = [row for row in inventory if row.get("status") == "healthy"]
@@ -595,6 +598,11 @@ class AstraAutonomousOptimizationGovernanceCoreV1(CachedDiagnosticModule):
                 "top_redundancy_findings": duplicate_rows[:5],
             },
             "resource_allocation_summary": resource,
+            "storage_cache_attribution_learning_efficiency_v1": storage_cache,
+            "storage_architecture_summary": storage_cache.get("storage_architecture_governance_v1") or {},
+            "smart_cache_freshness_summary": storage_cache.get("smart_cache_freshness_trust_v1") or {},
+            "profit_capture_summary_validation_wiring_v1": profit_capture_summary,
+            "ranking_attribution_summary_validation_wiring_v1": ranking_attribution_summary,
             "api_governance_summary": api,
             "information_compression_summary": compression,
             "promotion_readiness_oversight": promotion,

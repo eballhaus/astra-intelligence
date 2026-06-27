@@ -136,15 +136,42 @@ class AstraAutonomousImprovementPerformanceAttributionCompletionV1(CachedDiagnos
         }
 
     def _ranking_attribution(self, statuses: dict[str, Any]) -> dict[str, Any]:
+        storage_suite = status_value(statuses, "astra_storage_cache_attribution_learning_efficiency_v1")
+        wired = storage_suite.get("ranking_attribution_summary_validation_wiring_v1") or {}
+        if isinstance(wired, dict) and wired.get("wiring_status"):
+            return dict(wired)
         ranking = status_value(statuses, "candidate_ranking_attribution_promotion_intelligence_v1")
         controlled = status_value(statuses, "astra_controlled_ranking_evolution_executive_layer_v1")
         evidence = to_int(ranking.get("evidence_count"), 0)
         quality = rounded(first(ranking.get("ranking_quality_score"), ranking.get("attribution_quality"), 0.0), 3)
-        confidence = rounded(first(ranking.get("confidence_score"), controlled.get("ranking_bias_horizon_tie_breaker_validation_v1", {}).get("confidence_score") if isinstance(controlled.get("ranking_bias_horizon_tie_breaker_validation_v1"), dict) else 0.0), 3)
+        confidence = rounded(first(ranking.get("ranking_confidence_score"), ranking.get("confidence_score"), controlled.get("ranking_bias_horizon_tie_breaker_validation_v1", {}).get("confidence_score") if isinstance(controlled.get("ranking_bias_horizon_tie_breaker_validation_v1"), dict) else 0.0), 3)
+        ready = bool(quality >= 75 and confidence >= 70 and evidence >= 500)
         return {
             "status": "ok" if evidence >= 100 and confidence >= 50 else "insufficient_evidence",
             "ranking_attribution_score": quality,
             "ranking_confidence": confidence,
+            "ranking_confidence_score": confidence,
+            "ranking_predictive_power": rounded(ranking.get("ranking_predictive_power"), 3),
+            "ranking_reliability": rounded(ranking.get("ranking_reliability"), 3),
+            "ranking_truth_score": rounded(ranking.get("ranking_truth_score"), 3),
+            "ranking_accuracy": rounded(ranking.get("ranking_accuracy"), 3),
+            "promotion_accuracy": rounded(ranking.get("promotion_accuracy"), 3),
+            "rejection_accuracy": rounded(ranking.get("rejection_accuracy"), 3),
+            "ranking_consistency": rounded(ranking.get("ranking_consistency"), 3),
+            "strongest_positive_ranking_factor": ranking.get("strongest_positive_ranking_factor"),
+            "strongest_negative_ranking_factor": ranking.get("strongest_negative_ranking_factor"),
+            "most_predictive_ranking_factor": ranking.get("most_predictive_ranking_factor"),
+            "least_predictive_ranking_factor": ranking.get("least_predictive_ranking_factor"),
+            "most_overvalued_factor": ranking.get("most_overvalued_factor"),
+            "most_undervalued_factor": ranking.get("most_undervalued_factor"),
+            "dominant_ranking_blind_spot": ranking.get("dominant_ranking_blind_spot"),
+            "next_ranking_focus": ranking.get("next_ranking_focus"),
+            "highest_expected_ranking_improvement": ranking.get("highest_expected_ranking_improvement"),
+            "candidate_ranking_influence_readiness": ranking.get("candidate_ranking_influence_readiness"),
+            "strongest_ranking_lesson": ranking.get("strongest_ranking_lesson"),
+            "strongest_promotion_lesson": ranking.get("strongest_promotion_lesson"),
+            "strongest_rejection_lesson": ranking.get("strongest_rejection_lesson"),
+            "ranking_ready_for_micro_test": ready,
             "evidence_count": evidence,
             "why_candidate_a_ranked_above_b": "ranking_component_contributions_are_available" if evidence else "missing_candidate_level_evidence",
             "horizon_favored_reason": text(first(controlled.get("why_horizon_concentration_still_exists"), ranking.get("dominant_ranking_mistake"), "horizon_preference_requires_more_attribution")),
@@ -167,27 +194,47 @@ class AstraAutonomousImprovementPerformanceAttributionCompletionV1(CachedDiagnos
         }
 
     def _profit_capture(self, statuses: dict[str, Any]) -> dict[str, Any]:
+        storage_suite = status_value(statuses, "astra_storage_cache_attribution_learning_efficiency_v1")
+        wired = storage_suite.get("profit_capture_summary_validation_wiring_v1") or {}
+        if isinstance(wired, dict) and wired.get("wiring_status"):
+            return dict(wired)
         learned = status_value(statuses, "controlled_paper_learned_exit_validation_v1")
         profit = status_value(statuses, "profit_capture_peak_decay_exit_validation_suite_v1")
+        profit_summary = dict(profit.get("summary") or {})
         lock = status_value(statuses, "profit_lock_profit_capture_maturation_v2")
         targeted = status_value(statuses, "astra_targeted_maturity_profit_capture_optimization_bundle_v1")
-        capture = rounded(first(learned.get("baseline_capture_ratio"), profit.get("capture_ratio"), lock.get("capture_ratio"), targeted.get("profit_capture_score"), 0.0), 3)
-        giveback = rounded(first(learned.get("baseline_giveback"), profit.get("avg_giveback"), lock.get("avg_giveback"), 0.0), 3)
-        confidence = rounded(first(learned.get("policy_confidence"), profit.get("confidence_score"), lock.get("confidence_score"), 0.0), 3)
+        capture = rounded(first(profit_summary.get("average_capture_ratio"), learned.get("baseline_capture_ratio"), profit.get("capture_ratio"), lock.get("capture_ratio"), targeted.get("profit_capture_score"), 0.0), 3)
+        giveback = rounded(first(profit_summary.get("average_giveback_pct"), learned.get("baseline_giveback"), profit.get("avg_giveback"), lock.get("avg_giveback"), 0.0), 3)
+        confidence = rounded(first(profit_summary.get("policy_confidence"), learned.get("policy_confidence"), profit.get("confidence_score"), lock.get("confidence_score"), 0.0), 3)
+        readiness = rounded(first(profit_summary.get("readiness_score"), profit.get("readiness_score"), learned.get("policy_confidence"), 0.0), 3)
+        capture_quality = rounded(first(profit_summary.get("capture_quality_score"), profit.get("capture_quality_score"), capture, 0.0), 3)
         evidence = max(to_int(learned.get("evidence_count"), 0), to_int(profit.get("evidence_count"), 0), to_int(lock.get("evidence_count"), 0))
-        blockers = _safe_list(learned.get("paper_exit_path_blockers"), 8) + _safe_list(profit.get("profit_capture_blockers"), 8)
+        blockers = _safe_list(profit_summary.get("readiness_blocker"), 8) + _safe_list(learned.get("paper_exit_path_blockers"), 8) + _safe_list(profit.get("profit_capture_blockers"), 8)
         ready = bool(confidence >= 65 and evidence >= 50 and not blockers and learned.get("learned_exit_bucket_enabled"))
         return {
             "status": "ready_for_review" if ready else "needs_investigation",
             "profit_capture_confidence": confidence,
+            "profit_capture_score": capture_quality,
+            "capture_quality_score": capture_quality,
             "profit_capture_evidence_count": evidence,
             "capture_ratio": capture,
+            "average_capture_ratio": capture,
             "average_giveback": giveback,
+            "average_giveback_pct": giveback,
+            "profit_capture_readiness_score": readiness,
             "giveback_validation": "giveback_detected" if giveback > 0 else "warming_up",
             "premature_exit_validation": text(first(profit.get("premature_exit_status"), "insufficient_evidence")),
             "late_exit_validation": text(first(profit.get("late_exit_status"), learned.get("baseline_vs_learned_status"), "insufficient_evidence")),
             "profit_capture_blockers": blockers[:8] or [text(learned.get("baseline_vs_learned_status"), "profit_capture_persistence_window_incomplete")],
+            "highest_giveback_trade": profit_summary.get("highest_giveback_trade") or profit.get("highest_giveback_trade"),
+            "best_capture_trade": profit_summary.get("best_capture_trade") or profit.get("best_capture_trade"),
+            "best_exit_policy": first(profit_summary.get("best_exit_policy"), profit_summary.get("closest_exit_policy_to_readiness"), profit.get("best_exit_policy")),
+            "weakest_horizon": profit_summary.get("weakest_horizon") or profit.get("weakest_horizon"),
+            "strongest_horizon": profit_summary.get("strongest_horizon") or profit.get("strongest_horizon"),
+            "shadow_recommendation": profit_summary.get("shadow_recommendation") or profit.get("shadow_recommendation"),
             "highest_roi_profit_capture_improvement": text(first(targeted.get("highest_roi_next_improvement"), profit.get("highest_roi_profit_capture_improvement"), "validate_profit_lock_and_catalyst_decay_windows_before_micro_test")),
+            "profit_capture_next_action": "validate_profit_capture_policy_persistence_before_micro_test" if not ready else "human_review_for_tiny_paper_micro_test_candidate",
+            "profit_capture_ready_for_micro_test": ready,
             "paper_micro_test_consideration": "not_ready" if not ready else "human_review_candidate",
             "no_exit_behavior_changed": True,
         }

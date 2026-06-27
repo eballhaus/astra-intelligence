@@ -1645,6 +1645,7 @@ export default function LearningTab({ compact = false }) {
   const astraControlledRankingEvolution = unified?.astra_controlled_ranking_evolution_executive_layer_v1 || astraAdaptiveOccupancyEvolutionSuite?.astra_controlled_ranking_evolution_executive_layer_v1 || {};
   const astraAutonomousOptimizationGovernance = unified?.astra_autonomous_optimization_governance_core_v1 || {};
   const astraAutonomousImprovementCompletion = unified?.astra_autonomous_improvement_performance_attribution_completion_v1 || {};
+  const astraStorageCacheAttributionLearningEfficiency = unified?.astra_storage_cache_attribution_learning_efficiency_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -4300,6 +4301,71 @@ export default function LearningTab({ compact = false }) {
           <pre style={{ margin: "10px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
             {JSON.stringify(astraTradingBrainCompletion, null, 2)}
           </pre>
+        </details>
+        <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
+          <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
+            Storage, Cache, Attribution & Learning Efficiency: {String(astraStorageCacheAttributionLearningEfficiency?.status || "warming up").replaceAll("_", " ")}
+          </summary>
+          <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+            Hot/warm/cold storage governance, smart cache trust, Profit Capture wiring, Ranking Attribution wiring, and fast-load protection. Advisory-only; no data is deleted or archived automatically.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+            {[
+              ["Storage Risk", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.storage_risk_score || astraStorageCacheAttributionLearningEfficiency?.storage_risk_score).toFixed(1)],
+              ["Storage Pressure", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.storage_pressure_score || astraStorageCacheAttributionLearningEfficiency?.storage_pressure_score).toFixed(1)],
+              ["Hot/Warm/Cold", astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.hot_warm_cold_status],
+              ["Cache Trust", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.cache_trust_score || astraStorageCacheAttributionLearningEfficiency?.cache_trust_score).toFixed(1)],
+              ["Stale Critical Caches", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.stale_decision_critical_cache_count || astraStorageCacheAttributionLearningEfficiency?.stale_decision_critical_cache_count).toFixed(0)],
+              ["Profit Capture Confidence", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.profit_capture_confidence || astraStorageCacheAttributionLearningEfficiency?.profit_capture_confidence).toFixed(1)],
+              ["Ranking Attribution", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.ranking_attribution_score || astraStorageCacheAttributionLearningEfficiency?.ranking_attribution_score).toFixed(1)],
+              ["Learning Efficiency", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.learning_efficiency_score || astraStorageCacheAttributionLearningEfficiency?.learning_efficiency_score).toFixed(1)],
+              ["Dashboard Fast Load", astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.dashboard_fast_load_status],
+              ["Highest ROI Next", astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.highest_roi_next_improvement || astraStorageCacheAttributionLearningEfficiency?.highest_roi_next_improvement],
+            ].map(([label, value]) => (
+              <div key={label} style={{ background: "rgba(12,24,42,0.46)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+                <strong style={{ color: "#f2f7ff" }}>{String(value ?? "warming up").replaceAll("_", " ")}</strong>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginTop: 12 }}>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "10px 12px" }}>
+              <div style={{ color: "#7dd3fc", fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Largest State Files</div>
+              {((astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.largest_state_files || astraStorageCacheAttributionLearningEfficiency?.oversized_state_items || [])).slice(0, 5).map((item, idx) => (
+                <div key={`${item?.name || idx}-${idx}`} style={{ color: "#dce9fb", fontSize: 12, marginTop: 6 }}>
+                  {idx + 1}. {String(item?.name || "warming up").replaceAll("_", " ")} {item?.size_mb ? `(${item.size_mb} MB)` : ""}
+                </div>
+              ))}
+            </div>
+            <div style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "10px 12px" }}>
+              <div style={{ color: "#7dd3fc", fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Top Recommendations</div>
+              {((astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.top_recommendations || astraStorageCacheAttributionLearningEfficiency?.storage_recommendations || [])).slice(0, 5).map((item, idx) => (
+                <div key={`${item}-${idx}`} style={{ color: "#dce9fb", fontSize: 12, marginTop: 6 }}>{idx + 1}. {String(item).replaceAll("_", " ")}</div>
+              ))}
+            </div>
+          </div>
+          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+            {[
+              ["Storage Architecture", astraStorageCacheAttributionLearningEfficiency?.storage_architecture_governance_v1],
+              ["Smart Cache Freshness", astraStorageCacheAttributionLearningEfficiency?.smart_cache_freshness_trust_v1],
+              ["Profit Capture Wiring", astraStorageCacheAttributionLearningEfficiency?.profit_capture_summary_validation_wiring_v1],
+              ["Ranking Attribution Wiring", astraStorageCacheAttributionLearningEfficiency?.ranking_attribution_summary_validation_wiring_v1],
+              ["Learning Efficiency", astraStorageCacheAttributionLearningEfficiency?.learning_efficiency_evidence_roi_v1],
+              ["Fast Load Protection", astraStorageCacheAttributionLearningEfficiency?.fast_load_protection_v1],
+            ].map(([label, row]) => (
+              <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
+                <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+                  {label}: {String(row?.status || row?.smart_cache_status || row?.wiring_status || "available").replaceAll("_", " ")}
+                </summary>
+                <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
+                  {JSON.stringify(row || {}, null, 2)}
+                </pre>
+              </details>
+            ))}
+          </div>
+          <div style={{ marginTop: 10, color: "#dce9fb", fontSize: 12, lineHeight: 1.55 }}>
+            This suite blocks raw giant scans from UI paths and recommends summary/index work only. It does not delete, archive, compact, trade, rank, enter, exit, size, allocate, or change thresholds.
+          </div>
         </details>
         <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
           <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
