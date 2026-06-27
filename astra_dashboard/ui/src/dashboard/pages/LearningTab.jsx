@@ -4304,10 +4304,10 @@ export default function LearningTab({ compact = false }) {
         </details>
         <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
           <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
-            Storage, Cache, Attribution & Learning Efficiency: {String(astraStorageCacheAttributionLearningEfficiency?.status || "warming up").replaceAll("_", " ")}
+            Intelligence Infrastructure & Learning Efficiency: {String(astraStorageCacheAttributionLearningEfficiency?.status || "warming up").replaceAll("_", " ")}
           </summary>
           <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
-            Hot/warm/cold storage governance, smart cache trust, Profit Capture wiring, Ranking Attribution wiring, and fast-load protection. Advisory-only; no data is deleted or archived automatically.
+            Cold storage summaries, retrieval indexes, hot/warm/cold governance, smart cache trust, Profit Capture wiring, Ranking Attribution wiring, and fast-load protection. Advisory-only; no data is deleted or archived automatically.
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
             {[
@@ -4315,6 +4315,9 @@ export default function LearningTab({ compact = false }) {
               ["Storage Pressure", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.storage_pressure_score || astraStorageCacheAttributionLearningEfficiency?.storage_pressure_score).toFixed(1)],
               ["Hot/Warm/Cold", astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.hot_warm_cold_status],
               ["Cache Trust", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.cache_trust_score || astraStorageCacheAttributionLearningEfficiency?.cache_trust_score).toFixed(1)],
+              ["Summary Coverage", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.summary_coverage_score || astraStorageCacheAttributionLearningEfficiency?.summary_coverage_score).toFixed(1)],
+              ["Retrieval Health", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.retrieval_index_health || astraStorageCacheAttributionLearningEfficiency?.index_retrieval_health_score).toFixed(1)],
+              ["Evidence ROI", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.evidence_roi_score || astraStorageCacheAttributionLearningEfficiency?.evidence_roi_score).toFixed(1)],
               ["Stale Critical Caches", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.stale_decision_critical_cache_count || astraStorageCacheAttributionLearningEfficiency?.stale_decision_critical_cache_count).toFixed(0)],
               ["Profit Capture Confidence", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.profit_capture_confidence || astraStorageCacheAttributionLearningEfficiency?.profit_capture_confidence).toFixed(1)],
               ["Ranking Attribution", safeNumber(astraStorageCacheAttributionLearningEfficiency?.learning_center_summary?.ranking_attribution_score || astraStorageCacheAttributionLearningEfficiency?.ranking_attribution_score).toFixed(1)],
@@ -4347,10 +4350,15 @@ export default function LearningTab({ compact = false }) {
           <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
             {[
               ["Storage Architecture", astraStorageCacheAttributionLearningEfficiency?.storage_architecture_governance_v1],
+              ["Cold Summary Indexes", astraStorageCacheAttributionLearningEfficiency?.cold_storage_indexing_summary_architecture_v1],
+              ["Retrieval Indexing", astraStorageCacheAttributionLearningEfficiency?.retrieval_indexing_engine_v1],
               ["Smart Cache Freshness", astraStorageCacheAttributionLearningEfficiency?.smart_cache_freshness_trust_v1],
               ["Profit Capture Wiring", astraStorageCacheAttributionLearningEfficiency?.profit_capture_summary_validation_wiring_v1],
               ["Ranking Attribution Wiring", astraStorageCacheAttributionLearningEfficiency?.ranking_attribution_summary_validation_wiring_v1],
               ["Learning Efficiency", astraStorageCacheAttributionLearningEfficiency?.learning_efficiency_evidence_roi_v1],
+              ["Infrastructure Audit", astraStorageCacheAttributionLearningEfficiency?.autonomous_infrastructure_audit_v1],
+              ["Roadmap Generator", astraStorageCacheAttributionLearningEfficiency?.autonomous_roadmap_generator_v1],
+              ["Compaction Safety", astraStorageCacheAttributionLearningEfficiency?.compaction_archive_cleanup_safety_analysis_v1],
               ["Fast Load Protection", astraStorageCacheAttributionLearningEfficiency?.fast_load_protection_v1],
             ].map(([label, row]) => (
               <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>

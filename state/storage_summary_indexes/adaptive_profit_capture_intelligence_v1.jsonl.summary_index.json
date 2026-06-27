@@ -1,0 +1,106 @@
+{
+  "bounded_sample_only": true,
+  "canonical_truth_counts_preserved": true,
+  "dimension_counts": {
+    "archetype": {
+      "breakout_continuation": 5,
+      "momentum_expansion": 635,
+      "range_chop": 83,
+      "unknown": 477
+    },
+    "catalyst": {
+      "unknown": 1200
+    },
+    "confidence_bucket": {
+      "low_confidence": 1200
+    },
+    "exit_type": {
+      "unknown": 1200
+    },
+    "horizon": {
+      "day_trade": 432,
+      "scalp": 671,
+      "swing_trade": 97
+    },
+    "outcome_label": {
+      "unknown": 1200
+    },
+    "profit_capture_bucket": {
+      "low_capture": 1200
+    },
+    "ranking_factor": {
+      "unknown": 1200
+    },
+    "regime": {
+      "momentum_expansion": 5,
+      "unknown": 560,
+      "unknown_scalp_paper": 635
+    },
+    "symbol": {
+      "aapl": 108,
+      "abnb": 5,
+      "amc": 36,
+      "amzn": 132,
+      "biib": 10,
+      "bj": 41,
+      "bros": 36,
+      "ccl": 5,
+      "dal": 36,
+      "fslr": 5,
+      "gehc": 5,
+      "gm": 15,
+      "goog": 82,
+      "ionq": 5,
+      "khc": 25,
+      "klac": 5,
+      "lng": 5,
+      "lyft": 5,
+      "mdlz": 5,
+      "msft": 102,
+      "nbix": 36,
+      "nflx": 36,
+      "nvda": 206,
+      "nxpi": 5,
+      "oxy": 36,
+      "pg": 5,
+      "pton": 10,
+      "qbts": 30,
+      "rgti": 40,
+      "riot": 5,
+      "rivn": 10,
+      "sg": 10,
+      "tsla": 88,
+      "xlb": 15
+    },
+    "trade_family": {
+      "unknown": 1200
+    }
+  },
+  "generated_at": "2026-06-27T17:33:19.694021Z",
+  "index_schema_version": "1.0.0",
+  "indexed_dimensions": [
+    "symbol",
+    "horizon",
+    "regime",
+    "catalyst",
+    "archetype",
+    "exit_type",
+    "trade_family",
+    "profit_capture_bucket",
+    "ranking_factor",
+    "outcome_label",
+    "confidence_bucket"
+  ],
+  "line_count_note": "estimated_from_bounded_head_tail_sample_to_avoid_full_raw_scan",
+  "raw_source_modified": false,
+  "sample_rows": 1200,
+  "source_available": true,
+  "source_file": "adaptive_profit_capture_intelligence_v1.jsonl",
+  "source_line_count_estimate": 339836,
+  "source_line_count_exact": null,
+  "source_mtime": 1782578890.2801068,
+  "source_mtime_marker": "2e5a5970f964d323",
+  "source_path": "state/adaptive_profit_capture_intelligence_v1.jsonl",
+  "source_size_bytes": 427100750,
+  "source_size_mb": 427.101
+}

@@ -1,0 +1,104 @@
+{
+  "bounded_sample_only": true,
+  "canonical_truth_counts_preserved": true,
+  "dimension_counts": {
+    "archetype": {
+      "breakout_continuation": 4,
+      "buy_opportunity": 10,
+      "fallback_unclear": 10,
+      "momentum_expansion": 791,
+      "paper_learning_candidate": 30,
+      "range_chop": 50,
+      "scalp_momentum": 116,
+      "unknown": 189
+    },
+    "catalyst": {
+      "unknown": 1200
+    },
+    "confidence_bucket": {
+      "low_confidence": 1200
+    },
+    "exit_type": {
+      "unknown": 1200
+    },
+    "horizon": {
+      "unknown": 1200
+    },
+    "outcome_label": {
+      "unknown": 1200
+    },
+    "profit_capture_bucket": {
+      "low_capture": 1200
+    },
+    "ranking_factor": {
+      "unknown": 1200
+    },
+    "regime": {
+      "momentum_expansion": 4,
+      "unknown": 249,
+      "unknown_scalp_paper": 907,
+      "unknown_unknown_paper": 40
+    },
+    "symbol": {
+      "aapl": 157,
+      "abnb": 4,
+      "amc": 10,
+      "amzn": 261,
+      "bj": 14,
+      "bros": 10,
+      "ccl": 4,
+      "dal": 10,
+      "fslr": 4,
+      "gehc": 4,
+      "gm": 12,
+      "goog": 167,
+      "hmc": 5,
+      "ionq": 4,
+      "khc": 20,
+      "klac": 4,
+      "lng": 4,
+      "lyft": 4,
+      "mdlz": 4,
+      "msft": 50,
+      "nbix": 10,
+      "nflx": 10,
+      "nvda": 261,
+      "nxpi": 4,
+      "oxy": 10,
+      "pg": 4,
+      "riot": 4,
+      "tsla": 141,
+      "xlb": 4
+    },
+    "trade_family": {
+      "unknown": 1200
+    }
+  },
+  "generated_at": "2026-06-27T17:33:19.391676Z",
+  "index_schema_version": "1.0.0",
+  "indexed_dimensions": [
+    "symbol",
+    "horizon",
+    "regime",
+    "catalyst",
+    "archetype",
+    "exit_type",
+    "trade_family",
+    "profit_capture_bucket",
+    "ranking_factor",
+    "outcome_label",
+    "confidence_bucket"
+  ],
+  "line_count_note": "estimated_from_bounded_head_tail_sample_to_avoid_full_raw_scan",
+  "raw_source_modified": false,
+  "sample_rows": 1200,
+  "source_available": true,
+  "source_file": "replay_counterfactual_learning_v2.jsonl",
+  "source_line_count_estimate": 353548,
+  "source_line_count_exact": null,
+  "source_mtime": 1782578891.0891387,
+  "source_mtime_marker": "f5df7e67e60783c3",
+  "source_path": "state/replay_counterfactual_learning_v2.jsonl",
+  "source_size_bytes": 429608762,
+  "source_size_mb": 429.609
+}

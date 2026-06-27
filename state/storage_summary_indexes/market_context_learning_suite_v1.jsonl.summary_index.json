@@ -1,0 +1,119 @@
+{
+  "bounded_sample_only": true,
+  "canonical_truth_counts_preserved": true,
+  "dimension_counts": {
+    "archetype": {
+      "breakout_continuation": 10,
+      "momentum_expansion": 88,
+      "paper_learning_candidate": 37,
+      "range_chop": 19,
+      "unknown": 1046
+    },
+    "catalyst": {
+      "no_detected_catalyst": 196,
+      "unknown_catalyst": 1004
+    },
+    "confidence_bucket": {
+      "low_confidence": 1200
+    },
+    "exit_type": {
+      "unknown": 1200
+    },
+    "horizon": {
+      "day_trade": 310,
+      "scalp": 769,
+      "swing": 121
+    },
+    "outcome_label": {
+      "unknown": 1200
+    },
+    "profit_capture_bucket": {
+      "low_capture": 1200
+    },
+    "ranking_factor": {
+      "unknown": 1200
+    },
+    "regime": {
+      "opening_volatility_window": 217,
+      "premarket": 18,
+      "regular_market": 293,
+      "unknown": 111,
+      "unknown_day_trade_paper": 250,
+      "unknown_scalp_paper": 198,
+      "unknown_swing_trade_paper": 76,
+      "unknown_unknown_paper": 37
+    },
+    "symbol": {
+      "aapl": 29,
+      "abnb": 28,
+      "alny": 29,
+      "amc": 28,
+      "amzn": 28,
+      "biib": 28,
+      "bj": 28,
+      "bros": 28,
+      "btc": 28,
+      "ccl": 28,
+      "cost": 28,
+      "crsp": 19,
+      "dal": 29,
+      "dfs": 28,
+      "eth": 27,
+      "fslr": 28,
+      "gehc": 28,
+      "goog": 28,
+      "klac": 25,
+      "lng": 22,
+      "lyft": 22,
+      "mdlz": 22,
+      "msft": 29,
+      "nbix": 28,
+      "nflx": 28,
+      "nvda": 29,
+      "nxpi": 22,
+      "oxy": 28,
+      "pg": 22,
+      "pton": 28,
+      "race": 22,
+      "rcl": 22,
+      "riot": 25,
+      "rivn": 28,
+      "sg": 29,
+      "tsla": 29,
+      "ual": 21,
+      "wday": 22,
+      "xlb": 28,
+      "xrp": 28
+    },
+    "trade_family": {
+      "unknown": 1200
+    }
+  },
+  "generated_at": "2026-06-27T17:33:19.136036Z",
+  "index_schema_version": "1.0.0",
+  "indexed_dimensions": [
+    "symbol",
+    "horizon",
+    "regime",
+    "catalyst",
+    "archetype",
+    "exit_type",
+    "trade_family",
+    "profit_capture_bucket",
+    "ranking_factor",
+    "outcome_label",
+    "confidence_bucket"
+  ],
+  "line_count_note": "estimated_from_bounded_head_tail_sample_to_avoid_full_raw_scan",
+  "raw_source_modified": false,
+  "sample_rows": 1200,
+  "source_available": true,
+  "source_file": "market_context_learning_suite_v1.jsonl",
+  "source_line_count_estimate": 364539,
+  "source_line_count_exact": null,
+  "source_mtime": 1782578890.9798105,
+  "source_mtime_marker": "4266d8e8ab679b4e",
+  "source_path": "state/market_context_learning_suite_v1.jsonl",
+  "source_size_bytes": 503572960,
+  "source_size_mb": 503.573
+}

@@ -44211,9 +44211,13 @@ def _cached_autonomous_completion_statuses(cached_unified=None):
             statuses["astra_autonomous_optimization_governance_core_v1"] = ASTRA_AUTONOMOUS_OPTIMIZATION_GOVERNANCE_CORE.status(statuses=statuses, force=False)
         except Exception:
             pass
-    if not statuses.get("astra_storage_cache_attribution_learning_efficiency_v1") or statuses.get("astra_storage_cache_attribution_learning_efficiency_v1", {}).get("status") == "warning":
+    if (
+        not statuses.get("astra_storage_cache_attribution_learning_efficiency_v1")
+        or statuses.get("astra_storage_cache_attribution_learning_efficiency_v1", {}).get("status") == "warning"
+        or statuses.get("astra_storage_cache_attribution_learning_efficiency_v1", {}).get("summary_coverage_score") is None
+    ):
         try:
-            statuses["astra_storage_cache_attribution_learning_efficiency_v1"] = ASTRA_STORAGE_CACHE_ATTRIBUTION_LEARNING_EFFICIENCY.status(statuses=statuses, force=False)
+            statuses["astra_storage_cache_attribution_learning_efficiency_v1"] = ASTRA_STORAGE_CACHE_ATTRIBUTION_LEARNING_EFFICIENCY.status(statuses=statuses, force=True)
         except Exception:
             pass
     return statuses
@@ -44233,10 +44237,16 @@ def astra_autonomous_improvement_performance_attribution_completion_v1(force: bo
 def astra_storage_cache_attribution_learning_efficiency_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
     cached_payload = dict((cached_unified or {}).get("astra_storage_cache_attribution_learning_efficiency_v1") or {})
-    if cached_payload and not force:
+    if cached_payload and not force and cached_payload.get("summary_coverage_score") is not None:
         return cached_payload
     statuses = _cached_autonomous_completion_statuses(cached_unified)
-    return ASTRA_STORAGE_CACHE_ATTRIBUTION_LEARNING_EFFICIENCY.status(statuses=statuses, force=bool(force))
+    needs_phase_a_refresh = bool(cached_payload and cached_payload.get("summary_coverage_score") is None)
+    return ASTRA_STORAGE_CACHE_ATTRIBUTION_LEARNING_EFFICIENCY.status(statuses=statuses, force=bool(force or needs_phase_a_refresh))
+
+
+@router.get("/api/astra_intelligence_infrastructure_storage_learning_efficiency_v1")
+def astra_intelligence_infrastructure_storage_learning_efficiency_v1(force: bool = False):
+    return astra_storage_cache_attribution_learning_efficiency_v1(force=force)
 
 
 @router.post("/api/ask_astra_v1")
@@ -44698,7 +44708,16 @@ def ask_astra_v1(payload: dict = Body(...)):
             or "improve copilot accuracy" in q_lc
             or "what should be compressed" in q_lc
             or "what should astra compress" in q_lc
+            or "what should astra index" in q_lc
             or "what should astra keep fresh" in q_lc
+            or "what should astra archive later" in q_lc
+            or "archive later" in q_lc
+            or "hot warm cold" in q_lc
+            or "hot, warm" in q_lc
+            or "what data should never be deleted" in q_lc
+            or "never be deleted" in q_lc
+            or "learning efficiency" in q_lc
+            or "evidence roi" in q_lc
             or "what cache is stale" in q_lc
             or "cache is stale" in q_lc
             or "profit capture confidence" in q_lc
@@ -44718,18 +44737,22 @@ def ask_astra_v1(payload: dict = Body(...)):
             ranking = storage.get("ranking_attribution_summary_validation_wiring_v1") or comp.get("ranking_attribution_completion_v1") or {}
             learning_eff = storage.get("learning_efficiency_evidence_roi_v1") or {}
             cache_summary = storage.get("smart_cache_freshness_trust_v1") or {}
+            infra = storage.get("autonomous_infrastructure_audit_v1") or {}
+            roadmap = storage.get("autonomous_roadmap_generator_v1") or {}
             recs = comp.get("top_5_recommendations") or []
             top_rec = recs[0] if recs else {}
             fast_short = (
-                f"Astra's highest-ROI next improvement is {str(storage.get('highest_roi_next_improvement') or comp.get('highest_roi_next_improvement') or top_rec.get('recommendation') or 'continue validation').replace('_', ' ')}. "
+                f"Astra's highest-ROI next improvement is {str(roadmap.get('highest_roi_next_improvement') or storage.get('highest_roi_next_improvement') or comp.get('highest_roi_next_improvement') or top_rec.get('recommendation') or 'continue validation').replace('_', ' ')}. "
                 f"The slowest system is {str(comp.get('slowest_system') or perf_storage.get('slowest_system') or 'warming up').replace('_', ' ')}; "
                 f"storage risk is {storage.get('storage_risk_score', 'n/a')} and cache trust is {storage.get('cache_trust_score', cache_summary.get('cache_trust_score', 'n/a'))}. "
                 f"Stale decision-critical caches: {storage.get('stale_decision_critical_cache_count', cache_summary.get('stale_decision_critical_cache_count', 0))}. "
-                f"Astra should compress or summarize large cold learning files before any cleanup; no data is deleted automatically. "
+                f"Astra should index {', '.join((storage.get('indexed_source_files') or [])[:3]) or 'large cold learning files'} and summarize cold storage before any cleanup. "
+                f"Canonical truth and broker truth should never be deleted; archive candidates remain future-review only. "
                 f"Ranking attribution score is {ranking.get('ranking_attribution_score', 'n/a')} with confidence {ranking.get('ranking_confidence_score', ranking.get('ranking_confidence', 'n/a'))}; "
                 f"the ranking factor needing work is {str(ranking.get('most_overvalued_factor') or ranking.get('dominant_ranking_blind_spot') or 'warming up').replace('_', ' ')}. "
                 f"Profit-capture confidence is {profit.get('profit_capture_confidence', 'n/a')} and the main issue is {str((profit.get('profit_capture_blockers') or ['validation still building'])[0]).replace('_', ' ')}. "
-                f"Learning efficiency is {learning_eff.get('learning_efficiency_score', storage.get('learning_efficiency_score', 'n/a'))}; collecting too much={learning_eff.get('is_collecting_too_much', 'n/a')}. "
+                f"Learning efficiency is {learning_eff.get('learning_efficiency_score', storage.get('learning_efficiency_score', 'n/a'))}; evidence ROI is {learning_eff.get('evidence_roi_score', storage.get('evidence_roi_score', 'n/a'))}; collecting too much={learning_eff.get('is_collecting_too_much', 'n/a')}. "
+                f"Infrastructure bottleneck: {str((infra.get('top_bottlenecks') or ['warming up'])[0]).replace('_', ' ')}. "
                 f"Copilot accuracy is helped most by {str(copilot_attr.get('what_most_improves_copilot_accuracy') or 'ranking attribution').replace('_', ' ')} "
                 f"and hurt most by {str(copilot_attr.get('what_most_hurts_copilot_accuracy') or 'profit capture').replace('_', ' ')}. "
                 f"Next proof required: {str(top_rec.get('validation_requirement') or 'evidence-backed validation without behavior changes').replace('_', ' ')}. "
@@ -56341,7 +56364,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
                     completion_cached = {}
                 if isinstance(completion_cached, dict) and completion_cached:
                     fast["astra_autonomous_improvement_performance_attribution_completion_v1"] = completion_cached
-            if "astra_storage_cache_attribution_learning_efficiency_v1" not in fast:
+            if "astra_storage_cache_attribution_learning_efficiency_v1" not in fast or (fast.get("astra_storage_cache_attribution_learning_efficiency_v1") or {}).get("summary_coverage_score") is None:
                 try:
                     with open(os.path.join(STATE, "dashboard_cache", "astra_storage_cache_attribution_learning_efficiency_v1.json"), "r", encoding="utf-8") as handle:
                         storage_cached = json.load(handle)
@@ -56367,7 +56390,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
                     completion_cached = {}
                 if isinstance(completion_cached, dict) and completion_cached:
                     disk_cached["astra_autonomous_improvement_performance_attribution_completion_v1"] = completion_cached
-            if "astra_storage_cache_attribution_learning_efficiency_v1" not in disk_cached:
+            if "astra_storage_cache_attribution_learning_efficiency_v1" not in disk_cached or (disk_cached.get("astra_storage_cache_attribution_learning_efficiency_v1") or {}).get("summary_coverage_score") is None:
                 try:
                     with open(os.path.join(STATE, "dashboard_cache", "astra_storage_cache_attribution_learning_efficiency_v1.json"), "r", encoding="utf-8") as handle:
                         storage_cached = json.load(handle)

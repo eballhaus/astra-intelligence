@@ -1,0 +1,112 @@
+{
+  "bounded_sample_only": true,
+  "canonical_truth_counts_preserved": true,
+  "dimension_counts": {
+    "archetype": {
+      "breakout_continuation": 2,
+      "buy_opportunity": 11,
+      "fallback_unclear": 11,
+      "momentum_expansion": 685,
+      "paper_learning_candidate": 33,
+      "range_chop": 46,
+      "scalp_momentum": 132,
+      "unknown": 280
+    },
+    "catalyst": {
+      "unknown": 1200
+    },
+    "confidence_bucket": {
+      "low_confidence": 1200
+    },
+    "exit_type": {
+      "unknown": 1200
+    },
+    "horizon": {
+      "day_trade": 198,
+      "scalp": 874,
+      "swing": 128
+    },
+    "outcome_label": {
+      "unknown": 1200
+    },
+    "profit_capture_bucket": {
+      "low_capture": 1200
+    },
+    "ranking_factor": {
+      "unknown": 1200
+    },
+    "regime": {
+      "momentum_expansion": 2,
+      "unknown": 337,
+      "unknown_scalp_paper": 817,
+      "unknown_unknown_paper": 44
+    },
+    "symbol": {
+      "aapl": 120,
+      "abnb": 1,
+      "amc": 11,
+      "amzn": 223,
+      "biib": 11,
+      "bj": 12,
+      "bros": 11,
+      "ccl": 1,
+      "dal": 11,
+      "fslr": 1,
+      "gehc": 2,
+      "gm": 6,
+      "goog": 149,
+      "hmc": 2,
+      "ionq": 2,
+      "khc": 9,
+      "klac": 2,
+      "lng": 2,
+      "lyft": 2,
+      "mdlz": 1,
+      "msft": 30,
+      "nbix": 11,
+      "nflx": 11,
+      "nvda": 312,
+      "nxpi": 2,
+      "oxy": 11,
+      "pg": 2,
+      "pton": 11,
+      "qbts": 33,
+      "rgti": 44,
+      "riot": 1,
+      "rivn": 11,
+      "sg": 11,
+      "tsla": 119,
+      "xlb": 12
+    },
+    "trade_family": {
+      "unknown": 1200
+    }
+  },
+  "generated_at": "2026-06-27T17:33:19.960579Z",
+  "index_schema_version": "1.0.0",
+  "indexed_dimensions": [
+    "symbol",
+    "horizon",
+    "regime",
+    "catalyst",
+    "archetype",
+    "exit_type",
+    "trade_family",
+    "profit_capture_bucket",
+    "ranking_factor",
+    "outcome_label",
+    "confidence_bucket"
+  ],
+  "line_count_note": "estimated_from_bounded_head_tail_sample_to_avoid_full_raw_scan",
+  "raw_source_modified": false,
+  "sample_rows": 1200,
+  "source_available": true,
+  "source_file": "exit_learning_expansion_suite_v1.jsonl",
+  "source_line_count_estimate": 376426,
+  "source_line_count_exact": null,
+  "source_mtime": 1782578890.8043888,
+  "source_mtime_marker": "666246d7c3ed2f3b",
+  "source_path": "state/exit_learning_expansion_suite_v1.jsonl",
+  "source_size_bytes": 353511105,
+  "source_size_mb": 353.511
+}

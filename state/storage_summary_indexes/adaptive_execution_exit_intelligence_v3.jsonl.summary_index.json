@@ -1,0 +1,100 @@
+{
+  "bounded_sample_only": true,
+  "canonical_truth_counts_preserved": true,
+  "dimension_counts": {
+    "archetype": {
+      "unknown": 1200
+    },
+    "catalyst": {
+      "unknown": 1200
+    },
+    "confidence_bucket": {
+      "low_confidence": 1200
+    },
+    "exit_type": {
+      "unknown": 1200
+    },
+    "horizon": {
+      "unknown": 1200
+    },
+    "outcome_label": {
+      "unknown": 1200
+    },
+    "profit_capture_bucket": {
+      "low_capture": 1200
+    },
+    "ranking_factor": {
+      "unknown": 1200
+    },
+    "regime": {
+      "unknown": 1200
+    },
+    "symbol": {
+      "aapl": 137,
+      "abnb": 4,
+      "amc": 9,
+      "amzn": 233,
+      "biib": 9,
+      "bj": 13,
+      "bros": 9,
+      "ccl": 4,
+      "dal": 9,
+      "fslr": 4,
+      "gehc": 3,
+      "gm": 11,
+      "goog": 148,
+      "hmc": 4,
+      "ionq": 3,
+      "khc": 20,
+      "klac": 4,
+      "lng": 4,
+      "lyft": 4,
+      "mdlz": 4,
+      "msft": 38,
+      "nbix": 9,
+      "nflx": 9,
+      "nvda": 260,
+      "nxpi": 4,
+      "oxy": 9,
+      "pg": 4,
+      "pton": 9,
+      "qbts": 27,
+      "rgti": 36,
+      "riot": 4,
+      "rivn": 9,
+      "sg": 9,
+      "tsla": 124,
+      "xlb": 13
+    },
+    "trade_family": {
+      "unknown": 1200
+    }
+  },
+  "generated_at": "2026-06-27T17:33:19.820683Z",
+  "index_schema_version": "1.0.0",
+  "indexed_dimensions": [
+    "symbol",
+    "horizon",
+    "regime",
+    "catalyst",
+    "archetype",
+    "exit_type",
+    "trade_family",
+    "profit_capture_bucket",
+    "ranking_factor",
+    "outcome_label",
+    "confidence_bucket"
+  ],
+  "line_count_note": "estimated_from_bounded_head_tail_sample_to_avoid_full_raw_scan",
+  "raw_source_modified": false,
+  "sample_rows": 1200,
+  "source_available": true,
+  "source_file": "adaptive_execution_exit_intelligence_v3.jsonl",
+  "source_line_count_estimate": 365587,
+  "source_line_count_exact": null,
+  "source_mtime": 1782578890.5710628,
+  "source_mtime_marker": "cb4b83fea2c1f312",
+  "source_path": "state/adaptive_execution_exit_intelligence_v3.jsonl",
+  "source_size_bytes": 401426451,
+  "source_size_mb": 401.426
+}
