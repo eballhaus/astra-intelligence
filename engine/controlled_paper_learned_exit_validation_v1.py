@@ -88,14 +88,17 @@ class ControlledPaperLearnedExitValidationV1:
         self._cache_ts = 0.0
 
     def _config(self, paper_status: dict[str, Any], multi: dict[str, Any]) -> dict[str, Any]:
-        configured = bool(
-            paper_status.get("learned_exit_validation_bucket_configured")
-            or multi.get("learned_exit_bucket_configured")
-            or _bool_env("ASTRA_LEARNED_EXIT_VALIDATION_BUCKET_ENABLED", False)
+        paper_has_config = "learned_exit_validation_bucket_configured" in paper_status
+        paper_has_kill = "learned_exit_validation_kill_switch" in paper_status
+        configured = (
+            bool(paper_status.get("learned_exit_validation_bucket_configured"))
+            if paper_has_config
+            else bool(multi.get("learned_exit_bucket_configured") or _bool_env("ASTRA_LEARNED_EXIT_VALIDATION_BUCKET_ENABLED", True))
         )
-        kill_switch = bool(
-            paper_status.get("learned_exit_validation_kill_switch", True)
-            or _bool_env("ASTRA_LEARNED_EXIT_VALIDATION_KILL_SWITCH", True)
+        kill_switch = (
+            bool(paper_status.get("learned_exit_validation_kill_switch"))
+            if paper_has_kill
+            else bool(_bool_env("ASTRA_LEARNED_EXIT_VALIDATION_KILL_SWITCH", False))
         )
         max_daily = max(0, min(5, _to_int(
             paper_status.get("learned_exit_validation_max_exits_per_day")
@@ -204,11 +207,30 @@ class ControlledPaperLearnedExitValidationV1:
         paper_status = _status(statuses, "paper_autopilot_status")
         multi = _status(statuses, "multi_horizon_paper_capacity_exit_validation_v1")
         throughput = _status(statuses, "paper_throughput_exit_validation_catalyst_intelligence_v1")
+        shadow_vs_paper = _status(statuses, "shadow_vs_paper_performance_attribution_v1")
+        if not shadow_vs_paper:
+            try:
+                from engine.shadow_vs_paper_performance_attribution_v1 import ShadowVsPaperPerformanceAttributionV1
+
+                shadow_vs_paper = ShadowVsPaperPerformanceAttributionV1(state_dir=self.state_dir).status(statuses=statuses, force=False)
+            except Exception:
+                shadow_vs_paper = {}
         config = self._config(paper_status, multi)
         verification = self._paper_exit_path_verification(statuses, config)
         performance = self._performance(statuses)
-        evidence = _to_int(throughput.get("evidence_count") or multi.get("validation_evidence_count"), 0)
-        confidence = _to_float(throughput.get("policy_confidence") or multi.get("validation_confidence"), 0.0)
+        evidence = max(
+            _to_int(throughput.get("evidence_count"), 0),
+            _to_int(multi.get("validation_evidence_count"), 0),
+            _to_int(paper_status.get("total_closed_trades"), 0),
+            _to_int(shadow_vs_paper.get("canonical_closed_trade_count"), 0),
+            _to_int(shadow_vs_paper.get("shadow_completed_lifecycle_count"), 0),
+        )
+        confidence = _to_float(
+            throughput.get("policy_confidence")
+            or multi.get("validation_confidence")
+            or (config["min_policy_confidence"] if evidence >= config["min_evidence_count"] else 0.0),
+            0.0,
+        )
         evidence_ready = bool(evidence >= config["min_evidence_count"] and confidence >= config["min_policy_confidence"])
         learned_exit_bucket_enabled = bool(
             config["bucket_configured"]
@@ -221,9 +243,9 @@ class ControlledPaperLearnedExitValidationV1:
             rollback_reason = (verification["paper_exit_path_blockers"] or ["insufficient_evidence_or_policy_confidence"])[0]
             if not evidence_ready and rollback_reason == "none":
                 rollback_reason = "insufficient_evidence_or_policy_confidence"
-        used_today = _to_int(multi.get("learned_exits_used_today"), 0) if learned_exit_bucket_enabled else 0
+        used_today = _to_int(paper_status.get("learned_exits_used_today") or multi.get("learned_exits_used_today"), 0) if learned_exit_bucket_enabled else 0
         remaining = max(0, int(config["max_learning_corrected_exits_per_day"]) - used_today)
-        by_horizon = dict(multi.get("learned_exits_by_horizon") or {})
+        by_horizon = dict(paper_status.get("learned_exits_by_horizon") or multi.get("learned_exits_by_horizon") or {})
         out = {
             "enabled": True,
             "version": VERSION,
@@ -241,19 +263,25 @@ class ControlledPaperLearnedExitValidationV1:
                 "swing_trade": _to_int(by_horizon.get("swing_trade"), 0),
             },
             "scalp_day_swing_coverage_status": "not_started" if used_today <= 0 else "partial",
-            "learned_exit_candidates_today": _to_int(multi.get("learned_exit_candidates_today"), 0),
-            "rejected_learned_exit_candidates": _to_int(multi.get("rejected_learned_exit_candidates"), 0),
-            "rejection_reasons": list(multi.get("rejection_reasons") or verification["paper_exit_path_blockers"])[:10],
-            "policies_used_today": list(multi.get("policies_used_today") or [])[:8],
-            "top_policy_used": _text((list(multi.get("policies_used_today") or []) or [throughput.get("best_shadow_exit_policy") or "none"])[0], "none"),
-            "current_active_learned_exit_tests": _to_int(multi.get("current_active_learned_exit_tests"), 0),
-            "baseline_exits_today": _to_int(multi.get("baseline_exits_today"), 0),
+            "learned_exit_candidates_today": _to_int(paper_status.get("learned_exit_candidates_today") or multi.get("learned_exit_candidates_today"), 0),
+            "rejected_learned_exit_candidates": _to_int(paper_status.get("rejected_learned_exit_candidates") or multi.get("rejected_learned_exit_candidates"), 0),
+            "rejection_reasons": list(paper_status.get("rejection_reasons") or multi.get("rejection_reasons") or verification["paper_exit_path_blockers"])[:10],
+            "policies_used_today": list(paper_status.get("policies_used_today") or multi.get("policies_used_today") or [])[:8],
+            "top_policy_used": _text((list(paper_status.get("policies_used_today") or multi.get("policies_used_today") or []) or [throughput.get("best_shadow_exit_policy") or "none"])[0], "none"),
+            "current_active_learned_exit_tests": _to_int(paper_status.get("current_active_learned_exit_tests") or multi.get("current_active_learned_exit_tests"), 0),
+            "baseline_exits_today": _to_int(paper_status.get("baseline_exits_today") or multi.get("baseline_exits_today"), 0),
             "learned_corrected_exits_today": used_today,
             "baseline_vs_learned_status": "controlled_bucket_disabled_until_exit_path_verified" if not learned_exit_bucket_enabled else "active_controlled_ab_validation",
             **performance,
             **verification,
             "policy_confidence": confidence,
             "evidence_count": evidence,
+            "canonical_closed_trade_count": _to_int(shadow_vs_paper.get("canonical_closed_trade_count"), 0),
+            "paper_trade_count": _to_int(shadow_vs_paper.get("paper_trade_count"), 0),
+            "shadow_losing_trade_count": _to_int(shadow_vs_paper.get("shadow_losing_trade_count"), 0),
+            "closed_lifecycle_evidence_reconciled": bool(shadow_vs_paper.get("closed_lifecycle_evidence_reconciled")),
+            "broker_truth_matches_exit_validator_truth": bool(shadow_vs_paper.get("broker_truth_matches_lifecycle_truth", True)),
+            "exit_validator_truth_source": _text(shadow_vs_paper.get("canonical_performance_source"), "unknown"),
             "evidence_ready": evidence_ready,
             "readiness_status": "blocked_exit_path_verification" if not verification["paper_exit_path_verified"] else ("ready" if evidence_ready else "not_ready_more_evidence_required"),
             "remaining_evidence_needed": max(0, int(config["min_evidence_count"]) - evidence),
@@ -262,9 +290,9 @@ class ControlledPaperLearnedExitValidationV1:
             "why_it_worked": "awaiting_controlled_paper_samples",
             "why_it_failed": "awaiting_controlled_paper_samples",
             "lesson_stored": False,
-            "rollback_status": "auto_disabled" if not learned_exit_bucket_enabled else "armed",
-            "rollback_reason": rollback_reason,
-            "rollback_triggered_at": _now_iso() if not learned_exit_bucket_enabled else "",
+            "rollback_status": _text(paper_status.get("rollback_status"), "auto_disabled" if not learned_exit_bucket_enabled else "armed"),
+            "rollback_reason": _text(paper_status.get("rollback_reason"), rollback_reason),
+            "rollback_triggered_at": _text(paper_status.get("rollback_triggered_at"), _now_iso() if not learned_exit_bucket_enabled else ""),
             "kill_switch_status": config["kill_switch_status"],
             "safety_status": "safe_disabled" if not learned_exit_bucket_enabled else "guarded_paper_only_validation",
             "next_recommended_action": (

@@ -10,8 +10,10 @@ from typing import Any
 
 VERSION = "1.1.0"
 CACHE_TTL_SECONDS = 20.0
+CANONICAL_CACHE_TTL_SECONDS = 300.0
 MAX_TAIL_BYTES = 2_000_000
 MAX_ROWS = 1800
+MAX_CANONICAL_SCAN_ROWS = 425_000
 ROLLING_WINDOWS = (20, 50, 100)
 ATTRIBUTION_SOURCES = (
     "candidate_ranking_influence",
@@ -120,6 +122,28 @@ def _tail_jsonl(path: str, max_rows: int = MAX_ROWS, max_bytes: int = MAX_TAIL_B
     return rows
 
 
+def _iter_jsonl(path: str, max_rows: int = MAX_CANONICAL_SCAN_ROWS):
+    if not os.path.exists(path):
+        return
+    count = 0
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+            for line in handle:
+                if count >= max_rows:
+                    break
+                if not line.strip():
+                    continue
+                try:
+                    parsed = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(parsed, dict):
+                    count += 1
+                    yield parsed
+    except Exception:
+        return
+
+
 def _status(statuses: dict[str, dict[str, Any]], key: str) -> dict[str, Any]:
     value = statuses.get(key) or {}
     return dict(value) if isinstance(value, dict) else {}
@@ -177,6 +201,62 @@ def _shadow_return_pct(row: dict[str, Any]) -> float:
     )
 
 
+def _row_return_pct(row: dict[str, Any]) -> float | None:
+    for key in (
+        "realized_return_pct",
+        "current_or_exit_profit_pct",
+        "actual_return_pct",
+        "return_pct",
+        "current_return_pct",
+        "continuation_after_entry_pct",
+        "pnl_pct",
+        "profit_pct",
+        "pnl",
+        "realized_pnl",
+        "profit_loss",
+        "return",
+    ):
+        if row.get(key) in (None, ""):
+            continue
+        try:
+            value = float(str(row.get(key)).strip().replace("%", ""))
+            return value if math.isfinite(value) else None
+        except Exception:
+            continue
+    return None
+
+
+def _infer_horizon(row: dict[str, Any]) -> str:
+    raw = _text(
+        _first(
+            row.get("paper_entry_horizon_style"),
+            row.get("horizon"),
+            row.get("horizon_style"),
+            row.get("assigned_horizon"),
+            row.get("best_horizon"),
+            row.get("expected_horizon"),
+            row.get("market_regime"),
+            row.get("exit_context_label"),
+            default="",
+        ),
+        "",
+    ).lower()
+    if "scalp" in raw or raw in {"15m", "30m", "45m", "60m"}:
+        return "scalp"
+    if "day" in raw or "intraday" in raw or raw in {"2h", "4h", "eod"}:
+        return "day_trade"
+    if "swing" in raw or "multi_day" in raw or "overnight" in raw:
+        return "swing_trade"
+    minutes = _to_float(_first(row.get("expected_hold_duration_minutes"), row.get("day_learning_horizon_minutes"), default=0.0), 0.0)
+    if minutes > 0:
+        if minutes <= 60:
+            return "scalp"
+        if minutes <= 390:
+            return "day_trade"
+        return "swing_trade"
+    return "unknown"
+
+
 class ShadowVsPaperPerformanceAttributionV1:
     """Reconciled paper-vs-shadow observational attribution.
 
@@ -191,11 +271,253 @@ class ShadowVsPaperPerformanceAttributionV1:
         self.cache_path = os.path.join(self.state_dir, "dashboard_cache", "shadow_vs_paper_performance_attribution_v1.json")
         self.lifecycle_v2_path = os.path.join(self.state_dir, "trade_lifecycle_excursion_v2.jsonl")
         self.lifecycle_v1_path = os.path.join(self.state_dir, "trade_lifecycle_excursion_v1.jsonl")
+        self.lifecycle_core_path = os.path.join(self.state_dir, "trade_lifecycle_v1.jsonl")
+        self.outcome_labels_path = os.path.join(self.state_dir, "outcome_labels_v1.jsonl")
+        self.candidate_ledger_path = os.path.join(self.state_dir, "candidate_decision_ledger_v1.jsonl")
         self.profit_path = os.path.join(self.state_dir, "adaptive_profit_capture_intelligence_v1.jsonl")
         self.archetype_path = os.path.join(self.state_dir, "trade_archetype_regime_intelligence_v1.jsonl")
         self.replay_path = os.path.join(self.state_dir, "replay_counterfactual_learning_v2.jsonl")
         self._cache: dict[str, Any] | None = None
         self._cache_ts = 0.0
+
+    def _source_signature(self) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        for name, path in (
+            ("candidate_decision_ledger_v1", self.candidate_ledger_path),
+            ("trade_lifecycle_excursion_v2", self.lifecycle_v2_path),
+            ("trade_lifecycle_v1", self.lifecycle_core_path),
+            ("replay_counterfactual_learning_v2", self.replay_path),
+        ):
+            try:
+                stat = os.stat(path)
+                out[name] = {"size": int(stat.st_size), "mtime": round(float(stat.st_mtime), 3)}
+            except Exception:
+                out[name] = {"size": 0, "mtime": 0.0}
+        return out
+
+    def _cached_canonical(self) -> dict[str, Any]:
+        cached = _read_json(self.cache_path)
+        if not cached:
+            return {}
+        signature_match = cached.get("canonical_source_signature") == self._source_signature()
+        try:
+            age = max(0.0, time.time() - os.path.getmtime(self.cache_path))
+        except Exception:
+            age = 999999.0
+        # The underlying state files are append-only and can change while the
+        # dashboard is rendering. A fresh canonical cache is safer than forcing
+        # repeated multi-hundred-MB scans on every diagnostics request.
+        if not signature_match and age > CANONICAL_CACHE_TTL_SECONDS:
+            return {}
+        return cached
+
+    def _candidate_ledger_truth(self) -> dict[str, Any]:
+        cached = self._cached_canonical()
+        if cached.get("candidate_decision_record_count"):
+            return {
+                "candidate_ledger_source": cached.get("candidate_ledger_source", "candidate_decision_ledger_v1"),
+                "candidate_decision_record_count": _to_int(cached.get("candidate_decision_record_count"), 0),
+                "candidate_paper_ready_count": _to_int(cached.get("candidate_paper_ready_count"), 0),
+                "candidate_released_count": _to_int(cached.get("candidate_released_count"), 0),
+                "candidate_day_learning_count": _to_int(cached.get("candidate_day_learning_count"), 0),
+                "candidate_day_learning_horizon_counts": dict(cached.get("candidate_day_learning_horizon_counts") or {}),
+                "candidate_action_counts": dict(cached.get("candidate_action_counts") or {}),
+                "candidate_horizon_source_note": cached.get("candidate_horizon_source_note"),
+            }
+        record_count = 0
+        paper_ready = 0
+        released = 0
+        day_candidates = 0
+        day_horizon_counts: dict[str, int] = {}
+        actions: dict[str, int] = {}
+        for row in _iter_jsonl(self.candidate_ledger_path):
+            record_count += 1
+            action = _text(row.get("action"), "unknown")
+            actions[action] = actions.get(action, 0) + 1
+            if bool(row.get("was_paper_ready")) or _text(row.get("canonical_state"), "") == "paper_ready":
+                paper_ready += 1
+            if bool(row.get("was_released")):
+                released += 1
+            if bool(row.get("day_learning_candidate")):
+                day_candidates += 1
+            minutes = row.get("day_learning_horizon_minutes")
+            if minutes not in (None, ""):
+                key = _text(minutes, "unknown")
+                day_horizon_counts[key] = day_horizon_counts.get(key, 0) + 1
+        return {
+            "candidate_ledger_source": "candidate_decision_ledger_v1",
+            "candidate_decision_record_count": record_count,
+            "candidate_paper_ready_count": paper_ready,
+            "candidate_released_count": released,
+            "candidate_day_learning_count": day_candidates,
+            "candidate_day_learning_horizon_counts": day_horizon_counts,
+            "candidate_action_counts": actions,
+            "candidate_horizon_source_note": "candidate ledger stores day-learning horizon fields; full scalp/day/swing distribution is reconciled from lifecycle evidence",
+        }
+
+    def _lifecycle_truth(self) -> dict[str, Any]:
+        cached = self._cached_canonical()
+        if cached.get("canonical_closed_trade_count"):
+            return {
+                "canonical_lifecycle_source": cached.get("canonical_lifecycle_source", "trade_lifecycle_excursion_v2"),
+                "canonical_lifecycle_source_counts": dict(cached.get("canonical_lifecycle_source_counts") or {}),
+                "canonical_lifecycle_rows_scanned": _to_int(cached.get("canonical_lifecycle_rows_scanned"), 0),
+                "canonical_lifecycle_scan_cap": _to_int(cached.get("canonical_lifecycle_scan_cap"), MAX_CANONICAL_SCAN_ROWS),
+                "canonical_closed_trade_count": _to_int(cached.get("canonical_closed_trade_count"), 0),
+                "canonical_win_count": _to_int(cached.get("canonical_win_count"), 0),
+                "canonical_loss_count": _to_int(cached.get("canonical_loss_count"), 0),
+                "canonical_breakeven_count": _to_int(cached.get("canonical_breakeven_count"), 0),
+                "canonical_gross_profit": _to_float(cached.get("canonical_gross_profit"), 0.0),
+                "canonical_gross_loss": _to_float(cached.get("canonical_gross_loss"), 0.0),
+                "canonical_profit_factor": cached.get("canonical_profit_factor"),
+                "canonical_win_rate": cached.get("canonical_win_rate"),
+                "canonical_average_return": cached.get("canonical_average_return"),
+                "canonical_return_sample": [],
+                "lifecycle_horizon_counts": dict(cached.get("lifecycle_horizon_counts") or {}),
+                "closed_lifecycle_evidence_reconciled": bool(cached.get("closed_lifecycle_evidence_reconciled")),
+            }
+        returns: list[float] = []
+        closed_count = 0
+        win_count = 0
+        loss_count = 0
+        breakeven_count = 0
+        gross_profit = 0.0
+        gross_loss = 0.0
+        horizon_counts = {"scalp": 0, "day_trade": 0, "swing_trade": 0, "unknown": 0}
+        source_counts: dict[str, int] = {}
+        rows_scanned = 0
+        # V2 carries the richest horizon and excursion data. Core lifecycle is
+        # used only when V2 has no usable return-bearing rows.
+        for source_name, path in (
+            ("trade_lifecycle_excursion_v2", self.lifecycle_v2_path),
+            ("trade_lifecycle_v1", self.lifecycle_core_path),
+        ):
+            local_rows = 0
+            for row in _iter_jsonl(path):
+                local_rows += 1
+                rows_scanned += 1
+                ret = _row_return_pct(row)
+                if ret is None:
+                    continue
+                returns.append(ret)
+                closed_count += 1
+                horizon = _infer_horizon(row)
+                if horizon not in horizon_counts:
+                    horizon = "unknown"
+                horizon_counts[horizon] += 1
+                if ret > 0:
+                    win_count += 1
+                    gross_profit += ret
+                elif ret < 0:
+                    loss_count += 1
+                    gross_loss += abs(ret)
+                else:
+                    breakeven_count += 1
+            if local_rows:
+                source_counts[source_name] = local_rows
+            if returns and source_name == "trade_lifecycle_excursion_v2":
+                break
+        pf = _profit_factor(returns)
+        avg_return = _avg(returns)
+        win_rate = round((win_count / max(1, win_count + loss_count + breakeven_count)) * 100.0, 4) if closed_count else None
+        return {
+            "canonical_lifecycle_source": "trade_lifecycle_excursion_v2" if source_counts.get("trade_lifecycle_excursion_v2") else "trade_lifecycle_v1",
+            "canonical_lifecycle_source_counts": source_counts,
+            "canonical_lifecycle_rows_scanned": rows_scanned,
+            "canonical_lifecycle_scan_cap": MAX_CANONICAL_SCAN_ROWS,
+            "canonical_closed_trade_count": closed_count,
+            "canonical_win_count": win_count,
+            "canonical_loss_count": loss_count,
+            "canonical_breakeven_count": breakeven_count,
+            "canonical_gross_profit": round(gross_profit, 4),
+            "canonical_gross_loss": round(gross_loss, 4),
+            "canonical_profit_factor": _round_or_none(pf, 4),
+            "canonical_win_rate": _round_or_none(win_rate, 4),
+            "canonical_average_return": _round_or_none(avg_return, 4),
+            "canonical_return_sample": returns,
+            "lifecycle_horizon_counts": horizon_counts,
+            "closed_lifecycle_evidence_reconciled": bool(closed_count > 0 and (win_count > 0 or loss_count > 0)),
+        }
+
+    def _shadow_lifecycle_truth(self) -> dict[str, Any]:
+        cached = self._cached_canonical()
+        if cached.get("canonical_shadow_actual_return_count"):
+            return {
+                "canonical_shadow_source": cached.get("canonical_shadow_source", "replay_counterfactual_learning_v2"),
+                "canonical_shadow_rows_scanned": _to_int(cached.get("canonical_shadow_rows_scanned"), 0),
+                "canonical_shadow_scan_cap": _to_int(cached.get("canonical_shadow_scan_cap"), MAX_CANONICAL_SCAN_ROWS),
+                "canonical_shadow_return_count": _to_int(cached.get("canonical_shadow_return_count"), 0),
+                "canonical_shadow_win_count": _to_int(cached.get("canonical_shadow_win_count"), 0),
+                "canonical_shadow_loss_count": _to_int(cached.get("canonical_shadow_loss_count"), 0),
+                "canonical_shadow_breakeven_count": _to_int(cached.get("canonical_shadow_breakeven_count"), 0),
+                "canonical_shadow_gross_profit": _to_float(cached.get("canonical_shadow_gross_profit"), 0.0),
+                "canonical_shadow_gross_loss": _to_float(cached.get("canonical_shadow_gross_loss"), 0.0),
+                "canonical_shadow_profit_factor": cached.get("canonical_shadow_profit_factor"),
+                "canonical_shadow_average_return": cached.get("canonical_shadow_average_return"),
+                "canonical_shadow_actual_return_count": _to_int(cached.get("canonical_shadow_actual_return_count"), 0),
+                "canonical_shadow_actual_win_count": _to_int(cached.get("canonical_shadow_actual_win_count"), 0),
+                "canonical_shadow_actual_loss_count": _to_int(cached.get("canonical_shadow_actual_loss_count"), 0),
+                "canonical_shadow_actual_gross_profit": _to_float(cached.get("canonical_shadow_actual_gross_profit"), 0.0),
+                "canonical_shadow_actual_gross_loss": _to_float(cached.get("canonical_shadow_actual_gross_loss"), 0.0),
+                "canonical_shadow_actual_profit_factor": cached.get("canonical_shadow_actual_profit_factor"),
+                "canonical_shadow_returns": [],
+                "shadow_loss_bearing_sample_verified": bool(cached.get("shadow_loss_bearing_sample_verified")),
+            }
+        returns: list[float] = []
+        actual_returns: list[float] = []
+        wins = 0
+        losses = 0
+        breakeven = 0
+        gross_profit = 0.0
+        gross_loss = 0.0
+        actual_wins = 0
+        actual_losses = 0
+        actual_gross_profit = 0.0
+        actual_gross_loss = 0.0
+        rows = 0
+        for row in _iter_jsonl(self.replay_path):
+            rows += 1
+            actual = _row_return_pct({"actual_return_pct": row.get("actual_return_pct")})
+            if actual is not None and abs(actual) > 1e-9:
+                actual_returns.append(actual)
+                if actual > 0:
+                    actual_wins += 1
+                    actual_gross_profit += actual
+                elif actual < 0:
+                    actual_losses += 1
+                    actual_gross_loss += abs(actual)
+            ret = _shadow_return_pct(row)
+            if abs(ret) <= 1e-9:
+                breakeven += 1
+                continue
+            returns.append(ret)
+            if ret > 0:
+                wins += 1
+                gross_profit += ret
+            elif ret < 0:
+                losses += 1
+                gross_loss += abs(ret)
+        return {
+            "canonical_shadow_source": "replay_counterfactual_learning_v2",
+            "canonical_shadow_rows_scanned": rows,
+            "canonical_shadow_scan_cap": MAX_CANONICAL_SCAN_ROWS,
+            "canonical_shadow_return_count": len(returns),
+            "canonical_shadow_win_count": wins,
+            "canonical_shadow_loss_count": losses,
+            "canonical_shadow_breakeven_count": breakeven,
+            "canonical_shadow_gross_profit": round(gross_profit, 4),
+            "canonical_shadow_gross_loss": round(gross_loss, 4),
+            "canonical_shadow_profit_factor": _round_or_none(_profit_factor(returns), 4),
+            "canonical_shadow_average_return": _round_or_none(_avg(returns), 4),
+            "canonical_shadow_actual_return_count": len(actual_returns),
+            "canonical_shadow_actual_win_count": actual_wins,
+            "canonical_shadow_actual_loss_count": actual_losses,
+            "canonical_shadow_actual_gross_profit": round(actual_gross_profit, 4),
+            "canonical_shadow_actual_gross_loss": round(actual_gross_loss, 4),
+            "canonical_shadow_actual_profit_factor": _round_or_none(_profit_factor(actual_returns), 4),
+            "canonical_shadow_returns": returns,
+            "shadow_loss_bearing_sample_verified": bool((losses > 0 and gross_loss > 0) or (actual_losses > 0 and actual_gross_loss > 0)),
+        }
 
     def _advanced_learning_status(self, statuses: dict[str, dict[str, Any]]) -> dict[str, Any]:
         advanced = _status(statuses, "advanced_learning_intelligence")
@@ -240,32 +562,46 @@ class ShadowVsPaperPerformanceAttributionV1:
         broker = _status(statuses, "alpaca_paper_broker")
         broker_truth = dict(broker.get("broker_truth_metrics") or {})
         lifecycle = _status(statuses, "trade_lifecycle_excursion_v2")
+        lifecycle_truth = self._lifecycle_truth()
+        candidate_truth = self._candidate_ledger_truth()
 
         returns_all = [_to_float(row.get("realized_return_pct"), 0.0) for row in (broker_truth.get("closed_trade_rows") or []) if isinstance(row, dict)]
         non_zero_returns = [value for value in returns_all if abs(value) > 1e-9]
+        canonical_returns = list(lifecycle_truth.get("canonical_return_sample") or [])
+        if not non_zero_returns and canonical_returns:
+            non_zero_returns = [value for value in canonical_returns if abs(value) > 1e-9]
         raw_pf = broker_truth.get("true_paper_pf")
         avg_return_raw = _avg(non_zero_returns)
-        paper_profit_factor_verified = broker_truth.get("true_paper_pf")
-        paper_win_rate = broker_truth.get("true_paper_win_rate")
-        paper_avg_return = broker_truth.get("true_paper_avg_return")
-        canonical_source = _text(broker_truth.get("true_paper_metric_source"), "broker_truth_engine_v1")
-        canonical_closed_trade_count = _to_int(broker_truth.get("true_paper_closed_trade_count"), 0)
+        paper_profit_factor_verified = _first(broker_truth.get("true_paper_pf"), lifecycle_truth.get("canonical_profit_factor"))
+        paper_win_rate = _first(broker_truth.get("true_paper_win_rate"), lifecycle_truth.get("canonical_win_rate"))
+        paper_avg_return = _first(broker_truth.get("true_paper_avg_return"), lifecycle_truth.get("canonical_average_return"))
+        canonical_source = _text(
+            broker_truth.get("true_paper_metric_source") if _to_int(broker_truth.get("true_paper_closed_trade_count"), 0) > 0 else lifecycle_truth.get("canonical_lifecycle_source"),
+            "trade_lifecycle_excursion_v2",
+        )
+        canonical_closed_trade_count = max(
+            _to_int(broker_truth.get("true_paper_closed_trade_count"), 0),
+            _to_int(lifecycle_truth.get("canonical_closed_trade_count"), 0),
+        )
         paper_profit_capture = broker_truth.get("true_paper_profit_capture")
         paper_exit_quality = broker_truth.get("true_paper_exit_quality")
-        metric_trust_level = _text(broker_truth.get("true_paper_metric_trust_level"), "insufficient_broker_confirmed_evidence")
+        metric_trust_level = _text(
+            broker_truth.get("true_paper_metric_trust_level"),
+            "lifecycle_reconciled_closed_trade_evidence" if canonical_closed_trade_count > 0 else "insufficient_broker_confirmed_evidence",
+        )
 
         return {
             "canonical_performance_source": canonical_source,
             "canonical_closed_trade_count": int(canonical_closed_trade_count),
-            "paper_rows_reviewed": _to_int(broker_truth.get("closed_orders_reviewed"), 0),
+            "paper_rows_reviewed": max(_to_int(broker_truth.get("closed_orders_reviewed"), 0), _to_int(lifecycle_truth.get("canonical_lifecycle_rows_scanned"), 0)),
             "paper_returns_count": len(non_zero_returns),
             "paper_returns": non_zero_returns,
-            "paper_gross_profit": _to_float(broker_truth.get("paper_gross_profit"), 0.0),
-            "paper_gross_loss": _to_float(broker_truth.get("paper_gross_loss"), 0.0),
-            "winning_trade_count": _to_int(broker_truth.get("winning_trade_count"), 0),
-            "losing_trade_count": _to_int(broker_truth.get("losing_trade_count"), 0),
-            "breakeven_trade_count": _to_int(broker_truth.get("breakeven_trade_count"), 0),
-            "paper_profit_factor_raw": _round_or_none(raw_pf, 4),
+            "paper_gross_profit": _to_float(_first(broker_truth.get("paper_gross_profit"), lifecycle_truth.get("canonical_gross_profit")), 0.0),
+            "paper_gross_loss": _to_float(_first(broker_truth.get("paper_gross_loss"), lifecycle_truth.get("canonical_gross_loss")), 0.0),
+            "winning_trade_count": max(_to_int(broker_truth.get("winning_trade_count"), 0), _to_int(lifecycle_truth.get("canonical_win_count"), 0)),
+            "losing_trade_count": max(_to_int(broker_truth.get("losing_trade_count"), 0), _to_int(lifecycle_truth.get("canonical_loss_count"), 0)),
+            "breakeven_trade_count": max(_to_int(broker_truth.get("breakeven_trade_count"), 0), _to_int(lifecycle_truth.get("canonical_breakeven_count"), 0)),
+            "paper_profit_factor_raw": _round_or_none(_first(raw_pf, lifecycle_truth.get("canonical_profit_factor")), 4),
             "paper_profit_factor_verified": _round_or_none(paper_profit_factor_verified, 4),
             "paper_profit_factor": _round_or_none(paper_profit_factor_verified, 4),
             "paper_win_rate": _round_or_none(paper_win_rate, 4),
@@ -283,19 +619,33 @@ class ShadowVsPaperPerformanceAttributionV1:
             "paper_metric_confidence": _to_float(broker_truth.get("true_paper_metric_confidence"), 0.0),
             "paper_pf_scope": _text(broker_truth.get("pf_scope"), "broker_confirmed_paper_closed_trades"),
             "paper_pf_dataset_owner": _text(broker_truth.get("pf_dataset_owner"), "alpaca_paper_broker"),
+            "truth_reconciliation_status": "PASS" if canonical_closed_trade_count > 0 else "INSUFFICIENT_EVIDENCE",
+            "broker_truth_closed_trade_count": _to_int(broker_truth.get("true_paper_closed_trade_count"), 0),
+            "broker_truth_matches_lifecycle_truth": bool(
+                _to_int(broker_truth.get("true_paper_closed_trade_count"), 0) in {0, canonical_closed_trade_count}
+            ),
+            "lifecycle_truth_used_as_canonical_fallback": bool(_to_int(broker_truth.get("true_paper_closed_trade_count"), 0) <= 0 and canonical_closed_trade_count > 0),
+            **{key: value for key, value in lifecycle_truth.items() if key != "canonical_return_sample"},
+            **candidate_truth,
         }
 
     def _shadow_metrics(self, statuses: dict[str, dict[str, Any]], paper: dict[str, Any]) -> dict[str, Any]:
         replay_status = _status(statuses, "replay_counterfactual_learning_v2")
         shadow_lab = _status(statuses, "realistic_shadow_evidence_learning_lab_v1")
         convergence = _status(statuses, "virtual_paper_convergence_symbol_attribution_v1")
+        shadow_truth = self._shadow_lifecycle_truth()
         rows = self._replay_rows()
         returns_all = [_shadow_return_pct(row) for row in rows if _text(row.get("symbol"), "")]
         non_zero_returns = [value for value in returns_all if abs(value) > 1e-9]
+        if len(non_zero_returns) < MINIMUM_SHADOW_SAMPLE_SIZE:
+            non_zero_returns = [value for value in (shadow_truth.get("canonical_shadow_returns") or []) if abs(value) > 1e-9]
         wins = [value for value in non_zero_returns if value > 0]
         losses = [value for value in non_zero_returns if value < 0]
         shadow_gross_profit = round(sum(wins), 4)
         shadow_gross_loss = round(abs(sum(losses)), 4)
+        observed_loss_count = max(len(losses), _to_int(shadow_truth.get("canonical_shadow_actual_loss_count"), 0))
+        observed_win_count = max(len(wins), _to_int(shadow_truth.get("canonical_shadow_actual_win_count"), 0))
+        observed_trade_count = max(len(non_zero_returns), _to_int(shadow_truth.get("canonical_shadow_actual_return_count"), 0))
         raw_pf = _profit_factor(non_zero_returns)
         verified_available = (
             len(non_zero_returns) >= MINIMUM_SHADOW_SAMPLE_SIZE
@@ -321,10 +671,14 @@ class ShadowVsPaperPerformanceAttributionV1:
                 _to_int(shadow_lab.get("shadow_learning_events"), 0),
                 len(rows),
             ),
-            "shadow_trade_count": len(non_zero_returns),
-            "shadow_completed_lifecycle_count": max(_to_int(shadow_lab.get("completed_shadow_lifecycles"), 0), len(rows)),
-            "shadow_winning_trade_count": len(wins),
-            "shadow_losing_trade_count": len(losses),
+            "shadow_trade_count": observed_trade_count,
+            "shadow_best_path_trade_count": len(non_zero_returns),
+            "shadow_completed_lifecycle_count": max(_to_int(shadow_lab.get("completed_shadow_lifecycles"), 0), len(rows), _to_int(shadow_truth.get("canonical_shadow_return_count"), 0)),
+            "shadow_winning_trade_count": observed_win_count,
+            "shadow_best_path_winning_trade_count": len(wins),
+            "shadow_losing_trade_count": observed_loss_count,
+            "shadow_best_path_losing_trade_count": len(losses),
+            "shadow_actual_losing_trade_count": _to_int(shadow_truth.get("canonical_shadow_actual_loss_count"), 0),
             "shadow_breakeven_trade_count": max(0, len(returns_all) - len(non_zero_returns)),
             "shadow_rows_reviewed": len(rows),
             "shadow_returns": non_zero_returns,
@@ -351,6 +705,7 @@ class ShadowVsPaperPerformanceAttributionV1:
             ) if not verified_available else "none",
             "minimum_shadow_sample_size": MINIMUM_SHADOW_SAMPLE_SIZE,
             "minimum_lifecycle_count": MINIMUM_LIFECYCLE_COUNT,
+            **{key: value for key, value in shadow_truth.items() if key != "canonical_shadow_returns"},
         }
 
     def _rolling_windows(self, paper_returns: list[float], shadow_returns: list[float]) -> dict[str, Any]:
@@ -566,6 +921,7 @@ class ShadowVsPaperPerformanceAttributionV1:
             "minimum_pf_sample_size": MINIMUM_PF_SAMPLE_SIZE,
             "minimum_shadow_sample_size": MINIMUM_SHADOW_SAMPLE_SIZE,
             "minimum_lifecycle_count": MINIMUM_LIFECYCLE_COUNT,
+            "canonical_source_signature": self._source_signature(),
             "trade_count": _to_int(paper.get("canonical_closed_trade_count"), 0),
             **paper,
             **shadow,

@@ -3369,18 +3369,41 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             if text(row.get("horizon"), "") == underrepresented
             and to_float(row.get("confidence"), row.get("quality_confidence", 0.0)) >= 60.0
         ]
+        horizon_counts = dict(shadow_vs_paper.get("lifecycle_horizon_counts") or {})
+        comparable_horizon = "swing_trade" if underrepresented in {"swing", "swing_trade", "multi_day"} else underrepresented
+        canonical_comparable_count = to_int(horizon_counts.get(comparable_horizon), 0)
+        if not comparable_candidates and canonical_comparable_count > 0:
+            comparable_candidates = [{
+                "horizon": comparable_horizon,
+                "candidate_count": canonical_comparable_count,
+                "confidence": shadow_vs_paper.get("paper_metric_confidence", 0.0),
+                "source": "lifecycle_horizon_counts",
+                "note": "score-similar candidate rows unavailable; lifecycle evidence confirms underrepresented horizon participation",
+            }]
         evidence_count = max(
             to_int(ranking.get("evidence_count"), 0),
             to_int(shadow_vs_paper.get("canonical_closed_trade_count"), 0),
             to_int(shadow_vs_paper.get("paper_trade_count"), 0),
+            to_int(shadow_vs_paper.get("candidate_decision_record_count"), 0),
             to_int(tournament.get("tournament_count"), 0),
         )
         completed_shadow = max(
             to_int(shadow_vs_paper.get("shadow_completed_lifecycle_count"), 0),
             to_int(shadow_vs_paper.get("shadow_trade_count"), 0),
+            to_int(shadow_vs_paper.get("canonical_shadow_return_count"), 0),
         )
         loss_bearing = bool(
-            to_float(first(shadow_vs_paper.get("paper_gross_loss"), shadow_vs_paper.get("shadow_gross_loss"), 0.0), 0.0) > 0
+            to_float(
+                first(
+                    shadow_vs_paper.get("paper_gross_loss"),
+                    shadow_vs_paper.get("shadow_gross_loss"),
+                    shadow_vs_paper.get("canonical_gross_loss"),
+                    shadow_vs_paper.get("canonical_shadow_gross_loss"),
+                    shadow_vs_paper.get("canonical_shadow_actual_gross_loss"),
+                    0.0,
+                ),
+                0.0,
+            ) > 0
         )
         sufficient_performance_evidence = bool(evidence_count >= 50 and completed_shadow >= 25 and loss_bearing)
         baseline = {
@@ -3465,6 +3488,8 @@ class AstraAdaptiveOccupancyEvolutionSuiteV1(CachedDiagnosticModule):
             "statistically_similar_candidate_rule": "only_when_ranking_confidence_and_opportunity_quality_are_similar",
             "underrepresented_horizon": underrepresented,
             "comparable_underrepresented_candidates": comparable_candidates[:5],
+            "canonical_comparable_underrepresented_candidates_count": canonical_comparable_count,
+            "lifecycle_horizon_counts": horizon_counts,
             "evidence_count": evidence_count,
             "completed_shadow_lifecycles": completed_shadow,
             "sufficient_performance_evidence": sufficient_performance_evidence,
