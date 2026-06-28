@@ -44346,6 +44346,9 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
             {**(statuses or {}), **payload},
             force=force,
         )
+    payload["astra_final_paper_provider_replay_cortex_validation_v1"] = dict(
+        payload.get("astra_paper_provider_cortex_completion_v1") or {}
+    )
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -44661,6 +44664,11 @@ def astra_paper_provider_cortex_completion_v1(force: bool = False):
         statuses.update(cached_unified)
     statuses["astra_integration_completion_consumption_v1"] = astra_integration_completion_consumption_v1(force=False)
     return _astra_paper_provider_cortex_payload(statuses, force=bool(force))
+
+
+@router.get("/api/astra_final_paper_provider_replay_cortex_validation_v1")
+def astra_final_paper_provider_replay_cortex_validation_v1(force: bool = False):
+    return astra_paper_provider_cortex_completion_v1(force=force)
 
 
 @router.get("/api/cortex_issue_registry_v1")
@@ -45397,8 +45405,13 @@ def ask_astra_v1(payload: dict = Body(...)):
             or "api protections" in q_lc
             or "provider" in q_lc and "underutil" in q_lc
             or "historical replay" in q_lc
+            or "historical replay lessons" in q_lc
+            or "paper advisory evidence" in q_lc
             or "blocking paper influence" in q_lc
             or "paper influence" in q_lc and "block" in q_lc
+            or "current paper metrics" in q_lc
+            or "real paper metrics" in q_lc
+            or "paper metrics trustworthy" in q_lc
             or "closed-trade attribution" in q_lc
             or "closed trade attribution" in q_lc
             or "session order submission" in q_lc
@@ -45410,6 +45423,7 @@ def ask_astra_v1(payload: dict = Body(...)):
             or "what does cortex say needs fixed next" in q_lc
             or "did cortex close" in q_lc
             or "issues remain open" in q_lc
+            or "observation mode" in q_lc
         ):
             suite = paper_provider_cortex or {}
             provider = suite.get("cortex_provider_utilization_recovery_api_protection_v1") or {}
@@ -45420,6 +45434,8 @@ def ask_astra_v1(payload: dict = Body(...)):
             replay = suite.get("historical_replay_recovery_v1") or {}
             horizon = suite.get("horizon_intelligence_validation_promotion_v1") or {}
             attribution = suite.get("profitability_attribution_validation_v1") or {}
+            performance = suite.get("real_paper_performance_attribution_v1") or {}
+            thresholds = suite.get("profitability_validation_good_metric_threshold_v1") or {}
             registry = suite.get("cortex_issue_registry_v2") or {}
             highest_issue = registry.get("highest_roi_open_issue") or {}
             fast_short = (
@@ -45430,11 +45446,15 @@ def ask_astra_v1(payload: dict = Body(...)):
                 f"hard stops={provider.get('provider_hard_stops_enabled', True)}, dashboard provider calls={suite.get('dashboard_provider_calls_used', 0)}, LLM calls={suite.get('llm_calls_used', 0)}. "
                 f"Safe FMP expansion allowed: {suite.get('fmp_expansion_allowed', fmp_roi.get('fmp_expansion_allowed', False))}; ROI validation score={fmp_roi.get('fmp_reactivation_roi_score', 'n/a')}. "
                 f"Paper influence moved from {suite.get('paper_influence_score_before', 'n/a')} to {suite.get('paper_influence_score_after', 'n/a')}; blocker={str(paper_inf.get('paper_influence_blocker') or 'none').replace('_', ' ')}. "
+                f"Paper advisory attachment is {suite.get('paper_attachment_pct_after', 'n/a')}% and complete={_to_float(suite.get('paper_attachment_pct_after'), 0) >= 80}. "
+                f"Real Paper metrics trust level={performance.get('paper_metric_trust_level', suite.get('paper_metric_trust_level', 'warming_up'))}; broker-truth closed trades={performance.get('broker_truth_closed_trade_count', suite.get('broker_truth_closed_trade_count', 'n/a'))}; "
+                f"PF={performance.get('paper_profit_factor', suite.get('paper_profit_factor', 'n/a'))}, WR={performance.get('paper_win_rate', suite.get('paper_win_rate', 'n/a'))}, avg return={performance.get('paper_average_return', suite.get('paper_average_return', 'n/a'))}. "
                 f"Closed-trade attribution tracks {suite.get('tracked_closed_trades_after', closed.get('tracked_closed_trades_after', 'n/a'))} trades with score {suite.get('closed_trade_attribution_score', closed.get('closed_trade_attribution_score', 'n/a'))}; blocker={str(closed.get('closed_trade_attribution_blocker') or 'none').replace('_', ' ')}. "
                 f"Session order submission blocker={str(session.get('session_order_submission_blocker') or 'none').replace('_', ' ')}. "
                 f"Historical replay completed={suite.get('historical_replays_completed', replay.get('historical_replays_completed', 'n/a'))}, replay score={suite.get('historical_replay_score', replay.get('historical_replay_score', 'n/a'))}. "
                 f"Best horizon right now={str(horizon.get('best_horizon_right_now') or 'warming up').replace('_', ' ')}, horizon score={suite.get('horizon_intelligence_score', horizon.get('horizon_intelligence_score', 'n/a'))}, improving={horizon.get('horizon_recommendations_improving', False)}. "
                 f"Shadow outperforming Paper={attribution.get('shadow_outperforming_paper', False)}. "
+                f"Observation mode ready={suite.get('observation_mode_readiness', thresholds.get('profitability_ready_for_observation_mode', False))}. "
                 f"Cortex has {suite.get('cortex_open_issues', registry.get('open_issue_count', 0))} open issue(s); highest ROI fix is {str((highest_issue or {}).get('issue_name') or suite.get('highest_roi_open_issue') or 'none').replace('_', ' ')}. "
                 "Safety note: cached diagnostics only; no provider calls during render and no trading, ranking, entry, exit, sizing, allocation, threshold, broker, or Paper execution behavior changed."
             )
@@ -58059,6 +58079,9 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 statuses["astra_paper_provider_cortex_completion_v1"] = {}
             out["astra_paper_provider_cortex_completion_v1"] = dict(
                 statuses.get("astra_paper_provider_cortex_completion_v1") or {}
+            )
+            out["astra_final_paper_provider_replay_cortex_validation_v1"] = dict(
+                out.get("astra_paper_provider_cortex_completion_v1") or {}
             )
             out["cortex_issue_registry_v1"] = dict(
                 (out.get("astra_paper_provider_cortex_completion_v1") or {}).get("cortex_issue_registry_v2")

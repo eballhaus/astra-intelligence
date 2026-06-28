@@ -4561,7 +4561,7 @@ export default function LearningTab({ compact = false }) {
         </details>
         <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
           <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
-            Paper, Provider & Cortex Oversight Completion: {String(astraPaperProviderCortexCompletion?.status || "warming up").replaceAll("_", " ")}
+            Final Paper, Provider, Replay & Cortex Validation: {String(astraPaperProviderCortexCompletion?.status || "warming up").replaceAll("_", " ")}
           </summary>
           <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
             Verifies Paper advisory attachment, Paper influence readiness, closed-trade attribution, FMP/API utilization recovery, historical replay recovery, horizon validation, and Cortex oversight. Diagnostic-only; no Paper execution, broker, ranking, entry, exit, sizing, allocation, threshold, provider, or LLM behavior changes.
@@ -4572,22 +4572,35 @@ export default function LearningTab({ compact = false }) {
               ["Paper Attach After", `${safeNumber(astraPaperProviderCortexCompletion?.paper_attachment_pct_after).toFixed(1)}%`],
               ["Paper Influence Before", safeNumber(astraPaperProviderCortexCompletion?.paper_influence_score_before).toFixed(1)],
               ["Paper Influence After", safeNumber(astraPaperProviderCortexCompletion?.paper_influence_score_after).toFixed(1)],
+              ["Paper Performance", safeNumber(astraPaperProviderCortexCompletion?.paper_performance_attribution_score).toFixed(1)],
+              ["Broker Truth Closed", safeNumber(astraPaperProviderCortexCompletion?.broker_truth_closed_trade_count).toFixed(0)],
+              ["Attributed Paper Trades", safeNumber(astraPaperProviderCortexCompletion?.attributed_paper_trade_count).toFixed(0)],
+              ["Paper PF", safeNumber(astraPaperProviderCortexCompletion?.paper_profit_factor).toFixed(2)],
+              ["Paper Win Rate", `${safeNumber(astraPaperProviderCortexCompletion?.paper_win_rate).toFixed(1)}%`],
+              ["Paper Avg Return", `${safeNumber(astraPaperProviderCortexCompletion?.paper_average_return).toFixed(2)}%`],
               ["Closed Trades Before", safeNumber(astraPaperProviderCortexCompletion?.tracked_closed_trades_before).toFixed(0)],
               ["Closed Trades After", safeNumber(astraPaperProviderCortexCompletion?.tracked_closed_trades_after).toFixed(0)],
               ["Closed Attribution", safeNumber(astraPaperProviderCortexCompletion?.closed_trade_attribution_score).toFixed(1)],
               ["Session Blocker", astraPaperProviderCortexCompletion?.session_submission_blocker_investigation_v1?.session_order_submission_blocker || "none"],
               ["FMP Status", astraPaperProviderCortexCompletion?.fmp_utilization_status],
               ["FMP Calls Today", safeNumber(astraPaperProviderCortexCompletion?.fmp_calls_today).toFixed(0)],
+              ["FMP Usage", `${safeNumber(astraPaperProviderCortexCompletion?.fmp_usage_pct).toFixed(3)}%`],
+              ["FMP Phase", astraPaperProviderCortexCompletion?.fmp_expansion_phase],
               ["FMP Bandwidth", `${safeNumber(astraPaperProviderCortexCompletion?.fmp_bandwidth_used).toFixed(4)} GB`],
               ["FMP Expansion", astraPaperProviderCortexCompletion?.fmp_expansion_allowed ? "allowed worker-side" : "blocked"],
               ["Provider Protection", safeNumber(astraPaperProviderCortexCompletion?.provider_protection_score).toFixed(1)],
               ["Historical Replays", safeNumber(astraPaperProviderCortexCompletion?.historical_replays_completed).toFixed(0)],
               ["Replay Score", safeNumber(astraPaperProviderCortexCompletion?.historical_replay_score).toFixed(1)],
               ["Horizon Score", safeNumber(astraPaperProviderCortexCompletion?.horizon_intelligence_score).toFixed(1)],
+              ["Horizon Usage", safeNumber(astraPaperProviderCortexCompletion?.horizon_usage_score).toFixed(1)],
+              ["Horizon Paper Influence", safeNumber(astraPaperProviderCortexCompletion?.horizon_paper_influence_score).toFixed(1)],
               ["Best Horizon", astraPaperProviderCortexCompletion?.horizon_intelligence_validation_promotion_v1?.best_horizon_right_now],
               ["Shadow Outperforming", astraPaperProviderCortexCompletion?.profitability_attribution_validation_v1?.shadow_outperforming_paper ? "yes" : "not proven"],
               ["Open Cortex Issues", safeNumber(astraPaperProviderCortexCompletion?.cortex_open_issues).toFixed(0)],
               ["Highest ROI Issue", astraPaperProviderCortexCompletion?.highest_roi_open_issue],
+              ["Cortex Validation", safeNumber(astraPaperProviderCortexCompletion?.cortex_validation_score).toFixed(1)],
+              ["Profitability Validation", safeNumber(astraPaperProviderCortexCompletion?.profitability_validation_score).toFixed(1)],
+              ["Observation Mode", astraPaperProviderCortexCompletion?.observation_mode_readiness ? "ready" : "not ready"],
             ].map(([label, value]) => (
               <div key={label} style={{ background: "rgba(12,24,42,0.46)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
                 <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
@@ -4602,10 +4615,12 @@ export default function LearningTab({ compact = false }) {
               ["Closed Trade Attribution", astraPaperProviderCortexCompletion?.closed_trade_attribution_engine_v1],
               ["Session Submission Blocker", astraPaperProviderCortexCompletion?.session_submission_blocker_investigation_v1],
               ["Provider/API Utilization Recovery", astraPaperProviderCortexCompletion?.cortex_provider_utilization_recovery_api_protection_v1],
+              ["Real Paper Performance", astraPaperProviderCortexCompletion?.real_paper_performance_attribution_v1],
               ["FMP Reactivation ROI", astraPaperProviderCortexCompletion?.fmp_reactivation_roi_validation_v1],
               ["Historical Replay Recovery", astraPaperProviderCortexCompletion?.historical_replay_recovery_v1],
               ["Satellite Utilization Audit", astraPaperProviderCortexCompletion?.historical_satellite_symbol_satellite_utilization_audit_v1],
               ["Horizon Validation", astraPaperProviderCortexCompletion?.horizon_intelligence_validation_promotion_v1],
+              ["Profitability Thresholds", astraPaperProviderCortexCompletion?.profitability_validation_good_metric_threshold_v1],
               ["Profitability Attribution", astraPaperProviderCortexCompletion?.profitability_attribution_validation_v1],
               ["Shadow-to-Paper Governance", astraPaperProviderCortexCompletion?.shadow_to_paper_governance_foundation_v2],
               ["Cortex Issue Registry V2", astraPaperProviderCortexCompletion?.cortex_issue_registry_v2],
