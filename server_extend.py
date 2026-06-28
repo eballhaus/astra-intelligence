@@ -2444,6 +2444,7 @@ try:
     from engine.cortex_lifecycle_evidence_master_truth_v1 import CortexLifecycleEvidenceMasterTruthV1
     from engine.astra_profitability_activation_intelligence_utilization_v1 import AstraProfitabilityActivationIntelligenceUtilizationV1
     from engine.astra_tier1_tier2_profitability_activation_v1 import AstraTier1Tier2ProfitabilityActivationV1
+    from engine.astra_integration_completion_consumption_v1 import AstraIntegrationCompletionConsumptionV1
 except Exception:
     class _IntelligenceQualityUnavailable:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -2510,6 +2511,7 @@ except Exception:
     CortexLifecycleEvidenceMasterTruthV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraProfitabilityActivationIntelligenceUtilizationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraTier1Tier2ProfitabilityActivationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    AstraIntegrationCompletionConsumptionV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
@@ -3212,6 +3214,7 @@ ASTRA_STORAGE_CACHE_ATTRIBUTION_LEARNING_EFFICIENCY = AstraStorageCacheAttributi
 CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH = CortexLifecycleEvidenceMasterTruthV1(state_dir=STATE)
 ASTRA_PROFITABILITY_ACTIVATION_INTELLIGENCE_UTILIZATION = AstraProfitabilityActivationIntelligenceUtilizationV1(state_dir=STATE)
 ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION = AstraTier1Tier2ProfitabilityActivationV1(state_dir=STATE)
+ASTRA_INTEGRATION_COMPLETION_CONSUMPTION = AstraIntegrationCompletionConsumptionV1(state_dir=STATE)
 ASTRA_PROVIDER_ORCHESTRATION_DATA_GOVERNANCE = AstraProviderOrchestrationDataGovernanceV1(state_dir=STATE)
 TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
 MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
@@ -44114,6 +44117,7 @@ def astra_autonomous_optimization_governance_core_v1(force: bool = False):
             "astra_tier1_tier2_profitability_activation_v1",
             cached_unified.get("astra_tier1_tier2_profitability_activation_v1") or {},
         )
+        _attach_astra_integration_completion(cached_payload, cached_unified, force=False)
         return cached_payload
     statuses = dict(cached_unified or {})
     if cached_unified:
@@ -44175,6 +44179,7 @@ def astra_autonomous_optimization_governance_core_v1(force: bool = False):
             payload["astra_tier1_tier2_profitability_activation_v1"] = ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION.status(statuses={**statuses, **payload}, force=False)
         except Exception:
             payload["astra_tier1_tier2_profitability_activation_v1"] = {}
+        _attach_astra_integration_completion(payload, statuses, force=False)
     return payload
 
 
@@ -44250,6 +44255,51 @@ def _cached_autonomous_completion_statuses(cached_unified=None):
     return statuses
 
 
+def _astra_integration_completion_payload(statuses=None, *, force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    status_map = dict(statuses or {})
+    if isinstance(cached_unified, dict):
+        status_map.update({k: v for k, v in cached_unified.items() if k not in status_map})
+    try:
+        return ASTRA_INTEGRATION_COMPLETION_CONSUMPTION.status(statuses=status_map, force=bool(force))
+    except Exception as exc:
+        return {
+            "status": "insufficient_evidence",
+            "degraded_reason": f"astra_integration_completion_consumption_unavailable:{str(exc)[:120]}",
+            "behavior_safe_to_apply": False,
+            "advisory_only": True,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "portfolio_allocation_changed": False,
+            "thresholds_changed": False,
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "dashboard_provider_calls_used": 0,
+            "dashboard_llm_calls_used": 0,
+        }
+
+
+def _attach_astra_integration_completion(payload, statuses=None, *, force: bool = False):
+    if not isinstance(payload, dict):
+        return payload
+    if "astra_integration_completion_consumption_v1" not in payload or force:
+        payload["astra_integration_completion_consumption_v1"] = _astra_integration_completion_payload(
+            {**(statuses or {}), **payload},
+            force=force,
+        )
+    integration = payload.get("astra_integration_completion_consumption_v1") if isinstance(payload.get("astra_integration_completion_consumption_v1"), dict) else {}
+    if integration and "cortex_issue_registry_v1" not in payload:
+        payload["cortex_issue_registry_v1"] = dict(integration.get("cortex_issue_registry_v1") or {})
+    return payload
+
+
 @router.get("/api/astra_autonomous_improvement_performance_attribution_completion_v1")
 def astra_autonomous_improvement_performance_attribution_completion_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -44296,6 +44346,7 @@ def astra_storage_cache_attribution_learning_efficiency_v1(force: bool = False):
                 cached_payload["astra_tier1_tier2_profitability_activation_v1"] = ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION.status(statuses=cached_payload, force=False)
             except Exception:
                 cached_payload["astra_tier1_tier2_profitability_activation_v1"] = {}
+        _attach_astra_integration_completion(cached_payload, cached_unified, force=False)
         return cached_payload
     statuses = _cached_autonomous_completion_statuses(cached_unified)
     needs_phase_a_refresh = bool(
@@ -44316,6 +44367,7 @@ def astra_storage_cache_attribution_learning_efficiency_v1(force: bool = False):
             payload["astra_profitability_activation_intelligence_utilization_v1"] = ASTRA_PROFITABILITY_ACTIVATION_INTELLIGENCE_UTILIZATION.status(statuses={**statuses, **payload}, force=False)
         except Exception:
             payload["astra_profitability_activation_intelligence_utilization_v1"] = {}
+        _attach_astra_integration_completion(payload, statuses, force=False)
     return payload
 
 
@@ -44359,6 +44411,8 @@ def astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attributi
             out.setdefault("cortex_lifecycle_evidence_master_truth_v1", payload.get("cortex_lifecycle_evidence_master_truth_v1") or {})
             out.setdefault("astra_profitability_activation_intelligence_utilization_v1", payload.get("astra_profitability_activation_intelligence_utilization_v1") or {})
             out.setdefault("astra_tier1_tier2_profitability_activation_v1", payload.get("astra_tier1_tier2_profitability_activation_v1") or {})
+            out.setdefault("astra_integration_completion_consumption_v1", payload.get("astra_integration_completion_consumption_v1") or _astra_integration_completion_payload({**payload, **out}, force=False))
+            out.setdefault("cortex_issue_registry_v1", (out.get("astra_integration_completion_consumption_v1") or {}).get("cortex_issue_registry_v1") or {})
             return out
     return payload
 
@@ -44389,6 +44443,8 @@ def astra_intelligence_optimization_profit_capture_confidence_autonomous_researc
             out.setdefault("cortex_lifecycle_evidence_master_truth_v1", payload.get("cortex_lifecycle_evidence_master_truth_v1") or {})
             out.setdefault("astra_profitability_activation_intelligence_utilization_v1", payload.get("astra_profitability_activation_intelligence_utilization_v1") or {})
             out.setdefault("astra_tier1_tier2_profitability_activation_v1", payload.get("astra_tier1_tier2_profitability_activation_v1") or {})
+            out.setdefault("astra_integration_completion_consumption_v1", payload.get("astra_integration_completion_consumption_v1") or _astra_integration_completion_payload({**payload, **out}, force=False))
+            out.setdefault("cortex_issue_registry_v1", (out.get("astra_integration_completion_consumption_v1") or {}).get("cortex_issue_registry_v1") or {})
             return out
     return payload
 
@@ -44411,6 +44467,7 @@ def astra_profitability_activation_intelligence_utilization_v1(force: bool = Fal
                 cached_payload["astra_tier1_tier2_profitability_activation_v1"] = ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION.status(statuses=cached_payload, force=False)
             except Exception:
                 cached_payload["astra_tier1_tier2_profitability_activation_v1"] = {}
+        _attach_astra_integration_completion(cached_payload, cached_unified, force=False)
         return cached_payload
     statuses = _cached_autonomous_completion_statuses(cached_unified)
     if isinstance(cached_unified, dict):
@@ -44426,6 +44483,7 @@ def astra_profitability_activation_intelligence_utilization_v1(force: bool = Fal
             payload["astra_tier1_tier2_profitability_activation_v1"] = ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION.status(statuses={**statuses, **payload}, force=False)
         except Exception:
             payload["astra_tier1_tier2_profitability_activation_v1"] = {}
+        _attach_astra_integration_completion(payload, statuses, force=False)
     return payload
 
 
@@ -44435,6 +44493,7 @@ def astra_tier1_tier2_profitability_activation_v1(force: bool = False):
     cached_payload = dict((cached_unified or {}).get("astra_tier1_tier2_profitability_activation_v1") or {})
     cached_summary = cached_payload.get("learning_center_summary") if isinstance(cached_payload.get("learning_center_summary"), dict) else {}
     if cached_payload and not force and cached_payload.get("status") == "ok" and cached_summary.get("trade_management_intelligence_fabric_score") is not None:
+        _attach_astra_integration_completion(cached_payload, cached_unified, force=False)
         return cached_payload
     statuses = _cached_autonomous_completion_statuses(cached_unified)
     if isinstance(cached_unified, dict):
@@ -44444,7 +44503,8 @@ def astra_tier1_tier2_profitability_activation_v1(force: bool = False):
             statuses["astra_profitability_activation_intelligence_utilization_v1"] = ASTRA_PROFITABILITY_ACTIVATION_INTELLIGENCE_UTILIZATION.status(statuses=statuses, force=False)
         except Exception:
             statuses["astra_profitability_activation_intelligence_utilization_v1"] = {}
-    return ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION.status(statuses=statuses, force=bool(force))
+    payload = ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION.status(statuses=statuses, force=bool(force))
+    return _attach_astra_integration_completion(payload, statuses, force=False)
 
 
 @router.get("/api/cortex_lifecycle_evidence_master_truth_v1")
@@ -44476,6 +44536,7 @@ def cortex_lifecycle_evidence_master_truth_v1(force: bool = False):
                 cached_payload["astra_tier1_tier2_profitability_activation_v1"] = ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION.status(statuses=cached_payload, force=False)
             except Exception:
                 cached_payload["astra_tier1_tier2_profitability_activation_v1"] = {}
+        _attach_astra_integration_completion(cached_payload, cached_unified, force=False)
         return cached_payload
     statuses = _cached_autonomous_completion_statuses(cached_unified)
     if isinstance(cached_unified, dict):
@@ -44510,7 +44571,44 @@ def cortex_lifecycle_evidence_master_truth_v1(force: bool = False):
             payload["astra_tier1_tier2_profitability_activation_v1"] = ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION.status(statuses={**statuses, **payload}, force=False)
         except Exception:
             payload["astra_tier1_tier2_profitability_activation_v1"] = {}
+        _attach_astra_integration_completion(payload, statuses, force=False)
     return payload
+
+
+@router.get("/api/astra_integration_completion_consumption_v1")
+def astra_integration_completion_consumption_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_integration_completion_consumption_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = _cached_autonomous_completion_statuses(cached_unified)
+    if isinstance(cached_unified, dict):
+        statuses.update(cached_unified)
+    return _astra_integration_completion_payload(statuses, force=bool(force))
+
+
+@router.get("/api/cortex_issue_registry_v1")
+def cortex_issue_registry_v1(force: bool = False):
+    payload = astra_integration_completion_consumption_v1(force=force)
+    registry = dict((payload or {}).get("cortex_issue_registry_v1") or {})
+    if registry:
+        return registry
+    try:
+        with open(os.path.join(STATE, "cortex_issue_registry_v1.json"), "r", encoding="utf-8") as handle:
+            parsed = json.load(handle)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {
+            "status": "insufficient_evidence",
+            "open_issue_count": 0,
+            "red_issue_count": 0,
+            "orange_issue_count": 0,
+            "issues": [],
+            "behavior_safe_to_apply": False,
+            "advisory_only": True,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+        }
 
 
 @router.post("/api/ask_astra_v1")
@@ -44655,6 +44753,16 @@ def ask_astra_v1(payload: dict = Body(...)):
         except Exception:
             tier12_profitability_activation = {}
     ask_context_seed["astra_tier1_tier2_profitability_activation_v1"] = tier12_profitability_activation
+    integration_completion = dict((cached_unified or {}).get("astra_integration_completion_consumption_v1") or {})
+    if not integration_completion:
+        integration_completion = _astra_integration_completion_payload(
+            {**ask_context_seed, "astra_tier1_tier2_profitability_activation_v1": tier12_profitability_activation},
+            force=False,
+        )
+    ask_context_seed["astra_integration_completion_consumption_v1"] = integration_completion
+    ask_context_seed["cortex_issue_registry_v1"] = dict(
+        (integration_completion or {}).get("cortex_issue_registry_v1") or {}
+    )
     autonomous_improvement_completion = dict(
         (cached_unified or {}).get("astra_autonomous_improvement_performance_attribution_completion_v1") or {}
     )
@@ -44952,6 +45060,36 @@ def ask_astra_v1(payload: dict = Body(...)):
             "paper_influence_ready": (tier12_profitability_activation.get("mandatory_final_audit_v1") or {}).get("paper_influence_ready"),
             "paper_micro_test_ready": (tier12_profitability_activation.get("mandatory_final_audit_v1") or {}).get("paper_micro_test_ready"),
         },
+        "integration_completion_consumption": {
+            "status": integration_completion.get("status"),
+            "fabric_consumption_score": integration_completion.get("fabric_consumption_score"),
+            "fabric_consumer_count_after": integration_completion.get("fabric_consumer_count_after"),
+            "canonical_actual_code_consumers_after": integration_completion.get("canonical_actual_code_consumers_after"),
+            "canonical_active_consumers": integration_completion.get("canonical_active_consumers"),
+            "profit_capture_truth_score": integration_completion.get("profit_capture_truth_score"),
+            "profit_capture_score_before": integration_completion.get("profit_capture_score_before"),
+            "profit_capture_score_after": integration_completion.get("profit_capture_score_after"),
+            "paper_advisory_attachment_pct": integration_completion.get("paper_advisory_attachment_pct"),
+            "paper_decision_influence_score_after": integration_completion.get("paper_decision_influence_score_after"),
+            "ranking_reconstruction_score_after": integration_completion.get("ranking_reconstruction_score_after"),
+            "copilot_trade_management_consumption_score": integration_completion.get("copilot_trade_management_consumption_score"),
+            "cortex_issue_count_open": integration_completion.get("cortex_issue_count_open"),
+            "cortex_issue_count_red": integration_completion.get("cortex_issue_count_red"),
+            "cortex_issue_count_orange": integration_completion.get("cortex_issue_count_orange"),
+            "highest_roi_next_improvement": integration_completion.get("highest_roi_next_improvement"),
+            "top_remaining_blocker": integration_completion.get("top_remaining_blocker"),
+            "metrics_still_below_60": integration_completion.get("metrics_still_below_60"),
+            "issue_registry": integration_completion.get("cortex_issue_registry_v1"),
+            "paper_advisory_samples": (
+                (integration_completion.get("paper_influence_advisory_evidence_attachment_v1") or {}).get("sample_advisory_attachments")
+            ),
+            "ranking_proxy_factors": (
+                (integration_completion.get("ranking_proxy_reconstruction_v1") or {}).get("proxy_fields_reconstructed")
+            ),
+            "truth_sources": (
+                (integration_completion.get("profit_capture_truth_recovery_v1") or {}).get("source_table")
+            ),
+        },
         "autonomous_improvement_performance_attribution_completion": {
             "status": autonomous_improvement_completion.get("status"),
             "top_weaknesses": autonomous_improvement_completion.get("top_weaknesses"),
@@ -45062,6 +45200,13 @@ def ask_astra_v1(payload: dict = Body(...)):
             "symbol_behavior_profiles",
             "trade_management_intelligence_fabric",
             "tier_1_2_profitability_activation",
+            "cortex_issue_registry",
+            "integration_completion_consumption",
+            "profit_capture_truth_recovery",
+            "paper_advisory_evidence_attachment",
+            "copilot_trade_management_consumption",
+            "ranking_proxy_reconstruction",
+            "propagation_completion_verification",
             "propagation_verification",
             "safest_next_improvement",
             "biggest_opportunity",
@@ -45101,6 +45246,54 @@ def ask_astra_v1(payload: dict = Body(...)):
         first = (compressed_context.get("copilot_actions") or [{}])[0] if isinstance(compressed_context.get("copilot_actions"), list) else {}
         q_lc = question.lower()
         if (
+            "cortex issue" in q_lc
+            or "issues did cortex find" in q_lc
+            or "trade management fabric consumed by copilot" in q_lc
+            or "fabric consumed by copilot" in q_lc
+            or "profit capture using the strongest truth" in q_lc
+            or "profit capture still weak" in q_lc
+            or "advisory lesson ids" in q_lc
+            or "best hold window" in q_lc
+            or "giveback risk" in q_lc
+            or "held, trimmed, or reviewed for exit" in q_lc
+            or "hold, trim" in q_lc
+            or "reviewed for exit" in q_lc
+            or "ranking proxy" in q_lc
+            or "highest roi next fix" in q_lc
+            or "what remains blocked" in q_lc
+            or "did the fix actually propagate" in q_lc
+            or "did the fix propagate" in q_lc
+        ):
+            integ = integration_completion or {}
+            registry = integ.get("cortex_issue_registry_v1") or {}
+            highest_issue = registry.get("highest_roi_open_issue") or {}
+            truth = integ.get("profit_capture_truth_recovery_v1") or {}
+            attachments = integ.get("paper_influence_advisory_evidence_attachment_v1") or {}
+            ranking = integ.get("ranking_proxy_reconstruction_v1") or {}
+            fabric = integ.get("trade_management_fabric_consumption_completion_v1") or {}
+            copilot_tm = integ.get("copilot_trade_management_consumption_v1") or {}
+            samples = attachments.get("sample_advisory_attachments") or []
+            first_sample = samples[0] if samples else {}
+            fast_short = (
+                f"Cortex currently shows {registry.get('open_issue_count', integ.get('cortex_issue_count_open', 0))} open issues "
+                f"({registry.get('red_issue_count', integ.get('cortex_issue_count_red', 0))} red, {registry.get('orange_issue_count', integ.get('cortex_issue_count_orange', 0))} orange). "
+                f"Highest-ROI issue: {str((highest_issue or {}).get('issue_name') or integ.get('highest_roi_next_improvement') or 'none').replace('_', ' ')}. "
+                f"Trade Management Fabric consumption score is {integ.get('fabric_consumption_score', 'n/a')} with {integ.get('fabric_consumer_count_after', 'n/a')} consumers; "
+                f"Copilot trade-management consumption is {copilot_tm.get('copilot_trade_management_consumption_score', integ.get('copilot_trade_management_consumption_score', 'n/a'))}. "
+                f"Canonical active consumers: {', '.join(integ.get('canonical_active_consumers') or []) or 'warming up'}. "
+                f"Profit Capture is using {truth.get('strongest_profit_capture_source', 'warming up')} as the strongest source; truth score is {integ.get('profit_capture_truth_score', 'n/a')} "
+                f"and blended capture/giveback are {truth.get('blended_capture_ratio', 'n/a')} / {truth.get('blended_giveback_pct', 'n/a')}. "
+                f"If Profit Capture is still weak, the blocker is {str((integ.get('metrics_still_below_60') or {}).get('profit_capture_truth_score', {}).get('exact_blocker') or (integ.get('profit_capture_truth_recovery_v1') or {}).get('profit_capture_blocker_if_below_60') or 'paper validation and capture/giveback evidence are still maturing').replace('_', ' ')}. "
+                f"Paper advisory attachment is {integ.get('paper_advisory_attachment_pct', 'n/a')}% across {attachments.get('paper_candidates_audited', 'n/a')} bounded candidates; "
+                f"sample symbol {first_sample.get('symbol', 'n/a')} has lesson IDs {first_sample.get('canonical_lesson_ids', [])}, hold/trim/exit advisory {first_sample.get('hold_trim_exit_advisory', 'n/a')}, and giveback risk {first_sample.get('giveback_risk', 'n/a')}. "
+                f"Ranking proxy reconstruction improved from {ranking.get('ranking_reconstruction_score_before', integ.get('ranking_reconstruction_score_before', 'n/a'))} to {ranking.get('ranking_reconstruction_score_after', integ.get('ranking_reconstruction_score_after', 'n/a'))}; "
+                f"strongest proxy fields are {', '.join((ranking.get('strongest_proxy_factors') or [])[:4]) or 'warming up'}. "
+                f"Fix propagation status: fabric consumed={fabric.get('fabric_copilot_consumed', False)}, profit-capture consumed={fabric.get('fabric_profit_capture_consumed', False)}, "
+                f"paper influence consumed={fabric.get('fabric_paper_influence_consumed', False)}, Cortex consumed={fabric.get('fabric_cortex_consumed', False)}. "
+                f"Top remaining blocker: {str(integ.get('top_remaining_blocker') or 'none').replace('_', ' ')}. "
+                "Safety note: this is cached advisory diagnostics only; no ranking, entry, exit, sizing, allocation, broker behavior, Paper behavior, or live trading changed."
+            )
+        elif (
             "trade management intelligence" in q_lc
             or "trade-management intelligence" in q_lc
             or "canonical lessons, trade management" in q_lc
@@ -57040,6 +57233,30 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 return dict(value)
         return {}
 
+    if force:
+        try:
+            disk_cache_path = os.path.join(STATE, "dashboard_cache", "unified_learning_diagnostics_v1.json")
+            with open(disk_cache_path, "r", encoding="utf-8") as handle:
+                force_cached = json.load(handle)
+        except Exception:
+            force_cached = {}
+        if isinstance(force_cached, dict) and force_cached:
+            _attach_astra_integration_completion(force_cached, force_cached, force=False)
+            force_cached["cache_hit"] = True
+            force_cached["cache_source"] = "dashboard_cache_disk_force_guard"
+            force_cached["force_refresh_deferred"] = True
+            force_cached["force_refresh_deferred_reason"] = "bounded_validation_path_preserves_dashboard_responsiveness_and_zero_provider_calls"
+            force_cached["failed_sources_count"] = int(_to_float(force_cached.get("failed_sources_count"), 0.0))
+            force_cached["initial_learning_tab_endpoint_count"] = int(_to_float(force_cached.get("initial_learning_tab_endpoint_count"), 1.0) or 1)
+            force_cached["api_calls_used"] = 0
+            force_cached["provider_calls_used"] = 0
+            force_cached["llm_calls_used"] = 0
+            force_cached["dashboard_provider_calls_used"] = 0
+            force_cached["dashboard_llm_calls_used"] = 0
+            force_cached["behavior_safe_to_apply"] = False
+            _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(force_cached), "ts": time.time()}
+            return force_cached
+
     if not force:
         cached_unified = _CACHE.get("unified_learning_diagnostics_v1") if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
         cached_data = cached_unified.get("data") if isinstance(cached_unified, dict) else None
@@ -57128,6 +57345,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
                     storage_alias.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
                     convergence_alias.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
                 )
+            _attach_astra_integration_completion(fast, fast, force=False)
             fast["cache_hit"] = True
             fast["cache_age_seconds"] = round(cache_age, 3)
             return fast
@@ -57220,6 +57438,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
                     storage_alias.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
                     convergence_alias.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
                 )
+            _attach_astra_integration_completion(disk_cached, disk_cached, force=False)
             disk_cached["cache_hit"] = True
             disk_cached["cache_source"] = "dashboard_cache_disk"
             disk_cached["api_calls_used"] = 0
@@ -57255,6 +57474,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             fallback["astra_tier1_tier2_profitability_activation_v1"] = dict(
                 ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION.status(statuses={**fallback_statuses, **fallback}, force=False) or {}
             )
+            _attach_astra_integration_completion(fallback, fallback_statuses, force=False)
             fallback["astra_autonomous_improvement_performance_attribution_completion_v1"] = dict(completion or {})
             fallback.update({
                 "status": "ok",
@@ -57619,6 +57839,19 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 statuses["astra_tier1_tier2_profitability_activation_v1"] = {}
             out["astra_tier1_tier2_profitability_activation_v1"] = dict(
                 statuses.get("astra_tier1_tier2_profitability_activation_v1") or {}
+            )
+            try:
+                statuses["astra_integration_completion_consumption_v1"] = ASTRA_INTEGRATION_COMPLETION_CONSUMPTION.status(
+                    statuses={**statuses, **out},
+                    force=bool(force),
+                )
+            except Exception:
+                statuses["astra_integration_completion_consumption_v1"] = {}
+            out["astra_integration_completion_consumption_v1"] = dict(
+                statuses.get("astra_integration_completion_consumption_v1") or {}
+            )
+            out["cortex_issue_registry_v1"] = dict(
+                (out.get("astra_integration_completion_consumption_v1") or {}).get("cortex_issue_registry_v1") or {}
             )
             try:
                 statuses["astra_autonomous_optimization_governance_core_v1"] = ASTRA_AUTONOMOUS_OPTIMIZATION_GOVERNANCE_CORE.status(

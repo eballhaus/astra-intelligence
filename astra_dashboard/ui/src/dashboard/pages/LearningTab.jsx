@@ -1652,6 +1652,7 @@ export default function LearningTab({ compact = false }) {
   const cortexLifecycleEvidenceMasterTruth = unified?.cortex_lifecycle_evidence_master_truth_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.cortex_lifecycle_evidence_master_truth_v1 || astraProfitExitRankingCopilotConvergence?.cortex_lifecycle_evidence_master_truth_v1 || astraIntelligenceOptimizationResearch?.cortex_lifecycle_evidence_master_truth_v1 || {};
   const astraProfitabilityActivationUtilization = unified?.astra_profitability_activation_intelligence_utilization_v1 || cortexLifecycleEvidenceMasterTruth?.astra_profitability_activation_intelligence_utilization_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.astra_profitability_activation_intelligence_utilization_v1 || astraProfitExitRankingCopilotConvergence?.astra_profitability_activation_intelligence_utilization_v1 || astraIntelligenceOptimizationResearch?.astra_profitability_activation_intelligence_utilization_v1 || {};
   const astraTier12ProfitabilityActivation = unified?.astra_tier1_tier2_profitability_activation_v1 || astraProfitabilityActivationUtilization?.astra_tier1_tier2_profitability_activation_v1 || cortexLifecycleEvidenceMasterTruth?.astra_tier1_tier2_profitability_activation_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.astra_tier1_tier2_profitability_activation_v1 || astraProfitExitRankingCopilotConvergence?.astra_tier1_tier2_profitability_activation_v1 || astraIntelligenceOptimizationResearch?.astra_tier1_tier2_profitability_activation_v1 || {};
+  const astraIntegrationCompletionConsumption = unified?.astra_integration_completion_consumption_v1 || astraTier12ProfitabilityActivation?.astra_integration_completion_consumption_v1 || astraProfitabilityActivationUtilization?.astra_integration_completion_consumption_v1 || cortexLifecycleEvidenceMasterTruth?.astra_integration_completion_consumption_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.astra_integration_completion_consumption_v1 || astraProfitExitRankingCopilotConvergence?.astra_integration_completion_consumption_v1 || astraIntelligenceOptimizationResearch?.astra_integration_completion_consumption_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -4496,6 +4497,59 @@ export default function LearningTab({ compact = false }) {
               <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
                 <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
                   {label}: {String(row?.status || row?.candidate_ledger_join_status || "available").replaceAll("_", " ")}
+                </summary>
+                <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
+                  {JSON.stringify(row || {}, null, 2)}
+                </pre>
+              </details>
+            ))}
+          </div>
+        </details>
+        <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
+          <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
+            Integration Completion & Cortex Issues: {String(astraIntegrationCompletionConsumption?.status || "warming up").replaceAll("_", " ")}
+          </summary>
+          <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+            Verifies whether canonical lessons, Trade Management Fabric, Profit Capture truth, Paper advisory evidence, Copilot, ranking proxies, and Cortex issue tracking are actually consumed. Advisory-only; no Paper, ranking, exit, sizing, allocation, threshold, broker, provider, or LLM behavior changes.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+            {[
+              ["Fabric Consumption", safeNumber(astraIntegrationCompletionConsumption?.fabric_consumption_score).toFixed(1)],
+              ["Fabric Consumers", astraIntegrationCompletionConsumption?.fabric_consumer_count_after],
+              ["Canonical Consumers", astraIntegrationCompletionConsumption?.canonical_actual_code_consumers_after],
+              ["Profit Truth", safeNumber(astraIntegrationCompletionConsumption?.profit_capture_truth_score).toFixed(1)],
+              ["Paper Advisory Attach", `${safeNumber(astraIntegrationCompletionConsumption?.paper_advisory_attachment_pct).toFixed(1)}%`],
+              ["Copilot Consumption", safeNumber(astraIntegrationCompletionConsumption?.copilot_trade_management_consumption_score).toFixed(1)],
+              ["Ranking Proxy", safeNumber(astraIntegrationCompletionConsumption?.ranking_reconstruction_score_after).toFixed(1)],
+              ["Open Cortex Issues", astraIntegrationCompletionConsumption?.cortex_issue_count_open],
+              ["Red Issues", astraIntegrationCompletionConsumption?.cortex_issue_count_red],
+              ["Orange Issues", astraIntegrationCompletionConsumption?.cortex_issue_count_orange],
+              ["Highest ROI", astraIntegrationCompletionConsumption?.highest_roi_next_improvement],
+              ["Top Blocker", astraIntegrationCompletionConsumption?.top_remaining_blocker],
+            ].map(([label, value]) => (
+              <div key={label} style={{ background: "rgba(12,24,42,0.46)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+                <strong style={{ color: "#f2f7ff" }}>{String(value ?? "warming up").replaceAll("_", " ")}</strong>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+            {[
+              ["Trade Management Fabric Consumption", astraIntegrationCompletionConsumption?.trade_management_fabric_consumption_completion_v1],
+              ["Canonical Consumer Verification", astraIntegrationCompletionConsumption?.canonical_lesson_real_consumer_verification_v1],
+              ["Profit Capture Truth Recovery", astraIntegrationCompletionConsumption?.profit_capture_truth_recovery_v1],
+              ["Paper Advisory Evidence Attachment", astraIntegrationCompletionConsumption?.paper_influence_advisory_evidence_attachment_v1],
+              ["Copilot Trade Management Consumption", astraIntegrationCompletionConsumption?.copilot_trade_management_consumption_v1],
+              ["Ranking Proxy Reconstruction", astraIntegrationCompletionConsumption?.ranking_proxy_reconstruction_v1],
+              ["Endpoint Contract Repair", astraIntegrationCompletionConsumption?.endpoint_summary_contract_repair_v1],
+              ["Cortex Integration Auditor", astraIntegrationCompletionConsumption?.cortex_autonomous_integration_auditor_v1],
+              ["Cortex Issue Registry", astraIntegrationCompletionConsumption?.cortex_issue_registry_v1],
+              ["Development ROI Tracker", astraIntegrationCompletionConsumption?.cortex_development_roi_tracker_v1],
+              ["Metrics Still Below 60", astraIntegrationCompletionConsumption?.metrics_still_below_60],
+            ].map(([label, row]) => (
+              <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
+                <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+                  {label}: {String(row?.status || row?.endpoint_contract_status || row?.registry_status || "available").replaceAll("_", " ")}
                 </summary>
                 <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
                   {JSON.stringify(row || {}, null, 2)}
