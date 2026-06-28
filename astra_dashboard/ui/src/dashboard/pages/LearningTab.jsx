@@ -1650,6 +1650,7 @@ export default function LearningTab({ compact = false }) {
   const astraProfitExitRankingCopilotConvergence = unified?.astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1 || {};
   const astraIntelligenceOptimizationResearch = unified?.astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1 || astraProfitExitRankingCopilotConvergence?.astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1 || {};
   const cortexLifecycleEvidenceMasterTruth = unified?.cortex_lifecycle_evidence_master_truth_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.cortex_lifecycle_evidence_master_truth_v1 || astraProfitExitRankingCopilotConvergence?.cortex_lifecycle_evidence_master_truth_v1 || astraIntelligenceOptimizationResearch?.cortex_lifecycle_evidence_master_truth_v1 || {};
+  const astraProfitabilityActivationUtilization = unified?.astra_profitability_activation_intelligence_utilization_v1 || cortexLifecycleEvidenceMasterTruth?.astra_profitability_activation_intelligence_utilization_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.astra_profitability_activation_intelligence_utilization_v1 || astraProfitExitRankingCopilotConvergence?.astra_profitability_activation_intelligence_utilization_v1 || astraIntelligenceOptimizationResearch?.astra_profitability_activation_intelligence_utilization_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -4435,6 +4436,70 @@ export default function LearningTab({ compact = false }) {
               <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
                 <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
                   {label}: {String(row?.status || row?.master_truth_graph_status || row?.future_write_contract_status || "available").replaceAll("_", " ")}
+                </summary>
+                <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
+                  {JSON.stringify(row || {}, null, 2)}
+                </pre>
+              </details>
+            ))}
+          </div>
+        </details>
+        <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
+          <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
+            Profitability Activation & AIOS Utilization: {String(astraProfitabilityActivationUtilization?.status || "warming up").replaceAll("_", " ")}
+          </summary>
+          <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+            Measures whether canonical lessons are being consumed by advisory diagnostics and whether Shadow/Paper profitability influence is ready. This panel does not change trading, rankings, entries, exits, sizing, allocation, thresholds, or broker behavior.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+            {[
+              ["Intelligence Utilization", safeNumber(astraProfitabilityActivationUtilization?.intelligence_utilization_score_v1?.intelligence_utilization_score).toFixed(1)],
+              ["AIOS Flow", safeNumber(astraProfitabilityActivationUtilization?.aios_intelligence_utilization_recovery_v1?.aios_intelligence_flow_score).toFixed(1)],
+              ["Lesson Consumption", safeNumber(astraProfitabilityActivationUtilization?.canonical_lesson_consumption_engine_v1?.lesson_consumption_score_after).toFixed(1)],
+              ["Paper Influence", safeNumber(astraProfitabilityActivationUtilization?.paper_trading_decision_influence_audit_v1?.paper_decision_influence_score).toFixed(1)],
+              ["Shadow Transfer", safeNumber(astraProfitabilityActivationUtilization?.shadow_to_paper_transfer_intelligence_v1?.shadow_to_paper_transfer_score).toFixed(1)],
+              ["Profitability Validation", safeNumber(astraProfitabilityActivationUtilization?.profitability_validation_engine_v1?.profitability_validation_score).toFixed(1)],
+              ["Profit Capture", safeNumber(astraProfitabilityActivationUtilization?.profit_capture_optimization_consumer_v1?.profit_capture_score_after).toFixed(1)],
+              ["Exit Learning", safeNumber(astraProfitabilityActivationUtilization?.exit_learning_convergence_consumer_v1?.exit_learning_score_after).toFixed(1)],
+              ["Confidence Calibration", safeNumber(astraProfitabilityActivationUtilization?.confidence_calibration_consumer_v1?.confidence_score_after).toFixed(1)],
+              ["Symbol Intelligence", safeNumber(astraProfitabilityActivationUtilization?.symbol_intelligence_consumer_integration_v1?.symbol_intelligence_consumption_score).toFixed(1)],
+              ["Learning ROI", safeNumber(astraProfitabilityActivationUtilization?.learning_roi_engine_v1?.learning_roi_score).toFixed(1)],
+              ["Paper Readiness", astraProfitabilityActivationUtilization?.final_audit_v1?.paper_influence_ready ? "ready" : "not ready"],
+              ["Micro-Test", astraProfitabilityActivationUtilization?.final_audit_v1?.paper_micro_test_ready ? "ready" : "blocked"],
+              ["Highest ROI", astraProfitabilityActivationUtilization?.final_audit_v1?.highest_roi_next_improvement],
+            ].map(([label, value]) => (
+              <div key={label} style={{ background: "rgba(12,24,42,0.46)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+                <strong style={{ color: "#f2f7ff" }}>{String(value ?? "warming up").replaceAll("_", " ")}</strong>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+            {[
+              ["Canonical Lesson Consumption", astraProfitabilityActivationUtilization?.canonical_lesson_consumption_engine_v1],
+              ["AIOS Utilization Recovery", astraProfitabilityActivationUtilization?.aios_intelligence_utilization_recovery_v1],
+              ["Consumer Coverage Audit", astraProfitabilityActivationUtilization?.canonical_lesson_consumer_coverage_audit_v1],
+              ["Profit Capture Consumer", astraProfitabilityActivationUtilization?.profit_capture_optimization_consumer_v1],
+              ["Exit Learning Consumer", astraProfitabilityActivationUtilization?.exit_learning_convergence_consumer_v1],
+              ["Confidence Consumer", astraProfitabilityActivationUtilization?.confidence_calibration_consumer_v1],
+              ["Paper Influence Audit", astraProfitabilityActivationUtilization?.paper_trading_decision_influence_audit_v1],
+              ["Shadow-to-Paper Transfer", astraProfitabilityActivationUtilization?.shadow_to_paper_transfer_intelligence_v1],
+              ["Promotion Governance", astraProfitabilityActivationUtilization?.profitability_first_promotion_governance_v1],
+              ["Profitability Validation", astraProfitabilityActivationUtilization?.profitability_validation_engine_v1],
+              ["Shadow Lesson Registry", astraProfitabilityActivationUtilization?.shadow_lesson_registry_v1],
+              ["Symbol Compression", astraProfitabilityActivationUtilization?.symbol_satellite_compression_engine_v1],
+              ["Symbol Behavioral Memory", astraProfitabilityActivationUtilization?.symbol_behavioral_memory_engine_v1],
+              ["Lifecycle Completion", astraProfitabilityActivationUtilization?.lifecycle_completion_engine_v1],
+              ["Outcome Reconstruction", astraProfitabilityActivationUtilization?.outcome_reconstruction_engine_v1],
+              ["Historical Recovery", astraProfitabilityActivationUtilization?.historical_trade_intelligence_recovery_v1],
+              ["Learning ROI", astraProfitabilityActivationUtilization?.learning_roi_engine_v1],
+              ["Cortex Flow", astraProfitabilityActivationUtilization?.cortex_intelligence_flow_score_v1],
+              ["Bottleneck Prioritization", astraProfitabilityActivationUtilization?.cortex_bottleneck_prioritization_engine_v1],
+              ["Final Audit", astraProfitabilityActivationUtilization?.final_audit_v1],
+            ].map(([label, row]) => (
+              <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
+                <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+                  {label}: {String(row?.status || row?.consumer_audit_status || row?.profit_capture_consumer_status || row?.exit_learning_consumer_status || row?.shadow_lesson_registry_status || row?.symbol_behavior_memory_status || row?.lifecycle_completion_status || "available").replaceAll("_", " ")}
                 </summary>
                 <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
                   {JSON.stringify(row || {}, null, 2)}
