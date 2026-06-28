@@ -1649,6 +1649,7 @@ export default function LearningTab({ compact = false }) {
   const astraProfitCaptureExitRankingStorageLearningEfficiency = unified?.astra_profit_capture_exit_ranking_storage_learning_efficiency_v1 || astraStorageCacheAttributionLearningEfficiency || {};
   const astraProfitExitRankingCopilotConvergence = unified?.astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1 || {};
   const astraIntelligenceOptimizationResearch = unified?.astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1 || astraProfitExitRankingCopilotConvergence?.astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1 || {};
+  const cortexLifecycleEvidenceMasterTruth = unified?.cortex_lifecycle_evidence_master_truth_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.cortex_lifecycle_evidence_master_truth_v1 || astraProfitExitRankingCopilotConvergence?.cortex_lifecycle_evidence_master_truth_v1 || astraIntelligenceOptimizationResearch?.cortex_lifecycle_evidence_master_truth_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -4382,6 +4383,64 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ marginTop: 10, color: "#dce9fb", fontSize: 12, lineHeight: 1.55 }}>
             This suite blocks raw giant scans from UI paths and recommends summary/index work only. It does not delete, archive, compact, trade, rank, enter, exit, size, allocate, promote, enable learned exits, or change thresholds.
+          </div>
+        </details>
+        <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
+          <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
+            Cortex Master Truth & Lifecycle Evidence Linkage: {String(cortexLifecycleEvidenceMasterTruth?.status || "warming up").replaceAll("_", " ")}
+          </summary>
+          <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+            Reconstructs fragmented lifecycle evidence into derived canonical lessons without modifying raw evidence, broker behavior, rankings, entries, exits, sizing, allocation, or thresholds.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+            {[
+              ["Diagnostic Integrity", safeNumber(cortexLifecycleEvidenceMasterTruth?.cortex_diagnostic_integrity_self_audit_v1?.cortex_diagnostic_integrity_score).toFixed(1)],
+              ["Endpoint Contract", safeNumber(cortexLifecycleEvidenceMasterTruth?.cortex_diagnostic_integrity_self_audit_v1?.endpoint_contract_score).toFixed(1)],
+              ["Master Truth Coverage", safeNumber(cortexLifecycleEvidenceMasterTruth?.cortex_master_truth_graph_v1?.master_truth_coverage_score).toFixed(1)],
+              ["Contradictions", safeNumber(cortexLifecycleEvidenceMasterTruth?.cross_system_contradiction_detection_v1?.contradiction_count).toFixed(0)],
+              ["Causal Intelligence", safeNumber(cortexLifecycleEvidenceMasterTruth?.cortex_causal_intelligence_engine_v1?.causal_intelligence_score).toFixed(1)],
+              ["Join Coverage", safeNumber(cortexLifecycleEvidenceMasterTruth?.cross_file_lifecycle_evidence_joiner_v1?.join_coverage_score).toFixed(1)],
+              ["Canonical Lessons", safeNumber(cortexLifecycleEvidenceMasterTruth?.canonical_lifecycle_lesson_store_v1?.canonical_lesson_count).toFixed(0)],
+              ["Complete Lessons", `${safeNumber(cortexLifecycleEvidenceMasterTruth?.canonical_lifecycle_lesson_store_v1?.fully_complete_lesson_pct).toFixed(1)}%`],
+              ["Reconstructability", `${safeNumber(cortexLifecycleEvidenceMasterTruth?.evidence_reconstructability_score_v1?.fully_reconstructable_pct).toFixed(1)}%`],
+              ["Future Write Contract", cortexLifecycleEvidenceMasterTruth?.future_lifecycle_write_contract_v1?.future_write_contract_status],
+              ["Safety Truth", safeNumber(cortexLifecycleEvidenceMasterTruth?.unified_safety_truth_injection_v1?.safety_truth_consistency_score).toFixed(1)],
+              ["Shadow Tournament", safeNumber(cortexLifecycleEvidenceMasterTruth?.shadow_tournament_readiness_v1?.shadow_tournament_readiness_score).toFixed(1)],
+              ["Micro-Test Readiness", cortexLifecycleEvidenceMasterTruth?.micro_test_readiness_governance_v1?.paper_micro_test_ready ? "ready" : "blocked"],
+              ["Highest ROI", cortexLifecycleEvidenceMasterTruth?.cortex_roadmap_generator_v3?.highest_roi_next_improvement],
+            ].map(([label, value]) => (
+              <div key={label} style={{ background: "rgba(12,24,42,0.46)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+                <strong style={{ color: "#f2f7ff" }}>{String(value ?? "warming up").replaceAll("_", " ")}</strong>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+            {[
+              ["Before vs After Field Coverage", cortexLifecycleEvidenceMasterTruth?.before_vs_after_field_coverage],
+              ["Diagnostic Integrity", cortexLifecycleEvidenceMasterTruth?.cortex_diagnostic_integrity_self_audit_v1],
+              ["Endpoint Governance", cortexLifecycleEvidenceMasterTruth?.endpoint_governance_rationalization_v1],
+              ["Master Truth Graph", cortexLifecycleEvidenceMasterTruth?.cortex_master_truth_graph_v1],
+              ["Contradictions", cortexLifecycleEvidenceMasterTruth?.cross_system_contradiction_detection_v1],
+              ["Causal Intelligence", cortexLifecycleEvidenceMasterTruth?.cortex_causal_intelligence_engine_v1],
+              ["Field Alias Registry", cortexLifecycleEvidenceMasterTruth?.field_alias_normalization_v1],
+              ["Lifecycle Joiner", cortexLifecycleEvidenceMasterTruth?.cross_file_lifecycle_evidence_joiner_v1],
+              ["Canonical Lesson Store", cortexLifecycleEvidenceMasterTruth?.canonical_lifecycle_lesson_store_v1],
+              ["Evidence Reconstructability", cortexLifecycleEvidenceMasterTruth?.evidence_reconstructability_score_v1],
+              ["Future Write Contract", cortexLifecycleEvidenceMasterTruth?.future_lifecycle_write_contract_v1],
+              ["Safety Truth", cortexLifecycleEvidenceMasterTruth?.unified_safety_truth_injection_v1],
+              ["Roadmap V3", cortexLifecycleEvidenceMasterTruth?.cortex_roadmap_generator_v3],
+              ["Final Cortex Audit", cortexLifecycleEvidenceMasterTruth?.mandatory_final_cortex_audit_v1],
+            ].map(([label, row]) => (
+              <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
+                <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+                  {label}: {String(row?.status || row?.master_truth_graph_status || row?.future_write_contract_status || "available").replaceAll("_", " ")}
+                </summary>
+                <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
+                  {JSON.stringify(row || {}, null, 2)}
+                </pre>
+              </details>
+            ))}
           </div>
         </details>
         <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>

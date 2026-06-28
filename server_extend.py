@@ -2441,6 +2441,7 @@ try:
     from engine.astra_autonomous_optimization_governance_core_v1 import AstraAutonomousOptimizationGovernanceCoreV1
     from engine.astra_autonomous_improvement_performance_attribution_completion_v1 import AstraAutonomousImprovementPerformanceAttributionCompletionV1
     from engine.astra_storage_cache_attribution_learning_efficiency_v1 import AstraStorageCacheAttributionLearningEfficiencyV1
+    from engine.cortex_lifecycle_evidence_master_truth_v1 import CortexLifecycleEvidenceMasterTruthV1
 except Exception:
     class _IntelligenceQualityUnavailable:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -2504,6 +2505,7 @@ except Exception:
     AstraAutonomousOptimizationGovernanceCoreV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraAutonomousImprovementPerformanceAttributionCompletionV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraStorageCacheAttributionLearningEfficiencyV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    CortexLifecycleEvidenceMasterTruthV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
@@ -3203,6 +3205,7 @@ ASTRA_ADAPTIVE_OCCUPANCY_EVOLUTION_SUITE = AstraAdaptiveOccupancyEvolutionSuiteV
 ASTRA_AUTONOMOUS_OPTIMIZATION_GOVERNANCE_CORE = AstraAutonomousOptimizationGovernanceCoreV1(state_dir=STATE)
 ASTRA_AUTONOMOUS_IMPROVEMENT_PERFORMANCE_ATTRIBUTION_COMPLETION = AstraAutonomousImprovementPerformanceAttributionCompletionV1(state_dir=STATE)
 ASTRA_STORAGE_CACHE_ATTRIBUTION_LEARNING_EFFICIENCY = AstraStorageCacheAttributionLearningEfficiencyV1(state_dir=STATE)
+CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH = CortexLifecycleEvidenceMasterTruthV1(state_dir=STATE)
 ASTRA_PROVIDER_ORCHESTRATION_DATA_GOVERNANCE = AstraProviderOrchestrationDataGovernanceV1(state_dir=STATE)
 TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
 MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
@@ -44254,6 +44257,11 @@ def astra_storage_cache_attribution_learning_efficiency_v1(force: bool = False):
         and cached_nested
         and all(cached_nested.get(key) not in (None, "", [], {}) for key in convergence_required)
     ):
+        if "cortex_lifecycle_evidence_master_truth_v1" not in cached_payload:
+            try:
+                cached_payload["cortex_lifecycle_evidence_master_truth_v1"] = CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH.status(statuses=cached_payload, force=False)
+            except Exception:
+                cached_payload["cortex_lifecycle_evidence_master_truth_v1"] = {}
         return cached_payload
     statuses = _cached_autonomous_completion_statuses(cached_unified)
     needs_phase_a_refresh = bool(
@@ -44264,7 +44272,13 @@ def astra_storage_cache_attribution_learning_efficiency_v1(force: bool = False):
             or any(cached_nested.get(key) in (None, "", [], {}) for key in convergence_required)
         )
     )
-    return ASTRA_STORAGE_CACHE_ATTRIBUTION_LEARNING_EFFICIENCY.status(statuses=statuses, force=bool(force or needs_phase_a_refresh))
+    payload = ASTRA_STORAGE_CACHE_ATTRIBUTION_LEARNING_EFFICIENCY.status(statuses=statuses, force=bool(force or needs_phase_a_refresh))
+    if isinstance(payload, dict):
+        try:
+            payload["cortex_lifecycle_evidence_master_truth_v1"] = CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH.status(statuses={**statuses, **payload}, force=False)
+        except Exception:
+            payload["cortex_lifecycle_evidence_master_truth_v1"] = {}
+    return payload
 
 
 @router.get("/api/astra_intelligence_infrastructure_storage_learning_efficiency_v1")
@@ -44304,6 +44318,7 @@ def astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attributi
             out = dict(nested)
             out.setdefault("parent_suite", "astra_storage_cache_attribution_learning_efficiency_v1")
             out.setdefault("learning_center_summary", payload.get("learning_center_summary") or {})
+            out.setdefault("cortex_lifecycle_evidence_master_truth_v1", payload.get("cortex_lifecycle_evidence_master_truth_v1") or {})
             return out
     return payload
 
@@ -44331,7 +44346,55 @@ def astra_intelligence_optimization_profit_capture_confidence_autonomous_researc
             out = dict(nested)
             out.setdefault("parent_suite", "astra_storage_cache_attribution_learning_efficiency_v1")
             out.setdefault("learning_center_summary", payload.get("learning_center_summary") or {})
+            out.setdefault("cortex_lifecycle_evidence_master_truth_v1", payload.get("cortex_lifecycle_evidence_master_truth_v1") or {})
             return out
+    return payload
+
+
+@router.get("/api/cortex_lifecycle_evidence_master_truth_v1")
+def cortex_lifecycle_evidence_master_truth_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("cortex_lifecycle_evidence_master_truth_v1") or {})
+    cached_integrity = cached_payload.get("cortex_diagnostic_integrity_self_audit_v1") if isinstance(cached_payload.get("cortex_diagnostic_integrity_self_audit_v1"), dict) else {}
+    cached_safety = cached_payload.get("unified_safety_truth_injection_v1") if isinstance(cached_payload.get("unified_safety_truth_injection_v1"), dict) else {}
+    cached_canonical = cached_payload.get("canonical_lifecycle_lesson_store_v1") if isinstance(cached_payload.get("canonical_lifecycle_lesson_store_v1"), dict) else {}
+    cached_partial_consistent = not (
+        float((cached_canonical or {}).get("fully_complete_lesson_pct") or 0) > 0
+        and float((cached_canonical or {}).get("partial_lesson_pct") or 0) >= 99.9
+        and float((cached_canonical or {}).get("unusable_record_pct") or 0) <= 0.1
+    )
+    cached_payload_healthy = (
+        cached_payload
+        and float((cached_integrity or {}).get("cortex_diagnostic_integrity_score") or 0) > 0
+        and cached_partial_consistent
+        and cached_safety.get("paper_mode_verified") is not None
+    )
+    if cached_payload_healthy and not force:
+        return cached_payload
+    statuses = _cached_autonomous_completion_statuses(cached_unified)
+    if isinstance(cached_unified, dict):
+        statuses.update({
+            "astra_storage_cache_attribution_learning_efficiency_v1": cached_unified.get("astra_storage_cache_attribution_learning_efficiency_v1") or {},
+            "astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1": cached_unified.get("astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or {},
+            "astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1": cached_unified.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1") or {},
+            "astra_autonomous_optimization_governance_core_v1": cached_unified.get("astra_autonomous_optimization_governance_core_v1") or {},
+            "alpaca_paper_status_v1": cached_unified.get("alpaca_paper_status_v1") or {},
+            "failed_sources_count": cached_unified.get("failed_sources_count", 0),
+        })
+    payload = CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH.status(statuses=statuses, force=bool(force))
+    integrity = (payload or {}).get("cortex_diagnostic_integrity_self_audit_v1") if isinstance(payload, dict) else {}
+    safety_truth = (payload or {}).get("unified_safety_truth_injection_v1") if isinstance(payload, dict) else {}
+    needs_refresh = (
+        not force
+        and isinstance(payload, dict)
+        and (
+            not payload
+            or float((integrity or {}).get("cortex_diagnostic_integrity_score") or 0) <= 0
+            or safety_truth.get("paper_mode_verified") is None
+        )
+    )
+    if needs_refresh:
+        payload = CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH.status(statuses=statuses, force=True)
     return payload
 
 
@@ -44429,6 +44492,34 @@ def ask_astra_v1(payload: dict = Body(...)):
     ask_context_seed["astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1"] = dict(
         storage_cache_attribution.get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or storage_cache_attribution
     )
+    cortex_master_truth = dict((cached_unified or {}).get("cortex_lifecycle_evidence_master_truth_v1") or {})
+    cortex_before_after = cortex_master_truth.get("before_vs_after_field_coverage") if isinstance(cortex_master_truth.get("before_vs_after_field_coverage"), dict) else {}
+    cortex_integrity = cortex_master_truth.get("cortex_diagnostic_integrity_self_audit_v1") if isinstance(cortex_master_truth.get("cortex_diagnostic_integrity_self_audit_v1"), dict) else {}
+    cortex_canonical = cortex_master_truth.get("canonical_lifecycle_lesson_store_v1") if isinstance(cortex_master_truth.get("canonical_lifecycle_lesson_store_v1"), dict) else {}
+    cortex_complete_pct = float((cortex_canonical or {}).get("fully_complete_lesson_pct") or 0)
+    cortex_partial_pct = float((cortex_canonical or {}).get("partial_lesson_pct") or 0)
+    cortex_unusable_pct = float((cortex_canonical or {}).get("unusable_record_pct") or 0)
+    cortex_partial_consistent = not (
+        cortex_complete_pct > 0
+        and cortex_partial_pct >= 99.9
+        and cortex_unusable_pct <= 0.1
+    )
+    cortex_cache_healthy = (
+        bool(cortex_master_truth)
+        and float((cortex_integrity or {}).get("cortex_diagnostic_integrity_score") or 0) > 0
+        and cortex_partial_consistent
+        and cortex_before_after.get("original_mfe_pct") is not None
+        and cortex_before_after.get("original_mae_pct") is not None
+    )
+    if not cortex_cache_healthy:
+        try:
+            cortex_master_truth = CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH.status(
+                statuses={**ask_context_seed, **storage_cache_attribution},
+                force=bool(cortex_master_truth),
+            )
+        except Exception:
+            cortex_master_truth = {}
+    ask_context_seed["cortex_lifecycle_evidence_master_truth_v1"] = cortex_master_truth
     autonomous_improvement_completion = dict(
         (cached_unified or {}).get("astra_autonomous_improvement_performance_attribution_completion_v1") or {}
     )
@@ -44674,7 +44765,24 @@ def ask_astra_v1(payload: dict = Body(...)):
             "highest_roi_improvement": (storage_cache_attribution.get("cortex_integration_v1") or {}).get("highest_roi_improvement"),
             "recommended_roadmap_item": (storage_cache_attribution.get("cortex_integration_v1") or {}).get("recommended_roadmap_item"),
         },
-            "autonomous_improvement_performance_attribution_completion": {
+        "cortex_lifecycle_evidence_master_truth": {
+            "status": cortex_master_truth.get("status"),
+            "diagnostic_integrity_score": (cortex_master_truth.get("cortex_diagnostic_integrity_self_audit_v1") or {}).get("cortex_diagnostic_integrity_score"),
+            "endpoint_contract_score": (cortex_master_truth.get("cortex_diagnostic_integrity_self_audit_v1") or {}).get("endpoint_contract_score"),
+            "master_truth_coverage_score": (cortex_master_truth.get("cortex_master_truth_graph_v1") or {}).get("master_truth_coverage_score"),
+            "contradiction_count": (cortex_master_truth.get("cross_system_contradiction_detection_v1") or {}).get("contradiction_count"),
+            "causal_intelligence_score": (cortex_master_truth.get("cortex_causal_intelligence_engine_v1") or {}).get("causal_intelligence_score"),
+            "canonical_lesson_count": (cortex_master_truth.get("canonical_lifecycle_lesson_store_v1") or {}).get("canonical_lesson_count"),
+            "fully_complete_lesson_pct": (cortex_master_truth.get("canonical_lifecycle_lesson_store_v1") or {}).get("fully_complete_lesson_pct"),
+            "evidence_reconstructability_score": (cortex_master_truth.get("evidence_reconstructability_score_v1") or {}).get("fully_reconstructable_pct"),
+            "top_missing_fields": (cortex_master_truth.get("evidence_reconstructability_score_v1") or {}).get("top_missing_fields"),
+            "before_vs_after_field_coverage": cortex_master_truth.get("before_vs_after_field_coverage"),
+            "highest_roi_next_improvement": (cortex_master_truth.get("cortex_roadmap_generator_v3") or {}).get("highest_roi_next_improvement"),
+            "recommended_roadmap_order": (cortex_master_truth.get("cortex_roadmap_generator_v3") or {}).get("recommended_roadmap_order"),
+            "micro_test_ready": (cortex_master_truth.get("micro_test_readiness_governance_v1") or {}).get("paper_micro_test_ready"),
+            "biggest_root_cause": ((cortex_master_truth.get("cortex_causal_intelligence_engine_v1") or {}).get("top_root_causes") or [None])[0],
+        },
+        "autonomous_improvement_performance_attribution_completion": {
             "status": autonomous_improvement_completion.get("status"),
             "top_weaknesses": autonomous_improvement_completion.get("top_weaknesses"),
             "top_strengths": autonomous_improvement_completion.get("top_strengths"),
@@ -44813,6 +44921,46 @@ def ask_astra_v1(payload: dict = Body(...)):
         first = (compressed_context.get("copilot_actions") or [{}])[0] if isinstance(compressed_context.get("copilot_actions"), list) else {}
         q_lc = question.lower()
         if (
+            "319k" in q_lc
+            or "closed trades" in q_lc
+            or "scores low despite" in q_lc
+            or "historical evidence is reconstructable" in q_lc
+            or "evidence reconstructable" in q_lc
+            or "canonical lifecycle lessons" in q_lc
+            or "fields are missing" in q_lc
+            or "missing from lifecycle" in q_lc
+            or "what files contain the missing evidence" in q_lc
+            or "master truth graph" in q_lc
+            or "diagnostic integrity" in q_lc
+            or "endpoints consistent" in q_lc
+            or "what contradictions" in q_lc
+            or "biggest root cause" in q_lc
+        ):
+            canon = cortex_master_truth.get("canonical_lifecycle_lesson_store_v1") or {}
+            recon = cortex_master_truth.get("evidence_reconstructability_score_v1") or {}
+            before_after = cortex_master_truth.get("before_vs_after_field_coverage") or {}
+            diag = cortex_master_truth.get("cortex_diagnostic_integrity_self_audit_v1") or {}
+            truth = cortex_master_truth.get("cortex_master_truth_graph_v1") or {}
+            contradictions = cortex_master_truth.get("cross_system_contradiction_detection_v1") or {}
+            causal = cortex_master_truth.get("cortex_causal_intelligence_engine_v1") or {}
+            roadmap_v3 = cortex_master_truth.get("cortex_roadmap_generator_v3") or {}
+            micro = cortex_master_truth.get("micro_test_readiness_governance_v1") or {}
+            fast_short = (
+                f"Astra's scores are low despite {recon.get('total_closed_lifecycle_records', 'many')} lifecycle records because the evidence is fragmented, not absent. "
+                f"The main lifecycle file has literal coverage of exit_type={before_after.get('original_exit_type_pct', 'n/a')}%, "
+                f"MFE={before_after.get('original_mfe_pct', 'n/a')}%, MAE={before_after.get('original_mae_pct', 'n/a')}%, "
+                f"and capture_ratio={before_after.get('original_capture_ratio_pct', 'n/a')}%. "
+                f"After alias normalization and bounded cross-file joining, Astra created {canon.get('canonical_lesson_count', 0)} derived canonical lifecycle lessons; "
+                f"complete lessons are {canon.get('fully_complete_lesson_pct', 'n/a')}% and partial lessons are {canon.get('partial_lesson_pct', 'n/a')}%. "
+                f"Reconstructability: capture_ratio={recon.get('capture_ratio_reconstructable_pct', 'n/a')}%, giveback={recon.get('giveback_reconstructable_pct', 'n/a')}%, "
+                f"confidence={recon.get('confidence_reconstructable_pct', 'n/a')}%, ranking_factor={recon.get('ranking_factor_reconstructable_pct', 'n/a')}%. "
+                f"The biggest root cause is {str((causal.get('top_root_causes') or ['cross_file_lifecycle_evidence_not_joined'])[0]).replace('_', ' ')}. "
+                f"Master Truth coverage is {truth.get('master_truth_coverage_score', 'n/a')}; diagnostic integrity is {diag.get('cortex_diagnostic_integrity_score', 'n/a')}; "
+                f"contradictions found: {contradictions.get('contradiction_count', 0)}. "
+                f"Highest-ROI next improvement: {str(roadmap_v3.get('highest_roi_next_improvement') or 'consume canonical lifecycle lessons in diagnostics').replace('_', ' ')}. "
+                f"Paper micro-test ready: {micro.get('paper_micro_test_ready', False)}. This is advisory-only; no trades, exits, rankings, broker behavior, or Paper behavior changed."
+            )
+        elif (
             "what should astra improve next" in q_lc
             or "improve next" in q_lc
             or "slowing astra down" in q_lc
@@ -56655,6 +56803,31 @@ def unified_learning_diagnostics_v1(force: bool = False):
                     completion_cached = {}
                 if isinstance(completion_cached, dict) and completion_cached:
                     fast["astra_autonomous_improvement_performance_attribution_completion_v1"] = completion_cached
+            fast_cortex = fast.get("cortex_lifecycle_evidence_master_truth_v1") if isinstance(fast.get("cortex_lifecycle_evidence_master_truth_v1"), dict) else {}
+            fast_cortex_integrity = fast_cortex.get("cortex_diagnostic_integrity_self_audit_v1") if isinstance(fast_cortex.get("cortex_diagnostic_integrity_self_audit_v1"), dict) else {}
+            fast_cortex_safety = fast_cortex.get("unified_safety_truth_injection_v1") if isinstance(fast_cortex.get("unified_safety_truth_injection_v1"), dict) else {}
+            fast_cortex_canonical = fast_cortex.get("canonical_lifecycle_lesson_store_v1") if isinstance(fast_cortex.get("canonical_lifecycle_lesson_store_v1"), dict) else {}
+            fast_cortex_partial_consistent = not (
+                float((fast_cortex_canonical or {}).get("fully_complete_lesson_pct") or 0) > 0
+                and float((fast_cortex_canonical or {}).get("partial_lesson_pct") or 0) >= 99.9
+                and float((fast_cortex_canonical or {}).get("unusable_record_pct") or 0) <= 0.1
+            )
+            if (
+                "cortex_lifecycle_evidence_master_truth_v1" not in fast
+                or float((fast_cortex_integrity or {}).get("cortex_diagnostic_integrity_score") or 0) <= 0
+                or not fast_cortex_partial_consistent
+                or fast_cortex_safety.get("paper_mode_verified") is None
+            ):
+                try:
+                    cortex_cached = CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH.status(statuses=fast, force=False)
+                except Exception:
+                    cortex_cached = {}
+                if isinstance(cortex_cached, dict) and cortex_cached:
+                    fast["cortex_lifecycle_evidence_master_truth_v1"] = cortex_cached
+                    safety_truth = cortex_cached.get("unified_safety_truth_injection_v1") if isinstance(cortex_cached.get("unified_safety_truth_injection_v1"), dict) else {}
+                    fast["paper_mode_verified"] = safety_truth.get("paper_mode_verified", fast.get("paper_mode_verified"))
+                    fast["broker_live_endpoint_allowed"] = bool(safety_truth.get("broker_live_endpoint_allowed", fast.get("broker_live_endpoint_allowed", False)))
+                    fast["live_trading_changed"] = bool(safety_truth.get("live_trading_changed", fast.get("live_trading_changed", False)))
             if "astra_storage_cache_attribution_learning_efficiency_v1" not in fast or (fast.get("astra_storage_cache_attribution_learning_efficiency_v1") or {}).get("summary_coverage_score") is None:
                 try:
                     with open(os.path.join(STATE, "dashboard_cache", "astra_storage_cache_attribution_learning_efficiency_v1.json"), "r", encoding="utf-8") as handle:
@@ -56712,6 +56885,31 @@ def unified_learning_diagnostics_v1(force: bool = False):
                     completion_cached = {}
                 if isinstance(completion_cached, dict) and completion_cached:
                     disk_cached["astra_autonomous_improvement_performance_attribution_completion_v1"] = completion_cached
+            disk_cortex = disk_cached.get("cortex_lifecycle_evidence_master_truth_v1") if isinstance(disk_cached.get("cortex_lifecycle_evidence_master_truth_v1"), dict) else {}
+            disk_cortex_integrity = disk_cortex.get("cortex_diagnostic_integrity_self_audit_v1") if isinstance(disk_cortex.get("cortex_diagnostic_integrity_self_audit_v1"), dict) else {}
+            disk_cortex_safety = disk_cortex.get("unified_safety_truth_injection_v1") if isinstance(disk_cortex.get("unified_safety_truth_injection_v1"), dict) else {}
+            disk_cortex_canonical = disk_cortex.get("canonical_lifecycle_lesson_store_v1") if isinstance(disk_cortex.get("canonical_lifecycle_lesson_store_v1"), dict) else {}
+            disk_cortex_partial_consistent = not (
+                float((disk_cortex_canonical or {}).get("fully_complete_lesson_pct") or 0) > 0
+                and float((disk_cortex_canonical or {}).get("partial_lesson_pct") or 0) >= 99.9
+                and float((disk_cortex_canonical or {}).get("unusable_record_pct") or 0) <= 0.1
+            )
+            if (
+                "cortex_lifecycle_evidence_master_truth_v1" not in disk_cached
+                or float((disk_cortex_integrity or {}).get("cortex_diagnostic_integrity_score") or 0) <= 0
+                or not disk_cortex_partial_consistent
+                or disk_cortex_safety.get("paper_mode_verified") is None
+            ):
+                try:
+                    cortex_cached = CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH.status(statuses=disk_cached, force=False)
+                except Exception:
+                    cortex_cached = {}
+                if isinstance(cortex_cached, dict) and cortex_cached:
+                    disk_cached["cortex_lifecycle_evidence_master_truth_v1"] = cortex_cached
+                    safety_truth = cortex_cached.get("unified_safety_truth_injection_v1") if isinstance(cortex_cached.get("unified_safety_truth_injection_v1"), dict) else {}
+                    disk_cached["paper_mode_verified"] = safety_truth.get("paper_mode_verified", disk_cached.get("paper_mode_verified"))
+                    disk_cached["broker_live_endpoint_allowed"] = bool(safety_truth.get("broker_live_endpoint_allowed", disk_cached.get("broker_live_endpoint_allowed", False)))
+                    disk_cached["live_trading_changed"] = bool(safety_truth.get("live_trading_changed", disk_cached.get("live_trading_changed", False)))
             if "astra_storage_cache_attribution_learning_efficiency_v1" not in disk_cached or (disk_cached.get("astra_storage_cache_attribution_learning_efficiency_v1") or {}).get("summary_coverage_score") is None:
                 try:
                     with open(os.path.join(STATE, "dashboard_cache", "astra_storage_cache_attribution_learning_efficiency_v1.json"), "r", encoding="utf-8") as handle:
@@ -56774,6 +56972,12 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 (storage_suite or {}).get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
                 ((storage_suite or {}).get("profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or {}).get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
             )
+            cortex = CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH.status(statuses={**fallback_statuses, **fallback}, force=False)
+            fallback["cortex_lifecycle_evidence_master_truth_v1"] = dict(cortex or {})
+            safety_truth = (cortex or {}).get("unified_safety_truth_injection_v1") if isinstance((cortex or {}).get("unified_safety_truth_injection_v1"), dict) else {}
+            fallback["paper_mode_verified"] = safety_truth.get("paper_mode_verified")
+            fallback["broker_live_endpoint_allowed"] = bool(safety_truth.get("broker_live_endpoint_allowed", False))
+            fallback["live_trading_changed"] = bool(safety_truth.get("live_trading_changed", False))
             fallback["astra_autonomous_improvement_performance_attribution_completion_v1"] = dict(completion or {})
             fallback.update({
                 "status": "ok",
@@ -57104,6 +57308,21 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 (out.get("astra_storage_cache_attribution_learning_efficiency_v1") or {}).get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
                 (out.get("astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attribution_optimization_research_v1") or {}).get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
             )
+            try:
+                statuses["cortex_lifecycle_evidence_master_truth_v1"] = CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH.status(
+                    statuses={**statuses, **out},
+                    force=bool(force),
+                )
+            except Exception:
+                statuses["cortex_lifecycle_evidence_master_truth_v1"] = {}
+            out["cortex_lifecycle_evidence_master_truth_v1"] = dict(
+                statuses.get("cortex_lifecycle_evidence_master_truth_v1") or {}
+            )
+            safety_truth = out["cortex_lifecycle_evidence_master_truth_v1"].get("unified_safety_truth_injection_v1")
+            if isinstance(safety_truth, dict):
+                out["paper_mode_verified"] = safety_truth.get("paper_mode_verified", out.get("paper_mode_verified"))
+                out["broker_live_endpoint_allowed"] = bool(safety_truth.get("broker_live_endpoint_allowed", out.get("broker_live_endpoint_allowed", False)))
+                out["live_trading_changed"] = bool(safety_truth.get("live_trading_changed", out.get("live_trading_changed", False)))
             try:
                 statuses["astra_autonomous_optimization_governance_core_v1"] = ASTRA_AUTONOMOUS_OPTIMIZATION_GOVERNANCE_CORE.status(
                     statuses={**statuses, **out},
