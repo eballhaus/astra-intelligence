@@ -44349,6 +44349,9 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
     payload["astra_final_paper_provider_replay_cortex_validation_v1"] = dict(
         payload.get("astra_paper_provider_cortex_completion_v1") or {}
     )
+    payload["astra_premarket_paper_readiness_hotfix_v1"] = dict(
+        (payload.get("astra_paper_provider_cortex_completion_v1") or {}).get("astra_premarket_paper_readiness_hotfix_v1") or {}
+    )
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -44669,6 +44672,35 @@ def astra_paper_provider_cortex_completion_v1(force: bool = False):
 @router.get("/api/astra_final_paper_provider_replay_cortex_validation_v1")
 def astra_final_paper_provider_replay_cortex_validation_v1(force: bool = False):
     return astra_paper_provider_cortex_completion_v1(force=force)
+
+
+@router.get("/api/astra_premarket_paper_readiness_hotfix_v1")
+def astra_premarket_paper_readiness_hotfix_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    statuses = dict(cached_unified or {})
+    statuses["__premarket_fmp_probe_force"] = bool(force)
+    payload = _astra_paper_provider_cortex_payload(statuses, force=True)
+    hotfix = dict((payload or {}).get("astra_premarket_paper_readiness_hotfix_v1") or {})
+    if not hotfix:
+        hotfix = {
+            "status": "insufficient_evidence",
+            "degraded_reason": "premarket_hotfix_payload_missing",
+            "behavior_safe_to_apply": False,
+            "paper_only_preserved": True,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "portfolio_allocation_changed": False,
+            "thresholds_changed": False,
+            "dashboard_provider_calls_used": 0,
+            "dashboard_llm_calls_used": 0,
+        }
+    hotfix.setdefault("parent_suite_status", (payload or {}).get("status"))
+    hotfix.setdefault("parent_endpoint", "/api/astra_final_paper_provider_replay_cortex_validation_v1")
+    return hotfix
 
 
 @router.get("/api/cortex_issue_registry_v1")
@@ -45412,6 +45444,15 @@ def ask_astra_v1(payload: dict = Body(...)):
             or "current paper metrics" in q_lc
             or "real paper metrics" in q_lc
             or "paper metrics trustworthy" in q_lc
+            or "paper metrics trustworthy yet" in q_lc
+            or "ready for paper trading tomorrow" in q_lc
+            or "paper trading tomorrow" in q_lc
+            or "biggest issue before paper trading" in q_lc
+            or "what should i watch tomorrow" in q_lc
+            or "why is fmp still at 0 calls" in q_lc
+            or "why is fmp still at zero calls" in q_lc
+            or "what horizon should astra favor" in q_lc
+            or "are api protections still active" in q_lc
             or "closed-trade attribution" in q_lc
             or "closed trade attribution" in q_lc
             or "session order submission" in q_lc
@@ -45438,10 +45479,12 @@ def ask_astra_v1(payload: dict = Body(...)):
             thresholds = suite.get("profitability_validation_good_metric_threshold_v1") or {}
             registry = suite.get("cortex_issue_registry_v2") or {}
             highest_issue = registry.get("highest_roi_open_issue") or {}
+            fmp_blocker = suite.get("fmp_block_reason") or provider.get("fmp_block_reason") or suite.get("fmp_zero_call_reason") or provider.get("fmp_zero_call_reason") or "none"
+            best_horizon = horizon.get("best_horizon_overall") or horizon.get("best_horizon_right_now") or suite.get("best_horizon_overall") or "warming up"
             fast_short = (
                 f"FMP is tracked but currently underutilized: status={suite.get('fmp_utilization_status', provider.get('fmp_utilization_status', 'warming_up'))}, "
                 f"calls today={suite.get('fmp_calls_today', provider.get('fmp_calls_today', 'n/a'))}, bandwidth={suite.get('fmp_bandwidth_used', provider.get('fmp_bandwidth_used_gb', 'n/a'))} GB. "
-                f"Zero usage was caused by cache-first protections and no safe worker-side refresh need, not by dashboard calls. "
+                f"FMP probe attempted={suite.get('fmp_probe_attempted', provider.get('fmp_probe_attempted', False))}, success={suite.get('fmp_probe_success', provider.get('fmp_probe_success', False))}, blocker={str(fmp_blocker).replace('_', ' ')}. "
                 f"API protections remain active: provider protection score={suite.get('provider_protection_score', provider.get('provider_protection_score', 'n/a'))}, "
                 f"hard stops={provider.get('provider_hard_stops_enabled', True)}, dashboard provider calls={suite.get('dashboard_provider_calls_used', 0)}, LLM calls={suite.get('llm_calls_used', 0)}. "
                 f"Safe FMP expansion allowed: {suite.get('fmp_expansion_allowed', fmp_roi.get('fmp_expansion_allowed', False))}; ROI validation score={fmp_roi.get('fmp_reactivation_roi_score', 'n/a')}. "
@@ -45452,9 +45495,9 @@ def ask_astra_v1(payload: dict = Body(...)):
                 f"Closed-trade attribution tracks {suite.get('tracked_closed_trades_after', closed.get('tracked_closed_trades_after', 'n/a'))} trades with score {suite.get('closed_trade_attribution_score', closed.get('closed_trade_attribution_score', 'n/a'))}; blocker={str(closed.get('closed_trade_attribution_blocker') or 'none').replace('_', ' ')}. "
                 f"Session order submission blocker={str(session.get('session_order_submission_blocker') or 'none').replace('_', ' ')}. "
                 f"Historical replay completed={suite.get('historical_replays_completed', replay.get('historical_replays_completed', 'n/a'))}, replay score={suite.get('historical_replay_score', replay.get('historical_replay_score', 'n/a'))}. "
-                f"Best horizon right now={str(horizon.get('best_horizon_right_now') or 'warming up').replace('_', ' ')}, horizon score={suite.get('horizon_intelligence_score', horizon.get('horizon_intelligence_score', 'n/a'))}, improving={horizon.get('horizon_recommendations_improving', False)}. "
+                f"Best horizon right now={str(best_horizon).replace('_', ' ')}, horizon usage moved from {suite.get('horizon_usage_before', horizon.get('horizon_usage_before', 'n/a'))} to {suite.get('horizon_usage_after', horizon.get('horizon_usage_after', suite.get('horizon_usage_score', 'n/a')))}, horizon attachment={suite.get('horizon_paper_attachment_pct', horizon.get('horizon_paper_attachment_pct', 'n/a'))}. "
                 f"Shadow outperforming Paper={attribution.get('shadow_outperforming_paper', False)}. "
-                f"Observation mode ready={suite.get('observation_mode_readiness', thresholds.get('profitability_ready_for_observation_mode', False))}. "
+                f"Observation mode ready={suite.get('observation_mode_readiness', thresholds.get('profitability_ready_for_observation_mode', False))}; safe for Paper observation={suite.get('safe_for_paper_observation', suite.get('observation_mode_readiness', False))}. "
                 f"Cortex has {suite.get('cortex_open_issues', registry.get('open_issue_count', 0))} open issue(s); highest ROI fix is {str((highest_issue or {}).get('issue_name') or suite.get('highest_roi_open_issue') or 'none').replace('_', ' ')}. "
                 "Safety note: cached diagnostics only; no provider calls during render and no trading, ranking, entry, exit, sizing, allocation, threshold, broker, or Paper execution behavior changed."
             )
@@ -58082,6 +58125,9 @@ def unified_learning_diagnostics_v1(force: bool = False):
             )
             out["astra_final_paper_provider_replay_cortex_validation_v1"] = dict(
                 out.get("astra_paper_provider_cortex_completion_v1") or {}
+            )
+            out["astra_premarket_paper_readiness_hotfix_v1"] = dict(
+                (out.get("astra_paper_provider_cortex_completion_v1") or {}).get("astra_premarket_paper_readiness_hotfix_v1") or {}
             )
             out["cortex_issue_registry_v1"] = dict(
                 (out.get("astra_paper_provider_cortex_completion_v1") or {}).get("cortex_issue_registry_v2")
