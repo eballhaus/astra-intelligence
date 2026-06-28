@@ -1653,6 +1653,7 @@ export default function LearningTab({ compact = false }) {
   const astraProfitabilityActivationUtilization = unified?.astra_profitability_activation_intelligence_utilization_v1 || cortexLifecycleEvidenceMasterTruth?.astra_profitability_activation_intelligence_utilization_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.astra_profitability_activation_intelligence_utilization_v1 || astraProfitExitRankingCopilotConvergence?.astra_profitability_activation_intelligence_utilization_v1 || astraIntelligenceOptimizationResearch?.astra_profitability_activation_intelligence_utilization_v1 || {};
   const astraTier12ProfitabilityActivation = unified?.astra_tier1_tier2_profitability_activation_v1 || astraProfitabilityActivationUtilization?.astra_tier1_tier2_profitability_activation_v1 || cortexLifecycleEvidenceMasterTruth?.astra_tier1_tier2_profitability_activation_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.astra_tier1_tier2_profitability_activation_v1 || astraProfitExitRankingCopilotConvergence?.astra_tier1_tier2_profitability_activation_v1 || astraIntelligenceOptimizationResearch?.astra_tier1_tier2_profitability_activation_v1 || {};
   const astraIntegrationCompletionConsumption = unified?.astra_integration_completion_consumption_v1 || astraTier12ProfitabilityActivation?.astra_integration_completion_consumption_v1 || astraProfitabilityActivationUtilization?.astra_integration_completion_consumption_v1 || cortexLifecycleEvidenceMasterTruth?.astra_integration_completion_consumption_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.astra_integration_completion_consumption_v1 || astraProfitExitRankingCopilotConvergence?.astra_integration_completion_consumption_v1 || astraIntelligenceOptimizationResearch?.astra_integration_completion_consumption_v1 || {};
+  const astraPaperProviderCortexCompletion = unified?.astra_paper_provider_cortex_completion_v1 || astraIntegrationCompletionConsumption?.astra_paper_provider_cortex_completion_v1 || astraTier12ProfitabilityActivation?.astra_paper_provider_cortex_completion_v1 || astraProfitabilityActivationUtilization?.astra_paper_provider_cortex_completion_v1 || cortexLifecycleEvidenceMasterTruth?.astra_paper_provider_cortex_completion_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.astra_paper_provider_cortex_completion_v1 || astraProfitExitRankingCopilotConvergence?.astra_paper_provider_cortex_completion_v1 || astraIntelligenceOptimizationResearch?.astra_paper_provider_cortex_completion_v1 || astraAutonomousOptimizationGovernance?.astra_paper_provider_cortex_completion_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -4550,6 +4551,70 @@ export default function LearningTab({ compact = false }) {
               <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
                 <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
                   {label}: {String(row?.status || row?.endpoint_contract_status || row?.registry_status || "available").replaceAll("_", " ")}
+                </summary>
+                <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
+                  {JSON.stringify(row || {}, null, 2)}
+                </pre>
+              </details>
+            ))}
+          </div>
+        </details>
+        <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
+          <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
+            Paper, Provider & Cortex Oversight Completion: {String(astraPaperProviderCortexCompletion?.status || "warming up").replaceAll("_", " ")}
+          </summary>
+          <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+            Verifies Paper advisory attachment, Paper influence readiness, closed-trade attribution, FMP/API utilization recovery, historical replay recovery, horizon validation, and Cortex oversight. Diagnostic-only; no Paper execution, broker, ranking, entry, exit, sizing, allocation, threshold, provider, or LLM behavior changes.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+            {[
+              ["Paper Attach Before", `${safeNumber(astraPaperProviderCortexCompletion?.paper_attachment_pct_before).toFixed(1)}%`],
+              ["Paper Attach After", `${safeNumber(astraPaperProviderCortexCompletion?.paper_attachment_pct_after).toFixed(1)}%`],
+              ["Paper Influence Before", safeNumber(astraPaperProviderCortexCompletion?.paper_influence_score_before).toFixed(1)],
+              ["Paper Influence After", safeNumber(astraPaperProviderCortexCompletion?.paper_influence_score_after).toFixed(1)],
+              ["Closed Trades Before", safeNumber(astraPaperProviderCortexCompletion?.tracked_closed_trades_before).toFixed(0)],
+              ["Closed Trades After", safeNumber(astraPaperProviderCortexCompletion?.tracked_closed_trades_after).toFixed(0)],
+              ["Closed Attribution", safeNumber(astraPaperProviderCortexCompletion?.closed_trade_attribution_score).toFixed(1)],
+              ["Session Blocker", astraPaperProviderCortexCompletion?.session_submission_blocker_investigation_v1?.session_order_submission_blocker || "none"],
+              ["FMP Status", astraPaperProviderCortexCompletion?.fmp_utilization_status],
+              ["FMP Calls Today", safeNumber(astraPaperProviderCortexCompletion?.fmp_calls_today).toFixed(0)],
+              ["FMP Bandwidth", `${safeNumber(astraPaperProviderCortexCompletion?.fmp_bandwidth_used).toFixed(4)} GB`],
+              ["FMP Expansion", astraPaperProviderCortexCompletion?.fmp_expansion_allowed ? "allowed worker-side" : "blocked"],
+              ["Provider Protection", safeNumber(astraPaperProviderCortexCompletion?.provider_protection_score).toFixed(1)],
+              ["Historical Replays", safeNumber(astraPaperProviderCortexCompletion?.historical_replays_completed).toFixed(0)],
+              ["Replay Score", safeNumber(astraPaperProviderCortexCompletion?.historical_replay_score).toFixed(1)],
+              ["Horizon Score", safeNumber(astraPaperProviderCortexCompletion?.horizon_intelligence_score).toFixed(1)],
+              ["Best Horizon", astraPaperProviderCortexCompletion?.horizon_intelligence_validation_promotion_v1?.best_horizon_right_now],
+              ["Shadow Outperforming", astraPaperProviderCortexCompletion?.profitability_attribution_validation_v1?.shadow_outperforming_paper ? "yes" : "not proven"],
+              ["Open Cortex Issues", safeNumber(astraPaperProviderCortexCompletion?.cortex_open_issues).toFixed(0)],
+              ["Highest ROI Issue", astraPaperProviderCortexCompletion?.highest_roi_open_issue],
+            ].map(([label, value]) => (
+              <div key={label} style={{ background: "rgba(12,24,42,0.46)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+                <strong style={{ color: "#f2f7ff" }}>{String(value ?? "warming up").replaceAll("_", " ")}</strong>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+            {[
+              ["Paper Advisory Attachment", astraPaperProviderCortexCompletion?.paper_advisory_attachment_completion_v1],
+              ["Paper Influence Completion", astraPaperProviderCortexCompletion?.paper_influence_completion_v1],
+              ["Closed Trade Attribution", astraPaperProviderCortexCompletion?.closed_trade_attribution_engine_v1],
+              ["Session Submission Blocker", astraPaperProviderCortexCompletion?.session_submission_blocker_investigation_v1],
+              ["Provider/API Utilization Recovery", astraPaperProviderCortexCompletion?.cortex_provider_utilization_recovery_api_protection_v1],
+              ["FMP Reactivation ROI", astraPaperProviderCortexCompletion?.fmp_reactivation_roi_validation_v1],
+              ["Historical Replay Recovery", astraPaperProviderCortexCompletion?.historical_replay_recovery_v1],
+              ["Satellite Utilization Audit", astraPaperProviderCortexCompletion?.historical_satellite_symbol_satellite_utilization_audit_v1],
+              ["Horizon Validation", astraPaperProviderCortexCompletion?.horizon_intelligence_validation_promotion_v1],
+              ["Profitability Attribution", astraPaperProviderCortexCompletion?.profitability_attribution_validation_v1],
+              ["Shadow-to-Paper Governance", astraPaperProviderCortexCompletion?.shadow_to_paper_governance_foundation_v2],
+              ["Cortex Issue Registry V2", astraPaperProviderCortexCompletion?.cortex_issue_registry_v2],
+              ["Cortex Oversight V2", astraPaperProviderCortexCompletion?.cortex_autonomous_oversight_completion_v2],
+              ["Learning Center Summary", astraPaperProviderCortexCompletion?.learning_center_summary],
+            ].map(([label, row]) => (
+              <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
+                <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+                  {label}: {String(row?.status || row?.registry_status || row?.paper_influence_status || row?.provider_recovery_status || "available").replaceAll("_", " ")}
                 </summary>
                 <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
                   {JSON.stringify(row || {}, null, 2)}

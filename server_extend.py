@@ -2445,6 +2445,7 @@ try:
     from engine.astra_profitability_activation_intelligence_utilization_v1 import AstraProfitabilityActivationIntelligenceUtilizationV1
     from engine.astra_tier1_tier2_profitability_activation_v1 import AstraTier1Tier2ProfitabilityActivationV1
     from engine.astra_integration_completion_consumption_v1 import AstraIntegrationCompletionConsumptionV1
+    from engine.astra_paper_provider_cortex_completion_v1 import AstraPaperProviderCortexCompletionV1
 except Exception:
     class _IntelligenceQualityUnavailable:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -2512,6 +2513,7 @@ except Exception:
     AstraProfitabilityActivationIntelligenceUtilizationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraTier1Tier2ProfitabilityActivationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraIntegrationCompletionConsumptionV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    AstraPaperProviderCortexCompletionV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
@@ -3215,6 +3217,7 @@ CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH = CortexLifecycleEvidenceMasterTruthV1(st
 ASTRA_PROFITABILITY_ACTIVATION_INTELLIGENCE_UTILIZATION = AstraProfitabilityActivationIntelligenceUtilizationV1(state_dir=STATE)
 ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION = AstraTier1Tier2ProfitabilityActivationV1(state_dir=STATE)
 ASTRA_INTEGRATION_COMPLETION_CONSUMPTION = AstraIntegrationCompletionConsumptionV1(state_dir=STATE)
+ASTRA_PAPER_PROVIDER_CORTEX_COMPLETION = AstraPaperProviderCortexCompletionV1(state_dir=STATE)
 ASTRA_PROVIDER_ORCHESTRATION_DATA_GOVERNANCE = AstraProviderOrchestrationDataGovernanceV1(state_dir=STATE)
 TRADE_THESIS_VALIDATION = TradeThesisValidationV1(state_dir=STATE)
 MARKET_TRANSITION_DETECTION = MarketTransitionDetectionV1(state_dir=STATE)
@@ -44118,6 +44121,7 @@ def astra_autonomous_optimization_governance_core_v1(force: bool = False):
             cached_unified.get("astra_tier1_tier2_profitability_activation_v1") or {},
         )
         _attach_astra_integration_completion(cached_payload, cached_unified, force=False)
+        _attach_astra_paper_provider_cortex_completion(cached_payload, cached_unified, force=False)
         return cached_payload
     statuses = dict(cached_unified or {})
     if cached_unified:
@@ -44180,6 +44184,7 @@ def astra_autonomous_optimization_governance_core_v1(force: bool = False):
         except Exception:
             payload["astra_tier1_tier2_profitability_activation_v1"] = {}
         _attach_astra_integration_completion(payload, statuses, force=False)
+        _attach_astra_paper_provider_cortex_completion(payload, statuses, force=False)
     return payload
 
 
@@ -44300,6 +44305,54 @@ def _attach_astra_integration_completion(payload, statuses=None, *, force: bool 
     return payload
 
 
+def _astra_paper_provider_cortex_payload(statuses=None, *, force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    status_map = dict(statuses or {})
+    if isinstance(cached_unified, dict):
+        status_map.update({k: v for k, v in cached_unified.items() if k not in status_map})
+    if "astra_integration_completion_consumption_v1" not in status_map:
+        status_map["astra_integration_completion_consumption_v1"] = _astra_integration_completion_payload(status_map, force=False)
+    try:
+        return ASTRA_PAPER_PROVIDER_CORTEX_COMPLETION.status(statuses=status_map, force=bool(force))
+    except Exception as exc:
+        return {
+            "status": "insufficient_evidence",
+            "degraded_reason": f"astra_paper_provider_cortex_completion_unavailable:{str(exc)[:120]}",
+            "behavior_safe_to_apply": False,
+            "advisory_only": True,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "portfolio_allocation_changed": False,
+            "thresholds_changed": False,
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "dashboard_provider_calls_used": 0,
+            "dashboard_llm_calls_used": 0,
+        }
+
+
+def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, force: bool = False):
+    if not isinstance(payload, dict):
+        return payload
+    if "astra_paper_provider_cortex_completion_v1" not in payload or force:
+        payload["astra_paper_provider_cortex_completion_v1"] = _astra_paper_provider_cortex_payload(
+            {**(statuses or {}), **payload},
+            force=force,
+        )
+    completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
+    registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
+    if registry:
+        payload["cortex_issue_registry_v1"] = dict(registry)
+    return payload
+
+
 @router.get("/api/astra_autonomous_improvement_performance_attribution_completion_v1")
 def astra_autonomous_improvement_performance_attribution_completion_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -44347,6 +44400,7 @@ def astra_storage_cache_attribution_learning_efficiency_v1(force: bool = False):
             except Exception:
                 cached_payload["astra_tier1_tier2_profitability_activation_v1"] = {}
         _attach_astra_integration_completion(cached_payload, cached_unified, force=False)
+        _attach_astra_paper_provider_cortex_completion(cached_payload, cached_unified, force=False)
         return cached_payload
     statuses = _cached_autonomous_completion_statuses(cached_unified)
     needs_phase_a_refresh = bool(
@@ -44368,6 +44422,7 @@ def astra_storage_cache_attribution_learning_efficiency_v1(force: bool = False):
         except Exception:
             payload["astra_profitability_activation_intelligence_utilization_v1"] = {}
         _attach_astra_integration_completion(payload, statuses, force=False)
+        _attach_astra_paper_provider_cortex_completion(payload, statuses, force=False)
     return payload
 
 
@@ -44413,6 +44468,7 @@ def astra_profit_capture_exit_intelligence_ranking_convergence_copilot_attributi
             out.setdefault("astra_tier1_tier2_profitability_activation_v1", payload.get("astra_tier1_tier2_profitability_activation_v1") or {})
             out.setdefault("astra_integration_completion_consumption_v1", payload.get("astra_integration_completion_consumption_v1") or _astra_integration_completion_payload({**payload, **out}, force=False))
             out.setdefault("cortex_issue_registry_v1", (out.get("astra_integration_completion_consumption_v1") or {}).get("cortex_issue_registry_v1") or {})
+            _attach_astra_paper_provider_cortex_completion(out, {**payload, **out}, force=False)
             return out
     return payload
 
@@ -44445,6 +44501,7 @@ def astra_intelligence_optimization_profit_capture_confidence_autonomous_researc
             out.setdefault("astra_tier1_tier2_profitability_activation_v1", payload.get("astra_tier1_tier2_profitability_activation_v1") or {})
             out.setdefault("astra_integration_completion_consumption_v1", payload.get("astra_integration_completion_consumption_v1") or _astra_integration_completion_payload({**payload, **out}, force=False))
             out.setdefault("cortex_issue_registry_v1", (out.get("astra_integration_completion_consumption_v1") or {}).get("cortex_issue_registry_v1") or {})
+            _attach_astra_paper_provider_cortex_completion(out, {**payload, **out}, force=False)
             return out
     return payload
 
@@ -44468,6 +44525,7 @@ def astra_profitability_activation_intelligence_utilization_v1(force: bool = Fal
             except Exception:
                 cached_payload["astra_tier1_tier2_profitability_activation_v1"] = {}
         _attach_astra_integration_completion(cached_payload, cached_unified, force=False)
+        _attach_astra_paper_provider_cortex_completion(cached_payload, cached_unified, force=False)
         return cached_payload
     statuses = _cached_autonomous_completion_statuses(cached_unified)
     if isinstance(cached_unified, dict):
@@ -44484,6 +44542,7 @@ def astra_profitability_activation_intelligence_utilization_v1(force: bool = Fal
         except Exception:
             payload["astra_tier1_tier2_profitability_activation_v1"] = {}
         _attach_astra_integration_completion(payload, statuses, force=False)
+        _attach_astra_paper_provider_cortex_completion(payload, statuses, force=False)
     return payload
 
 
@@ -44494,6 +44553,7 @@ def astra_tier1_tier2_profitability_activation_v1(force: bool = False):
     cached_summary = cached_payload.get("learning_center_summary") if isinstance(cached_payload.get("learning_center_summary"), dict) else {}
     if cached_payload and not force and cached_payload.get("status") == "ok" and cached_summary.get("trade_management_intelligence_fabric_score") is not None:
         _attach_astra_integration_completion(cached_payload, cached_unified, force=False)
+        _attach_astra_paper_provider_cortex_completion(cached_payload, cached_unified, force=False)
         return cached_payload
     statuses = _cached_autonomous_completion_statuses(cached_unified)
     if isinstance(cached_unified, dict):
@@ -44504,7 +44564,8 @@ def astra_tier1_tier2_profitability_activation_v1(force: bool = False):
         except Exception:
             statuses["astra_profitability_activation_intelligence_utilization_v1"] = {}
     payload = ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION.status(statuses=statuses, force=bool(force))
-    return _attach_astra_integration_completion(payload, statuses, force=False)
+    payload = _attach_astra_integration_completion(payload, statuses, force=False)
+    return _attach_astra_paper_provider_cortex_completion(payload, statuses, force=False)
 
 
 @router.get("/api/cortex_lifecycle_evidence_master_truth_v1")
@@ -44537,6 +44598,7 @@ def cortex_lifecycle_evidence_master_truth_v1(force: bool = False):
             except Exception:
                 cached_payload["astra_tier1_tier2_profitability_activation_v1"] = {}
         _attach_astra_integration_completion(cached_payload, cached_unified, force=False)
+        _attach_astra_paper_provider_cortex_completion(cached_payload, cached_unified, force=False)
         return cached_payload
     statuses = _cached_autonomous_completion_statuses(cached_unified)
     if isinstance(cached_unified, dict):
@@ -44572,6 +44634,7 @@ def cortex_lifecycle_evidence_master_truth_v1(force: bool = False):
         except Exception:
             payload["astra_tier1_tier2_profitability_activation_v1"] = {}
         _attach_astra_integration_completion(payload, statuses, force=False)
+        _attach_astra_paper_provider_cortex_completion(payload, statuses, force=False)
     return payload
 
 
@@ -44587,8 +44650,25 @@ def astra_integration_completion_consumption_v1(force: bool = False):
     return _astra_integration_completion_payload(statuses, force=bool(force))
 
 
+@router.get("/api/astra_paper_provider_cortex_completion_v1")
+def astra_paper_provider_cortex_completion_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_paper_provider_cortex_completion_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = _cached_autonomous_completion_statuses(cached_unified)
+    if isinstance(cached_unified, dict):
+        statuses.update(cached_unified)
+    statuses["astra_integration_completion_consumption_v1"] = astra_integration_completion_consumption_v1(force=False)
+    return _astra_paper_provider_cortex_payload(statuses, force=bool(force))
+
+
 @router.get("/api/cortex_issue_registry_v1")
 def cortex_issue_registry_v1(force: bool = False):
+    completion = astra_paper_provider_cortex_completion_v1(force=force)
+    registry = dict((completion or {}).get("cortex_issue_registry_v2") or {})
+    if registry:
+        return registry
     payload = astra_integration_completion_consumption_v1(force=force)
     registry = dict((payload or {}).get("cortex_issue_registry_v1") or {})
     if registry:
@@ -44760,8 +44840,17 @@ def ask_astra_v1(payload: dict = Body(...)):
             force=False,
         )
     ask_context_seed["astra_integration_completion_consumption_v1"] = integration_completion
+    paper_provider_cortex = dict((cached_unified or {}).get("astra_paper_provider_cortex_completion_v1") or {})
+    if not paper_provider_cortex:
+        paper_provider_cortex = _astra_paper_provider_cortex_payload(
+            {**ask_context_seed, "astra_integration_completion_consumption_v1": integration_completion},
+            force=False,
+        )
+    ask_context_seed["astra_paper_provider_cortex_completion_v1"] = paper_provider_cortex
     ask_context_seed["cortex_issue_registry_v1"] = dict(
-        (integration_completion or {}).get("cortex_issue_registry_v1") or {}
+        (paper_provider_cortex or {}).get("cortex_issue_registry_v2")
+        or (integration_completion or {}).get("cortex_issue_registry_v1")
+        or {}
     )
     autonomous_improvement_completion = dict(
         (cached_unified or {}).get("astra_autonomous_improvement_performance_attribution_completion_v1") or {}
@@ -45090,6 +45179,54 @@ def ask_astra_v1(payload: dict = Body(...)):
                 (integration_completion.get("profit_capture_truth_recovery_v1") or {}).get("source_table")
             ),
         },
+        "paper_provider_cortex_completion": {
+            "status": paper_provider_cortex.get("status"),
+            "paper_attachment_pct_before": paper_provider_cortex.get("paper_attachment_pct_before"),
+            "paper_attachment_pct_after": paper_provider_cortex.get("paper_attachment_pct_after"),
+            "paper_influence_score_before": paper_provider_cortex.get("paper_influence_score_before"),
+            "paper_influence_score_after": paper_provider_cortex.get("paper_influence_score_after"),
+            "tracked_closed_trades_before": paper_provider_cortex.get("tracked_closed_trades_before"),
+            "tracked_closed_trades_after": paper_provider_cortex.get("tracked_closed_trades_after"),
+            "closed_trade_attribution_score": paper_provider_cortex.get("closed_trade_attribution_score"),
+            "fmp_utilization_status": paper_provider_cortex.get("fmp_utilization_status"),
+            "fmp_calls_today": paper_provider_cortex.get("fmp_calls_today"),
+            "fmp_bandwidth_used": paper_provider_cortex.get("fmp_bandwidth_used"),
+            "fmp_expansion_allowed": paper_provider_cortex.get("fmp_expansion_allowed"),
+            "provider_protection_score": paper_provider_cortex.get("provider_protection_score"),
+            "historical_replays_completed": paper_provider_cortex.get("historical_replays_completed"),
+            "historical_replay_score": paper_provider_cortex.get("historical_replay_score"),
+            "horizon_intelligence_score": paper_provider_cortex.get("horizon_intelligence_score"),
+            "best_horizon_right_now": (
+                (paper_provider_cortex.get("horizon_intelligence_validation_promotion_v1") or {}).get("best_horizon_right_now")
+                if isinstance(paper_provider_cortex.get("horizon_intelligence_validation_promotion_v1"), dict)
+                else None
+            ),
+            "shadow_outperforming_paper": (
+                (paper_provider_cortex.get("profitability_attribution_validation_v1") or {}).get("shadow_outperforming_paper")
+                if isinstance(paper_provider_cortex.get("profitability_attribution_validation_v1"), dict)
+                else None
+            ),
+            "session_order_submission_blocker": (
+                (paper_provider_cortex.get("session_submission_blocker_investigation_v1") or {}).get("session_order_submission_blocker")
+                if isinstance(paper_provider_cortex.get("session_submission_blocker_investigation_v1"), dict)
+                else None
+            ),
+            "paper_influence_blocker": (
+                (paper_provider_cortex.get("paper_influence_completion_v1") or {}).get("paper_influence_blocker")
+                if isinstance(paper_provider_cortex.get("paper_influence_completion_v1"), dict)
+                else None
+            ),
+            "closed_trade_attribution_blocker": (
+                (paper_provider_cortex.get("closed_trade_attribution_engine_v1") or {}).get("closed_trade_attribution_blocker")
+                if isinstance(paper_provider_cortex.get("closed_trade_attribution_engine_v1"), dict)
+                else None
+            ),
+            "cortex_open_issues": paper_provider_cortex.get("cortex_open_issues"),
+            "highest_roi_open_issue": paper_provider_cortex.get("highest_roi_open_issue"),
+            "metrics_still_below_target": paper_provider_cortex.get("metrics_still_below_target"),
+            "provider_calls_used": paper_provider_cortex.get("provider_calls_used"),
+            "llm_calls_used": paper_provider_cortex.get("llm_calls_used"),
+        },
         "autonomous_improvement_performance_attribution_completion": {
             "status": autonomous_improvement_completion.get("status"),
             "top_weaknesses": autonomous_improvement_completion.get("top_weaknesses"),
@@ -45208,6 +45345,15 @@ def ask_astra_v1(payload: dict = Body(...)):
             "ranking_proxy_reconstruction",
             "propagation_completion_verification",
             "propagation_verification",
+            "fmp_api_utilization",
+            "provider_underutilization",
+            "historical_replay_recovery",
+            "paper_influence_completion",
+            "closed_trade_attribution",
+            "session_submission_blocker",
+            "horizon_validation",
+            "shadow_to_paper_governance",
+            "cortex_oversight_completion",
             "safest_next_improvement",
             "biggest_opportunity",
             "today_market_explanation",
@@ -45246,6 +45392,53 @@ def ask_astra_v1(payload: dict = Body(...)):
         first = (compressed_context.get("copilot_actions") or [{}])[0] if isinstance(compressed_context.get("copilot_actions"), list) else {}
         q_lc = question.lower()
         if (
+            "fmp" in q_lc
+            or "api protection" in q_lc
+            or "api protections" in q_lc
+            or "provider" in q_lc and "underutil" in q_lc
+            or "historical replay" in q_lc
+            or "blocking paper influence" in q_lc
+            or "paper influence" in q_lc and "block" in q_lc
+            or "closed-trade attribution" in q_lc
+            or "closed trade attribution" in q_lc
+            or "session order submission" in q_lc
+            or "blocking session" in q_lc
+            or "horizon recommendations improving" in q_lc
+            or "which horizon is best" in q_lc
+            or "best horizon" in q_lc
+            or "shadow outperforming paper" in q_lc
+            or "what does cortex say needs fixed next" in q_lc
+            or "did cortex close" in q_lc
+            or "issues remain open" in q_lc
+        ):
+            suite = paper_provider_cortex or {}
+            provider = suite.get("cortex_provider_utilization_recovery_api_protection_v1") or {}
+            fmp_roi = suite.get("fmp_reactivation_roi_validation_v1") or {}
+            closed = suite.get("closed_trade_attribution_engine_v1") or {}
+            paper_inf = suite.get("paper_influence_completion_v1") or {}
+            session = suite.get("session_submission_blocker_investigation_v1") or {}
+            replay = suite.get("historical_replay_recovery_v1") or {}
+            horizon = suite.get("horizon_intelligence_validation_promotion_v1") or {}
+            attribution = suite.get("profitability_attribution_validation_v1") or {}
+            registry = suite.get("cortex_issue_registry_v2") or {}
+            highest_issue = registry.get("highest_roi_open_issue") or {}
+            fast_short = (
+                f"FMP is tracked but currently underutilized: status={suite.get('fmp_utilization_status', provider.get('fmp_utilization_status', 'warming_up'))}, "
+                f"calls today={suite.get('fmp_calls_today', provider.get('fmp_calls_today', 'n/a'))}, bandwidth={suite.get('fmp_bandwidth_used', provider.get('fmp_bandwidth_used_gb', 'n/a'))} GB. "
+                f"Zero usage was caused by cache-first protections and no safe worker-side refresh need, not by dashboard calls. "
+                f"API protections remain active: provider protection score={suite.get('provider_protection_score', provider.get('provider_protection_score', 'n/a'))}, "
+                f"hard stops={provider.get('provider_hard_stops_enabled', True)}, dashboard provider calls={suite.get('dashboard_provider_calls_used', 0)}, LLM calls={suite.get('llm_calls_used', 0)}. "
+                f"Safe FMP expansion allowed: {suite.get('fmp_expansion_allowed', fmp_roi.get('fmp_expansion_allowed', False))}; ROI validation score={fmp_roi.get('fmp_reactivation_roi_score', 'n/a')}. "
+                f"Paper influence moved from {suite.get('paper_influence_score_before', 'n/a')} to {suite.get('paper_influence_score_after', 'n/a')}; blocker={str(paper_inf.get('paper_influence_blocker') or 'none').replace('_', ' ')}. "
+                f"Closed-trade attribution tracks {suite.get('tracked_closed_trades_after', closed.get('tracked_closed_trades_after', 'n/a'))} trades with score {suite.get('closed_trade_attribution_score', closed.get('closed_trade_attribution_score', 'n/a'))}; blocker={str(closed.get('closed_trade_attribution_blocker') or 'none').replace('_', ' ')}. "
+                f"Session order submission blocker={str(session.get('session_order_submission_blocker') or 'none').replace('_', ' ')}. "
+                f"Historical replay completed={suite.get('historical_replays_completed', replay.get('historical_replays_completed', 'n/a'))}, replay score={suite.get('historical_replay_score', replay.get('historical_replay_score', 'n/a'))}. "
+                f"Best horizon right now={str(horizon.get('best_horizon_right_now') or 'warming up').replace('_', ' ')}, horizon score={suite.get('horizon_intelligence_score', horizon.get('horizon_intelligence_score', 'n/a'))}, improving={horizon.get('horizon_recommendations_improving', False)}. "
+                f"Shadow outperforming Paper={attribution.get('shadow_outperforming_paper', False)}. "
+                f"Cortex has {suite.get('cortex_open_issues', registry.get('open_issue_count', 0))} open issue(s); highest ROI fix is {str((highest_issue or {}).get('issue_name') or suite.get('highest_roi_open_issue') or 'none').replace('_', ' ')}. "
+                "Safety note: cached diagnostics only; no provider calls during render and no trading, ranking, entry, exit, sizing, allocation, threshold, broker, or Paper execution behavior changed."
+            )
+        elif (
             "cortex issue" in q_lc
             or "issues did cortex find" in q_lc
             or "trade management fabric consumed by copilot" in q_lc
@@ -57242,6 +57435,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             force_cached = {}
         if isinstance(force_cached, dict) and force_cached:
             _attach_astra_integration_completion(force_cached, force_cached, force=False)
+            _attach_astra_paper_provider_cortex_completion(force_cached, force_cached, force=False)
             force_cached["cache_hit"] = True
             force_cached["cache_source"] = "dashboard_cache_disk_force_guard"
             force_cached["force_refresh_deferred"] = True
@@ -57346,6 +57540,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
                     convergence_alias.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
                 )
             _attach_astra_integration_completion(fast, fast, force=False)
+            _attach_astra_paper_provider_cortex_completion(fast, fast, force=False)
             fast["cache_hit"] = True
             fast["cache_age_seconds"] = round(cache_age, 3)
             return fast
@@ -57439,6 +57634,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
                     convergence_alias.get("astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1"),
                 )
             _attach_astra_integration_completion(disk_cached, disk_cached, force=False)
+            _attach_astra_paper_provider_cortex_completion(disk_cached, disk_cached, force=False)
             disk_cached["cache_hit"] = True
             disk_cached["cache_source"] = "dashboard_cache_disk"
             disk_cached["api_calls_used"] = 0
@@ -57475,6 +57671,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION.status(statuses={**fallback_statuses, **fallback}, force=False) or {}
             )
             _attach_astra_integration_completion(fallback, fallback_statuses, force=False)
+            _attach_astra_paper_provider_cortex_completion(fallback, fallback_statuses, force=False)
             fallback["astra_autonomous_improvement_performance_attribution_completion_v1"] = dict(completion or {})
             fallback.update({
                 "status": "ok",
@@ -57852,6 +58049,21 @@ def unified_learning_diagnostics_v1(force: bool = False):
             )
             out["cortex_issue_registry_v1"] = dict(
                 (out.get("astra_integration_completion_consumption_v1") or {}).get("cortex_issue_registry_v1") or {}
+            )
+            try:
+                statuses["astra_paper_provider_cortex_completion_v1"] = ASTRA_PAPER_PROVIDER_CORTEX_COMPLETION.status(
+                    statuses={**statuses, **out},
+                    force=False,
+                )
+            except Exception:
+                statuses["astra_paper_provider_cortex_completion_v1"] = {}
+            out["astra_paper_provider_cortex_completion_v1"] = dict(
+                statuses.get("astra_paper_provider_cortex_completion_v1") or {}
+            )
+            out["cortex_issue_registry_v1"] = dict(
+                (out.get("astra_paper_provider_cortex_completion_v1") or {}).get("cortex_issue_registry_v2")
+                or out.get("cortex_issue_registry_v1")
+                or {}
             )
             try:
                 statuses["astra_autonomous_optimization_governance_core_v1"] = ASTRA_AUTONOMOUS_OPTIMIZATION_GOVERNANCE_CORE.status(
