@@ -1651,6 +1651,7 @@ export default function LearningTab({ compact = false }) {
   const astraIntelligenceOptimizationResearch = unified?.astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1 || astraProfitExitRankingCopilotConvergence?.astra_intelligence_optimization_profit_capture_confidence_autonomous_research_v1 || {};
   const cortexLifecycleEvidenceMasterTruth = unified?.cortex_lifecycle_evidence_master_truth_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.cortex_lifecycle_evidence_master_truth_v1 || astraProfitExitRankingCopilotConvergence?.cortex_lifecycle_evidence_master_truth_v1 || astraIntelligenceOptimizationResearch?.cortex_lifecycle_evidence_master_truth_v1 || {};
   const astraProfitabilityActivationUtilization = unified?.astra_profitability_activation_intelligence_utilization_v1 || cortexLifecycleEvidenceMasterTruth?.astra_profitability_activation_intelligence_utilization_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.astra_profitability_activation_intelligence_utilization_v1 || astraProfitExitRankingCopilotConvergence?.astra_profitability_activation_intelligence_utilization_v1 || astraIntelligenceOptimizationResearch?.astra_profitability_activation_intelligence_utilization_v1 || {};
+  const astraTier12ProfitabilityActivation = unified?.astra_tier1_tier2_profitability_activation_v1 || astraProfitabilityActivationUtilization?.astra_tier1_tier2_profitability_activation_v1 || cortexLifecycleEvidenceMasterTruth?.astra_tier1_tier2_profitability_activation_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.astra_tier1_tier2_profitability_activation_v1 || astraProfitExitRankingCopilotConvergence?.astra_tier1_tier2_profitability_activation_v1 || astraIntelligenceOptimizationResearch?.astra_tier1_tier2_profitability_activation_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
   const marketTransitionDetection = unified?.market_transition_detection_v1 || {};
@@ -4436,6 +4437,65 @@ export default function LearningTab({ compact = false }) {
               <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
                 <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
                   {label}: {String(row?.status || row?.master_truth_graph_status || row?.future_write_contract_status || "available").replaceAll("_", " ")}
+                </summary>
+                <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
+                  {JSON.stringify(row || {}, null, 2)}
+                </pre>
+              </details>
+            ))}
+          </div>
+        </details>
+        <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
+          <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
+            Tier 1-2 Profitability Activation & Trade Management Intelligence: {String(astraTier12ProfitabilityActivation?.status || "warming up").replaceAll("_", " ")}
+          </summary>
+          <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+            Verifies propagation from canonical lessons into advisory trade-management, Paper influence, Shadow transfer, Cortex, Ask Astra, and Learning Center diagnostics. This remains diagnostic-only and does not change trading behavior.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+            {[
+              ["Cortex Propagation", safeNumber(astraTier12ProfitabilityActivation?.cortex_autonomous_oversight_propagation_verification_v1?.cortex_propagation_verification_score).toFixed(1)],
+              ["Trade Mgmt Fabric", safeNumber(astraTier12ProfitabilityActivation?.trade_management_intelligence_fabric_v1?.trade_management_intelligence_fabric_score).toFixed(1)],
+              ["Lesson Consumption", safeNumber(astraTier12ProfitabilityActivation?.canonical_lesson_propagation_consumer_completion_v2?.lesson_consumption_score_after).toFixed(1)],
+              ["Profit Capture", safeNumber(astraTier12ProfitabilityActivation?.profit_capture_consumer_wiring_completion_v2?.profit_capture_score_after).toFixed(1)],
+              ["Exit Learning", safeNumber(astraTier12ProfitabilityActivation?.exit_learning_consumer_wiring_completion_v2?.exit_learning_score_after).toFixed(1)],
+              ["Paper Influence", safeNumber(astraTier12ProfitabilityActivation?.paper_decision_influence_wiring_v2?.paper_decision_influence_score_after).toFixed(1)],
+              ["Shadow Transfer", safeNumber(astraTier12ProfitabilityActivation?.shadow_to_paper_transfer_intelligence_v2?.shadow_to_paper_transfer_score_after).toFixed(1)],
+              ["Symbol Intelligence", safeNumber(astraTier12ProfitabilityActivation?.symbol_satellite_compression_behavioral_memory_v2?.symbol_satellite_compression_score).toFixed(1)],
+              ["Ranking Reconstruction", safeNumber(astraTier12ProfitabilityActivation?.ranking_attribution_reconstruction_v2?.ranking_reconstruction_score_after).toFixed(1)],
+              ["Learning ROI", safeNumber(astraTier12ProfitabilityActivation?.learning_roi_engine_v2?.learning_roi_score_after).toFixed(1)],
+              ["Intelligence Use", safeNumber(astraTier12ProfitabilityActivation?.mandatory_final_audit_v1?.before_after_metrics?.intelligence_utilization_score?.[1]).toFixed(1)],
+              ["Cortex Integration", safeNumber(astraTier12ProfitabilityActivation?.cortex_integration_contract_v2?.cortex_integration_score_after).toFixed(1)],
+              ["Highest ROI", astraTier12ProfitabilityActivation?.mandatory_final_audit_v1?.highest_roi_next_improvement],
+              ["Top Blocker", astraTier12ProfitabilityActivation?.mandatory_final_audit_v1?.top_5_bottlenecks?.[0]],
+            ].map(([label, value]) => (
+              <div key={label} style={{ background: "rgba(12,24,42,0.46)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+                <strong style={{ color: "#f2f7ff" }}>{String(value ?? "warming up").replaceAll("_", " ")}</strong>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+            {[
+              ["Cortex Propagation Verification", astraTier12ProfitabilityActivation?.cortex_autonomous_oversight_propagation_verification_v1],
+              ["Trade Management Fabric", astraTier12ProfitabilityActivation?.trade_management_intelligence_fabric_v1],
+              ["Canonical Propagation", astraTier12ProfitabilityActivation?.canonical_lesson_propagation_consumer_completion_v2],
+              ["Profit Capture Wiring", astraTier12ProfitabilityActivation?.profit_capture_consumer_wiring_completion_v2],
+              ["Exit Learning Wiring", astraTier12ProfitabilityActivation?.exit_learning_consumer_wiring_completion_v2],
+              ["Paper Decision Influence", astraTier12ProfitabilityActivation?.paper_decision_influence_wiring_v2],
+              ["Shadow-to-Paper Transfer", astraTier12ProfitabilityActivation?.shadow_to_paper_transfer_intelligence_v2],
+              ["Symbol Behavioral Memory", astraTier12ProfitabilityActivation?.symbol_satellite_compression_behavioral_memory_v2],
+              ["Sector / Index Personality", astraTier12ProfitabilityActivation?.sector_index_personality_engine_v2],
+              ["Historical Recovery", astraTier12ProfitabilityActivation?.historical_trade_intelligence_recovery_v2],
+              ["Ranking Reconstruction", astraTier12ProfitabilityActivation?.ranking_attribution_reconstruction_v2],
+              ["Candidate Ledger Join", astraTier12ProfitabilityActivation?.candidate_ledger_outcome_join_engine_v1],
+              ["Learning ROI V2", astraTier12ProfitabilityActivation?.learning_roi_engine_v2],
+              ["Cortex Integration", astraTier12ProfitabilityActivation?.cortex_integration_contract_v2],
+              ["Final Audit", astraTier12ProfitabilityActivation?.mandatory_final_audit_v1],
+            ].map(([label, row]) => (
+              <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
+                <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+                  {label}: {String(row?.status || row?.candidate_ledger_join_status || "available").replaceAll("_", " ")}
                 </summary>
                 <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
                   {JSON.stringify(row || {}, null, 2)}
