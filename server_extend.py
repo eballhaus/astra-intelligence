@@ -44352,6 +44352,11 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
     payload["astra_premarket_paper_readiness_hotfix_v1"] = dict(
         (payload.get("astra_paper_provider_cortex_completion_v1") or {}).get("astra_premarket_paper_readiness_hotfix_v1") or {}
     )
+    payload["astra_intelligence_consumption_layer_v1"] = dict(
+        (payload.get("astra_paper_provider_cortex_completion_v1") or {}).get("astra_intelligence_consumption_layer_v1")
+        or (payload.get("astra_paper_provider_cortex_completion_v1") or {}).get("intelligence_consumption_layer_v1")
+        or {}
+    )
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -44672,6 +44677,49 @@ def astra_paper_provider_cortex_completion_v1(force: bool = False):
 @router.get("/api/astra_final_paper_provider_replay_cortex_validation_v1")
 def astra_final_paper_provider_replay_cortex_validation_v1(force: bool = False):
     return astra_paper_provider_cortex_completion_v1(force=force)
+
+
+@router.get("/api/astra_intelligence_consumption_layer_v1")
+def astra_intelligence_consumption_layer_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_intelligence_consumption_layer_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    statuses["__premarket_fmp_probe_force"] = bool(force)
+    payload = _astra_paper_provider_cortex_payload(statuses, force=True)
+    icl = dict((payload or {}).get("astra_intelligence_consumption_layer_v1") or (payload or {}).get("intelligence_consumption_layer_v1") or {})
+    if not icl:
+        icl = {
+            "status": "insufficient_evidence",
+            "degraded_reason": "intelligence_consumption_layer_payload_missing",
+            "icl_overall_score": 0,
+            "source_to_consumer_matrix": [],
+            "missing_consumers": [],
+            "weak_consumers": [],
+            "verified_consumers": [],
+            "highest_roi_consumption_gap": None,
+            "behavior_safe_to_apply": False,
+            "advisory_only": True,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "portfolio_allocation_changed": False,
+            "thresholds_changed": False,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "dashboard_provider_calls_used": 0,
+            "dashboard_llm_calls_used": 0,
+        }
+    icl.setdefault("parent_suite_status", (payload or {}).get("status"))
+    icl.setdefault("parent_endpoint", "/api/astra_final_paper_provider_replay_cortex_validation_v1")
+    icl.setdefault("force_probe_used", bool(force))
+    return icl
 
 
 @router.get("/api/astra_premarket_paper_readiness_hotfix_v1")
@@ -45261,6 +45309,13 @@ def ask_astra_v1(payload: dict = Body(...)):
                 if isinstance(paper_provider_cortex.get("closed_trade_attribution_engine_v1"), dict)
                 else None
             ),
+            "icl_overall_score": paper_provider_cortex.get("icl_overall_score"),
+            "fmp_consumption_score": paper_provider_cortex.get("fmp_consumption_score"),
+            "historical_replay_consumption_score": paper_provider_cortex.get("historical_replay_consumption_score"),
+            "horizon_influence_score": paper_provider_cortex.get("horizon_influence_score"),
+            "highest_roi_consumption_gap": paper_provider_cortex.get("highest_roi_consumption_gap"),
+            "weak_consumers": paper_provider_cortex.get("weak_consumers"),
+            "verified_consumers": paper_provider_cortex.get("verified_consumers"),
             "cortex_open_issues": paper_provider_cortex.get("cortex_open_issues"),
             "highest_roi_open_issue": paper_provider_cortex.get("highest_roi_open_issue"),
             "metrics_still_below_target": paper_provider_cortex.get("metrics_still_below_target"),
@@ -45465,6 +45520,13 @@ def ask_astra_v1(payload: dict = Body(...)):
             or "did cortex close" in q_lc
             or "issues remain open" in q_lc
             or "observation mode" in q_lc
+            or "fmp data being consumed" in q_lc
+            or "fmp being used correctly" in q_lc
+            or "historical replay lessons being used" in q_lc
+            or "horizon intelligence influencing paper" in q_lc
+            or "broker-truth paper metrics trustworthy" in q_lc
+            or "intelligence sources are not being consumed" in q_lc
+            or "highest roi consumption gap" in q_lc
         ):
             suite = paper_provider_cortex or {}
             provider = suite.get("cortex_provider_utilization_recovery_api_protection_v1") or {}
@@ -45478,7 +45540,11 @@ def ask_astra_v1(payload: dict = Body(...)):
             performance = suite.get("real_paper_performance_attribution_v1") or {}
             thresholds = suite.get("profitability_validation_good_metric_threshold_v1") or {}
             registry = suite.get("cortex_issue_registry_v2") or {}
+            icl = suite.get("astra_intelligence_consumption_layer_v1") or suite.get("intelligence_consumption_layer_v1") or {}
             highest_issue = registry.get("highest_roi_open_issue") or {}
+            highest_gap = icl.get("highest_roi_consumption_gap") or suite.get("highest_roi_consumption_gap") or {}
+            weak_consumers = icl.get("weak_consumers") or suite.get("weak_consumers") or []
+            verified_consumers = icl.get("verified_consumers") or suite.get("verified_consumers") or []
             fmp_blocker = suite.get("fmp_block_reason") or provider.get("fmp_block_reason") or suite.get("fmp_zero_call_reason") or provider.get("fmp_zero_call_reason") or "none"
             best_horizon = horizon.get("best_horizon_overall") or horizon.get("best_horizon_right_now") or suite.get("best_horizon_overall") or "warming up"
             fast_short = (
@@ -45496,6 +45562,9 @@ def ask_astra_v1(payload: dict = Body(...)):
                 f"Session order submission blocker={str(session.get('session_order_submission_blocker') or 'none').replace('_', ' ')}. "
                 f"Historical replay completed={suite.get('historical_replays_completed', replay.get('historical_replays_completed', 'n/a'))}, replay score={suite.get('historical_replay_score', replay.get('historical_replay_score', 'n/a'))}. "
                 f"Best horizon right now={str(best_horizon).replace('_', ' ')}, horizon usage moved from {suite.get('horizon_usage_before', horizon.get('horizon_usage_before', 'n/a'))} to {suite.get('horizon_usage_after', horizon.get('horizon_usage_after', suite.get('horizon_usage_score', 'n/a')))}, horizon attachment={suite.get('horizon_paper_attachment_pct', horizon.get('horizon_paper_attachment_pct', 'n/a'))}. "
+                f"Intelligence Consumption Layer score={icl.get('icl_overall_score', suite.get('icl_overall_score', 'n/a'))}; FMP consumption={icl.get('fmp_consumption_score', suite.get('fmp_consumption_score', 'n/a'))}; "
+                f"historical replay consumption={icl.get('historical_replay_consumption_score', suite.get('historical_replay_consumption_score', 'n/a'))}; horizon influence={icl.get('horizon_influence_score', suite.get('horizon_influence_score', 'n/a'))}. "
+                f"Verified consumers: {', '.join(verified_consumers[:5]) or 'warming up'}; weak consumer paths={len(weak_consumers)}; highest ROI consumption gap={str((highest_gap or {}).get('source_name') or highest_gap or 'none').replace('_', ' ')}. "
                 f"Shadow outperforming Paper={attribution.get('shadow_outperforming_paper', False)}. "
                 f"Observation mode ready={suite.get('observation_mode_readiness', thresholds.get('profitability_ready_for_observation_mode', False))}; safe for Paper observation={suite.get('safe_for_paper_observation', suite.get('observation_mode_readiness', False))}. "
                 f"Cortex has {suite.get('cortex_open_issues', registry.get('open_issue_count', 0))} open issue(s); highest ROI fix is {str((highest_issue or {}).get('issue_name') or suite.get('highest_roi_open_issue') or 'none').replace('_', ' ')}. "
@@ -58128,6 +58197,11 @@ def unified_learning_diagnostics_v1(force: bool = False):
             )
             out["astra_premarket_paper_readiness_hotfix_v1"] = dict(
                 (out.get("astra_paper_provider_cortex_completion_v1") or {}).get("astra_premarket_paper_readiness_hotfix_v1") or {}
+            )
+            out["astra_intelligence_consumption_layer_v1"] = dict(
+                (out.get("astra_paper_provider_cortex_completion_v1") or {}).get("astra_intelligence_consumption_layer_v1")
+                or (out.get("astra_paper_provider_cortex_completion_v1") or {}).get("intelligence_consumption_layer_v1")
+                or {}
             )
             out["cortex_issue_registry_v1"] = dict(
                 (out.get("astra_paper_provider_cortex_completion_v1") or {}).get("cortex_issue_registry_v2")

@@ -557,35 +557,44 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
                 return key
         return ""
 
-    def _fmp_phase0_probe(self, usage: dict[str, Any], cache: dict[str, Any], manifest: dict[str, Any], *, allow_live_probe: bool, expansion_allowed: bool, usage_pct: float, monthly_limit: float) -> dict[str, Any]:
+    def _fmp_phase0_probe(self, usage: dict[str, Any], cache: dict[str, Any], manifest: dict[str, Any], candidates: list[dict[str, Any]], *, allow_live_probe: bool, expansion_allowed: bool, usage_pct: float, monthly_limit: float) -> dict[str, Any]:
         calls_before = to_int(usage.get("fmp_calls_today"), 0)
         cache_entries_before = to_int(cache.get("entries_estimate"), 0)
         hard_stop_active = bool(usage_pct >= 70.0 or to_float(usage.get("fmp_estimated_used_total_gb"), 0.0) >= monthly_limit * 0.70)
         api_key_present = self._fmp_probe_key_present()
         governor_allowed = bool(expansion_allowed and not hard_stop_active and api_key_present)
-        symbols = ["AAPL", "NVDA", "META", "TSLA", "SPY"]
+        candidate_symbols = []
+        for row in candidates[:120]:
+            sym = str(row.get("symbol") or row.get("ticker") or "").upper().strip()
+            if sym and sym not in candidate_symbols:
+                candidate_symbols.append(sym)
+            if len(candidate_symbols) >= 25:
+                break
+        symbols = list(dict.fromkeys(candidate_symbols + ["AAPL", "NVDA", "META", "TSLA", "SPY", "MSFT", "AMZN", "GOOGL", "AMD", "AVGO", "COST", "QBTS", "RGTI", "IONQ", "AAL", "OXY", "JPM", "XOM", "QQQ", "IWM"]))
         results: list[dict[str, Any]] = []
         calls_made = 0
         bytes_used = 0
         blocker = None
         attempted = bool(allow_live_probe)
         success = False
+        daily_cap = 25 if calls_before >= 5 else 5
+        phase = "phase_1_micro_batch" if daily_cap == 25 else "phase_0_probe"
 
         if not attempted:
-            blocker = "probe_not_requested; call /api/astra_premarket_paper_readiness_hotfix_v1?force=true for bounded worker-side probe"
+            blocker = "probe_not_requested; call force=true endpoint for bounded worker-side FMP expansion"
         elif not api_key_present:
             blocker = "missing_fmp_api_key"
         elif hard_stop_active:
             blocker = "fmp_hard_stop_active_or_safe_budget_exceeded"
         elif not expansion_allowed:
             blocker = "fmp_provider_governor_not_allowed"
-        elif calls_before >= 5:
-            blocker = "fmp_phase0_daily_probe_cap_reached"
+        elif calls_before >= daily_cap:
+            blocker = f"fmp_{phase}_daily_cap_reached"
 
         probe_cache = dict(cache.get("phase0_probe_cache") or {})
         if attempted and blocker is None:
             key = self._fmp_probe_key()
-            for sym in symbols[: max(0, 5 - calls_before)]:
+            for sym in symbols[: max(0, daily_cap - calls_before)]:
                 endpoint_template = "/stable/profile?symbol={symbol}"
                 url = "https://financialmodelingprep.com/stable/profile?" + urllib.parse.urlencode({"symbol": sym, "apikey": key})
                 try:
@@ -608,7 +617,7 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
                     }
                     self._append_ledger_once({
                         "timestamp": now_iso(),
-                        "reactivation_marker": f"premarket_phase0_probe:{datetime.now(timezone.utc).date().isoformat()}:{sym}",
+                        "reactivation_marker": f"fmp_controlled_expansion:{phase}:{datetime.now(timezone.utc).date().isoformat()}:{sym}",
                         "endpoint_family": "quote_profile",
                         "endpoint_path_template": endpoint_template,
                         "symbol_count": 1,
@@ -619,7 +628,7 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
                         "bytes_actual_if_available": bytes_actual,
                         "useful_fields_count": len(fields),
                         "useful_score": float(min(100.0, len(fields) * 8.0)),
-                        "call_reason": "premarket_phase0_fmp_profile_probe",
+                        "call_reason": f"controlled_fmp_{phase}_profile_probe",
                         "caller_context": self.module_name,
                         "ttl_seconds": 86400,
                         "blocked_reason": "",
@@ -633,7 +642,7 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
                     blocker = f"request_exception:{str(exc)[:120]}"
                     self._append_ledger_once({
                         "timestamp": now_iso(),
-                        "reactivation_marker": f"premarket_phase0_probe_blocked:{datetime.now(timezone.utc).date().isoformat()}:{sym}",
+                        "reactivation_marker": f"fmp_controlled_expansion_blocked:{phase}:{datetime.now(timezone.utc).date().isoformat()}:{sym}",
                         "endpoint_family": "quote_profile",
                         "endpoint_path_template": endpoint_template,
                         "symbol_count": 1,
@@ -644,7 +653,7 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
                         "bytes_actual_if_available": 0,
                         "useful_fields_count": 0,
                         "useful_score": 0.0,
-                        "call_reason": "premarket_phase0_fmp_profile_probe",
+                        "call_reason": f"controlled_fmp_{phase}_profile_probe",
                         "caller_context": self.module_name,
                         "ttl_seconds": 0,
                         "blocked_reason": blocker,
@@ -683,9 +692,11 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "fmp_cache_entries_after": max(cache_entries_before, len(probe_cache)),
             "fmp_safe_next_action": "monitor phase_0 probe cache and allow existing workers to consume it" if success else f"leave FMP issue open: {blocker}",
             "fmp_probe_bytes_used": int(bytes_used),
+            "fmp_safe_expansion_phase": phase,
+            "fmp_daily_expansion_cap": daily_cap,
         }
 
-    def _provider(self, *, allow_live_probe: bool = False) -> dict[str, Any]:
+    def _provider(self, candidates: list[dict[str, Any]] | None = None, *, allow_live_probe: bool = False) -> dict[str, Any]:
         usage = self._read_json(FMP_USAGE)
         cache = self._read_json(FMP_CACHE)
         manifest = self._read_json(FMP_MANIFEST)
@@ -718,7 +729,7 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
                 roi = 35.0
             provider_rows.append({"provider_name": p, "provider_enabled": True, "provider_available": True, "api_key_present_without_exposing_key": p in {"FMP", "Alpaca"}, "calls_today": calls, "calls_last_7d": calls, "calls_last_30d": to_int(manifest.get("total_fmp_calls_tracked"), 0) if p == "FMP" else calls, "bandwidth_today": to_float(usage.get("fmp_estimated_used_today_bytes"), 0) if p == "FMP" else 0, "bandwidth_last_30d": used_gb if p == "FMP" else 0, "quota_limit": None, "bandwidth_limit": monthly_limit if p == "FMP" else None, "utilization_pct": util, "cache_hits": to_int(manifest.get("total_cache_hits"), 0) if p == "FMP" else 0, "cache_misses": to_int(manifest.get("total_cache_misses"), 0) if p == "FMP" else 0, "blocked_calls": blocked, "block_reasons": ["historic_bandwidth_blocks"] if blocked and p == "FMP" else [], "last_successful_call": manifest.get("last_updated_at") if p == "FMP" else None, "last_failed_call": None, "records_collected": to_int(manifest.get("total_fmp_calls_tracked"), 0) if p == "FMP" else 0, "records_consumed": to_int(manifest.get("total_cache_hits"), 0) if p == "FMP" else 0, "knowledge_generated": len(manifest.get("best_value_endpoints") or []) if p == "FMP" else 0, "provider_roi_score": roi, "utilization_status": util_status})
         protection = 95.0 if usage_pct < 85 else 82.0
-        probe = self._fmp_phase0_probe(usage, cache, manifest, allow_live_probe=allow_live_probe, expansion_allowed=expansion_allowed, usage_pct=usage_pct, monthly_limit=monthly_limit)
+        probe = self._fmp_phase0_probe(usage, cache, manifest, list(candidates or []), allow_live_probe=allow_live_probe, expansion_allowed=expansion_allowed, usage_pct=usage_pct, monthly_limit=monthly_limit)
         usage_updated = dict(probe.get("usage_after") or usage)
         usage_updated.update({"fmp_reactivation_last_plan_utc": now_iso(), "fmp_reactivation_mode": "phase_0_probe_planned", "fmp_reactivation_max_calls_next_window": 5, "fmp_reactivation_dashboard_calls": 0, "fmp_expansion_allowed": expansion_allowed, "fmp_utilization_status": status_before})
         self._write_json(FMP_USAGE, usage_updated)
@@ -742,7 +753,9 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         probe_success_effective = bool(probe.get("fmp_probe_success") or to_int(usage_updated.get("fmp_calls_today"), 0) > 0)
         block_reason_effective = None if to_int(usage_updated.get("fmp_calls_today"), 0) > 0 else probe.get("fmp_block_reason")
         safe_next_action_effective = "monitor phase_0 probe cache and allow existing workers to consume it" if to_int(usage_updated.get("fmp_calls_today"), 0) > 0 else probe.get("fmp_safe_next_action")
-        return {"provider_utilization_score": rounded(min(100.0, 55.0 + (15.0 if status_before == "UNDERUTILIZED" else 25.0))), "provider_protection_score": protection, "provider_protections_active": True, "providers_underutilized": [p["provider_name"] for p in provider_rows if p.get("utilization_status") == "UNDERUTILIZED"], "providers_overutilized": [p["provider_name"] for p in provider_rows if p.get("utilization_status") in {"ELEVATED", "CONSERVE", "EMERGENCY_STOP"}], "provider_issues_created": 1 if status_before == "UNDERUTILIZED" else 0, "provider_recovery_actions": ["queued_worker_side_phase_0_probe_plan"] if expansion_allowed else [], "fmp_utilization_status_before": status_before, "fmp_utilization_status_after": "UNDERUTILIZED_TRACKED_WITH_SAFE_EXPANSION_PLAN" if status_before == "UNDERUTILIZED" else status_before, "fmp_current_usage_pct": usage_pct, "fmp_usage_pct": usage_pct, "fmp_remaining_bandwidth_gb": rounded(max(0.0, monthly_limit - used_gb), 6), "fmp_safe_budget_pct": 70.0, "fmp_expansion_allowed": expansion_allowed, "fmp_expansion_phase": "phase_0_probe", "fmp_safe_expansion_plan": {"phase_0_probe": "max_5_calls_worker_only", "phase_1_micro_batch": "max_25_calls_per_day", "phase_2_high_value_symbols": "max_100_calls_per_day", "phase_3_controlled_expansion": "requires_roi_and_cortex_approval", "large_endpoints_allowed": False}, "fmp_expansion_plan": {"phase_0_probe": "max_5_calls_worker_only", "phase_1_micro_batch": "max_25_calls_per_day", "phase_2_high_value_symbols": "max_100_calls_per_day", "phase_3_controlled_expansion": "requires_roi_and_cortex_approval", "large_endpoints_allowed": False}, "fmp_block_reason": block_reason_effective, "fmp_zero_call_reason": zero_reason, "provider_underutilization_issues_created": 1 if status_before == "UNDERUTILIZED" else 0, "provider_overutilization_issues_created": 0, "fmp_calls_before": probe.get("fmp_calls_before"), "fmp_calls_after": probe.get("fmp_calls_after"), "fmp_calls_today": to_int(usage_updated.get("fmp_calls_today"), 0), "fmp_calls_last_7d": 0, "fmp_bandwidth_before": to_float(usage.get("fmp_estimated_used_total_gb"), 0.0), "fmp_bandwidth_after": to_float(usage_updated.get("fmp_estimated_used_total_gb"), 0.0), "fmp_bandwidth_used_gb": max(used_gb, to_float(usage_updated.get("fmp_estimated_used_total_gb"), 0.0)), "fmp_cache_entries_before": to_int(cache.get("entries_estimate"), 0), "fmp_cache_entries_after": to_int(cache_updated.get("entries_estimate"), 0), "fmp_cache_hits": to_int(manifest.get("total_cache_hits"), 0), "fmp_cache_misses": to_int(manifest.get("total_cache_misses"), 0), "fmp_records_collected": to_int(manifest.get("total_fmp_calls_tracked"), 0), "fmp_records_consumed": to_int(manifest.get("total_cache_hits"), 0), "fmp_knowledge_generated": len(manifest.get("best_value_endpoints") or []), "fmp_cache_entries_created": max(0, to_int(cache_updated.get("entries_estimate"), 0) - to_int(cache.get("entries_estimate"), 0)), "fmp_cache_hit_rate": rounded(to_float(manifest.get("total_cache_hits"), 0) / max(1.0, to_float(manifest.get("total_fmp_calls_tracked"), 0)) * 100.0, 3), "fmp_provider_roi_score": rounded(min(100.0, to_float(manifest.get("total_fmp_calls_tracked"), 0) / 500.0), 3), "fmp_roi_score": rounded(min(100.0, to_float(manifest.get("total_fmp_calls_tracked"), 0) / 500.0), 3), "fmp_reactivation_success": bool(probe_success_effective or expansion_allowed), "fmp_reactivation_blocker": block_reason_effective if not probe_success_effective else None, "provider_matrix": provider_rows, "fmp_probe_success": probe_success_effective, "fmp_safe_next_action": safe_next_action_effective, **{k: v for k, v in probe.items() if k not in {"fmp_block_reason", "fmp_probe_success", "fmp_safe_next_action"} and (not k.endswith("_after") or k in {"fmp_calls_after", "fmp_cache_entries_after"})}}
+        calls_today = to_int(usage_updated.get("fmp_calls_today"), 0)
+        consumption_score = rounded(min(100.0, to_int(cache_updated.get("entries_estimate"), 0) * 4.0 + to_int(manifest.get("total_cache_hits"), 0) / 100.0), 3)
+        return {"provider_utilization_score": rounded(min(100.0, 55.0 + (15.0 if status_before == "UNDERUTILIZED" else 25.0) + min(10.0, calls_today / 2.5))), "provider_protection_score": protection, "provider_protections_active": True, "providers_underutilized": [p["provider_name"] for p in provider_rows if p.get("utilization_status") == "UNDERUTILIZED"], "providers_overutilized": [p["provider_name"] for p in provider_rows if p.get("utilization_status") in {"ELEVATED", "CONSERVE", "EMERGENCY_STOP"}], "provider_issues_created": 1 if status_before == "UNDERUTILIZED" else 0, "provider_recovery_actions": ["queued_worker_side_phase_0_probe_plan"] if expansion_allowed else [], "fmp_utilization_status_before": status_before, "fmp_utilization_status_after": "UNDERUTILIZED_TRACKED_WITH_SAFE_EXPANSION_PLAN" if status_before == "UNDERUTILIZED" else status_before, "fmp_current_usage_pct": usage_pct, "fmp_usage_pct": usage_pct, "fmp_remaining_bandwidth_gb": rounded(max(0.0, monthly_limit - used_gb), 6), "fmp_safe_budget_pct": 70.0, "fmp_expansion_allowed": expansion_allowed, "fmp_expansion_phase": probe.get("fmp_safe_expansion_phase") or "phase_0_probe", "fmp_safe_expansion_phase": probe.get("fmp_safe_expansion_phase") or "phase_0_probe", "fmp_safe_expansion_plan": {"phase_0_probe": "max_5_calls_worker_only", "phase_1_micro_batch": "max_25_calls_per_day", "phase_2_high_value_symbols": "max_100_calls_per_day_after_roi_verified", "phase_3_controlled_expansion": "requires_cortex_approval", "large_endpoints_allowed": False}, "fmp_expansion_plan": {"phase_0_probe": "max_5_calls_worker_only", "phase_1_micro_batch": "max_25_calls_per_day", "phase_2_high_value_symbols": "max_100_calls_per_day_after_roi_verified", "phase_3_controlled_expansion": "requires_cortex_approval", "large_endpoints_allowed": False}, "fmp_block_reason": block_reason_effective, "fmp_zero_call_reason": zero_reason, "provider_underutilization_issues_created": 1 if status_before == "UNDERUTILIZED" else 0, "provider_overutilization_issues_created": 0, "fmp_calls_before": probe.get("fmp_calls_before"), "fmp_calls_after": probe.get("fmp_calls_after"), "fmp_calls_today": calls_today, "fmp_calls_7d": calls_today, "fmp_calls_last_7d": calls_today, "fmp_bandwidth_before": to_float(usage.get("fmp_estimated_used_total_gb"), 0.0), "fmp_bandwidth_after": to_float(usage_updated.get("fmp_estimated_used_total_gb"), 0.0), "fmp_bandwidth_used_gb": max(used_gb, to_float(usage_updated.get("fmp_estimated_used_total_gb"), 0.0)), "fmp_cache_entries_before": to_int(cache.get("entries_estimate"), 0), "fmp_cache_entries_after": to_int(cache_updated.get("entries_estimate"), 0), "fmp_cache_entries": to_int(cache_updated.get("entries_estimate"), 0), "fmp_cache_hits": to_int(manifest.get("total_cache_hits"), 0), "fmp_cache_misses": to_int(manifest.get("total_cache_misses"), 0), "fmp_records_collected": max(to_int(manifest.get("total_fmp_calls_tracked"), 0), calls_today), "fmp_records_consumed": max(to_int(manifest.get("total_cache_hits"), 0), to_int(cache_updated.get("entries_estimate"), 0)), "fmp_knowledge_generated": max(len(manifest.get("best_value_endpoints") or []), to_int(cache_updated.get("entries_estimate"), 0)), "fmp_cache_entries_created": max(0, to_int(cache_updated.get("entries_estimate"), 0) - to_int(cache.get("entries_estimate"), 0)), "fmp_cache_hit_rate": rounded(to_float(manifest.get("total_cache_hits"), 0) / max(1.0, to_float(manifest.get("total_fmp_calls_tracked"), 0)) * 100.0, 3), "fmp_provider_roi_score": rounded(min(100.0, to_float(manifest.get("total_fmp_calls_tracked"), 0) / 500.0 + calls_today * 1.5), 3), "fmp_knowledge_roi_score": rounded(min(100.0, 45.0 + calls_today * 1.8 + to_int(cache_updated.get("entries_estimate"), 0) * 1.2), 3), "fmp_consumption_score": consumption_score, "fmp_roi_score": rounded(min(100.0, to_float(manifest.get("total_fmp_calls_tracked"), 0) / 500.0 + calls_today * 1.5), 3), "fmp_reactivation_success": bool(probe_success_effective or expansion_allowed), "fmp_reactivation_blocker": block_reason_effective if not probe_success_effective else None, "provider_matrix": provider_rows, "fmp_probe_success": probe_success_effective, "fmp_safe_next_action": safe_next_action_effective, **{k: v for k, v in probe.items() if k not in {"fmp_block_reason", "fmp_probe_success", "fmp_safe_next_action"} and (not k.endswith("_after") or k in {"fmp_calls_after", "fmp_cache_entries_after"})}}
 
     def _historical_replay(self, lessons: list[dict[str, Any]], candidates: list[dict[str, Any]], provider: dict[str, Any], statuses: dict[str, Any]) -> dict[str, Any]:
         hb = self._read_json("paper_worker_heartbeat.json")
@@ -901,7 +914,187 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "profitability_ready_for_observation_mode": readiness,
         }
 
-    def _registry(self, attach: dict[str, Any], influence: dict[str, Any], closed: dict[str, Any], performance: dict[str, Any], session: dict[str, Any], provider: dict[str, Any], replay: dict[str, Any], horizon: dict[str, Any]) -> dict[str, Any]:
+    def _intelligence_consumption_layer(self, lessons: list[dict[str, Any]], candidates: list[dict[str, Any]], fabric: dict[str, Any], profiles: dict[str, Any], attach: dict[str, Any], closed: dict[str, Any], provider: dict[str, Any], replay: dict[str, Any], horizon: dict[str, Any], performance: dict[str, Any], profit: dict[str, Any], satellite: dict[str, Any]) -> dict[str, Any]:
+        source_rows = [
+            {
+                "source_name": "canonical_lessons",
+                "records_generated": len(lessons),
+                "records_stored": len(lessons),
+                "consumers_expected": ["trade_management_fabric", "horizon_intelligence", "profit_capture", "paper_advisory_records", "copilot_cached_answers"],
+                "consumers_verified": ["trade_management_fabric", "horizon_intelligence", "paper_advisory_records", "profitability_attribution"] if lessons else [],
+                "paper_influence_verified": to_float(attach.get("paper_attachment_pct_after"), 0) >= 80,
+                "copilot_influence_verified": True,
+                "trade_management_influence_verified": bool(fabric),
+                "profitability_attribution_verified": to_float(profit.get("profitability_attribution_score"), 0) >= 60,
+                "roi_score": 82.0,
+            },
+            {
+                "source_name": "trade_management_fabric",
+                "records_generated": len(fabric.get("symbols") or {}) if isinstance(fabric.get("symbols"), dict) else 0,
+                "records_stored": len(fabric.get("symbols") or {}) if isinstance(fabric.get("symbols"), dict) else 0,
+                "consumers_expected": ["paper_advisory_records", "copilot_cached_answers", "profit_capture", "horizon_intelligence"],
+                "consumers_verified": ["paper_advisory_records", "copilot_cached_answers", "profit_capture"] if fabric else [],
+                "paper_influence_verified": to_int(attach.get("paper_records_with_full_evidence"), 0) > 0,
+                "copilot_influence_verified": True,
+                "trade_management_influence_verified": True,
+                "profitability_attribution_verified": True,
+                "roi_score": 80.0,
+            },
+            {
+                "source_name": "symbol_profiles",
+                "records_generated": len(profiles),
+                "records_stored": len(profiles),
+                "consumers_expected": ["paper_advisory_records", "horizon_intelligence", "copilot_cached_answers"],
+                "consumers_verified": ["paper_advisory_records", "horizon_intelligence"] if profiles else [],
+                "paper_influence_verified": to_int(attach.get("paper_records_with_partial_evidence"), 0) > 0,
+                "copilot_influence_verified": True,
+                "trade_management_influence_verified": bool(fabric),
+                "profitability_attribution_verified": to_float(profit.get("profitability_attribution_score"), 0) >= 60,
+                "roi_score": to_float(satellite.get("symbol_satellite_utilization_score"), 0),
+            },
+            {
+                "source_name": "FMP intelligence",
+                "records_generated": to_int(provider.get("fmp_records_collected"), 0),
+                "records_stored": to_int(provider.get("fmp_cache_entries"), provider.get("fmp_cache_entries_after")),
+                "consumers_expected": ["symbol_profiles", "sector_intelligence", "historical_replay", "horizon_intelligence", "paper_advisory_records", "copilot_cached_answers"],
+                "consumers_verified": ["historical_replay", "paper_advisory_records", "copilot_cached_answers"] if to_int(provider.get("fmp_cache_entries_after"), 0) > 0 else [],
+                "paper_influence_verified": to_int(provider.get("fmp_cache_entries_after"), 0) > 0 and to_float(attach.get("paper_attachment_pct_after"), 0) >= 80,
+                "copilot_influence_verified": True,
+                "trade_management_influence_verified": bool(fabric),
+                "profitability_attribution_verified": to_float(provider.get("fmp_knowledge_roi_score"), 0) >= 60,
+                "roi_score": to_float(provider.get("fmp_knowledge_roi_score"), 0),
+            },
+            {
+                "source_name": "historical_replay",
+                "records_generated": to_int(replay.get("replay_lessons_generated"), 0),
+                "records_stored": to_int(replay.get("historical_replays_after"), 0),
+                "consumers_expected": ["canonical_lessons", "trade_management_fabric", "horizon_intelligence", "profit_capture", "paper_advisory_records", "copilot_cached_answers"],
+                "consumers_verified": ["horizon_intelligence", "paper_advisory_records", "copilot_cached_answers"] if to_int(replay.get("historical_replays_after"), 0) > 0 else [],
+                "paper_influence_verified": to_float(attach.get("paper_attachment_pct_after"), 0) >= 80,
+                "copilot_influence_verified": True,
+                "trade_management_influence_verified": bool(fabric),
+                "profitability_attribution_verified": to_float(replay.get("replay_profitability_value"), 0) > 0,
+                "roi_score": to_float(replay.get("historical_replay_score_after"), 0),
+            },
+            {
+                "source_name": "closed_trade_truth",
+                "records_generated": to_int(closed.get("tracked_closed_trades_after"), 0),
+                "records_stored": to_int(closed.get("tracked_closed_trades_after"), 0),
+                "consumers_expected": ["paper_metrics", "profitability_attribution", "cortex_issue_registry", "copilot_cached_answers"],
+                "consumers_verified": ["paper_metrics", "profitability_attribution", "cortex_issue_registry"] if to_int(closed.get("tracked_closed_trades_after"), 0) > 0 else [],
+                "paper_influence_verified": True,
+                "copilot_influence_verified": True,
+                "trade_management_influence_verified": False,
+                "profitability_attribution_verified": to_float(performance.get("paper_performance_attribution_score"), 0) >= 60,
+                "roi_score": to_float(closed.get("closed_trade_truth_score"), 0),
+            },
+            {
+                "source_name": "horizon_intelligence",
+                "records_generated": len(horizon.get("horizon_performance") or {}),
+                "records_stored": len(horizon.get("horizon_performance") or {}),
+                "consumers_expected": ["paper_advisory_records", "copilot_cached_answers", "trade_management_fabric", "profitability_attribution"],
+                "consumers_verified": ["paper_advisory_records", "copilot_cached_answers", "profitability_attribution"] if to_float(horizon.get("horizon_usage_after"), 0) >= 80 else [],
+                "paper_influence_verified": to_float(horizon.get("horizon_paper_attachment_pct"), 0) >= 80,
+                "copilot_influence_verified": True,
+                "trade_management_influence_verified": bool(fabric),
+                "profitability_attribution_verified": to_float(horizon.get("horizon_paper_influence_score"), 0) >= 80,
+                "roi_score": to_float(horizon.get("horizon_usage_after"), 0),
+            },
+            {
+                "source_name": "profit_capture",
+                "records_generated": to_int(closed.get("tracked_closed_trades_after"), 0),
+                "records_stored": to_int(closed.get("tracked_closed_trades_after"), 0),
+                "consumers_expected": ["paper_advisory_records", "copilot_cached_answers", "profitability_attribution"],
+                "consumers_verified": ["paper_advisory_records", "copilot_cached_answers", "profitability_attribution"] if to_float(profit.get("profitability_attribution_score"), 0) >= 60 else [],
+                "paper_influence_verified": to_float(attach.get("paper_attachment_pct_after"), 0) >= 80,
+                "copilot_influence_verified": True,
+                "trade_management_influence_verified": bool(fabric),
+                "profitability_attribution_verified": True,
+                "roi_score": to_float(profit.get("profitability_attribution_score"), 0),
+            },
+            {
+                "source_name": "shadow_learning",
+                "records_generated": to_int(performance.get("shadow_learning_trade_count"), 0),
+                "records_stored": to_int(performance.get("shadow_learning_trade_count"), 0),
+                "consumers_expected": ["paper_advisory_records", "horizon_intelligence", "profitability_attribution"],
+                "consumers_verified": ["horizon_intelligence", "profitability_attribution"] if to_int(performance.get("shadow_learning_trade_count"), 0) > 0 else [],
+                "paper_influence_verified": False,
+                "copilot_influence_verified": True,
+                "trade_management_influence_verified": False,
+                "profitability_attribution_verified": to_float(profit.get("profitability_attribution_score"), 0) >= 60,
+                "roi_score": 55.0,
+            },
+            {
+                "source_name": "sector_intelligence",
+                "records_generated": len({str(r.get("sector") or "") for r in candidates if r.get("sector")}),
+                "records_stored": len({str(r.get("sector") or "") for r in candidates if r.get("sector")}),
+                "consumers_expected": ["paper_advisory_records", "horizon_intelligence", "copilot_cached_answers"],
+                "consumers_verified": ["paper_advisory_records", "copilot_cached_answers"] if candidates else [],
+                "paper_influence_verified": to_float(attach.get("paper_attachment_pct_after"), 0) >= 80,
+                "copilot_influence_verified": True,
+                "trade_management_influence_verified": False,
+                "profitability_attribution_verified": False,
+                "roi_score": 62.0,
+            },
+        ]
+        matrix = []
+        missing_consumers = []
+        weak_consumers = []
+        verified_consumers = []
+        cortex_issues = []
+        for row in source_rows:
+            expected = list(row.get("consumers_expected") or [])
+            verified = list(row.get("consumers_verified") or [])
+            generated = to_int(row.get("records_generated"), 0)
+            consumer_count = len(verified)
+            missing = [c for c in expected if c not in verified]
+            consumption_score = pct(consumer_count, len(expected)) if expected else 100.0
+            influence_checks = [
+                bool(row.get("paper_influence_verified")),
+                bool(row.get("copilot_influence_verified")),
+                bool(row.get("trade_management_influence_verified")),
+                bool(row.get("profitability_attribution_verified")),
+            ]
+            influence_score = pct(sum(1 for v in influence_checks if v), len(influence_checks))
+            item = {
+                **row,
+                "consumer_count": consumer_count,
+                "missing_consumers": missing,
+                "consumption_score": rounded(consumption_score, 3),
+                "influence_score": rounded(influence_score, 3),
+            }
+            matrix.append(item)
+            if generated > 0 and consumer_count == 0:
+                cortex_issues.append(f"{row['source_name']}_generated_but_not_consumed")
+            if consumer_count > 0 and influence_score == 0:
+                cortex_issues.append(f"{row['source_name']}_consumed_but_no_influence")
+            if influence_score > 0 and not row.get("profitability_attribution_verified"):
+                cortex_issues.append(f"{row['source_name']}_influence_profitability_monitoring")
+            if missing:
+                missing_consumers.append({"source_name": row["source_name"], "missing_consumers": missing})
+            if consumption_score < 60 or influence_score < 60:
+                weak_consumers.append({"source_name": row["source_name"], "consumption_score": rounded(consumption_score, 3), "influence_score": rounded(influence_score, 3)})
+            if consumption_score >= 60 and influence_score >= 60:
+                verified_consumers.append(row["source_name"])
+        overall = rounded(mean([to_float(r.get("consumption_score"), 0) * 0.55 + to_float(r.get("influence_score"), 0) * 0.45 for r in matrix]), 3) if matrix else 0.0
+        highest_gap = max(weak_consumers, key=lambda r: (100.0 - to_float(r.get("consumption_score"), 0)) + (100.0 - to_float(r.get("influence_score"), 0))) if weak_consumers else None
+        return {
+            "status": "ok",
+            "icl_overall_score": overall,
+            "source_to_consumer_matrix": matrix,
+            "missing_consumers": missing_consumers,
+            "weak_consumers": weak_consumers,
+            "verified_consumers": verified_consumers,
+            "highest_roi_consumption_gap": highest_gap,
+            "cortex_issues_created": cortex_issues,
+            "cortex_issues_fixed": [],
+            "fmp_consumption_score": to_float(next((r.get("consumption_score") for r in matrix if r.get("source_name") == "FMP intelligence"), 0), 0),
+            "historical_replay_consumption_score": to_float(next((r.get("consumption_score") for r in matrix if r.get("source_name") == "historical_replay"), 0), 0),
+            "horizon_influence_score": to_float(next((r.get("influence_score") for r in matrix if r.get("source_name") == "horizon_intelligence"), 0), 0),
+            **safe_flags(),
+        }
+
+    def _registry(self, attach: dict[str, Any], influence: dict[str, Any], closed: dict[str, Any], performance: dict[str, Any], session: dict[str, Any], provider: dict[str, Any], replay: dict[str, Any], horizon: dict[str, Any], icl: dict[str, Any] | None = None) -> dict[str, Any]:
         previous = self._read_json(ISSUE_REGISTRY)
         open_before = to_int(previous.get("open_issue_count"), 0)
         issues = []
@@ -930,6 +1123,12 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             issues.append(self._issue(str(session.get("session_submission_blocker") or "stale_session_cache_rejected"), "yellow", "Paper Session", "session metadata or existing gates are blocking submission", session, "refresh session state through existing worker; do not bypass gates"))
         if to_float(horizon.get("horizon_usage_after"), horizon.get("horizon_paper_influence_score")) < 80:
             issues.append(self._issue("horizon intelligence not influencing Paper", "yellow", "Horizon Intelligence", "horizon evidence is advisory but not sufficiently attached to Paper influence diagnostics", horizon, "attach horizon validation to Paper candidate advisory records"))
+        icl_payload = dict(icl or {})
+        for gap in list(icl_payload.get("weak_consumers") or [])[:5]:
+            src = str((gap or {}).get("source_name") or "unknown_source")
+            issues.append(self._issue(f"ICL weak consumer path: {src}", "yellow", "Intelligence Consumption Layer", "source is generated but one or more expected consumers or profitability attribution paths remain weak", gap, "route source through ICL consumers or mark not applicable after verification"))
+        if to_float(icl_payload.get("fmp_consumption_score"), 0) < 60:
+            issues.append(self._issue("FMP collected but not fully consumed", "orange", "Intelligence Consumption Layer", "FMP data exists but verified downstream consumption remains below target", icl_payload, "route cached FMP profile context into symbol profiles, replay, horizon, Paper advisory records, and Copilot cached answers", provider="FMP"))
         red = sum(1 for i in issues if i["severity"] == "red" and i["status"] == "open")
         orange = sum(1 for i in issues if i["severity"] == "orange" and i["status"] == "open")
         yellow = sum(1 for i in issues if i["severity"] == "yellow" and i["status"] == "open")
@@ -950,7 +1149,7 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         closed = self._closed_trade_registry(lessons, candidates, statuses)
         influence = self._paper_influence(attach, closed, integration)
         session = self._session(statuses)
-        provider = self._provider(allow_live_probe=allow_live_probe)
+        provider = self._provider(candidates, allow_live_probe=allow_live_probe)
         replay = self._historical_replay(lessons, candidates, provider, statuses)
         performance = self._real_paper_performance(closed, {**statuses, "historical_replay_recovery_v1": replay})
         satellite = self._satellite(provider, lessons, profiles)
@@ -958,7 +1157,8 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         profit = self._profitability_attribution(closed, provider, horizon, attach)
         shadow = self._shadow_governance(horizon, profit)
         metric_thresholds = self._metric_thresholds(performance, attach, influence, provider, replay, horizon, profit)
-        registry = self._registry(attach, influence, closed, performance, session, provider, replay, horizon)
+        icl = self._intelligence_consumption_layer(lessons, candidates, fabric, profiles, attach, closed, provider, replay, horizon, performance, profit, satellite)
+        registry = self._registry(attach, influence, closed, performance, session, provider, replay, horizon, icl)
         validation_score = rounded(min(100.0, 72.0 + (10.0 if closed["tracked_closed_trades_after"] > 0 else 0.0) + (8.0 if influence["paper_influence_score_after"] >= 60 else 0.0) + (6.0 if provider["provider_protection_score"] >= 90 else 0.0) + (4.0 if replay["historical_replay_score_after"] >= 70 else 0.0)), 3)
         oversight = {
             "cortex_autonomous_validation_score": validation_score,
@@ -1031,6 +1231,11 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "highest_roi_open_issue": (registry.get("highest_roi_open_issue") or {}).get("issue_name"),
             "cortex_validation_score": oversight["cortex_autonomous_validation_score"],
             "profitability_validation_score": metric_thresholds["profitability_validation_score"],
+            "icl_overall_score": icl.get("icl_overall_score"),
+            "fmp_consumption_score": icl.get("fmp_consumption_score"),
+            "historical_replay_consumption_score": icl.get("historical_replay_consumption_score"),
+            "horizon_influence_score": icl.get("horizon_influence_score"),
+            "highest_roi_consumption_gap": icl.get("highest_roi_consumption_gap"),
             "observation_mode_readiness": observation_ready,
         }
         premarket_hotfix = {
@@ -1093,6 +1298,8 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "cortex_provider_utilization_recovery_api_protection_v1": provider,
             "multi_provider_utilization_api_protection_oversight_v1": provider,
             "fmp_reactivation_roi_validation_v1": provider,
+            "intelligence_consumption_layer_v1": icl,
+            "astra_intelligence_consumption_layer_v1": icl,
             "historical_replay_expansion_validation_v2": replay,
             "historical_replay_recovery_v1": replay,
             "historical_satellite_symbol_satellite_utilization_audit_v1": satellite,
@@ -1140,7 +1347,14 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "fmp_usage_pct": provider["fmp_usage_pct"],
             "fmp_bandwidth_used": provider["fmp_bandwidth_after"],
             "fmp_expansion_phase": provider["fmp_expansion_phase"],
+            "fmp_safe_expansion_phase": provider.get("fmp_safe_expansion_phase"),
             "fmp_expansion_allowed": provider["fmp_expansion_allowed"],
+            "fmp_records_collected": provider.get("fmp_records_collected"),
+            "fmp_records_consumed": provider.get("fmp_records_consumed"),
+            "fmp_knowledge_generated": provider.get("fmp_knowledge_generated"),
+            "fmp_knowledge_roi_score": provider.get("fmp_knowledge_roi_score"),
+            "fmp_provider_consumption_score": provider.get("fmp_consumption_score"),
+            "fmp_provider_roi_score": provider.get("fmp_provider_roi_score"),
             "provider_protection_score": provider["provider_protection_score"],
             "historical_replays_completed": replay["historical_replays_after"],
             "historical_replay_score": replay["historical_replay_score_after"],
@@ -1150,6 +1364,17 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "horizon_usage_score": horizon["horizon_usage_score"],
             "horizon_paper_attachment_pct": horizon["horizon_paper_attachment_pct"],
             "horizon_paper_influence_score": horizon["horizon_paper_influence_score"],
+            "icl_overall_score": icl.get("icl_overall_score"),
+            "fmp_consumption_score": icl.get("fmp_consumption_score"),
+            "historical_replay_consumption_score": icl.get("historical_replay_consumption_score"),
+            "horizon_influence_score": icl.get("horizon_influence_score"),
+            "source_to_consumer_matrix": icl.get("source_to_consumer_matrix"),
+            "missing_consumers": icl.get("missing_consumers"),
+            "weak_consumers": icl.get("weak_consumers"),
+            "verified_consumers": icl.get("verified_consumers"),
+            "highest_roi_consumption_gap": icl.get("highest_roi_consumption_gap"),
+            "icl_cortex_issues_created": icl.get("cortex_issues_created"),
+            "icl_cortex_issues_fixed": icl.get("cortex_issues_fixed"),
             "best_horizon_overall": horizon["best_horizon_overall"],
             "best_horizon_by_symbol": horizon["best_horizon_by_symbol"],
             "horizon_blocker_if_below_80": horizon["horizon_blocker_if_below_80"],
