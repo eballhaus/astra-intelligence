@@ -4648,16 +4648,19 @@ export default function LearningTab({ compact = false }) {
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
             {[
-              ["ICL Overall", safeNumber(astraIntelligenceConsumptionLayer?.icl_overall_score ?? astraPaperProviderCortexCompletion?.icl_overall_score).toFixed(1)],
-              ["FMP Consumption", safeNumber(astraIntelligenceConsumptionLayer?.fmp_consumption_score ?? astraPaperProviderCortexCompletion?.fmp_consumption_score).toFixed(1)],
-              ["FMP Records Collected", safeNumber(astraPaperProviderCortexCompletion?.fmp_records_collected).toFixed(0)],
-              ["FMP Records Consumed", safeNumber(astraPaperProviderCortexCompletion?.fmp_records_consumed).toFixed(0)],
+              ["ICL Before", safeNumber(astraIntelligenceConsumptionLayer?.icl_overall_score_before ?? astraPaperProviderCortexCompletion?.icl_overall_score_before).toFixed(1)],
+              ["ICL After", safeNumber(astraIntelligenceConsumptionLayer?.icl_overall_score_after ?? astraPaperProviderCortexCompletion?.icl_overall_score_after ?? astraIntelligenceConsumptionLayer?.icl_overall_score ?? astraPaperProviderCortexCompletion?.icl_overall_score).toFixed(1)],
+              ["Weak Before", safeNumber(astraIntelligenceConsumptionLayer?.weak_consumers_before ?? astraPaperProviderCortexCompletion?.weak_consumers_before).toFixed(0)],
+              ["Weak After", safeNumber(astraIntelligenceConsumptionLayer?.weak_consumers_after ?? astraPaperProviderCortexCompletion?.weak_consumers_after ?? (astraIntelligenceConsumptionLayer?.weak_consumers || astraPaperProviderCortexCompletion?.weak_consumers || []).length).toFixed(0)],
+              ["FMP Consumption", `${safeNumber(astraIntelligenceConsumptionLayer?.fmp_downstream_consumption_before ?? astraPaperProviderCortexCompletion?.fmp_downstream_consumption_before).toFixed(1)} -> ${safeNumber(astraIntelligenceConsumptionLayer?.fmp_downstream_consumption_after ?? astraPaperProviderCortexCompletion?.fmp_downstream_consumption_after ?? astraIntelligenceConsumptionLayer?.fmp_consumption_score ?? astraPaperProviderCortexCompletion?.fmp_consumption_score).toFixed(1)}`],
+              ["FMP Records", `${safeNumber(astraPaperProviderCortexCompletion?.fmp_records_collected).toFixed(0)} / ${safeNumber(astraPaperProviderCortexCompletion?.fmp_records_consumed).toFixed(0)}`],
               ["FMP Knowledge ROI", safeNumber(astraPaperProviderCortexCompletion?.fmp_knowledge_roi_score).toFixed(1)],
-              ["FMP Provider ROI", safeNumber(astraPaperProviderCortexCompletion?.fmp_provider_roi_score).toFixed(1)],
               ["FMP Safe Phase", astraPaperProviderCortexCompletion?.fmp_safe_expansion_phase || astraPaperProviderCortexCompletion?.fmp_expansion_phase],
-              ["Replay Consumption", safeNumber(astraIntelligenceConsumptionLayer?.historical_replay_consumption_score ?? astraPaperProviderCortexCompletion?.historical_replay_consumption_score).toFixed(1)],
+              ["Replay Consumption", `${safeNumber(astraIntelligenceConsumptionLayer?.replay_consumption_before ?? astraPaperProviderCortexCompletion?.replay_consumption_before).toFixed(1)} -> ${safeNumber(astraIntelligenceConsumptionLayer?.replay_consumption_after ?? astraPaperProviderCortexCompletion?.replay_consumption_after ?? astraIntelligenceConsumptionLayer?.historical_replay_consumption_score ?? astraPaperProviderCortexCompletion?.historical_replay_consumption_score).toFixed(1)}`],
+              ["Shadow Consumption", safeNumber(astraIntelligenceConsumptionLayer?.shadow_consumption_score ?? astraPaperProviderCortexCompletion?.shadow_consumption_score).toFixed(1)],
+              ["Sector / Regime", `${safeNumber(astraIntelligenceConsumptionLayer?.sector_intelligence_after ?? astraPaperProviderCortexCompletion?.sector_intelligence_after).toFixed(1)} / ${safeNumber(astraIntelligenceConsumptionLayer?.regime_intelligence_after ?? astraPaperProviderCortexCompletion?.regime_intelligence_after).toFixed(1)}`],
               ["Horizon Influence", safeNumber(astraIntelligenceConsumptionLayer?.horizon_influence_score ?? astraPaperProviderCortexCompletion?.horizon_influence_score).toFixed(1)],
-              ["Weak Consumers", safeNumber((astraIntelligenceConsumptionLayer?.weak_consumers || astraPaperProviderCortexCompletion?.weak_consumers || []).length).toFixed(0)],
+              ["Regression Guard", safeNumber(astraIntelligenceConsumptionLayer?.icl_regression_guard_score ?? astraPaperProviderCortexCompletion?.icl_regression_guard_score).toFixed(1)],
               ["Verified Consumers", safeNumber((astraIntelligenceConsumptionLayer?.verified_consumers || astraPaperProviderCortexCompletion?.verified_consumers || []).length).toFixed(0)],
               ["Highest ROI Gap", (astraIntelligenceConsumptionLayer?.highest_roi_consumption_gap || astraPaperProviderCortexCompletion?.highest_roi_consumption_gap || {})?.source_name || astraPaperProviderCortexCompletion?.highest_roi_open_issue],
               ["Broker Truth Trades", safeNumber(astraPaperProviderCortexCompletion?.broker_truth_closed_trade_count).toFixed(0)],
@@ -4674,8 +4677,11 @@ export default function LearningTab({ compact = false }) {
           <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
             {[
               ["Source-to-Consumer Matrix", astraIntelligenceConsumptionLayer?.source_to_consumer_matrix || astraPaperProviderCortexCompletion?.source_to_consumer_matrix],
+              ["Before Matrix", astraIntelligenceConsumptionLayer?.source_to_consumer_matrix_before || astraPaperProviderCortexCompletion?.source_to_consumer_matrix_before],
               ["Missing Consumers", astraIntelligenceConsumptionLayer?.missing_consumers || astraPaperProviderCortexCompletion?.missing_consumers],
               ["Weak Consumers", astraIntelligenceConsumptionLayer?.weak_consumers || astraPaperProviderCortexCompletion?.weak_consumers],
+              ["Weak Consumer Root Causes", astraIntelligenceConsumptionLayer?.weak_consumer_root_causes || astraPaperProviderCortexCompletion?.weak_consumer_root_causes],
+              ["Weak Consumer Fixes", astraIntelligenceConsumptionLayer?.weak_consumer_fixes_applied || astraPaperProviderCortexCompletion?.weak_consumer_fixes_applied],
               ["Verified Consumers", astraIntelligenceConsumptionLayer?.verified_consumers || astraPaperProviderCortexCompletion?.verified_consumers],
               ["ICL Cortex Issues Created", astraPaperProviderCortexCompletion?.icl_cortex_issues_created || astraIntelligenceConsumptionLayer?.cortex_issues_created],
               ["FMP Utilization Recovery", astraPaperProviderCortexCompletion?.fmp_utilization_recovery_controlled_reactivation_v2],

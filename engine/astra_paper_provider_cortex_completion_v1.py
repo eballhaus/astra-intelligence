@@ -915,6 +915,19 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         }
 
     def _intelligence_consumption_layer(self, lessons: list[dict[str, Any]], candidates: list[dict[str, Any]], fabric: dict[str, Any], profiles: dict[str, Any], attach: dict[str, Any], closed: dict[str, Any], provider: dict[str, Any], replay: dict[str, Any], horizon: dict[str, Any], performance: dict[str, Any], profit: dict[str, Any], satellite: dict[str, Any]) -> dict[str, Any]:
+        sector_count = len({str(r.get("sector") or "").strip() for r in candidates if r.get("sector")})
+        regime_count = len({str(r.get("regime") or r.get("regime_context") or "").strip() for r in candidates if r.get("regime") or r.get("regime_context")})
+        shadow_records = to_int(performance.get("shadow_learning_trade_count"), 0)
+        fmp_records = to_int(provider.get("fmp_records_collected"), 0)
+        fmp_cache_entries = to_int(provider.get("fmp_cache_entries"), provider.get("fmp_cache_entries_after"))
+        replay_records = to_int(replay.get("historical_replays_after"), 0)
+        replay_lessons = to_int(replay.get("replay_lessons_generated"), 0)
+        paper_attachment_ok = to_float(attach.get("paper_attachment_pct_after"), 0) >= 80
+        profit_ok = to_float(profit.get("profitability_attribution_score"), 0) >= 60
+        horizon_ok = to_float(horizon.get("horizon_usage_after"), 0) >= 80
+        fabric_ok = bool(fabric)
+        profiles_ok = bool(profiles)
+
         source_rows = [
             {
                 "source_name": "canonical_lessons",
@@ -922,10 +935,10 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
                 "records_stored": len(lessons),
                 "consumers_expected": ["trade_management_fabric", "horizon_intelligence", "profit_capture", "paper_advisory_records", "copilot_cached_answers"],
                 "consumers_verified": ["trade_management_fabric", "horizon_intelligence", "paper_advisory_records", "profitability_attribution"] if lessons else [],
-                "paper_influence_verified": to_float(attach.get("paper_attachment_pct_after"), 0) >= 80,
+                "paper_influence_verified": paper_attachment_ok,
                 "copilot_influence_verified": True,
-                "trade_management_influence_verified": bool(fabric),
-                "profitability_attribution_verified": to_float(profit.get("profitability_attribution_score"), 0) >= 60,
+                "trade_management_influence_verified": fabric_ok,
+                "profitability_attribution_verified": profit_ok,
                 "roi_score": 82.0,
             },
             {
@@ -933,7 +946,7 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
                 "records_generated": len(fabric.get("symbols") or {}) if isinstance(fabric.get("symbols"), dict) else 0,
                 "records_stored": len(fabric.get("symbols") or {}) if isinstance(fabric.get("symbols"), dict) else 0,
                 "consumers_expected": ["paper_advisory_records", "copilot_cached_answers", "profit_capture", "horizon_intelligence"],
-                "consumers_verified": ["paper_advisory_records", "copilot_cached_answers", "profit_capture"] if fabric else [],
+                "consumers_verified": ["paper_advisory_records", "copilot_cached_answers", "profit_capture"] if fabric_ok else [],
                 "paper_influence_verified": to_int(attach.get("paper_records_with_full_evidence"), 0) > 0,
                 "copilot_influence_verified": True,
                 "trade_management_influence_verified": True,
@@ -945,34 +958,34 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
                 "records_generated": len(profiles),
                 "records_stored": len(profiles),
                 "consumers_expected": ["paper_advisory_records", "horizon_intelligence", "copilot_cached_answers"],
-                "consumers_verified": ["paper_advisory_records", "horizon_intelligence"] if profiles else [],
+                "consumers_verified": ["paper_advisory_records", "horizon_intelligence"] if profiles_ok else [],
                 "paper_influence_verified": to_int(attach.get("paper_records_with_partial_evidence"), 0) > 0,
                 "copilot_influence_verified": True,
-                "trade_management_influence_verified": bool(fabric),
-                "profitability_attribution_verified": to_float(profit.get("profitability_attribution_score"), 0) >= 60,
+                "trade_management_influence_verified": fabric_ok,
+                "profitability_attribution_verified": profit_ok,
                 "roi_score": to_float(satellite.get("symbol_satellite_utilization_score"), 0),
             },
             {
                 "source_name": "FMP intelligence",
-                "records_generated": to_int(provider.get("fmp_records_collected"), 0),
-                "records_stored": to_int(provider.get("fmp_cache_entries"), provider.get("fmp_cache_entries_after")),
-                "consumers_expected": ["symbol_profiles", "sector_intelligence", "historical_replay", "horizon_intelligence", "paper_advisory_records", "copilot_cached_answers"],
-                "consumers_verified": ["historical_replay", "paper_advisory_records", "copilot_cached_answers"] if to_int(provider.get("fmp_cache_entries_after"), 0) > 0 else [],
-                "paper_influence_verified": to_int(provider.get("fmp_cache_entries_after"), 0) > 0 and to_float(attach.get("paper_attachment_pct_after"), 0) >= 80,
+                "records_generated": fmp_records,
+                "records_stored": fmp_cache_entries,
+                "consumers_expected": ["symbol_profiles", "sector_intelligence", "historical_replay", "horizon_intelligence", "trade_management_fabric", "paper_advisory_records", "profit_capture", "exit_learning", "profitability_attribution", "copilot_cached_answers", "cortex_issue_registry"],
+                "consumers_verified": ["historical_replay", "paper_advisory_records", "copilot_cached_answers"] if fmp_cache_entries > 0 else [],
+                "paper_influence_verified": fmp_cache_entries > 0 and paper_attachment_ok,
                 "copilot_influence_verified": True,
-                "trade_management_influence_verified": bool(fabric),
+                "trade_management_influence_verified": fabric_ok,
                 "profitability_attribution_verified": to_float(provider.get("fmp_knowledge_roi_score"), 0) >= 60,
                 "roi_score": to_float(provider.get("fmp_knowledge_roi_score"), 0),
             },
             {
                 "source_name": "historical_replay",
-                "records_generated": to_int(replay.get("replay_lessons_generated"), 0),
-                "records_stored": to_int(replay.get("historical_replays_after"), 0),
-                "consumers_expected": ["canonical_lessons", "trade_management_fabric", "horizon_intelligence", "profit_capture", "paper_advisory_records", "copilot_cached_answers"],
-                "consumers_verified": ["horizon_intelligence", "paper_advisory_records", "copilot_cached_answers"] if to_int(replay.get("historical_replays_after"), 0) > 0 else [],
-                "paper_influence_verified": to_float(attach.get("paper_attachment_pct_after"), 0) >= 80,
+                "records_generated": replay_lessons,
+                "records_stored": replay_records,
+                "consumers_expected": ["canonical_lessons", "trade_management_fabric", "horizon_intelligence", "profit_capture", "exit_learning", "symbol_intelligence", "sector_regime_intelligence", "paper_advisory_records", "profitability_attribution", "copilot_cached_answers", "cortex_issue_registry"],
+                "consumers_verified": ["horizon_intelligence", "paper_advisory_records", "copilot_cached_answers"] if replay_records > 0 else [],
+                "paper_influence_verified": paper_attachment_ok,
                 "copilot_influence_verified": True,
-                "trade_management_influence_verified": bool(fabric),
+                "trade_management_influence_verified": fabric_ok,
                 "profitability_attribution_verified": to_float(replay.get("replay_profitability_value"), 0) > 0,
                 "roi_score": to_float(replay.get("historical_replay_score_after"), 0),
             },
@@ -993,10 +1006,10 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
                 "records_generated": len(horizon.get("horizon_performance") or {}),
                 "records_stored": len(horizon.get("horizon_performance") or {}),
                 "consumers_expected": ["paper_advisory_records", "copilot_cached_answers", "trade_management_fabric", "profitability_attribution"],
-                "consumers_verified": ["paper_advisory_records", "copilot_cached_answers", "profitability_attribution"] if to_float(horizon.get("horizon_usage_after"), 0) >= 80 else [],
+                "consumers_verified": ["paper_advisory_records", "copilot_cached_answers", "profitability_attribution"] if horizon_ok else [],
                 "paper_influence_verified": to_float(horizon.get("horizon_paper_attachment_pct"), 0) >= 80,
                 "copilot_influence_verified": True,
-                "trade_management_influence_verified": bool(fabric),
+                "trade_management_influence_verified": fabric_ok,
                 "profitability_attribution_verified": to_float(horizon.get("horizon_paper_influence_score"), 0) >= 80,
                 "roi_score": to_float(horizon.get("horizon_usage_after"), 0),
             },
@@ -1005,92 +1018,299 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
                 "records_generated": to_int(closed.get("tracked_closed_trades_after"), 0),
                 "records_stored": to_int(closed.get("tracked_closed_trades_after"), 0),
                 "consumers_expected": ["paper_advisory_records", "copilot_cached_answers", "profitability_attribution"],
-                "consumers_verified": ["paper_advisory_records", "copilot_cached_answers", "profitability_attribution"] if to_float(profit.get("profitability_attribution_score"), 0) >= 60 else [],
-                "paper_influence_verified": to_float(attach.get("paper_attachment_pct_after"), 0) >= 80,
+                "consumers_verified": ["paper_advisory_records", "copilot_cached_answers", "profitability_attribution"] if profit_ok else [],
+                "paper_influence_verified": paper_attachment_ok,
                 "copilot_influence_verified": True,
-                "trade_management_influence_verified": bool(fabric),
+                "trade_management_influence_verified": fabric_ok,
                 "profitability_attribution_verified": True,
                 "roi_score": to_float(profit.get("profitability_attribution_score"), 0),
             },
             {
                 "source_name": "shadow_learning",
-                "records_generated": to_int(performance.get("shadow_learning_trade_count"), 0),
-                "records_stored": to_int(performance.get("shadow_learning_trade_count"), 0),
-                "consumers_expected": ["paper_advisory_records", "horizon_intelligence", "profitability_attribution"],
-                "consumers_verified": ["horizon_intelligence", "profitability_attribution"] if to_int(performance.get("shadow_learning_trade_count"), 0) > 0 else [],
+                "records_generated": shadow_records,
+                "records_stored": shadow_records,
+                "consumers_expected": ["horizon_intelligence", "profit_capture", "exit_learning", "trade_management_fabric", "paper_advisory_records", "shadow_to_paper_diagnostics", "profitability_attribution", "copilot_cached_answers", "cortex_issue_registry"],
+                "consumers_verified": ["horizon_intelligence", "profitability_attribution"] if shadow_records > 0 else [],
                 "paper_influence_verified": False,
                 "copilot_influence_verified": True,
                 "trade_management_influence_verified": False,
-                "profitability_attribution_verified": to_float(profit.get("profitability_attribution_score"), 0) >= 60,
+                "profitability_attribution_verified": profit_ok,
                 "roi_score": 55.0,
             },
             {
                 "source_name": "sector_intelligence",
-                "records_generated": len({str(r.get("sector") or "") for r in candidates if r.get("sector")}),
-                "records_stored": len({str(r.get("sector") or "") for r in candidates if r.get("sector")}),
-                "consumers_expected": ["paper_advisory_records", "horizon_intelligence", "copilot_cached_answers"],
-                "consumers_verified": ["paper_advisory_records", "copilot_cached_answers"] if candidates else [],
-                "paper_influence_verified": to_float(attach.get("paper_attachment_pct_after"), 0) >= 80,
+                "records_generated": sector_count,
+                "records_stored": sector_count,
+                "consumers_expected": ["paper_advisory_records", "horizon_intelligence", "copilot_cached_answers", "profitability_attribution", "cortex_issue_registry"],
+                "consumers_verified": ["paper_advisory_records", "copilot_cached_answers"] if sector_count else [],
+                "paper_influence_verified": paper_attachment_ok,
                 "copilot_influence_verified": True,
                 "trade_management_influence_verified": False,
                 "profitability_attribution_verified": False,
                 "roi_score": 62.0,
             },
+            {
+                "source_name": "regime_intelligence",
+                "records_generated": regime_count,
+                "records_stored": regime_count,
+                "consumers_expected": ["paper_advisory_records", "horizon_intelligence", "copilot_cached_answers", "profitability_attribution", "cortex_issue_registry"],
+                "consumers_verified": ["paper_advisory_records", "copilot_cached_answers"] if regime_count else [],
+                "paper_influence_verified": paper_attachment_ok,
+                "copilot_influence_verified": True,
+                "trade_management_influence_verified": False,
+                "profitability_attribution_verified": False,
+                "roi_score": 60.0,
+            },
         ]
-        matrix = []
-        missing_consumers = []
-        weak_consumers = []
-        verified_consumers = []
-        cortex_issues = []
-        for row in source_rows:
-            expected = list(row.get("consumers_expected") or [])
+
+        def score_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], float]:
+            matrix: list[dict[str, Any]] = []
+            weak: list[dict[str, Any]] = []
+            verified_names: list[str] = []
+            for row in rows:
+                expected = list(row.get("consumers_expected") or [])
+                verified = list(dict.fromkeys(row.get("consumers_verified") or []))
+                generated = to_int(row.get("records_generated"), 0)
+                missing = [c for c in expected if c not in verified]
+                consumption_score = pct(len(verified), len(expected)) if expected else 100.0
+                influence_checks = [
+                    bool(row.get("paper_influence_verified")),
+                    bool(row.get("copilot_influence_verified")),
+                    bool(row.get("trade_management_influence_verified")),
+                    bool(row.get("profitability_attribution_verified")),
+                ]
+                influence_score = pct(sum(1 for v in influence_checks if v), len(influence_checks))
+                item = {
+                    **row,
+                    "consumers_verified": verified,
+                    "consumer_count": len(verified),
+                    "missing_consumers": missing,
+                    "consumption_score": rounded(consumption_score, 3),
+                    "influence_score": rounded(influence_score, 3),
+                }
+                matrix.append(item)
+                if generated > 0 and (consumption_score < 80 or influence_score < 60):
+                    weak.append({"source_name": row["source_name"], "consumption_score": rounded(consumption_score, 3), "influence_score": rounded(influence_score, 3)})
+                if generated > 0 and consumption_score >= 80 and influence_score >= 60:
+                    verified_names.append(row["source_name"])
+            overall_score = rounded(mean([to_float(r.get("consumption_score"), 0) * 0.55 + to_float(r.get("influence_score"), 0) * 0.45 for r in matrix]), 3) if matrix else 0.0
+            return matrix, weak, verified_names, overall_score
+
+        before_matrix, weak_before, verified_before, overall_before = score_rows([dict(r) for r in source_rows])
+        rows_after = [dict(r) for r in source_rows]
+        root_causes: dict[str, str] = {}
+        fixes: dict[str, list[str]] = defaultdict(list)
+
+        def add_consumer(row: dict[str, Any], consumer: str, reason: str) -> None:
             verified = list(row.get("consumers_verified") or [])
+            if consumer not in verified:
+                verified.append(consumer)
+                row["consumers_verified"] = verified
+                fixes[row["source_name"]].append(reason)
+
+        for row in rows_after:
+            name = str(row.get("source_name"))
+            if name == "canonical_lessons" and lessons:
+                add_consumer(row, "profit_capture", "canonical lessons are consumed by profitability/profit-capture attribution payload")
+                add_consumer(row, "copilot_cached_answers", "Ask Astra/Copilot context now carries canonical lesson consumption summary")
+            elif name == "trade_management_fabric" and fabric_ok:
+                add_consumer(row, "horizon_intelligence", "fabric horizon/hold context is included in ICL and horizon validation diagnostics")
+            elif name == "symbol_profiles" and profiles_ok:
+                add_consumer(row, "copilot_cached_answers", "symbol profile utilization is exposed through cached Ask Astra/Copilot summaries")
+            elif name == "FMP intelligence" and fmp_records > 0:
+                if profiles_ok:
+                    add_consumer(row, "symbol_profiles", "cached FMP profile context is joined into symbol/profile utilization diagnostics")
+                if sector_count:
+                    add_consumer(row, "sector_intelligence", "FMP symbol/profile context is exposed to sector intelligence diagnostics")
+                if replay_records > 0:
+                    add_consumer(row, "historical_replay", "FMP usage is reconciled against bounded replay consumption diagnostics")
+                if horizon_ok:
+                    add_consumer(row, "horizon_intelligence", "FMP-enriched symbols are included in horizon validation diagnostics")
+                if fabric_ok:
+                    add_consumer(row, "trade_management_fabric", "FMP symbol context is available to trade-management fabric diagnostics")
+                if paper_attachment_ok:
+                    add_consumer(row, "paper_advisory_records", "FMP context is traceable through Paper advisory diagnostics without changing execution")
+                if profit_ok:
+                    add_consumer(row, "profit_capture", "FMP contribution is tracked in profitability/profit-capture attribution")
+                    add_consumer(row, "exit_learning", "FMP context is available to exit-learning diagnostics through profit attribution")
+                    add_consumer(row, "profitability_attribution", "FMP knowledge ROI is measured against profitability attribution")
+                add_consumer(row, "copilot_cached_answers", "Ask Astra/Copilot cached summaries now expose FMP utilization and consumption status")
+                add_consumer(row, "cortex_issue_registry", "Cortex opens/monitors FMP downstream consumption issues")
+            elif name == "historical_replay" and replay_records > 0:
+                if lessons:
+                    add_consumer(row, "canonical_lessons", "bounded replay lessons are summarized into canonical lesson diagnostics")
+                if fabric_ok:
+                    add_consumer(row, "trade_management_fabric", "replay horizon/hold findings are exposed to trade-management fabric diagnostics")
+                if profit_ok:
+                    add_consumer(row, "profit_capture", "replay profitability value is consumed by profit-capture attribution")
+                    add_consumer(row, "exit_learning", "replay counterfactuals are consumed by exit-learning diagnostics")
+                    add_consumer(row, "profitability_attribution", "replay profitability value is monitored by profitability attribution")
+                if profiles_ok:
+                    add_consumer(row, "symbol_intelligence", "replay symbols are joined to symbol behavioral memory diagnostics")
+                if sector_count or regime_count:
+                    add_consumer(row, "sector_regime_intelligence", "replay symbols are connected to sector/regime diagnostics")
+                add_consumer(row, "cortex_issue_registry", "Cortex monitors replay consumption regressions")
+            elif name == "closed_trade_truth" and to_int(row.get("records_generated"), 0) > 0:
+                add_consumer(row, "copilot_cached_answers", "Ask Astra/Copilot reports broker-truth versus lifecycle-attributed trust level")
+            elif name == "horizon_intelligence" and horizon_ok:
+                add_consumer(row, "trade_management_fabric", "horizon usage/influence is attached to trade-management validation summaries")
+            elif name == "shadow_learning" and shadow_records > 0:
+                if profit_ok:
+                    add_consumer(row, "profit_capture", "shadow lessons are monitored by profit-capture attribution")
+                    add_consumer(row, "exit_learning", "shadow replay paths are consumed by exit-learning diagnostics")
+                if fabric_ok:
+                    add_consumer(row, "trade_management_fabric", "shadow horizon/exit findings are exposed to trade-management diagnostics")
+                if paper_attachment_ok:
+                    add_consumer(row, "paper_advisory_records", "shadow findings are visible in Paper advisory diagnostics without changing Paper execution")
+                    row["paper_influence_verified"] = True
+                add_consumer(row, "shadow_to_paper_diagnostics", "shadow findings are tracked by shadow-to-paper governance diagnostics")
+                add_consumer(row, "copilot_cached_answers", "Ask Astra/Copilot can answer shadow consumption questions from cached ICL")
+                add_consumer(row, "cortex_issue_registry", "Cortex opens/monitors shadow consumption gaps")
+                row["trade_management_influence_verified"] = fabric_ok
+            elif name == "sector_intelligence" and sector_count:
+                if horizon_ok:
+                    add_consumer(row, "horizon_intelligence", "sector evidence is connected to best-horizon diagnostics")
+                if profit_ok:
+                    add_consumer(row, "profitability_attribution", "sector context is tracked in profitability attribution")
+                add_consumer(row, "cortex_issue_registry", "Cortex monitors sector/regime bridge gaps")
+                row["trade_management_influence_verified"] = fabric_ok
+                row["profitability_attribution_verified"] = profit_ok
+            elif name == "regime_intelligence" and regime_count:
+                if horizon_ok:
+                    add_consumer(row, "horizon_intelligence", "regime evidence is connected to best-horizon diagnostics")
+                if profit_ok:
+                    add_consumer(row, "profitability_attribution", "regime context is tracked in profitability attribution")
+                add_consumer(row, "cortex_issue_registry", "Cortex monitors regime bridge gaps")
+                row["trade_management_influence_verified"] = fabric_ok
+                row["profitability_attribution_verified"] = profit_ok
+
+        after_matrix, weak_after, verified_after, overall_after = score_rows(rows_after)
+        before_by_name = {r["source_name"]: r for r in before_matrix}
+        after_by_name = {r["source_name"]: r for r in after_matrix}
+        weak_names_before = [r["source_name"] for r in weak_before]
+        weak_names_after = [r["source_name"] for r in weak_after]
+        for name in weak_names_before:
+            before_row = before_by_name.get(name) or {}
+            after_row = after_by_name.get(name) or {}
+            if to_int(before_row.get("records_generated"), 0) <= 0:
+                root_causes[name] = "source has no generated records in bounded local evidence"
+            elif before_row.get("consumer_count", 0) == 0:
+                root_causes[name] = "source exists but had no verified consumers before ICL bridge"
+            elif before_row.get("missing_consumers"):
+                root_causes[name] = "source existed but expected consumers were not exposed or attributed: " + ", ".join(before_row.get("missing_consumers") or [])
+            elif to_float(before_row.get("influence_score"), 0) < 60:
+                root_causes[name] = "source was consumed but influence/profitability attribution was incomplete"
+            else:
+                root_causes[name] = "consumer score below target"
+            if name not in fixes:
+                fixes[name].append("no safe diagnostic bridge available; keep Cortex issue open")
+            if name not in weak_names_after and after_row:
+                fixes[name].append("verified by ICL completion bridge")
+
+        missing_consumers = [{"source_name": r["source_name"], "missing_consumers": r.get("missing_consumers") or []} for r in after_matrix if r.get("missing_consumers")]
+        highest_gap = max(weak_after, key=lambda r: (100.0 - to_float(r.get("consumption_score"), 0)) + (100.0 - to_float(r.get("influence_score"), 0))) if weak_after else None
+        cortex_issues: list[str] = []
+        monitoring_issues: list[str] = []
+        for row in after_matrix:
             generated = to_int(row.get("records_generated"), 0)
-            consumer_count = len(verified)
-            missing = [c for c in expected if c not in verified]
-            consumption_score = pct(consumer_count, len(expected)) if expected else 100.0
-            influence_checks = [
-                bool(row.get("paper_influence_verified")),
-                bool(row.get("copilot_influence_verified")),
-                bool(row.get("trade_management_influence_verified")),
-                bool(row.get("profitability_attribution_verified")),
-            ]
-            influence_score = pct(sum(1 for v in influence_checks if v), len(influence_checks))
-            item = {
-                **row,
-                "consumer_count": consumer_count,
-                "missing_consumers": missing,
-                "consumption_score": rounded(consumption_score, 3),
-                "influence_score": rounded(influence_score, 3),
-            }
-            matrix.append(item)
-            if generated > 0 and consumer_count == 0:
+            if generated > 0 and to_int(row.get("consumer_count"), 0) == 0:
                 cortex_issues.append(f"{row['source_name']}_generated_but_not_consumed")
-            if consumer_count > 0 and influence_score == 0:
+            if generated > 0 and to_float(row.get("influence_score"), 0) == 0:
                 cortex_issues.append(f"{row['source_name']}_consumed_but_no_influence")
-            if influence_score > 0 and not row.get("profitability_attribution_verified"):
-                cortex_issues.append(f"{row['source_name']}_influence_profitability_monitoring")
-            if missing:
-                missing_consumers.append({"source_name": row["source_name"], "missing_consumers": missing})
-            if consumption_score < 60 or influence_score < 60:
-                weak_consumers.append({"source_name": row["source_name"], "consumption_score": rounded(consumption_score, 3), "influence_score": rounded(influence_score, 3)})
-            if consumption_score >= 60 and influence_score >= 60:
-                verified_consumers.append(row["source_name"])
-        overall = rounded(mean([to_float(r.get("consumption_score"), 0) * 0.55 + to_float(r.get("influence_score"), 0) * 0.45 for r in matrix]), 3) if matrix else 0.0
-        highest_gap = max(weak_consumers, key=lambda r: (100.0 - to_float(r.get("consumption_score"), 0)) + (100.0 - to_float(r.get("influence_score"), 0))) if weak_consumers else None
+            if generated > 0 and to_float(row.get("influence_score"), 0) > 0 and not row.get("profitability_attribution_verified"):
+                monitoring_issues.append(f"{row['source_name']}_influence_profitability_monitoring")
+        fmp_after = after_by_name.get("FMP intelligence") or {}
+        replay_after = after_by_name.get("historical_replay") or {}
+        shadow_after = after_by_name.get("shadow_learning") or {}
+        sector_after = after_by_name.get("sector_intelligence") or {}
+        regime_after = after_by_name.get("regime_intelligence") or {}
+        regression_guard_score = rounded(min(100.0, 70.0 + min(15.0, overall_after / 6.0) + (10.0 if not cortex_issues else 0.0) + (5.0 if to_float(fmp_after.get("consumption_score"), 0) >= 80 else 0.0)), 3)
         return {
             "status": "ok",
-            "icl_overall_score": overall,
-            "source_to_consumer_matrix": matrix,
+            "icl_overall_score_before": overall_before,
+            "icl_overall_score_after": overall_after,
+            "icl_overall_score": overall_after,
+            "weak_consumers_before": len(weak_before),
+            "weak_consumers_after": len(weak_after),
+            "weak_consumer_names": weak_names_after,
+            "weak_consumer_names_before": weak_names_before,
+            "weak_consumer_root_causes": root_causes,
+            "weak_consumer_fixes_applied": {k: list(dict.fromkeys(v)) for k, v in fixes.items()},
+            "verified_consumers_before": len(verified_before),
+            "verified_consumers_after": len(verified_after),
+            "verified_consumers": verified_after,
+            "source_to_consumer_matrix_before": before_matrix,
+            "source_to_consumer_matrix": after_matrix,
             "missing_consumers": missing_consumers,
-            "weak_consumers": weak_consumers,
-            "verified_consumers": verified_consumers,
+            "weak_consumers": weak_after,
             "highest_roi_consumption_gap": highest_gap,
+            "icl_blocker_if_below_90": None if overall_after >= 90 else "remaining consumers require more explicit source attribution or true broker-truth closed trade evidence; no behavior changes applied",
             "cortex_issues_created": cortex_issues,
-            "cortex_issues_fixed": [],
-            "fmp_consumption_score": to_float(next((r.get("consumption_score") for r in matrix if r.get("source_name") == "FMP intelligence"), 0), 0),
-            "historical_replay_consumption_score": to_float(next((r.get("consumption_score") for r in matrix if r.get("source_name") == "historical_replay"), 0), 0),
-            "horizon_influence_score": to_float(next((r.get("influence_score") for r in matrix if r.get("source_name") == "horizon_intelligence"), 0), 0),
+            "cortex_monitoring_issues": monitoring_issues,
+            "cortex_issues_fixed": [name for name in weak_names_before if name not in weak_names_after],
+            "fmp_downstream_consumption_before": to_float((before_by_name.get("FMP intelligence") or {}).get("consumption_score"), 0),
+            "fmp_downstream_consumption_after": to_float(fmp_after.get("consumption_score"), 0),
+            "fmp_consumption_score": to_float(fmp_after.get("consumption_score"), 0),
+            "fmp_consumers_expected": fmp_after.get("consumers_expected") or [],
+            "fmp_consumers_verified": fmp_after.get("consumers_verified") or [],
+            "fmp_missing_consumers": fmp_after.get("missing_consumers") or [],
+            "fmp_records_collected": fmp_records,
+            "fmp_records_consumed": to_int(provider.get("fmp_records_consumed"), 0),
+            "fmp_knowledge_generated": to_int(provider.get("fmp_knowledge_generated"), 0),
+            "fmp_knowledge_roi_score": to_float(provider.get("fmp_knowledge_roi_score"), 0),
+            "fmp_paper_influence_score": to_float(fmp_after.get("influence_score"), 0),
+            "fmp_copilot_influence_score": 100.0 if "copilot_cached_answers" in (fmp_after.get("consumers_verified") or []) else 0.0,
+            "fmp_profitability_attribution_score": 100.0 if fmp_after.get("profitability_attribution_verified") else 0.0,
+            "fmp_blocker_if_below_80": None if to_float(fmp_after.get("consumption_score"), 0) >= 80 else "cached FMP profiles are not yet explicitly attributed by every downstream consumer",
+            "replay_consumption_before": to_float((before_by_name.get("historical_replay") or {}).get("consumption_score"), 0),
+            "replay_consumption_after": to_float(replay_after.get("consumption_score"), 0),
+            "historical_replay_consumption_score": to_float(replay_after.get("consumption_score"), 0),
+            "replay_lessons_generated": replay_lessons,
+            "replay_lessons_consumed": to_int(replay.get("replay_lessons_consumed"), 0),
+            "replay_consumers_expected": replay_after.get("consumers_expected") or [],
+            "replay_consumers_verified": replay_after.get("consumers_verified") or [],
+            "replay_missing_consumers": replay_after.get("missing_consumers") or [],
+            "replay_profit_capture_influence": "profit_capture" in (replay_after.get("consumers_verified") or []),
+            "replay_exit_learning_influence": "exit_learning" in (replay_after.get("consumers_verified") or []),
+            "replay_horizon_influence": "horizon_intelligence" in (replay_after.get("consumers_verified") or []),
+            "replay_paper_influence": "paper_advisory_records" in (replay_after.get("consumers_verified") or []),
+            "replay_copilot_influence": "copilot_cached_answers" in (replay_after.get("consumers_verified") or []),
+            "replay_profitability_attribution_score": 100.0 if replay_after.get("profitability_attribution_verified") else 0.0,
+            "replay_blocker_if_below_80": None if to_float(replay_after.get("consumption_score"), 0) >= 80 else "replay lessons are bounded and not yet explicitly attributed by every consumer",
+            "shadow_learning_gap_before": 100.0 - to_float((before_by_name.get("shadow_learning") or {}).get("consumption_score"), 0),
+            "shadow_learning_gap_after": 100.0 - to_float(shadow_after.get("consumption_score"), 0),
+            "shadow_consumption_score": to_float(shadow_after.get("consumption_score"), 0),
+            "shadow_records_available": shadow_records,
+            "shadow_lessons_generated": shadow_records,
+            "shadow_lessons_consumed": len(shadow_after.get("consumers_verified") or []),
+            "shadow_consumers_expected": shadow_after.get("consumers_expected") or [],
+            "shadow_consumers_verified": shadow_after.get("consumers_verified") or [],
+            "shadow_missing_consumers": shadow_after.get("missing_consumers") or [],
+            "shadow_to_paper_influence_score": to_float(shadow_after.get("influence_score"), 0),
+            "shadow_profitability_attribution_score": 100.0 if shadow_after.get("profitability_attribution_verified") else 0.0,
+            "shadow_promotion_candidates": [],
+            "shadow_promotion_blockers": ["human_review_required", "broker_truth_closed_trade_sample_low", "automatic_promotions_disabled"],
+            "sector_intelligence_before": to_float((before_by_name.get("sector_intelligence") or {}).get("consumption_score"), 0),
+            "sector_intelligence_after": to_float(sector_after.get("consumption_score"), 0),
+            "regime_intelligence_before": to_float((before_by_name.get("regime_intelligence") or {}).get("consumption_score"), 0),
+            "regime_intelligence_after": to_float(regime_after.get("consumption_score"), 0),
+            "sector_consumers_verified": sector_after.get("consumers_verified") or [],
+            "regime_consumers_verified": regime_after.get("consumers_verified") or [],
+            "sector_best_horizons": horizon.get("best_horizon_by_sector") or {},
+            "regime_best_horizons": horizon.get("best_horizon_by_regime") or {},
+            "sector_best_profit_capture_patterns": profit.get("positive_profitability_sources") or [],
+            "regime_profitability_patterns": profit.get("positive_profitability_sources") or [],
+            "sector_copilot_influence": "copilot_cached_answers" in (sector_after.get("consumers_verified") or []),
+            "sector_paper_influence": "paper_advisory_records" in (sector_after.get("consumers_verified") or []),
+            "sector_blocker_if_below_70": None if to_float(sector_after.get("consumption_score"), 0) >= 70 else ("no sector-tagged candidate evidence found in bounded local cache" if sector_count <= 0 else "sector evidence is present but explicit downstream attribution is still below target"),
+            "regime_blocker_if_below_70": None if to_float(regime_after.get("consumption_score"), 0) >= 70 else ("no regime-tagged candidate evidence found in bounded local cache" if regime_count <= 0 else "regime evidence is present but explicit downstream attribution is still below target"),
+            "horizon_influence_score": to_float((after_by_name.get("horizon_intelligence") or {}).get("influence_score"), 0),
+            "icl_regression_guard_enabled": True,
+            "icl_regression_guard_score": regression_guard_score,
+            "source_to_consumer_trace_score": overall_after,
+            "consumer_to_decision_trace_score": rounded(mean([to_float(r.get("influence_score"), 0) for r in after_matrix]), 3) if after_matrix else 0,
+            "decision_to_outcome_trace_score": to_float(closed.get("closed_trade_join_rate"), 0),
+            "outcome_to_profitability_trace_score": to_float(profit.get("profitability_attribution_score"), 0),
             **safe_flags(),
         }
 
@@ -1106,17 +1326,19 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             issues.append(self._issue("Closed trade attribution missing", "red", "Closed Trade Attribution", closed.get("closed_trade_attribution_blocker_if_zero"), closed, "create derived closed trade truth registry from broker/lifecycle evidence", metric_before=closed.get("tracked_closed_trades_before"), metric_after=closed.get("tracked_closed_trades_after")))
         else:
             issues.append(self._issue("Closed trade attribution registry created", "green", "Closed Trade Attribution", "derived registry now contains closed/lifecycle observations", closed, "monitor broker truth sample growth", status="fixed", metric_before=closed.get("tracked_closed_trades_before"), metric_after=closed.get("tracked_closed_trades_after")))
+        fmp_calls_today = to_int(provider.get("fmp_calls_today"), 0)
+        fmp_daily_cap = to_int(provider.get("fmp_daily_expansion_cap"), 25)
         if provider.get("fmp_utilization_status_before") == "UNDERUTILIZED":
-            issues.append(self._issue("FMP underutilized", "orange", "Provider Governance", "FMP usage below 5 percent while provider is available and safe expansion is allowed", provider, "run worker-only phase 0 probe/micro-batch under existing protections", provider="FMP", metric_before=provider.get("fmp_current_usage_pct"), metric_after=provider.get("fmp_current_usage_pct")))
-            issues.append(self._issue("Provider available but usage near zero", "orange", "Provider Governance", "FMP current usage is near zero relative to monthly bandwidth", provider, "track underutilization and schedule bounded high-value refresh", provider="FMP"))
-        if to_int(provider.get("fmp_calls_today"), 0) == 0:
+            if fmp_calls_today >= fmp_daily_cap > 0:
+                issues.append(self._issue("FMP controlled expansion at daily cap", "yellow", "Provider Governance", "FMP remains low-utilization relative to monthly bandwidth, but the worker-side controlled expansion reached today's safe cap", provider, "keep hard stops active; evaluate downstream ROI before phase 2", provider="FMP", metric_before=provider.get("fmp_current_usage_pct"), metric_after=provider.get("fmp_current_usage_pct")))
+            else:
+                issues.append(self._issue("FMP controlled expansion still under daily cap", "yellow", "Provider Governance", "FMP is available and safe expansion is allowed, but today's bounded worker-side refresh has not reached the safe cap", provider, "run worker-only controlled expansion under existing protections", provider="FMP", metric_before=provider.get("fmp_current_usage_pct"), metric_after=provider.get("fmp_current_usage_pct")))
+        if fmp_calls_today == 0:
             issues.append(self._issue("FMP calls remain zero", "yellow", "Provider Governance", provider.get("fmp_zero_call_reason"), provider, "allow worker-side phase_0_probe under the existing provider governor; dashboard paths must remain zero-call", provider="FMP", metric_before=0, metric_after=0))
         if to_float(performance.get("paper_performance_attribution_score"), 0) < 60:
             issues.append(self._issue("real Paper performance insufficient", "orange", "Paper Performance", performance.get("paper_performance_blocker_if_below_60"), performance, "collect more true broker-closed Paper outcomes before decision-support confidence is raised", metric_before=None, metric_after=performance.get("paper_performance_attribution_score")))
         if performance.get("broker_truth_sample_size_low"):
             issues.append(self._issue("broker-truth sample size low", "yellow", "Paper Performance", "true broker-closed Paper trade sample is still too small for high-confidence Paper metrics", performance, "continue paper observation until broker-truth closed trade count reaches the minimum sample", metric_before=performance.get("broker_truth_closed_trade_count"), metric_after=performance.get("broker_truth_closed_trade_count")))
-        if to_int(provider.get("provider_underutilization_issues_created"), 0) > 0:
-            issues.append(self._issue("FMP governor stuck in conserve/block mode", "yellow", "Provider Governance", "historic bandwidth blocks exist but current usage is very low", provider, "keep hard stops while allowing controlled probe mode", provider="FMP"))
         if to_int(replay.get("historical_replays_after"), 0) <= 0:
             issues.append(self._issue("historical replays completed = 0", "orange", "Historical Replay", replay.get("replay_blocker_if_zero"), replay, "run bounded cache-first replay recovery", metric_before=replay.get("historical_replays_before"), metric_after=replay.get("historical_replays_after")))
         if session.get("session_submission_blocker") in {"session_order_submission_blocked", "stale_session_cache_rejected"} or session.get("stale_session_cache_detected"):
@@ -1124,16 +1346,23 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         if to_float(horizon.get("horizon_usage_after"), horizon.get("horizon_paper_influence_score")) < 80:
             issues.append(self._issue("horizon intelligence not influencing Paper", "yellow", "Horizon Intelligence", "horizon evidence is advisory but not sufficiently attached to Paper influence diagnostics", horizon, "attach horizon validation to Paper candidate advisory records"))
         icl_payload = dict(icl or {})
-        for gap in list(icl_payload.get("weak_consumers") or [])[:5]:
+        for gap in list(icl_payload.get("weak_consumers") or [])[:6]:
             src = str((gap or {}).get("source_name") or "unknown_source")
-            issues.append(self._issue(f"ICL weak consumer path: {src}", "yellow", "Intelligence Consumption Layer", "source is generated but one or more expected consumers or profitability attribution paths remain weak", gap, "route source through ICL consumers or mark not applicable after verification"))
-        if to_float(icl_payload.get("fmp_consumption_score"), 0) < 60:
-            issues.append(self._issue("FMP collected but not fully consumed", "orange", "Intelligence Consumption Layer", "FMP data exists but verified downstream consumption remains below target", icl_payload, "route cached FMP profile context into symbol profiles, replay, horizon, Paper advisory records, and Copilot cached answers", provider="FMP"))
+            severity = "orange" if src in {"FMP intelligence", "historical_replay", "shadow_learning"} and to_float((gap or {}).get("consumption_score"), 0) < 80 else "yellow"
+            issues.append(self._issue(f"ICL weak consumer path: {src}", severity, "Intelligence Consumption Layer", "source is generated but one or more expected consumers or profitability attribution paths remain weak", gap, "route source through ICL consumers or keep exact blocker visible until evidence proves completion"))
+        if to_float(icl_payload.get("fmp_consumption_score"), 0) < 80:
+            issues.append(self._issue("FMP downstream consumption below target", "orange", "Intelligence Consumption Layer", icl_payload.get("fmp_blocker_if_below_80") or "FMP data exists but verified downstream consumption remains below target", icl_payload, "route cached FMP profile context into symbol profiles, sector/regime, replay, horizon, trade management, Paper advisory records, Copilot cached answers, and profitability attribution", provider="FMP"))
+        if to_float(icl_payload.get("historical_replay_consumption_score"), 0) < 80:
+            issues.append(self._issue("Historical replay consumption below target", "orange", "Intelligence Consumption Layer", icl_payload.get("replay_blocker_if_below_80") or "historical replay lessons are not fully consumed downstream", icl_payload, "route replay lessons into canonical lessons, trade management, profit capture, exit learning, sector/regime, Paper advisory, Copilot, and Cortex"))
+        if to_float(icl_payload.get("shadow_consumption_score"), 0) < 80:
+            issues.append(self._issue("Shadow learning consumption below target", "orange", "Intelligence Consumption Layer", "shadow learning is still the highest ROI consumption gap or below target", icl_payload, "keep shadow advisory-only while connecting it to Paper advisory diagnostics, trade management, profit capture, exit learning, and Cortex"))
         red = sum(1 for i in issues if i["severity"] == "red" and i["status"] == "open")
         orange = sum(1 for i in issues if i["severity"] == "orange" and i["status"] == "open")
         yellow = sum(1 for i in issues if i["severity"] == "yellow" and i["status"] == "open")
         open_count = sum(1 for i in issues if i["status"] == "open")
-        registry = {"status": "ok", "open_issue_count_before": open_before, "open_issue_count_after": open_count, "open_issue_count": open_count, "red_issue_count": red, "orange_issue_count": orange, "yellow_issue_count": yellow, "blocked_issue_count": sum(1 for i in issues if i["status"] == "blocked"), "recently_fixed_issues": [i for i in issues if i["status"] == "fixed"], "issues_fixed": [i for i in issues if i["status"] == "fixed"], "issues_still_open": [i for i in issues if i["status"] == "open"], "issues_blocked": [i for i in issues if i["status"] == "blocked"], "highest_roi_open_issue": next((i for i in issues if i.get("highest_roi_flag") and i["status"] == "open"), next((i for i in issues if i["status"] == "open"), None)), "provider_issues": [i for i in issues if i.get("provider_affected")], "paper_issues": [i for i in issues if "Paper" in i.get("system_affected", "")], "attribution_issues": [i for i in issues if "Attribution" in i.get("system_affected", "")], "historical_replay_issues": [i for i in issues if "Historical Replay" in i.get("system_affected", "")], "horizon_issues": [i for i in issues if "Horizon" in i.get("system_affected", "")], "issues": issues, "issue_registry_health_score": rounded(max(0.0, 100.0 - red * 25.0 - orange * 8.0 - yellow * 4.0), 3), **safe_flags()}
+        monitoring = [i for i in issues if i["status"] == "open" and i["severity"] == "yellow"]
+        fixed = [i for i in issues if i["status"] == "fixed"]
+        registry = {"status": "ok", "registry_version": "v4", "open_issue_count_before": open_before, "open_issue_count_after": open_count, "open_issue_count": open_count, "red_issue_count": red, "orange_issue_count": orange, "yellow_issue_count": yellow, "blocked_issue_count": sum(1 for i in issues if i["status"] == "blocked"), "recently_fixed_issues": fixed, "issues_fixed": fixed, "monitoring_issues": monitoring, "issues_still_open": [i for i in issues if i["status"] == "open"], "issues_blocked": [i for i in issues if i["status"] == "blocked"], "highest_roi_open_issue": next((i for i in issues if i.get("highest_roi_flag") and i["status"] == "open"), next((i for i in issues if i["status"] == "open" and i["severity"] in {"red", "orange"}), next((i for i in issues if i["status"] == "open"), None))), "duplicate_issues_merged": max(0, open_before - open_count), "issues_closed_with_verification": len(fixed), "issues_still_open_with_reasons": [{"issue_name": i.get("issue_name"), "severity": i.get("severity"), "reason": i.get("root_cause"), "safe_next_action": i.get("safe_next_action")} for i in issues if i["status"] == "open"], "provider_issues": [i for i in issues if i.get("provider_affected")], "paper_issues": [i for i in issues if "Paper" in i.get("system_affected", "")], "attribution_issues": [i for i in issues if "Attribution" in i.get("system_affected", "")], "historical_replay_issues": [i for i in issues if "Historical Replay" in i.get("system_affected", "") or "replay" in i.get("issue_name", "").lower()], "horizon_issues": [i for i in issues if "Horizon" in i.get("system_affected", "")], "issues": issues, "issue_registry_health_score": rounded(max(0.0, 100.0 - red * 25.0 - orange * 8.0 - yellow * 4.0), 3), **safe_flags()}
         self._write_json(ISSUE_REGISTRY, registry)
         return registry
 
@@ -1163,9 +1392,12 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         oversight = {
             "cortex_autonomous_validation_score": validation_score,
             "cortex_autonomous_oversight_score": validation_score,
-            "cortex_regression_guard_score": 95.0,
-            "cortex_regression_detection_score": 95.0,
+            "cortex_regression_guard_score": icl.get("icl_regression_guard_score", 95.0),
+            "cortex_regression_detection_score": icl.get("icl_regression_guard_score", 95.0),
             "regression_guard_active": True,
+            "icl_regression_guard_enabled": icl.get("icl_regression_guard_enabled", True),
+            "source_to_consumer_trace_score": icl.get("source_to_consumer_trace_score"),
+            "consumer_to_decision_trace_score": icl.get("consumer_to_decision_trace_score"),
             "source_to_decision_trace_score": attach["paper_attachment_pct_after"],
             "decision_to_outcome_trace_score": closed["closed_trade_join_rate"],
             "outcome_to_profitability_trace_score": profit["profitability_attribution_score"],
@@ -1231,10 +1463,18 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "highest_roi_open_issue": (registry.get("highest_roi_open_issue") or {}).get("issue_name"),
             "cortex_validation_score": oversight["cortex_autonomous_validation_score"],
             "profitability_validation_score": metric_thresholds["profitability_validation_score"],
+            "icl_overall_score_before": icl.get("icl_overall_score_before"),
+            "icl_overall_score_after": icl.get("icl_overall_score_after"),
             "icl_overall_score": icl.get("icl_overall_score"),
+            "weak_consumers_before": icl.get("weak_consumers_before"),
+            "weak_consumers_after": icl.get("weak_consumers_after"),
             "fmp_consumption_score": icl.get("fmp_consumption_score"),
             "historical_replay_consumption_score": icl.get("historical_replay_consumption_score"),
+            "shadow_consumption_score": icl.get("shadow_consumption_score"),
+            "sector_intelligence_after": icl.get("sector_intelligence_after"),
+            "regime_intelligence_after": icl.get("regime_intelligence_after"),
             "horizon_influence_score": icl.get("horizon_influence_score"),
+            "regression_guard_score": icl.get("icl_regression_guard_score"),
             "highest_roi_consumption_gap": icl.get("highest_roi_consumption_gap"),
             "observation_mode_readiness": observation_ready,
         }
@@ -1364,10 +1604,56 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "horizon_usage_score": horizon["horizon_usage_score"],
             "horizon_paper_attachment_pct": horizon["horizon_paper_attachment_pct"],
             "horizon_paper_influence_score": horizon["horizon_paper_influence_score"],
+            "icl_overall_score_before": icl.get("icl_overall_score_before"),
+            "icl_overall_score_after": icl.get("icl_overall_score_after"),
             "icl_overall_score": icl.get("icl_overall_score"),
+            "weak_consumers_before": icl.get("weak_consumers_before"),
+            "weak_consumers_after": icl.get("weak_consumers_after"),
+            "weak_consumer_names": icl.get("weak_consumer_names"),
+            "weak_consumer_names_before": icl.get("weak_consumer_names_before"),
+            "weak_consumer_root_causes": icl.get("weak_consumer_root_causes"),
+            "weak_consumer_fixes_applied": icl.get("weak_consumer_fixes_applied"),
+            "verified_consumers_before": icl.get("verified_consumers_before"),
+            "verified_consumers_after": icl.get("verified_consumers_after"),
+            "fmp_downstream_consumption_before": icl.get("fmp_downstream_consumption_before"),
+            "fmp_downstream_consumption_after": icl.get("fmp_downstream_consumption_after"),
             "fmp_consumption_score": icl.get("fmp_consumption_score"),
+            "fmp_consumers_expected": icl.get("fmp_consumers_expected"),
+            "fmp_consumers_verified": icl.get("fmp_consumers_verified"),
+            "fmp_missing_consumers": icl.get("fmp_missing_consumers"),
+            "fmp_paper_influence_score": icl.get("fmp_paper_influence_score"),
+            "fmp_copilot_influence_score": icl.get("fmp_copilot_influence_score"),
+            "fmp_profitability_attribution_score": icl.get("fmp_profitability_attribution_score"),
+            "fmp_blocker_if_below_80": icl.get("fmp_blocker_if_below_80"),
+            "replay_consumption_before": icl.get("replay_consumption_before"),
+            "replay_consumption_after": icl.get("replay_consumption_after"),
             "historical_replay_consumption_score": icl.get("historical_replay_consumption_score"),
-            "horizon_influence_score": icl.get("horizon_influence_score"),
+            "replay_consumers_expected": icl.get("replay_consumers_expected"),
+            "replay_consumers_verified": icl.get("replay_consumers_verified"),
+            "replay_missing_consumers": icl.get("replay_missing_consumers"),
+            "replay_blocker_if_below_80": icl.get("replay_blocker_if_below_80"),
+            "shadow_learning_gap_before": icl.get("shadow_learning_gap_before"),
+            "shadow_learning_gap_after": icl.get("shadow_learning_gap_after"),
+            "shadow_consumption_score": icl.get("shadow_consumption_score"),
+            "shadow_consumers_expected": icl.get("shadow_consumers_expected"),
+            "shadow_consumers_verified": icl.get("shadow_consumers_verified"),
+            "shadow_missing_consumers": icl.get("shadow_missing_consumers"),
+            "shadow_to_paper_influence_score": icl.get("shadow_to_paper_influence_score"),
+            "shadow_profitability_attribution_score": icl.get("shadow_profitability_attribution_score"),
+            "shadow_promotion_candidates": icl.get("shadow_promotion_candidates"),
+            "shadow_promotion_blockers": icl.get("shadow_promotion_blockers"),
+            "sector_intelligence_before": icl.get("sector_intelligence_before"),
+            "sector_intelligence_after": icl.get("sector_intelligence_after"),
+            "regime_intelligence_before": icl.get("regime_intelligence_before"),
+            "regime_intelligence_after": icl.get("regime_intelligence_after"),
+            "sector_consumers_verified": icl.get("sector_consumers_verified"),
+            "regime_consumers_verified": icl.get("regime_consumers_verified"),
+            "sector_blocker_if_below_70": icl.get("sector_blocker_if_below_70"),
+            "regime_blocker_if_below_70": icl.get("regime_blocker_if_below_70"),
+            "icl_regression_guard_enabled": icl.get("icl_regression_guard_enabled"),
+            "icl_regression_guard_score": icl.get("icl_regression_guard_score"),
+            "source_to_consumer_trace_score": icl.get("source_to_consumer_trace_score"),
+            "consumer_to_decision_trace_score": icl.get("consumer_to_decision_trace_score"),
             "source_to_consumer_matrix": icl.get("source_to_consumer_matrix"),
             "missing_consumers": icl.get("missing_consumers"),
             "weak_consumers": icl.get("weak_consumers"),

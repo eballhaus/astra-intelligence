@@ -44722,6 +44722,11 @@ def astra_intelligence_consumption_layer_v1(force: bool = False):
     return icl
 
 
+@router.get("/api/astra_icl_consumption_completion_v1")
+def astra_icl_consumption_completion_v1(force: bool = False):
+    return astra_intelligence_consumption_layer_v1(force=force)
+
+
 @router.get("/api/astra_premarket_paper_readiness_hotfix_v1")
 def astra_premarket_paper_readiness_hotfix_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -45309,10 +45314,27 @@ def ask_astra_v1(payload: dict = Body(...)):
                 if isinstance(paper_provider_cortex.get("closed_trade_attribution_engine_v1"), dict)
                 else None
             ),
+            "icl_overall_score_before": paper_provider_cortex.get("icl_overall_score_before"),
+            "icl_overall_score_after": paper_provider_cortex.get("icl_overall_score_after"),
             "icl_overall_score": paper_provider_cortex.get("icl_overall_score"),
+            "weak_consumers_before": paper_provider_cortex.get("weak_consumers_before"),
+            "weak_consumers_after": paper_provider_cortex.get("weak_consumers_after"),
+            "weak_consumer_names": paper_provider_cortex.get("weak_consumer_names"),
+            "weak_consumer_root_causes": paper_provider_cortex.get("weak_consumer_root_causes"),
+            "fmp_downstream_consumption_before": paper_provider_cortex.get("fmp_downstream_consumption_before"),
+            "fmp_downstream_consumption_after": paper_provider_cortex.get("fmp_downstream_consumption_after"),
             "fmp_consumption_score": paper_provider_cortex.get("fmp_consumption_score"),
+            "fmp_missing_consumers": paper_provider_cortex.get("fmp_missing_consumers"),
+            "replay_consumption_before": paper_provider_cortex.get("replay_consumption_before"),
+            "replay_consumption_after": paper_provider_cortex.get("replay_consumption_after"),
             "historical_replay_consumption_score": paper_provider_cortex.get("historical_replay_consumption_score"),
+            "replay_missing_consumers": paper_provider_cortex.get("replay_missing_consumers"),
+            "shadow_consumption_score": paper_provider_cortex.get("shadow_consumption_score"),
+            "shadow_missing_consumers": paper_provider_cortex.get("shadow_missing_consumers"),
+            "sector_intelligence_after": paper_provider_cortex.get("sector_intelligence_after"),
+            "regime_intelligence_after": paper_provider_cortex.get("regime_intelligence_after"),
             "horizon_influence_score": paper_provider_cortex.get("horizon_influence_score"),
+            "icl_regression_guard_score": paper_provider_cortex.get("icl_regression_guard_score"),
             "highest_roi_consumption_gap": paper_provider_cortex.get("highest_roi_consumption_gap"),
             "weak_consumers": paper_provider_cortex.get("weak_consumers"),
             "verified_consumers": paper_provider_cortex.get("verified_consumers"),
@@ -45527,6 +45549,14 @@ def ask_astra_v1(payload: dict = Body(...)):
             or "broker-truth paper metrics trustworthy" in q_lc
             or "intelligence sources are not being consumed" in q_lc
             or "highest roi consumption gap" in q_lc
+            or "shadow learning being consumed" in q_lc
+            or "shadow learning is consumed" in q_lc
+            or "sector/regime intelligence connected" in q_lc
+            or "sector regime intelligence connected" in q_lc
+            or "4 weak consumers" in q_lc
+            or "weak consumers" in q_lc
+            or "regression guard" in q_lc
+            or "what should eric watch tomorrow" in q_lc
         ):
             suite = paper_provider_cortex or {}
             provider = suite.get("cortex_provider_utilization_recovery_api_protection_v1") or {}
@@ -45545,6 +45575,8 @@ def ask_astra_v1(payload: dict = Body(...)):
             highest_gap = icl.get("highest_roi_consumption_gap") or suite.get("highest_roi_consumption_gap") or {}
             weak_consumers = icl.get("weak_consumers") or suite.get("weak_consumers") or []
             verified_consumers = icl.get("verified_consumers") or suite.get("verified_consumers") or []
+            weak_names = icl.get("weak_consumer_names") or suite.get("weak_consumer_names") or [str((w or {}).get("source_name") or "unknown") for w in weak_consumers]
+            root_causes = icl.get("weak_consumer_root_causes") or suite.get("weak_consumer_root_causes") or {}
             fmp_blocker = suite.get("fmp_block_reason") or provider.get("fmp_block_reason") or suite.get("fmp_zero_call_reason") or provider.get("fmp_zero_call_reason") or "none"
             best_horizon = horizon.get("best_horizon_overall") or horizon.get("best_horizon_right_now") or suite.get("best_horizon_overall") or "warming up"
             fast_short = (
@@ -45562,9 +45594,13 @@ def ask_astra_v1(payload: dict = Body(...)):
                 f"Session order submission blocker={str(session.get('session_order_submission_blocker') or 'none').replace('_', ' ')}. "
                 f"Historical replay completed={suite.get('historical_replays_completed', replay.get('historical_replays_completed', 'n/a'))}, replay score={suite.get('historical_replay_score', replay.get('historical_replay_score', 'n/a'))}. "
                 f"Best horizon right now={str(best_horizon).replace('_', ' ')}, horizon usage moved from {suite.get('horizon_usage_before', horizon.get('horizon_usage_before', 'n/a'))} to {suite.get('horizon_usage_after', horizon.get('horizon_usage_after', suite.get('horizon_usage_score', 'n/a')))}, horizon attachment={suite.get('horizon_paper_attachment_pct', horizon.get('horizon_paper_attachment_pct', 'n/a'))}. "
-                f"Intelligence Consumption Layer score={icl.get('icl_overall_score', suite.get('icl_overall_score', 'n/a'))}; FMP consumption={icl.get('fmp_consumption_score', suite.get('fmp_consumption_score', 'n/a'))}; "
-                f"historical replay consumption={icl.get('historical_replay_consumption_score', suite.get('historical_replay_consumption_score', 'n/a'))}; horizon influence={icl.get('horizon_influence_score', suite.get('horizon_influence_score', 'n/a'))}. "
-                f"Verified consumers: {', '.join(verified_consumers[:5]) or 'warming up'}; weak consumer paths={len(weak_consumers)}; highest ROI consumption gap={str((highest_gap or {}).get('source_name') or highest_gap or 'none').replace('_', ' ')}. "
+                f"Intelligence Consumption Layer score moved from {icl.get('icl_overall_score_before', suite.get('icl_overall_score_before', 'n/a'))} to {icl.get('icl_overall_score_after', suite.get('icl_overall_score', 'n/a'))}; "
+                f"FMP downstream consumption moved from {icl.get('fmp_downstream_consumption_before', suite.get('fmp_downstream_consumption_before', 'n/a'))} to {icl.get('fmp_downstream_consumption_after', suite.get('fmp_consumption_score', 'n/a'))}; "
+                f"historical replay consumption moved from {icl.get('replay_consumption_before', suite.get('replay_consumption_before', 'n/a'))} to {icl.get('replay_consumption_after', suite.get('historical_replay_consumption_score', 'n/a'))}; "
+                f"shadow consumption={icl.get('shadow_consumption_score', suite.get('shadow_consumption_score', 'n/a'))}; sector/regime={icl.get('sector_intelligence_after', suite.get('sector_intelligence_after', 'n/a'))}/{icl.get('regime_intelligence_after', suite.get('regime_intelligence_after', 'n/a'))}; "
+                f"horizon influence={icl.get('horizon_influence_score', suite.get('horizon_influence_score', 'n/a'))}; regression guard={icl.get('icl_regression_guard_score', suite.get('icl_regression_guard_score', 'n/a'))}. "
+                f"Verified consumers: {', '.join(verified_consumers[:6]) or 'warming up'}; weak consumer paths={len(weak_consumers)} ({', '.join(weak_names[:6]) or 'none'}); highest ROI consumption gap={str((highest_gap or {}).get('source_name') or highest_gap or 'none').replace('_', ' ')}. "
+                f"Weak-root summary: {str(root_causes).replace('_', ' ')[:260]}. "
                 f"Shadow outperforming Paper={attribution.get('shadow_outperforming_paper', False)}. "
                 f"Observation mode ready={suite.get('observation_mode_readiness', thresholds.get('profitability_ready_for_observation_mode', False))}; safe for Paper observation={suite.get('safe_for_paper_observation', suite.get('observation_mode_readiness', False))}. "
                 f"Cortex has {suite.get('cortex_open_issues', registry.get('open_issue_count', 0))} open issue(s); highest ROI fix is {str((highest_issue or {}).get('issue_name') or suite.get('highest_roi_open_issue') or 'none').replace('_', ' ')}. "
