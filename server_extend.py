@@ -44357,6 +44357,11 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
         or (payload.get("astra_paper_provider_cortex_completion_v1") or {}).get("intelligence_consumption_layer_v1")
         or {}
     )
+    payload["astra_performance_conversion_exit_broker_fmp_truth_capacity_v1"] = dict(
+        (payload.get("astra_paper_provider_cortex_completion_v1") or {}).get("astra_performance_conversion_exit_broker_fmp_truth_capacity_v1")
+        or (payload.get("astra_paper_provider_cortex_completion_v1") or {}).get("performance_conversion_exit_broker_fmp_truth_capacity_v1")
+        or {}
+    )
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -44679,6 +44684,48 @@ def astra_final_paper_provider_replay_cortex_validation_v1(force: bool = False):
     return astra_paper_provider_cortex_completion_v1(force=force)
 
 
+@router.get("/api/astra_performance_conversion_exit_broker_fmp_truth_capacity_v1")
+def astra_performance_conversion_exit_broker_fmp_truth_capacity_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_performance_conversion_exit_broker_fmp_truth_capacity_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    statuses["__premarket_fmp_probe_force"] = bool(force)
+    payload = _astra_paper_provider_cortex_payload(statuses, force=True)
+    suite = dict(
+        (payload or {}).get("astra_performance_conversion_exit_broker_fmp_truth_capacity_v1")
+        or (payload or {}).get("performance_conversion_exit_broker_fmp_truth_capacity_v1")
+        or {}
+    )
+    if not suite:
+        suite = {
+            "status": "insufficient_evidence",
+            "degraded_reason": "performance_conversion_payload_missing",
+            "behavior_safe_to_apply": False,
+            "advisory_only": True,
+            "paper_only_preserved": True,
+            "alpaca_paper_only_preserved": True,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "paper_execution_changed": False,
+            "ranking_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+            "position_sizing_changed": False,
+            "portfolio_allocation_changed": False,
+            "thresholds_changed": False,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "dashboard_provider_calls_used": 0,
+            "dashboard_llm_calls_used": 0,
+        }
+    suite.setdefault("parent_suite_status", (payload or {}).get("status"))
+    suite.setdefault("parent_endpoint", "/api/astra_final_paper_provider_replay_cortex_validation_v1")
+    suite.setdefault("force_probe_used", bool(force))
+    return suite
+
+
 @router.get("/api/astra_intelligence_consumption_layer_v1")
 def astra_intelligence_consumption_layer_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -44940,6 +44987,13 @@ def ask_astra_v1(payload: dict = Body(...)):
             force=False,
         )
     ask_context_seed["astra_paper_provider_cortex_completion_v1"] = paper_provider_cortex
+    performance_conversion_suite = dict(
+        (paper_provider_cortex or {}).get("astra_performance_conversion_exit_broker_fmp_truth_capacity_v1")
+        or (paper_provider_cortex or {}).get("performance_conversion_exit_broker_fmp_truth_capacity_v1")
+        or (cached_unified or {}).get("astra_performance_conversion_exit_broker_fmp_truth_capacity_v1")
+        or {}
+    )
+    ask_context_seed["astra_performance_conversion_exit_broker_fmp_truth_capacity_v1"] = performance_conversion_suite
     ask_context_seed["cortex_issue_registry_v1"] = dict(
         (paper_provider_cortex or {}).get("cortex_issue_registry_v2")
         or (integration_completion or {}).get("cortex_issue_registry_v1")
@@ -45557,8 +45611,26 @@ def ask_astra_v1(payload: dict = Body(...)):
             or "weak consumers" in q_lc
             or "regression guard" in q_lc
             or "what should eric watch tomorrow" in q_lc
+            or "biggest trading weakness" in q_lc
+            or "exit quality low" in q_lc
+            or "positions need profit protection" in q_lc
+            or "largest loser risks" in q_lc
+            or "best shadow exit policy" in q_lc
+            or "paper metrics trustworthy" in q_lc
+            or "broker truth warming" in q_lc
+            or "fmp underutilized" in q_lc
+            or "fmp bandwidth" in q_lc
+            or "saturated" in q_lc
+            or "executive snapshot" in q_lc
+            or "paper observation" in q_lc
         ):
             suite = paper_provider_cortex or {}
+            conversion = performance_conversion_suite or suite.get("astra_performance_conversion_exit_broker_fmp_truth_capacity_v1") or {}
+            exit_conv = conversion.get("exit_intelligence_profit_capture_completion_v1") or {}
+            broker_conv = conversion.get("broker_truth_completion_v1") or {}
+            fmp_conv = conversion.get("fmp_utilization_expansion_v1") or {}
+            executive_conv = conversion.get("executive_truth_layer_repair_v1") or {}
+            capacity_conv = conversion.get("capacity_saturation_audit_v1") or {}
             provider = suite.get("cortex_provider_utilization_recovery_api_protection_v1") or {}
             fmp_roi = suite.get("fmp_reactivation_roi_validation_v1") or {}
             closed = suite.get("closed_trade_attribution_engine_v1") or {}
@@ -45601,6 +45673,14 @@ def ask_astra_v1(payload: dict = Body(...)):
                 f"horizon influence={icl.get('horizon_influence_score', suite.get('horizon_influence_score', 'n/a'))}; regression guard={icl.get('icl_regression_guard_score', suite.get('icl_regression_guard_score', 'n/a'))}. "
                 f"Verified consumers: {', '.join(verified_consumers[:6]) or 'warming up'}; weak consumer paths={len(weak_consumers)} ({', '.join(weak_names[:6]) or 'none'}); highest ROI consumption gap={str((highest_gap or {}).get('source_name') or highest_gap or 'none').replace('_', ' ')}. "
                 f"Weak-root summary: {str(root_causes).replace('_', ' ')[:260]}. "
+                f"Biggest trading weakness: Exit Quality={conversion.get('exit_quality_score', exit_conv.get('exit_quality_score', 'n/a'))}, caused by {str(exit_conv.get('exit_maturity_blocker_if_below_70') or 'profit capture and giveback evidence still maturing').replace('_', ' ')}. "
+                f"Profit Capture={conversion.get('profit_capture_score', exit_conv.get('profit_capture_score', 'n/a'))}; Giveback Reduction={conversion.get('giveback_reduction_score', exit_conv.get('giveback_reduction_score', 'n/a'))}; best shadow exit policy={conversion.get('best_shadow_exit_policy', exit_conv.get('best_shadow_exit_policy', 'warming up'))}. "
+                f"Positions/symbols needing profit protection: {', '.join((conversion.get('winners_requiring_profit_protection') or exit_conv.get('winners_requiring_profit_protection') or [])[:6]) or 'none proven'}. "
+                f"Largest loser risks: {', '.join((conversion.get('losers_requiring_review') or exit_conv.get('losers_requiring_review') or [])[:6]) or 'none proven'}. "
+                f"True Paper metrics trust={broker_conv.get('true_paper_metric_trust_level', conversion.get('true_paper_metric_trust_level', 'warming up'))}; true PF={broker_conv.get('true_paper_profit_factor', conversion.get('true_paper_profit_factor', 'warming up'))}; true WR={broker_conv.get('true_paper_win_rate', conversion.get('true_paper_win_rate', 'warming up'))}; true avg return={broker_conv.get('true_paper_avg_return', conversion.get('true_paper_avg_return', 'warming up'))}. "
+                f"Executive health is {executive_conv.get('executive_system_health_after', conversion.get('executive_system_health_after', 'warming up'))}, trading confidence is {executive_conv.get('trading_confidence', conversion.get('trading_confidence', 'warming up'))}, and broker truth maturity is {executive_conv.get('broker_truth_maturity', conversion.get('broker_truth_maturity', 'warming up'))}. "
+                f"Capacity status={capacity_conv.get('saturation_status', conversion.get('capacity_mismatch_status', 'warming up'))}; open positions={capacity_conv.get('open_positions_count', conversion.get('open_positions_count', 'n/a'))}, target={capacity_conv.get('capacity_target', conversion.get('capacity_target', 'n/a'))}; root cause={str(capacity_conv.get('capacity_mismatch_root_cause') or 'warming up').replace('_', ' ')}. "
+                f"FMP next safe phase={fmp_conv.get('fmp_next_safe_expansion_phase', conversion.get('fmp_next_safe_expansion_phase', 'warming up'))}; cap {fmp_conv.get('fmp_daily_cap_before', conversion.get('fmp_daily_cap_before', 'n/a'))}->{fmp_conv.get('fmp_daily_cap_after', conversion.get('fmp_daily_cap_after', 'n/a'))}; usage={fmp_conv.get('fmp_usage_pct', conversion.get('fmp_usage_pct', 'n/a'))}%; remaining bandwidth={fmp_conv.get('fmp_remaining_bandwidth_gb', 'n/a')} GB. "
                 f"Shadow outperforming Paper={attribution.get('shadow_outperforming_paper', False)}. "
                 f"Observation mode ready={suite.get('observation_mode_readiness', thresholds.get('profitability_ready_for_observation_mode', False))}; safe for Paper observation={suite.get('safe_for_paper_observation', suite.get('observation_mode_readiness', False))}. "
                 f"Cortex has {suite.get('cortex_open_issues', registry.get('open_issue_count', 0))} open issue(s); highest ROI fix is {str((highest_issue or {}).get('issue_name') or suite.get('highest_roi_open_issue') or 'none').replace('_', ' ')}. "
@@ -58237,6 +58317,11 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_intelligence_consumption_layer_v1"] = dict(
                 (out.get("astra_paper_provider_cortex_completion_v1") or {}).get("astra_intelligence_consumption_layer_v1")
                 or (out.get("astra_paper_provider_cortex_completion_v1") or {}).get("intelligence_consumption_layer_v1")
+                or {}
+            )
+            out["astra_performance_conversion_exit_broker_fmp_truth_capacity_v1"] = dict(
+                (out.get("astra_paper_provider_cortex_completion_v1") or {}).get("astra_performance_conversion_exit_broker_fmp_truth_capacity_v1")
+                or (out.get("astra_paper_provider_cortex_completion_v1") or {}).get("performance_conversion_exit_broker_fmp_truth_capacity_v1")
                 or {}
             )
             out["cortex_issue_registry_v1"] = dict(

@@ -1654,6 +1654,7 @@ export default function LearningTab({ compact = false }) {
   const astraTier12ProfitabilityActivation = unified?.astra_tier1_tier2_profitability_activation_v1 || astraProfitabilityActivationUtilization?.astra_tier1_tier2_profitability_activation_v1 || cortexLifecycleEvidenceMasterTruth?.astra_tier1_tier2_profitability_activation_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.astra_tier1_tier2_profitability_activation_v1 || astraProfitExitRankingCopilotConvergence?.astra_tier1_tier2_profitability_activation_v1 || astraIntelligenceOptimizationResearch?.astra_tier1_tier2_profitability_activation_v1 || {};
   const astraIntegrationCompletionConsumption = unified?.astra_integration_completion_consumption_v1 || astraTier12ProfitabilityActivation?.astra_integration_completion_consumption_v1 || astraProfitabilityActivationUtilization?.astra_integration_completion_consumption_v1 || cortexLifecycleEvidenceMasterTruth?.astra_integration_completion_consumption_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.astra_integration_completion_consumption_v1 || astraProfitExitRankingCopilotConvergence?.astra_integration_completion_consumption_v1 || astraIntelligenceOptimizationResearch?.astra_integration_completion_consumption_v1 || {};
   const astraPaperProviderCortexCompletion = unified?.astra_paper_provider_cortex_completion_v1 || astraIntegrationCompletionConsumption?.astra_paper_provider_cortex_completion_v1 || astraTier12ProfitabilityActivation?.astra_paper_provider_cortex_completion_v1 || astraProfitabilityActivationUtilization?.astra_paper_provider_cortex_completion_v1 || cortexLifecycleEvidenceMasterTruth?.astra_paper_provider_cortex_completion_v1 || astraProfitCaptureExitRankingStorageLearningEfficiency?.astra_paper_provider_cortex_completion_v1 || astraProfitExitRankingCopilotConvergence?.astra_paper_provider_cortex_completion_v1 || astraIntelligenceOptimizationResearch?.astra_paper_provider_cortex_completion_v1 || astraAutonomousOptimizationGovernance?.astra_paper_provider_cortex_completion_v1 || {};
+  const astraPerformanceConversionExitBrokerFmpTruthCapacity = unified?.astra_performance_conversion_exit_broker_fmp_truth_capacity_v1 || astraPaperProviderCortexCompletion?.astra_performance_conversion_exit_broker_fmp_truth_capacity_v1 || astraPaperProviderCortexCompletion?.performance_conversion_exit_broker_fmp_truth_capacity_v1 || {};
   const astraIntelligenceConsumptionLayer = unified?.astra_intelligence_consumption_layer_v1 || astraPaperProviderCortexCompletion?.astra_intelligence_consumption_layer_v1 || astraPaperProviderCortexCompletion?.intelligence_consumption_layer_v1 || {};
   const astraAiosThroughputInstitutionalMemory = unified?.astra_aios_throughput_institutional_memory_optimization_v1 || {};
   const tradeThesisValidation = unified?.trade_thesis_validation_v1 || {};
@@ -4552,6 +4553,61 @@ export default function LearningTab({ compact = false }) {
               <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
                 <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
                   {label}: {String(row?.status || row?.endpoint_contract_status || row?.registry_status || "available").replaceAll("_", " ")}
+                </summary>
+                <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
+                  {JSON.stringify(row || {}, null, 2)}
+                </pre>
+              </details>
+            ))}
+          </div>
+        </details>
+        <details style={{ marginTop: 12, background: "rgba(9,26,48,0.72)", border: "1px solid #34577f", borderRadius: 12, padding: "10px 12px" }}>
+          <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 900 }}>
+            Performance Conversion & Exit Readiness: {String(astraPerformanceConversionExitBrokerFmpTruthCapacity?.status || "warming up").replaceAll("_", " ")}
+          </summary>
+          <div style={{ color: "#9fb1cc", fontSize: 12, marginTop: 8 }}>
+            Converts connected intelligence into advisory-only exit, profit-capture, broker-truth, FMP-utilization, executive-truth, and capacity diagnostics. No broker, Paper execution, ranking, entry, exit, sizing, allocation, threshold, provider, or LLM behavior changes.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+            {[
+              ["Exit Quality", `${safeNumber(astraPerformanceConversionExitBrokerFmpTruthCapacity?.exit_quality_before).toFixed(1)} -> ${safeNumber(astraPerformanceConversionExitBrokerFmpTruthCapacity?.exit_quality_after ?? astraPerformanceConversionExitBrokerFmpTruthCapacity?.exit_quality_score).toFixed(1)}`],
+              ["Profit Capture", safeNumber(astraPerformanceConversionExitBrokerFmpTruthCapacity?.profit_capture_score).toFixed(1)],
+              ["Giveback Reduction", safeNumber(astraPerformanceConversionExitBrokerFmpTruthCapacity?.giveback_reduction_score).toFixed(1)],
+              ["Best Shadow Exit", astraPerformanceConversionExitBrokerFmpTruthCapacity?.best_shadow_exit_policy],
+              ["Largest Giveback", (astraPerformanceConversionExitBrokerFmpTruthCapacity?.largest_giveback_symbols || []).slice(0, 4).join(", ") || "none"],
+              ["Loser Review", (astraPerformanceConversionExitBrokerFmpTruthCapacity?.losers_requiring_review || []).slice(0, 4).join(", ") || "none"],
+              ["Profit Protection", (astraPerformanceConversionExitBrokerFmpTruthCapacity?.winners_requiring_profit_protection || []).slice(0, 4).join(", ") || "none"],
+              ["Broker Closed", safeNumber(astraPerformanceConversionExitBrokerFmpTruthCapacity?.broker_truth_closed_trades_after).toFixed(0)],
+              ["True Paper PF", astraPerformanceConversionExitBrokerFmpTruthCapacity?.true_paper_profit_factor ?? "warming up"],
+              ["True Paper WR", astraPerformanceConversionExitBrokerFmpTruthCapacity?.true_paper_win_rate === null || astraPerformanceConversionExitBrokerFmpTruthCapacity?.true_paper_win_rate === undefined ? "warming up" : `${safeNumber(astraPerformanceConversionExitBrokerFmpTruthCapacity?.true_paper_win_rate).toFixed(1)}%`],
+              ["True Avg Return", astraPerformanceConversionExitBrokerFmpTruthCapacity?.true_paper_avg_return === null || astraPerformanceConversionExitBrokerFmpTruthCapacity?.true_paper_avg_return === undefined ? "warming up" : `${safeNumber(astraPerformanceConversionExitBrokerFmpTruthCapacity?.true_paper_avg_return).toFixed(2)}%`],
+              ["FMP Cap", `${safeNumber(astraPerformanceConversionExitBrokerFmpTruthCapacity?.fmp_daily_cap_before).toFixed(0)} -> ${safeNumber(astraPerformanceConversionExitBrokerFmpTruthCapacity?.fmp_daily_cap_after).toFixed(0)}`],
+              ["FMP Usage", `${safeNumber(astraPerformanceConversionExitBrokerFmpTruthCapacity?.fmp_usage_pct).toFixed(3)}%`],
+              ["FMP Bandwidth", `${safeNumber((astraPerformanceConversionExitBrokerFmpTruthCapacity?.fmp_utilization_expansion_v1 || {})?.fmp_remaining_bandwidth_gb).toFixed(3)} GB left`],
+              ["Executive Health", astraPerformanceConversionExitBrokerFmpTruthCapacity?.executive_system_health_after],
+              ["Trading Confidence", astraPerformanceConversionExitBrokerFmpTruthCapacity?.trading_confidence],
+              ["Broker Maturity", astraPerformanceConversionExitBrokerFmpTruthCapacity?.broker_truth_maturity],
+              ["Capacity Status", astraPerformanceConversionExitBrokerFmpTruthCapacity?.capacity_mismatch_status],
+              ["Positions / Target", `${safeNumber(astraPerformanceConversionExitBrokerFmpTruthCapacity?.open_positions_count).toFixed(0)} / ${safeNumber(astraPerformanceConversionExitBrokerFmpTruthCapacity?.capacity_target).toFixed(0)}`],
+              ["Cortex Highest ROI", astraPerformanceConversionExitBrokerFmpTruthCapacity?.highest_roi_open_issue],
+            ].map(([label, value]) => (
+              <div key={label} style={{ background: "rgba(12,24,42,0.46)", border: "1px solid #2f4a72", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#7da3d6", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+                <strong style={{ color: "#f2f7ff" }}>{String(value ?? "warming up").replaceAll("_", " ")}</strong>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+            {[
+              ["Exit Intelligence", astraPerformanceConversionExitBrokerFmpTruthCapacity?.exit_intelligence_profit_capture_completion_v1],
+              ["Broker Truth Completion", astraPerformanceConversionExitBrokerFmpTruthCapacity?.broker_truth_completion_v1],
+              ["FMP Utilization Expansion", astraPerformanceConversionExitBrokerFmpTruthCapacity?.fmp_utilization_expansion_v1],
+              ["Executive Truth Repair", astraPerformanceConversionExitBrokerFmpTruthCapacity?.executive_truth_layer_repair_v1],
+              ["Capacity Saturation Audit", astraPerformanceConversionExitBrokerFmpTruthCapacity?.capacity_saturation_audit_v1],
+            ].map(([label, row]) => (
+              <details key={label} style={{ background: "rgba(10,22,41,0.48)", border: "1px solid #29476f", borderRadius: 10, padding: "8px 10px" }}>
+                <summary style={{ cursor: "pointer", color: "#dce9fb", fontWeight: 800 }}>
+                  {label}: {String(row?.status || "available").replaceAll("_", " ")}
                 </summary>
                 <pre style={{ margin: "8px 0 0", color: "#9fb1cc", whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 260, overflow: "auto" }}>
                   {JSON.stringify(row || {}, null, 2)}

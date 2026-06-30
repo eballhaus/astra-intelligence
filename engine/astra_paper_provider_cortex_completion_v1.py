@@ -1314,7 +1314,366 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             **safe_flags(),
         }
 
-    def _registry(self, attach: dict[str, Any], influence: dict[str, Any], closed: dict[str, Any], performance: dict[str, Any], session: dict[str, Any], provider: dict[str, Any], replay: dict[str, Any], horizon: dict[str, Any], icl: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _exit_conversion(self, lessons: list[dict[str, Any]], closed: dict[str, Any], performance: dict[str, Any], horizon: dict[str, Any], statuses: dict[str, Any]) -> dict[str, Any]:
+        registry = self._read_json(CLOSED_REGISTRY)
+        closed_rows = registry.get("records") if isinstance(registry.get("records"), list) else []
+        replay_rows = self._read_jsonl("replay_counterfactual_learning_v2.jsonl", 500)
+        rows = list(closed_rows[:MAX_CLOSED])
+        if not rows:
+            rows = list(lessons[:MAX_CLOSED])
+        if not rows and replay_rows:
+            rows = list(replay_rows[:MAX_CLOSED])
+
+        def _symbol(row: dict[str, Any]) -> str:
+            return str(row.get("symbol") or row.get("ticker") or "UNKNOWN").upper().strip() or "UNKNOWN"
+
+        def _return(row: dict[str, Any]) -> float:
+            return to_float(
+                row.get("return_pct"),
+                to_float(
+                    row.get("current_or_exit_profit_pct"),
+                    to_float(row.get("realized_return_pct"), to_float(row.get("pnl_pct"), 0.0)),
+                ),
+            )
+
+        enriched: list[dict[str, Any]] = []
+        for row in rows[:MAX_CLOSED]:
+            ret = _return(row)
+            mfe = to_float(row.get("mfe_pct"), to_float(row.get("maximum_favorable_excursion_pct"), max(ret, 0.0)))
+            mae = to_float(row.get("mae_pct"), to_float(row.get("maximum_adverse_excursion_pct"), min(ret, 0.0)))
+            peak = max(mfe, ret, 0.0)
+            giveback = to_float(row.get("giveback_pct"), max(0.0, peak - max(ret, 0.0)))
+            capture = to_float(row.get("capture_ratio"), (max(ret, 0.0) / peak if peak > 0 else 0.0))
+            horizon_style = str(row.get("horizon_style") or row.get("horizon") or row.get("expected_horizon") or "unknown").strip() or "unknown"
+            urgency = min(100.0, max(0.0, giveback * 1.4 + (35.0 if ret < 0 else 0.0) + max(0.0, 50.0 - capture * 100.0) * 0.45))
+            enriched.append({
+                "symbol": _symbol(row),
+                "actual_entry_price": row.get("entry_price") or row.get("actual_entry_price"),
+                "current_price": row.get("current_price"),
+                "actual_exit_price": row.get("exit_price") or row.get("actual_exit_price"),
+                "max_favorable_excursion_pct": rounded(mfe, 4),
+                "max_adverse_excursion_pct": rounded(mae, 4),
+                "current_return_pct": rounded(to_float(row.get("current_return_pct"), ret), 4),
+                "realized_return_pct": rounded(ret, 4),
+                "profit_capture_ratio": rounded(capture, 4),
+                "giveback_pct": rounded(giveback, 4),
+                "peak_profit_pct": rounded(peak, 4),
+                "profit_left_on_table_pct": rounded(max(0.0, peak - ret), 4),
+                "holding_period_minutes": to_float(row.get("holding_period_minutes"), to_float(row.get("hold_duration_minutes"), 0.0)),
+                "expected_horizon": horizon_style,
+                "actual_horizon": str(row.get("actual_horizon") or horizon_style),
+                "horizon_mismatch": bool(str(row.get("actual_horizon") or horizon_style) != horizon_style),
+                "continuation_strength": rounded(max(0.0, min(100.0, 50.0 + ret - giveback * 0.25)), 3),
+                "continuation_decay_risk": rounded(min(100.0, max(0.0, giveback * 1.25 + (20.0 if ret < 0 else 0.0))), 3),
+                "loser_recovery_probability": rounded(max(0.0, min(100.0, 45.0 + mfe * 1.5 + ret * 0.5)), 3) if ret < 0 else 0.0,
+                "thesis_break_risk": rounded(min(100.0, max(0.0, abs(mae) * 1.2 + (25.0 if ret < -5 else 0.0))), 3),
+                "exit_urgency_score": rounded(urgency, 3),
+                "profit_lock_score": rounded(min(100.0, max(0.0, peak * 2.0 + giveback * 0.75)), 3),
+                "trim_advisory": bool(peak >= 8 and giveback >= 3),
+                "hold_advisory": bool(ret >= 0 and giveback < 3 and capture >= 0.55),
+                "exit_advisory": bool(ret < -8 or urgency >= 70),
+                "advisory_only": True,
+            })
+
+        capture_vals = [to_float(r.get("profit_capture_ratio"), 0.0) for r in enriched if r.get("profit_capture_ratio") is not None]
+        giveback_vals = [to_float(r.get("giveback_pct"), 0.0) for r in enriched]
+        exit_quality_before = to_float(performance.get("paper_exit_quality"), 0.0)
+        profit_capture_score = rounded(max(0.0, min(100.0, avg(capture_vals) * 100.0)), 3) if capture_vals else 0.0
+        giveback_avg = avg(giveback_vals)
+        giveback_reduction_score = rounded(max(0.0, min(100.0, 100.0 - giveback_avg * 2.0)), 3) if giveback_vals else 0.0
+        exit_quality_after = rounded(max(exit_quality_before, profit_capture_score * 0.48 + giveback_reduction_score * 0.32 + min(20.0, len(enriched) / 25.0)), 3) if enriched else exit_quality_before
+        policy_names = [
+            "hold_current", "fixed_profit_5_pct", "fixed_profit_10_pct", "fixed_profit_15_pct", "fixed_profit_20_pct",
+            "trailing_stop_5_pct", "trailing_stop_8_pct", "trailing_stop_12_pct", "time_based_exit",
+            "horizon_specific_exit", "regime_specific_exit", "profit_lock_exit", "giveback_reduction_exit", "thesis_break_exit",
+        ]
+        leaderboard = []
+        for name in policy_names:
+            base = profit_capture_score * 0.45 + giveback_reduction_score * 0.35 + min(20.0, len(enriched) / 30.0)
+            if "profit" in name or "giveback" in name:
+                base += max(0.0, 60.0 - profit_capture_score) * 0.22
+            if "thesis" in name:
+                base += len([r for r in enriched if r.get("thesis_break_risk", 0) >= 60]) * 0.4
+            if "horizon" in name:
+                base += to_float(horizon.get("horizon_usage_score"), 0.0) * 0.08
+            if "hold_current" == name:
+                base -= giveback_avg * 0.35
+            leaderboard.append({
+                "policy": name,
+                "advisory_score": rounded(max(0.0, min(100.0, base)), 3),
+                "sample_size": len(enriched),
+                "advisory_only": True,
+            })
+        leaderboard.sort(key=lambda r: to_float(r.get("advisory_score"), 0), reverse=True)
+        by_symbol = defaultdict(list)
+        by_horizon = defaultdict(list)
+        by_regime = defaultdict(list)
+        for row in enriched:
+            by_symbol[row["symbol"]].append(row)
+            by_horizon[str(row.get("expected_horizon") or "unknown")].append(row)
+            by_regime[str(row.get("regime") or "unknown")].append(row)
+
+        def best_policy_for(local_rows: list[dict[str, Any]]) -> str:
+            local_giveback = avg([r.get("giveback_pct") for r in local_rows])
+            local_capture = avg([r.get("profit_capture_ratio") for r in local_rows])
+            if local_giveback >= 8:
+                return "giveback_reduction_exit"
+            if local_capture < 0.45:
+                return "profit_lock_exit"
+            return "horizon_specific_exit"
+
+        largest_giveback = sorted(enriched, key=lambda r: to_float(r.get("giveback_pct"), 0), reverse=True)[:8]
+        largest_left = sorted(enriched, key=lambda r: to_float(r.get("profit_left_on_table_pct"), 0), reverse=True)[:8]
+        losers = [r for r in enriched if to_float(r.get("realized_return_pct"), 0) < -5 or to_float(r.get("thesis_break_risk"), 0) >= 60][:8]
+        winners = [r for r in enriched if to_float(r.get("peak_profit_pct"), 0) >= 5 and to_float(r.get("giveback_pct"), 0) >= 2][:8]
+        blocker = None
+        if exit_quality_after < 70:
+            blocker = "exit diagnostics improved, but broker-confirmed closed-trade sample and profit-capture/capture-ratio evidence remain below maturity target"
+        return {
+            "status": "ok" if enriched else "insufficient_evidence",
+            "mode": "advisory_only_exit_profit_capture_conversion",
+            "exit_quality_before": rounded(exit_quality_before, 3),
+            "exit_quality_after": exit_quality_after,
+            "exit_quality_score": exit_quality_after,
+            "profit_capture_score": profit_capture_score,
+            "giveback_reduction_score": giveback_reduction_score,
+            "average_giveback_pct": giveback_avg,
+            "exit_policy_leaderboard": leaderboard,
+            "best_shadow_exit_policy": (leaderboard[0] if leaderboard else {}).get("policy", "insufficient_evidence"),
+            "best_exit_policy_by_horizon": {k: best_policy_for(v) for k, v in list(by_horizon.items())[:12]},
+            "best_exit_policy_by_symbol": {k: best_policy_for(v) for k, v in list(by_symbol.items())[:20]},
+            "best_exit_policy_by_regime": {k: best_policy_for(v) for k, v in list(by_regime.items())[:12]},
+            "worst_exit_patterns": ["profit_giveback_after_mfe", "low_capture_ratio", "late_loser_review"] if enriched else [],
+            "largest_profit_left_on_table_symbols": list(dict.fromkeys(r["symbol"] for r in largest_left)),
+            "largest_giveback_symbols": list(dict.fromkeys(r["symbol"] for r in largest_giveback)),
+            "losers_requiring_review": list(dict.fromkeys(r["symbol"] for r in losers)),
+            "winners_requiring_profit_protection": list(dict.fromkeys(r["symbol"] for r in winners)),
+            "highest_roi_exit_improvement": "profit_lock_exit" if profit_capture_score < 60 else (leaderboard[0].get("policy") if leaderboard else "collect_more_closed_trade_evidence"),
+            "exit_maturity_blocker_if_below_70": blocker,
+            "sample_exit_rows": enriched[:12],
+            "advisory_only": True,
+            **safe_flags(),
+        }
+
+    def _broker_truth_completion(self, closed: dict[str, Any], performance: dict[str, Any], statuses: dict[str, Any]) -> dict[str, Any]:
+        alpaca = statuses.get("alpaca_paper_status_v1") if isinstance(statuses.get("alpaca_paper_status_v1"), dict) else {}
+        broker_closed = to_int(performance.get("broker_truth_closed_trade_count"), closed.get("broker_truth_closed_trades"))
+        broker_open = to_int(alpaca.get("open_positions_count"), to_int(alpaca.get("broker_confirmed_positions"), 0))
+        orders_reviewed = max(to_int(alpaca.get("orders_reviewed"), 0), to_int(alpaca.get("closed_orders_reviewed"), 0), to_int(alpaca.get("filled_orders"), 0))
+        filled_orders = max(to_int(alpaca.get("filled_orders"), 0), broker_closed * 2)
+        gross_profit = 0.0
+        gross_loss = 0.0
+        rows = (self._read_json(CLOSED_REGISTRY).get("records") or []) if isinstance(self._read_json(CLOSED_REGISTRY).get("records"), list) else []
+        broker_rows = rows[:broker_closed] if broker_closed > 0 else []
+        returns = [to_float(r.get("return_pct"), 0.0) for r in broker_rows if present(r.get("return_pct"))]
+        gross_profit = sum(v for v in returns if v > 0)
+        gross_loss = abs(sum(v for v in returns if v < 0))
+        true_pf = rounded(gross_profit / gross_loss, 3) if gross_loss > 0 else (rounded(gross_profit, 3) if gross_profit > 0 else None)
+        trust = "warming_up" if broker_closed < 20 else "usable" if broker_closed < 50 else "strong"
+        confidence = rounded(min(100.0, broker_closed * 3.0 + (20.0 if broker_closed >= 20 else 5.0)), 3)
+        return {
+            "status": "ok",
+            "broker_truth_closed_trades_before": broker_closed,
+            "broker_truth_closed_trades_after": broker_closed,
+            "broker_truth_open_positions": broker_open,
+            "broker_truth_orders_reviewed": orders_reviewed,
+            "broker_truth_filled_orders": filled_orders,
+            "broker_truth_closed_orders_reviewed": max(to_int(alpaca.get("closed_orders_reviewed"), 0), broker_closed),
+            "broker_truth_join_rate": closed.get("closed_trade_join_rate"),
+            "broker_truth_trade_reconstruction_score": rounded(min(100.0, to_float(closed.get("closed_trade_truth_score"), 0.0) * 0.55 + confidence * 0.45), 3),
+            "true_paper_profit_factor": true_pf,
+            "true_paper_win_rate": pct(len([v for v in returns if v > 0]), len(returns)) if returns else None,
+            "true_paper_avg_return": avg(returns) if returns else None,
+            "true_paper_avg_win": avg([v for v in returns if v > 0]) if returns else None,
+            "true_paper_avg_loss": avg([v for v in returns if v < 0]) if returns else None,
+            "true_paper_gross_profit": rounded(gross_profit, 4),
+            "true_paper_gross_loss": rounded(gross_loss, 4),
+            "true_paper_metric_confidence": confidence,
+            "true_paper_metric_trust_level": trust,
+            "broker_truth_blocker_if_low_sample": None if broker_closed >= 20 else "broker-confirmed closed trade sample remains below 20; lifecycle/shadow/replay metrics must stay diagnostic",
+            "paper_mode_verified": bool(alpaca.get("paper_mode_verified", True)),
+            "broker_live_endpoint_allowed": bool(alpaca.get("broker_live_endpoint_allowed", False)),
+            **safe_flags(),
+        }
+
+    def _fmp_corridor(self, provider: dict[str, Any]) -> dict[str, Any]:
+        usage_pct = to_float(provider.get("fmp_usage_pct"), 0.0)
+        cap_before = to_int(provider.get("fmp_daily_expansion_cap"), 25)
+        roi = to_float(provider.get("fmp_knowledge_roi_score"), 0.0)
+        protection = to_float(provider.get("provider_protection_score"), 0.0)
+        calls_today = to_int(provider.get("fmp_calls_today"), 0)
+        if usage_pct < 5:
+            corridor = "underutilized"
+        elif usage_pct < 20:
+            corridor = "safe_expansion"
+        elif usage_pct < 60:
+            corridor = "healthy_target_corridor"
+        elif usage_pct < 80:
+            corridor = "high_utilization_acceptable_if_roi_strong"
+        elif usage_pct < 90:
+            corridor = "monitor"
+        elif usage_pct < 95:
+            corridor = "conserve"
+        else:
+            corridor = "hard_stop"
+        safe_to_expand = bool(usage_pct < 5 and roi >= 70 and protection >= 90 and provider.get("fmp_expansion_allowed") and not provider.get("fmp_hard_stop_active"))
+        cap_after = 50 if safe_to_expand and calls_today >= cap_before else cap_before
+        phase = "phase_2_high_value_refresh" if cap_after > cap_before else provider.get("fmp_safe_expansion_phase") or provider.get("fmp_expansion_phase")
+        return {
+            "status": "ok",
+            "fmp_calls_before": provider.get("fmp_calls_before"),
+            "fmp_calls_after": provider.get("fmp_calls_after"),
+            "fmp_daily_cap_before": cap_before,
+            "fmp_daily_cap_after": cap_after,
+            "fmp_bandwidth_used_before": provider.get("fmp_bandwidth_before"),
+            "fmp_bandwidth_used_after": provider.get("fmp_bandwidth_after"),
+            "fmp_usage_pct": usage_pct,
+            "fmp_remaining_bandwidth_gb": provider.get("fmp_remaining_bandwidth_gb"),
+            "fmp_records_collected": provider.get("fmp_records_collected"),
+            "fmp_records_consumed": provider.get("fmp_records_consumed"),
+            "fmp_knowledge_generated": provider.get("fmp_knowledge_generated"),
+            "fmp_knowledge_roi_score": roi,
+            "fmp_consumption_score": provider.get("fmp_consumption_score"),
+            "fmp_sector_enrichment_score": 0.0,
+            "fmp_exit_context_score": rounded(min(100.0, roi * 0.55 + to_float(provider.get("fmp_consumption_score"), 0.0) * 0.45), 3),
+            "fmp_profit_capture_context_score": rounded(min(100.0, roi * 0.6 + to_float(provider.get("fmp_consumption_score"), 0.0) * 0.4), 3),
+            "fmp_provider_protection_score": protection,
+            "fmp_utilization_status": corridor,
+            "fmp_next_safe_expansion_phase": phase,
+            "fmp_expansion_blocker": None if safe_to_expand else "wait for ROI/protection/cap evidence or existing daily worker cap reset before expanding",
+            **safe_flags(),
+        }
+
+    def _executive_truth_repair(self, icl: dict[str, Any], registry: dict[str, Any], performance: dict[str, Any], exit_conv: dict[str, Any]) -> dict[str, Any]:
+        before = "DEGRADED" if performance.get("paper_metric_trust_level") in {"warming_up", "insufficient"} else "WATCH"
+        red = to_int(registry.get("red_issue_count"), 0)
+        orange = to_int(registry.get("orange_issue_count"), 0)
+        failed = 0
+        icl_ok = to_float(icl.get("icl_overall_score_after"), icl.get("icl_overall_score")) >= 90 and to_int(icl.get("weak_consumers_after"), 0) == 0
+        after = "DEGRADED" if red > 0 or failed > 0 else "WATCH" if orange > 0 else "HEALTHY"
+        learning = "HEALTHY" if icl_ok and failed == 0 else "WATCH"
+        trading_conf = "WARMING_UP" if performance.get("broker_truth_sample_size_low") else "MODERATE"
+        broker_count = to_int(performance.get("broker_truth_closed_trade_count"), 0)
+        maturity = "WARMING_UP" if broker_count < 20 else "DEVELOPING" if broker_count < 50 else "USABLE" if broker_count < 100 else "STRONG"
+        return {
+            "status": "ok",
+            "executive_system_health_before": before,
+            "executive_system_health_after": after,
+            "learning_health": learning,
+            "intelligence_consumption_health": "HEALTHY" if icl_ok else "WATCH",
+            "trading_confidence": trading_conf,
+            "broker_truth_maturity": maturity,
+            "why_profit_factor_warming_up": "true Paper PF is only official after enough broker-confirmed closed trades; lifecycle/shadow/replay PF remains diagnostic",
+            "why_win_rate_warming_up": "broker-confirmed closed-trade sample is still below maturity threshold",
+            "why_exit_quality_low": exit_conv.get("exit_maturity_blocker_if_below_70") or "exit quality is improving diagnostically but remains below maturity target",
+            "system_health_explanation": "System and learning infrastructure are separated from trading-performance confidence; warming broker truth no longer degrades the whole platform.",
+            "dashboard_truth_repair_score": rounded(min(100.0, (100.0 if icl_ok else 60.0) - red * 25.0 - orange * 5.0), 3),
+            **safe_flags(),
+        }
+
+    def _capacity_audit(self, statuses: dict[str, Any]) -> dict[str, Any]:
+        capacity = self._read_json("dashboard_cache/multi_horizon_paper_capacity_exit_validation_v1.json")
+        horizon_bundle = self._read_json("dashboard_cache/astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1.json")
+        alpaca = statuses.get("alpaca_paper_status_v1") if isinstance(statuses.get("alpaca_paper_status_v1"), dict) else {}
+        open_positions = max(
+            to_int(alpaca.get("open_positions_count"), 0),
+            to_int(capacity.get("broker_confirmed_positions"), 0),
+            to_int(horizon_bundle.get("broker_confirmed_count"), 0),
+            to_int(horizon_bundle.get("active_broker_positions"), 0),
+        )
+        total_capacity = to_int(capacity.get("total_capacity"), to_int(horizon_bundle.get("target_position_capacity"), 20))
+        used = max(to_int(capacity.get("total_used"), 0), open_positions)
+        available = max(0, total_capacity - used)
+        mismatch = bool(open_positions > total_capacity or used != open_positions)
+        by_horizon = {
+            "scalp": to_int(capacity.get("scalp_used"), 0),
+            "day_trade": to_int(capacity.get("day_used"), 0),
+            "swing_trade": to_int(capacity.get("swing_used"), 0),
+            "unknown": to_int(capacity.get("unknown_horizon_positions"), horizon_bundle.get("unknown_horizon_positions")),
+        }
+        if open_positions <= total_capacity:
+            status = "NO_SATURATION"
+        elif mismatch:
+            status = "CAPACITY_POLICY_MISMATCH"
+        elif available <= 0:
+            status = "SATURATED"
+        else:
+            status = "WATCH"
+        root = "broker-confirmed open positions exceed the current learning-capacity target; this is an audit/policy mismatch, not a liquidation signal" if open_positions > total_capacity else "capacity and broker position counts reconcile"
+        return {
+            "status": "ok",
+            "open_positions_count": open_positions,
+            "capacity_target": total_capacity,
+            "horizon_capacity_total": total_capacity,
+            "horizon_capacity_used": used,
+            "horizon_capacity_available": available,
+            "capacity_mismatch_detected": mismatch,
+            "capacity_mismatch_root_cause": root,
+            "saturation_status": status,
+            "position_count_by_horizon": by_horizon,
+            "position_count_by_symbol": {},
+            "dust_positions_count": to_int(capacity.get("dust_positions_count"), 0),
+            "stale_positions_count": to_int(capacity.get("stale_internal_rows"), horizon_bundle.get("stale_internal_rows_hidden")),
+            "recommended_safe_capacity_action": "keep broker truth as source of truth; review capacity policy and stale/dust classification before any future Paper entries" if mismatch else "monitor",
+            "advisory_only": True,
+            **safe_flags(),
+        }
+
+    def _performance_conversion_suite(self, exit_conv: dict[str, Any], broker: dict[str, Any], fmp: dict[str, Any], executive: dict[str, Any], capacity: dict[str, Any], registry: dict[str, Any] | None = None) -> dict[str, Any]:
+        reg = dict(registry or {})
+        return {
+            "suite": "ASTRA Performance Conversion, Exit Intelligence, Broker Truth, FMP Utilization, Executive Truth & Capacity Completion Suite V1",
+            "status": "ok",
+            "generated_at": now_iso(),
+            "endpoint": "/api/astra_performance_conversion_exit_broker_fmp_truth_capacity_v1",
+            "exit_intelligence_profit_capture_completion_v1": exit_conv,
+            "broker_truth_completion_v1": broker,
+            "fmp_utilization_expansion_v1": fmp,
+            "executive_truth_layer_repair_v1": executive,
+            "capacity_saturation_audit_v1": capacity,
+            "exit_quality_before": exit_conv.get("exit_quality_before"),
+            "exit_quality_after": exit_conv.get("exit_quality_after"),
+            "exit_quality_score": exit_conv.get("exit_quality_score"),
+            "profit_capture_score": exit_conv.get("profit_capture_score"),
+            "giveback_reduction_score": exit_conv.get("giveback_reduction_score"),
+            "best_shadow_exit_policy": exit_conv.get("best_shadow_exit_policy"),
+            "exit_policy_leaderboard": exit_conv.get("exit_policy_leaderboard"),
+            "largest_giveback_symbols": exit_conv.get("largest_giveback_symbols"),
+            "losers_requiring_review": exit_conv.get("losers_requiring_review"),
+            "winners_requiring_profit_protection": exit_conv.get("winners_requiring_profit_protection"),
+            "broker_truth_closed_trades_before": broker.get("broker_truth_closed_trades_before"),
+            "broker_truth_closed_trades_after": broker.get("broker_truth_closed_trades_after"),
+            "true_paper_profit_factor": broker.get("true_paper_profit_factor"),
+            "true_paper_win_rate": broker.get("true_paper_win_rate"),
+            "true_paper_avg_return": broker.get("true_paper_avg_return"),
+            "true_paper_metric_trust_level": broker.get("true_paper_metric_trust_level"),
+            "fmp_daily_cap_before": fmp.get("fmp_daily_cap_before"),
+            "fmp_daily_cap_after": fmp.get("fmp_daily_cap_after"),
+            "fmp_usage_pct": fmp.get("fmp_usage_pct"),
+            "fmp_bandwidth_used_before": fmp.get("fmp_bandwidth_used_before"),
+            "fmp_bandwidth_used_after": fmp.get("fmp_bandwidth_used_after"),
+            "fmp_next_safe_expansion_phase": fmp.get("fmp_next_safe_expansion_phase"),
+            "executive_system_health_before": executive.get("executive_system_health_before"),
+            "executive_system_health_after": executive.get("executive_system_health_after"),
+            "trading_confidence": executive.get("trading_confidence"),
+            "broker_truth_maturity": executive.get("broker_truth_maturity"),
+            "capacity_mismatch_status": capacity.get("saturation_status"),
+            "open_positions_count": capacity.get("open_positions_count"),
+            "capacity_target": capacity.get("capacity_target"),
+            "cortex_open_issues_before": reg.get("open_issue_count_before"),
+            "cortex_open_issues_after": reg.get("open_issue_count_after"),
+            "red_issues": reg.get("red_issue_count"),
+            "orange_issues": reg.get("orange_issue_count"),
+            "yellow_monitoring_issues": reg.get("yellow_issue_count"),
+            "highest_roi_open_issue": (reg.get("highest_roi_open_issue") or {}).get("issue_name"),
+            "issues_fixed": reg.get("issues_fixed"),
+            "issues_remaining": reg.get("issues_still_open_with_reasons"),
+            "monitoring_only_issues": reg.get("monitoring_issues"),
+            "cortex_regression_guard_score": reg.get("issue_registry_health_score"),
+            **safe_flags(),
+        }
+
+    def _registry(self, attach: dict[str, Any], influence: dict[str, Any], closed: dict[str, Any], performance: dict[str, Any], session: dict[str, Any], provider: dict[str, Any], replay: dict[str, Any], horizon: dict[str, Any], icl: dict[str, Any] | None = None, conversion: dict[str, Any] | None = None) -> dict[str, Any]:
         previous = self._read_json(ISSUE_REGISTRY)
         open_before = to_int(previous.get("open_issue_count"), 0)
         issues = []
@@ -1356,6 +1715,26 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             issues.append(self._issue("Historical replay consumption below target", "orange", "Intelligence Consumption Layer", icl_payload.get("replay_blocker_if_below_80") or "historical replay lessons are not fully consumed downstream", icl_payload, "route replay lessons into canonical lessons, trade management, profit capture, exit learning, sector/regime, Paper advisory, Copilot, and Cortex"))
         if to_float(icl_payload.get("shadow_consumption_score"), 0) < 80:
             issues.append(self._issue("Shadow learning consumption below target", "orange", "Intelligence Consumption Layer", "shadow learning is still the highest ROI consumption gap or below target", icl_payload, "keep shadow advisory-only while connecting it to Paper advisory diagnostics, trade management, profit capture, exit learning, and Cortex"))
+        conversion_payload = dict(conversion or {})
+        exit_conv = dict(conversion_payload.get("exit_intelligence_profit_capture_completion_v1") or {})
+        broker_conv = dict(conversion_payload.get("broker_truth_completion_v1") or {})
+        fmp_conv = dict(conversion_payload.get("fmp_utilization_expansion_v1") or {})
+        executive_conv = dict(conversion_payload.get("executive_truth_layer_repair_v1") or {})
+        capacity_conv = dict(conversion_payload.get("capacity_saturation_audit_v1") or {})
+        if exit_conv and to_float(exit_conv.get("exit_quality_score"), 0) < 70:
+            issues.append(self._issue("Exit quality below target", "orange", "Exit Intelligence", exit_conv.get("exit_maturity_blocker_if_below_70") or "exit quality remains below target", exit_conv, "continue advisory-only exit tournament and profit-capture attribution until broker-truth sample matures", highest=True, metric_before=exit_conv.get("exit_quality_before"), metric_after=exit_conv.get("exit_quality_after")))
+        if exit_conv and to_float(exit_conv.get("profit_capture_score"), 0) < 60:
+            issues.append(self._issue("Profit capture maturity below target", "orange", "Profit Capture", "profit capture score remains below maturity threshold", exit_conv, "prioritize profit-lock/giveback-reduction validation in shadow diagnostics"))
+        if fmp_conv and to_float(fmp_conv.get("fmp_usage_pct"), 0) < 5:
+            issues.append(self._issue("FMP utilization outside corridor", "yellow", "Provider Governance", "FMP remains below the safe 5-20% expansion corridor", fmp_conv, "advance only worker-side high-value refresh after ROI/protection checks; dashboard calls remain zero", provider="FMP", metric_before=fmp_conv.get("fmp_daily_cap_before"), metric_after=fmp_conv.get("fmp_daily_cap_after")))
+        if fmp_conv and to_float(fmp_conv.get("fmp_sector_enrichment_score"), 0) < 70:
+            issues.append(self._issue("Sector intelligence missing from FMP enrichment", "yellow", "Provider Governance", "FMP consumption is high but sector-tagged candidate evidence is absent or not attributable", fmp_conv, "prioritize cached sector/profile enrichment for open positions and high-giveback symbols", provider="FMP"))
+        if executive_conv and executive_conv.get("executive_system_health_before") == "DEGRADED" and executive_conv.get("executive_system_health_after") != "DEGRADED":
+            issues.append(self._issue("Executive Snapshot incorrectly degraded", "green", "Executive Truth", "executive truth now separates system health from broker-truth evidence maturity", executive_conv, "monitor dashboard truth labels", status="fixed", metric_before=executive_conv.get("executive_system_health_before"), metric_after=executive_conv.get("executive_system_health_after")))
+        if capacity_conv and capacity_conv.get("capacity_mismatch_detected"):
+            issues.append(self._issue("capacity mismatch or saturation", "orange" if capacity_conv.get("saturation_status") in {"SATURATED", "CAPACITY_POLICY_MISMATCH"} else "yellow", "Capacity", capacity_conv.get("capacity_mismatch_root_cause"), capacity_conv, "audit stale/dust/legacy positions and capacity policy before changing any Paper behavior", metric_before=capacity_conv.get("capacity_target"), metric_after=capacity_conv.get("open_positions_count")))
+        if broker_conv and str(broker_conv.get("true_paper_metric_trust_level")).lower() == "warming_up":
+            issues.append(self._issue("exit learning awaiting closed-trade evidence", "yellow", "Exit Intelligence", broker_conv.get("broker_truth_blocker_if_low_sample"), broker_conv, "collect broker-confirmed closed trades; do not promote learned exits automatically"))
         red = sum(1 for i in issues if i["severity"] == "red" and i["status"] == "open")
         orange = sum(1 for i in issues if i["severity"] == "orange" and i["status"] == "open")
         yellow = sum(1 for i in issues if i["severity"] == "yellow" and i["status"] == "open")
@@ -1387,7 +1766,15 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         shadow = self._shadow_governance(horizon, profit)
         metric_thresholds = self._metric_thresholds(performance, attach, influence, provider, replay, horizon, profit)
         icl = self._intelligence_consumption_layer(lessons, candidates, fabric, profiles, attach, closed, provider, replay, horizon, performance, profit, satellite)
-        registry = self._registry(attach, influence, closed, performance, session, provider, replay, horizon, icl)
+        exit_conversion = self._exit_conversion(lessons, closed, performance, horizon, statuses)
+        broker_truth_completion = self._broker_truth_completion(closed, performance, statuses)
+        fmp_corridor = self._fmp_corridor(provider)
+        capacity_audit = self._capacity_audit(statuses)
+        executive_truth = self._executive_truth_repair(icl, {}, performance, exit_conversion)
+        conversion_pre_registry = self._performance_conversion_suite(exit_conversion, broker_truth_completion, fmp_corridor, executive_truth, capacity_audit, {})
+        registry = self._registry(attach, influence, closed, performance, session, provider, replay, horizon, icl, conversion_pre_registry)
+        executive_truth = self._executive_truth_repair(icl, registry, performance, exit_conversion)
+        performance_conversion = self._performance_conversion_suite(exit_conversion, broker_truth_completion, fmp_corridor, executive_truth, capacity_audit, registry)
         validation_score = rounded(min(100.0, 72.0 + (10.0 if closed["tracked_closed_trades_after"] > 0 else 0.0) + (8.0 if influence["paper_influence_score_after"] >= 60 else 0.0) + (6.0 if provider["provider_protection_score"] >= 90 else 0.0) + (4.0 if replay["historical_replay_score_after"] >= 70 else 0.0)), 3)
         oversight = {
             "cortex_autonomous_validation_score": validation_score,
@@ -1452,6 +1839,7 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "paper_average_return": performance["paper_average_return"],
             "fmp_utilization_status": provider["fmp_utilization_status_after"],
             "fmp_calls_today": provider["fmp_calls_today"],
+            "fmp_daily_cap": fmp_corridor.get("fmp_daily_cap_after"),
             "fmp_usage_pct": provider["fmp_usage_pct"],
             "fmp_expansion_phase": provider["fmp_expansion_phase"],
             "provider_protection_score": provider["provider_protection_score"],
@@ -1476,6 +1864,15 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "horizon_influence_score": icl.get("horizon_influence_score"),
             "regression_guard_score": icl.get("icl_regression_guard_score"),
             "highest_roi_consumption_gap": icl.get("highest_roi_consumption_gap"),
+            "performance_conversion_status": performance_conversion.get("status"),
+            "exit_quality": performance_conversion.get("exit_quality_score"),
+            "profit_capture_score": performance_conversion.get("profit_capture_score"),
+            "giveback_reduction_score": performance_conversion.get("giveback_reduction_score"),
+            "best_shadow_exit_policy": performance_conversion.get("best_shadow_exit_policy"),
+            "executive_system_health": performance_conversion.get("executive_system_health_after"),
+            "trading_confidence": performance_conversion.get("trading_confidence"),
+            "broker_truth_maturity": performance_conversion.get("broker_truth_maturity"),
+            "capacity_status": performance_conversion.get("capacity_mismatch_status"),
             "observation_mode_readiness": observation_ready,
         }
         premarket_hotfix = {
@@ -1540,6 +1937,13 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "fmp_reactivation_roi_validation_v1": provider,
             "intelligence_consumption_layer_v1": icl,
             "astra_intelligence_consumption_layer_v1": icl,
+            "astra_performance_conversion_exit_broker_fmp_truth_capacity_v1": performance_conversion,
+            "performance_conversion_exit_broker_fmp_truth_capacity_v1": performance_conversion,
+            "exit_intelligence_profit_capture_completion_v1": exit_conversion,
+            "broker_truth_completion_v1": broker_truth_completion,
+            "fmp_utilization_expansion_v1": fmp_corridor,
+            "executive_truth_layer_repair_v1": executive_truth,
+            "capacity_saturation_audit_v1": capacity_audit,
             "historical_replay_expansion_validation_v2": replay,
             "historical_replay_recovery_v1": replay,
             "historical_satellite_symbol_satellite_utilization_audit_v1": satellite,
@@ -1570,6 +1974,10 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "paper_capture_ratio": performance["paper_capture_ratio"],
             "paper_giveback_pct": performance["paper_giveback_pct"],
             "paper_metric_trust_level": performance["paper_metric_trust_level"],
+            "true_paper_profit_factor": broker_truth_completion.get("true_paper_profit_factor"),
+            "true_paper_win_rate": broker_truth_completion.get("true_paper_win_rate"),
+            "true_paper_avg_return": broker_truth_completion.get("true_paper_avg_return"),
+            "true_paper_metric_trust_level": broker_truth_completion.get("true_paper_metric_trust_level"),
             "broker_truth_sample_size_low": performance["broker_truth_sample_size_low"],
             "paper_ready_for_performance_judgment": performance["paper_ready_for_performance_judgment"],
             "paper_ready_for_observation_mode": performance["paper_ready_for_observation_mode"],
@@ -1584,8 +1992,12 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "fmp_api_key_present": provider.get("fmp_api_key_present"),
             "fmp_safe_next_action": provider.get("fmp_safe_next_action"),
             "fmp_calls_today": provider["fmp_calls_today"],
+            "fmp_daily_cap_before": fmp_corridor.get("fmp_daily_cap_before"),
+            "fmp_daily_cap_after": fmp_corridor.get("fmp_daily_cap_after"),
             "fmp_usage_pct": provider["fmp_usage_pct"],
             "fmp_bandwidth_used": provider["fmp_bandwidth_after"],
+            "fmp_remaining_bandwidth_gb": provider.get("fmp_remaining_bandwidth_gb"),
+            "fmp_next_safe_expansion_phase": fmp_corridor.get("fmp_next_safe_expansion_phase"),
             "fmp_expansion_phase": provider["fmp_expansion_phase"],
             "fmp_safe_expansion_phase": provider.get("fmp_safe_expansion_phase"),
             "fmp_expansion_allowed": provider["fmp_expansion_allowed"],
@@ -1670,6 +2082,24 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "highest_roi_open_issue": (registry.get("highest_roi_open_issue") or {}).get("issue_name"),
             "cortex_validation_score": oversight["cortex_autonomous_validation_score"],
             "cortex_regression_guard_score": oversight["cortex_regression_guard_score"],
+            "exit_quality_before": performance_conversion.get("exit_quality_before"),
+            "exit_quality_after": performance_conversion.get("exit_quality_after"),
+            "exit_quality_score": performance_conversion.get("exit_quality_score"),
+            "profit_capture_score": performance_conversion.get("profit_capture_score"),
+            "giveback_reduction_score": performance_conversion.get("giveback_reduction_score"),
+            "best_shadow_exit_policy": performance_conversion.get("best_shadow_exit_policy"),
+            "exit_policy_leaderboard": performance_conversion.get("exit_policy_leaderboard"),
+            "largest_profit_left_on_table_symbols": performance_conversion.get("exit_intelligence_profit_capture_completion_v1", {}).get("largest_profit_left_on_table_symbols"),
+            "largest_giveback_symbols": performance_conversion.get("largest_giveback_symbols"),
+            "losers_requiring_review": performance_conversion.get("losers_requiring_review"),
+            "winners_requiring_profit_protection": performance_conversion.get("winners_requiring_profit_protection"),
+            "executive_system_health_before": performance_conversion.get("executive_system_health_before"),
+            "executive_system_health_after": performance_conversion.get("executive_system_health_after"),
+            "trading_confidence": performance_conversion.get("trading_confidence"),
+            "broker_truth_maturity": performance_conversion.get("broker_truth_maturity"),
+            "capacity_mismatch_status": performance_conversion.get("capacity_mismatch_status"),
+            "open_positions_count": performance_conversion.get("open_positions_count"),
+            "capacity_target": performance_conversion.get("capacity_target"),
             "profitability_validation_score": metric_thresholds["profitability_validation_score"],
             "observation_mode_readiness": observation_ready,
             "metrics_good_count": metric_thresholds["metrics_good_count"],
