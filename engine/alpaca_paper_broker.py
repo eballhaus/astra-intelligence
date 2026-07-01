@@ -448,6 +448,9 @@ class AlpacaPaperBroker:
             "type": _safe_text(order.get("type"), "market").lower(),
             "time_in_force": _safe_text(order.get("time_in_force"), "day").lower(),
         }
+        client_order_id = _safe_text(order.get("client_order_id"))
+        if client_order_id:
+            payload["client_order_id"] = client_order_id[:48]
         notional = _to_float(order.get("notional"), 0.0)
         qty = _to_float(order.get("qty"), 0.0)
         if notional > 0:

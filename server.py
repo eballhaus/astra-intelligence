@@ -14,7 +14,7 @@ app.add_middleware(
         "http://127.0.0.1:8000",
         "http://localhost:8000"
     ] + [x.strip() for x in str(os.getenv("ASTRA_EXTRA_CORS_ORIGINS", "")).split(",") if x.strip()],
-    allow_origin_regex=r"^https?://((localhost)|(127\.0\.0\.1)|(\d{1,3}(\.\d{1,3}){3}))(:\d+)?$",
+    allow_origin_regex=r"^https?://((localhost)|(127\.0\.0\.1)|(\d{1,3}(\.\d{1,3}){3})|([a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*\.ts\.net))(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
