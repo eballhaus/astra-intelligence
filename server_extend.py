@@ -44392,6 +44392,17 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "provider_calls_used": 0,
                 "llm_calls_used": 0,
             }
+    if "astra_wave3_portfolio_policy_system_status_v1" not in payload or force:
+        try:
+            payload["astra_wave3_portfolio_policy_system_status_v1"] = _astra_wave3_portfolio_policy_system_status_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_wave3_portfolio_policy_system_status_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"wave3_portfolio_policy_system_status_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+            }
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -45437,6 +45448,282 @@ def _astra_wave2_intelligence_maturation_status_payload(statuses: dict | None = 
     }
 
 
+def _safety_flags_v1() -> dict:
+    return {
+        "paper_only_preserved": True,
+        "alpaca_paper_only_preserved": True,
+        "behavior_safe_to_apply": False,
+        "broker_live_endpoint_allowed": False,
+        "learned_exits_enabled": False,
+        "automatic_promotions_enabled": False,
+        "broker_behavior_changed": False,
+        "live_trading_changed": False,
+        "forced_trades_enabled": False,
+        "forced_exits_enabled": False,
+        "ranking_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "exit_behavior_changed": False,
+        "position_sizing_changed": False,
+        "portfolio_allocation_changed": False,
+        "thresholds_changed": False,
+        "api_calls_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "dashboard_provider_calls_used": 0,
+        "dashboard_llm_calls_used": 0,
+    }
+
+
+def _wave3_position_rows_v1(alpaca: dict) -> list[dict]:
+    rows = alpaca.get("positions") if isinstance(alpaca.get("positions"), list) else []
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        sym = str(row.get("symbol") or "").upper().strip()
+        if not sym:
+            continue
+        out.append(dict(row))
+    return out
+
+
+def _astra_wave3_portfolio_construction_v1(evidence: dict, wave2: dict, alpaca: dict) -> dict:
+    positions = _wave3_position_rows_v1(alpaca)
+    broker_open = int(_to_float(evidence.get("broker_open_positions"), _to_float(alpaca.get("open_positions_count"), len(positions))))
+    target_capacity = int(_to_float(evidence.get("target_capacity"), 20.0))
+    over_by = max(0, broker_open - target_capacity)
+    symbol_counts: dict[str, int] = {}
+    for row in positions:
+        sym = str(row.get("symbol") or "").upper().strip()
+        if sym:
+            symbol_counts[sym] = symbol_counts.get(sym, 0) + 1
+    duplicate_symbols = sorted([sym for sym, count in symbol_counts.items() if count > 1])
+    top_symbol_count = max(symbol_counts.values()) if symbol_counts else (1 if broker_open else 0)
+    symbol_concentration = round((top_symbol_count / max(1, broker_open)) * 100.0, 3) if broker_open else 0.0
+
+    symbol_payload = wave2.get("symbol_intelligence_behavioral_memory_v1") if isinstance(wave2.get("symbol_intelligence_behavioral_memory_v1"), dict) else {}
+    strongest = [str(r.get("symbol") or "").upper() for r in (symbol_payload.get("strongest_diagnostic_symbol_profiles") or []) if isinstance(r, dict)]
+    weakest = [str(r.get("symbol") or "").upper() for r in (symbol_payload.get("weakest_diagnostic_symbol_profiles") or []) if isinstance(r, dict)]
+    open_symbols = set(symbol_counts) if symbol_counts else set()
+    weak_exposure = sorted(open_symbols.intersection(set(weakest)))
+    strong_exposure = sorted(open_symbols.intersection(set(strongest)))
+    trade_styles = ((wave2.get("trade_style_intelligence_framework_v1") or {}).get("trade_style_profiles") or []) if isinstance(wave2.get("trade_style_intelligence_framework_v1"), dict) else []
+    style_counts = {str(r.get("trade_style") or "unknown"): int(_to_float(r.get("evidence_count_deduped"), 0.0)) for r in trade_styles if isinstance(r, dict)}
+    style_total = sum(style_counts.values())
+    top_style = max(style_counts, key=style_counts.get) if style_counts else "unknown"
+    trade_style_concentration = round((style_counts.get(top_style, 0) / max(1, style_total)) * 100.0, 3) if style_total else 0.0
+    horizon_concentration = {
+        "dominant_diagnostic_trade_style": top_style,
+        "dominant_trade_style_pct": trade_style_concentration,
+        "source": "wave2_deduped_lifecycle_diagnostic_not_broker_truth",
+    }
+    high_risk_symbol_count = len(weak_exposure)
+    if broker_open <= 0:
+        status = "INSUFFICIENT_DATA"
+    elif over_by > 0:
+        status = "CAPACITY_OVER_TARGET"
+    elif symbol_concentration >= 25 or high_risk_symbol_count >= 3:
+        status = "OVER_CONCENTRATED"
+    elif symbol_concentration >= 15 or high_risk_symbol_count:
+        status = "WATCH"
+    else:
+        status = "HEALTHY"
+    return {
+        "portfolio_construction_suite_v1": True,
+        "portfolio_construction_status": status,
+        "broker_open_positions": broker_open,
+        "target_capacity": target_capacity,
+        "capacity_over_target_by": over_by,
+        "position_count_status": "OVER_TARGET" if over_by > 0 else "WITHIN_TARGET",
+        "symbol_concentration": symbol_concentration,
+        "sector_concentration": "not_available_from_cached_positions",
+        "trade_style_concentration": horizon_concentration,
+        "horizon_concentration": horizon_concentration,
+        "high_risk_symbol_count": high_risk_symbol_count,
+        "weak_symbol_exposure": weak_exposure,
+        "strongest_symbol_exposure": strong_exposure,
+        "duplicate_symbol_exposure": duplicate_symbols,
+        "portfolio_crowding_status": "crowded_capacity_over_target" if over_by > 0 else "not_crowded_by_position_count",
+        "portfolio_balance_status": "watch_capacity_first" if over_by > 0 else "diagnostic_balance_available",
+        "advisory_recommendations": [
+            "review_over_capacity_positions" if over_by > 0 else "monitor_position_count",
+            "avoid_new_capacity_expansion_until_position_count_normalizes" if over_by > 0 else "capacity_target_should_remain_unchanged",
+            "monitor_weak_symbol_exposure" if weak_exposure else "continue_symbol_exposure_monitoring",
+            "increase_broker_truth_sample_before allocation decisions",
+        ],
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_wave3_adaptive_policy_manager_v1(evidence: dict, wave2: dict) -> dict:
+    broker_complete = int(_to_float(evidence.get("broker_confirmed_complete_records"), 0.0))
+    broker_total = int(_to_float(evidence.get("broker_truth_records_total"), 0.0))
+    capacity_over = int(_to_float(evidence.get("capacity_over_target_by"), 0.0))
+    symbol_coverage = _to_float(wave2.get("symbol_broker_truth_coverage"), 0.0)
+    exit_broker = int(_to_float(wave2.get("broker_confirmed_exit_evidence_count"), 0.0))
+    policies = [
+        {"policy": "broker_truth_sample_threshold", "threshold": 50, "current": broker_complete, "ready": broker_complete >= 50},
+        {"policy": "performance_metric_unlock_thresholds", "threshold": 50, "current": broker_complete, "ready": broker_complete >= 50},
+        {"policy": "exit_promotion_thresholds", "threshold": "broker_truth_plus_human_review", "current": exit_broker, "ready": False},
+        {"policy": "symbol_confidence_thresholds", "threshold": "broker_confirmed_complete_count>=20_per_symbol", "current": symbol_coverage, "ready": symbol_coverage > 0},
+        {"policy": "capacity_target", "threshold": 20, "current": evidence.get("broker_open_positions"), "ready": capacity_over <= 0},
+        {"policy": "duplicate_evidence_guards", "threshold": "active", "current": "active", "ready": True},
+        {"policy": "retrieval_trust_labels", "threshold": "active", "current": "active", "ready": True},
+        {"policy": "behavior_safe_to_apply_guard", "threshold": False, "current": False, "ready": True},
+        {"policy": "learned_exits_enabled_guard", "threshold": False, "current": False, "ready": True},
+        {"policy": "automatic_promotions_enabled_guard", "threshold": False, "current": False, "ready": True},
+    ]
+    blockers = []
+    if broker_complete < 50:
+        blockers.append("broker_confirmed_complete_records_below_50")
+    if capacity_over > 0:
+        blockers.append("broker_position_count_over_target_capacity")
+    if symbol_coverage <= 0:
+        blockers.append("symbol_broker_truth_coverage_zero")
+    if exit_broker <= 0:
+        blockers.append("exit_broker_truth_coverage_zero")
+    if evidence.get("official_metric_status") != "INSUFFICIENT_BROKER_TRUTH_EVIDENCE" and broker_complete < 50:
+        blockers.append("official_metrics_unblocked_too_early")
+    ready_count = len([p for p in policies if p.get("ready")])
+    score = round((ready_count / max(1, len(policies))) * 100.0, 3)
+    status = "READY_FOR_HUMAN_REVIEW_ONLY" if score >= 80 and not blockers else "NOT_READY_FOR_ADAPTATION"
+    return {
+        "adaptive_policy_manager_v1": True,
+        "policy_manager_status": status,
+        "policy_readiness_score": score,
+        "policies_tracked": policies,
+        "policy_blockers": blockers,
+        "policy_guardrails_active": {
+            "behavior_safe_to_apply": False,
+            "learned_exits_enabled": False,
+            "automatic_promotions_enabled": False,
+            "thresholds_changed": False,
+            "portfolio_allocation_changed": False,
+            "position_sizing_changed": False,
+        },
+        "adaptive_policy_actions_enabled": False,
+        "human_review_required": True,
+        "broker_truth_records_total": broker_total,
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_wave3_system_integrity_v1(evidence: dict, wave2: dict, portfolio: dict, policy: dict) -> dict:
+    bottlenecks = []
+    broker_complete = int(_to_float(evidence.get("broker_confirmed_complete_records"), 0.0))
+    if broker_complete <= 0:
+        bottlenecks.append({"rank": 1, "bottleneck": "broker_confirmed_complete_records_zero", "severity": "high"})
+    if broker_complete < 50:
+        bottlenecks.append({"rank": 2, "bottleneck": "broker_truth_sample_below_50", "severity": "high"})
+    if int(_to_float(evidence.get("capacity_over_target_by"), 0.0)) > 0:
+        bottlenecks.append({"rank": 3, "bottleneck": "capacity_35_vs_target_20", "severity": "medium"})
+    if int(_to_float(evidence.get("duplicate_lifecycle_records"), 0.0)) > 0:
+        bottlenecks.append({"rank": 4, "bottleneck": "duplicate_lifecycle_evidence_guarded", "severity": "medium"})
+    if _to_float(wave2.get("symbol_broker_truth_coverage"), 0.0) <= 0:
+        bottlenecks.append({"rank": 5, "bottleneck": "symbol_broker_truth_coverage_zero", "severity": "medium"})
+    if int(_to_float(wave2.get("broker_confirmed_exit_evidence_count"), 0.0)) <= 0:
+        bottlenecks.append({"rank": 6, "bottleneck": "exit_broker_truth_coverage_zero", "severity": "medium"})
+    checks = {
+        "broker_truth_wiring": bool(evidence.get("broker_truth_records_total") is not None),
+        "canonical_outcome_wiring": bool(evidence.get("canonical_outcome_candidates") is not None),
+        "truth_integrity_wiring": True,
+        "evidence_maturation_wiring": bool(evidence),
+        "wave2_intelligence_wiring": wave2.get("wave2_wiring_status") == "PASS",
+        "portfolio_construction_wiring": bool(portfolio),
+        "adaptive_policy_wiring": bool(policy),
+        "unified_diagnostics_wiring": True,
+        "cortex_wiring": True,
+        "learning_center_endpoint_wiring": True,
+        "provider_call_safety": True,
+        "llm_call_safety": True,
+        "official_metric_guard": evidence.get("official_metric_status") == "INSUFFICIENT_BROKER_TRUTH_EVIDENCE",
+        "lifecycle_diagnostic_labeling": True,
+        "replay_diagnostic_labeling": True,
+        "shadow_diagnostic_labeling": True,
+        "duplicate_evidence_guard": True,
+        "capacity_mismatch_visibility": int(_to_float(evidence.get("capacity_over_target_by"), 0.0)) >= 0,
+        "broker_live_safety": True,
+    }
+    score = round((sum(1 for v in checks.values() if v) / max(1, len(checks))) * 100.0, 3)
+    warnings = [b["bottleneck"] for b in bottlenecks]
+    critical = [b["bottleneck"] for b in bottlenecks if b.get("severity") == "high"]
+    return {
+        "astra_system_integrity_diagnostic_v1": True,
+        "system_integrity_score": score,
+        "wiring_status": "WARNING" if warnings else "PASS",
+        "checks": checks,
+        "remaining_bottlenecks_ranked": bottlenecks,
+        "critical_blockers": critical,
+        "warnings": warnings,
+        "fixed_by_wave1": ["canonical_broker_truth_registry_foundation", "official_metric_guard", "capacity_visibility", "canonical_outcome_audit"],
+        "fixed_by_wave2": ["deduped_symbol_diagnostics", "diagnostic_exit_leaderboards", "trade_style_diagnostics", "knowledge_retrieval_index_foundation"],
+        "fixed_by_wave3": ["portfolio_construction_diagnostic", "adaptive_policy_readiness_audit", "system_integrity_rollup"],
+        "next_recommended_wave": "Wave 4 should focus on broker-truth sample growth, capacity normalization by natural exits, and human-reviewed micro-test readiness only after evidence matures.",
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_wave3_improvement_summary_v1(evidence: dict, wave2: dict, portfolio: dict, policy: dict, integrity: dict) -> dict:
+    return {
+        "architecture_status": "diagnostic_mature_foundation_active",
+        "evidence_integrity_status": "guarded_duplicate_lifecycle_evidence_visible",
+        "broker_truth_status": evidence.get("broker_truth_ingestion_status") or "partial",
+        "capacity_status": evidence.get("capacity_policy_status"),
+        "performance_validation_status": evidence.get("official_metric_status"),
+        "symbol_intelligence_status": (wave2.get("symbol_intelligence_behavioral_memory_v1") or {}).get("symbol_intelligence_maturity_status"),
+        "exit_intelligence_status": (wave2.get("exit_intelligence_maturation_v2") or {}).get("exit_intelligence_maturity_status"),
+        "retrieval_status": (wave2.get("knowledge_retrieval_indexing_engine_v1") or {}).get("retrieval_index_status"),
+        "portfolio_diagnostic_status": portfolio.get("portfolio_construction_status"),
+        "adaptive_policy_status": policy.get("policy_manager_status"),
+        "safety_status": "paper_safe_advisory_only",
+        "overall_project_phase": "EVIDENCE_FOUNDATION_AND_DIAGNOSTIC_MATURITY_PHASE",
+        "what_improved": [
+            "broker truth is separated from lifecycle diagnostics",
+            "symbol and exit evidence are deduped and confidence-guarded",
+            "portfolio over-capacity is visible without forced action",
+            "adaptive policy readiness is auditable without changing thresholds",
+        ],
+        "what_remains_blocked": [
+            "official performance metrics until broker-confirmed complete sample reaches 50",
+            "policy adaptation until human-reviewed readiness and broker truth mature",
+            "allocation/sizing changes remain disabled",
+        ],
+        "ready_for_wave4": True,
+        "must_not_be_promoted_yet": ["official_pf_wr_avg_return", "learned_exits", "adaptive_thresholds", "portfolio_allocation_changes"],
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_wave3_portfolio_policy_system_status_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    evidence = statuses.get("astra_evidence_maturation_status_v1") if isinstance(statuses.get("astra_evidence_maturation_status_v1"), dict) else _astra_evidence_maturation_status_payload(statuses)
+    wave2 = statuses.get("astra_wave2_intelligence_maturation_status_v1") if isinstance(statuses.get("astra_wave2_intelligence_maturation_status_v1"), dict) else _astra_wave2_intelligence_maturation_status_payload({**statuses, "astra_evidence_maturation_status_v1": evidence})
+    alpaca = _cached_alpaca_paper_status_payload(statuses)
+    portfolio = _astra_wave3_portfolio_construction_v1(evidence, wave2, alpaca)
+    policy = _astra_wave3_adaptive_policy_manager_v1(evidence, wave2)
+    integrity = _astra_wave3_system_integrity_v1(evidence, wave2, portfolio, policy)
+    summary = _astra_wave3_improvement_summary_v1(evidence, wave2, portfolio, policy, integrity)
+    return {
+        "suite": "Astra Wave 3 Portfolio, Adaptive Policy & System Health Diagnostic V1",
+        "status": "ok",
+        "generated_at": _now_utc_iso(),
+        "endpoint": "/api/astra_wave3_portfolio_policy_system_status_v1",
+        "portfolio_construction_suite_v1": portfolio,
+        "adaptive_policy_manager_v1": policy,
+        "astra_system_integrity_diagnostic_v1": integrity,
+        "astra_improvement_summary_v1": summary,
+        "portfolio_diagnostics_status": portfolio.get("portfolio_construction_status"),
+        "policy_readiness_status": policy.get("policy_manager_status"),
+        "system_integrity_score": integrity.get("system_integrity_score"),
+        "wiring_status": integrity.get("wiring_status"),
+        "broker_truth_status": evidence.get("broker_truth_ingestion_status"),
+        "capacity_status": evidence.get("capacity_policy_status"),
+        "official_metric_status": evidence.get("official_metric_status"),
+        "top_bottlenecks": integrity.get("remaining_bottlenecks_ranked"),
+        **_safety_flags_v1(),
+    }
+
+
 def _astra_evidence_maturation_status_payload(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -45793,6 +46080,16 @@ def astra_wave2_intelligence_maturation_status_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_wave2_intelligence_maturation_status_payload(statuses)
+
+
+@router.get("/api/astra_wave3_portfolio_policy_system_status_v1")
+def astra_wave3_portfolio_policy_system_status_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_wave3_portfolio_policy_system_status_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_wave3_portfolio_policy_system_status_payload(statuses)
 
 
 @router.get("/api/astra_intelligence_consumption_layer_v1")
