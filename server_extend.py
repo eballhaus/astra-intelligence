@@ -44362,6 +44362,14 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
         or (payload.get("astra_paper_provider_cortex_completion_v1") or {}).get("performance_conversion_exit_broker_fmp_truth_capacity_v1")
         or {}
     )
+    truth_audit = (
+        (payload.get("astra_paper_provider_cortex_completion_v1") or {}).get("truth_integrity_audit_v1")
+        or ((payload.get("astra_paper_provider_cortex_completion_v1") or {}).get("closed_trade_attribution_engine_v1") or {}).get("truth_integrity_audit_v1")
+        or (payload.get("astra_performance_conversion_exit_broker_fmp_truth_capacity_v1") or {}).get("truth_integrity_audit_v1")
+        or {}
+    )
+    if truth_audit:
+        payload["truth_integrity_audit_v1"] = dict(truth_audit)
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -44724,6 +44732,56 @@ def astra_performance_conversion_exit_broker_fmp_truth_capacity_v1(force: bool =
     suite.setdefault("parent_endpoint", "/api/astra_final_paper_provider_replay_cortex_validation_v1")
     suite.setdefault("force_probe_used", bool(force))
     return suite
+
+
+@router.get("/api/truth_integrity_audit_v1")
+def truth_integrity_audit_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("truth_integrity_audit_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    payload = _astra_paper_provider_cortex_payload(statuses, force=bool(force))
+    audit = (
+        (payload or {}).get("truth_integrity_audit_v1")
+        or ((payload or {}).get("closed_trade_attribution_engine_v1") or {}).get("truth_integrity_audit_v1")
+        or (((payload or {}).get("astra_performance_conversion_exit_broker_fmp_truth_capacity_v1") or {}).get("truth_integrity_audit_v1"))
+        or {}
+    )
+    if audit:
+        return dict(audit)
+    return {
+        "status": "insufficient_evidence",
+        "registry_name": "closed_trade_truth_registry_v1.json",
+        "registry_label_accuracy": "unavailable",
+        "broker_confirmed_truth_records": 0,
+        "lifecycle_attribution_records": 0,
+        "advisory_only_records": 0,
+        "unique_source_trade_ids": 0,
+        "duplicate_source_trade_ids": 0,
+        "duplicate_record_count": 0,
+        "unique_advisory_ids": 0,
+        "total_advisory_refs": 0,
+        "records_missing_truth_fields": 0,
+        "evidence_inflation_detected": False,
+        "verified_trading_metrics_status": "INSUFFICIENT_BROKER_TRUTH_EVIDENCE",
+        "behavior_safe_to_apply": False,
+        "advisory_only": True,
+        "paper_only_preserved": True,
+        "alpaca_paper_only_preserved": True,
+        "live_trading_changed": False,
+        "broker_behavior_changed": False,
+        "ranking_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "exit_behavior_changed": False,
+        "position_sizing_changed": False,
+        "portfolio_allocation_changed": False,
+        "thresholds_changed": False,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "dashboard_provider_calls_used": 0,
+        "dashboard_llm_calls_used": 0,
+    }
 
 
 @router.get("/api/astra_intelligence_consumption_layer_v1")
@@ -45660,9 +45718,9 @@ def ask_astra_v1(payload: dict = Body(...)):
                 f"Safe FMP expansion allowed: {suite.get('fmp_expansion_allowed', fmp_roi.get('fmp_expansion_allowed', False))}; ROI validation score={fmp_roi.get('fmp_reactivation_roi_score', 'n/a')}. "
                 f"Paper influence moved from {suite.get('paper_influence_score_before', 'n/a')} to {suite.get('paper_influence_score_after', 'n/a')}; blocker={str(paper_inf.get('paper_influence_blocker') or 'none').replace('_', ' ')}. "
                 f"Paper advisory attachment is {suite.get('paper_attachment_pct_after', 'n/a')}% and complete={_to_float(suite.get('paper_attachment_pct_after'), 0) >= 80}. "
-                f"Real Paper metrics trust level={performance.get('paper_metric_trust_level', suite.get('paper_metric_trust_level', 'warming_up'))}; broker-truth closed trades={performance.get('broker_truth_closed_trade_count', suite.get('broker_truth_closed_trade_count', 'n/a'))}; "
-                f"PF={performance.get('paper_profit_factor', suite.get('paper_profit_factor', 'n/a'))}, WR={performance.get('paper_win_rate', suite.get('paper_win_rate', 'n/a'))}, avg return={performance.get('paper_average_return', suite.get('paper_average_return', 'n/a'))}. "
-                f"Closed-trade attribution tracks {suite.get('tracked_closed_trades_after', closed.get('tracked_closed_trades_after', 'n/a'))} trades with score {suite.get('closed_trade_attribution_score', closed.get('closed_trade_attribution_score', 'n/a'))}; blocker={str(closed.get('closed_trade_attribution_blocker') or 'none').replace('_', ' ')}. "
+                f"Official Broker Truth metrics status={performance.get('verified_trading_metrics_status', suite.get('verified_trading_metrics_status', 'INSUFFICIENT_BROKER_TRUTH_EVIDENCE'))}; broker-confirmed truth records={performance.get('broker_confirmed_truth_records', suite.get('broker_confirmed_truth_records', 'n/a'))}. "
+                f"Official PF={performance.get('paper_profit_factor', suite.get('paper_profit_factor', 'blocked'))}, WR={performance.get('paper_win_rate', suite.get('paper_win_rate', 'blocked'))}, avg return={performance.get('paper_average_return', suite.get('paper_average_return', 'blocked'))}. "
+                f"Diagnostic lifecycle attribution tracks {suite.get('tracked_closed_trades_after', closed.get('tracked_closed_trades_after', 'n/a'))} rows with lifecycle score {suite.get('lifecycle_attribution_score', closed.get('lifecycle_attribution_score', 'n/a'))}; broker truth blocker={str(closed.get('broker_truth_blocker_if_low_sample') or 'none').replace('_', ' ')}. "
                 f"Session order submission blocker={str(session.get('session_order_submission_blocker') or 'none').replace('_', ' ')}. "
                 f"Historical replay completed={suite.get('historical_replays_completed', replay.get('historical_replays_completed', 'n/a'))}, replay score={suite.get('historical_replay_score', replay.get('historical_replay_score', 'n/a'))}. "
                 f"Best horizon right now={str(best_horizon).replace('_', ' ')}, horizon usage moved from {suite.get('horizon_usage_before', horizon.get('horizon_usage_before', 'n/a'))} to {suite.get('horizon_usage_after', horizon.get('horizon_usage_after', suite.get('horizon_usage_score', 'n/a')))}, horizon attachment={suite.get('horizon_paper_attachment_pct', horizon.get('horizon_paper_attachment_pct', 'n/a'))}. "
@@ -45677,7 +45735,7 @@ def ask_astra_v1(payload: dict = Body(...)):
                 f"Profit Capture={conversion.get('profit_capture_score', exit_conv.get('profit_capture_score', 'n/a'))}; Giveback Reduction={conversion.get('giveback_reduction_score', exit_conv.get('giveback_reduction_score', 'n/a'))}; best shadow exit policy={conversion.get('best_shadow_exit_policy', exit_conv.get('best_shadow_exit_policy', 'warming up'))}. "
                 f"Positions/symbols needing profit protection: {', '.join((conversion.get('winners_requiring_profit_protection') or exit_conv.get('winners_requiring_profit_protection') or [])[:6]) or 'none proven'}. "
                 f"Largest loser risks: {', '.join((conversion.get('losers_requiring_review') or exit_conv.get('losers_requiring_review') or [])[:6]) or 'none proven'}. "
-                f"True Paper metrics trust={broker_conv.get('true_paper_metric_trust_level', conversion.get('true_paper_metric_trust_level', 'warming up'))}; true PF={broker_conv.get('true_paper_profit_factor', conversion.get('true_paper_profit_factor', 'warming up'))}; true WR={broker_conv.get('true_paper_win_rate', conversion.get('true_paper_win_rate', 'warming up'))}; true avg return={broker_conv.get('true_paper_avg_return', conversion.get('true_paper_avg_return', 'warming up'))}. "
+                f"Official Broker Truth maturity={broker_conv.get('true_paper_metric_trust_level', conversion.get('true_paper_metric_trust_level', 'warming up'))}; metric status={broker_conv.get('verified_trading_metrics_status', conversion.get('verified_trading_metrics_status', 'INSUFFICIENT_BROKER_TRUTH_EVIDENCE'))}; official PF={broker_conv.get('true_paper_profit_factor', conversion.get('true_paper_profit_factor', 'blocked'))}; official WR={broker_conv.get('true_paper_win_rate', conversion.get('true_paper_win_rate', 'blocked'))}; official avg return={broker_conv.get('true_paper_avg_return', conversion.get('true_paper_avg_return', 'blocked'))}. "
                 f"Executive health is {executive_conv.get('executive_system_health_after', conversion.get('executive_system_health_after', 'warming up'))}, trading confidence is {executive_conv.get('trading_confidence', conversion.get('trading_confidence', 'warming up'))}, and broker truth maturity is {executive_conv.get('broker_truth_maturity', conversion.get('broker_truth_maturity', 'warming up'))}. "
                 f"Capacity status={capacity_conv.get('saturation_status', conversion.get('capacity_mismatch_status', 'warming up'))}; open positions={capacity_conv.get('open_positions_count', conversion.get('open_positions_count', 'n/a'))}, target={capacity_conv.get('capacity_target', conversion.get('capacity_target', 'n/a'))}; root cause={str(capacity_conv.get('capacity_mismatch_root_cause') or 'warming up').replace('_', ' ')}. "
                 f"FMP next safe phase={fmp_conv.get('fmp_next_safe_expansion_phase', conversion.get('fmp_next_safe_expansion_phase', 'warming up'))}; cap {fmp_conv.get('fmp_daily_cap_before', conversion.get('fmp_daily_cap_before', 'n/a'))}->{fmp_conv.get('fmp_daily_cap_after', conversion.get('fmp_daily_cap_after', 'n/a'))}; usage={fmp_conv.get('fmp_usage_pct', conversion.get('fmp_usage_pct', 'n/a'))}%; remaining bandwidth={fmp_conv.get('fmp_remaining_bandwidth_gb', 'n/a')} GB. "

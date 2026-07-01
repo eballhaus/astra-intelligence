@@ -80,6 +80,25 @@ def avg(vals: list[Any]) -> float:
     return rounded(mean(nums), 3) if nums else 0.0
 
 
+def broker_truth_maturity_label(count: int) -> str:
+    count = max(0, to_int(count, 0))
+    if count <= 0:
+        return "NOT_ACTIVE"
+    if count < 20:
+        return "WARMING_UP_LOW_CONFIDENCE"
+    if count < 50:
+        return "EARLY_SAMPLE"
+    if count < 100:
+        return "DEVELOPING"
+    if count < 250:
+        return "MATURING"
+    return "STRONG_SAMPLE"
+
+
+def broker_metrics_status(count: int) -> str:
+    return "AVAILABLE" if to_int(count, 0) >= 50 else "INSUFFICIENT_BROKER_TRUTH_EVIDENCE"
+
+
 def issue_id(name: str) -> str:
     return hashlib.sha1(name.encode("utf-8", errors="ignore")).hexdigest()[:12]
 
@@ -121,6 +140,81 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         except Exception:
             return []
         return rows
+
+    def _is_broker_confirmed_truth_record(self, row: dict[str, Any]) -> bool:
+        if not isinstance(row, dict):
+            return False
+        has_order_id = present(row.get("broker_order_id")) or present(row.get("client_order_id"))
+        return bool(has_order_id and present(row.get("exit_time")) and row.get("realized_pnl") is not None)
+
+    def _truth_integrity_audit(self, rows: list[dict[str, Any]], broker_closed: int = 0) -> dict[str, Any]:
+        source_ids = [
+            str(row.get("source_trade_id") or row.get("trade_id") or "").strip()
+            for row in rows
+            if present(row.get("source_trade_id") or row.get("trade_id"))
+        ]
+        source_counts = Counter(source_ids)
+        advisory_refs: list[str] = []
+        replay_records = 0
+        for row in rows:
+            for key in ("paper_advisory_evidence_ids", "canonical_lesson_ids", "advisory_ids"):
+                value = row.get(key)
+                if isinstance(value, list):
+                    advisory_refs.extend(str(v) for v in value if present(v))
+            source_name = str(row.get("source") or row.get("evidence_source") or row.get("record_type") or "").lower()
+            if "replay" in source_name or "counterfactual" in source_name:
+                replay_records += 1
+        broker_truth_records = sum(1 for row in rows if self._is_broker_confirmed_truth_record(row))
+        missing_truth = len(rows) - broker_truth_records
+        duplicate_source_ids = sum(1 for _, count in source_counts.items() if count > 1)
+        duplicate_record_count = max(0, len(source_ids) - len(source_counts))
+        advisory_records = sum(
+            1
+            for row in rows
+            if not self._is_broker_confirmed_truth_record(row)
+            and (
+                row.get("paper_advisory_evidence_ids")
+                or row.get("canonical_lesson_ids")
+                or str(row.get("record_type") or "").lower().startswith("lifecycle")
+            )
+        )
+        maturity = broker_truth_maturity_label(broker_truth_records)
+        metrics_status = broker_metrics_status(broker_truth_records)
+        inflation = bool(rows and (broker_truth_records < len(rows) or duplicate_record_count > 0))
+        return {
+            "status": "ok",
+            "generated_at": now_iso(),
+            "registry_name": CLOSED_REGISTRY,
+            "registry_label_accuracy": "legacy_filename_misleading_lifecycle_advisory_registry_not_broker_truth",
+            "registry_recommended_label": "lifecycle_attribution_registry_v1",
+            "record_count": len(rows),
+            "broker_reported_closed_trades": to_int(broker_closed, 0),
+            "broker_confirmed_truth_records": broker_truth_records,
+            "lifecycle_attribution_records": len(rows),
+            "advisory_only_records": advisory_records,
+            "replay_counterfactual_records": replay_records,
+            "invalid_incomplete_records": missing_truth,
+            "records_missing_truth_fields": missing_truth,
+            "unique_source_trade_ids": len(source_counts),
+            "duplicate_source_trade_ids": duplicate_source_ids,
+            "duplicate_record_count": duplicate_record_count,
+            "unique_advisory_ids": len(set(advisory_refs)),
+            "total_advisory_refs": len(advisory_refs),
+            "duplicate_advisory_ids": sum(1 for _, count in Counter(advisory_refs).items() if count > 1),
+            "evidence_inflation_detected": inflation,
+            "evidence_inflation_reason": "lifecycle/advisory rows and duplicate source ids must not be counted as broker-confirmed closed trades" if inflation else None,
+            "official_broker_truth_metric_status": metrics_status,
+            "verified_trading_metrics_status": metrics_status,
+            "broker_truth_maturity": maturity,
+            "minimum_broker_truth_records_required": 50,
+            "performance_metrics_safe_to_trust": bool(broker_truth_records >= 50),
+            "advisory_lifecycle_evidence_available": bool(rows),
+            "advisory_lifecycle_only": True,
+            "diagnostic_only": True,
+            "not_broker_verified": True,
+            "raw_registry_records_modified": False,
+            **safe_flags(),
+        }
 
     def _append_ledger_once(self, event: dict[str, Any]) -> None:
         path = self._path(FMP_LEDGER)
@@ -371,8 +465,13 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
                 "setup_type": cand.get("setup_type") or lesson.get("archetype"),
                 "canonical_lesson_ids": [lesson.get("lesson_id")] if lesson.get("lesson_id") else [],
                 "paper_advisory_evidence_ids": [cand.get("ledger_id")] if cand.get("ledger_id") else [],
+                "record_type": "lifecycle_attribution",
+                "evidence_basis": "advisory_lifecycle_only",
+                "diagnostic_only": True,
+                "not_broker_verified": not self._is_broker_confirmed_truth_record(row),
                 "attribution_quality_score": pct(sum(1 for v in quality_fields if present(v)), len(quality_fields)),
             })
+        audit = self._truth_integrity_audit(registry_rows, broker_closed=broker_closed)
         summary = {
             "status": "ok",
             "generated_at": now_iso(),
@@ -380,21 +479,55 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "record_count": len(registry_rows),
             "broker_truth_closed_trades": broker_closed,
             "lifecycle_learning_closed_records": len(lifecycle_rows),
+            "truth_integrity_audit_v1": audit,
+            "registry_label_accuracy": audit.get("registry_label_accuracy"),
+            "broker_confirmed_truth_records": audit.get("broker_confirmed_truth_records"),
+            "lifecycle_attribution_records": audit.get("lifecycle_attribution_records"),
+            "advisory_only_records": audit.get("advisory_only_records"),
+            "unique_source_trade_ids": audit.get("unique_source_trade_ids"),
+            "duplicate_source_trade_ids": audit.get("duplicate_source_trade_ids"),
+            "duplicate_record_count": audit.get("duplicate_record_count"),
+            "unique_advisory_ids": audit.get("unique_advisory_ids"),
+            "total_advisory_refs": audit.get("total_advisory_refs"),
+            "records_missing_truth_fields": audit.get("records_missing_truth_fields"),
+            "evidence_inflation_detected": audit.get("evidence_inflation_detected"),
+            "verified_trading_metrics_status": audit.get("verified_trading_metrics_status"),
             **safe_flags(),
         }
         self._write_json(CLOSED_REGISTRY, summary)
         before = to_int(((statuses.get("profit_capture_validation_completion_v1") or {}) if isinstance(statuses.get("profit_capture_validation_completion_v1"), dict) else {}).get("tracked_closed_trades"), 0)
         join_rate = pct(len([r for r in registry_rows if r.get("canonical_lesson_ids") or r.get("paper_advisory_evidence_ids")]), len(registry_rows))
+        broker_truth_records = to_int(audit.get("broker_confirmed_truth_records"), 0)
+        lifecycle_score = rounded(min(100.0, join_rate * 0.65 + min(35.0, len(registry_rows) / 20.0)), 3)
         return {
             "tracked_closed_trades_before": before,
             "tracked_closed_trades_after": len(registry_rows),
+            "tracked_lifecycle_attribution_records_after": len(registry_rows),
             "attributed_paper_trade_count": len(registry_rows),
             "broker_truth_closed_trades": broker_closed,
+            "broker_confirmed_truth_records": broker_truth_records,
             "lifecycle_closed_trades_available": len(lifecycle_rows),
+            "lifecycle_attribution_records": len(registry_rows),
+            "advisory_only_records": audit.get("advisory_only_records"),
             "closed_trade_join_rate": join_rate,
-            "closed_trade_truth_score": rounded(min(100.0, join_rate * 0.65 + min(35.0, len(registry_rows) / 20.0)), 3),
+            "closed_trade_truth_score": rounded(min(100.0, broker_truth_records * 2.0), 3),
+            "lifecycle_attribution_score": lifecycle_score,
+            "closed_trade_truth_label": "broker_confirmed_truth_only",
+            "lifecycle_attribution_label": "advisory_lifecycle_only",
             "closed_trade_registry_path": f"state/{CLOSED_REGISTRY}",
             "closed_trade_attribution_blocker_if_zero": None if registry_rows else "no broker closed trades or lifecycle closed observations available in bounded local evidence",
+            "broker_truth_blocker_if_low_sample": None if broker_truth_records >= 50 else "broker-confirmed closed trade sample remains below 50; official PF/WR/Avg Return are blocked",
+            "truth_integrity_audit_v1": audit,
+            "registry_label_accuracy": audit.get("registry_label_accuracy"),
+            "unique_source_trade_ids": audit.get("unique_source_trade_ids"),
+            "duplicate_source_trade_ids": audit.get("duplicate_source_trade_ids"),
+            "duplicate_record_count": audit.get("duplicate_record_count"),
+            "unique_advisory_ids": audit.get("unique_advisory_ids"),
+            "total_advisory_refs": audit.get("total_advisory_refs"),
+            "records_missing_truth_fields": audit.get("records_missing_truth_fields"),
+            "evidence_inflation_detected": audit.get("evidence_inflation_detected"),
+            "verified_trading_metrics_status": audit.get("verified_trading_metrics_status"),
+            "performance_metrics_safe_to_trust": audit.get("performance_metrics_safe_to_trust"),
             "sample_closed_trade_attribution": registry_rows[:8],
         }
 
@@ -408,58 +541,94 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
     def _real_paper_performance(self, closed: dict[str, Any], statuses: dict[str, Any]) -> dict[str, Any]:
         registry = self._read_json(CLOSED_REGISTRY)
         rows = registry.get("records") if isinstance(registry.get("records"), list) else []
-        returns = [to_float(r.get("return_pct"), 0.0) for r in rows if present(r.get("return_pct"))]
-        wins = [v for v in returns if v > 0]
-        losses = [v for v in returns if v < 0]
-        broker_truth_count = to_int(closed.get("broker_truth_closed_trades"), 0)
+        broker_rows = [r for r in rows if self._is_broker_confirmed_truth_record(r)]
+        lifecycle_returns = [to_float(r.get("return_pct"), 0.0) for r in rows if present(r.get("return_pct"))]
+        broker_returns = [to_float(r.get("return_pct"), 0.0) for r in broker_rows if present(r.get("return_pct"))]
+        lifecycle_wins = [v for v in lifecycle_returns if v > 0]
+        lifecycle_losses = [v for v in lifecycle_returns if v < 0]
+        broker_wins = [v for v in broker_returns if v > 0]
+        broker_losses = [v for v in broker_returns if v < 0]
+        broker_reported_closed_count = to_int(closed.get("broker_truth_closed_trades"), 0)
+        broker_truth_count = len(broker_rows)
+        maturity = broker_truth_maturity_label(broker_truth_count)
+        metrics_status = broker_metrics_status(broker_truth_count)
+        official_available = broker_truth_count >= 50
         lifecycle_count = to_int(closed.get("lifecycle_closed_trades_available"), len(rows))
         attributed_count = to_int(closed.get("tracked_closed_trades_after"), len(rows))
         capture_vals = [to_float(r.get("capture_ratio"), 0.0) for r in rows if present(r.get("capture_ratio"))]
         giveback_vals = [to_float(r.get("giveback_pct"), 0.0) for r in rows if present(r.get("giveback_pct"))]
-        broker_low = broker_truth_count < 20
-        trust = "warming_up" if broker_low and attributed_count else "insufficient" if attributed_count == 0 else "improving"
-        paper_pf = self._profit_factor(returns) if attributed_count else 0.0
+        broker_capture_vals = [to_float(r.get("capture_ratio"), 0.0) for r in broker_rows if present(r.get("capture_ratio"))]
+        broker_giveback_vals = [to_float(r.get("giveback_pct"), 0.0) for r in broker_rows if present(r.get("giveback_pct"))]
+        broker_low = broker_truth_count < 50
+        diagnostic_pf = self._profit_factor(lifecycle_returns) if attributed_count else 0.0
+        official_pf = self._profit_factor(broker_returns) if official_available and broker_returns else None
+        official_wr = pct(len(broker_wins), len(broker_returns)) if official_available and broker_returns else None
+        official_avg_return = avg(broker_returns) if official_available and broker_returns else None
         score = 0.0
-        if attributed_count:
-            score = min(100.0, 25.0 + min(35.0, attributed_count / 20.0) + min(20.0, len(capture_vals) / 20.0) + (20.0 if not broker_low else 8.0))
+        if broker_truth_count:
+            score = min(100.0, broker_truth_count * 2.0 + (20.0 if official_available else 0.0))
         return {
             "broker_truth_closed_trade_count": broker_truth_count,
             "broker_truth_closed_trades": broker_truth_count,
+            "broker_confirmed_truth_records": broker_truth_count,
+            "broker_reported_closed_trade_count": broker_reported_closed_count,
             "attributed_paper_trade_count": attributed_count,
             "attributed_paper_trades": attributed_count,
             "lifecycle_learning_trade_count": lifecycle_count,
             "shadow_learning_trade_count": len(self._read_jsonl("replay_counterfactual_learning_v2.jsonl", 500)),
             "historical_replay_trade_count": max(0, to_int((statuses.get("historical_replay_recovery_v1") or {}).get("historical_replays_after"), 0)),
-            "paper_profit_factor": paper_pf,
-            "paper_win_rate": pct(len(wins), len(returns)),
-            "paper_average_return": avg(returns),
-            "paper_average_loss": avg(losses),
-            "paper_average_win": avg(wins),
-            "paper_capture_ratio": avg(capture_vals),
-            "paper_giveback_pct": avg(giveback_vals),
-            "paper_exit_quality": rounded(max(0.0, min(100.0, avg(capture_vals) * 100.0 - avg(giveback_vals) * 0.5)), 3) if capture_vals or giveback_vals else 0.0,
+            "paper_profit_factor": official_pf,
+            "paper_win_rate": official_wr,
+            "paper_average_return": official_avg_return,
+            "paper_average_loss": avg(broker_losses) if official_available and broker_losses else None,
+            "paper_average_win": avg(broker_wins) if official_available and broker_wins else None,
+            "paper_capture_ratio": avg(broker_capture_vals) if official_available and broker_capture_vals else None,
+            "paper_giveback_pct": avg(broker_giveback_vals) if official_available and broker_giveback_vals else None,
+            "paper_exit_quality": rounded(max(0.0, min(100.0, avg(broker_capture_vals) * 100.0 - avg(broker_giveback_vals) * 0.5)), 3) if official_available and (broker_capture_vals or broker_giveback_vals) else None,
+            "official_paper_profit_factor_status": metrics_status,
+            "official_paper_win_rate_status": metrics_status,
+            "official_paper_average_return_status": metrics_status,
+            "verified_trading_metrics_status": metrics_status,
+            "official_broker_truth_metric_status": metrics_status,
             "paper_profitability_confidence": rounded(min(100.0, score), 3),
-            "paper_metric_trust_level": trust,
+            "paper_metric_trust_level": maturity,
+            "broker_truth_maturity": maturity,
             "broker_truth_sample_size_low": broker_low,
-            "paper_ready_for_performance_judgment": bool(not broker_low and attributed_count >= 20),
+            "paper_ready_for_performance_judgment": bool(official_available),
             "paper_ready_for_observation_mode": bool(attributed_count > 0),
             "paper_performance_attribution_score": rounded(score, 3),
-            "paper_profitability_validation_score": rounded(min(100.0, score * 0.82 + (10.0 if returns else 0.0)), 3),
-            "paper_performance_blocker_if_below_60": None if score >= 60 else "true broker-truth closed trade sample remains low; lifecycle attribution is useful but not enough for high-confidence Paper performance proof",
+            "paper_profitability_validation_score": rounded(min(100.0, score * 0.82 + (10.0 if broker_returns else 0.0)), 3),
+            "paper_performance_blocker_if_below_60": None if score >= 60 else "broker-confirmed closed trade sample remains below 50; lifecycle attribution is useful but official Paper PF/WR/Avg Return remain blocked",
             "broker_truth_paper_metrics": {
                 "closed_trades": broker_truth_count,
-                "paper_metric_trust_level": "warming_up" if broker_low else "trusted",
-                "ready_for_performance_judgment": bool(not broker_low),
+                "paper_metric_trust_level": maturity,
+                "verified_trading_metrics_status": metrics_status,
+                "ready_for_performance_judgment": bool(official_available),
+                "paper_profit_factor": official_pf,
+                "paper_win_rate": official_wr,
+                "paper_average_return": official_avg_return,
             },
             "attributed_paper_metrics": {
                 "trades": attributed_count,
-                "paper_profit_factor": paper_pf,
-                "paper_win_rate": pct(len(wins), len(returns)),
-                "paper_average_return": avg(returns),
-                "paper_capture_ratio": avg(capture_vals),
-                "paper_giveback_pct": avg(giveback_vals),
+                "diagnostic_lifecycle_profit_factor": diagnostic_pf,
+                "diagnostic_lifecycle_win_rate": pct(len(lifecycle_wins), len(lifecycle_returns)),
+                "diagnostic_lifecycle_average_return": avg(lifecycle_returns),
+                "diagnostic_lifecycle_average_loss": avg(lifecycle_losses),
+                "diagnostic_lifecycle_average_win": avg(lifecycle_wins),
+                "diagnostic_lifecycle_capture_ratio": avg(capture_vals),
+                "diagnostic_lifecycle_giveback_pct": avg(giveback_vals),
                 "source": "closed_trade_truth_registry_v1",
+                "evidence_basis": "advisory_lifecycle_only",
+                "diagnostic_only": True,
+                "not_broker_verified": True,
             },
+            "diagnostic_lifecycle_profit_factor": diagnostic_pf,
+            "diagnostic_lifecycle_win_rate": pct(len(lifecycle_wins), len(lifecycle_returns)),
+            "diagnostic_lifecycle_average_return": avg(lifecycle_returns),
+            "diagnostic_lifecycle_capture_ratio": avg(capture_vals),
+            "diagnostic_lifecycle_giveback_pct": avg(giveback_vals),
+            "diagnostic_metric_basis": "advisory_lifecycle_only",
+            "diagnostic_metrics_not_broker_verified": True,
             "shadow_metrics": {
                 "trade_count": len(self._read_jsonl("replay_counterfactual_learning_v2.jsonl", 500)),
                 "source": "replay_counterfactual_learning_v2",
@@ -478,13 +647,13 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
                 "shadow_learning_trades": len(self._read_jsonl("replay_counterfactual_learning_v2.jsonl", 500)),
                 "historical_replay_trades": max(0, to_int((statuses.get("historical_replay_recovery_v1") or {}).get("historical_replays_after"), 0)),
             },
-            "paper_metrics_ready_for_decision_support": bool(score >= 60 and not broker_low),
+            "paper_metrics_ready_for_decision_support": bool(score >= 60 and official_available),
         }
 
     def _paper_influence(self, attach: dict[str, Any], closed: dict[str, Any], integration: dict[str, Any]) -> dict[str, Any]:
         before = to_float(integration.get("paper_decision_influence_score_after"), 30.0)
         coverage = to_float(attach.get("paper_attachment_pct_after"), 0.0)
-        closed_score = to_float(closed.get("closed_trade_truth_score"), 0.0)
+        closed_score = to_float(closed.get("lifecycle_attribution_score"), closed.get("closed_trade_truth_score"))
         after = rounded(min(100.0, coverage * 0.62 + closed_score * 0.28 + 10.0), 3)
         total = to_int(attach.get("paper_candidates_audited"), 0)
         with_evidence = to_int(attach.get("paper_candidates_with_full_evidence"), 0) + to_int(attach.get("paper_candidates_with_partial_evidence"), 0)
@@ -1451,6 +1620,11 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "highest_roi_exit_improvement": "profit_lock_exit" if profit_capture_score < 60 else (leaderboard[0].get("policy") if leaderboard else "collect_more_closed_trade_evidence"),
             "exit_maturity_blocker_if_below_70": blocker,
             "sample_exit_rows": enriched[:12],
+            "evidence_basis": "advisory_lifecycle_only",
+            "diagnostic_only": True,
+            "not_broker_verified": True,
+            "broker_confirmed_truth_records": to_int(closed.get("broker_confirmed_truth_records"), closed.get("broker_truth_closed_trades")),
+            "verified_trading_metrics_status": broker_metrics_status(to_int(closed.get("broker_confirmed_truth_records"), closed.get("broker_truth_closed_trades"))),
             "advisory_only": True,
             **safe_flags(),
         }
@@ -1463,18 +1637,26 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         filled_orders = max(to_int(alpaca.get("filled_orders"), 0), broker_closed * 2)
         gross_profit = 0.0
         gross_loss = 0.0
-        rows = (self._read_json(CLOSED_REGISTRY).get("records") or []) if isinstance(self._read_json(CLOSED_REGISTRY).get("records"), list) else []
-        broker_rows = rows[:broker_closed] if broker_closed > 0 else []
+        registry = self._read_json(CLOSED_REGISTRY)
+        rows = registry.get("records") if isinstance(registry.get("records"), list) else []
+        broker_rows = [r for r in rows if self._is_broker_confirmed_truth_record(r)]
+        broker_reported_closed = broker_closed
+        broker_closed = len(broker_rows)
         returns = [to_float(r.get("return_pct"), 0.0) for r in broker_rows if present(r.get("return_pct"))]
         gross_profit = sum(v for v in returns if v > 0)
         gross_loss = abs(sum(v for v in returns if v < 0))
-        true_pf = rounded(gross_profit / gross_loss, 3) if gross_loss > 0 else (rounded(gross_profit, 3) if gross_profit > 0 else None)
-        trust = "warming_up" if broker_closed < 20 else "usable" if broker_closed < 50 else "strong"
-        confidence = rounded(min(100.0, broker_closed * 3.0 + (20.0 if broker_closed >= 20 else 5.0)), 3)
+        official_available = broker_closed >= 50
+        true_pf = (rounded(gross_profit / gross_loss, 3) if gross_loss > 0 else (rounded(gross_profit, 3) if gross_profit > 0 else None)) if official_available else None
+        trust = broker_truth_maturity_label(broker_closed)
+        metrics_status = broker_metrics_status(broker_closed)
+        confidence = rounded(min(100.0, broker_closed * 2.0 + (20.0 if official_available else 0.0)), 3)
+        truth_audit = self._truth_integrity_audit(rows, broker_closed=broker_closed)
         return {
             "status": "ok",
             "broker_truth_closed_trades_before": broker_closed,
             "broker_truth_closed_trades_after": broker_closed,
+            "broker_confirmed_truth_records": broker_closed,
+            "broker_reported_closed_trade_count": broker_reported_closed,
             "broker_truth_open_positions": broker_open,
             "broker_truth_orders_reviewed": orders_reviewed,
             "broker_truth_filled_orders": filled_orders,
@@ -1482,15 +1664,19 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "broker_truth_join_rate": closed.get("closed_trade_join_rate"),
             "broker_truth_trade_reconstruction_score": rounded(min(100.0, to_float(closed.get("closed_trade_truth_score"), 0.0) * 0.55 + confidence * 0.45), 3),
             "true_paper_profit_factor": true_pf,
-            "true_paper_win_rate": pct(len([v for v in returns if v > 0]), len(returns)) if returns else None,
-            "true_paper_avg_return": avg(returns) if returns else None,
-            "true_paper_avg_win": avg([v for v in returns if v > 0]) if returns else None,
-            "true_paper_avg_loss": avg([v for v in returns if v < 0]) if returns else None,
+            "true_paper_win_rate": pct(len([v for v in returns if v > 0]), len(returns)) if official_available and returns else None,
+            "true_paper_avg_return": avg(returns) if official_available and returns else None,
+            "true_paper_avg_win": avg([v for v in returns if v > 0]) if official_available and returns else None,
+            "true_paper_avg_loss": avg([v for v in returns if v < 0]) if official_available and returns else None,
             "true_paper_gross_profit": rounded(gross_profit, 4),
             "true_paper_gross_loss": rounded(gross_loss, 4),
             "true_paper_metric_confidence": confidence,
             "true_paper_metric_trust_level": trust,
-            "broker_truth_blocker_if_low_sample": None if broker_closed >= 20 else "broker-confirmed closed trade sample remains below 20; lifecycle/shadow/replay metrics must stay diagnostic",
+            "verified_trading_metrics_status": metrics_status,
+            "official_broker_truth_metric_status": metrics_status,
+            "performance_metrics_safe_to_trust": bool(official_available),
+            "broker_truth_blocker_if_low_sample": None if official_available else "broker-confirmed closed trade sample remains below 50; lifecycle/shadow/replay metrics must stay diagnostic",
+            "truth_integrity_audit_v1": truth_audit,
             "paper_mode_verified": bool(alpaca.get("paper_mode_verified", True)),
             "broker_live_endpoint_allowed": bool(alpaca.get("broker_live_endpoint_allowed", False)),
             **safe_flags(),
@@ -1545,7 +1731,7 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         }
 
     def _executive_truth_repair(self, icl: dict[str, Any], registry: dict[str, Any], performance: dict[str, Any], exit_conv: dict[str, Any]) -> dict[str, Any]:
-        before = "DEGRADED" if performance.get("paper_metric_trust_level") in {"warming_up", "insufficient"} else "WATCH"
+        before = "DEGRADED" if performance.get("paper_metric_trust_level") in {"warming_up", "insufficient", "NOT_ACTIVE", "WARMING_UP_LOW_CONFIDENCE"} else "WATCH"
         red = to_int(registry.get("red_issue_count"), 0)
         orange = to_int(registry.get("orange_issue_count"), 0)
         failed = 0
@@ -1554,7 +1740,8 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         learning = "HEALTHY" if icl_ok and failed == 0 else "WATCH"
         trading_conf = "WARMING_UP" if performance.get("broker_truth_sample_size_low") else "MODERATE"
         broker_count = to_int(performance.get("broker_truth_closed_trade_count"), 0)
-        maturity = "WARMING_UP" if broker_count < 20 else "DEVELOPING" if broker_count < 50 else "USABLE" if broker_count < 100 else "STRONG"
+        maturity = broker_truth_maturity_label(broker_count)
+        metrics_status = broker_metrics_status(broker_count)
         return {
             "status": "ok",
             "executive_system_health_before": before,
@@ -1563,6 +1750,8 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "intelligence_consumption_health": "HEALTHY" if icl_ok else "WATCH",
             "trading_confidence": trading_conf,
             "broker_truth_maturity": maturity,
+            "verified_trading_metrics_status": metrics_status,
+            "performance_metrics_safe_to_trust": bool(broker_count >= 50),
             "why_profit_factor_warming_up": "true Paper PF is only official after enough broker-confirmed closed trades; lifecycle/shadow/replay PF remains diagnostic",
             "why_win_rate_warming_up": "broker-confirmed closed-trade sample is still below maturity threshold",
             "why_exit_quality_low": exit_conv.get("exit_maturity_blocker_if_below_70") or "exit quality is improving diagnostically but remains below maturity target",
@@ -1621,6 +1810,7 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
 
     def _performance_conversion_suite(self, exit_conv: dict[str, Any], broker: dict[str, Any], fmp: dict[str, Any], executive: dict[str, Any], capacity: dict[str, Any], registry: dict[str, Any] | None = None) -> dict[str, Any]:
         reg = dict(registry or {})
+        truth_audit = dict(broker.get("truth_integrity_audit_v1") or reg.get("truth_integrity_audit_v1") or {})
         return {
             "suite": "ASTRA Performance Conversion, Exit Intelligence, Broker Truth, FMP Utilization, Executive Truth & Capacity Completion Suite V1",
             "status": "ok",
@@ -1628,6 +1818,7 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "endpoint": "/api/astra_performance_conversion_exit_broker_fmp_truth_capacity_v1",
             "exit_intelligence_profit_capture_completion_v1": exit_conv,
             "broker_truth_completion_v1": broker,
+            "truth_integrity_audit_v1": truth_audit,
             "fmp_utilization_expansion_v1": fmp,
             "executive_truth_layer_repair_v1": executive,
             "capacity_saturation_audit_v1": capacity,
@@ -1647,6 +1838,17 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "true_paper_win_rate": broker.get("true_paper_win_rate"),
             "true_paper_avg_return": broker.get("true_paper_avg_return"),
             "true_paper_metric_trust_level": broker.get("true_paper_metric_trust_level"),
+            "verified_trading_metrics_status": broker.get("verified_trading_metrics_status"),
+            "official_broker_truth_metric_status": broker.get("official_broker_truth_metric_status"),
+            "performance_metrics_safe_to_trust": broker.get("performance_metrics_safe_to_trust"),
+            "broker_confirmed_truth_records": broker.get("broker_confirmed_truth_records"),
+            "lifecycle_attribution_records": truth_audit.get("lifecycle_attribution_records"),
+            "advisory_only_records": truth_audit.get("advisory_only_records"),
+            "records_missing_truth_fields": truth_audit.get("records_missing_truth_fields"),
+            "duplicate_source_trade_ids": truth_audit.get("duplicate_source_trade_ids"),
+            "duplicate_record_count": truth_audit.get("duplicate_record_count"),
+            "evidence_inflation_detected": truth_audit.get("evidence_inflation_detected"),
+            "registry_label_accuracy": truth_audit.get("registry_label_accuracy"),
             "fmp_daily_cap_before": fmp.get("fmp_daily_cap_before"),
             "fmp_daily_cap_after": fmp.get("fmp_daily_cap_after"),
             "fmp_usage_pct": fmp.get("fmp_usage_pct"),
@@ -1682,9 +1884,13 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         if to_float(influence.get("paper_influence_score_after"), 0) < 60:
             issues.append(self._issue("Paper influence below threshold", "orange", "Paper Influence", influence.get("paper_influence_blocker_if_below_60"), influence, "complete advisory and closed-trade traceability", metric_before=influence.get("paper_influence_score_before"), metric_after=influence.get("paper_influence_score_after")))
         if to_int(closed.get("tracked_closed_trades_after"), 0) <= 0:
-            issues.append(self._issue("Closed trade attribution missing", "red", "Closed Trade Attribution", closed.get("closed_trade_attribution_blocker_if_zero"), closed, "create derived closed trade truth registry from broker/lifecycle evidence", metric_before=closed.get("tracked_closed_trades_before"), metric_after=closed.get("tracked_closed_trades_after")))
+            issues.append(self._issue("lifecycle attribution registry missing", "red", "Closed Trade Attribution", closed.get("closed_trade_attribution_blocker_if_zero"), closed, "create derived lifecycle attribution registry from bounded local evidence; keep broker truth separate", metric_before=closed.get("tracked_closed_trades_before"), metric_after=closed.get("tracked_closed_trades_after")))
         else:
-            issues.append(self._issue("Closed trade attribution registry created", "green", "Closed Trade Attribution", "derived registry now contains closed/lifecycle observations", closed, "monitor broker truth sample growth", status="fixed", metric_before=closed.get("tracked_closed_trades_before"), metric_after=closed.get("tracked_closed_trades_after")))
+            issues.append(self._issue("lifecycle attribution registry created", "green", "Closed Trade Attribution", "advisory lifecycle evidence is available but not broker verified", closed, "monitor broker truth sample growth; do not treat lifecycle rows as official PF/WR/Avg Return", status="fixed", metric_before=closed.get("tracked_closed_trades_before"), metric_after=closed.get("tracked_closed_trades_after")))
+        if to_int(closed.get("broker_confirmed_truth_records"), 0) < 50:
+            issues.append(self._issue("performance metrics blocked pending broker truth", "yellow", "Broker Truth", closed.get("broker_truth_blocker_if_low_sample") or "broker-confirmed closed trade sample remains below 50", closed, "continue paper observation until broker-confirmed closed trades reach the official metric threshold", metric_before=closed.get("broker_confirmed_truth_records"), metric_after=closed.get("broker_confirmed_truth_records")))
+        if closed.get("evidence_inflation_detected"):
+            issues.append(self._issue("registry evidence inflation detected", "yellow", "Evidence Integrity", "lifecycle/advisory rows and duplicate source ids were previously able to inflate broker-truth confidence", closed, "keep lifecycle attribution diagnostic-only and use broker-confirmed records for official trading metrics", metric_before=closed.get("duplicate_record_count"), metric_after=closed.get("broker_confirmed_truth_records")))
         fmp_calls_today = to_int(provider.get("fmp_calls_today"), 0)
         fmp_daily_cap = to_int(provider.get("fmp_daily_expansion_cap"), 25)
         if provider.get("fmp_utilization_status_before") == "UNDERUTILIZED":
@@ -1733,7 +1939,7 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             issues.append(self._issue("Executive Snapshot incorrectly degraded", "green", "Executive Truth", "executive truth now separates system health from broker-truth evidence maturity", executive_conv, "monitor dashboard truth labels", status="fixed", metric_before=executive_conv.get("executive_system_health_before"), metric_after=executive_conv.get("executive_system_health_after")))
         if capacity_conv and capacity_conv.get("capacity_mismatch_detected"):
             issues.append(self._issue("capacity mismatch or saturation", "orange" if capacity_conv.get("saturation_status") in {"SATURATED", "CAPACITY_POLICY_MISMATCH"} else "yellow", "Capacity", capacity_conv.get("capacity_mismatch_root_cause"), capacity_conv, "audit stale/dust/legacy positions and capacity policy before changing any Paper behavior", metric_before=capacity_conv.get("capacity_target"), metric_after=capacity_conv.get("open_positions_count")))
-        if broker_conv and str(broker_conv.get("true_paper_metric_trust_level")).lower() == "warming_up":
+        if broker_conv and str(broker_conv.get("verified_trading_metrics_status") or "").upper() == "INSUFFICIENT_BROKER_TRUTH_EVIDENCE":
             issues.append(self._issue("exit learning awaiting closed-trade evidence", "yellow", "Exit Intelligence", broker_conv.get("broker_truth_blocker_if_low_sample"), broker_conv, "collect broker-confirmed closed trades; do not promote learned exits automatically"))
         red = sum(1 for i in issues if i["severity"] == "red" and i["status"] == "open")
         orange = sum(1 for i in issues if i["severity"] == "orange" and i["status"] == "open")
@@ -1797,7 +2003,7 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
                     "fmp_worker_calls": provider["fmp_calls_today"],
                 }.items() if (k == "fmp_worker_calls" and to_float(v) <= 0) or (k != "fmp_worker_calls" and to_float(v) < 60)
             ],
-            "fixed_trace_gaps": ["closed_trade_truth_registry_created"] if closed["tracked_closed_trades_after"] > 0 else [],
+            "fixed_trace_gaps": ["lifecycle_attribution_registry_created"] if closed["tracked_closed_trades_after"] > 0 else [],
             "highest_roi_trace_gap": (registry.get("highest_roi_open_issue") or {}).get("issue_name"),
             "source_exists_verified": True,
             "source_fresh_verified": True,
@@ -1805,7 +2011,8 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "evidence_compressed_verified": bool(fabric or profiles),
             "evidence_consumed_verified": influence["paper_influence_score_after"] >= 60,
             "paper_candidate_annotated_verified": attach["paper_attachment_pct_after"] >= 80,
-            "closed_trade_attributed_verified": closed["tracked_closed_trades_after"] > 0,
+            "lifecycle_attribution_verified": closed["tracked_closed_trades_after"] > 0,
+            "broker_confirmed_closed_trade_truth_verified": to_int(closed.get("broker_confirmed_truth_records"), 0) >= 50,
             "paper_outcome_measured_verified": performance["attributed_paper_trade_count"] > 0,
             "profitability_impact_measured_verified": metric_thresholds["profitability_validation_score"] > 0,
             "issue_closure_requires_verification": True,
@@ -1834,9 +2041,15 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "paper_performance_attribution_score": performance["paper_performance_attribution_score"],
             "broker_truth_closed_trades": performance["broker_truth_closed_trade_count"],
             "attributed_paper_trades": performance["attributed_paper_trade_count"],
+            "broker_confirmed_truth_records": closed.get("broker_confirmed_truth_records"),
+            "lifecycle_attribution_records": closed.get("lifecycle_attribution_records"),
+            "verified_trading_metrics_status": performance.get("verified_trading_metrics_status"),
             "paper_profit_factor": performance["paper_profit_factor"],
             "paper_win_rate": performance["paper_win_rate"],
             "paper_average_return": performance["paper_average_return"],
+            "diagnostic_lifecycle_profit_factor": performance.get("diagnostic_lifecycle_profit_factor"),
+            "diagnostic_lifecycle_win_rate": performance.get("diagnostic_lifecycle_win_rate"),
+            "diagnostic_lifecycle_average_return": performance.get("diagnostic_lifecycle_average_return"),
             "fmp_utilization_status": provider["fmp_utilization_status_after"],
             "fmp_calls_today": provider["fmp_calls_today"],
             "fmp_daily_cap": fmp_corridor.get("fmp_daily_cap_after"),
@@ -1891,11 +2104,15 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "fmp_safe_next_action": provider.get("fmp_safe_next_action"),
             "provider_protection_score": provider.get("provider_protection_score"),
             "paper_metric_trust_level": performance.get("paper_metric_trust_level"),
+            "verified_trading_metrics_status": performance.get("verified_trading_metrics_status"),
             "broker_truth_closed_trades": performance.get("broker_truth_closed_trade_count"),
             "attributed_paper_trades": performance.get("attributed_paper_trade_count"),
             "paper_pf": performance.get("paper_profit_factor"),
             "paper_win_rate": performance.get("paper_win_rate"),
             "paper_avg_return": performance.get("paper_average_return"),
+            "diagnostic_lifecycle_pf": performance.get("diagnostic_lifecycle_profit_factor"),
+            "diagnostic_lifecycle_win_rate": performance.get("diagnostic_lifecycle_win_rate"),
+            "diagnostic_lifecycle_avg_return": performance.get("diagnostic_lifecycle_average_return"),
             "paper_ready_for_performance_judgment": performance.get("paper_ready_for_performance_judgment"),
             "paper_ready_for_observation_mode": performance.get("paper_ready_for_observation_mode"),
             "horizon_usage_before": horizon.get("horizon_usage_before"),
@@ -1930,6 +2147,7 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "real_paper_performance_attribution_v1": performance,
             "paper_influence_completion_v1": influence,
             "closed_trade_attribution_engine_v1": closed,
+            "truth_integrity_audit_v1": closed.get("truth_integrity_audit_v1"),
             "session_submission_blocker_investigation_v1": session,
             "fmp_utilization_recovery_controlled_reactivation_v2": provider,
             "cortex_provider_utilization_recovery_api_protection_v1": provider,
@@ -1964,16 +2182,30 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "tracked_closed_trades_before": closed["tracked_closed_trades_before"],
             "tracked_closed_trades_after": closed["tracked_closed_trades_after"],
             "broker_truth_closed_trade_count": performance["broker_truth_closed_trade_count"],
+            "broker_confirmed_truth_records": closed.get("broker_confirmed_truth_records"),
+            "lifecycle_attribution_records": closed.get("lifecycle_attribution_records"),
+            "advisory_only_records": closed.get("advisory_only_records"),
+            "records_missing_truth_fields": closed.get("records_missing_truth_fields"),
+            "duplicate_source_trade_ids": closed.get("duplicate_source_trade_ids"),
+            "duplicate_record_count": closed.get("duplicate_record_count"),
+            "evidence_inflation_detected": closed.get("evidence_inflation_detected"),
+            "registry_label_accuracy": closed.get("registry_label_accuracy"),
             "attributed_paper_trade_count": performance["attributed_paper_trade_count"],
             "closed_trade_attribution_score": closed["closed_trade_truth_score"],
+            "lifecycle_attribution_score": closed.get("lifecycle_attribution_score"),
             "paper_performance_attribution_score": performance["paper_performance_attribution_score"],
             "paper_profitability_validation_score": performance["paper_profitability_validation_score"],
             "paper_profit_factor": performance["paper_profit_factor"],
             "paper_win_rate": performance["paper_win_rate"],
             "paper_average_return": performance["paper_average_return"],
+            "diagnostic_lifecycle_profit_factor": performance.get("diagnostic_lifecycle_profit_factor"),
+            "diagnostic_lifecycle_win_rate": performance.get("diagnostic_lifecycle_win_rate"),
+            "diagnostic_lifecycle_average_return": performance.get("diagnostic_lifecycle_average_return"),
             "paper_capture_ratio": performance["paper_capture_ratio"],
             "paper_giveback_pct": performance["paper_giveback_pct"],
             "paper_metric_trust_level": performance["paper_metric_trust_level"],
+            "verified_trading_metrics_status": performance.get("verified_trading_metrics_status"),
+            "official_broker_truth_metric_status": performance.get("official_broker_truth_metric_status"),
             "true_paper_profit_factor": broker_truth_completion.get("true_paper_profit_factor"),
             "true_paper_win_rate": broker_truth_completion.get("true_paper_win_rate"),
             "true_paper_avg_return": broker_truth_completion.get("true_paper_avg_return"),
