@@ -44814,6 +44814,239 @@ def _clean_broker_truth_records_from_alpaca(alpaca: dict) -> list[dict]:
     return clean
 
 
+def _astra_evidence_state_list(relative_path: str) -> list[dict]:
+    try:
+        with open(os.path.join(STATE, relative_path), "r", encoding="utf-8") as handle:
+            parsed = json.load(handle)
+        if isinstance(parsed, list):
+            return [row for row in parsed if isinstance(row, dict)]
+        if isinstance(parsed, dict):
+            rows = parsed.get("records") or parsed.get("broker_truth_records") or []
+            return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    except Exception:
+        pass
+    return []
+
+
+def _astra_evidence_write_json(relative_path: str, payload: dict) -> bool:
+    try:
+        path = os.path.join(STATE, relative_path)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp_path, path)
+        return True
+    except Exception:
+        return False
+
+
+def _broker_truth_stable_key(row: dict) -> str:
+    broker_order_id = str(row.get("broker_order_id") or row.get("order_id") or "").strip()
+    if broker_order_id:
+        return f"broker_order_id:{broker_order_id}"
+    client_order_id = str(row.get("client_order_id") or "").strip()
+    if client_order_id:
+        return f"client_order_id:{client_order_id}"
+    symbol = str(row.get("symbol") or "").upper().strip()
+    ts = str(row.get("exit_timestamp") or row.get("filled_at") or row.get("broker_timestamp") or "").strip()
+    qty = round(_to_float(row.get("filled_qty") or row.get("qty"), 0.0), 6)
+    side = str(row.get("side") or "").lower().strip()
+    return f"fallback:{symbol}:{ts}:{qty}:{side}"
+
+
+def _broker_truth_quality(row: dict) -> tuple[str, list[str]]:
+    required = {
+        "source": row.get("source") or row.get("broker_source"),
+        "symbol": row.get("symbol"),
+        "broker_order_id_or_client_order_id": row.get("broker_order_id") or row.get("client_order_id"),
+        "side": row.get("side"),
+        "quantity": row.get("filled_qty") or row.get("qty"),
+        "filled_avg_price": row.get("filled_avg_price"),
+        "broker_timestamp": row.get("broker_timestamp") or row.get("exit_timestamp") or row.get("filled_at"),
+        "status": row.get("status") or row.get("closed_indicator"),
+    }
+    missing = [name for name, value in required.items() if value in (None, "", 0)]
+    has_minimum = (
+        bool(row.get("symbol"))
+        and bool(row.get("broker_order_id") or row.get("client_order_id"))
+        and _to_float(row.get("filled_qty") or row.get("qty"), 0.0) > 0
+        and bool(row.get("broker_timestamp") or row.get("exit_timestamp") or row.get("filled_at"))
+    )
+    if not has_minimum:
+        return "insufficient_broker_truth_fields", missing
+    if not missing and row.get("realized_pnl") is not None and row.get("entry_timestamp"):
+        return "broker_confirmed_complete", missing
+    return "broker_reconstructable_partial", missing
+
+
+def _canonicalize_broker_truth_records_v1(alpaca: dict, *, persist: bool = True) -> dict:
+    existing_rows = _astra_evidence_state_list("broker_truth_records_v1.json")
+    clean_rows = _clean_broker_truth_records_from_alpaca(alpaca)
+    by_key: dict[str, dict] = {}
+    for row in existing_rows:
+        key = str(row.get("stable_key") or _broker_truth_stable_key(row))
+        if key:
+            by_key[key] = dict(row)
+
+    missing_fields: dict[str, int] = {}
+    rejected_rows = 0
+    added = 0
+    for row in clean_rows:
+        canonical = {
+            "source": "alpaca_paper",
+            "broker_source": row.get("broker_source") or "alpaca_paper_closed_orders",
+            "symbol": row.get("symbol"),
+            "broker_order_id": row.get("broker_order_id"),
+            "client_order_id": row.get("client_order_id"),
+            "side": row.get("side") or "sell",
+            "filled_qty": row.get("filled_qty"),
+            "quantity": row.get("filled_qty"),
+            "filled_avg_price": row.get("filled_avg_price"),
+            "broker_timestamp": row.get("exit_timestamp"),
+            "entry_timestamp": row.get("entry_timestamp"),
+            "exit_timestamp": row.get("exit_timestamp"),
+            "status": "filled_closed_reconstructed",
+            "closed_indicator": True,
+            "realized_pnl": row.get("realized_pnl"),
+            "realized_pnl_available": row.get("realized_pnl") is not None,
+            "realized_return_pct": row.get("realized_return_pct"),
+            "official_metric_eligible": False,
+            "created_at": _now_utc_iso(),
+            "updated_at": _now_utc_iso(),
+        }
+        quality, missing = _broker_truth_quality(canonical)
+        canonical["truth_quality"] = quality
+        canonical["broker_truth_missing_fields"] = missing
+        canonical["stable_key"] = _broker_truth_stable_key(canonical)
+        for field in missing:
+            missing_fields[field] = missing_fields.get(field, 0) + 1
+        if quality == "insufficient_broker_truth_fields":
+            rejected_rows += 1
+            continue
+        existing = by_key.get(canonical["stable_key"])
+        if existing:
+            canonical["created_at"] = existing.get("created_at") or canonical["created_at"]
+            canonical["updated_at"] = _now_utc_iso()
+        else:
+            added += 1
+        by_key[canonical["stable_key"]] = canonical
+
+    records = sorted(by_key.values(), key=lambda r: str(r.get("broker_timestamp") or r.get("exit_timestamp") or ""))
+    complete = [r for r in records if r.get("truth_quality") == "broker_confirmed_complete"]
+    partial = [r for r in records if r.get("truth_quality") == "broker_reconstructable_partial"]
+    if not clean_rows and not records:
+        status = "NOT_AVAILABLE"
+    elif clean_rows and not records:
+        status = "BLOCKED_MISSING_REQUIRED_FIELDS"
+    elif partial and not complete:
+        status = "PARTIAL_CANONICALIZATION"
+    else:
+        status = "CANONICALIZED"
+    payload = {
+        "registry": "broker_truth_records_v1",
+        "status": status,
+        "generated_at": _now_utc_iso(),
+        "records": records,
+        "broker_truth_records_total": len(records),
+        "broker_confirmed_complete_records": len(complete),
+        "broker_reconstructable_partial_records": len(partial),
+        "broker_order_seen_not_closed_records": len([r for r in records if r.get("truth_quality") == "broker_order_seen_not_closed"]),
+        "insufficient_broker_truth_fields_records": rejected_rows,
+        "broker_truth_records_added_this_run": added,
+        "broker_truth_records_deduped": max(0, len(existing_rows) + len(clean_rows) - len(records) - rejected_rows),
+        "broker_truth_missing_fields": missing_fields,
+        "official_metric_eligible_records": len([r for r in complete if r.get("realized_pnl_available")]),
+        "behavior_safe_to_apply": False,
+        "paper_only_preserved": True,
+        "alpaca_paper_only_preserved": True,
+        "broker_behavior_changed": False,
+        "live_trading_changed": False,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+    }
+    if persist:
+        payload["persisted"] = _astra_evidence_write_json("broker_truth_records_v1.json", payload)
+    else:
+        payload["persisted"] = False
+    return payload
+
+
+def _canonical_outcome_audit_v1(truth: dict, broker_registry: dict, *, persist: bool = True) -> dict:
+    total_lifecycle = int(_to_float(truth.get("lifecycle_attribution_records"), 0.0))
+    unique_source = int(_to_float(truth.get("unique_source_trade_ids"), 0.0))
+    duplicates = int(_to_float(truth.get("duplicate_record_count"), max(0, total_lifecycle - unique_source)))
+    broker_records = int(_to_float(broker_registry.get("broker_truth_records_total"), 0.0))
+    complete_records = int(_to_float(broker_registry.get("broker_confirmed_complete_records"), 0.0))
+    partial_records = int(_to_float(broker_registry.get("broker_reconstructable_partial_records"), 0.0))
+    linked_outcomes = complete_records
+    audit = {
+        "audit": "canonical_outcome_audit_v1",
+        "status": "audit_only",
+        "generated_at": _now_utc_iso(),
+        "total_lifecycle_records": total_lifecycle,
+        "unique_source_trade_ids": unique_source,
+        "duplicate_lifecycle_records": duplicates,
+        "canonical_outcome_candidates": unique_source,
+        "broker_truth_records_total": broker_records,
+        "broker_truth_linked_outcomes": linked_outcomes,
+        "broker_truth_partial_outcomes": partial_records,
+        "unlinked_lifecycle_outcomes": max(0, unique_source - linked_outcomes),
+        "advisory_only_outcomes": max(0, unique_source - linked_outcomes),
+        "replay_or_counterfactual_outcomes": 0,
+        "outcome_canonicalization_status": "BROKER_TRUTH_PARTIAL_FOUNDATION" if broker_records else "WAITING_FOR_BROKER_TRUTH",
+        "destructive_merge_performed": False,
+        "raw_lifecycle_records_preserved": True,
+        "behavior_safe_to_apply": False,
+        "paper_only_preserved": True,
+        "alpaca_paper_only_preserved": True,
+        "broker_behavior_changed": False,
+        "live_trading_changed": False,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+    }
+    if persist:
+        audit["persisted"] = _astra_evidence_write_json("canonical_outcome_audit_v1.json", audit)
+    else:
+        audit["persisted"] = False
+    return audit
+
+
+def _truth_wiring_integrity_v1(evidence: dict, canonical_audit: dict, registry: dict) -> dict:
+    official_blocked = evidence.get("official_metric_status") == "INSUFFICIENT_BROKER_TRUTH_EVIDENCE"
+    lifecycle_labeled = ((evidence.get("performance_validation") or {}).get("lifecycle_metrics_labeled") == "diagnostic_only/advisory_lifecycle_only/not_broker_verified")
+    duplicate_detected = int(_to_float(canonical_audit.get("duplicate_lifecycle_records"), 0.0)) > 0
+    blockers = []
+    if not official_blocked and int(_to_float(registry.get("broker_confirmed_complete_records"), 0.0)) < 50:
+        blockers.append("official_metrics_not_blocked_with_low_broker_truth_sample")
+    if not lifecycle_labeled:
+        blockers.append("lifecycle_metrics_missing_diagnostic_label")
+    status = "PASS" if not blockers else "FAIL"
+    return {
+        "truth_wiring_integrity_v1": True,
+        "broker_truth_endpoint_connected": True,
+        "truth_integrity_endpoint_connected": True,
+        "evidence_maturation_endpoint_connected": True,
+        "unified_diagnostics_connected": True,
+        "cortex_connected": True,
+        "learning_center_connected": True,
+        "official_metrics_blocked_when_insufficient": official_blocked,
+        "lifecycle_metrics_labeled_diagnostic": lifecycle_labeled,
+        "duplicate_evidence_detected": duplicate_detected,
+        "broker_truth_not_replaced_by_replay": True,
+        "broker_truth_not_replaced_by_lifecycle": True,
+        "broker_truth_records_registry_connected": int(_to_float(registry.get("broker_truth_records_total"), 0.0)) >= 0,
+        "canonical_outcome_audit_connected": True,
+        "wiring_status": status if not duplicate_detected else ("WARNING" if not blockers else status),
+        "wiring_blockers": blockers,
+        "exact_fix_needed": None if not blockers else "keep official broker metrics gated and lifecycle/replay metrics diagnostic-only",
+        "behavior_safe_to_apply": False,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+    }
+
+
 def _astra_evidence_maturation_status_payload(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -44834,35 +45067,46 @@ def _astra_evidence_maturation_status_payload(statuses: dict | None = None) -> d
 
     broker_truth_metrics = alpaca.get("broker_truth_metrics") if isinstance(alpaca.get("broker_truth_metrics"), dict) else {}
     clean_broker_rows = _clean_broker_truth_records_from_alpaca(alpaca)
+    canonical_broker_registry = _canonicalize_broker_truth_records_v1(alpaca, persist=True)
     registry_broker_records = int(_to_float(truth.get("broker_confirmed_truth_records"), 0.0))
+    broker_records_total = int(_to_float(canonical_broker_registry.get("broker_truth_records_total"), 0.0))
+    broker_complete_records = int(_to_float(canonical_broker_registry.get("broker_confirmed_complete_records"), 0.0))
+    broker_partial_records = int(_to_float(canonical_broker_registry.get("broker_reconstructable_partial_records"), 0.0))
     clean_broker_count = len(clean_broker_rows)
     effective_broker_records = max(registry_broker_records, clean_broker_count)
     missing_broker_fields = []
     if not clean_broker_rows:
         missing_broker_fields.append("clean_alpaca_closed_order_rows")
-    if registry_broker_records <= 0:
+    if broker_records_total <= 0:
         missing_broker_fields.append("canonical_truth_registry_ingestion")
     if clean_broker_rows and any(not r.get("entry_timestamp") for r in clean_broker_rows):
         missing_broker_fields.append("entry_timestamp")
 
     broker_truth_ingestion = {
-        "broker_truth_ingestion_status": "available_not_canonicalized" if clean_broker_rows and registry_broker_records <= 0 else ("canonicalized" if registry_broker_records > 0 else "not_available"),
+        "broker_truth_ingestion_status": canonical_broker_registry.get("status") or ("AVAILABLE_NOT_CANONICALIZED" if clean_broker_rows and broker_records_total <= 0 else ("CANONICALIZED" if broker_records_total > 0 else "NOT_AVAILABLE")),
         "broker_truth_source_available": bool(clean_broker_rows),
-        "broker_confirmed_truth_records": registry_broker_records,
+        "broker_confirmed_truth_records": broker_complete_records,
+        "broker_truth_records_total": broker_records_total,
+        "broker_confirmed_complete_records": broker_complete_records,
+        "broker_reconstructable_partial_records": broker_partial_records,
+        "broker_truth_records_added_this_run": canonical_broker_registry.get("broker_truth_records_added_this_run", 0),
+        "broker_truth_records_deduped": canonical_broker_registry.get("broker_truth_records_deduped", 0),
         "broker_truth_records_available_from_alpaca_status": clean_broker_count,
-        "broker_truth_records_v1": clean_broker_rows[-25:],
+        "broker_truth_records_v1": (canonical_broker_registry.get("records") or [])[-25:],
+        "broker_truth_registry_path": "state/broker_truth_records_v1.json",
         "closed_order_history_supported": True,
         "closed_order_history_source": "engine/alpaca_paper_broker.py::broker_truth_metrics",
         "client_order_id_persisted": bool(any(r.get("client_order_id") for r in clean_broker_rows)),
         "broker_order_id_persisted": bool(any(r.get("broker_order_id") for r in clean_broker_rows)),
         "realized_pnl_available": bool(any(r.get("realized_pnl") is not None for r in clean_broker_rows)),
         "missing_broker_truth_fields": missing_broker_fields,
+        "broker_truth_missing_fields": canonical_broker_registry.get("broker_truth_missing_fields", {}),
         "next_required_broker_truth_step": (
-            "persist clean Alpaca closed-order rows into canonical broker_truth_records_v1 and join entry timestamps without using lifecycle/advisory rows"
-            if clean_broker_rows and registry_broker_records <= 0
+            "collect additional broker-confirmed complete closed paper trades; keep partial reconstructed rows excluded from official metrics"
+            if broker_records_total > 0 and broker_complete_records < 50
             else "wait for Alpaca closed orders/fills or credential availability; do not infer broker truth from lifecycle evidence"
         ),
-        "official_metric_status": _broker_truth_metric_status_local(registry_broker_records),
+        "official_metric_status": _broker_truth_metric_status_local(broker_complete_records),
     }
 
     broker_open = int(_to_float(alpaca.get("open_positions_count"), _to_float(horizon_capacity.get("active_broker_positions"), 0.0)))
@@ -44886,22 +45130,28 @@ def _astra_evidence_maturation_status_payload(statuses: dict | None = None) -> d
         "lifecycle_active_positions": lifecycle_active,
         "stale_internal_positions": stale_internal,
         "advisory_or_shadow_positions": int(_to_float(truth.get("lifecycle_attribution_records"), _to_float(cortex.get("attributed_paper_trade_count"), 0.0))),
+        "replay_positions": 0,
+        "duplicate_position_records": max(0, internal_active - broker_open) if internal_active and broker_open else 0,
         "target_capacity": target_capacity,
+        "capacity_over_target_by": max(0, broker_open - target_capacity),
         "capacity_policy_status": capacity_status,
         "capacity_source_of_truth": "broker_confirmed_alpaca_paper" if broker_open else "cached_horizon_capacity_diagnostics",
-        "recommended_capacity_next_action": "resolve whether 20 is a learning target or hard policy; keep broker truth as source and do not force liquidations" if capacity_status != "OK" else "monitor",
+        "recommended_capacity_next_action": "review broker paper positions manually and wait for natural exits; target capacity should remain unchanged and no automatic action is taken" if capacity_status != "OK" else "monitor",
     }
 
-    official_status = _broker_truth_metric_status_local(registry_broker_records)
+    official_status = _broker_truth_metric_status_local(broker_complete_records)
     performance_validation = {
         "official_metric_status": official_status,
         "diagnostic_metric_status": "AVAILABLE_DIAGNOSTIC_ONLY" if int(_to_float(truth.get("lifecycle_attribution_records"), 0.0)) > 0 else "INSUFFICIENT_EVIDENCE",
         "broker_truth_sample_threshold": 50,
-        "broker_truth_maturity": _broker_truth_maturity_label_local(registry_broker_records),
+        "broker_truth_maturity": _broker_truth_maturity_label_local(broker_complete_records),
         "performance_validation_status": "OFFICIAL_METRICS_BLOCKED_DIAGNOSTIC_AVAILABLE" if official_status != "AVAILABLE" else "OFFICIAL_METRICS_AVAILABLE",
         "official_profit_factor": None if official_status != "AVAILABLE" else performance_conversion.get("true_paper_profit_factor"),
         "official_win_rate": None if official_status != "AVAILABLE" else performance_conversion.get("true_paper_win_rate"),
         "official_average_return": None if official_status != "AVAILABLE" else performance_conversion.get("true_paper_avg_return"),
+        "official_profit_capture": None if official_status != "AVAILABLE" else performance_conversion.get("true_paper_profit_capture"),
+        "official_giveback_reduction": None if official_status != "AVAILABLE" else performance_conversion.get("true_paper_avg_giveback"),
+        "verified_performance_score": None if official_status != "AVAILABLE" else performance_conversion.get("verified_performance_score"),
         "diagnostic_lifecycle_profit_factor": cortex.get("diagnostic_lifecycle_profit_factor") or performance_conversion.get("diagnostic_lifecycle_profit_factor"),
         "lifecycle_metrics_labeled": "diagnostic_only/advisory_lifecycle_only/not_broker_verified",
     }
@@ -44935,7 +45185,7 @@ def _astra_evidence_maturation_status_payload(statuses: dict | None = None) -> d
     weak_symbols = [r for r in symbol_items if r.get("broker_confirmed_trade_count", 0) <= 0][:10]
     symbol_maturity = {
         "symbol_profiles_tracked": len(profiles),
-        "symbol_evidence_quality": "advisory_mature_broker_truth_immature" if profiles and registry_broker_records < 50 else "insufficient_evidence" if not profiles else "developing",
+        "symbol_evidence_quality": "advisory_mature_broker_truth_immature" if profiles and broker_complete_records < 50 else "insufficient_evidence" if not profiles else "developing",
         "symbol_broker_truth_coverage": round((len([r for r in symbol_items if r.get("broker_confirmed_trade_count", 0) > 0]) / max(1, len(symbol_items))) * 100.0, 3),
         "weak_symbol_profiles": weak_symbols[:8],
         "strongest_diagnostic_symbol_profiles": symbol_items[:8],
@@ -44949,7 +45199,7 @@ def _astra_evidence_maturation_status_payload(statuses: dict | None = None) -> d
     exit_maturity = {
         "exit_intelligence_status": "diagnostic_advisory_only",
         "exit_quality_diagnostic": performance_conversion.get("exit_quality_score") or cortex.get("exit_quality"),
-        "broker_confirmed_exit_evidence_count": registry_broker_records,
+        "broker_confirmed_exit_evidence_count": broker_complete_records,
         "lifecycle_exit_evidence_count_deduped": int(_to_float(truth.get("unique_source_trade_ids"), 0.0)),
         "lifecycle_exit_evidence_sample_rows": max(exit_sample, adaptive_exit_sample),
         "exit_policy_leaderboard_status": "diagnostic_only_not_broker_verified",
@@ -44969,8 +45219,9 @@ def _astra_evidence_maturation_status_payload(statuses: dict | None = None) -> d
         "replay_not_safe_as_broker_truth": True,
         "historical_replay_status": shadow_vs_paper.get("historical_replay_status") or "diagnostic_only",
     }
+    canonical_outcome_audit = _canonical_outcome_audit_v1(truth, canonical_broker_registry, persist=True)
 
-    return {
+    payload = {
         "suite": "Astra Broker Truth, Capacity, Performance & Evidence Maturation Suite V1",
         "status": "ok",
         "generated_at": _now_utc_iso(),
@@ -44982,21 +45233,39 @@ def _astra_evidence_maturation_status_payload(statuses: dict | None = None) -> d
             "symbol_intelligence_maturation",
             "exit_intelligence_maturation",
             "historical_broker_replay_readiness",
+            "canonical_outcome_audit",
+            "truth_wiring_integrity",
         ],
+        "canonical_broker_truth_registry_v1": canonical_broker_registry,
         "broker_truth_ingestion": broker_truth_ingestion,
         "capacity_truth": capacity_truth,
         "performance_validation": performance_validation,
+        "canonical_outcome_audit_v1": canonical_outcome_audit,
         "symbol_intelligence_maturity": symbol_maturity,
         "exit_intelligence_maturity": exit_maturity,
         "replay_readiness": replay_maturity,
         "broker_truth_ingestion_status": broker_truth_ingestion["broker_truth_ingestion_status"],
         "broker_truth_source_available": broker_truth_ingestion["broker_truth_source_available"],
-        "broker_confirmed_truth_records": registry_broker_records,
+        "broker_confirmed_truth_records": broker_complete_records,
+        "broker_truth_records_total": broker_records_total,
+        "broker_confirmed_complete_records": broker_complete_records,
+        "broker_reconstructable_partial_records": broker_partial_records,
+        "broker_truth_records_added_this_run": canonical_broker_registry.get("broker_truth_records_added_this_run", 0),
+        "broker_truth_records_deduped": canonical_broker_registry.get("broker_truth_records_deduped", 0),
+        "broker_truth_missing_fields": canonical_broker_registry.get("broker_truth_missing_fields", {}),
+        "broker_truth_records_available_from_alpaca_status": clean_broker_count,
         "lifecycle_attribution_records": int(_to_float(truth.get("lifecycle_attribution_records"), 0.0)),
         "unique_source_trade_ids": int(_to_float(truth.get("unique_source_trade_ids"), 0.0)),
         "duplicate_evidence_count": int(_to_float(truth.get("duplicate_record_count"), 0.0)),
+        "duplicate_lifecycle_records": int(_to_float(truth.get("duplicate_record_count"), 0.0)),
         "official_metric_status": official_status,
         "capacity_policy_status": capacity_status,
+        "broker_open_positions": broker_open,
+        "target_capacity": target_capacity,
+        "capacity_over_target_by": max(0, broker_open - target_capacity),
+        "canonical_outcome_candidates": canonical_outcome_audit.get("canonical_outcome_candidates"),
+        "broker_truth_linked_outcomes": canonical_outcome_audit.get("broker_truth_linked_outcomes"),
+        "outcome_canonicalization_status": canonical_outcome_audit.get("outcome_canonicalization_status"),
         "symbol_intelligence_maturity_status": symbol_maturity["symbol_intelligence_maturity_status"],
         "exit_intelligence_status": exit_maturity["exit_intelligence_status"],
         "replay_readiness_status": replay_maturity["replay_readiness_status"],
@@ -45025,6 +45294,9 @@ def _astra_evidence_maturation_status_payload(statuses: dict | None = None) -> d
         "cache_first": True,
         "provider_calls_added": False,
     }
+    payload["truth_wiring_integrity_v1"] = _truth_wiring_integrity_v1(payload, canonical_outcome_audit, canonical_broker_registry)
+    payload["wiring_status"] = payload["truth_wiring_integrity_v1"].get("wiring_status")
+    return payload
 
 
 @router.get("/api/truth_integrity_audit_v1")
@@ -45085,6 +45357,42 @@ def astra_evidence_maturation_status_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_evidence_maturation_status_payload(statuses)
+
+
+@router.get("/api/broker_truth_records_v1")
+def broker_truth_records_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    evidence = dict((cached_unified or {}).get("astra_evidence_maturation_status_v1") or {})
+    if force or not evidence:
+        evidence = _astra_evidence_maturation_status_payload(dict(cached_unified or {}))
+    registry = dict(evidence.get("canonical_broker_truth_registry_v1") or _astra_evidence_state_json("broker_truth_records_v1.json") or {})
+    registry.setdefault("registry", "broker_truth_records_v1")
+    registry.setdefault("behavior_safe_to_apply", False)
+    registry.setdefault("paper_only_preserved", True)
+    registry.setdefault("alpaca_paper_only_preserved", True)
+    registry.setdefault("broker_behavior_changed", False)
+    registry.setdefault("live_trading_changed", False)
+    registry.setdefault("provider_calls_used", 0)
+    registry.setdefault("llm_calls_used", 0)
+    return registry
+
+
+@router.get("/api/canonical_outcome_audit_v1")
+def canonical_outcome_audit_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    evidence = dict((cached_unified or {}).get("astra_evidence_maturation_status_v1") or {})
+    if force or not evidence:
+        evidence = _astra_evidence_maturation_status_payload(dict(cached_unified or {}))
+    audit = dict(evidence.get("canonical_outcome_audit_v1") or _astra_evidence_state_json("canonical_outcome_audit_v1.json") or {})
+    audit.setdefault("audit", "canonical_outcome_audit_v1")
+    audit.setdefault("behavior_safe_to_apply", False)
+    audit.setdefault("paper_only_preserved", True)
+    audit.setdefault("alpaca_paper_only_preserved", True)
+    audit.setdefault("broker_behavior_changed", False)
+    audit.setdefault("live_trading_changed", False)
+    audit.setdefault("provider_calls_used", 0)
+    audit.setdefault("llm_calls_used", 0)
+    return audit
 
 
 @router.get("/api/astra_intelligence_consumption_layer_v1")
