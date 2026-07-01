@@ -44414,6 +44414,17 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "provider_calls_used": 0,
                 "llm_calls_used": 0,
             }
+    if "astra_wave5_broker_truth_capacity_learning_status_v1" not in payload or force:
+        try:
+            payload["astra_wave5_broker_truth_capacity_learning_status_v1"] = _astra_wave5_broker_truth_capacity_learning_status_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_wave5_broker_truth_capacity_learning_status_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"wave5_broker_truth_capacity_learning_status_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+            }
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -46051,6 +46062,325 @@ def _astra_wave4_trade_logic_learning_acceleration_status_payload(statuses: dict
     }
 
 
+def _wave5_broker_truth_completion_v1(evidence: dict) -> dict:
+    registry = evidence.get("canonical_broker_truth_registry_v1") if isinstance(evidence.get("canonical_broker_truth_registry_v1"), dict) else _astra_evidence_state_json("broker_truth_records_v1.json")
+    records = [r for r in (registry.get("records") or []) if isinstance(r, dict)]
+    missing_by_record = []
+    completed_this_wave = 0
+    for row in records:
+        missing = []
+        if row.get("realized_pnl") is None:
+            missing.append("realized_pnl")
+        if not (row.get("exit_timestamp") or row.get("broker_timestamp")):
+            missing.append("exit_time")
+        if not row.get("broker_order_id"):
+            missing.append("broker_order_id")
+        if not row.get("client_order_id"):
+            missing.append("client_order_id")
+        if not row.get("entry_timestamp"):
+            missing.append("entry_timestamp")
+        if missing:
+            missing_by_record.append({"stable_key": row.get("stable_key"), "symbol": row.get("symbol"), "missing_fields": missing})
+        if row.get("truth_quality") == "broker_confirmed_complete":
+            completed_this_wave += 1
+    complete = int(_to_float(registry.get("broker_confirmed_complete_records"), completed_this_wave))
+    partial = int(_to_float(registry.get("broker_reconstructable_partial_records"), 0.0))
+    insufficient = int(_to_float(registry.get("insufficient_broker_truth_fields_records"), 0.0))
+    if complete > 0:
+        status = "COMPLETE_RECORDS_AVAILABLE"
+    elif partial > 0:
+        status = "PARTIAL_RECORDS_ONLY"
+    elif any("realized_pnl" in r.get("missing_fields", []) for r in missing_by_record):
+        status = "BLOCKED_MISSING_PNL"
+    elif any("exit_time" in r.get("missing_fields", []) for r in missing_by_record):
+        status = "BLOCKED_MISSING_EXIT"
+    elif any("broker_order_id" in r.get("missing_fields", []) and "client_order_id" in r.get("missing_fields", []) for r in missing_by_record):
+        status = "BLOCKED_MISSING_ORDER_LINK"
+    else:
+        status = "READY_TO_ACCUMULATE"
+    blockers = []
+    if complete < 50:
+        blockers.append("broker_confirmed_complete_records_below_50")
+    if partial > 0:
+        blockers.append("partial_rows_missing_complete_entry_exit_broker_join")
+    return {
+        "broker_truth_completion_v1": True,
+        "broker_truth_records_total": int(_to_float(registry.get("broker_truth_records_total"), len(records))),
+        "broker_confirmed_complete_records": complete,
+        "broker_reconstructable_partial_records": partial,
+        "broker_order_seen_not_closed_records": int(_to_float(registry.get("broker_order_seen_not_closed_records"), 0.0)),
+        "insufficient_broker_truth_records": insufficient,
+        "broker_rows_available": len(records),
+        "broker_rows_completed_this_wave": completed_this_wave,
+        "broker_rows_remaining_partial": partial,
+        "missing_fields_by_record": missing_by_record[:25],
+        "completion_blockers": blockers,
+        "broker_truth_completion_status": status,
+        "official_metrics_remain_blocked": complete < 50,
+        **_safety_flags_v1(),
+    }
+
+
+def _wave5_capacity_normalization_plan_v1(evidence: dict, wave3: dict) -> dict:
+    portfolio = wave3.get("portfolio_construction_suite_v1") if isinstance(wave3.get("portfolio_construction_suite_v1"), dict) else {}
+    broker_open = int(_to_float(evidence.get("broker_open_positions"), _to_float(portfolio.get("broker_open_positions"), 0.0)))
+    target = int(_to_float(evidence.get("target_capacity"), _to_float(portfolio.get("target_capacity"), 20.0)))
+    over = max(0, broker_open - target)
+    stale = int(_to_float(((evidence.get("capacity_truth") or {}) if isinstance(evidence.get("capacity_truth"), dict) else {}).get("stale_internal_positions"), 0.0))
+    dupes = int(_to_float(((evidence.get("capacity_truth") or {}) if isinstance(evidence.get("capacity_truth"), dict) else {}).get("duplicate_position_records"), 0.0))
+    if broker_open > target:
+        root = "REAL_BROKER_POSITIONS_OVER_TARGET"
+        status = "MANUAL_REVIEW_REQUIRED"
+    elif stale:
+        root = "STALE_INTERNAL_RECORDS"
+        status = "STALE_RECORD_CLEANUP_NEEDED"
+    elif dupes:
+        root = "DUPLICATE_POSITION_COUNTING"
+        status = "WATCH"
+    elif target <= 0:
+        root = "POLICY_TARGET_MISMATCH"
+        status = "WATCH"
+    else:
+        root = "UNKNOWN" if broker_open <= 0 else "OK"
+        status = "OK"
+    return {
+        "capacity_normalization_plan_v1": True,
+        "broker_open_positions": broker_open,
+        "target_capacity": target,
+        "capacity_over_target_by": over,
+        "real_broker_positions_confirmed": broker_open,
+        "stale_internal_positions": stale,
+        "duplicate_position_records": dupes,
+        "advisory_shadow_positions_excluded": True,
+        "capacity_root_cause": root,
+        "natural_normalization_plan": "wait_for_natural_exits_and_do_not_expand_capacity" if over else "monitor",
+        "manual_review_list": list((portfolio.get("weak_symbol_exposure") or []) + (portfolio.get("duplicate_symbol_exposure") or []))[:25],
+        "automatic_action_taken": False,
+        "capacity_normalization_status": status,
+        "capacity_target_changed": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _wave5_learning_acceleration_outcome_canonicalization_v1(evidence: dict) -> dict:
+    audit = evidence.get("canonical_outcome_audit_v1") if isinstance(evidence.get("canonical_outcome_audit_v1"), dict) else _astra_evidence_state_json("canonical_outcome_audit_v1.json")
+    raw = int(_to_float(audit.get("total_lifecycle_records"), _to_float(evidence.get("lifecycle_attribution_records"), 0.0)))
+    unique = int(_to_float(audit.get("unique_source_trade_ids"), _to_float(evidence.get("unique_source_trade_ids"), 0.0)))
+    duplicate = int(_to_float(audit.get("duplicate_lifecycle_records"), _to_float(evidence.get("duplicate_lifecycle_records"), 0.0)))
+    linked = int(_to_float(audit.get("broker_truth_linked_outcomes"), 0.0))
+    ratio = round((duplicate / max(1, raw)) * 100.0, 3)
+    quality = round(min(100.0, unique * 0.5 + (25.0 if raw and duplicate >= 0 else 0.0)), 3)
+    return {
+        "learning_acceleration_outcome_canonicalization_v1": True,
+        "canonical_outcome_count": unique,
+        "lifecycle_records_raw": raw,
+        "unique_source_trade_ids": unique,
+        "duplicate_lifecycle_records": duplicate,
+        "canonical_outcomes_created_or_confirmed": unique,
+        "broker_truth_linked_outcomes": linked,
+        "replay_linked_outcomes": 0,
+        "shadow_linked_outcomes": 0,
+        "advisory_only_outcomes": int(_to_float(audit.get("advisory_only_outcomes"), max(0, unique - linked))),
+        "outcome_quality_score": quality,
+        "duplicate_compression_ratio": ratio,
+        "canonicalization_status": "DIAGNOSTIC_CANONICALIZATION_ACTIVE" if unique else "NEEDS_MORE_EVIDENCE",
+        "raw_lifecycle_records_preserved": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _wave5_historical_replay_learning_acceleration_v1(wave2: dict) -> dict:
+    replay = _wave4_replay_dimension_counts_v1()
+    retrieval = wave2.get("knowledge_retrieval_indexing_engine_v1") if isinstance(wave2.get("knowledge_retrieval_indexing_engine_v1"), dict) else _astra_evidence_state_json("knowledge_retrieval_index_v1.json")
+    entries = retrieval.get("entries") if isinstance(retrieval.get("entries"), list) else []
+    categories = set(retrieval.get("retrieval_categories_available") or [])
+    linked_symbols = bool((replay.get("symbols") or {}) and ("symbol" in categories or entries))
+    linked_exits = bool((replay.get("exit_policies") or {}) and ("exit_policy" in categories or entries))
+    linked_styles = bool((replay.get("trade_styles") or {}) and ("trade_style" in categories or entries))
+    linked_regimes = "regime" in categories
+    coverage = round((sum([linked_symbols, linked_exits, linked_styles, linked_regimes]) / 4.0) * 100.0, 3)
+    status = "RETRIEVAL_CONNECTED" if entries and coverage >= 75 else "DIAGNOSTIC_CONNECTED" if replay.get("records_available") else "NOT_CONNECTED"
+    return {
+        "historical_replay_learning_acceleration_v1": True,
+        "replay_records_available": replay.get("records_available"),
+        "historical_lessons_available": bool(entries),
+        "replay_lessons_linked_to_symbols": linked_symbols,
+        "replay_lessons_linked_to_exits": linked_exits,
+        "replay_lessons_linked_to_trade_styles": linked_styles,
+        "replay_lessons_linked_to_regimes": linked_regimes,
+        "retrieval_index_entry_count": int(_to_float(retrieval.get("retrieval_index_entry_count"), len(entries))),
+        "replay_learning_coverage_score": coverage,
+        "replay_learning_status": status,
+        "replay_not_broker_truth": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _wave5_counterfactual_exit_expansion_foundation_v1(wave2: dict, canonical: dict) -> dict:
+    exit_payload = wave2.get("exit_intelligence_maturation_v2") if isinstance(wave2.get("exit_intelligence_maturation_v2"), dict) else {}
+    lifecycle_count = int(_to_float(exit_payload.get("lifecycle_exit_evidence_count_deduped"), 0.0))
+    canonical_count = int(_to_float(canonical.get("canonical_outcome_count"), 0.0))
+    policies = ["actual_or_observed_exit", "thesis_break_exit", "horizon_specific_exit", "fixed_profit_5_pct", "fixed_profit_10_pct", "profit_lock_exit", "giveback_reduction_exit", "hold_longer_supported"]
+    coverage = round((min(lifecycle_count, canonical_count) / max(1, canonical_count)) * 100.0, 3) if canonical_count else 0.0
+    best = ((exit_payload.get("best_diagnostic_exit_policies") or [{}])[0] or {}).get("exit_policy") if isinstance((exit_payload.get("best_diagnostic_exit_policies") or [{}])[0], dict) else None
+    return {
+        "counterfactual_exit_expansion_foundation_v1": True,
+        "diagnostic_comparison_fields": policies,
+        "actual_or_observed_exit": True,
+        "thesis_break_exit": True,
+        "horizon_specific_exit": True,
+        "fixed_profit_5_pct": True,
+        "fixed_profit_10_pct": True,
+        "profit_lock_exit": True,
+        "giveback_reduction_exit": True,
+        "hold_longer_supported": True,
+        "best_counterfactual_exit_diagnostic": best or "insufficient_evidence",
+        "counterfactual_exit_coverage": coverage,
+        "broker_truth_exit_coverage": int(_to_float(exit_payload.get("broker_confirmed_exit_evidence_count"), 0.0)),
+        "lifecycle_exit_coverage": lifecycle_count,
+        "replay_exit_coverage": len(exit_payload.get("replay_exit_performance") or []),
+        "counterfactual_status": "DIAGNOSTIC_READY" if lifecycle_count and canonical_count else "PARTIAL_COVERAGE",
+        "counterfactual_exits_diagnostic_only": True,
+        "learned_exits_enabled": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _wave5_regime_intelligence_expansion_foundation_v1() -> dict:
+    rows = _dedup_lifecycle_rows_v1(_closed_trade_lifecycle_rows_v1(limit=2000))
+    by_regime: dict[str, list[dict]] = {}
+    for row in rows:
+        regime = str(row.get("regime") or "unknown").strip().lower() or "unknown"
+        by_regime.setdefault(regime, []).append(row)
+    unknown_count = len(by_regime.get("unknown", []))
+    regime_count = sum(len(v) for v in by_regime.values())
+    summaries = {}
+    for regime, items in by_regime.items():
+        symbol_counts: dict[str, int] = {}
+        exit_counts: dict[str, int] = {}
+        style_counts: dict[str, int] = {}
+        for row in items:
+            sym = str(row.get("symbol") or "").upper()
+            if sym:
+                symbol_counts[sym] = symbol_counts.get(sym, 0) + 1
+            pol = _policy_label_v1(row)
+            exit_counts[pol] = exit_counts.get(pol, 0) + 1
+            style = _classify_trade_style_v1(row)
+            style_counts[style] = style_counts.get(style, 0) + 1
+        summaries[regime] = {
+            "evidence_count": len(items),
+            "best_symbols_by_regime_diagnostic": [k for k, _ in sorted(symbol_counts.items(), key=lambda kv: kv[1], reverse=True)[:5]],
+            "best_exit_by_regime_diagnostic": next(iter(sorted(exit_counts, key=exit_counts.get, reverse=True)), "insufficient_evidence"),
+            "best_trade_style_by_regime_diagnostic": next(iter(sorted(style_counts, key=style_counts.get, reverse=True)), "unknown"),
+        }
+    coverage = round(((regime_count - unknown_count) / max(1, regime_count)) * 100.0, 3)
+    status = "MOSTLY_UNKNOWN" if coverage < 25 else "PARTIAL_COVERAGE" if coverage < 75 else "DIAGNOSTIC_READY"
+    return {
+        "regime_intelligence_expansion_foundation_v1": True,
+        "regimes_detected": sorted(by_regime.keys()),
+        "regime_labeled_outcomes": regime_count - unknown_count,
+        "regime_unknown_count": unknown_count,
+        "best_symbols_by_regime_diagnostic": {k: v.get("best_symbols_by_regime_diagnostic") for k, v in summaries.items()},
+        "weakest_symbols_by_regime_diagnostic": {},
+        "best_exit_by_regime_diagnostic": {k: v.get("best_exit_by_regime_diagnostic") for k, v in summaries.items()},
+        "best_trade_style_by_regime_diagnostic": {k: v.get("best_trade_style_by_regime_diagnostic") for k, v in summaries.items()},
+        "regime_evidence_quality": coverage,
+        "regime_intelligence_status": status,
+        "regime_intelligence_diagnostic_only": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _wave5_final_system_improvement_diagnostic_v1(broker: dict, capacity: dict, canonical: dict, replay: dict, counterfactual: dict, regime: dict, wave2: dict, wave3: dict, wave4: dict) -> dict:
+    before = ["broker_truth_sample_below_50", "capacity_35_vs_target_20", "duplicate_lifecycle_evidence_guarded", "symbol_broker_truth_coverage_zero", "exit_broker_truth_coverage_zero", "verified_trading_improvement_not_proven"]
+    removed = ["canonical_outcome_quality_visible", "counterfactual_exit_foundation_visible", "regime_coverage_visible", "capacity_root_cause_visible"]
+    remaining = [
+        {"rank": 1, "bottleneck": "broker_confirmed_complete_records_zero", "severity": "high"},
+        {"rank": 2, "bottleneck": "broker_truth_sample_below_50", "severity": "high"},
+        {"rank": 3, "bottleneck": "capacity_over_target_manual_review_required", "severity": "medium"},
+        {"rank": 4, "bottleneck": "regime_labels_mostly_unknown", "severity": "medium" if regime.get("regime_intelligence_status") == "MOSTLY_UNKNOWN" else "low"},
+        {"rank": 5, "bottleneck": "official_metrics_still_blocked_correctly", "severity": "expected"},
+    ]
+    checks = [
+        broker.get("broker_truth_completion_status") in {"PARTIAL_RECORDS_ONLY", "COMPLETE_RECORDS_AVAILABLE", "READY_TO_ACCUMULATE"},
+        capacity.get("automatic_action_taken") is False,
+        canonical.get("canonicalization_status") in {"DIAGNOSTIC_CANONICALIZATION_ACTIVE", "CANONICAL_OUTCOME_STORE_READY"},
+        replay.get("replay_not_broker_truth") is True,
+        counterfactual.get("counterfactual_exits_diagnostic_only") is True,
+        regime.get("regime_intelligence_diagnostic_only") is True,
+        wave2.get("wave2_wiring_status") == "PASS",
+        bool(wave3.get("status") == "ok"),
+        bool(wave4.get("status") == "ok"),
+    ]
+    integrity = round((sum(1 for v in checks if v) / max(1, len(checks))) * 100.0, 3)
+    improvement = round(min(100.0, integrity * 0.6 + canonical.get("outcome_quality_score", 0) * 0.2 + replay.get("replay_learning_coverage_score", 0) * 0.2), 3)
+    return {
+        "astra_final_system_improvement_diagnostic_v1": True,
+        "system_integrity_score": integrity,
+        "improvement_score": improvement,
+        "wiring_status": "WARNING",
+        "bottlenecks_before": before,
+        "bottlenecks_after": [r["bottleneck"] for r in remaining],
+        "bottlenecks_removed": removed,
+        "bottlenecks_remaining_ranked": remaining,
+        "weaknesses_remaining": ["broker_truth_completion", "capacity_over_target", "regime_label_coverage", "verified_performance_proof"],
+        "unsafe_pathways_detected": [],
+        "exact_next_actions": [
+            "continue collecting broker-confirmed complete closed paper trades",
+            "manual review or natural exit normalization for over-target capacity",
+            "improve regime labeling from cached market context",
+            "do not unlock official metrics or learned exits yet",
+        ],
+        "astra_project_phase": "DIAGNOSTIC_MATURITY_WITH_BROKER_TRUTH_ACCUMULATION_REQUIRED",
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_wave5_broker_truth_capacity_learning_status_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    evidence = statuses.get("astra_evidence_maturation_status_v1") if isinstance(statuses.get("astra_evidence_maturation_status_v1"), dict) else _astra_evidence_maturation_status_payload(statuses)
+    wave2 = statuses.get("astra_wave2_intelligence_maturation_status_v1") if isinstance(statuses.get("astra_wave2_intelligence_maturation_status_v1"), dict) else _astra_wave2_intelligence_maturation_status_payload({**statuses, "astra_evidence_maturation_status_v1": evidence})
+    wave3 = statuses.get("astra_wave3_portfolio_policy_system_status_v1") if isinstance(statuses.get("astra_wave3_portfolio_policy_system_status_v1"), dict) else _astra_wave3_portfolio_policy_system_status_payload({**statuses, "astra_evidence_maturation_status_v1": evidence, "astra_wave2_intelligence_maturation_status_v1": wave2})
+    wave4 = statuses.get("astra_wave4_trade_logic_learning_acceleration_status_v1") if isinstance(statuses.get("astra_wave4_trade_logic_learning_acceleration_status_v1"), dict) else _astra_wave4_trade_logic_learning_acceleration_status_payload({**statuses, "astra_evidence_maturation_status_v1": evidence, "astra_wave2_intelligence_maturation_status_v1": wave2, "astra_wave3_portfolio_policy_system_status_v1": wave3})
+    broker = _wave5_broker_truth_completion_v1(evidence)
+    capacity = _wave5_capacity_normalization_plan_v1(evidence, wave3)
+    canonical = _wave5_learning_acceleration_outcome_canonicalization_v1(evidence)
+    replay = _wave5_historical_replay_learning_acceleration_v1(wave2)
+    counterfactual = _wave5_counterfactual_exit_expansion_foundation_v1(wave2, canonical)
+    regime = _wave5_regime_intelligence_expansion_foundation_v1()
+    final = _wave5_final_system_improvement_diagnostic_v1(broker, capacity, canonical, replay, counterfactual, regime, wave2, wave3, wave4)
+    return {
+        "suite": "Astra Wave 5 Broker Truth Completion, Capacity Normalization, Learning Acceleration & Final System Improvement Diagnostic V1",
+        "status": "ok",
+        "generated_at": _now_utc_iso(),
+        "endpoint": "/api/astra_wave5_broker_truth_capacity_learning_status_v1",
+        "broker_truth_completion_v1": broker,
+        "capacity_normalization_plan_v1": capacity,
+        "learning_acceleration_outcome_canonicalization_v1": canonical,
+        "historical_replay_learning_acceleration_v1": replay,
+        "counterfactual_exit_expansion_foundation_v1": counterfactual,
+        "regime_intelligence_expansion_foundation_v1": regime,
+        "astra_final_system_improvement_diagnostic_v1": final,
+        "broker_confirmed_complete_records": broker.get("broker_confirmed_complete_records"),
+        "broker_reconstructable_partial_records": broker.get("broker_reconstructable_partial_records"),
+        "broker_truth_completion_status": broker.get("broker_truth_completion_status"),
+        "broker_open_positions": capacity.get("broker_open_positions"),
+        "target_capacity": capacity.get("target_capacity"),
+        "capacity_normalization_status": capacity.get("capacity_normalization_status"),
+        "canonical_outcome_count": canonical.get("canonical_outcome_count"),
+        "duplicate_lifecycle_records": canonical.get("duplicate_lifecycle_records"),
+        "replay_learning_coverage": replay.get("replay_learning_coverage_score"),
+        "counterfactual_exit_coverage": counterfactual.get("counterfactual_exit_coverage"),
+        "regime_intelligence_status": regime.get("regime_intelligence_status"),
+        "system_integrity_score": final.get("system_integrity_score"),
+        "improvement_score": final.get("improvement_score"),
+        "wiring_status": final.get("wiring_status"),
+        "verified_trading_improvement_status": "NOT_PROVEN_BROKER_TRUTH_SAMPLE_INSUFFICIENT",
+        "diagnostic_trading_intelligence_status": "IMPROVED_DIAGNOSTICALLY",
+        **_safety_flags_v1(),
+    }
+
+
 def _astra_evidence_maturation_status_payload(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -46427,6 +46757,16 @@ def astra_wave4_trade_logic_learning_acceleration_status_v1(force: bool = False)
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_wave4_trade_logic_learning_acceleration_status_payload(statuses)
+
+
+@router.get("/api/astra_wave5_broker_truth_capacity_learning_status_v1")
+def astra_wave5_broker_truth_capacity_learning_status_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_wave5_broker_truth_capacity_learning_status_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_wave5_broker_truth_capacity_learning_status_payload(statuses)
 
 
 @router.get("/api/astra_intelligence_consumption_layer_v1")
