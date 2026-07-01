@@ -44370,6 +44370,17 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
     )
     if truth_audit:
         payload["truth_integrity_audit_v1"] = dict(truth_audit)
+    if "astra_evidence_maturation_status_v1" not in payload or force:
+        try:
+            payload["astra_evidence_maturation_status_v1"] = _astra_evidence_maturation_status_payload({**(statuses or {}), **payload})
+        except Exception:
+            payload["astra_evidence_maturation_status_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": "evidence_maturation_status_unavailable",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+            }
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -44734,6 +44745,288 @@ def astra_performance_conversion_exit_broker_fmp_truth_capacity_v1(force: bool =
     return suite
 
 
+def _astra_evidence_state_json(relative_path: str) -> dict:
+    try:
+        with open(os.path.join(STATE, relative_path), "r", encoding="utf-8") as handle:
+            parsed = json.load(handle)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _broker_truth_maturity_label_local(count: int) -> str:
+    count = max(0, int(_to_float(count, 0.0)))
+    if count <= 0:
+        return "NOT_ACTIVE"
+    if count < 20:
+        return "WARMING_UP_LOW_CONFIDENCE"
+    if count < 50:
+        return "EARLY_SAMPLE"
+    if count < 100:
+        return "DEVELOPING"
+    if count < 250:
+        return "MATURING"
+    return "STRONG_SAMPLE"
+
+
+def _broker_truth_metric_status_local(count: int) -> str:
+    return "AVAILABLE" if int(_to_float(count, 0.0)) >= 50 else "INSUFFICIENT_BROKER_TRUTH_EVIDENCE"
+
+
+def _cached_alpaca_paper_status_payload(statuses: dict | None = None) -> dict:
+    if isinstance(statuses, dict) and isinstance(statuses.get("alpaca_paper_status_v1"), dict):
+        return dict(statuses.get("alpaca_paper_status_v1") or {})
+    cached = ((_CACHE.get("alpaca_paper_status_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
+    return dict(cached or {})
+
+
+def _clean_broker_truth_records_from_alpaca(alpaca: dict) -> list[dict]:
+    broker_truth = alpaca.get("broker_truth_metrics") if isinstance(alpaca.get("broker_truth_metrics"), dict) else {}
+    rows = broker_truth.get("closed_trade_rows") if isinstance(broker_truth.get("closed_trade_rows"), list) else []
+    clean: list[dict] = []
+    for row in rows[:200]:
+        if not isinstance(row, dict):
+            continue
+        order_id = str(row.get("order_id") or row.get("broker_order_id") or "").strip()
+        client_order_id = str(row.get("client_order_id") or "").strip()
+        symbol = str(row.get("symbol") or "").upper().strip()
+        qty = _to_float(row.get("qty") or row.get("filled_qty"), 0.0)
+        realized_pnl = row.get("realized_pnl")
+        exit_ts = str(row.get("filled_at") or row.get("exit_timestamp") or "").strip()
+        if not (symbol and qty > 0 and (order_id or client_order_id) and realized_pnl is not None):
+            continue
+        exit_proceeds = _to_float(row.get("exit_proceeds"), 0.0)
+        filled_avg_price = (exit_proceeds / qty) if qty > 0 and exit_proceeds > 0 else None
+        clean.append({
+            "broker_order_id": order_id or None,
+            "client_order_id": client_order_id or None,
+            "symbol": symbol,
+            "side": "sell",
+            "filled_qty": round(qty, 6),
+            "filled_avg_price": round(filled_avg_price, 6) if filled_avg_price is not None else None,
+            "entry_timestamp": row.get("entry_timestamp"),
+            "exit_timestamp": exit_ts or None,
+            "realized_pnl": _to_float(realized_pnl, 0.0),
+            "realized_return_pct": _to_float(row.get("realized_return_pct"), 0.0),
+            "broker_source": "alpaca_paper_closed_orders",
+            "truth_record_complete_enough_for_metric_count": bool(exit_ts),
+        })
+    return clean
+
+
+def _astra_evidence_maturation_status_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    if isinstance(cached_unified, dict):
+        statuses = {**cached_unified, **statuses}
+    alpaca = _cached_alpaca_paper_status_payload(statuses)
+    truth = statuses.get("truth_integrity_audit_v1") if isinstance(statuses.get("truth_integrity_audit_v1"), dict) else _astra_evidence_state_json("closed_trade_truth_registry_v1.json").get("truth_integrity_audit_v1") or {}
+    cortex = statuses.get("astra_paper_provider_cortex_completion_v1") if isinstance(statuses.get("astra_paper_provider_cortex_completion_v1"), dict) else _astra_evidence_state_json("dashboard_cache/astra_paper_provider_cortex_completion_v1.json")
+    performance_conversion = statuses.get("astra_performance_conversion_exit_broker_fmp_truth_capacity_v1") if isinstance(statuses.get("astra_performance_conversion_exit_broker_fmp_truth_capacity_v1"), dict) else _astra_evidence_state_json("dashboard_cache/astra_performance_conversion_exit_broker_fmp_truth_capacity_v1.json")
+    horizon_capacity = _astra_evidence_state_json("dashboard_cache/astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1.json")
+    multi_capacity = _astra_evidence_state_json("dashboard_cache/multi_horizon_paper_capacity_exit_validation_v1.json")
+    symbol_profiles = _astra_evidence_state_json("long_term_memory/symbol_profiles/latest_symbol_profiles.json")
+    virtual_symbol = _astra_evidence_state_json("dashboard_cache/virtual_paper_convergence_symbol_attribution_v1.json")
+    exit_idx = _astra_evidence_state_json("storage_summary_indexes/exit_learning_expansion_suite_v1.jsonl.summary_index.json")
+    adaptive_exit_idx = _astra_evidence_state_json("storage_summary_indexes/adaptive_execution_exit_intelligence_v3.jsonl.summary_index.json")
+    replay_idx = _astra_evidence_state_json("storage_summary_indexes/replay_counterfactual_learning_v2.jsonl.summary_index.json")
+    shadow_vs_paper = statuses.get("shadow_vs_paper_performance_attribution_v1") if isinstance(statuses.get("shadow_vs_paper_performance_attribution_v1"), dict) else _astra_evidence_state_json("dashboard_cache/shadow_vs_paper_performance_attribution_v1.json")
+
+    broker_truth_metrics = alpaca.get("broker_truth_metrics") if isinstance(alpaca.get("broker_truth_metrics"), dict) else {}
+    clean_broker_rows = _clean_broker_truth_records_from_alpaca(alpaca)
+    registry_broker_records = int(_to_float(truth.get("broker_confirmed_truth_records"), 0.0))
+    clean_broker_count = len(clean_broker_rows)
+    effective_broker_records = max(registry_broker_records, clean_broker_count)
+    missing_broker_fields = []
+    if not clean_broker_rows:
+        missing_broker_fields.append("clean_alpaca_closed_order_rows")
+    if registry_broker_records <= 0:
+        missing_broker_fields.append("canonical_truth_registry_ingestion")
+    if clean_broker_rows and any(not r.get("entry_timestamp") for r in clean_broker_rows):
+        missing_broker_fields.append("entry_timestamp")
+
+    broker_truth_ingestion = {
+        "broker_truth_ingestion_status": "available_not_canonicalized" if clean_broker_rows and registry_broker_records <= 0 else ("canonicalized" if registry_broker_records > 0 else "not_available"),
+        "broker_truth_source_available": bool(clean_broker_rows),
+        "broker_confirmed_truth_records": registry_broker_records,
+        "broker_truth_records_available_from_alpaca_status": clean_broker_count,
+        "broker_truth_records_v1": clean_broker_rows[-25:],
+        "closed_order_history_supported": True,
+        "closed_order_history_source": "engine/alpaca_paper_broker.py::broker_truth_metrics",
+        "client_order_id_persisted": bool(any(r.get("client_order_id") for r in clean_broker_rows)),
+        "broker_order_id_persisted": bool(any(r.get("broker_order_id") for r in clean_broker_rows)),
+        "realized_pnl_available": bool(any(r.get("realized_pnl") is not None for r in clean_broker_rows)),
+        "missing_broker_truth_fields": missing_broker_fields,
+        "next_required_broker_truth_step": (
+            "persist clean Alpaca closed-order rows into canonical broker_truth_records_v1 and join entry timestamps without using lifecycle/advisory rows"
+            if clean_broker_rows and registry_broker_records <= 0
+            else "wait for Alpaca closed orders/fills or credential availability; do not infer broker truth from lifecycle evidence"
+        ),
+        "official_metric_status": _broker_truth_metric_status_local(registry_broker_records),
+    }
+
+    broker_open = int(_to_float(alpaca.get("open_positions_count"), _to_float(horizon_capacity.get("active_broker_positions"), 0.0)))
+    internal_active = int(_to_float(horizon_capacity.get("active_workflow_rows"), _to_float(multi_capacity.get("internal_active_rows"), 0.0)))
+    lifecycle_active = int(_to_float(horizon_capacity.get("lifecycle_rows_audited"), _to_float(horizon_capacity.get("active_broker_positions"), 0.0)))
+    stale_internal = int(_to_float(horizon_capacity.get("stale_internal_rows_hidden"), _to_float(alpaca.get("stale_rows_hidden"), 0.0)))
+    target_capacity = int(_to_float(multi_capacity.get("total_capacity"), _to_float(horizon_capacity.get("target_position_capacity"), 20.0)))
+    if broker_open > target_capacity > 0:
+        capacity_status = "BROKER_CAPACITY_OVER_TARGET"
+    elif stale_internal > 0 and internal_active != broker_open:
+        capacity_status = "INTERNAL_STALE_COUNT_MISMATCH"
+    elif internal_active and broker_open and internal_active != broker_open:
+        capacity_status = "POLICY_MISMATCH"
+    elif broker_open <= target_capacity:
+        capacity_status = "OK"
+    else:
+        capacity_status = "UNKNOWN"
+    capacity_truth = {
+        "broker_open_positions": broker_open,
+        "internal_active_positions": internal_active,
+        "lifecycle_active_positions": lifecycle_active,
+        "stale_internal_positions": stale_internal,
+        "advisory_or_shadow_positions": int(_to_float(truth.get("lifecycle_attribution_records"), _to_float(cortex.get("attributed_paper_trade_count"), 0.0))),
+        "target_capacity": target_capacity,
+        "capacity_policy_status": capacity_status,
+        "capacity_source_of_truth": "broker_confirmed_alpaca_paper" if broker_open else "cached_horizon_capacity_diagnostics",
+        "recommended_capacity_next_action": "resolve whether 20 is a learning target or hard policy; keep broker truth as source and do not force liquidations" if capacity_status != "OK" else "monitor",
+    }
+
+    official_status = _broker_truth_metric_status_local(registry_broker_records)
+    performance_validation = {
+        "official_metric_status": official_status,
+        "diagnostic_metric_status": "AVAILABLE_DIAGNOSTIC_ONLY" if int(_to_float(truth.get("lifecycle_attribution_records"), 0.0)) > 0 else "INSUFFICIENT_EVIDENCE",
+        "broker_truth_sample_threshold": 50,
+        "broker_truth_maturity": _broker_truth_maturity_label_local(registry_broker_records),
+        "performance_validation_status": "OFFICIAL_METRICS_BLOCKED_DIAGNOSTIC_AVAILABLE" if official_status != "AVAILABLE" else "OFFICIAL_METRICS_AVAILABLE",
+        "official_profit_factor": None if official_status != "AVAILABLE" else performance_conversion.get("true_paper_profit_factor"),
+        "official_win_rate": None if official_status != "AVAILABLE" else performance_conversion.get("true_paper_win_rate"),
+        "official_average_return": None if official_status != "AVAILABLE" else performance_conversion.get("true_paper_avg_return"),
+        "diagnostic_lifecycle_profit_factor": cortex.get("diagnostic_lifecycle_profit_factor") or performance_conversion.get("diagnostic_lifecycle_profit_factor"),
+        "lifecycle_metrics_labeled": "diagnostic_only/advisory_lifecycle_only/not_broker_verified",
+    }
+
+    profiles = symbol_profiles.get("profiles") if isinstance(symbol_profiles.get("profiles"), dict) else {}
+    symbol_items = []
+    broker_symbols = {}
+    for row in clean_broker_rows:
+        broker_symbols[row.get("symbol")] = broker_symbols.get(row.get("symbol"), 0) + 1
+    for sym, profile in list(profiles.items())[:500]:
+        if not isinstance(profile, dict):
+            continue
+        evidence = int(_to_float(profile.get("evidence_count"), _to_float(profile.get("sample_size"), _to_float(profile.get("observation_count"), 0.0))))
+        lifecycle_count = int(_to_float(profile.get("lifecycle_count"), evidence))
+        broker_count = int(broker_symbols.get(str(sym).upper(), 0))
+        duplicate_count = max(0, lifecycle_count - max(1, evidence)) if lifecycle_count and evidence else 0
+        confidence_raw = _to_float(profile.get("confidence"), _to_float(profile.get("confidence_score"), _to_float(profile.get("behavioral_edge_score"), 0.0)))
+        confidence_cap = 45 if broker_count <= 0 else 70 if broker_count < 20 else 100
+        symbol_items.append({
+            "symbol": str(sym).upper(),
+            "evidence_count": evidence,
+            "unique_source_trade_count": evidence,
+            "broker_confirmed_trade_count": broker_count,
+            "lifecycle_advisory_count": lifecycle_count,
+            "duplicate_evidence_count": duplicate_count,
+            "confidence_raw": round(confidence_raw, 3),
+            "confidence_capped": round(min(confidence_raw, confidence_cap), 3),
+            "evidence_basis": "broker_confirmed_plus_lifecycle" if broker_count else "advisory_lifecycle_only",
+        })
+    symbol_items.sort(key=lambda r: (r.get("broker_confirmed_trade_count", 0), r.get("evidence_count", 0)), reverse=True)
+    weak_symbols = [r for r in symbol_items if r.get("broker_confirmed_trade_count", 0) <= 0][:10]
+    symbol_maturity = {
+        "symbol_profiles_tracked": len(profiles),
+        "symbol_evidence_quality": "advisory_mature_broker_truth_immature" if profiles and registry_broker_records < 50 else "insufficient_evidence" if not profiles else "developing",
+        "symbol_broker_truth_coverage": round((len([r for r in symbol_items if r.get("broker_confirmed_trade_count", 0) > 0]) / max(1, len(symbol_items))) * 100.0, 3),
+        "weak_symbol_profiles": weak_symbols[:8],
+        "strongest_diagnostic_symbol_profiles": symbol_items[:8],
+        "symbol_intelligence_maturity_status": "ADVISORY_LIFECYCLE_ONLY_UNTIL_BROKER_TRUTH_MATURES",
+        "virtual_symbol_attribution_status": virtual_symbol.get("status"),
+    }
+
+    exit_sample = int(_to_float(exit_idx.get("sample_rows"), 0.0))
+    adaptive_exit_sample = int(_to_float(adaptive_exit_idx.get("sample_rows"), 0.0))
+    exit_horizons = ((exit_idx.get("dimension_counts") or {}).get("horizon") or {}) if isinstance(exit_idx.get("dimension_counts"), dict) else {}
+    exit_maturity = {
+        "exit_intelligence_status": "diagnostic_advisory_only",
+        "exit_quality_diagnostic": performance_conversion.get("exit_quality_score") or cortex.get("exit_quality"),
+        "broker_confirmed_exit_evidence_count": registry_broker_records,
+        "lifecycle_exit_evidence_count_deduped": int(_to_float(truth.get("unique_source_trade_ids"), 0.0)),
+        "lifecycle_exit_evidence_sample_rows": max(exit_sample, adaptive_exit_sample),
+        "exit_policy_leaderboard_status": "diagnostic_only_not_broker_verified",
+        "exit_horizon_sample_distribution": exit_horizons,
+        "learned_exit_promotion_status": "disabled",
+        "learned_exits_enabled": False,
+    }
+
+    replay_records = int(_to_float(replay_idx.get("source_line_count_estimate"), _to_float(replay_idx.get("sample_rows"), 0.0)))
+    replay_sample = int(_to_float(replay_idx.get("sample_rows"), 0.0))
+    replay_maturity = {
+        "replay_readiness_status": "diagnostic_ready_not_broker_truth" if replay_sample > 0 else "insufficient_evidence",
+        "replay_records_available": replay_records,
+        "replay_sample_rows": replay_sample,
+        "replay_evidence_quality": "bounded_index_available" if replay_sample > 0 else "missing",
+        "replay_safe_to_use_for_diagnostics": bool(replay_sample > 0),
+        "replay_not_safe_as_broker_truth": True,
+        "historical_replay_status": shadow_vs_paper.get("historical_replay_status") or "diagnostic_only",
+    }
+
+    return {
+        "suite": "Astra Broker Truth, Capacity, Performance & Evidence Maturation Suite V1",
+        "status": "ok",
+        "generated_at": _now_utc_iso(),
+        "endpoint": "/api/astra_evidence_maturation_status_v1",
+        "phase_order": [
+            "broker_truth_discovery_ingestion",
+            "capacity_policy_resolution",
+            "performance_validation",
+            "symbol_intelligence_maturation",
+            "exit_intelligence_maturation",
+            "historical_broker_replay_readiness",
+        ],
+        "broker_truth_ingestion": broker_truth_ingestion,
+        "capacity_truth": capacity_truth,
+        "performance_validation": performance_validation,
+        "symbol_intelligence_maturity": symbol_maturity,
+        "exit_intelligence_maturity": exit_maturity,
+        "replay_readiness": replay_maturity,
+        "broker_truth_ingestion_status": broker_truth_ingestion["broker_truth_ingestion_status"],
+        "broker_truth_source_available": broker_truth_ingestion["broker_truth_source_available"],
+        "broker_confirmed_truth_records": registry_broker_records,
+        "lifecycle_attribution_records": int(_to_float(truth.get("lifecycle_attribution_records"), 0.0)),
+        "unique_source_trade_ids": int(_to_float(truth.get("unique_source_trade_ids"), 0.0)),
+        "duplicate_evidence_count": int(_to_float(truth.get("duplicate_record_count"), 0.0)),
+        "official_metric_status": official_status,
+        "capacity_policy_status": capacity_status,
+        "symbol_intelligence_maturity_status": symbol_maturity["symbol_intelligence_maturity_status"],
+        "exit_intelligence_status": exit_maturity["exit_intelligence_status"],
+        "replay_readiness_status": replay_maturity["replay_readiness_status"],
+        "next_required_broker_truth_step": broker_truth_ingestion["next_required_broker_truth_step"],
+        "paper_only_preserved": True,
+        "alpaca_paper_only_preserved": True,
+        "behavior_safe_to_apply": False,
+        "broker_live_endpoint_allowed": False,
+        "learned_exits_enabled": False,
+        "automatic_promotions_enabled": False,
+        "broker_behavior_changed": False,
+        "live_trading_changed": False,
+        "forced_trades_enabled": False,
+        "forced_exits_enabled": False,
+        "ranking_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "exit_behavior_changed": False,
+        "position_sizing_changed": False,
+        "portfolio_allocation_changed": False,
+        "thresholds_changed": False,
+        "api_calls_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "dashboard_provider_calls_used": 0,
+        "dashboard_llm_calls_used": 0,
+        "cache_first": True,
+        "provider_calls_added": False,
+    }
+
+
 @router.get("/api/truth_integrity_audit_v1")
 def truth_integrity_audit_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -44782,6 +45075,16 @@ def truth_integrity_audit_v1(force: bool = False):
         "dashboard_provider_calls_used": 0,
         "dashboard_llm_calls_used": 0,
     }
+
+
+@router.get("/api/astra_evidence_maturation_status_v1")
+def astra_evidence_maturation_status_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_evidence_maturation_status_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_evidence_maturation_status_payload(statuses)
 
 
 @router.get("/api/astra_intelligence_consumption_layer_v1")
