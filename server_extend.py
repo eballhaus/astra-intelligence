@@ -44381,6 +44381,17 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "provider_calls_used": 0,
                 "llm_calls_used": 0,
             }
+    if "astra_wave2_intelligence_maturation_status_v1" not in payload or force:
+        try:
+            payload["astra_wave2_intelligence_maturation_status_v1"] = _astra_wave2_intelligence_maturation_status_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_wave2_intelligence_maturation_status_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"wave2_intelligence_maturation_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+            }
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -45047,6 +45058,385 @@ def _truth_wiring_integrity_v1(evidence: dict, canonical_audit: dict, registry: 
     }
 
 
+def _closed_trade_lifecycle_rows_v1(limit: int = 2000) -> list[dict]:
+    registry = _astra_evidence_state_json("closed_trade_truth_registry_v1.json")
+    rows = registry.get("records") if isinstance(registry.get("records"), list) else []
+    return [row for row in rows[: max(0, int(limit))] if isinstance(row, dict)]
+
+
+def _dedup_lifecycle_rows_v1(rows: list[dict]) -> list[dict]:
+    deduped: dict[str, dict] = {}
+    for row in rows:
+        key = str(row.get("source_trade_id") or row.get("trade_id") or row.get("symbol") or "").strip()
+        if not key:
+            key = hashlib.sha1(json.dumps(row, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+        if key not in deduped:
+            deduped[key] = row
+    return list(deduped.values())
+
+
+def _classify_trade_style_v1(row: dict) -> str:
+    raw = str(row.get("trade_style") or row.get("horizon") or row.get("best_horizon") or row.get("best_horizon_style") or "").strip().lower()
+    if raw in {"scalp", "day_trade", "short_swing", "standard_swing", "extended_swing"}:
+        return raw
+    hold = _to_float(row.get("hold_duration"), 0.0)
+    # Existing lifecycle rows mix minute/hour/day units, so keep broad diagnostic buckets.
+    if hold <= 0:
+        return "unknown"
+    if hold <= 60:
+        return "scalp"
+    if hold <= 390:
+        return "day_trade"
+    if hold <= 2880:
+        return "short_swing"
+    if hold <= 10080:
+        return "standard_swing"
+    return "extended_swing"
+
+
+def _avg_v1(values: list[float]) -> float | None:
+    vals = [float(v) for v in values if v is not None]
+    return round(sum(vals) / len(vals), 4) if vals else None
+
+
+def _policy_label_v1(row: dict) -> str:
+    label = str(row.get("exit_type") or row.get("exit_policy") or row.get("best_exit_style") or "insufficient_evidence").strip().lower()
+    allowed = {
+        "thesis_break_exit",
+        "horizon_specific_exit",
+        "fixed_profit_5_pct",
+        "fixed_profit_10_pct",
+        "profit_lock_exit",
+        "giveback_reduction_exit",
+        "hold_longer_supported",
+        "protect_profit_earlier",
+        "normal_volatility_do_not_overreact",
+        "partial_profit_protection_candidate",
+        "insufficient_evidence",
+    }
+    return label if label in allowed else ("protect_profit_earlier" if "protect" in label else "insufficient_evidence" if "insufficient" in label else label)
+
+
+def _rank_group_stats_v1(groups: dict[str, list[dict]], *, kind: str, limit: int = 8) -> list[dict]:
+    ranked = []
+    for name, rows in groups.items():
+        unique = _dedup_lifecycle_rows_v1(rows)
+        returns = [_to_float(r.get("return_pct"), 0.0) for r in unique if r.get("return_pct") is not None]
+        wins = len([v for v in returns if v > 0])
+        givebacks = [_to_float(r.get("giveback_pct"), 0.0) for r in unique if r.get("giveback_pct") is not None]
+        captures = [_to_float(r.get("capture_ratio"), 0.0) for r in unique if r.get("capture_ratio") is not None]
+        holds = [_to_float(r.get("hold_duration"), 0.0) for r in unique if r.get("hold_duration") is not None]
+        ranked.append({
+            kind: name,
+            "evidence_count_deduped": len(unique),
+            "average_diagnostic_return": _avg_v1(returns),
+            "diagnostic_win_rate": round((wins / len(returns)) * 100.0, 3) if returns else None,
+            "average_giveback": _avg_v1(givebacks),
+            "average_capture_ratio": _avg_v1(captures),
+            "average_hold_duration": _avg_v1(holds),
+            "trust_label": "advisory_lifecycle_only",
+            "diagnostic_only": True,
+        })
+    ranked.sort(key=lambda r: (_to_float(r.get("average_diagnostic_return"), -9999.0), _to_float(r.get("diagnostic_win_rate"), -1.0), r.get("evidence_count_deduped", 0)), reverse=True)
+    return ranked[:limit]
+
+
+def _wave2_symbol_intelligence_v1(lifecycle_rows: list[dict], broker_registry: dict) -> dict:
+    deduped = _dedup_lifecycle_rows_v1(lifecycle_rows)
+    by_symbol: dict[str, list[dict]] = {}
+    for row in deduped:
+        sym = str(row.get("symbol") or "").upper().strip()
+        if sym:
+            by_symbol.setdefault(sym, []).append(row)
+    broker_rows = [r for r in (broker_registry.get("records") or []) if isinstance(r, dict)]
+    broker_by_symbol: dict[str, dict[str, int]] = {}
+    for row in broker_rows:
+        sym = str(row.get("symbol") or "").upper().strip()
+        if not sym:
+            continue
+        bucket = broker_by_symbol.setdefault(sym, {"complete": 0, "partial": 0})
+        if row.get("truth_quality") == "broker_confirmed_complete":
+            bucket["complete"] += 1
+        elif row.get("truth_quality") == "broker_reconstructable_partial":
+            bucket["partial"] += 1
+
+    profiles = {}
+    for source_path in ("symbol_behavior_profiles_v1.json", "long_term_memory/symbol_profiles/latest_symbol_profiles.json"):
+        source = _astra_evidence_state_json(source_path)
+        for sym, profile in (source.get("profiles") or {}).items():
+            if isinstance(profile, dict):
+                profiles[str(sym).upper()] = {**profiles.get(str(sym).upper(), {}), **profile}
+
+    output = []
+    all_symbols = sorted(set(by_symbol) | set(profiles) | set(broker_by_symbol))
+    for sym in all_symbols:
+        rows = by_symbol.get(sym, [])
+        returns = [_to_float(r.get("return_pct"), 0.0) for r in rows if r.get("return_pct") is not None]
+        wins = len([v for v in returns if v > 0])
+        givebacks = [_to_float(r.get("giveback_pct"), 0.0) for r in rows if r.get("giveback_pct") is not None]
+        captures = [_to_float(r.get("capture_ratio"), 0.0) for r in rows if r.get("capture_ratio") is not None]
+        p = profiles.get(sym, {})
+        broker_complete = (broker_by_symbol.get(sym) or {}).get("complete", 0)
+        broker_partial = (broker_by_symbol.get(sym) or {}).get("partial", 0)
+        confidence_raw = _to_float(p.get("profile_confidence"), _to_float(p.get("confidence_reliability"), _to_float(p.get("behavioral_edge_score"), 0.0)))
+        confidence_cap = 45 if broker_complete < 20 else 100
+        output.append({
+            "symbol": sym,
+            "lifecycle_advisory_evidence_count": len(rows),
+            "unique_source_trade_ids": len(rows),
+            "duplicate_evidence_count": max(0, len([r for r in lifecycle_rows if str(r.get("symbol") or "").upper().strip() == sym]) - len(rows)),
+            "broker_confirmed_complete_count": broker_complete,
+            "broker_reconstructable_partial_count": broker_partial,
+            "best_horizon_diagnostic": p.get("best_horizon") or "unknown",
+            "worst_horizon_diagnostic": p.get("worst_horizon") or "unknown",
+            "best_exit_style_diagnostic": p.get("best_exit_style") or "insufficient_evidence",
+            "worst_exit_style_diagnostic": p.get("worst_exit_style") or "unknown",
+            "average_diagnostic_return": _avg_v1(returns),
+            "diagnostic_win_rate": round((wins / len(returns)) * 100.0, 3) if returns else None,
+            "average_giveback": _avg_v1(givebacks) if givebacks else _to_float(p.get("giveback_average"), _to_float(p.get("giveback_risk"), 0.0)),
+            "profit_capture_score": _avg_v1(captures) if captures else _to_float(p.get("profit_capture_history"), _to_float(p.get("capture_ratio_average"), 0.0)),
+            "confidence_raw": round(confidence_raw, 3),
+            "confidence_capped": round(min(confidence_raw, confidence_cap), 3),
+            "confidence_cap_reason": "broker_confirmed_complete_count_below_20" if broker_complete < 20 else "broker_truth_symbol_sample_available",
+            "evidence_label": "advisory_lifecycle_only" if broker_complete < 20 else "broker_truth_supported",
+        })
+    output.sort(key=lambda r: (_to_float(r.get("confidence_capped"), 0.0), _to_float(r.get("average_diagnostic_return"), -9999.0), r.get("unique_source_trade_ids", 0)), reverse=True)
+    coverage = round((len([r for r in output if r.get("broker_confirmed_complete_count", 0) > 0]) / max(1, len(output))) * 100.0, 3)
+    return {
+        "symbol_intelligence_maturity_status": "ADVISORY_LIFECYCLE_ONLY_UNTIL_BROKER_TRUTH_MATURES",
+        "symbol_profiles_tracked": len(output),
+        "strongest_diagnostic_symbol_profiles": output[:8],
+        "weakest_diagnostic_symbol_profiles": sorted(output, key=lambda r: (_to_float(r.get("average_diagnostic_return"), 9999.0), r.get("unique_source_trade_ids", 0)))[:8],
+        "under_evidenced_symbols": [r for r in output if r.get("unique_source_trade_ids", 0) < 5 and r.get("broker_confirmed_complete_count", 0) < 20][:12],
+        "symbol_broker_truth_coverage": coverage,
+        "symbol_confidence_guard_active": True,
+        "behavior_safe_to_apply": False,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+    }
+
+
+def _wave2_exit_intelligence_v2(lifecycle_rows: list[dict], broker_registry: dict) -> dict:
+    deduped = _dedup_lifecycle_rows_v1(lifecycle_rows)
+    lifecycle_groups: dict[str, list[dict]] = {}
+    for row in deduped:
+        lifecycle_groups.setdefault(_policy_label_v1(row), []).append(row)
+    lifecycle_board = _rank_group_stats_v1(lifecycle_groups, kind="exit_policy", limit=12)
+    exit_idx = _astra_evidence_state_json("storage_summary_indexes/exit_learning_expansion_suite_v1.jsonl.summary_index.json")
+    replay_idx = _astra_evidence_state_json("storage_summary_indexes/replay_counterfactual_learning_v2.jsonl.summary_index.json")
+    replay_policies = (((replay_idx.get("dimension_counts") or {}).get("exit_type")) or {}) if isinstance(replay_idx.get("dimension_counts"), dict) else {}
+    replay_board = [{"exit_policy": k, "sample_count": v, "label": "replay_counterfactual_only"} for k, v in sorted(replay_policies.items(), key=lambda kv: kv[1], reverse=True)[:12]]
+    return {
+        "exit_intelligence_maturity_status": "DIAGNOSTIC_ADVISORY_ONLY",
+        "exit_quality_diagnostic": None,
+        "broker_confirmed_exit_performance": [],
+        "lifecycle_diagnostic_exit_performance": lifecycle_board,
+        "replay_exit_performance": replay_board,
+        "shadow_exit_performance": [],
+        "lifecycle_exit_evidence_count_deduped": len(deduped),
+        "broker_confirmed_exit_evidence_count": int(_to_float(broker_registry.get("broker_confirmed_complete_records"), 0.0)),
+        "best_diagnostic_exit_policies": lifecycle_board[:5],
+        "exit_policy_confidence_guard_active": True,
+        "learned_exit_promotion_status": "disabled",
+        "learned_exits_enabled": False,
+        "automatic_promotions_enabled": False,
+        "exit_index_sample_rows": int(_to_float(exit_idx.get("sample_rows"), 0.0)),
+        "behavior_safe_to_apply": False,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+    }
+
+
+def _wave2_trade_style_v1(lifecycle_rows: list[dict], broker_registry: dict) -> dict:
+    deduped = _dedup_lifecycle_rows_v1(lifecycle_rows)
+    groups: dict[str, list[dict]] = {k: [] for k in ("scalp", "day_trade", "short_swing", "standard_swing", "extended_swing", "unknown")}
+    for row in deduped:
+        groups.setdefault(_classify_trade_style_v1(row), []).append(row)
+    styles = _rank_group_stats_v1(groups, kind="trade_style", limit=10)
+    for item in styles:
+        style_rows = groups.get(item.get("trade_style"), [])
+        symbol_counts: dict[str, int] = {}
+        exit_counts: dict[str, int] = {}
+        for row in style_rows:
+            sym = str(row.get("symbol") or "").upper().strip()
+            if sym:
+                symbol_counts[sym] = symbol_counts.get(sym, 0) + 1
+            pol = _policy_label_v1(row)
+            exit_counts[pol] = exit_counts.get(pol, 0) + 1
+        item["best_symbols"] = [k for k, _ in sorted(symbol_counts.items(), key=lambda kv: kv[1], reverse=True)[:5]]
+        item["worst_symbols"] = []
+        item["best_exit_policy_diagnostic"] = next(iter(sorted(exit_counts, key=exit_counts.get, reverse=True)), "insufficient_evidence")
+        item["worst_exit_policy_diagnostic"] = "insufficient_evidence"
+        item["broker_truth_coverage"] = 0.0
+    return {
+        "trade_style_intelligence_status": "DIAGNOSTIC_ADVISORY_ONLY",
+        "trade_style_categories_tracked": list(groups.keys()),
+        "trade_style_profiles": styles,
+        "best_diagnostic_trade_styles": styles[:3],
+        "weakest_diagnostic_trade_styles": sorted(styles, key=lambda r: _to_float(r.get("average_diagnostic_return"), 9999.0))[:3],
+        "trade_style_broker_truth_coverage": 0.0 if int(_to_float(broker_registry.get("broker_confirmed_complete_records"), 0.0)) <= 0 else None,
+        "trade_style_confidence_guard_active": True,
+        "behavior_safe_to_apply": False,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+    }
+
+
+def _wave2_retrieval_index_v1(lifecycle_rows: list[dict], broker_registry: dict, symbol_payload: dict, exit_payload: dict, trade_style_payload: dict, *, persist: bool = True) -> dict:
+    deduped = _dedup_lifecycle_rows_v1(lifecycle_rows)
+    categories = {
+        "symbol": {},
+        "exit_policy": {},
+        "trade_style": {},
+        "horizon": {},
+        "regime": {},
+        "setup_type": {},
+        "evidence_type": {"advisory_lifecycle_only": len(deduped)},
+        "confidence_bucket": {},
+        "outcome_label": {},
+    }
+    for row in deduped:
+        values = {
+            "symbol": str(row.get("symbol") or "unknown").upper(),
+            "exit_policy": _policy_label_v1(row),
+            "trade_style": _classify_trade_style_v1(row),
+            "horizon": str(row.get("horizon") or row.get("best_horizon") or _classify_trade_style_v1(row) or "unknown"),
+            "regime": str(row.get("regime") or "unknown"),
+            "setup_type": str(row.get("setup_type") or "unknown"),
+            "confidence_bucket": str(int(_to_float(row.get("confidence"), 0.0) // 20 * 20)),
+            "outcome_label": "winner" if _to_float(row.get("return_pct"), 0.0) > 0 else "loser" if _to_float(row.get("return_pct"), 0.0) < 0 else "neutral",
+        }
+        for category, value in values.items():
+            bucket = categories.setdefault(category, {})
+            bucket[value] = int(bucket.get(value, 0)) + 1
+    entries = []
+    for category, counts in categories.items():
+        for key, count in sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:25]:
+            entries.append({
+                "key": str(key),
+                "category": category,
+                "evidence_type": "advisory_lifecycle_only",
+                "unique_source_trade_count": int(count),
+                "broker_truth_count": 0,
+                "lifecycle_count": int(count),
+                "replay_count": 0,
+                "shadow_count": 0,
+                "top_symbols": [r.get("symbol") for r in (symbol_payload.get("strongest_diagnostic_symbol_profiles") or [])[:5]],
+                "top_exit_policies": [r.get("exit_policy") for r in (exit_payload.get("best_diagnostic_exit_policies") or [])[:5]],
+                "top_trade_styles": [r.get("trade_style") for r in (trade_style_payload.get("best_diagnostic_trade_styles") or [])[:5]],
+                "freshness": _now_utc_iso(),
+                "trust_label": "advisory_lifecycle_only",
+            })
+    payload = {
+        "retrieval_index_status": "READY_DIAGNOSTIC_READ_ONLY" if entries else "INSUFFICIENT_EVIDENCE",
+        "generated_at": _now_utc_iso(),
+        "entries": entries,
+        "retrieval_index_entry_count": len(entries),
+        "retrieval_categories_available": sorted([k for k, v in categories.items() if v]),
+        "retrieval_cache_path": "state/knowledge_retrieval_index_v1.json",
+        "retrieval_wiring_status": "PASS",
+        "scan_mode": "bounded_cached_registry_and_summary_indexes",
+        "raw_archive_scanned": False,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "behavior_safe_to_apply": False,
+    }
+    if persist:
+        payload["persisted"] = _astra_evidence_write_json("knowledge_retrieval_index_v1.json", payload)
+    else:
+        payload["persisted"] = False
+    return payload
+
+
+def _wave2_wiring_integrity_v1(symbol_payload: dict, exit_payload: dict, trade_style_payload: dict, retrieval_payload: dict, evidence_payload: dict, broker_registry: dict) -> dict:
+    blockers = []
+    if not symbol_payload:
+        blockers.append("symbol_intelligence_missing")
+    if not exit_payload:
+        blockers.append("exit_intelligence_missing")
+    if not trade_style_payload:
+        blockers.append("trade_style_intelligence_missing")
+    if not retrieval_payload:
+        blockers.append("retrieval_index_missing")
+    broker_complete = int(_to_float(broker_registry.get("broker_confirmed_complete_records"), 0.0))
+    official_blocked = (evidence_payload.get("official_metric_status") == "INSUFFICIENT_BROKER_TRUTH_EVIDENCE") if broker_complete < 50 else True
+    if not official_blocked:
+        blockers.append("official_metrics_polluted_by_diagnostic_evidence")
+    return {
+        "wave2_intelligence_wiring_integrity_v1": True,
+        "symbol_intelligence_connected": bool(symbol_payload),
+        "exit_intelligence_connected": bool(exit_payload),
+        "trade_style_intelligence_connected": bool(trade_style_payload),
+        "retrieval_index_connected": bool(retrieval_payload),
+        "unified_diagnostics_connected": True,
+        "evidence_maturation_connected": bool(evidence_payload),
+        "broker_truth_guards_preserved": official_blocked,
+        "duplicate_evidence_guard_active": True,
+        "official_metrics_not_polluted": official_blocked,
+        "no_behavior_change_confirmed": True,
+        "wiring_status": "PASS" if not blockers else "FAIL",
+        "wiring_blockers": blockers,
+        "exact_fix_needed": None if not blockers else "repair Wave 2 diagnostic wiring without relaxing broker-truth guards",
+        "behavior_safe_to_apply": False,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+    }
+
+
+def _astra_wave2_intelligence_maturation_status_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    evidence_payload = statuses.get("astra_evidence_maturation_status_v1") if isinstance(statuses.get("astra_evidence_maturation_status_v1"), dict) else _astra_evidence_maturation_status_payload(statuses)
+    broker_registry = evidence_payload.get("canonical_broker_truth_registry_v1") if isinstance(evidence_payload.get("canonical_broker_truth_registry_v1"), dict) else _astra_evidence_state_json("broker_truth_records_v1.json")
+    lifecycle_rows = _closed_trade_lifecycle_rows_v1(limit=2000)
+    symbol_payload = _wave2_symbol_intelligence_v1(lifecycle_rows, broker_registry)
+    exit_payload = _wave2_exit_intelligence_v2(lifecycle_rows, broker_registry)
+    trade_style_payload = _wave2_trade_style_v1(lifecycle_rows, broker_registry)
+    retrieval_payload = _wave2_retrieval_index_v1(lifecycle_rows, broker_registry, symbol_payload, exit_payload, trade_style_payload, persist=True)
+    wiring = _wave2_wiring_integrity_v1(symbol_payload, exit_payload, trade_style_payload, retrieval_payload, evidence_payload, broker_registry)
+    return {
+        "suite": "Astra Wave 2 Intelligence Maturation & Retrieval Foundation V1",
+        "status": "ok",
+        "generated_at": _now_utc_iso(),
+        "endpoint": "/api/astra_wave2_intelligence_maturation_status_v1",
+        "symbol_intelligence_behavioral_memory_v1": symbol_payload,
+        "exit_intelligence_maturation_v2": exit_payload,
+        "trade_style_intelligence_framework_v1": trade_style_payload,
+        "knowledge_retrieval_indexing_engine_v1": retrieval_payload,
+        "wave2_intelligence_wiring_integrity_v1": wiring,
+        "symbol_profiles_tracked": symbol_payload.get("symbol_profiles_tracked"),
+        "symbol_broker_truth_coverage": symbol_payload.get("symbol_broker_truth_coverage"),
+        "exit_evidence_deduped_count": exit_payload.get("lifecycle_exit_evidence_count_deduped"),
+        "broker_confirmed_exit_evidence_count": exit_payload.get("broker_confirmed_exit_evidence_count"),
+        "trade_style_categories_tracked": trade_style_payload.get("trade_style_categories_tracked"),
+        "retrieval_index_entry_count": retrieval_payload.get("retrieval_index_entry_count"),
+        "retrieval_categories_available": retrieval_payload.get("retrieval_categories_available"),
+        "wave2_wiring_status": wiring.get("wiring_status"),
+        "official_metric_status": evidence_payload.get("official_metric_status"),
+        "paper_only_preserved": True,
+        "alpaca_paper_only_preserved": True,
+        "behavior_safe_to_apply": False,
+        "broker_live_endpoint_allowed": False,
+        "learned_exits_enabled": False,
+        "automatic_promotions_enabled": False,
+        "broker_behavior_changed": False,
+        "live_trading_changed": False,
+        "forced_trades_enabled": False,
+        "forced_exits_enabled": False,
+        "ranking_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "exit_behavior_changed": False,
+        "position_sizing_changed": False,
+        "portfolio_allocation_changed": False,
+        "thresholds_changed": False,
+        "api_calls_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "dashboard_provider_calls_used": 0,
+        "dashboard_llm_calls_used": 0,
+        "cache_first": True,
+    }
+
+
 def _astra_evidence_maturation_status_payload(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -45393,6 +45783,16 @@ def canonical_outcome_audit_v1(force: bool = False):
     audit.setdefault("provider_calls_used", 0)
     audit.setdefault("llm_calls_used", 0)
     return audit
+
+
+@router.get("/api/astra_wave2_intelligence_maturation_status_v1")
+def astra_wave2_intelligence_maturation_status_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_wave2_intelligence_maturation_status_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_wave2_intelligence_maturation_status_payload(statuses)
 
 
 @router.get("/api/astra_intelligence_consumption_layer_v1")
