@@ -290,8 +290,11 @@ class AlpacaPaperBroker:
                 or datetime.min.replace(tzinfo=timezone.utc)
             )
         )
-        lots: dict[str, list[dict[str, float]]] = {}
+        lots: dict[str, list[dict[str, Any]]] = {}
         closed_rows: list[dict[str, Any]] = []
+        fill_rows: list[dict[str, Any]] = []
+        buy_fill_rows: list[dict[str, Any]] = []
+        sell_fill_rows: list[dict[str, Any]] = []
         realized_profit = 0.0
         realized_loss = 0.0
         gross_cost = 0.0
@@ -307,15 +310,42 @@ class AlpacaPaperBroker:
             if status not in {"filled", "partially_filled", "done_for_day", "canceled"}:
                 continue
             filled_orders_reviewed += 1
+            filled_at = _safe_text(row.get("filled_at") or row.get("updated_at") or row.get("submitted_at") or row.get("created_at"))
+            fill = {
+                "fill_id": _safe_text(row.get("id")) or f"{symbol}:{side}:{filled_at}:{round(qty, 6)}:{round(price, 6)}",
+                "broker_order_id": _safe_text(row.get("id")),
+                "client_order_id": _safe_text(row.get("client_order_id")),
+                "symbol": symbol,
+                "side": side,
+                "filled_qty": round(qty, 6),
+                "filled_avg_price": round(price, 6),
+                "filled_at": filled_at,
+                "status": status,
+                "source": "alpaca_paper_closed_orders",
+            }
+            fill_rows.append(fill)
+            if side == "buy":
+                buy_fill_rows.append(fill)
+            elif side == "sell":
+                sell_fill_rows.append(fill)
             symbol_lots = lots.setdefault(symbol, [])
             if side == "buy":
-                symbol_lots.append({"qty": qty, "price": price})
+                symbol_lots.append({
+                    "qty": qty,
+                    "price": price,
+                    "filled_at": filled_at,
+                    "broker_order_id": fill.get("broker_order_id"),
+                    "client_order_id": fill.get("client_order_id"),
+                })
                 continue
             if side != "sell" or not symbol_lots:
                 continue
             remaining = qty
             cost_basis = 0.0
             matched_qty = 0.0
+            matched_entry_times: list[str] = []
+            matched_entry_order_ids: list[str] = []
+            matched_entry_client_order_ids: list[str] = []
             while remaining > 1e-9 and symbol_lots:
                 head = symbol_lots[0]
                 take = min(remaining, _to_float(head.get("qty"), 0.0))
@@ -324,6 +354,12 @@ class AlpacaPaperBroker:
                     continue
                 cost_basis += take * _to_float(head.get("price"), 0.0)
                 matched_qty += take
+                if _safe_text(head.get("filled_at")):
+                    matched_entry_times.append(_safe_text(head.get("filled_at")))
+                if _safe_text(head.get("broker_order_id")):
+                    matched_entry_order_ids.append(_safe_text(head.get("broker_order_id")))
+                if _safe_text(head.get("client_order_id")):
+                    matched_entry_client_order_ids.append(_safe_text(head.get("client_order_id")))
                 head["qty"] = max(0.0, _to_float(head.get("qty"), 0.0) - take)
                 remaining -= take
                 if _to_float(head.get("qty"), 0.0) <= 1e-9:
@@ -346,11 +382,16 @@ class AlpacaPaperBroker:
                     "exit_proceeds": round(proceeds, 4),
                     "realized_pnl": round(pnl, 4),
                     "realized_return_pct": round(return_pct, 4),
-                    "filled_at": _safe_text(row.get("filled_at") or row.get("updated_at") or row.get("submitted_at") or row.get("created_at")),
+                    "entry_timestamp": matched_entry_times[0] if matched_entry_times else None,
+                    "entry_order_ids": sorted(set(matched_entry_order_ids)),
+                    "entry_client_order_ids": sorted(set(matched_entry_client_order_ids)),
+                    "filled_at": filled_at,
                     "order_id": _safe_text(row.get("id")),
                     "client_order_id": _safe_text(row.get("client_order_id")),
                 }
             )
+        unpaired_buy_count = sum(1 for symbol_lots in lots.values() for lot in symbol_lots if _to_float(lot.get("qty"), 0.0) > 1e-9)
+        unpaired_sell_count = max(0, len(sell_fill_rows) - len(closed_rows))
         trade_count = len(closed_rows)
         winning = len([row for row in closed_rows if _to_float(row.get("realized_pnl"), 0.0) > 0])
         losing = len([row for row in closed_rows if _to_float(row.get("realized_pnl"), 0.0) < 0])
@@ -390,6 +431,14 @@ class AlpacaPaperBroker:
             "winning_trade_count": winning,
             "losing_trade_count": losing,
             "breakeven_trade_count": breakeven,
+            "buy_fill_count": len(buy_fill_rows),
+            "sell_fill_count": len(sell_fill_rows),
+            "paired_round_trip_count": trade_count,
+            "unpaired_buy_count": unpaired_buy_count,
+            "unpaired_sell_count": unpaired_sell_count,
+            "fill_rows": fill_rows[-100:],
+            "buy_fill_rows": buy_fill_rows[-50:],
+            "sell_fill_rows": sell_fill_rows[-50:],
             "closed_trade_rows": closed_rows[-25:],
         }
 
