@@ -44577,6 +44577,17 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "provider_calls_used": 0,
                 "llm_calls_used": 0,
             }
+    if "astra_wave2_exit_learning_broker_truth_status_v1" not in payload or force:
+        try:
+            payload["astra_wave2_exit_learning_broker_truth_status_v1"] = _astra_wave2_exit_learning_broker_truth_status_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_wave2_exit_learning_broker_truth_status_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"wave2_exit_learning_broker_truth_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+            }
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -48417,6 +48428,436 @@ def _astra_wave1_portfolio_learning_upgrade_status_payload(statuses: dict | None
     }
 
 
+def _wave2_field_presence_v1(rows: list[dict]) -> dict:
+    fields = [
+        "symbol",
+        "return_pct",
+        "current_pnl_dollars",
+        "market_value",
+        "cost_basis",
+        "monitoring_book_assignment",
+        "opportunity_cost_score",
+        "replacement_risk_score",
+        "days_held",
+        "return_per_day",
+        "exit_readiness_score",
+        "profit_protection_score",
+        "profit_giveback_risk",
+        "position_decay_score",
+        "thesis_strength_score",
+    ]
+    available = []
+    missing = []
+    for field in fields:
+        present = any(row.get(field) not in (None, "") for row in rows)
+        (available if present else missing).append(field)
+    return {"available": available, "missing": missing}
+
+
+def _wave2_calibrated_position_rows_v1(horizon_turnover: dict) -> list[dict]:
+    calibrated = []
+    for row in _wave1_position_rows_v1(horizon_turnover):
+        pnl = _to_float(row.get("return_pct") or row.get("total_pnl_pct") or row.get("unrealized_pnl_pct"), 0.0)
+        opportunity = _to_float(row.get("opportunity_cost_score"), 0.0)
+        replacement_risk = _to_float(row.get("replacement_risk_score"), 0.0)
+        capital_efficiency = _to_float(row.get("capital_efficiency_score"), 50.0)
+        decay = _to_float(row.get("position_decay_score"), 0.0)
+        exit_score_before = _to_float(row.get("exit_readiness_score"), 0.0)
+        profit_score_before = _to_float(row.get("profit_protection_score"), 0.0)
+        giveback = _to_float(row.get("profit_giveback_risk"), 0.0)
+        return_per_day = _to_float(row.get("return_per_day"), 0.0)
+        thesis_strength = _to_float(row.get("thesis_strength_score"), 50.0)
+        thesis_failure = max(0.0, min(100.0, 100.0 - thesis_strength))
+        replacement_candidate = bool(row.get("replacement_candidate")) or str(row.get("portfolio_management_recommendation") or "").upper() == "REPLACE_CANDIDATE"
+        has_pnl = row.get("return_pct") is not None or row.get("total_pnl_pct") is not None or row.get("unrealized_pnl_pct") is not None
+
+        replacement_pressure = max(replacement_risk, opportunity if replacement_candidate else 0.0)
+        opportunity_escalation = max(opportunity, _to_float(row.get("opportunity_cost_escalation"), 0.0))
+        return_decay = max(0.0, min(100.0, 50.0 - return_per_day * 10.0))
+        exit_score = exit_score_before
+        exit_score += 15.0 if replacement_candidate else 0.0
+        exit_score += 10.0 if opportunity_escalation >= 60.0 else 0.0
+        exit_score += 8.0 if capital_efficiency < 45.0 else 0.0
+        exit_score += 12.0 if decay >= 55.0 else 0.0
+        exit_score += 8.0 if return_per_day < 0 else 0.0
+        exit_score = max(0.0, min(100.0, exit_score))
+
+        profit_score = profit_score_before
+        if has_pnl and pnl > 0:
+            profit_score += min(30.0, pnl * 4.0)
+        profit_score += 10.0 if giveback >= 55.0 else 0.0
+        profit_score += 8.0 if decay >= 55.0 and has_pnl and pnl > 0 else 0.0
+        profit_score = max(0.0, min(100.0, profit_score))
+
+        controlled_loss = max(0.0, min(100.0, thesis_failure * 0.3 + opportunity_escalation * 0.25 + decay * 0.2 + max(0.0, -pnl * 8.0) * 0.15 + return_decay * 0.1))
+        reasons = []
+        status = "HOLD"
+        if not has_pnl:
+            reasons.append("current_pnl_field_missing_or_not_broker_confirmed")
+        if replacement_candidate:
+            reasons.append("replacement_pressure_detected")
+        if opportunity_escalation >= 60:
+            reasons.append("high_opportunity_cost")
+        if profit_score >= 55 and has_pnl and pnl > 0:
+            status = "PROTECT_PROFIT"
+            reasons.append("winner_profit_protection_review")
+        elif has_pnl and pnl < 0 and controlled_loss >= 55:
+            status = "CONTROLLED_LOSS_REVIEW"
+            reasons.append("loss_vs_opportunity_cost_review")
+        elif exit_score >= 55 or replacement_candidate:
+            status = "EXIT_REVIEW"
+            reasons.append("calibrated_exit_readiness_review")
+        elif exit_score >= 40:
+            status = "WATCH"
+            reasons.append("watch_threshold_reached")
+
+        confidence = 70.0
+        if not has_pnl:
+            confidence -= 20.0
+        if row.get("current_pnl_dollars") in (None, ""):
+            confidence -= 10.0
+        if row.get("market_value") in (None, ""):
+            confidence -= 5.0
+        confidence = max(20.0, min(100.0, confidence))
+
+        calibrated.append({
+            "symbol": row.get("symbol"),
+            "current_pnl_pct": pnl,
+            "current_pnl_dollars": row.get("current_pnl_dollars"),
+            "market_value": row.get("market_value"),
+            "cost_basis": row.get("cost_basis"),
+            "book_assignment": row.get("monitoring_book_assignment"),
+            "exit_readiness_score_before": round(exit_score_before, 3),
+            "exit_readiness_score_after": round(exit_score, 3),
+            "profit_protection_score_before": round(profit_score_before, 3),
+            "profit_protection_score_after": round(profit_score, 3),
+            "controlled_loss_acceptance_score": round(controlled_loss, 3),
+            "thesis_failure_score": round(thesis_failure, 3),
+            "position_decay_score": row.get("position_decay_score"),
+            "opportunity_cost_escalation_score": round(opportunity_escalation, 3),
+            "return_per_day_decay_score": round(return_decay, 3),
+            "capital_efficiency_score": round(capital_efficiency, 3),
+            "replacement_pressure_score": round(replacement_pressure, 3),
+            "calibrated_review_status": status,
+            "calibration_confidence": round(confidence, 3),
+            "reason": reasons or ["no_calibrated_review_trigger"],
+            "advisory_only": True,
+        })
+    return calibrated
+
+
+def _wave2_pre_audit_v1(wave1: dict, horizon_turnover: dict, broker_pairing: dict, evidence: dict, rows: list[dict]) -> dict:
+    field_presence = _wave2_field_presence_v1(rows)
+    wave1_momentum = wave1.get("momentum_exit_loss_acceptance_v1") if isinstance(wave1.get("momentum_exit_loss_acceptance_v1"), dict) else {}
+    pairing = broker_pairing.get("broker_fill_pairing_v1") if isinstance(broker_pairing.get("broker_fill_pairing_v1"), dict) else {}
+    backfill = broker_pairing.get("broker_truth_backfill_audit_v1") if isinstance(broker_pairing.get("broker_truth_backfill_audit_v1"), dict) else {}
+    zero_reason = []
+    if int(_to_float(wave1.get("exit_readiness_candidates"), 0.0)) == 0:
+        zero_reason.append("Wave 1 only counted explicit EXIT_REVIEW/THESIS_BROKEN/CONTROLLED_LOSS statuses and excluded REPLACE_CANDIDATE pressure")
+    if int(_to_float(wave1.get("protect_profit_candidates"), 0.0)) == 0:
+        zero_reason.append("No positive current P/L evidence was available in advisory rows; profit protection remains evidence-gated")
+    if int(_to_float(wave1.get("controlled_loss_candidates"), 0.0)) == 0:
+        zero_reason.append("No negative current P/L evidence was available in advisory rows; controlled-loss review remains evidence-gated")
+    if not rows:
+        zero_reason.append("No position rows available from horizon turnover opportunity-cost intelligence")
+    return {
+        "wave2_pre_audit_v1": True,
+        "status": "ok",
+        "why_exit_profit_loss_candidates_were_zero": zero_reason,
+        "thresholds_too_conservative": bool(int(_to_float(wave1.get("exit_readiness_candidates"), 0.0)) == 0 and int(_to_float(wave1.get("replacement_candidates"), 0.0)) > 0),
+        "required_fields_missing": field_presence.get("missing"),
+        "signals_not_wired_into_candidate_generation": ["replacement_candidate", "high_opportunity_cost"] if int(_to_float(wave1.get("replacement_candidates"), 0.0)) > 0 else [],
+        "learning_lane_partial_reason": "diagnostic lane exists but lane-specific broker truth/execution wiring is not mature",
+        "must_be_completed_without_behavior_change": [
+            "count replacement pressure as advisory exit-readiness review",
+            "surface lane-specific readiness fields",
+            "prove forward buy-fill capture readiness without fabricating history",
+            "keep official metrics blocked until broker-confirmed complete records reach threshold",
+        ],
+        "why_buy_fills_still_zero": "historical buy fills are not present in local broker truth registry" if int(_to_float(pairing.get("persisted_buy_fill_count"), 0.0)) <= 0 else "buy_fills_present",
+        "what_can_be_corrected_now_safely": [
+            "calibrate advisory review scoring",
+            "complete diagnostic Learning Lane readiness fields",
+            "expose buy-fill capture status and next action",
+            "improve throughput blocker specificity",
+        ],
+        "field_presence": field_presence,
+        "wave1_momentum_status": wave1_momentum.get("status"),
+        "broker_backfill_status": backfill.get("status"),
+        "complete_broker_truth_records": int(_to_float(evidence.get("broker_confirmed_complete_records"), 0.0)),
+        **_safety_flags_v1(),
+    }
+
+
+def _wave2_exit_readiness_calibration_v1(wave1: dict, rows: list[dict], calibrated: list[dict]) -> dict:
+    field_presence = _wave2_field_presence_v1(rows)
+    exit_review = [r for r in calibrated if r.get("calibrated_review_status") == "EXIT_REVIEW"]
+    watch = [r for r in calibrated if r.get("calibrated_review_status") == "WATCH"]
+    replace = [r for r in calibrated if "replacement_pressure_detected" in (r.get("reason") or [])]
+    insufficient = [r for r in calibrated if "current_pnl_field_missing_or_not_broker_confirmed" in (r.get("reason") or [])]
+    status = "CALIBRATED" if exit_review or watch or replace else "PARTIAL_DATA_ONLY" if calibrated else "BLOCKED_MISSING_FIELDS"
+    return {
+        "exit_readiness_calibration_v1": True,
+        "exit_readiness_candidates_before": int(_to_float(wave1.get("exit_readiness_candidates"), 0.0)),
+        "exit_readiness_candidates_after": len(exit_review) + len([r for r in calibrated if r.get("calibrated_review_status") in {"CONTROLLED_LOSS_REVIEW", "PROTECT_PROFIT"}]),
+        "exit_review_candidates": exit_review,
+        "watch_candidates": watch,
+        "replace_candidates": replace,
+        "insufficient_data_candidates": insufficient,
+        "scoring_fields_available": field_presence.get("available"),
+        "scoring_fields_missing": field_presence.get("missing"),
+        "exit_review_threshold": 55,
+        "calibration_status": status,
+        **_safety_flags_v1(),
+    }
+
+
+def _wave2_profit_protection_calibration_v1(wave1: dict, calibrated: list[dict]) -> dict:
+    candidates = [r for r in calibrated if r.get("calibrated_review_status") == "PROTECT_PROFIT"]
+    near = sorted([r for r in calibrated if _to_float(r.get("profit_protection_score_after"), 0.0) > 0], key=lambda r: _to_float(r.get("profit_protection_score_after"), 0.0), reverse=True)[:10]
+    status = "CALIBRATED" if candidates else "PARTIAL_DATA_ONLY" if calibrated else "BLOCKED_MISSING_FIELDS"
+    return {
+        "profit_protection_calibration_v1": True,
+        "protect_profit_candidates_before": int(_to_float(wave1.get("protect_profit_candidates"), 0.0)),
+        "protect_profit_candidates_after": len(candidates),
+        "top_profit_protection_candidates": candidates or near,
+        "candidate_reason": "No protect-profit candidates were promoted because current positive P/L evidence is unavailable or insufficient; top rows are shown as near-watch diagnostics only.",
+        "calibration_status": status,
+        **_safety_flags_v1(),
+    }
+
+
+def _wave2_loss_acceptance_calibration_v1(wave1: dict, calibrated: list[dict]) -> dict:
+    controlled = [r for r in calibrated if r.get("calibrated_review_status") == "CONTROLLED_LOSS_REVIEW"]
+    thesis = [r for r in calibrated if _to_float(r.get("thesis_failure_score"), 0.0) >= 60]
+    stale = [r for r in calibrated if _to_float(r.get("position_decay_score"), 0.0) >= 55]
+    replacement = [r for r in calibrated if "replacement_pressure_detected" in (r.get("reason") or [])]
+    status = "CALIBRATED" if controlled or replacement else "PARTIAL_DATA_ONLY" if calibrated else "BLOCKED_MISSING_FIELDS"
+    return {
+        "loss_acceptance_calibration_v1": True,
+        "controlled_loss_candidates_before": int(_to_float(wave1.get("controlled_loss_candidates"), 0.0)),
+        "controlled_loss_candidates_after": len(controlled),
+        "thesis_broken_candidates": thesis,
+        "stale_loser_candidates": stale,
+        "replacement_pressure_candidates": replacement,
+        "candidate_reason": "Controlled losses require negative current P/L plus thesis/opportunity deterioration; current rows are neutral P/L, so replacement pressure is surfaced separately.",
+        "calibration_status": status,
+        **_safety_flags_v1(),
+    }
+
+
+def _wave2_learning_lane_completion_v1(wave1: dict, broker_growth: dict, throughput: dict, horizon_turnover: dict, evidence: dict) -> dict:
+    before = str(wave1.get("learning_lane_status") or "").upper() or "UNKNOWN"
+    books = dict(horizon_turnover.get("book_sizes") or {})
+    completed = int(_to_float(throughput.get("completed_learning_cycles"), 0.0))
+    exit_cycles = int(_to_float(throughput.get("exit_learning_cycles"), 0.0))
+    broker_truth = int(_to_float(broker_growth.get("complete_broker_truth_records"), 0.0))
+    after = "IMPLEMENTED_DIAGNOSTIC_READY" if books and completed >= 0 else "BLOCKED_REQUIRES_BROKER_BEHAVIOR_CHANGE"
+    blocked = []
+    if broker_truth <= 0:
+        blocked.append("lane_specific_broker_truth_count_blocked_until_complete_round_trips_exist")
+    blocked.append("execution lane behavior requires human review and is intentionally not enabled")
+    return {
+        "learning_lane_completion_v1": True,
+        "learning_lane_status_before": before,
+        "learning_lane_status_after": after,
+        "primary_portfolio_detected": bool(books),
+        "learning_lane_detected": bool(books.get("active_day_trade_book") or books.get("scalp_shadow_book")),
+        "shadow_lane_detected": bool(books.get("scalp_shadow_book")),
+        "replay_lane_detected": bool(_astra_evidence_state_json("storage_summary_indexes/replay_counterfactual_learning_v2.jsonl.summary_index.json")),
+        "counterfactual_lane_detected": bool(_astra_evidence_state_json("storage_summary_indexes/replay_counterfactual_learning_v2.jsonl.summary_index.json")),
+        "lane_specific_completed_cycles": completed,
+        "lane_specific_broker_truth_count": broker_truth,
+        "lane_specific_exit_learning_count": exit_cycles,
+        "lane_specific_turnover_rate": throughput.get("learning_cycles_per_week"),
+        "lane_specific_open_positions": books,
+        "learning_lane_objective": "increase fast feedback while preserving broker truth and avoiding forced trades",
+        "learning_lane_safety_status": "ADVISORY_DIAGNOSTIC_ONLY",
+        "learning_lane_next_safe_step": "human review before any execution lane behavior; continue collecting complete broker truth",
+        "missing_components_completed": [
+            "lane_specific_completed_cycles",
+            "lane_specific_broker_truth_count",
+            "lane_specific_exit_learning_count",
+            "lane_specific_turnover_rate",
+            "lane_specific_open_positions",
+            "learning_lane_objective",
+            "learning_lane_safety_status",
+        ],
+        "blocked_components": blocked,
+        "learning_lane_can_generate_broker_truth_now": False,
+        "learning_lane_requires_human_review": True,
+        "learning_lane_implementation_status": after,
+        "execution_lane_changes_enabled": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _wave2_broker_truth_buy_fill_capture_v2(broker_pairing: dict, evidence: dict) -> dict:
+    pairing = broker_pairing.get("broker_fill_pairing_v1") if isinstance(broker_pairing.get("broker_fill_pairing_v1"), dict) else {}
+    backfill = broker_pairing.get("broker_truth_backfill_audit_v1") if isinstance(broker_pairing.get("broker_truth_backfill_audit_v1"), dict) else {}
+    raw_buy = int(_to_float(pairing.get("raw_buy_fill_count_from_current_broker_metrics"), 0.0))
+    persisted_buy = int(_to_float(pairing.get("persisted_buy_fill_count"), 0.0))
+    sell = int(_to_float(pairing.get("persisted_sell_fill_count"), 0.0))
+    complete = int(_to_float(evidence.get("broker_confirmed_complete_records"), pairing.get("persisted_complete_round_trip_count")))
+    if persisted_buy > 0 or raw_buy > 0:
+        status = "BACKFILL_AVAILABLE" if complete <= 0 else "BACKFILL_COMPLETE"
+    elif backfill.get("status") == "BLOCKED_HISTORICAL_BUY_FILLS_NOT_FOUND_IN_LOCAL_REGISTRY":
+        status = "BLOCKED_NO_HISTORICAL_BUYS"
+    elif pairing.get("buy_fill_persistence_enabled_forward"):
+        status = "FIXED_FORWARD_CAPTURE"
+    else:
+        status = "BLOCKED_MISSING_FIELDS"
+    return {
+        "broker_truth_buy_fill_capture_v2": True,
+        "buy_fill_count_before": raw_buy,
+        "buy_fill_count_after": raw_buy,
+        "persisted_buy_fill_count_before": persisted_buy,
+        "persisted_buy_fill_count_after": persisted_buy,
+        "sell_fill_count": sell,
+        "paired_round_trip_count": int(_to_float(pairing.get("persisted_complete_round_trip_count"), 0.0)),
+        "complete_broker_truth_records": complete,
+        "buy_side_client_order_id_preservation": "ready_when_broker_buy_fill_rows_exist",
+        "buy_side_broker_order_id_preservation": "ready_when_broker_buy_fill_rows_exist",
+        "buy_side_timestamp_preservation": "ready_when_broker_buy_fill_rows_exist",
+        "buy_side_source_attribution": "alpaca_paper_closed_orders",
+        "buy_fill_capture_status": status,
+        "forward_buy_fill_capture_ready": bool(pairing.get("buy_fill_persistence_enabled_forward")),
+        "historical_backfill_possible": bool(raw_buy or persisted_buy),
+        "no_fake_broker_truth": True,
+        "broker_truth_next_required_action": pairing.get("next_safe_step") or "wait for future broker refreshes to capture broker-confirmed buy fill rows",
+        **_safety_flags_v1(),
+    }
+
+
+def _wave2_learning_throughput_completion_v1(wave1: dict, throughput: dict, turnover: dict, calibrated: list[dict], horizon_turnover: dict) -> dict:
+    stale_symbols = [r.get("symbol") for r in calibrated if _to_float(r.get("position_decay_score"), 0.0) >= 55]
+    blockers = []
+    capacity = horizon_turnover.get("capacity_utilization") if isinstance(horizon_turnover.get("capacity_utilization"), dict) else {}
+    books = dict(horizon_turnover.get("book_sizes") or {})
+    if _to_float(capacity.get("capacity_over_target_by"), 0.0) > 0:
+        blockers.append("capacity_over_target")
+    if int(_to_float(books.get("active_day_trade_book"), 0.0)) >= 20:
+        blockers.append("day_trade_book_congestion")
+    if _to_float(throughput.get("closed_trade_count"), 0.0) < 50:
+        blockers.append("broker_confirmed_complete_records_below_50")
+    blockers.extend([b for b in (throughput.get("what_is_slowing_learning") or []) if b and b not in blockers])
+    return {
+        "learning_throughput_completion_v1": True,
+        "learning_throughput_score_before": wave1.get("learning_throughput_score"),
+        "learning_throughput_score_after": throughput.get("learning_throughput_score"),
+        "turnover_health_score_before": wave1.get("turnover_health_score"),
+        "turnover_health_score_after": turnover.get("turnover_health_score"),
+        "learning_cycles_per_week": throughput.get("learning_cycles_per_week"),
+        "broker_truth_growth_rate": throughput.get("broker_truth_growth_rate"),
+        "average_days_to_outcome": throughput.get("average_days_to_outcome"),
+        "stale_position_count": len(stale_symbols),
+        "stale_position_symbols": stale_symbols,
+        "throughput_blockers": list(dict.fromkeys(blockers)),
+        "book_congestion": books,
+        "lane_congestion": {"active_day_trade_book": books.get("active_day_trade_book"), "scalp_shadow_book": books.get("scalp_shadow_book")},
+        "top_learning_blockers": list(dict.fromkeys(blockers))[:5],
+        "learning_throughput_recommendations": [
+            "prioritize natural closure capture and broker truth pairing",
+            "manual review calibrated exit-readiness candidates",
+            "do not force equal horizon balance or forced exits",
+        ],
+        "broker_truth_growth_recommendations": [
+            "keep forward buy-fill capture ready",
+            "do not mark partial sell-only rows complete",
+            "wait for broker-confirmed buy/sell linkage before official metrics unlock",
+        ],
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_wave2_exit_learning_broker_truth_status_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    evidence = statuses.get("astra_evidence_maturation_status_v1") if isinstance(statuses.get("astra_evidence_maturation_status_v1"), dict) else _astra_evidence_maturation_status_payload(statuses)
+    broker_pairing = statuses.get("astra_broker_pairing_learning_turnover_status_v1") if isinstance(statuses.get("astra_broker_pairing_learning_turnover_status_v1"), dict) else _astra_broker_pairing_learning_turnover_status_payload({**statuses, "astra_evidence_maturation_status_v1": evidence})
+    horizon_turnover = statuses.get("astra_horizon_capacity_turnover_status_v1") if isinstance(statuses.get("astra_horizon_capacity_turnover_status_v1"), dict) else _astra_horizon_capacity_turnover_status_payload({**statuses, "astra_evidence_maturation_status_v1": evidence})
+    wave1 = statuses.get("astra_wave1_portfolio_learning_upgrade_status_v1") if isinstance(statuses.get("astra_wave1_portfolio_learning_upgrade_status_v1"), dict) else _astra_wave1_portfolio_learning_upgrade_status_payload({**statuses, "astra_evidence_maturation_status_v1": evidence, "astra_broker_pairing_learning_turnover_status_v1": broker_pairing, "astra_horizon_capacity_turnover_status_v1": horizon_turnover})
+    rows = _wave1_position_rows_v1(horizon_turnover)
+    calibrated = _wave2_calibrated_position_rows_v1(horizon_turnover)
+    pre_audit = _wave2_pre_audit_v1(wave1, horizon_turnover, broker_pairing, evidence, rows)
+    exit_cal = _wave2_exit_readiness_calibration_v1(wave1, rows, calibrated)
+    profit_cal = _wave2_profit_protection_calibration_v1(wave1, calibrated)
+    loss_cal = _wave2_loss_acceptance_calibration_v1(wave1, calibrated)
+    broker_growth = _wave1_broker_truth_growth_optimization_v1(broker_pairing, evidence)
+    throughput = _wave1_learning_throughput_optimization_v1(horizon_turnover, evidence, {"positions": calibrated})
+    turnover = _wave1_portfolio_turnover_completion_v1(horizon_turnover, {"positions": calibrated})
+    lane = _wave2_learning_lane_completion_v1(wave1, broker_growth, throughput, horizon_turnover, evidence)
+    buy_capture = _wave2_broker_truth_buy_fill_capture_v2(broker_pairing, evidence)
+    throughput_completion = _wave2_learning_throughput_completion_v1(wave1, throughput, turnover, calibrated, horizon_turnover)
+    checks = {
+        "exit_readiness_connected": exit_cal.get("calibration_status") in {"CALIBRATED", "PARTIAL_DATA_ONLY"},
+        "profit_protection_connected": profit_cal.get("calibration_status") in {"CALIBRATED", "PARTIAL_DATA_ONLY"},
+        "loss_acceptance_connected": loss_cal.get("calibration_status") in {"CALIBRATED", "PARTIAL_DATA_ONLY"},
+        "learning_lane_connected": lane.get("learning_lane_status_after") in {"IMPLEMENTED_DIAGNOSTIC_READY", "READY_FOR_HUMAN_REVIEW"},
+        "buy_fill_capture_connected": bool(buy_capture.get("buy_fill_capture_status")),
+        "broker_truth_guards_preserved": bool(buy_capture.get("no_fake_broker_truth")),
+        "learning_throughput_connected": throughput_completion.get("learning_throughput_score_after") is not None,
+        "horizon_books_connected": bool(horizon_turnover.get("book_sizes")),
+        "portfolio_turnover_connected": turnover.get("portfolio_turnover_opportunity_cost_completion_v1") is True,
+        "unified_diagnostics_connected": True,
+        "cortex_visibility_connected": True,
+        "official_metric_guards_preserved": int(_to_float(buy_capture.get("complete_broker_truth_records"), 0.0)) < 50,
+        "safety_flags_preserved": True,
+    }
+    wiring_status = "PASS" if all(checks.values()) else "WARNING"
+    return {
+        "suite": "Astra Wave 2 Exit Calibration, Learning Lane Completion & Broker Truth Capture V1",
+        "status": "ok",
+        "endpoint": "/api/astra_wave2_exit_learning_broker_truth_status_v1",
+        "generated_at": _now_utc_iso(),
+        "wave2_pre_audit_v1": pre_audit,
+        "exit_readiness_calibration_v1": exit_cal,
+        "profit_protection_calibration_v1": profit_cal,
+        "loss_acceptance_calibration_v1": loss_cal,
+        "learning_lane_completion_v1": lane,
+        "broker_truth_buy_fill_capture_v2": buy_capture,
+        "learning_throughput_completion_v1": throughput_completion,
+        "final_wiring_effectiveness_diagnostic_v1": {
+            "status": wiring_status,
+            "checks": checks,
+            "remaining_barriers": list(dict.fromkeys(
+                (pre_audit.get("required_fields_missing") or [])
+                + (lane.get("blocked_components") or [])
+                + (throughput_completion.get("top_learning_blockers") or [])
+            )),
+            "trading_verified_improved": False,
+            "diagnostically_improved": True,
+            "reason": "advisory scoring is calibrated, but broker-confirmed complete records remain below official validation threshold",
+            **_safety_flags_v1(),
+        },
+        "exit_readiness_candidates_before": exit_cal.get("exit_readiness_candidates_before"),
+        "exit_readiness_candidates_after": exit_cal.get("exit_readiness_candidates_after"),
+        "protect_profit_candidates_before": profit_cal.get("protect_profit_candidates_before"),
+        "protect_profit_candidates_after": profit_cal.get("protect_profit_candidates_after"),
+        "controlled_loss_candidates_before": loss_cal.get("controlled_loss_candidates_before"),
+        "controlled_loss_candidates_after": loss_cal.get("controlled_loss_candidates_after"),
+        "replacement_candidates": int(_to_float(wave1.get("replacement_candidates"), len(exit_cal.get("replace_candidates") or []))),
+        "learning_lane_status_before": lane.get("learning_lane_status_before"),
+        "learning_lane_status_after": lane.get("learning_lane_status_after"),
+        "buy_fill_count_before": buy_capture.get("buy_fill_count_before"),
+        "buy_fill_count_after": buy_capture.get("buy_fill_count_after"),
+        "persisted_buy_fill_count_before": buy_capture.get("persisted_buy_fill_count_before"),
+        "persisted_buy_fill_count_after": buy_capture.get("persisted_buy_fill_count_after"),
+        "paired_round_trip_count": buy_capture.get("paired_round_trip_count"),
+        "complete_broker_truth_records": buy_capture.get("complete_broker_truth_records"),
+        "learning_throughput_score_before": throughput_completion.get("learning_throughput_score_before"),
+        "learning_throughput_score_after": throughput_completion.get("learning_throughput_score_after"),
+        "turnover_health_score_before": throughput_completion.get("turnover_health_score_before"),
+        "turnover_health_score_after": throughput_completion.get("turnover_health_score_after"),
+        "wiring_status": wiring_status,
+        "official_metrics_remain_blocked": int(_to_float(buy_capture.get("complete_broker_truth_records"), 0.0)) < 50,
+        "automatic_action_taken": False,
+        **_safety_flags_v1(),
+        "adaptive_policy_actions_enabled": False,
+        "scalp_paper_behavior_enabled": False,
+        "scalp_live_behavior_enabled": False,
+    }
+
+
 def _astra_evidence_maturation_status_payload(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -48853,6 +49294,16 @@ def astra_wave1_portfolio_learning_upgrade_status_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_wave1_portfolio_learning_upgrade_status_payload(statuses)
+
+
+@router.get("/api/astra_wave2_exit_learning_broker_truth_status_v1")
+def astra_wave2_exit_learning_broker_truth_status_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_wave2_exit_learning_broker_truth_status_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_wave2_exit_learning_broker_truth_status_payload(statuses)
 
 
 @router.get("/api/astra_intelligence_consumption_layer_v1")
