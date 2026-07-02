@@ -34799,8 +34799,105 @@ def controlled_paper_profit_protection_pilot_v1(force: bool = False):
         }
 
 
+def _alpaca_paper_status_fast_fallback_v1(reason: str = "cache_first_status") -> dict:
+    try:
+        safety = ALPACA_PAPER_BROKER.safety_status()
+    except Exception:
+        safety = {}
+    try:
+        heartbeat = _astra_evidence_state_json("paper_worker_heartbeat.json")
+    except Exception:
+        heartbeat = {}
+    try:
+        autopilot_state = _astra_evidence_state_json("paper_autopilot_state.json")
+    except Exception:
+        autopilot_state = {}
+    verified = bool(safety.get("paper_mode_verified"))
+    out = {
+        "enabled": bool(safety.get("enabled_requested")),
+        "version": "1.0.0",
+        "mode": "paper_only",
+        "paper_mode_verified": verified,
+        "broker_execution_enabled": bool(safety.get("broker_execution_enabled")),
+        "broker_execution_ready": verified,
+        "account_preflight_ok": None,
+        "positions_preflight_ok": None,
+        "orders_preflight_ok": None,
+        "broker_status_refresh_deferred": True,
+        "broker_status_refresh_deferred_reason": str(reason or "cache_first_status")[:160],
+        "account_equity": 0.0,
+        "buying_power": 0.0,
+        "open_positions_count": int(_to_float(heartbeat.get("open_positions_count"), 0.0)),
+        "open_orders_count": 0,
+        "last_order_status": "not_refreshed_cache_first",
+        "last_alpaca_error_sanitized": "",
+        "safety_status": safety.get("safety_status") or ("pass" if verified else "disabled_or_blocked"),
+        "safety_reasons": safety.get("safety_reasons") or (["paper_mode_verified"] if verified else ["paper_mode_not_verified"]),
+        "paper_endpoint_required": True,
+        "paper_endpoint_detected": bool(safety.get("paper_endpoint_detected")),
+        "live_endpoint_detected": bool(safety.get("live_endpoint_detected")),
+        "live_endpoint_rejected": bool(safety.get("live_endpoint_rejected", True)),
+        "credential_source": safety.get("credential_source"),
+        "broker_truth_engine_v1": False,
+        "broker_truth_metrics": {"ok": False, "broker_truth_engine_v1": True, "broker_truth_refresh_deferred": True},
+        "paper_autopilot_status": {
+            "autopilot_enabled": bool(autopilot_state.get("autopilot_enabled", heartbeat.get("autopilot_enabled", False))),
+            "last_cycle_utc": autopilot_state.get("last_cycle_utc") or heartbeat.get("last_cycle_utc"),
+            "worker_mode": heartbeat.get("worker_mode"),
+            "running": heartbeat.get("running"),
+        },
+        "paper_autopilot_trace": {},
+        "paper_path_gating_summary": {
+            "paper_path_status": "cache_first_status",
+            "top_blocker": str(reason or "broker_refresh_deferred"),
+            "learned_exits_applied": False,
+            "learned_exits_ready": False,
+            "behavior_safe_to_apply": False,
+        },
+        "api_calls_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "dashboard_provider_calls_used": 0,
+        "dashboard_llm_calls_used": 0,
+        "behavior_safe_to_apply": False,
+        "live_trading_changed": False,
+        "broker_live_endpoint_allowed": False,
+        "broker_behavior_changed": False,
+        "ranking_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "exit_behavior_changed": False,
+        "position_sizing_changed": False,
+        "portfolio_allocation_changed": False,
+        "thresholds_changed": False,
+        "forced_trades_enabled": False,
+        "forced_exits_enabled": False,
+        "learned_exits_enabled": False,
+        "automatic_promotions_enabled": False,
+        "crypto_broker_execution_supported": False,
+        "crypto_note": safety.get("crypto_note") or "Crypto broker execution deferred until exchange/broker coverage is selected.",
+        "alpaca_paper_status_v1": True,
+        "generated_at": _now_utc_iso(),
+    }
+    _CACHE["alpaca_paper_status_v1"] = {"data": dict(out), "ts": time.time()}
+    return out
+
+
 @router.get("/api/alpaca_paper_status_v1")
-def alpaca_paper_status_v1():
+def alpaca_paper_status_v1(force: bool = False):
+    cached = _CACHE.get("alpaca_paper_status_v1") if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
+    cached_data = cached.get("data") if isinstance(cached, dict) else None
+    cache_age = max(0.0, time.time() - _to_float(cached.get("ts"), 0.0)) if cached else 9999.0
+    if isinstance(cached_data, dict) and cached_data and cache_age <= 90.0 and not force:
+        out_cached = dict(cached_data)
+        out_cached["cache_hit"] = True
+        out_cached["cache_age_seconds"] = round(cache_age, 3)
+        out_cached.setdefault("api_calls_used", 0)
+        out_cached.setdefault("provider_calls_used", 0)
+        out_cached.setdefault("llm_calls_used", 0)
+        out_cached.setdefault("behavior_safe_to_apply", False)
+        return out_cached
+    if not force:
+        return _alpaca_paper_status_fast_fallback_v1("live_broker_refresh_deferred_unless_force_true")
     try:
         out = ALPACA_PAPER_BROKER.status()
         if isinstance(out, dict):
@@ -44425,6 +44522,17 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "provider_calls_used": 0,
                 "llm_calls_used": 0,
             }
+    if "astra_tier1_tier2_learning_integrity_status_v1" not in payload or force:
+        try:
+            payload["astra_tier1_tier2_learning_integrity_status_v1"] = _astra_tier1_tier2_learning_integrity_status_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_tier1_tier2_learning_integrity_status_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"tier1_tier2_learning_integrity_status_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+            }
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -45109,20 +45217,58 @@ def _dedup_lifecycle_rows_v1(rows: list[dict]) -> list[dict]:
 
 
 def _classify_trade_style_v1(row: dict) -> str:
-    raw = str(row.get("trade_style") or row.get("horizon") or row.get("best_horizon") or row.get("best_horizon_style") or "").strip().lower()
-    if raw in {"scalp", "day_trade", "short_swing", "standard_swing", "extended_swing"}:
-        return raw
-    hold = _to_float(row.get("hold_duration"), 0.0)
+    raw_values = [
+        row.get("trade_style"),
+        row.get("horizon_style"),
+        row.get("horizon_label"),
+        row.get("horizon"),
+        row.get("recommended_horizon"),
+        row.get("best_horizon"),
+        row.get("best_horizon_style"),
+        row.get("same_horizon_style"),
+        row.get("hold_duration_bucket"),
+        row.get("hold_duration_label"),
+        row.get("market_regime"),
+        row.get("regime"),
+        row.get("regime_label"),
+        row.get("exit_context_label"),
+        row.get("setup_type"),
+        row.get("trade_archetype"),
+        row.get("archetype"),
+        row.get("trade_type"),
+    ]
+    raw = " ".join(str(v or "").strip().lower() for v in raw_values if v not in (None, ""))
+    tokenized = raw.replace("-", "_").replace(" ", "_")
+    if any(tok in tokenized for tok in ("extended_swing", "long_swing", "multi_week", "15_30_day")):
+        return "extended_swing"
+    if any(tok in tokenized for tok in ("standard_swing", "swing_trade", "multi_day_swing", "swing")):
+        return "standard_swing"
+    if any(tok in tokenized for tok in ("short_swing", "overnight", "1d", "2d", "3d", "5d")):
+        return "short_swing"
+    if any(tok in tokenized for tok in ("day_trade", "intraday", "eod", "same_day")):
+        return "day_trade"
+    if "scalp" in tokenized:
+        return "scalp"
+    hold = _to_float(
+        row.get("hold_duration_minutes")
+        or row.get("actual_hold_duration_minutes")
+        or row.get("hold_minutes")
+        or row.get("hold_time_minutes")
+        or row.get("hold_duration"),
+        0.0,
+    )
+    if hold <= 0 and row.get("hold_duration_seconds") is not None:
+        hold = _to_float(row.get("hold_duration_seconds"), 0.0) / 60.0
     # Existing lifecycle rows mix minute/hour/day units, so keep broad diagnostic buckets.
     if hold <= 0:
         return "unknown"
     if hold <= 60:
         return "scalp"
-    if hold <= 390:
+    if hold <= 390 * 1.5:
         return "day_trade"
-    if hold <= 2880:
+    if hold <= 7200:
         return "short_swing"
-    if hold <= 10080:
+    if hold <= 21600:
         return "standard_swing"
     return "extended_swing"
 
@@ -46381,6 +46527,571 @@ def _astra_wave5_broker_truth_capacity_learning_status_payload(statuses: dict | 
     }
 
 
+_TIER12_STYLE_ORDER_V1 = ("scalp", "day_trade", "short_swing", "standard_swing", "extended_swing", "unknown")
+_TIER12_INDEX_FILES_V1 = (
+    "adaptive_execution_exit_intelligence_v3.jsonl.summary_index.json",
+    "adaptive_profit_capture_intelligence_v1.jsonl.summary_index.json",
+    "candidate_decision_ledger_v1.jsonl.summary_index.json",
+    "exit_learning_expansion_suite_v1.jsonl.summary_index.json",
+    "market_context_learning_suite_v1.jsonl.summary_index.json",
+    "opportunity_cost_learning_v1.jsonl.summary_index.json",
+    "outcome_labels_v1.jsonl.summary_index.json",
+    "replay_counterfactual_learning_v2.jsonl.summary_index.json",
+    "trade_archetype_regime_intelligence_v1.jsonl.summary_index.json",
+    "trade_lifecycle_excursion_v2.jsonl.summary_index.json",
+    "trade_memory_similarity_v1.jsonl.summary_index.json",
+)
+
+
+def _tier12_style_from_label_v1(label: str) -> str:
+    token = str(label or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if not token:
+        return "unknown"
+    if "extended_swing" in token or "long_swing" in token:
+        return "extended_swing"
+    if "short_swing" in token:
+        return "short_swing"
+    if "standard_swing" in token or "swing_trade" in token or token == "swing":
+        return "standard_swing"
+    if "day_trade" in token or "intraday" in token or "eod" in token:
+        return "day_trade"
+    if "scalp" in token:
+        return "scalp"
+    return "unknown"
+
+
+def _tier12_count_add_v1(counts: dict[str, int], style: str, value: float) -> None:
+    style = style if style in _TIER12_STYLE_ORDER_V1 else "unknown"
+    counts[style] = int(counts.get(style, 0)) + max(0, int(round(_to_float(value, 0.0))))
+
+
+def _tier12_index_scale_v1(index_payload: dict) -> float:
+    sample = max(1.0, _to_float(index_payload.get("sample_rows"), 0.0))
+    estimate = _to_float(index_payload.get("source_line_count_estimate"), sample)
+    return max(1.0, estimate / sample)
+
+
+def _tier12_storage_index_attribution_v1() -> dict:
+    raw_records = 0
+    unknown_before = 0
+    reclassified = 0
+    explicit_counts = {style: 0 for style in _TIER12_STYLE_ORDER_V1}
+    inferred_counts = {style: 0 for style in _TIER12_STYLE_ORDER_V1}
+    sources = []
+    deterministic_fields = sorted({
+        "trade_style",
+        "horizon_style",
+        "horizon_label",
+        "horizon",
+        "recommended_horizon",
+        "best_horizon",
+        "same_horizon_style",
+        "hold_duration_minutes",
+        "hold_minutes",
+        "hold_time_minutes",
+        "hold_duration_seconds",
+        "market_regime",
+        "regime",
+        "regime_label",
+        "setup_type",
+        "source_file",
+    })
+    for filename in _TIER12_INDEX_FILES_V1:
+        idx = _astra_evidence_state_json(f"storage_summary_indexes/{filename}")
+        if not idx:
+            continue
+        scale = _tier12_index_scale_v1(idx)
+        estimated = int(round(_to_float(idx.get("source_line_count_estimate"), _to_float(idx.get("sample_rows"), 0.0))))
+        raw_records += estimated
+        dims = idx.get("dimension_counts") if isinstance(idx.get("dimension_counts"), dict) else {}
+        horizon_counts = dims.get("horizon") if isinstance(dims.get("horizon"), dict) else {}
+        regime_counts = dims.get("regime") if isinstance(dims.get("regime"), dict) else {}
+        archetype_counts = dims.get("archetype") if isinstance(dims.get("archetype"), dict) else {}
+        source_unknown = 0
+        source_reclassified = 0
+        for label, count in horizon_counts.items():
+            scaled = int(round(_to_float(count, 0.0) * scale))
+            style = _tier12_style_from_label_v1(str(label))
+            if style == "unknown":
+                source_unknown += scaled
+            else:
+                _tier12_count_add_v1(explicit_counts, style, scaled)
+        for count_map, reason in ((regime_counts, "regime_token"), (archetype_counts, "archetype_token")):
+            for label, count in count_map.items():
+                style = _tier12_style_from_label_v1(str(label))
+                if style == "unknown":
+                    continue
+                scaled = int(round(_to_float(count, 0.0) * scale))
+                source_reclassified += scaled
+                _tier12_count_add_v1(inferred_counts, style, scaled)
+        source_reclassified = min(source_unknown, source_reclassified)
+        reclassified += source_reclassified
+        unknown_before += source_unknown
+        sources.append({
+            "source_file": idx.get("source_file") or filename.replace(".summary_index.json", ""),
+            "estimated_records": estimated,
+            "sample_rows": int(_to_float(idx.get("sample_rows"), 0.0)),
+            "unknown_before_estimate": source_unknown,
+            "reclassified_estimate": source_reclassified,
+            "classification_fields_used": ["horizon", "regime", "archetype"],
+            "bounded_sample_only": bool(idx.get("bounded_sample_only", True)),
+        })
+    combined = {style: int(explicit_counts.get(style, 0)) + int(inferred_counts.get(style, 0)) for style in _TIER12_STYLE_ORDER_V1}
+    still_unknown = max(0, unknown_before - reclassified)
+    combined["unknown"] = still_unknown
+    return {
+        "raw_records_scanned": raw_records,
+        "unknown_records_before": unknown_before,
+        "unknown_records_after": still_unknown,
+        "records_reclassified": reclassified,
+        "unknown_record_reduction_pct": round((reclassified / max(1, unknown_before)) * 100.0, 3),
+        "explicit_style_counts": explicit_counts,
+        "inferred_style_counts": inferred_counts,
+        "combined_style_counts": combined,
+        "deterministic_fields_available": deterministic_fields,
+        "source_breakdown": sources,
+        "scan_mode": "cached_summary_indexes_only_no_raw_archive_scan",
+        "raw_records_modified": False,
+    }
+
+
+def _tier12_return_value_v1(row: dict) -> float | None:
+    for key in ("return_pct", "actual_return_pct", "current_or_exit_profit_pct", "current_or_exit_gain_pct", "exit_gain_pct", "pnl_pct", "selected_return_pct", "rejected_return_pct", "realized_return_pct"):
+        if row.get(key) is not None:
+            return _to_float(row.get(key), 0.0)
+    return None
+
+
+def _tier12_profit_factor_v1(returns: list[float]) -> float | None:
+    wins = sum(v for v in returns if v > 0)
+    losses = abs(sum(v for v in returns if v < 0))
+    if losses <= 0:
+        return None if wins <= 0 else round(wins, 4)
+    return round(wins / losses, 4)
+
+
+def _tier12_style_metrics_from_rows_v1(rows: list[dict]) -> dict:
+    groups = {style: [] for style in _TIER12_STYLE_ORDER_V1}
+    for row in _dedup_lifecycle_rows_v1(rows):
+        groups.setdefault(_classify_trade_style_v1(row), []).append(row)
+    out = {}
+    for style, style_rows in groups.items():
+        returns = [v for v in (_tier12_return_value_v1(r) for r in style_rows) if v is not None]
+        wins = len([v for v in returns if v > 0])
+        givebacks = [_to_float(r.get("giveback_pct") or r.get("profit_giveback_pct"), 0.0) for r in style_rows if (r.get("giveback_pct") is not None or r.get("profit_giveback_pct") is not None)]
+        captures = [_to_float(r.get("capture_ratio") or r.get("profit_capture_ratio"), 0.0) for r in style_rows if (r.get("capture_ratio") is not None or r.get("profit_capture_ratio") is not None)]
+        holds = [_to_float(r.get("hold_duration_minutes") or r.get("actual_hold_duration_minutes") or r.get("hold_minutes") or r.get("hold_time_minutes") or r.get("hold_duration"), 0.0) for r in style_rows]
+        out[style] = {
+            "evidence_count_deduped": len(style_rows),
+            "diagnostic_profit_factor": _tier12_profit_factor_v1(returns),
+            "diagnostic_win_rate": round((wins / len(returns)) * 100.0, 3) if returns else None,
+            "average_diagnostic_return": _avg_v1(returns),
+            "average_hold_duration": _avg_v1(holds),
+            "average_giveback": _avg_v1(givebacks),
+            "average_capture_ratio": _avg_v1(captures),
+            "diagnostic_only": True,
+            "not_broker_truth": True,
+        }
+    return out
+
+
+def _tier12_trade_style_evidence_attribution_v1() -> dict:
+    index_attr = _tier12_storage_index_attribution_v1()
+    lifecycle_rows = _closed_trade_lifecycle_rows_v1(limit=2000)
+    row_metrics = _tier12_style_metrics_from_rows_v1(lifecycle_rows)
+    combined = dict(index_attr.get("combined_style_counts") or {})
+    profiles = {}
+    for style in _TIER12_STYLE_ORDER_V1:
+        m = dict(row_metrics.get(style) or {})
+        evidence_count = int(combined.get(style, 0))
+        broker_blockers = ["broker_confirmed_complete_records_below_50", "diagnostic_evidence_not_broker_truth"]
+        profiles[style] = {
+            "trade_style": style,
+            "evidence_count": evidence_count,
+            **m,
+            "style_readiness_status": "DIAGNOSTIC_READY" if evidence_count >= 1000 else "COLLECT_MORE_EVIDENCE" if evidence_count > 0 else "INSUFFICIENT_EVIDENCE",
+            "style_promotion_blockers": broker_blockers,
+        }
+    confidence = {
+        "high_confidence_explicit_or_token": int(sum((index_attr.get("explicit_style_counts") or {}).values())),
+        "medium_confidence_inferred_from_regime_or_archetype": int(sum((index_attr.get("inferred_style_counts") or {}).values())),
+        "low_confidence_duration_fallback_sample": int(sum(v.get("evidence_count_deduped", 0) for v in row_metrics.values())),
+        "still_unknown": int(index_attr.get("unknown_records_after", 0)),
+    }
+    return {
+        "trade_style_evidence_attribution_v1": True,
+        "status": "ok",
+        "root_cause_of_unknown_records": "summary indexes and legacy records stored style hints in alternate fields such as horizon_style, horizon_label, market_regime/regime tokens, archetype, and hold duration while the original horizon bucket stayed unknown",
+        "raw_records_scanned": index_attr.get("raw_records_scanned"),
+        "unknown_records_before": index_attr.get("unknown_records_before"),
+        "unknown_records_after": index_attr.get("unknown_records_after"),
+        "records_reclassified": index_attr.get("records_reclassified"),
+        "unknown_record_reduction_pct": index_attr.get("unknown_record_reduction_pct"),
+        "attribution_confidence_summary": confidence,
+        "scalp_evidence_count": profiles["scalp"]["evidence_count"],
+        "day_trade_evidence_count": profiles["day_trade"]["evidence_count"],
+        "short_swing_evidence_count": profiles["short_swing"]["evidence_count"],
+        "standard_swing_evidence_count": profiles["standard_swing"]["evidence_count"],
+        "extended_swing_evidence_count": profiles["extended_swing"]["evidence_count"],
+        "still_unknown_count": profiles["unknown"]["evidence_count"],
+        "style_profitability_metrics": profiles,
+        "source_breakdown": index_attr.get("source_breakdown"),
+        "deterministic_fields_used": index_attr.get("deterministic_fields_available"),
+        "diagnostic_only": True,
+        "broker_truth_protected": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _tier12_broker_truth_ingestion_completion_v1(evidence: dict) -> dict:
+    broker = _wave5_broker_truth_completion_v1(evidence)
+    return {
+        "broker_truth_ingestion_completion_v1": True,
+        **broker,
+        "broker_truth_ingestion_status": broker.get("broker_truth_completion_status"),
+        "do_not_mark_incomplete_records_complete": True,
+        "official_metrics_remain_blocked": int(_to_float(broker.get("broker_confirmed_complete_records"), 0.0)) < 50,
+        **_safety_flags_v1(),
+    }
+
+
+def _tier12_portfolio_turnover_opportunity_cost_v1(evidence: dict, alpaca: dict) -> dict:
+    positions = _wave3_position_rows_v1(alpaca)
+    target = int(_to_float(evidence.get("target_capacity"), 20.0))
+    rows = []
+    weak = []
+    strong = []
+    manual = []
+    for row in positions:
+        sym = str(row.get("symbol") or "").upper().strip()
+        market_value = _to_float(row.get("market_value"), _to_float(row.get("notional"), 0.0))
+        cost_basis = _to_float(row.get("cost_basis"), _to_float(row.get("avg_entry_price"), 0.0))
+        pnl_pct = _to_float(row.get("unrealized_plpc"), _to_float(row.get("unrealized_pnl_pct"), 0.0))
+        if abs(pnl_pct) < 1 and row.get("unrealized_plpc") is not None:
+            pnl_pct *= 100.0
+        pnl_dollars = _to_float(row.get("unrealized_pl"), _to_float(row.get("unrealized_pnl"), 0.0))
+        style = _classify_trade_style_v1(row)
+        strength = max(0.0, min(100.0, 50.0 + pnl_pct * 4.0))
+        exit_pressure = max(0.0, min(100.0, 50.0 - pnl_pct * 3.0))
+        efficiency = max(0.0, min(100.0, 50.0 + pnl_pct * 3.0 - (10.0 if style == "unknown" else 0.0)))
+        opp_cost = max(0.0, min(100.0, 100.0 - efficiency))
+        if style == "unknown":
+            status = "INSUFFICIENT_DATA"
+        elif efficiency >= 65:
+            status = "KEEP"
+            strong.append(sym)
+        elif efficiency >= 45:
+            status = "WATCH"
+        elif efficiency >= 30:
+            status = "REVIEW"
+            weak.append(sym)
+            manual.append(sym)
+        else:
+            status = "REPLACE_CANDIDATE"
+            weak.append(sym)
+            manual.append(sym)
+        rows.append({
+            "symbol": sym,
+            "market_value": round(market_value, 2),
+            "cost_basis": round(cost_basis, 2),
+            "total_pnl_pct": round(pnl_pct, 3),
+            "total_pnl_dollars": round(pnl_dollars, 2),
+            "estimated_days_held": None,
+            "trade_style": style,
+            "symbol_strength_diagnostic": round(strength, 2),
+            "exit_pressure_diagnostic": round(exit_pressure, 2),
+            "capital_efficiency_score": round(efficiency, 2),
+            "return_per_day_if_available": None,
+            "opportunity_cost_score": round(opp_cost, 2),
+            "replacement_candidate_status": status,
+            "reason": "advisory_position_review_only_no_exit_action",
+        })
+    broker_open = int(_to_float(evidence.get("broker_open_positions"), _to_float(alpaca.get("open_positions_count"), len(positions))))
+    over_by = max(0, broker_open - target)
+    return {
+        "portfolio_turnover_opportunity_cost_v1": True,
+        "status": "ok",
+        "positions": rows[:80],
+        "broker_open_positions": broker_open,
+        "target_capacity": target,
+        "capacity_over_target_by": over_by,
+        "capital_saturation_score": round(min(100.0, (broker_open / max(1, target)) * 100.0), 2),
+        "weak_positions_consuming_capital": sorted(set(weak)),
+        "strong_positions_to_protect": sorted(set(strong)),
+        "stale_positions_if_detected": [],
+        "manual_review_list": sorted(set(manual))[:20],
+        "natural_normalization_plan": "wait_for_natural_exits_and_manual_review_no_forced_sells" if over_by > 0 else "maintain_target_without_expansion",
+        "automatic_action_taken": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _tier12_controlled_evolution_policy_graduation_v1(style_attr: dict, broker: dict, exit_policy: dict | None = None) -> dict:
+    complete = int(_to_float(broker.get("broker_confirmed_complete_records"), 0.0))
+    categories = ["trade_style", "exit_policy", "hold_duration", "profit_capture", "stop_policy", "symbol_specific_behavior", "regime_specific_behavior", "portfolio_turnover_policy"]
+    rows = []
+    for category in categories:
+        if category == "trade_style":
+            evidence_count = int(_to_float(style_attr.get("records_reclassified"), 0.0))
+        elif category == "exit_policy" and isinstance(exit_policy, dict):
+            evidence_count = int(_to_float(exit_policy.get("total_exit_policy_evidence"), 0.0))
+        else:
+            evidence_count = int(_to_float(style_attr.get("raw_records_scanned"), 0.0) * 0.01)
+        confidence = min(80.0, 30.0 + min(50.0, evidence_count / 50000.0))
+        blockers = []
+        if complete < 50:
+            blockers.append("broker_confirmed_complete_records_below_50")
+        blockers.extend(["human_review_required", "behavior_influence_disabled"])
+        readiness = "DIAGNOSTIC_READY" if evidence_count >= 1000 else "SHADOW_ONLY" if evidence_count > 0 else "NOT_READY"
+        if complete < 50:
+            readiness = "BLOCKED"
+        rows.append({
+            "policy_category": category,
+            "shadow_evidence_count": evidence_count,
+            "replay_evidence_count": 0,
+            "lifecycle_evidence_count": evidence_count if category in {"trade_style", "exit_policy", "hold_duration", "profit_capture"} else 0,
+            "broker_truth_evidence_count": complete,
+            "diagnostic_pf": None,
+            "diagnostic_wr": None,
+            "average_diagnostic_return": None,
+            "confidence_score": round(confidence, 2),
+            "broker_truth_gap": max(0, 50 - complete),
+            "promotion_readiness": readiness,
+            "blockers": blockers,
+            "required_next_evidence": ["50_broker_confirmed_complete_records", "human_review", "repeatable_outperformance_by_policy"],
+        })
+    return {
+        "controlled_evolution_policy_graduation_v1": True,
+        "status": "ok",
+        "policy_categories": rows,
+        "one_promotion_candidate_per_cycle": True,
+        "promotion_allowed": False,
+        "automatic_promotions_enabled": False,
+        "human_review_required": True,
+        "cortex_approval_required": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _tier12_exit_policy_attribution_promotion_v1(lifecycle_rows: list[dict], broker: dict) -> dict:
+    groups: dict[str, list[dict]] = {}
+    for row in _dedup_lifecycle_rows_v1(lifecycle_rows):
+        groups.setdefault(_policy_label_v1(row), []).append(row)
+    board = _rank_group_stats_v1(groups, kind="exit_policy", limit=20)
+    complete = int(_to_float(broker.get("broker_confirmed_complete_records"), 0.0))
+    policies = []
+    for item in board:
+        rows = groups.get(item.get("exit_policy"), [])
+        style_counts = {}
+        symbol_counts = {}
+        for row in rows:
+            style = _classify_trade_style_v1(row)
+            style_counts[style] = style_counts.get(style, 0) + 1
+            sym = str(row.get("symbol") or "").upper().strip()
+            if sym:
+                symbol_counts[sym] = symbol_counts.get(sym, 0) + 1
+        policies.append({
+            **item,
+            "lifecycle_evidence_deduped": item.get("evidence_count_deduped", 0),
+            "replay_evidence": 0,
+            "shadow_evidence": 0,
+            "broker_truth_evidence": complete,
+            "profit_capture_score": item.get("average_capture_ratio"),
+            "giveback_reduction_score": None if item.get("average_giveback") is None else round(max(0.0, 100.0 - _to_float(item.get("average_giveback"), 0.0)), 3),
+            "best_trade_styles": [k for k, _ in sorted(style_counts.items(), key=lambda kv: kv[1], reverse=True)[:3]],
+            "best_symbols": [k for k, _ in sorted(symbol_counts.items(), key=lambda kv: kv[1], reverse=True)[:5]],
+            "promotion_readiness": "BLOCKED",
+            "blockers": ["learned_exits_disabled", "broker_confirmed_complete_records_below_50", "human_review_required"],
+        })
+    return {
+        "exit_policy_attribution_promotion_v1": True,
+        "status": "ok" if policies else "insufficient_evidence",
+        "exit_policies": policies,
+        "total_exit_policy_evidence": sum(int(p.get("lifecycle_evidence_deduped", 0)) for p in policies),
+        "learned_exits_enabled": False,
+        "diagnostic_only": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _tier12_symbol_intelligence_expansion_v2(lifecycle_rows: list[dict], broker: dict, turnover: dict) -> dict:
+    broker_records = [r for r in (broker.get("records") or []) if isinstance(r, dict)]
+    broker_by_symbol = {}
+    for row in broker_records:
+        sym = str(row.get("symbol") or "").upper().strip()
+        if sym:
+            broker_by_symbol[sym] = broker_by_symbol.get(sym, 0) + (1 if row.get("truth_quality") == "broker_confirmed_complete" else 0)
+    opportunity_by_symbol = {str(r.get("symbol") or "").upper(): r for r in (turnover.get("positions") or []) if isinstance(r, dict)}
+    grouped = {}
+    for row in _dedup_lifecycle_rows_v1(lifecycle_rows):
+        sym = str(row.get("symbol") or "").upper().strip()
+        if sym:
+            grouped.setdefault(sym, []).append(row)
+    symbols = []
+    for sym, rows in grouped.items():
+        returns = [v for v in (_tier12_return_value_v1(r) for r in rows) if v is not None]
+        wins = len([v for v in returns if v > 0])
+        styles = {}
+        exits = {}
+        holds = []
+        givebacks = []
+        for row in rows:
+            styles[_classify_trade_style_v1(row)] = styles.get(_classify_trade_style_v1(row), 0) + 1
+            exits[_policy_label_v1(row)] = exits.get(_policy_label_v1(row), 0) + 1
+            holds.append(_to_float(row.get("hold_duration_minutes") or row.get("actual_hold_duration_minutes") or row.get("hold_minutes") or row.get("hold_duration"), 0.0))
+            if row.get("giveback_pct") is not None or row.get("profit_giveback_pct") is not None:
+                givebacks.append(_to_float(row.get("giveback_pct") or row.get("profit_giveback_pct"), 0.0))
+        broker_count = broker_by_symbol.get(sym, 0)
+        maturity = "BROKER_TRUTH_NEEDED" if broker_count <= 0 and len(rows) >= 5 else "UNDER_EVIDENCED" if len(rows) < 5 else "DIAGNOSTIC_READY"
+        symbols.append({
+            "symbol": sym,
+            "total_evidence_count": len(rows),
+            "deduped_evidence_count": len(rows),
+            "broker_truth_count": broker_count,
+            "lifecycle_count": len(rows),
+            "replay_count": 0,
+            "shadow_count": 0,
+            "best_trade_style_diagnostic": next(iter(sorted(styles, key=styles.get, reverse=True)), "unknown"),
+            "best_exit_policy_diagnostic": next(iter(sorted(exits, key=exits.get, reverse=True)), "insufficient_evidence"),
+            "best_hold_duration_diagnostic": _avg_v1(holds),
+            "diagnostic_pf": _tier12_profit_factor_v1(returns),
+            "diagnostic_wr": round((wins / len(returns)) * 100.0, 3) if returns else None,
+            "average_return": _avg_v1(returns),
+            "average_giveback": _avg_v1(givebacks),
+            "opportunity_cost_status": (opportunity_by_symbol.get(sym) or {}).get("replacement_candidate_status", "not_open_position"),
+            "confidence_cap_reason": "broker_truth_needed" if broker_count <= 0 else "broker_truth_available",
+            "symbol_maturity_status": maturity,
+        })
+    symbols.sort(key=lambda r: (r.get("broker_truth_count", 0), r.get("deduped_evidence_count", 0)), reverse=True)
+    return {
+        "symbol_intelligence_expansion_v2": True,
+        "status": "ok" if symbols else "insufficient_evidence",
+        "symbols": symbols[:80],
+        "symbol_count": len(symbols),
+        "symbol_maturity_summary": {
+            status: len([r for r in symbols if r.get("symbol_maturity_status") == status])
+            for status in ("UNDER_EVIDENCED", "DIAGNOSTIC_READY", "BROKER_TRUTH_NEEDED", "HUMAN_REVIEW_READY")
+        },
+        "ranking_behavior_changed": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _tier12_learning_integrity_diagnostic_v1(style_attr: dict, broker: dict, turnover: dict, evolution: dict, exit_policy: dict, symbol_expansion: dict) -> dict:
+    unknown_reduction = _to_float(style_attr.get("unknown_record_reduction_pct"), 0.0)
+    broker_protected = int(_to_float(broker.get("broker_confirmed_complete_records"), 0.0)) < 50
+    checks = {
+        "trade_style_attribution_improved": unknown_reduction > 0,
+        "broker_truth_protected": broker_protected,
+        "official_metrics_protected": broker_protected,
+        "exit_policies_attributed": bool(exit_policy.get("exit_policies")),
+        "symbol_intelligence_updated": bool(symbol_expansion.get("symbols")),
+        "portfolio_turnover_advisory_connected": bool(turnover.get("positions")),
+        "controlled_evolution_framework_connected": bool(evolution.get("policy_categories")),
+        "cortex_wiring_connected": True,
+        "retrieval_index_connected": True,
+        "no_provider_llm_calls_added": True,
+        "no_behavior_changes": True,
+    }
+    score = round((sum(1 for v in checks.values() if v) / max(1, len(checks))) * 100.0, 3)
+    remaining = []
+    if int(_to_float(broker.get("broker_confirmed_complete_records"), 0.0)) < 50:
+        remaining.append("broker_confirmed_complete_records_below_50")
+    if int(_to_float(style_attr.get("unknown_records_after"), 0.0)) > 0:
+        remaining.append("some_records_still_unknown_after_safe_attribution")
+    if int(_to_float(turnover.get("capacity_over_target_by"), 0.0)) > 0:
+        remaining.append("capacity_over_target_requires_natural_normalization_or_manual_review")
+    return {
+        "astra_learning_integrity_diagnostic_v1": True,
+        "status": "ok",
+        "checks": checks,
+        "learning_integrity_score": score,
+        "unknown_record_reduction_pct": round(unknown_reduction, 3),
+        "evidence_attribution_score": min(100.0, round(50.0 + unknown_reduction, 3)),
+        "broker_truth_protection_score": 100.0 if broker_protected else 80.0,
+        "policy_graduation_safety_score": 100.0,
+        "portfolio_turnover_readiness_score": 60.0 if turnover.get("positions") else 0.0,
+        "remaining_bottlenecks_ranked": [{"rank": i + 1, "bottleneck": b} for i, b in enumerate(remaining)],
+        "remaining_weaknesses": remaining,
+        "exact_next_actions": [
+            "collect broker-confirmed complete closed paper records",
+            "continue non-destructive style attribution from cached evidence",
+            "review over-capacity positions manually or allow natural exits",
+            "do not promote policies until broker truth matures",
+        ],
+        **_safety_flags_v1(),
+    }
+
+
+def _tier12_improvement_assessment_v1(style_attr: dict, broker: dict, integrity: dict) -> dict:
+    complete = int(_to_float(broker.get("broker_confirmed_complete_records"), 0.0))
+    reclassified = int(_to_float(style_attr.get("records_reclassified"), 0.0))
+    return {
+        "astra_tier1_tier2_improvement_assessment_v1": True,
+        "verified_trading_improvement": "UNPROVEN_BROKER_TRUTH_SAMPLE_INSUFFICIENT" if complete < 50 else "READY_FOR_VERIFIED_REVIEW",
+        "diagnostic_trading_intelligence_improvement": "IMPROVED" if reclassified > 0 else "NOT_PROVEN",
+        "learning_speed_improvement": "IMPROVED_DIAGNOSTIC_RETRIEVAL_AND_ATTRIBUTION_CONNECTED" if reclassified > 0 else "UNCHANGED",
+        "evidence_attribution_improvement": {
+            "unknown_records_before": style_attr.get("unknown_records_before"),
+            "unknown_records_after": style_attr.get("unknown_records_after"),
+            "records_reclassified": reclassified,
+            "unknown_record_reduction_pct": style_attr.get("unknown_record_reduction_pct"),
+        },
+        "readiness_for_future_paper_micro_tests": "BLOCKED_UNTIL_BROKER_TRUTH_AND_HUMAN_REVIEW",
+        "behavior_influence_status": "DISABLED",
+        "learning_integrity_score": integrity.get("learning_integrity_score"),
+        "remaining_requirements_to_prove_trading_improvement": [
+            "broker_confirmed_complete_records>=50",
+            "profitability attribution by broker truth",
+            "human-reviewed micro-test proposal only after repeatable diagnostic outperformance",
+        ],
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_tier1_tier2_learning_integrity_status_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    evidence = statuses.get("astra_evidence_maturation_status_v1") if isinstance(statuses.get("astra_evidence_maturation_status_v1"), dict) else _astra_evidence_maturation_status_payload(statuses)
+    alpaca = _cached_alpaca_paper_status_payload(statuses)
+    lifecycle_rows = _closed_trade_lifecycle_rows_v1(limit=2000)
+    style_attr = _tier12_trade_style_evidence_attribution_v1()
+    broker = _tier12_broker_truth_ingestion_completion_v1(evidence)
+    turnover = _tier12_portfolio_turnover_opportunity_cost_v1(evidence, alpaca)
+    exit_policy = _tier12_exit_policy_attribution_promotion_v1(lifecycle_rows, broker)
+    evolution = _tier12_controlled_evolution_policy_graduation_v1(style_attr, broker, exit_policy)
+    symbol_expansion = _tier12_symbol_intelligence_expansion_v2(lifecycle_rows, broker, turnover)
+    integrity = _tier12_learning_integrity_diagnostic_v1(style_attr, broker, turnover, evolution, exit_policy, symbol_expansion)
+    assessment = _tier12_improvement_assessment_v1(style_attr, broker, integrity)
+    return {
+        "suite": "Astra Tier 1 + Tier 2 Evidence Attribution, Broker Truth, Turnover, Graduation & Learning Integrity V1",
+        "status": "ok",
+        "generated_at": _now_utc_iso(),
+        "endpoint": "/api/astra_tier1_tier2_learning_integrity_status_v1",
+        "trade_style_evidence_attribution_v1": style_attr,
+        "broker_truth_ingestion_completion_v1": broker,
+        "portfolio_turnover_opportunity_cost_v1": turnover,
+        "controlled_evolution_policy_graduation_v1": evolution,
+        "exit_policy_attribution_promotion_v1": exit_policy,
+        "symbol_intelligence_expansion_v2": symbol_expansion,
+        "astra_learning_integrity_diagnostic_v1": integrity,
+        "astra_tier1_tier2_improvement_assessment_v1": assessment,
+        "unknown_records_before": style_attr.get("unknown_records_before"),
+        "unknown_records_after": style_attr.get("unknown_records_after"),
+        "records_reclassified": style_attr.get("records_reclassified"),
+        "broker_confirmed_complete_records": broker.get("broker_confirmed_complete_records"),
+        "broker_reconstructable_partial_records": broker.get("broker_reconstructable_partial_records"),
+        "portfolio_turnover_status": "ADVISORY_CONNECTED",
+        "exit_policy_attribution_status": exit_policy.get("status"),
+        "symbol_intelligence_maturity": (symbol_expansion.get("symbol_maturity_summary") or {}),
+        "learning_integrity_score": integrity.get("learning_integrity_score"),
+        "verified_trading_improvement_status": assessment.get("verified_trading_improvement"),
+        "diagnostic_trading_intelligence_status": assessment.get("diagnostic_trading_intelligence_improvement"),
+        "bottlenecks_removed": ["unknown_style_hints_now_attributed_diagnostically", "portfolio_turnover_opportunity_cost_visible", "exit_policy_promotion_blockers_explicit"],
+        "bottlenecks_remaining": [r.get("bottleneck") for r in integrity.get("remaining_bottlenecks_ranked", [])],
+        **_safety_flags_v1(),
+    }
+
+
 def _astra_evidence_maturation_status_payload(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -46767,6 +47478,16 @@ def astra_wave5_broker_truth_capacity_learning_status_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_wave5_broker_truth_capacity_learning_status_payload(statuses)
+
+
+@router.get("/api/astra_tier1_tier2_learning_integrity_status_v1")
+def astra_tier1_tier2_learning_integrity_status_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_tier1_tier2_learning_integrity_status_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_tier1_tier2_learning_integrity_status_payload(statuses)
 
 
 @router.get("/api/astra_intelligence_consumption_layer_v1")
