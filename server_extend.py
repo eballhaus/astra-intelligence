@@ -44555,6 +44555,17 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "provider_calls_used": 0,
                 "llm_calls_used": 0,
             }
+    if "astra_horizon_capacity_turnover_status_v1" not in payload or force:
+        try:
+            payload["astra_horizon_capacity_turnover_status_v1"] = _astra_horizon_capacity_turnover_status_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_horizon_capacity_turnover_status_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"horizon_capacity_turnover_status_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+            }
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -47708,6 +47719,370 @@ def _astra_broker_pairing_learning_turnover_status_payload(statuses: dict | None
     }
 
 
+def _horizon_capacity_source_payload_v1(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    horizon = statuses.get("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1") if isinstance(statuses.get("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1"), dict) else {}
+    raw_cache = _astra_evidence_state_json("dashboard_cache/astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1.json")
+    if not horizon:
+        horizon = raw_cache
+    elif raw_cache and not isinstance(horizon.get("modules"), dict):
+        horizon = {**raw_cache, **horizon, "modules": raw_cache.get("modules")}
+    elif raw_cache:
+        horizon = {**raw_cache, **horizon}
+    return dict(horizon or {})
+
+
+def _horizon_turnover_book_name_v1(horizon: str) -> str:
+    label = str(horizon or "unknown").lower().strip()
+    if label == "scalp":
+        return "scalp_shadow_book"
+    if label == "day_trade":
+        return "active_day_trade_book"
+    if label == "short_swing":
+        return "short_swing_book"
+    if label == "extended_swing":
+        return "extended_swing_book"
+    if label in {"standard_swing", "swing_trade", "swing"}:
+        return "standard_swing_book"
+    return "standard_swing_book"
+
+
+def _position_days_held_v1(row: dict) -> float:
+    for key, scale in (
+        ("days_held", 1.0),
+        ("position_age", 1.0),
+        ("position_age_days", 1.0),
+        ("hold_days", 1.0),
+        ("age_days", 1.0),
+        ("hold_hours", 1.0 / 24.0),
+        ("position_age_hours", 1.0 / 24.0),
+        ("hold_minutes", 1.0 / 1440.0),
+        ("elapsed_hold_minutes", 1.0 / 1440.0),
+        ("position_age_minutes", 1.0 / 1440.0),
+    ):
+        if row.get(key) not in (None, ""):
+            return round(max(0.0, _to_float(row.get(key), 0.0) * scale), 3)
+    return 0.0
+
+
+def _position_return_pct_v1(row: dict) -> float:
+    value = _to_float(
+        row.get("total_pnl_pct")
+        if row.get("total_pnl_pct") is not None
+        else row.get("unrealized_pnl_pct")
+        if row.get("unrealized_pnl_pct") is not None
+        else row.get("unrealized_plpc")
+        if row.get("unrealized_plpc") is not None
+        else row.get("return_pct"),
+        0.0,
+    )
+    if abs(value) <= 2.0 and row.get("unrealized_plpc") is not None:
+        value *= 100.0
+    return round(value, 3)
+
+
+def _score_horizon_position_v1(row: dict, best_candidate: dict | None = None) -> dict:
+    row = dict(row or {})
+    symbol = str(row.get("symbol") or row.get("asset") or row.get("ticker") or "UNKNOWN").upper().strip()
+    horizon = _classify_trade_style_v1(row)
+    if horizon == "unknown":
+        horizon = str(row.get("horizon") or row.get("assigned_horizon") or "standard_swing").lower().strip()
+    if horizon == "unknown":
+        horizon = "standard_swing"
+    if horizon == "swing_trade":
+        horizon = "standard_swing"
+    book = _horizon_turnover_book_name_v1(horizon)
+    days_held = _position_days_held_v1(row)
+    ret_pct = _position_return_pct_v1(row)
+    return_per_day = round(ret_pct / max(1.0, days_held), 3) if days_held else round(ret_pct, 3)
+    capital_eff = _to_float(row.get("capital_efficiency"), _to_float(row.get("capital_efficiency_score"), 50.0 + ret_pct * 2.0 - min(35.0, days_held * 1.5)))
+    capital_eff = max(0.0, min(100.0, capital_eff))
+    momentum = _to_float(row.get("momentum_strength"), _to_float(row.get("relative_strength"), 50.0 + ret_pct * 1.5))
+    momentum = max(0.0, min(100.0, momentum))
+    catalyst_decay = max(0.0, min(100.0, _to_float(row.get("catalyst_decay"), _to_float(row.get("catalyst_decay_risk"), 50.0 - min(25.0, ret_pct)))))
+    giveback_risk = max(0.0, min(100.0, _to_float(row.get("giveback_risk"), max(0.0, 45.0 - ret_pct * 2.0 + days_held * 1.2))))
+    age_score = max(0.0, min(100.0, days_held * 6.0 if book in {"active_day_trade_book", "short_swing_book"} else days_held * 2.5))
+    return_decay = max(0.0, min(100.0, 50.0 - return_per_day * 4.0))
+    remaining_upside = max(0.0, min(100.0, momentum * 0.45 + (100.0 - catalyst_decay) * 0.35 + max(0.0, ret_pct) * 1.2))
+    productivity = max(0.0, min(100.0, capital_eff * 0.45 + return_per_day * 4.0 + remaining_upside * 0.25))
+    opportunity_cost = max(0.0, min(100.0, 100.0 - productivity + min(25.0, days_held * 0.8)))
+    replacement_score = _to_float((best_candidate or {}).get("replacement_score"), _to_float((best_candidate or {}).get("score"), 0.0))
+    replacement_risk = max(0.0, min(100.0, replacement_score - capital_eff + opportunity_cost * 0.25))
+    position_decay = max(0.0, min(100.0, age_score * 0.25 + catalyst_decay * 0.25 + giveback_risk * 0.25 + return_decay * 0.25))
+    thesis_strength = max(0.0, min(100.0, 100.0 - position_decay))
+    exit_readiness = max(0.0, min(100.0, position_decay * 0.45 + opportunity_cost * 0.25 + giveback_risk * 0.2 + replacement_risk * 0.1))
+    profit_protection = max(0.0, min(100.0, max(0.0, ret_pct) * 5.0 + giveback_risk * 0.35))
+    if thesis_strength < 30:
+        action = "THESIS_BROKEN"
+    elif exit_readiness >= 75:
+        action = "EXIT_REVIEW"
+    elif profit_protection >= 70:
+        action = "PROTECT_PROFIT"
+    elif (replacement_risk >= 55 and opportunity_cost >= 55) or (replacement_risk >= 50 and opportunity_cost >= 60):
+        action = "REPLACE_CANDIDATE"
+    elif opportunity_cost >= 55 or position_decay >= 55:
+        action = "REVIEW"
+    elif opportunity_cost >= 35 or position_decay >= 35:
+        action = "WATCH"
+    else:
+        action = "KEEP"
+    return {
+        "symbol": symbol,
+        "horizon": horizon,
+        "monitoring_book_assignment": book,
+        "days_held": days_held,
+        "return_pct": ret_pct,
+        "return_per_day": return_per_day,
+        "capital_efficiency_score": round(capital_eff, 3),
+        "opportunity_cost_score": round(opportunity_cost, 3),
+        "remaining_upside_estimate": round(remaining_upside, 3),
+        "position_age_score": round(age_score, 3),
+        "expected_capital_productivity": round(productivity, 3),
+        "replacement_risk_score": round(replacement_risk, 3),
+        "replacement_candidate": action == "REPLACE_CANDIDATE",
+        "replacement_candidate_symbol": str((best_candidate or {}).get("symbol") or "none").upper(),
+        "momentum_deterioration_score": round(max(0.0, 100.0 - momentum), 3),
+        "relative_strength_deterioration_score": round(max(0.0, 100.0 - _to_float(row.get("relative_strength"), momentum)), 3),
+        "trend_deterioration_score": round(return_decay, 3),
+        "profit_giveback_risk": round(giveback_risk, 3),
+        "thesis_deterioration_score": round(100.0 - thesis_strength, 3),
+        "remaining_upside_compression": round(max(0.0, 100.0 - remaining_upside), 3),
+        "opportunity_cost_escalation": round(opportunity_cost, 3),
+        "exit_readiness_score": round(exit_readiness, 3),
+        "profit_protection_score": round(profit_protection, 3),
+        "thesis_strength_score": round(thesis_strength, 3),
+        "remaining_upside_score": round(remaining_upside, 3),
+        "position_decay_score": round(position_decay, 3),
+        "portfolio_management_recommendation": action,
+        "advisory_only": True,
+    }
+
+
+def _horizon_book_rows_from_cache_v1(horizon: dict, alpaca: dict) -> list[dict]:
+    rows: list[dict] = []
+    alpaca_rows = alpaca.get("positions") if isinstance(alpaca.get("positions"), list) else []
+    rows.extend([dict(r) for r in alpaca_rows if isinstance(r, dict)])
+    modules = horizon.get("modules") if isinstance(horizon.get("modules"), dict) else {}
+    rotation = modules.get("adaptive_portfolio_rotation_engine_v1") if isinstance(modules.get("adaptive_portfolio_rotation_engine_v1"), dict) else {}
+    for key in ("rotation_review_positions", "top_stale_positions"):
+        for row in rotation.get(key) or []:
+            if isinstance(row, dict):
+                rows.append(dict(row))
+    deduped: dict[str, dict] = {}
+    for row in rows:
+        symbol = str(row.get("symbol") or row.get("asset") or row.get("ticker") or "").upper().strip()
+        if symbol and symbol not in deduped:
+            deduped[symbol] = row
+    return list(deduped.values())
+
+
+def _horizon_book_summaries_v1(scored_rows: list[dict], capacity: dict, best_candidates: list[dict]) -> dict:
+    books = {
+        "active_day_trade_book": {"book": "active_day_trade_book", "horizon": "day_trade", "monitoring_frequency": "high_frequency", "positions": []},
+        "short_swing_book": {"book": "short_swing_book", "horizon": "short_swing", "monitoring_frequency": "daily", "positions": []},
+        "standard_swing_book": {"book": "standard_swing_book", "horizon": "standard_swing", "monitoring_frequency": "lower_frequency", "positions": []},
+        "extended_swing_book": {"book": "extended_swing_book", "horizon": "extended_swing", "monitoring_frequency": "thesis_monitoring", "positions": []},
+        "scalp_shadow_book": {"book": "scalp_shadow_book", "horizon": "scalp", "monitoring_frequency": "practice_only", "positions": []},
+    }
+    for row in scored_rows:
+        books.setdefault(row["monitoring_book_assignment"], {"positions": []})["positions"].append(row)
+    day_count = int(_to_float(capacity.get("day_trade_slots_used"), len(books["active_day_trade_book"]["positions"])))
+    scalp_count = int(_to_float(capacity.get("scalp_slots_used"), len(books["scalp_shadow_book"]["positions"])))
+    swing_count = int(_to_float(capacity.get("swing_slots_used"), len(books["standard_swing_book"]["positions"]) + len(books["extended_swing_book"]["positions"]) + len(books["short_swing_book"]["positions"])))
+    fallback_counts = {
+        "active_day_trade_book": day_count,
+        "scalp_shadow_book": scalp_count,
+        "short_swing_book": len(books["short_swing_book"]["positions"]),
+        "standard_swing_book": max(swing_count - len(books["short_swing_book"]["positions"]) - len(books["extended_swing_book"]["positions"]), len(books["standard_swing_book"]["positions"])),
+        "extended_swing_book": len(books["extended_swing_book"]["positions"]),
+    }
+    for name, book in books.items():
+        positions = list(book.get("positions") or [])
+        count = max(len(positions), int(fallback_counts.get(name, 0)))
+        avg_cost = round(sum(_to_float(r.get("opportunity_cost_score"), 0.0) for r in positions) / max(1, len(positions)), 3) if positions else None
+        book["book_size"] = count
+        book["positions_sample"] = positions[:20]
+        book["monitoring_priority_score"] = {
+            "active_day_trade_book": 90,
+            "short_swing_book": 70,
+            "standard_swing_book": 45,
+            "extended_swing_book": 30,
+            "scalp_shadow_book": 20,
+        }.get(name, 40)
+        book["average_opportunity_cost_score"] = avg_cost
+        book["replacement_candidates_count"] = len([r for r in positions if r.get("replacement_candidate")])
+        book["advisory_only"] = True
+    swing_parking_positions = books["standard_swing_book"]["positions_sample"] + books["extended_swing_book"]["positions_sample"]
+    return {
+        "books": books,
+        "book_sizes": {name: book.get("book_size", 0) for name, book in books.items()},
+        "swing_parking_book": {
+            "book": "swing_parking_book",
+            "book_size": books["standard_swing_book"]["book_size"] + books["extended_swing_book"]["book_size"],
+            "positions_sample": swing_parking_positions[:30],
+            "preserved_monitoring": ["profit_monitoring", "thesis_monitoring", "exit_readiness_monitoring"],
+            "purpose": "prevent_standard_and_extended_swing_positions_from_consuming_active_day_trade_attention",
+            "monitoring_frequency": "lower_frequency_thesis_and_profit_monitoring",
+            "advisory_only": True,
+        },
+        "replacement_candidates": sorted([r for r in scored_rows if r.get("replacement_candidate")], key=lambda r: r.get("replacement_risk_score", 0), reverse=True)[:10],
+        "best_new_opportunity_candidates": best_candidates[:10],
+    }
+
+
+def _astra_horizon_capacity_turnover_status_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    horizon = _horizon_capacity_source_payload_v1(statuses)
+    modules = horizon.get("modules") if isinstance(horizon.get("modules"), dict) else {}
+    capacity = modules.get("horizon_capacity_manager_v1") if isinstance(modules.get("horizon_capacity_manager_v1"), dict) else {}
+    exposure = modules.get("horizon_exposure_balancer_v1") if isinstance(modules.get("horizon_exposure_balancer_v1"), dict) else {}
+    optimizer = modules.get("learning_exposure_optimizer_v1") if isinstance(modules.get("learning_exposure_optimizer_v1"), dict) else {}
+    rotation = modules.get("adaptive_portfolio_rotation_engine_v1") if isinstance(modules.get("adaptive_portfolio_rotation_engine_v1"), dict) else {}
+    recycling = modules.get("dynamic_capacity_recycling_v1") if isinstance(modules.get("dynamic_capacity_recycling_v1"), dict) else {}
+    alpaca = _cached_alpaca_paper_status_payload(statuses)
+    best_candidates = [dict(r) for r in (rotation.get("best_replacement_candidates") or horizon.get("best_replacement_candidates") or []) if isinstance(r, dict)]
+    best_candidate = best_candidates[0] if best_candidates else {}
+    raw_position_rows = _horizon_book_rows_from_cache_v1(horizon, alpaca)
+    scored_rows = [_score_horizon_position_v1(row, best_candidate) for row in raw_position_rows]
+    book_summary = _horizon_book_summaries_v1(scored_rows, capacity, best_candidates)
+    total_capacity = int(_to_float(capacity.get("total_capacity"), _to_float(horizon.get("target_position_capacity"), 20.0)))
+    total_used = int(_to_float(capacity.get("total_used"), _to_float(horizon.get("active_broker_positions"), _to_float(horizon.get("broker_confirmed_count"), 0.0))))
+    day_used = int(_to_float(capacity.get("day_trade_slots_used"), book_summary["book_sizes"].get("active_day_trade_book", 0)))
+    scalp_used = int(_to_float(capacity.get("scalp_slots_used"), book_summary["book_sizes"].get("scalp_shadow_book", 0)))
+    swing_used = int(_to_float(capacity.get("swing_slots_used"), book_summary["book_sizes"].get("standard_swing_book", 0) + book_summary["book_sizes"].get("extended_swing_book", 0)))
+    capacity_utilization = round((total_used / max(1, total_capacity)) * 100.0, 3)
+    day_capacity_preserved = day_used < max(1, total_capacity)
+    swing_capacity_utilization = round((swing_used / max(1, total_used)) * 100.0, 3) if total_used else 0.0
+    learning_throughput_score = max(0.0, min(100.0, 100.0 - max(0.0, capacity_utilization - 100.0) * 0.5 - max(0.0, swing_capacity_utilization - 40.0)))
+    lowest_incumbent = min(scored_rows, key=lambda r: r.get("capital_efficiency_score", 100.0), default={})
+    exceptional = []
+    for candidate in best_candidates:
+        score = _to_float(candidate.get("replacement_score"), _to_float(candidate.get("score"), 0.0))
+        if score >= 85.0 and total_used >= total_capacity:
+            exceptional.append({
+                "symbol": str(candidate.get("symbol") or "UNKNOWN").upper(),
+                "candidate_score": round(score, 3),
+                "exceptional_opportunity_candidate": True,
+                "review_status": "EXCEPTIONAL_REVIEW_REQUIRED",
+                "lowest_efficiency_incumbent": lowest_incumbent.get("symbol"),
+                "lowest_efficiency_score": lowest_incumbent.get("capital_efficiency_score"),
+                "automatic_action_taken": False,
+            })
+    wiring_checks = {
+        "horizon_books": bool(book_summary["book_sizes"]),
+        "monitoring_allocation": all((book.get("monitoring_frequency") for book in book_summary["books"].values())),
+        "swing_parking": bool(book_summary.get("swing_parking_book")),
+        "opportunity_cost": bool(scored_rows) or total_used > 0,
+        "replacement_candidates": bool(book_summary.get("replacement_candidates") or best_candidates),
+        "exit_readiness": bool(scored_rows) or bool(rotation),
+        "profit_protection": bool(scored_rows) or bool(modules.get("exit_profit_retention_maturation_v1")),
+        "learning_throughput": learning_throughput_score >= 0,
+        "capacity_utilization": total_capacity > 0,
+        "controlled_evolution": True,
+        "cortex_integration": True,
+        "unified_diagnostics": True,
+        "learning_center": True,
+    }
+    bottlenecks = []
+    if total_used > total_capacity:
+        bottlenecks.append("broker_positions_over_target_capacity")
+    if not raw_position_rows and total_used > 0:
+        bottlenecks.append("position_level_rows_missing_from_cache_using_book_counts")
+    if not best_candidates:
+        bottlenecks.append("replacement_candidate_cache_empty")
+    if int(_to_float(horizon.get("unknown_horizon_positions"), capacity.get("unknown_horizon_slots", 0))) > 0:
+        bottlenecks.append("unknown_horizon_positions_present")
+    wiring_status = "PASS" if all(wiring_checks.values()) else "WARNING"
+    return {
+        "suite": "Astra Horizon-Aware Capacity, Turnover & Monitoring Allocation V1",
+        "status": "ok",
+        "endpoint": "/api/astra_horizon_capacity_turnover_status_v1",
+        "generated_at": _now_utc_iso(),
+        "horizon_books_v1": book_summary["books"],
+        "book_sizes": book_summary["book_sizes"],
+        "active_day_trade_book": book_summary["books"]["active_day_trade_book"],
+        "short_swing_book": book_summary["books"]["short_swing_book"],
+        "standard_swing_book": book_summary["books"]["standard_swing_book"],
+        "extended_swing_book": book_summary["books"]["extended_swing_book"],
+        "scalp_shadow_book": book_summary["books"]["scalp_shadow_book"],
+        "swing_parking_book": book_summary["swing_parking_book"],
+        "monitoring_allocation_v1": {
+            name: {
+                "monitoring_priority_score": book.get("monitoring_priority_score"),
+                "monitoring_frequency": book.get("monitoring_frequency"),
+                "monitoring_book_assignment": name,
+                "book_size": book.get("book_size"),
+            }
+            for name, book in book_summary["books"].items()
+        },
+        "opportunity_cost_intelligence_v1": {
+            "positions_reviewed": len(scored_rows),
+            "positions": scored_rows[:80],
+            "highest_opportunity_cost_positions": sorted(scored_rows, key=lambda r: r.get("opportunity_cost_score", 0), reverse=True)[:10],
+            "average_opportunity_cost_score": round(sum(r.get("opportunity_cost_score", 0.0) for r in scored_rows) / max(1, len(scored_rows)), 3) if scored_rows else None,
+        },
+        "replacement_candidate_engine_v1": {
+            "replacement_candidates": book_summary["replacement_candidates"],
+            "best_new_opportunity_candidates": book_summary["best_new_opportunity_candidates"],
+            "exceptional_opportunity_candidates": exceptional,
+            "automatic_replacement_enabled": False,
+        },
+        "momentum_exit_readiness_intelligence_v1": {
+            "positions": sorted(scored_rows, key=lambda r: r.get("exit_readiness_score", 0), reverse=True)[:80],
+            "highest_exit_readiness_positions": sorted(scored_rows, key=lambda r: r.get("exit_readiness_score", 0), reverse=True)[:10],
+            "highest_profit_protection_positions": sorted(scored_rows, key=lambda r: r.get("profit_protection_score", 0), reverse=True)[:10],
+            "automatic_exits_enabled": False,
+            "learned_exits_enabled": False,
+        },
+        "horizon_priority_logic_v1": {
+            "capacity_decision_mode": "horizon_aware_not_global_stop",
+            "global_full_does_not_auto_block_all_horizons": True,
+            "day_trade_capacity_preserved": bool(day_capacity_preserved),
+            "scalp_shadow_practice_only": True,
+            "best_horizon_before_capacity_decision": True,
+            "current_overexposed_horizon": capacity.get("overexposed_horizon"),
+            "current_underexposed_horizon": exposure.get("recommended_learning_focus"),
+            "no_forced_horizon_quotas": True,
+        },
+        "learning_throughput_protection_v1": {
+            "learning_throughput_score": round(learning_throughput_score, 3),
+            "day_trade_capacity_preserved": bool(day_capacity_preserved),
+            "swing_capacity_utilization": swing_capacity_utilization,
+            "capital_productivity_score": round(sum(r.get("expected_capital_productivity", 0.0) for r in scored_rows) / max(1, len(scored_rows)), 3) if scored_rows else None,
+            "broker_truth_growth_expected": "slow_until_position_turnover_increases" if total_used > total_capacity else "normal",
+            "recommended_shadow_focus": optimizer.get("recommended_shadow_focus"),
+            "recommended_paper_learning_focus": optimizer.get("recommended_paper_learning_focus"),
+        },
+        "capacity_utilization": {
+            "total_capacity": total_capacity,
+            "total_used": total_used,
+            "total_available": max(0, total_capacity - total_used),
+            "capacity_utilization_pct": capacity_utilization,
+            "day_trade_slots_used": day_used,
+            "scalp_slots_used": scalp_used,
+            "swing_slots_used": swing_used,
+            "capacity_over_target_by": max(0, total_used - total_capacity),
+            "capacity_health": capacity.get("capacity_health") or capacity.get("capacity_status"),
+        },
+        "dynamic_recycling_status": recycling.get("dynamic_recycling_status") or horizon.get("dynamic_recycling_status"),
+        "remaining_bottlenecks": bottlenecks,
+        "final_wiring_audit_v1": {
+            "status": wiring_status,
+            "checks": wiring_checks,
+            "remaining_bottlenecks": bottlenecks,
+        },
+        "implementation_mode": "advisory_portfolio_management_intelligence_no_execution_changes",
+        "broker_behavior_changed": False,
+        "ranking_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "exit_behavior_changed": False,
+        "position_sizing_changed": False,
+        "portfolio_allocation_changed": False,
+        "thresholds_changed": False,
+        **_safety_flags_v1(),
+    }
+
+
 def _astra_evidence_maturation_status_payload(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -48124,6 +48499,16 @@ def astra_broker_pairing_learning_turnover_status_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_broker_pairing_learning_turnover_status_payload(statuses)
+
+
+@router.get("/api/astra_horizon_capacity_turnover_status_v1")
+def astra_horizon_capacity_turnover_status_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_horizon_capacity_turnover_status_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_horizon_capacity_turnover_status_payload(statuses)
 
 
 @router.get("/api/astra_intelligence_consumption_layer_v1")
