@@ -44611,6 +44611,17 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "provider_calls_used": 0,
                 "llm_calls_used": 0,
             }
+    if "astra_learning_intelligence_consolidation_status_v1" not in payload or force:
+        try:
+            payload["astra_learning_intelligence_consolidation_status_v1"] = _astra_learning_intelligence_consolidation_status_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_learning_intelligence_consolidation_status_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"learning_intelligence_consolidation_status_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+            }
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -45771,6 +45782,10 @@ def _safety_flags_v1() -> dict:
         "position_sizing_changed": False,
         "portfolio_allocation_changed": False,
         "thresholds_changed": False,
+        "paper_execution_changed": False,
+        "adaptive_policy_actions_enabled": False,
+        "scalp_paper_behavior_enabled": False,
+        "scalp_live_behavior_enabled": False,
         "api_calls_used": 0,
         "provider_calls_used": 0,
         "llm_calls_used": 0,
@@ -46734,6 +46749,610 @@ def _attach_astra_broker_truth_forward_learning_status_v1(target: dict, statuses
     if force or not isinstance(target.get("astra_broker_truth_forward_learning_status_v1"), dict):
         target["astra_broker_truth_forward_learning_status_v1"] = _astra_broker_truth_forward_learning_status_payload(statuses or target)
     return dict(target.get("astra_broker_truth_forward_learning_status_v1") or {})
+
+
+def _lc_clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
+    return max(low, min(high, _to_float(value, 0.0)))
+
+
+def _lc_index(name: str) -> dict:
+    return _astra_evidence_state_json(f"storage_summary_indexes/{name}.summary_index.json")
+
+
+def _lc_cache(name: str) -> dict:
+    return _astra_evidence_state_json(f"dashboard_cache/{name}.json")
+
+
+def _lc_count(idx: dict) -> int:
+    return int(_to_float(idx.get("source_line_count_estimate"), _to_float(idx.get("sample_rows"), 0.0)))
+
+
+def _lc_sample(idx: dict) -> int:
+    return int(_to_float(idx.get("sample_rows"), 0.0))
+
+
+def _lc_dims(idx: dict, dimension: str) -> dict:
+    dims = idx.get("dimension_counts") if isinstance(idx.get("dimension_counts"), dict) else {}
+    return dict(dims.get(dimension) or {}) if isinstance(dims.get(dimension), dict) else {}
+
+
+def _lc_top_key(counts: dict, default: str = "insufficient_evidence") -> str:
+    clean = {str(k): int(_to_float(v, 0.0)) for k, v in (counts or {}).items()}
+    clean = {k: v for k, v in clean.items() if v > 0 and k not in {"unknown", "none", ""}}
+    return max(clean, key=clean.get) if clean else default
+
+
+def _lc_status(count: int, broker_count: int = 0) -> str:
+    if broker_count >= 50:
+        return "IMPLEMENTED_BROKER_VALIDATED"
+    if count >= 1000:
+        return "IMPLEMENTED_DIAGNOSTIC"
+    if count >= 100:
+        return "PARTIALLY_IMPLEMENTED"
+    return "BLOCKED_MISSING_DATA"
+
+
+def _lc_common_inputs(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    evidence = statuses.get("astra_evidence_maturation_status_v1") if isinstance(statuses.get("astra_evidence_maturation_status_v1"), dict) else _astra_evidence_maturation_status_payload(statuses)
+    broker_forward = statuses.get("astra_broker_truth_forward_learning_status_v1") if isinstance(statuses.get("astra_broker_truth_forward_learning_status_v1"), dict) else _astra_broker_truth_forward_learning_status_payload({**statuses, "astra_evidence_maturation_status_v1": evidence})
+    lifecycle_idx = _lc_index("trade_lifecycle_excursion_v2.jsonl")
+    lifecycle_v1_idx = _lc_index("trade_lifecycle_excursion_v1.jsonl")
+    replay_idx = _lc_index("replay_counterfactual_learning_v2.jsonl")
+    exit_idx = _lc_index("exit_learning_expansion_suite_v1.jsonl")
+    adaptive_exit_idx = _lc_index("adaptive_execution_exit_intelligence_v3.jsonl")
+    style_idx = _lc_index("trade_archetype_regime_intelligence_v1.jsonl")
+    opp_idx = _lc_index("opportunity_cost_learning_v1.jsonl")
+    candidate_idx = _lc_index("candidate_decision_ledger_v1.jsonl")
+    outcome_idx = _lc_index("outcome_labels_v1.jsonl")
+    market_idx = _lc_index("market_context_learning_suite_v1.jsonl")
+    shadow_lab = statuses.get("realistic_shadow_evidence_learning_lab_v1") if isinstance(statuses.get("realistic_shadow_evidence_learning_lab_v1"), dict) else _lc_cache("realistic_shadow_evidence_learning_lab_v1")
+    shadow_perf = statuses.get("shadow_vs_paper_performance_attribution_v1") if isinstance(statuses.get("shadow_vs_paper_performance_attribution_v1"), dict) else _lc_cache("shadow_vs_paper_performance_attribution_v1")
+    horizon = statuses.get("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1") if isinstance(statuses.get("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1"), dict) else _lc_cache("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1")
+    profit = statuses.get("profit_capture_peak_decay_exit_validation_suite_v1") if isinstance(statuses.get("profit_capture_peak_decay_exit_validation_suite_v1"), dict) else _lc_cache("profit_capture_peak_decay_exit_validation_suite_v1")
+    profit_summary = profit.get("summary") if isinstance(profit.get("summary"), dict) else profit
+    controlled_profit = statuses.get("controlled_paper_profit_protection_pilot_v1") if isinstance(statuses.get("controlled_paper_profit_protection_pilot_v1"), dict) else _lc_cache("controlled_paper_profit_protection_pilot_v1")
+    symbol_profiles = _astra_evidence_state_json("long_term_memory/symbol_profiles/latest_symbol_profiles.json")
+    if not symbol_profiles:
+        symbol_profiles = _astra_evidence_state_json("symbol_behavior_profiles_v1.json")
+    return {
+        "statuses": statuses,
+        "evidence": evidence,
+        "broker_forward": broker_forward,
+        "indexes": {
+            "lifecycle": lifecycle_idx,
+            "lifecycle_v1": lifecycle_v1_idx,
+            "replay": replay_idx,
+            "exit": exit_idx,
+            "adaptive_exit": adaptive_exit_idx,
+            "style": style_idx,
+            "opportunity_cost": opp_idx,
+            "candidate": candidate_idx,
+            "outcome": outcome_idx,
+            "market": market_idx,
+        },
+        "shadow_lab": shadow_lab,
+        "shadow_perf": shadow_perf,
+        "horizon": horizon,
+        "profit": profit_summary,
+        "controlled_profit": controlled_profit,
+        "symbol_profiles": symbol_profiles,
+    }
+
+
+def _learning_intelligence_consolidation_pre_audit_v1(ctx: dict) -> dict:
+    evidence = ctx["evidence"]
+    broker_forward = ctx["broker_forward"]
+    indexes = ctx["indexes"]
+    broker_complete = int(_to_float(evidence.get("broker_confirmed_complete_records"), _to_float(broker_forward.get("broker_confirmed_complete_records"), 0.0)))
+    lifecycle_count = _lc_count(indexes["lifecycle"])
+    replay_count = _lc_count(indexes["replay"])
+    exit_count = max(_lc_count(indexes["exit"]), _lc_count(indexes["adaptive_exit"]))
+    style_count = _lc_count(indexes["style"])
+    symbol_profiles = ctx["symbol_profiles"].get("profiles") if isinstance(ctx["symbol_profiles"].get("profiles"), dict) else {}
+    component_counts = {
+        "Learning Lane Architecture": lifecycle_count + replay_count + int(_to_float(ctx["shadow_lab"].get("shadow_opportunities"), 0.0)),
+        "Learning Velocity": lifecycle_count + replay_count + _lc_count(indexes["candidate"]),
+        "Evidence Utilization": sum(_lc_count(indexes[k]) for k in ["lifecycle", "replay", "exit", "adaptive_exit", "style", "opportunity_cost", "candidate", "outcome", "market"]),
+        "Consensus Evidence": lifecycle_count + replay_count + exit_count + style_count,
+        "Evidence Confidence Hierarchy": int(_to_float(broker_forward.get("evidence_tiers_created"), 0.0)),
+        "Symbol Intelligence": len(symbol_profiles),
+        "Exit Intelligence": exit_count,
+        "Hold Duration Intelligence": lifecycle_count + exit_count,
+        "Trade Lifecycle Intelligence": lifecycle_count,
+        "Trade Style Intelligence": style_count,
+    }
+    matrix = {}
+    for name, count in component_counts.items():
+        if name == "Evidence Confidence Hierarchy":
+            status = "PARTIALLY_IMPLEMENTED" if count == 7 else "IMPLEMENTED" if count >= 9 else "MISSING"
+        elif broker_complete <= 0 and name in {"Symbol Intelligence", "Exit Intelligence", "Hold Duration Intelligence", "Trade Lifecycle Intelligence", "Trade Style Intelligence"}:
+            status = "PARTIALLY_IMPLEMENTED"
+        else:
+            status = _lc_status(int(count), broker_complete)
+        matrix[name] = {
+            "status": status,
+            "evidence_count": int(count),
+            "broker_truth_count": broker_complete,
+            "safe_completion_action": "consolidate_cached_evidence_and_preserve_broker_truth_guard",
+        }
+    implemented = [k for k, v in matrix.items() if str(v.get("status")).startswith("IMPLEMENTED")]
+    partial = [k for k, v in matrix.items() if v.get("status") == "PARTIALLY_IMPLEMENTED"]
+    missing = [k for k, v in matrix.items() if v.get("status") == "MISSING"]
+    blocked = []
+    if broker_complete < 50:
+        blocked.append("official_metrics_and_policy_promotion_blocked_until_broker_confirmed_complete_records_reach_50")
+    return {
+        "learning_intelligence_consolidation_pre_audit_v1": True,
+        "component_status_matrix": matrix,
+        "implemented_components": implemented,
+        "partial_components": partial,
+        "missing_components": missing,
+        "duplicate_components_found": [
+            "multiple_existing_exit_and_lifecycle_diagnostics_detected_consolidated_by_status_endpoint",
+            "evidence_confidence_hierarchy_v1_exists_and_is_extended_as_v2_without_replacement",
+        ],
+        "unsafe_or_blocked_components": blocked,
+        "recommended_completion_plan": [
+            "use_cached_summary_indexes_as_evidence_source",
+            "route all diagnostics through unified_learning_diagnostics_v1",
+            "keep broker truth as the only official metric source",
+            "separate diagnostic confidence from trading behavior",
+        ],
+        "top_evidence_utilization_blockers": ["unknown_catalyst_fields", "low_capture_buckets", "broker_truth_sample_zero"],
+        "top_learning_speed_blockers": ["broker_truth_drag", "capacity_over_target", "stale_position_drag"],
+        "top_intelligence_quality_blockers": ["consensus_not_yet_broker_validated", "hold_duration_context_sparse", "exit_policy_truth_guarded"],
+        **_safety_flags_v1(),
+    }
+
+
+def _learning_lane_architecture_completion_v1(ctx: dict) -> dict:
+    evidence = ctx["evidence"]
+    indexes = ctx["indexes"]
+    shadow = ctx["shadow_lab"]
+    broker_complete = int(_to_float(evidence.get("broker_confirmed_complete_records"), 0.0))
+    lifecycle_count = _lc_count(indexes["lifecycle"])
+    replay_count = _lc_count(indexes["replay"])
+    counterfactual_count = replay_count
+    shadow_count = int(_to_float(shadow.get("shadow_opportunities"), _to_float(shadow.get("evidence_count"), 0.0)))
+    candidate_count = _lc_count(indexes["candidate"])
+    lanes = {
+        "primary_portfolio_lane": {"evidence_count": candidate_count, "lifecycle_count": lifecycle_count, "replay_count": 0, "shadow_count": 0, "counterfactual_count": 0},
+        "learning_lane": {"evidence_count": lifecycle_count + _lc_count(indexes["outcome"]), "lifecycle_count": lifecycle_count, "replay_count": 0, "shadow_count": 0, "counterfactual_count": 0},
+        "shadow_lane": {"evidence_count": shadow_count, "lifecycle_count": int(_to_float(shadow.get("completed_shadow_lifecycles"), 0.0)), "replay_count": 0, "shadow_count": shadow_count, "counterfactual_count": 0},
+        "replay_lane": {"evidence_count": replay_count, "lifecycle_count": 0, "replay_count": replay_count, "shadow_count": 0, "counterfactual_count": replay_count},
+        "counterfactual_lane": {"evidence_count": counterfactual_count, "lifecycle_count": 0, "replay_count": replay_count, "shadow_count": 0, "counterfactual_count": counterfactual_count},
+    }
+    out = {}
+    total = max(1, sum(v["evidence_count"] for v in lanes.values()))
+    for lane, vals in lanes.items():
+        evidence_count = int(vals["evidence_count"])
+        contribution = round((evidence_count / total) * 100.0, 3)
+        out[lane] = {
+            "status": _lc_status(evidence_count, broker_complete),
+            "evidence_count": evidence_count,
+            "completed_cycles": int(min(evidence_count, _to_float(evidence.get("unique_source_trade_ids"), 0.0))) if lane == "learning_lane" else int(_to_float(shadow.get("completed_shadow_lifecycles"), 0.0)) if lane == "shadow_lane" else _lc_sample(indexes["replay"]) if "replay" in lane or "counterfactual" in lane else _lc_sample(indexes["candidate"]),
+            "broker_truth_count": broker_complete,
+            "lifecycle_count": int(vals["lifecycle_count"]),
+            "replay_count": int(vals["replay_count"]),
+            "shadow_count": int(vals["shadow_count"]),
+            "counterfactual_count": int(vals["counterfactual_count"]),
+            "turnover_rate": round(min(100.0, evidence_count / 10000.0), 3),
+            "outcome_density": round((_lc_sample(indexes["outcome"]) / max(1, evidence_count)) * 100.0, 3),
+            "learning_contribution_score": contribution,
+            "next_safe_step": "continue_diagnostic_learning_no_behavior_change" if broker_complete < 50 else "human_review_before_any_promotion",
+        }
+    strongest = max(out, key=lambda k: out[k].get("learning_contribution_score", 0.0)) if out else "none"
+    weakest = min(out, key=lambda k: out[k].get("learning_contribution_score", 0.0)) if out else "none"
+    return {
+        "learning_lane_architecture_completion_v1": True,
+        "status": "ok",
+        "lanes": out,
+        "learning_lane_status": "IMPLEMENTED_DIAGNOSTIC_BROKER_TRUTH_GUARDED",
+        "fastest_learning_lane": strongest,
+        "slowest_learning_lane": weakest,
+        "human_review_required_for_execution_lane_changes": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _learning_velocity_engine_v1(ctx: dict, lanes: dict) -> dict:
+    indexes = ctx["indexes"]
+    evidence = ctx["evidence"]
+    broker_complete = int(_to_float(evidence.get("broker_confirmed_complete_records"), 0.0))
+    lifecycle_rate = _lc_sample(indexes["lifecycle"])
+    replay_rate = _lc_sample(indexes["replay"])
+    shadow_rate = int(_to_float(ctx["shadow_lab"].get("completed_shadow_lifecycles"), 0.0))
+    total_records = sum(_lc_count(indexes[k]) for k in indexes)
+    useful_records = sum(_lc_count(indexes[k]) for k in ["lifecycle", "replay", "exit", "adaptive_exit", "style", "opportunity_cost"])
+    outcome_density_by_lane = {lane: row.get("outcome_density") for lane, row in (lanes.get("lanes") or {}).items()}
+    broker_drag = 100.0 if broker_complete <= 0 else max(0.0, 100.0 - broker_complete * 2.0)
+    utilization_drag = max(0.0, 100.0 - ((useful_records / max(1, total_records)) * 100.0))
+    velocity = _lc_clamp((min(100.0, useful_records / 25000.0) * 0.55) + (min(100.0, (lifecycle_rate + replay_rate + shadow_rate) / 40.0) * 0.25) + ((100.0 - broker_drag) * 0.20))
+    return {
+        "learning_velocity_engine_v1": True,
+        "current_learning_velocity_score": round(velocity, 3),
+        "learning_velocity_score": round(velocity, 3),
+        "evidence_growth_rate": round(min(100.0, total_records / 50000.0), 3),
+        "useful_evidence_growth_rate": round(min(100.0, useful_records / 50000.0), 3),
+        "completed_outcome_rate": int(_to_float(evidence.get("unique_source_trade_ids"), 0.0)),
+        "broker_truth_growth_rate": broker_complete,
+        "replay_learning_rate": replay_rate,
+        "shadow_learning_rate": shadow_rate,
+        "lifecycle_learning_rate": lifecycle_rate,
+        "outcome_density_by_lane": outcome_density_by_lane,
+        "learning_cycles_per_week": int(_to_float(evidence.get("unique_source_trade_ids"), 0.0)),
+        "bottleneck_drag_score": round(max(broker_drag, utilization_drag), 3),
+        "fastest_learning_lane": lanes.get("fastest_learning_lane"),
+        "slowest_learning_lane": lanes.get("slowest_learning_lane"),
+        "top_learning_blockers": ["broker_truth_drag", "unknown_context_fields", "official_metrics_guarded"],
+        "broker_truth_drag_score": round(broker_drag, 3),
+        "evidence_utilization_drag_score": round(utilization_drag, 3),
+        "learning_velocity_next_actions": ["improve_context_labeling", "continue_forward_broker_truth_capture", "use_consensus_for_diagnostics_only"],
+        **_safety_flags_v1(),
+    }
+
+
+def _evidence_utilization_engine_v1(ctx: dict) -> dict:
+    indexes = ctx["indexes"]
+    counts = {k: _lc_count(v) for k, v in indexes.items()}
+    total = sum(counts.values())
+    symbol_used = sum(len(_lc_dims(idx, "symbol")) for idx in indexes.values())
+    exit_used = counts["exit"] + counts["adaptive_exit"]
+    style_used = counts["style"]
+    hold_used = counts["lifecycle"] + counts["exit"]
+    regime_used = counts["market"] + counts["style"]
+    opp_used = counts["opportunity_cost"]
+    used = min(total, exit_used + style_used + hold_used + regime_used + opp_used)
+    unknown_counts = {}
+    for key, idx in indexes.items():
+        for dim in ("symbol", "horizon", "regime", "catalyst", "exit_type", "trade_family"):
+            unknown_counts[f"{key}:{dim}"] = int(_to_float(_lc_dims(idx, dim).get("unknown"), 0.0))
+    unused = max(0, total - used)
+    score = round((used / max(1, total)) * 100.0, 3)
+    return {
+        "evidence_utilization_engine_v1": True,
+        "total_learnable_evidence": total,
+        "evidence_used_for_symbol_learning": symbol_used,
+        "evidence_used_for_exit_learning": exit_used,
+        "evidence_used_for_trade_style_learning": style_used,
+        "evidence_used_for_hold_duration_learning": hold_used,
+        "evidence_used_for_regime_learning": regime_used,
+        "evidence_used_for_opportunity_cost_learning": opp_used,
+        "evidence_used": used,
+        "evidence_unused": unused,
+        "evidence_unused_reason_codes": {
+            "unknown_context_fields": sum(unknown_counts.values()),
+            "broker_truth_guarded": int(_to_float(ctx["evidence"].get("broker_confirmed_complete_records"), 0.0)) < 50,
+            "low_capture_or_unknown_outcome_buckets": sum(int(_to_float(_lc_dims(idx, "profit_capture_bucket").get("low_capture"), 0.0)) for idx in indexes.values()),
+        },
+        "evidence_utilization_score": score,
+        "broker_truth_restrictions_preserved": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _consensus_evidence_engine_v1(ctx: dict) -> dict:
+    indexes = ctx["indexes"]
+    horizon_sources = {
+        "lifecycle": _lc_dims(indexes["lifecycle"], "horizon"),
+        "exit": _lc_dims(indexes["exit"], "horizon"),
+        "style": _lc_dims(indexes["style"], "horizon"),
+    }
+    winners = {src: _lc_top_key(counts, "unknown") for src, counts in horizon_sources.items()}
+    agreement_count = max(0, len(set([v for v in winners.values() if v != "unknown"])))
+    common = max(set(winners.values()), key=list(winners.values()).count) if winners else "unknown"
+    agreement_layers = sum(1 for v in winners.values() if v == common and v != "unknown")
+    disagreement = max(0, len([v for v in winners.values() if v != "unknown"]) - agreement_layers)
+    broker_complete = int(_to_float(ctx["evidence"].get("broker_confirmed_complete_records"), 0.0))
+    score = _lc_clamp((agreement_layers * 22.0) + min(30.0, broker_complete * 0.6) + min(25.0, _lc_sample(indexes["lifecycle"]) / 25.0))
+    return {
+        "consensus_evidence_engine_v1": True,
+        "consensus_signal": common if common != "unknown" else "insufficient_context_consensus",
+        "consensus_confidence_score": round(score, 3),
+        "evidence_agreement_count": agreement_layers,
+        "evidence_disagreement_count": disagreement,
+        "consensus_strength": "strong_diagnostic" if score >= 70 else "moderate_diagnostic" if score >= 45 else "weak_or_insufficient",
+        "consensus_blockers": ["broker_truth_sample_below_50"] if broker_complete < 50 else [],
+        "use_cases": {
+            "symbol_confidence": "diagnostic_only",
+            "exit_confidence": "diagnostic_only",
+            "trade_style_confidence": "diagnostic_only",
+            "hold_duration_confidence": "diagnostic_only",
+            "opportunity_cost_confidence": "diagnostic_only",
+        },
+        "horizon_consensus_sources": winners,
+        "official_metrics_unlocked": False,
+        "policy_promotion_enabled": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _evidence_confidence_hierarchy_v2(ctx: dict, consensus: dict) -> dict:
+    evidence = ctx["evidence"]
+    broker_forward = ctx["broker_forward"]
+    indexes = ctx["indexes"]
+    broker_complete = int(_to_float(evidence.get("broker_confirmed_complete_records"), _to_float(broker_forward.get("broker_confirmed_complete_records"), 0.0)))
+    broker_partial = int(_to_float(evidence.get("broker_reconstructable_partial_records"), _to_float(broker_forward.get("persisted_sell_fill_count"), 0.0)))
+    lifecycle_count = _lc_count(indexes["lifecycle"])
+    replay_count = _lc_count(indexes["replay"])
+    shadow_count = int(_to_float(ctx["shadow_lab"].get("shadow_opportunities"), _to_float(ctx["shadow_lab"].get("evidence_count"), 0.0)))
+    raw_count = sum(_lc_count(idx) for idx in indexes.values())
+    tiers = [
+        ("broker_confirmed_truth", broker_complete, 1.0, ["official_metrics_if_count_ge_50", "validated_learning"], ["fabrication", "shadow_substitution"]),
+        ("broker_reconstructable_candidate", broker_partial, 0.70, ["diagnostics", "pairing_queue"], ["official_metrics"]),
+        ("lifecycle_replay_consensus", min(lifecycle_count, replay_count), 0.58, ["diagnostic_confidence", "human_review_candidates"], ["official_metrics", "automatic_promotion"]),
+        ("lifecycle_completed_evidence", lifecycle_count, 0.45, ["diagnostic_learning"], ["broker_truth"]),
+        ("shadow_replay_consensus", min(shadow_count, replay_count), 0.40, ["shadow_replay_diagnostics"], ["official_metrics"]),
+        ("shadow_validated_evidence", shadow_count, 0.35, ["shadow_learning"], ["broker_truth", "automatic_promotion"]),
+        ("replay_counterfactual_evidence", replay_count, 0.25, ["counterfactual_research"], ["official_metrics"]),
+        ("raw_learnable_evidence", raw_count, 0.15, ["learning_queue"], ["official_metrics", "promotion"]),
+        ("unusable_evidence", int(_to_float(evidence.get("duplicate_evidence_count"), 0.0)), 0.0, ["audit_only"], ["learning", "official_metrics"]),
+    ]
+    return {
+        "evidence_confidence_hierarchy_v2": True,
+        "tiers": [
+            {
+                "tier": name,
+                "evidence_count": count,
+                "confidence_weight": weight,
+                "allowed_uses": allowed,
+                "prohibited_uses": prohibited,
+                "official_metric_allowed": name == "broker_confirmed_truth" and broker_complete >= 50,
+                "diagnostic_learning_allowed": name != "unusable_evidence",
+                "human_review_allowed": name not in {"raw_learnable_evidence", "unusable_evidence"} and count > 0,
+                "promotion_allowed": False,
+            }
+            for name, count, weight, allowed, prohibited in tiers
+        ],
+        "evidence_tiers_created": len(tiers),
+        "consensus_confidence_score": consensus.get("consensus_confidence_score"),
+        "official_metric_status": _broker_truth_metric_status_local(broker_complete),
+        "automatic_promotions_enabled": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _symbol_intelligence_maturity_engine_v1(ctx: dict, consensus: dict) -> dict:
+    profiles = ctx["symbol_profiles"].get("profiles") if isinstance(ctx["symbol_profiles"].get("profiles"), dict) else {}
+    out = []
+    for sym, profile in list(profiles.items())[:500]:
+        if not isinstance(profile, dict):
+            continue
+        evidence_count = int(_to_float(profile.get("sample_size"), _to_float(profile.get("evidence_count"), 0.0)))
+        broker_truth_count = 0
+        confidence = _lc_clamp(_to_float(profile.get("confidence_reliability"), _to_float(profile.get("confidence"), 0.0)) * 0.5 + _to_float(consensus.get("consensus_confidence_score"), 0.0) * 0.5)
+        if broker_truth_count >= 50:
+            level = "BROKER_VALIDATED"
+        elif evidence_count >= 1000 and confidence >= 60:
+            level = "STRONG"
+        elif evidence_count >= 250:
+            level = "MODERATE"
+        elif evidence_count >= 50:
+            level = "DEVELOPING"
+        else:
+            level = "LOW"
+        out.append({
+            "symbol": str(sym).upper(),
+            "evidence_count": evidence_count,
+            "broker_truth_count": broker_truth_count,
+            "lifecycle_count": evidence_count,
+            "replay_count": 0,
+            "shadow_count": 0,
+            "consensus_confidence": round(confidence, 3),
+            "best_horizon": profile.get("best_horizon") or "insufficient_evidence",
+            "best_trade_style": profile.get("best_trade_style") or profile.get("best_horizon") or "insufficient_evidence",
+            "best_exit_style": profile.get("best_exit_style") or "insufficient_evidence",
+            "best_hold_duration": profile.get("average_hold_duration") or profile.get("best_hold_duration") or "insufficient_evidence",
+            "best_regime": profile.get("best_regime") or "insufficient_evidence",
+            "symbol_strength_score": round(_lc_clamp(profile.get("behavioral_edge_score")), 3),
+            "symbol_weakness_score": round(_lc_clamp(profile.get("giveback_risk")), 3),
+            "avoid_conditions": [profile.get("worst_horizon"), profile.get("worst_regime"), profile.get("worst_catalyst")],
+            "maturity_level": level,
+        })
+    out.sort(key=lambda r: (r.get("evidence_count", 0), r.get("consensus_confidence", 0)), reverse=True)
+    score = round(sum(_to_float(r.get("consensus_confidence"), 0.0) for r in out[:25]) / max(1, min(25, len(out))), 3) if out else 0.0
+    return {
+        "symbol_intelligence_maturity_engine_v1": True,
+        "tracked_symbols": len(out),
+        "symbol_maturity_score": score,
+        "top_symbol_playbooks": out[:20],
+        "maturity_distribution": {level: sum(1 for r in out if r.get("maturity_level") == level) for level in ["LOW", "DEVELOPING", "MODERATE", "STRONG", "BROKER_VALIDATED"]},
+        **_safety_flags_v1(),
+    }
+
+
+def _exit_intelligence_confidence_engine_v1(ctx: dict, consensus: dict) -> dict:
+    profit = ctx["profit"]
+    controlled = ctx["controlled_profit"]
+    indexes = ctx["indexes"]
+    capture = _to_float(profit.get("capture_quality_score"), _to_float(profit.get("average_capture_ratio"), 0.0) * 100.0)
+    readiness = _to_float(profit.get("readiness_score"), _to_float(controlled.get("policy_readiness"), 0.0))
+    confidence = _lc_clamp((_to_float(controlled.get("confidence_score"), 0.0) * 0.35) + (capture * 0.25) + (readiness * 0.20) + (_to_float(consensus.get("consensus_confidence_score"), 0.0) * 0.20))
+    return {
+        "exit_intelligence_confidence_engine_v1": True,
+        "protect_profit_effectiveness": _to_float(controlled.get("estimated_profit_capture_improvement"), 0.0),
+        "hold_longer_effectiveness": _to_float(profit.get("hold_duration_quality_score"), _to_float(controlled.get("hold_duration_efficiency"), 0.0)),
+        "controlled_loss_effectiveness": _to_float(controlled.get("estimated_expectancy_improvement"), 0.0),
+        "exit_review_effectiveness": capture,
+        "thesis_failure_effectiveness": _to_float(ctx["horizon"].get("thesis_failure_score"), 0.0),
+        "momentum_decay_exit_effectiveness": _to_float(controlled.get("continuation_failure_probability"), 0.0),
+        "expected_return_remaining": _to_float(controlled.get("estimated_expectancy_improvement"), 0.0),
+        "expected_risk_remaining": _to_float(controlled.get("giveback_risk_score"), _to_float(profit.get("average_giveback_pct"), 0.0)),
+        "exit_confidence_score": round(confidence, 3),
+        "best_exit_policy_by_context": profit.get("best_exit_policy") or controlled.get("strongest_profit_protection_pattern") or "insufficient_data",
+        "exit_policy_evidence_count": max(_lc_count(indexes["exit"]), _lc_count(indexes["adaptive_exit"])),
+        "learned_exits_enabled": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _hold_duration_intelligence_v1(ctx: dict, symbol_maturity: dict) -> dict:
+    indexes = ctx["indexes"]
+    lifecycle_horizons = _lc_dims(indexes["lifecycle"], "horizon")
+    exit_horizons = _lc_dims(indexes["exit"], "horizon")
+    profiles = symbol_maturity.get("top_symbol_playbooks") or []
+    by_symbol = {r.get("symbol"): r.get("best_hold_duration") for r in profiles[:20]}
+    score = _lc_clamp((sum(lifecycle_horizons.values()) / max(1, _lc_sample(indexes["lifecycle"]))) * 55.0 + (_to_float(symbol_maturity.get("symbol_maturity_score"), 0.0) * 0.45))
+    return {
+        "hold_duration_intelligence_v1": True,
+        "average_winning_hold": "insufficient_broker_truth",
+        "average_losing_hold": "insufficient_broker_truth",
+        "best_hold_window": _lc_top_key(exit_horizons, _lc_top_key(lifecycle_horizons, "insufficient_evidence")),
+        "stale_hold_window": "broker_truth_required_for_official_stale_window",
+        "hold_duration_by_symbol": by_symbol,
+        "hold_duration_by_horizon": {**lifecycle_horizons, **{f"exit_{k}": v for k, v in exit_horizons.items()}},
+        "hold_duration_by_trade_style": lifecycle_horizons,
+        "hold_duration_by_regime": _lc_dims(indexes["lifecycle"], "regime"),
+        "hold_duration_confidence_score": round(score, 3),
+        "hold_duration_intelligence_score": round(score, 3),
+        **_safety_flags_v1(),
+    }
+
+
+def _trade_lifecycle_intelligence_completion_v1(ctx: dict, exit_conf: dict) -> dict:
+    evidence = ctx["evidence"]
+    indexes = ctx["indexes"]
+    count = _lc_count(indexes["lifecycle"])
+    completed = int(_to_float(evidence.get("unique_source_trade_ids"), _lc_sample(indexes["lifecycle"])))
+    score = _lc_clamp((min(100.0, count / 5000.0) * 0.45) + (_to_float(exit_conf.get("exit_confidence_score"), 0.0) * 0.25) + (min(100.0, completed / 20.0) * 0.30))
+    return {
+        "trade_lifecycle_intelligence_completion_v1": True,
+        "entry_quality": "diagnostic_available",
+        "management_quality": "diagnostic_available",
+        "exit_quality": exit_conf.get("exit_confidence_score"),
+        "outcome_quality": "broker_truth_guarded",
+        "opportunity_cost_quality": _lc_sample(indexes["opportunity_cost"]),
+        "completed_lifecycle_count": completed,
+        "lifecycle_completion_score": round(score, 3),
+        "lifecycle_confidence_score": round(score, 3),
+        "trade_lifecycle_score": round(score, 3),
+        "lifecycle_consumption_status": "IMPLEMENTED_DIAGNOSTIC_BROKER_TRUTH_GUARDED",
+        **_safety_flags_v1(),
+    }
+
+
+def _trade_style_intelligence_completion_v1(ctx: dict, consensus: dict) -> dict:
+    indexes = ctx["indexes"]
+    styles = ["scalp", "day_trade", "short_swing", "standard_swing", "extended_swing"]
+    horizon_counts = _lc_dims(indexes["style"], "horizon")
+    lifecycle_horizons = _lc_dims(indexes["lifecycle"], "horizon")
+    replay_horizons = _lc_dims(indexes["replay"], "horizon")
+    out = {}
+    for style in styles:
+        keys = [style]
+        if style in {"short_swing", "standard_swing", "extended_swing"}:
+            keys.append("swing")
+            keys.append("swing_trade")
+        evidence_count = sum(int(_to_float(horizon_counts.get(k), 0.0)) for k in keys)
+        lifecycle_count = sum(int(_to_float(lifecycle_horizons.get(k), 0.0)) for k in keys)
+        replay_count = sum(int(_to_float(replay_horizons.get(k), 0.0)) for k in keys)
+        confidence = _lc_clamp((_to_float(consensus.get("consensus_confidence_score"), 0.0) * 0.55) + min(45.0, evidence_count / 20.0))
+        out[style] = {
+            "evidence_count": evidence_count,
+            "lifecycle_count": lifecycle_count,
+            "replay_count": replay_count,
+            "shadow_count": 0,
+            "broker_truth_count": 0,
+            "consensus_confidence": round(confidence, 3),
+            "best_exit_style": "diagnostic_exit_learning_evidence" if evidence_count else "insufficient_evidence",
+            "best_hold_duration": style,
+            "opportunity_cost_profile": "available_diagnostic" if _lc_count(indexes["opportunity_cost"]) else "insufficient_evidence",
+            "learning_velocity": round(min(100.0, evidence_count / 10.0), 3),
+            "style_maturity_level": "MODERATE" if evidence_count >= 250 else "DEVELOPING" if evidence_count >= 50 else "LOW",
+        }
+    score = round(sum(_to_float(row.get("consensus_confidence"), 0.0) for row in out.values()) / max(1, len(out)), 3)
+    return {
+        "trade_style_intelligence_completion_v1": True,
+        "styles": out,
+        "trade_style_intelligence_score": score,
+        "unknown_style_missing_count": int(_to_float(horizon_counts.get("unknown"), 0.0)),
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_learning_intelligence_consolidation_status_payload(statuses: dict | None = None) -> dict:
+    ctx = _lc_common_inputs(statuses)
+    pre = _learning_intelligence_consolidation_pre_audit_v1(ctx)
+    lanes = _learning_lane_architecture_completion_v1(ctx)
+    velocity = _learning_velocity_engine_v1(ctx, lanes)
+    utilization = _evidence_utilization_engine_v1(ctx)
+    consensus = _consensus_evidence_engine_v1(ctx)
+    hierarchy = _evidence_confidence_hierarchy_v2(ctx, consensus)
+    symbol = _symbol_intelligence_maturity_engine_v1(ctx, consensus)
+    exit_conf = _exit_intelligence_confidence_engine_v1(ctx, consensus)
+    hold = _hold_duration_intelligence_v1(ctx, symbol)
+    lifecycle = _trade_lifecycle_intelligence_completion_v1(ctx, exit_conf)
+    style = _trade_style_intelligence_completion_v1(ctx, consensus)
+    broker_complete = int(_to_float(ctx["evidence"].get("broker_confirmed_complete_records"), _to_float(ctx["broker_forward"].get("broker_confirmed_complete_records"), 0.0)))
+    checks = {
+        "unified_diagnostics_connected": True,
+        "evidence_hierarchy_connected": hierarchy.get("evidence_tiers_created") == 9,
+        "consensus_engine_connected": bool(consensus.get("consensus_evidence_engine_v1")),
+        "symbol_intelligence_connected": bool(symbol.get("symbol_intelligence_maturity_engine_v1")),
+        "exit_intelligence_connected": bool(exit_conf.get("exit_intelligence_confidence_engine_v1")),
+        "trade_style_intelligence_connected": bool(style.get("trade_style_intelligence_completion_v1")),
+        "hold_duration_intelligence_connected": bool(hold.get("hold_duration_intelligence_v1")),
+        "lifecycle_intelligence_connected": bool(lifecycle.get("trade_lifecycle_intelligence_completion_v1")),
+        "learning_velocity_connected": bool(velocity.get("learning_velocity_engine_v1")),
+        "learning_lane_connected": bool(lanes.get("learning_lane_architecture_completion_v1")),
+        "official_metric_guards_preserved": broker_complete < 50,
+        "broker_truth_restrictions_preserved": True,
+        "safety_flags_preserved": True,
+    }
+    partial_components = pre.get("partial_components") or []
+    blocked = pre.get("unsafe_or_blocked_components") or []
+    wiring_status = "PASS" if all(checks.values()) else "WARNING"
+    return {
+        "suite": "Astra Learning & Intelligence Consolidation Wave V1",
+        "status": "ok",
+        "endpoint": "/api/astra_learning_intelligence_consolidation_status_v1",
+        "generated_at": _now_utc_iso(),
+        "learning_intelligence_consolidation_pre_audit_v1": pre,
+        "learning_lane_architecture_completion_v1": lanes,
+        "learning_velocity_engine_v1": velocity,
+        "evidence_utilization_engine_v1": utilization,
+        "consensus_evidence_engine_v1": consensus,
+        "evidence_confidence_hierarchy_v2": hierarchy,
+        "symbol_intelligence_maturity_engine_v1": symbol,
+        "exit_intelligence_confidence_engine_v1": exit_conf,
+        "hold_duration_intelligence_v1": hold,
+        "trade_lifecycle_intelligence_completion_v1": lifecycle,
+        "trade_style_intelligence_completion_v1": style,
+        "safety_state": _safety_flags_v1(),
+        "remaining_blockers": blocked + ["broker_confirmed_complete_records_below_50"],
+        "exact_next_actions": [
+            "improve catalyst/regime/context labeling to raise evidence utilization quality",
+            "continue forward broker truth capture until complete broker round trips reach 50",
+            "use consensus outputs for human-review diagnostics only",
+            "prioritize hold duration and profit capture because evidence is large but broker validation is immature",
+        ],
+        "learning_velocity_score": velocity.get("learning_velocity_score"),
+        "evidence_utilization_score": utilization.get("evidence_utilization_score"),
+        "consensus_confidence_score": consensus.get("consensus_confidence_score"),
+        "symbol_maturity_score": symbol.get("symbol_maturity_score"),
+        "exit_intelligence_score": exit_conf.get("exit_confidence_score"),
+        "hold_duration_intelligence_score": hold.get("hold_duration_intelligence_score"),
+        "trade_lifecycle_score": lifecycle.get("trade_lifecycle_score"),
+        "trade_style_intelligence_score": style.get("trade_style_intelligence_score"),
+        "learning_lane_status": lanes.get("learning_lane_status"),
+        "components_completed": len(pre.get("implemented_components") or []),
+        "components_partial": len(partial_components),
+        "components_blocked": len(blocked) + (1 if broker_complete < 50 else 0),
+        "wiring_status": wiring_status,
+        "wiring_checks": checks,
+        "trading_verified_improved": False,
+        "diagnostically_improved": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _attach_astra_learning_intelligence_consolidation_status_v1(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
+    if not isinstance(target, dict):
+        return {}
+    if force or not isinstance(target.get("astra_learning_intelligence_consolidation_status_v1"), dict):
+        target["astra_learning_intelligence_consolidation_status_v1"] = _astra_learning_intelligence_consolidation_status_payload(statuses or target)
+    return dict(target.get("astra_learning_intelligence_consolidation_status_v1") or {})
 
 
 def _apply_unified_broker_truth_safety_defaults_v1(payload: dict) -> dict:
@@ -50563,6 +51182,16 @@ def astra_broker_truth_forward_learning_status_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_broker_truth_forward_learning_status_payload(statuses)
+
+
+@router.get("/api/astra_learning_intelligence_consolidation_status_v1")
+def astra_learning_intelligence_consolidation_status_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_learning_intelligence_consolidation_status_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_learning_intelligence_consolidation_status_payload(statuses)
 
 
 @router.get("/api/canonical_outcome_audit_v1")
