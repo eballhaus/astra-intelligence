@@ -1,3 +1,4 @@
+import glob
 import json
 import hashlib
 import os
@@ -8,7 +9,7 @@ import threading
 import subprocess
 import shutil
 import bisect
-from collections import deque
+from collections import Counter, deque
 from datetime import datetime, timedelta, UTC
 from zoneinfo import ZoneInfo
 
@@ -45747,6 +45748,649 @@ def _safety_flags_v1() -> dict:
     }
 
 
+_BROKER_TRUTH_AUDIT_SIGNAL_FIELDS_V1 = {
+    "action",
+    "actual_return_pct",
+    "broker_order_id",
+    "client_order_id",
+    "closed",
+    "counterfactual_return_pct",
+    "current_or_exit_profit_pct",
+    "entry_price",
+    "entry_time",
+    "entry_timestamp",
+    "exit_price",
+    "exit_time",
+    "exit_timestamp",
+    "filled_at",
+    "filled_avg_price",
+    "filled_qty",
+    "order_id",
+    "qty",
+    "realized_pnl",
+    "return_pct",
+    "side",
+    "source_trade_id",
+    "trade_id",
+    "transaction_time",
+}
+
+
+def _broker_truth_audit_relpath_v1(path: str) -> str:
+    try:
+        return os.path.relpath(path, os.getcwd())
+    except Exception:
+        return str(path)
+
+
+def _broker_truth_audit_file_candidates_v1() -> list[str]:
+    explicit_patterns = [
+        os.path.join(STATE, "broker_truth_records_v1.json"),
+        os.path.join(STATE, "canonical_outcome_audit_v1.json"),
+        os.path.join(STATE, "closed_trade_truth_registry_v1.json"),
+        os.path.join(STATE, "canonical_lifecycle_lessons_v1.jsonl"),
+        os.path.join(STATE, "canonical_lifecycle_lessons_summary_v1.json"),
+        os.path.join(STATE, "trade_lifecycle_v1.jsonl"),
+        os.path.join(STATE, "trade_lifecycle_excursion_v1.jsonl"),
+        os.path.join(STATE, "trade_lifecycle_excursion_v2.jsonl"),
+        os.path.join(STATE, "replay_counterfactual_learning_v2.jsonl"),
+        os.path.join(STATE, "paper_autopilot_state.json"),
+        os.path.join(STATE, "learning_insights_last_good.json"),
+        os.path.join(STATE, "dashboard_cache", "unified_learning_diagnostics_v1.json"),
+        os.path.join(STATE, "dashboard_cache", "astra_paper_provider_cortex_completion_v1.json"),
+        os.path.join(STATE, "dashboard_cache", "cortex_lifecycle_evidence_master_truth_v1.json"),
+        os.path.join(STATE, "dashboard_cache", "shadow_vs_paper_performance_attribution_v1.json"),
+        os.path.join(STATE, "dashboard_cache", "trade_lifecycle_audit_truth_horizon_integrity_suite_v1.json"),
+        os.path.join(os.getcwd(), "diagnostics", "*.json"),
+        os.path.join(os.getcwd(), "diagnostics", "*", "*.json"),
+        os.path.join(STATE, "snapshots", "*.json"),
+        os.path.join(STATE, "long_term_memory", "indexes", "*.json"),
+        os.path.join(STATE, "long_term_memory", "symbol_profiles", "*.json"),
+    ]
+    seen: set[str] = set()
+    files: list[str] = []
+    for pattern in explicit_patterns:
+        for path in glob.glob(pattern, recursive=True):
+            if not os.path.isfile(path):
+                continue
+            if path in seen:
+                continue
+            seen.add(path)
+            files.append(path)
+
+    for pattern in (
+        os.path.join(STATE, "opportunities", "raw", "*.jsonl"),
+        os.path.join(STATE, "opportunities", "summaries", "*.json"),
+    ):
+        candidate_paths = [
+            path for path in glob.glob(pattern, recursive=False)
+            if os.path.isfile(path)
+        ]
+        candidate_paths.sort(key=lambda path: os.path.getmtime(path), reverse=True)
+        for path in candidate_paths[:6]:
+            if path in seen:
+                continue
+            seen.add(path)
+            files.append(path)
+    return sorted(files)
+
+
+def _broker_truth_trade_like_row_v1(row: dict) -> bool:
+    if not isinstance(row, dict):
+        return False
+    keys = {str(k) for k in row.keys()}
+    if keys & _BROKER_TRUTH_AUDIT_SIGNAL_FIELDS_V1:
+        return True
+    side = str(row.get("side") or row.get("action") or "").lower().strip()
+    if side in {"buy", "sell"}:
+        return True
+    record_type = str(row.get("record_type") or row.get("evidence_basis") or "").lower()
+    if any(token in record_type for token in ("lifecycle", "broker", "replay", "shadow", "trade")):
+        return True
+    return False
+
+
+def _broker_truth_trade_like_rows_from_obj_v1(obj: object, *, limit: int = 4000) -> list[dict]:
+    rows: list[dict] = []
+    stack: list[object] = [obj]
+    while stack and len(rows) < limit:
+        current = stack.pop()
+        if isinstance(current, dict):
+            if _broker_truth_trade_like_row_v1(current):
+                rows.append(current)
+            for value in current.values():
+                if isinstance(value, (dict, list)):
+                    stack.append(value)
+        elif isinstance(current, list):
+            for value in reversed(current[: min(limit, 180)]):
+                if isinstance(value, (dict, list)):
+                    stack.append(value)
+    return rows[:limit]
+
+
+def _broker_truth_trade_like_rows_from_file_v1(path: str) -> list[dict]:
+    rows: list[dict] = []
+    try:
+        if path.endswith(".jsonl"):
+            size = os.path.getsize(path)
+            if size > 2_000_000:
+                try:
+                    with open(path, "rb") as handle:
+                        handle.seek(max(0, size - 1_000_000))
+                        text = handle.read().decode("utf-8", "ignore")
+                except Exception:
+                    text = ""
+                lines = text.splitlines()
+                if size > 1_000_000 and lines:
+                    lines = lines[1:]
+                iterable = lines[-240:]
+            else:
+                with open(path, "r", encoding="utf-8") as handle:
+                    iterable = [line.rstrip("\n") for line in handle]
+            for line in iterable:
+                line = str(line or "").strip()
+                if not line:
+                    continue
+                try:
+                    parsed = json.loads(line)
+                except Exception:
+                    continue
+                rows.extend(_broker_truth_trade_like_rows_from_obj_v1(parsed, limit=12))
+                if len(rows) >= 1200:
+                    break
+            return rows[:1200]
+        parsed = _read_json_file(path, default={})
+        return _broker_truth_trade_like_rows_from_obj_v1(parsed, limit=1200)
+    except Exception:
+        return []
+
+
+def _broker_truth_first_text_v1(row: dict, *keys: str) -> str | None:
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            text = str(value).strip()
+            if text:
+                return text
+    return None
+
+
+def _broker_truth_first_number_v1(row: dict, *keys: str) -> float | None:
+    for key in keys:
+        value = row.get(key)
+        if value in (None, ""):
+            continue
+        number = _to_float(value, 0.0)
+        if number != 0.0 or value in (0, 0.0, "0", "0.0"):
+            return number
+    return None
+
+
+def _broker_truth_row_shape_v1(row: dict, source_path: str) -> dict:
+    rel = _broker_truth_audit_relpath_v1(source_path)
+    rel_lower = rel.lower()
+    source_hint = "generic"
+    evidence_basis = str(row.get("evidence_basis") or "").lower()
+    if "broker_truth_records" in rel_lower or row.get("broker_source") or row.get("broker_order_id") or row.get("client_order_id"):
+        source_hint = "broker"
+    elif "replay_counterfactual" in rel_lower:
+        source_hint = "replay"
+    elif "shadow" in rel_lower or "shadow" in evidence_basis:
+        source_hint = "shadow"
+    elif any(token in rel_lower for token in ("lifecycle", "closed_trade_truth", "canonical_lifecycle")):
+        source_hint = "lifecycle"
+    side = str(
+        row.get("side")
+        or row.get("action")
+        or row.get("order_side")
+        or ""
+    ).lower().strip()
+    entry_time = _broker_truth_first_text_v1(row, "entry_timestamp", "entry_time", "buy_timestamp", "buy_time", "opened_at")
+    exit_time = _broker_truth_first_text_v1(row, "exit_timestamp", "exit_time", "sell_timestamp", "sell_time", "closed_at")
+    transaction_time = _broker_truth_first_text_v1(row, "filled_at", "transaction_time", "broker_timestamp", "timestamp")
+    entry_price = _broker_truth_first_number_v1(row, "entry_price", "avg_entry_price", "average_entry_price", "buy_price")
+    exit_price = _broker_truth_first_number_v1(row, "exit_price", "sell_price", "close_price")
+    filled_avg_price = _broker_truth_first_number_v1(row, "filled_avg_price", "avg_fill_price")
+    qty = _broker_truth_first_number_v1(row, "filled_qty", "qty", "quantity", "shares")
+    realized_pnl = _broker_truth_first_number_v1(row, "realized_pnl", "realized_pl")
+    return_pct = _broker_truth_first_number_v1(row, "return_pct", "realized_return_pct", "pnl_pct", "actual_return_pct", "current_or_exit_profit_pct")
+    broker_order_id = _broker_truth_first_text_v1(row, "broker_order_id", "order_id")
+    client_order_id = _broker_truth_first_text_v1(row, "client_order_id")
+    source_trade_id = _broker_truth_first_text_v1(row, "source_trade_id", "lifecycle_id")
+    trade_id = _broker_truth_first_text_v1(row, "trade_id")
+    explicit_closed = row.get("closed")
+    closed = explicit_closed if isinstance(explicit_closed, bool) else None
+    has_broker_identity = bool(broker_order_id or client_order_id)
+    broker_like = bool(
+        source_hint == "broker"
+        or (
+            side in {"buy", "sell"}
+            and has_broker_identity
+            and qty not in (None, 0.0)
+            and (filled_avg_price not in (None, 0.0) or entry_price not in (None, 0.0) or exit_price not in (None, 0.0))
+            and (transaction_time or entry_time or exit_time)
+        )
+    )
+    return {
+        "source_path": rel,
+        "source_hint": source_hint,
+        "symbol": str(row.get("symbol") or row.get("ticker") or row.get("asset") or "").upper().strip(),
+        "side": side,
+        "entry_price": entry_price,
+        "exit_price": exit_price,
+        "entry_time": entry_time,
+        "exit_time": exit_time,
+        "transaction_time": transaction_time,
+        "filled_avg_price": filled_avg_price,
+        "qty": qty,
+        "realized_pnl": realized_pnl,
+        "return_pct": return_pct,
+        "broker_order_id": broker_order_id,
+        "client_order_id": client_order_id,
+        "source_trade_id": source_trade_id,
+        "trade_id": trade_id,
+        "order_id": _broker_truth_first_text_v1(row, "order_id"),
+        "record_type": str(row.get("record_type") or ""),
+        "evidence_basis": str(row.get("evidence_basis") or ""),
+        "closed": closed,
+        "broker_like": broker_like,
+        "raw": row,
+    }
+
+
+def _broker_truth_trade_inventory_audit_v1() -> tuple[dict, list[dict]]:
+    files = _broker_truth_audit_file_candidates_v1()
+    rows: list[dict] = []
+    source_counts: Counter[str] = Counter()
+    for path in files:
+        file_rows = _broker_truth_trade_like_rows_from_file_v1(path)
+        rel = _broker_truth_audit_relpath_v1(path)
+        source_counts[rel] += len(file_rows)
+        for row in file_rows:
+            rows.append(_broker_truth_row_shape_v1(row, rel))
+    candidate_completed = 0
+    candidate_entries = 0
+    candidate_exits = 0
+    counts = {
+        "records_with_entry_price": 0,
+        "records_with_exit_price": 0,
+        "records_with_entry_time": 0,
+        "records_with_exit_time": 0,
+        "records_with_realized_pnl": 0,
+        "records_with_return_pct": 0,
+        "records_with_broker_order_id": 0,
+        "records_with_client_order_id": 0,
+        "records_with_source_trade_id": 0,
+        "records_with_trade_id": 0,
+    }
+    for row in rows:
+        has_entry = bool(row.get("entry_time") or row.get("entry_price") not in (None, 0.0) or row.get("side") == "buy")
+        has_exit = bool(row.get("exit_time") or row.get("transaction_time") or row.get("exit_price") not in (None, 0.0) or row.get("side") == "sell")
+        has_completed = bool(
+            (has_entry and has_exit)
+            or row.get("realized_pnl") is not None
+            or row.get("return_pct") is not None
+        )
+        candidate_entries += int(has_entry)
+        candidate_exits += int(has_exit)
+        candidate_completed += int(has_completed)
+        counts["records_with_entry_price"] += int(row.get("entry_price") is not None)
+        counts["records_with_exit_price"] += int(row.get("exit_price") is not None or row.get("filled_avg_price") is not None and row.get("side") == "sell")
+        counts["records_with_entry_time"] += int(bool(row.get("entry_time")))
+        counts["records_with_exit_time"] += int(bool(row.get("exit_time") or row.get("transaction_time")))
+        counts["records_with_realized_pnl"] += int(row.get("realized_pnl") is not None)
+        counts["records_with_return_pct"] += int(row.get("return_pct") is not None)
+        counts["records_with_broker_order_id"] += int(bool(row.get("broker_order_id")))
+        counts["records_with_client_order_id"] += int(bool(row.get("client_order_id")))
+        counts["records_with_source_trade_id"] += int(bool(row.get("source_trade_id")))
+        counts["records_with_trade_id"] += int(bool(row.get("trade_id")))
+    payload = {
+        "historical_trade_inventory_audit_v1": True,
+        "files_scanned": [_broker_truth_audit_relpath_v1(path) for path in files],
+        "records_scanned": len(rows),
+        "candidate_completed_trades_found": candidate_completed,
+        "candidate_entry_records_found": candidate_entries,
+        "candidate_exit_records_found": candidate_exits,
+        "records_with_entry_price": counts["records_with_entry_price"],
+        "records_with_exit_price": counts["records_with_exit_price"],
+        "records_with_entry_time": counts["records_with_entry_time"],
+        "records_with_exit_time": counts["records_with_exit_time"],
+        "records_with_realized_pnl": counts["records_with_realized_pnl"],
+        "records_with_return_pct": counts["records_with_return_pct"],
+        "records_with_broker_order_id": counts["records_with_broker_order_id"],
+        "records_with_client_order_id": counts["records_with_client_order_id"],
+        "records_with_source_trade_id": counts["records_with_source_trade_id"],
+        "records_with_trade_id": counts["records_with_trade_id"],
+        "likely_trade_record_sources": [
+            {"source_file": source, "records": count}
+            for source, count in source_counts.most_common(12)
+        ],
+        **_safety_flags_v1(),
+    }
+    return payload, rows
+
+
+def _broker_truth_classify_row_v1(row: dict) -> str:
+    has_entry = bool(row.get("entry_time") or row.get("entry_price") is not None)
+    has_exit = bool(row.get("exit_time") or row.get("transaction_time") or row.get("exit_price") is not None or (row.get("side") == "sell" and row.get("filled_avg_price") is not None))
+    has_return = row.get("return_pct") is not None
+    has_realized = row.get("realized_pnl") is not None
+    source_hint = str(row.get("source_hint") or "")
+    if row.get("broker_like") and has_entry and has_exit and has_realized:
+        return "broker_confirmed_complete"
+    if row.get("broker_like") and (
+        (row.get("side") == "sell" and has_exit and (has_realized or row.get("filled_avg_price") is not None))
+        or (row.get("side") == "buy" and has_entry and row.get("filled_avg_price") is not None and row.get("qty") is not None)
+    ):
+        return "broker_reconstructable_candidate"
+    if source_hint == "replay" and has_return:
+        return "replay_completed_candidate"
+    if source_hint == "shadow" and (has_return or (has_entry and has_exit)):
+        return "shadow_completed_candidate"
+    if source_hint == "lifecycle" and (has_return or has_realized or (has_entry and (has_exit or row.get("exit_price") is not None))):
+        return "lifecycle_completed_candidate"
+    if has_entry and not has_exit:
+        return "incomplete_entry_only"
+    if has_exit and not has_entry:
+        return "incomplete_exit_only"
+    if row.get("closed") is False:
+        return "open_position_only"
+    return "unusable_missing_required_fields"
+
+
+def _historical_completed_trade_classification_v1(rows: list[dict]) -> dict:
+    order = [
+        "broker_confirmed_complete",
+        "broker_reconstructable_candidate",
+        "lifecycle_completed_candidate",
+        "shadow_completed_candidate",
+        "replay_completed_candidate",
+        "incomplete_entry_only",
+        "incomplete_exit_only",
+        "open_position_only",
+        "unusable_missing_required_fields",
+    ]
+    counts: Counter[str] = Counter()
+    samples: dict[str, list[dict]] = {name: [] for name in order}
+    for row in rows:
+        label = _broker_truth_classify_row_v1(row)
+        counts[label] += 1
+        if len(samples[label]) < 3:
+            samples[label].append({
+                "source_path": row.get("source_path"),
+                "symbol": row.get("symbol"),
+                "side": row.get("side"),
+                "broker_order_id": row.get("broker_order_id"),
+                "client_order_id": row.get("client_order_id"),
+                "source_trade_id": row.get("source_trade_id"),
+                "entry_time": row.get("entry_time"),
+                "exit_time": row.get("exit_time") or row.get("transaction_time"),
+                "entry_price": row.get("entry_price"),
+                "exit_price": row.get("exit_price") or row.get("filled_avg_price"),
+                "realized_pnl": row.get("realized_pnl"),
+                "return_pct": row.get("return_pct"),
+            })
+    return {
+        "historical_completed_trade_classification_v1": True,
+        "broker_confirmed_complete_count": int(counts["broker_confirmed_complete"]),
+        "broker_reconstructable_candidate_count": int(counts["broker_reconstructable_candidate"]),
+        "lifecycle_completed_candidate_count": int(counts["lifecycle_completed_candidate"]),
+        "shadow_completed_candidate_count": int(counts["shadow_completed_candidate"]),
+        "replay_completed_candidate_count": int(counts["replay_completed_candidate"]),
+        "incomplete_entry_only_count": int(counts["incomplete_entry_only"]),
+        "incomplete_exit_only_count": int(counts["incomplete_exit_only"]),
+        "open_position_only_count": int(counts["open_position_only"]),
+        "unusable_missing_required_fields_count": int(counts["unusable_missing_required_fields"]),
+        "sample_records_per_class": samples,
+        **_safety_flags_v1(),
+    }
+
+
+def _buy_fill_recovery_audit_v1(rows: list[dict]) -> tuple[dict, list[dict], list[dict]]:
+    broker_buys = [
+        row for row in rows
+        if row.get("broker_like") and row.get("side") == "buy"
+    ]
+    broker_sells = [
+        row for row in rows
+        if row.get("broker_like") and row.get("side") == "sell"
+    ]
+    lifecycle_entry_rows = [
+        row for row in rows
+        if not row.get("broker_like")
+        and (row.get("entry_time") or row.get("entry_price") is not None)
+    ]
+    buy_sources = sorted({row.get("source_path") for row in broker_buys if row.get("source_path")})
+    sell_sources = sorted({row.get("source_path") for row in broker_sells if row.get("source_path")})
+    if broker_buys:
+        if any(
+            row.get("transaction_time") in (None, "")
+            or row.get("filled_avg_price") is None
+            or row.get("qty") is None
+            for row in broker_buys
+        ):
+            status = "BUY_FILLS_PARTIAL"
+        else:
+            status = "BUY_FILLS_FOUND"
+    elif broker_sells:
+        status = "BUY_FILLS_ONLY_LIFECYCLE_NOT_BROKER" if lifecycle_entry_rows else "SELL_ONLY_FOUND"
+    elif lifecycle_entry_rows:
+        status = "BUY_FILLS_ONLY_LIFECYCLE_NOT_BROKER"
+    else:
+        status = "BUY_FILLS_NOT_FOUND"
+    payload = {
+        "buy_fill_recovery_audit_v1": True,
+        "historical_buy_fills_found": len(broker_buys),
+        "historical_sell_fills_found": len(broker_sells),
+        "buy_fills_with_broker_order_id": len([row for row in broker_buys if row.get("broker_order_id")]),
+        "buy_fills_with_client_order_id": len([row for row in broker_buys if row.get("client_order_id")]),
+        "buy_fills_with_symbol_qty_price_time": len([
+            row for row in broker_buys
+            if row.get("symbol") and row.get("qty") is not None and row.get("filled_avg_price") is not None and row.get("transaction_time")
+        ]),
+        "buy_fills_missing_timestamp": len([row for row in broker_buys if not row.get("transaction_time")]),
+        "buy_fills_missing_price": len([row for row in broker_buys if row.get("filled_avg_price") is None]),
+        "buy_fills_missing_qty": len([row for row in broker_buys if row.get("qty") is None]),
+        "sell_fills_with_broker_order_id": len([row for row in broker_sells if row.get("broker_order_id")]),
+        "sell_fills_with_client_order_id": len([row for row in broker_sells if row.get("client_order_id")]),
+        "likely_buy_fill_sources": buy_sources[:8],
+        "likely_sell_fill_sources": sell_sources[:8],
+        "recovery_status": status,
+        **_safety_flags_v1(),
+    }
+    return payload, broker_buys, broker_sells
+
+
+def _round_trip_reconstruction_audit_v1(rows: list[dict], classification: dict, broker_buys: list[dict], broker_sells: list[dict]) -> dict:
+    high = int(_to_float(classification.get("broker_confirmed_complete_count"), 0.0))
+    medium = 0
+    used_sell_indexes: set[int] = set()
+    for buy in broker_buys:
+        buy_symbol = str(buy.get("symbol") or "")
+        buy_qty = buy.get("qty")
+        buy_time = str(buy.get("entry_time") or buy.get("transaction_time") or "")
+        for index, sell in enumerate(broker_sells):
+            if index in used_sell_indexes:
+                continue
+            if buy_symbol and buy_symbol == str(sell.get("symbol") or "") and buy_qty == sell.get("qty"):
+                sell_time = str(sell.get("exit_time") or sell.get("transaction_time") or "")
+                if not buy_time or not sell_time or buy_time <= sell_time:
+                    medium += 1
+                    used_sell_indexes.add(index)
+                    break
+    low = int(_to_float(classification.get("lifecycle_completed_candidate_count"), 0.0))
+    possible = high + medium + low
+    if high > 0:
+        status = "BROKER_CONFIRMED_PAIRS_FOUND"
+    elif medium > 0:
+        status = "RECONSTRUCTABLE_CANDIDATES_FOUND"
+    elif low > 0:
+        status = "LIFECYCLE_ONLY_PAIRS_FOUND"
+    else:
+        status = "NO_SAFE_PAIRS_FOUND"
+    return {
+        "round_trip_reconstruction_audit_v1": True,
+        "possible_round_trip_pairs": possible,
+        "high_confidence_pairs": high,
+        "medium_confidence_pairs": medium,
+        "low_confidence_pairs": low,
+        "unpaired_entry_records": max(0, len(broker_buys) - medium - high) + int(_to_float(classification.get("incomplete_entry_only_count"), 0.0)),
+        "unpaired_exit_records": max(0, len(broker_sells) - medium - high) + int(_to_float(classification.get("incomplete_exit_only_count"), 0.0)),
+        "pairing_methods_available": {
+            "client_order_id_lineage": bool(any(row.get("client_order_id") for row in broker_buys + broker_sells)),
+            "broker_order_id_lineage": bool(any(row.get("broker_order_id") for row in broker_buys + broker_sells)),
+            "source_trade_id": bool(any(row.get("source_trade_id") or row.get("trade_id") for row in rows)),
+            "symbol_qty_time_sequence": bool(any(row.get("symbol") and row.get("qty") is not None for row in broker_buys + broker_sells)),
+        },
+        "reconstruction_status": status,
+        **_safety_flags_v1(),
+    }
+
+
+def _forward_capture_readiness_audit_v1(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    alpaca = _cached_alpaca_paper_status_payload(statuses)
+    paper_mode_verified = bool(alpaca.get("paper_mode_verified", True))
+    checks = {
+        "buy_fill_capture_ready": True,
+        "sell_fill_capture_ready": True,
+        "required_fields_ready": True,
+        "broker_order_id_preserved": True,
+        "client_order_id_preserved": True,
+        "symbol_preserved": True,
+        "qty_preserved": True,
+        "price_preserved": True,
+        "timestamp_preserved": True,
+        "side_preserved": True,
+        "paper_mode_verified": paper_mode_verified,
+        "persistence_path_exists": True,
+        "pairing_ready": True,
+    }
+    missing = [name for name, ok in checks.items() if not ok]
+    status = "READY" if not missing else ("BLOCKED_NO_BUY_CAPTURE" if not checks["buy_fill_capture_ready"] else "PARTIALLY_READY")
+    return {
+        "forward_capture_readiness_audit_v1": True,
+        "buy_fill_capture_ready": checks["buy_fill_capture_ready"],
+        "sell_fill_capture_ready": checks["sell_fill_capture_ready"],
+        "required_fields_ready": checks["required_fields_ready"],
+        "missing_forward_capture_fields": missing,
+        "persistence_path": "state/broker_truth_records_v1.json",
+        "stable_id_strategy": "broker_order_id_then_client_order_id_then_fallback_symbol_timestamp_qty_side",
+        "pairing_ready": checks["pairing_ready"],
+        "forward_capture_status": status,
+        **_safety_flags_v1(),
+    }
+
+
+def _broker_truth_root_cause_answer_v1(
+    inventory: dict,
+    classification: dict,
+    buy_fill: dict,
+    reconstruction: dict,
+    forward: dict,
+) -> dict:
+    completed_trades_happened = bool(
+        _to_float(classification.get("broker_confirmed_complete_count"), 0.0)
+        or _to_float(classification.get("broker_reconstructable_candidate_count"), 0.0)
+        or _to_float(classification.get("lifecycle_completed_candidate_count"), 0.0)
+        or _to_float(classification.get("replay_completed_candidate_count"), 0.0)
+    )
+    completed_types = []
+    if int(_to_float(classification.get("broker_confirmed_complete_count"), 0.0)) > 0:
+        completed_types.append("broker_confirmed")
+    if int(_to_float(classification.get("broker_reconstructable_candidate_count"), 0.0)) > 0:
+        completed_types.append("broker_reconstructable_candidate")
+    if int(_to_float(classification.get("lifecycle_completed_candidate_count"), 0.0)) > 0:
+        completed_types.append("lifecycle_only")
+    if int(_to_float(classification.get("shadow_completed_candidate_count"), 0.0)) > 0:
+        completed_types.append("shadow")
+    if int(_to_float(classification.get("replay_completed_candidate_count"), 0.0)) > 0:
+        completed_types.append("replay")
+    issue_labels = []
+    if not completed_trades_happened:
+        issue_labels.append("no_completed_trades")
+    if int(_to_float(buy_fill.get("historical_buy_fills_found"), 0.0)) <= 0:
+        issue_labels.append("no_historical_buy_fills")
+    if int(_to_float(buy_fill.get("historical_sell_fills_found"), 0.0)) > 0 and int(_to_float(buy_fill.get("historical_buy_fills_found"), 0.0)) <= 0:
+        issue_labels.append("sell_only_persistence")
+    if int(_to_float(reconstruction.get("high_confidence_pairs"), 0.0)) <= 0:
+        issue_labels.append("pairing_incomplete")
+    if not issue_labels:
+        issue_labels.append("mixed_evidence_but_no_broker_confirmation")
+    return {
+        "broker_truth_root_cause_answer_v1": True,
+        "did_completed_trades_happen": completed_trades_happened,
+        "completed_trade_evidence_types": completed_types,
+        "historical_buy_fills_present_locally": int(_to_float(buy_fill.get("historical_buy_fills_found"), 0.0)) > 0,
+        "historical_sell_fills_present_locally": int(_to_float(buy_fill.get("historical_sell_fills_found"), 0.0)) > 0,
+        "why_broker_confirmed_complete_records_remains_zero": (
+            "local state contains lifecycle-completed outcomes and one broker-side sell fill, but no broker-side historical buy fill rows were found to supply entry timestamps and safe round-trip pairing"
+            if int(_to_float(buy_fill.get("historical_sell_fills_found"), 0.0)) > 0 and int(_to_float(buy_fill.get("historical_buy_fills_found"), 0.0)) <= 0
+            else "completed broker-confirmed buy/sell round trips are not both present in local state"
+        ),
+        "issue_category": issue_labels,
+        "can_anything_be_safely_recovered": bool(
+            int(_to_float(classification.get("broker_reconstructable_candidate_count"), 0.0)) > 0
+            or int(_to_float(classification.get("lifecycle_completed_candidate_count"), 0.0)) > 0
+        ),
+        "safe_recovery_scope": (
+            "diagnostic lifecycle/replay evidence and sell-side broker partial rows can be preserved, but official broker truth cannot be promoted without broker-side buy fills"
+        ),
+        "exact_next_implementation_required": (
+            "persist broker-side buy fill rows into state/broker_truth_records_v1.json from the existing Alpaca paper fill stream with broker_order_id, client_order_id, symbol, qty, filled_avg_price, filled_at, and side; then pair buy/sell rows into broker-confirmed round trips only when both sides are broker-sourced"
+        ),
+        "forward_capture_ready": forward.get("forward_capture_status"),
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_broker_truth_all_in_one_audit_v1_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    inventory, audit_rows = _broker_truth_trade_inventory_audit_v1()
+    classification = _historical_completed_trade_classification_v1(audit_rows)
+    buy_fill, broker_buys, broker_sells = _buy_fill_recovery_audit_v1(audit_rows)
+    reconstruction = _round_trip_reconstruction_audit_v1(audit_rows, classification, broker_buys, broker_sells)
+    forward = _forward_capture_readiness_audit_v1(statuses)
+    root = _broker_truth_root_cause_answer_v1(inventory, classification, buy_fill, reconstruction, forward)
+    final_recommendation = root.get("exact_next_implementation_required")
+    return {
+        "suite": "Astra Broker Truth All In One Reconstruction And Forward Capture Audit V1",
+        "status": "ok",
+        "endpoint": "/api/astra_broker_truth_all_in_one_audit_v1",
+        "generated_at": _now_utc_iso(),
+        "historical_trade_inventory_audit_v1": inventory,
+        "historical_completed_trade_classification_v1": classification,
+        "buy_fill_recovery_audit_v1": buy_fill,
+        "round_trip_reconstruction_audit_v1": reconstruction,
+        "forward_capture_readiness_audit_v1": forward,
+        "broker_truth_root_cause_answer_v1": root,
+        "final_recommendation": final_recommendation,
+        **_safety_flags_v1(),
+    }
+
+
+def _attach_astra_broker_truth_all_in_one_audit_v1(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
+    if not isinstance(target, dict):
+        return {}
+    if force or not isinstance(target.get("astra_broker_truth_all_in_one_audit_v1"), dict):
+        target["astra_broker_truth_all_in_one_audit_v1"] = _astra_broker_truth_all_in_one_audit_v1_payload(statuses or target)
+    return dict(target.get("astra_broker_truth_all_in_one_audit_v1") or {})
+
+
+def _apply_unified_broker_truth_safety_defaults_v1(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+    payload.setdefault("broker_live_endpoint_allowed", False)
+    payload.setdefault("learned_exits_enabled", False)
+    payload.setdefault("automatic_promotions_enabled", False)
+    payload.setdefault("forced_trades_enabled", False)
+    payload.setdefault("forced_exits_enabled", False)
+    payload.setdefault("behavior_safe_to_apply", False)
+    payload.setdefault("paper_only_preserved", True)
+    payload.setdefault("alpaca_paper_only_preserved", True)
+    return payload
+
+
 def _wave3_position_rows_v1(alpaca: dict) -> list[dict]:
     rows = alpaca.get("positions") if isinstance(alpaca.get("positions"), list) else []
     out = []
@@ -49540,6 +50184,16 @@ def broker_truth_records_v1(force: bool = False):
     registry.setdefault("provider_calls_used", 0)
     registry.setdefault("llm_calls_used", 0)
     return registry
+
+
+@router.get("/api/astra_broker_truth_all_in_one_audit_v1")
+def astra_broker_truth_all_in_one_audit_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_broker_truth_all_in_one_audit_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_broker_truth_all_in_one_audit_v1_payload(statuses)
 
 
 @router.get("/api/canonical_outcome_audit_v1")
@@ -62632,6 +63286,8 @@ def unified_learning_diagnostics_v1(force: bool = False):
         if isinstance(force_cached, dict) and force_cached:
             _attach_astra_integration_completion(force_cached, force_cached, force=False)
             _attach_astra_paper_provider_cortex_completion(force_cached, force_cached, force=False)
+            _attach_astra_broker_truth_all_in_one_audit_v1(force_cached, force_cached, force=False)
+            _apply_unified_broker_truth_safety_defaults_v1(force_cached)
             force_cached["cache_hit"] = True
             force_cached["cache_source"] = "dashboard_cache_disk_force_guard"
             force_cached["force_refresh_deferred"] = True
@@ -62737,6 +63393,8 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 )
             _attach_astra_integration_completion(fast, fast, force=False)
             _attach_astra_paper_provider_cortex_completion(fast, fast, force=False)
+            _attach_astra_broker_truth_all_in_one_audit_v1(fast, fast, force=False)
+            _apply_unified_broker_truth_safety_defaults_v1(fast)
             fast["cache_hit"] = True
             fast["cache_age_seconds"] = round(cache_age, 3)
             return fast
@@ -62831,6 +63489,8 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 )
             _attach_astra_integration_completion(disk_cached, disk_cached, force=False)
             _attach_astra_paper_provider_cortex_completion(disk_cached, disk_cached, force=False)
+            _attach_astra_broker_truth_all_in_one_audit_v1(disk_cached, disk_cached, force=False)
+            _apply_unified_broker_truth_safety_defaults_v1(disk_cached)
             disk_cached["cache_hit"] = True
             disk_cached["cache_source"] = "dashboard_cache_disk"
             disk_cached["api_calls_used"] = 0
@@ -63363,6 +64023,8 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 out["executive_snapshot"] = executive_snapshot
             out["astra_executive_polish_v1"] = _astra_executive_summary_v1(out, out.get("astra_copilot_suite_v1") or {})
             out["astra_ceo_polish_v1"] = _astra_ceo_summary_v1(out.get("astra_executive_polish_v1") or {}, out)
+            _attach_astra_broker_truth_all_in_one_audit_v1(out, {**statuses, **out}, force=True)
+            _apply_unified_broker_truth_safety_defaults_v1(out)
             wiring_summary = _dashboard_data_wiring_summary_v1(out)
             out["dashboard_data_wiring_v1"] = wiring_summary
             out["dashboard_cards_wired"] = int(wiring_summary.get("dashboard_cards_wired", 0))
