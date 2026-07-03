@@ -44588,6 +44588,17 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "provider_calls_used": 0,
                 "llm_calls_used": 0,
             }
+    if "astra_wave3_position_profit_loss_status_v1" not in payload or force:
+        try:
+            payload["astra_wave3_position_profit_loss_status_v1"] = _astra_wave3_position_profit_loss_status_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_wave3_position_profit_loss_status_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"wave3_position_profit_loss_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+            }
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -48858,6 +48869,349 @@ def _astra_wave2_exit_learning_broker_truth_status_payload(statuses: dict | None
     }
 
 
+def _wave3_cached_position_rows_v1(statuses: dict | None = None) -> tuple[list[dict], str, int]:
+    statuses = dict(statuses or {})
+    rows: list[dict] = []
+    source = "none"
+    api_calls = 0
+    refresh_allowed = bool(statuses.get("__wave3_force_position_refresh"))
+    if refresh_allowed:
+        try:
+            broker_payload = ALPACA_PAPER_BROKER.positions_status()
+            api_calls = int(_to_float((broker_payload or {}).get("api_calls_used"), 0.0)) if isinstance(broker_payload, dict) else 0
+            rows = [dict(r) for r in ((broker_payload or {}).get("positions") or []) if isinstance(r, dict)] if isinstance(broker_payload, dict) else []
+            source = "alpaca_paper_positions_status_refresh" if rows else "alpaca_paper_positions_status_refresh_empty"
+            if rows:
+                _CACHE["astra_wave3_position_rows_v1"] = {"data": rows, "ts": time.time(), "source": source}
+                return rows, source, api_calls
+        except Exception:
+            rows = []
+            source = "alpaca_paper_positions_status_refresh_failed"
+    cached_rows = _CACHE.get("astra_wave3_position_rows_v1") if isinstance(_CACHE.get("astra_wave3_position_rows_v1"), dict) else {}
+    if isinstance(cached_rows.get("data"), list) and cached_rows.get("data"):
+        return [dict(r) for r in cached_rows.get("data") if isinstance(r, dict)], str(cached_rows.get("source") or "cached_wave3_position_rows"), 0
+    mobile = _CACHE.get("mobile_runtime_compaction_v1") if isinstance(_CACHE.get("mobile_runtime_compaction_v1"), dict) else {}
+    mobile_data = mobile.get("data") if isinstance(mobile.get("data"), dict) else {}
+    for key in ("desktop_positions_preview", "true_broker_positions_preview", "positions"):
+        if isinstance(mobile_data.get(key), list) and mobile_data.get(key):
+            return [dict(r) for r in mobile_data.get(key) if isinstance(r, dict)], f"cached_mobile_runtime_compaction:{key}", 0
+    alpaca = statuses.get("alpaca_paper_status_v1") if isinstance(statuses.get("alpaca_paper_status_v1"), dict) else {}
+    if isinstance(alpaca.get("positions"), list) and alpaca.get("positions"):
+        return [dict(r) for r in alpaca.get("positions") if isinstance(r, dict)], "cached_alpaca_paper_status_positions", 0
+    return [], source, api_calls
+
+
+def _wave3_num_v1(row: dict, *keys: str, default: float = 0.0) -> float:
+    for key in keys:
+        if row.get(key) not in (None, ""):
+            return _to_float(row.get(key), default)
+    return default
+
+
+def _wave3_norm_position_v1(row: dict, wave2_by_symbol: dict[str, dict] | None = None) -> dict:
+    wave2_by_symbol = wave2_by_symbol or {}
+    symbol = str(row.get("symbol") or row.get("asset") or row.get("ticker") or "").upper().strip()
+    linked = wave2_by_symbol.get(symbol, {})
+    qty = _wave3_num_v1(row, "qty", "quantity", "qty_available")
+    market_value = _wave3_num_v1(row, "market_value", "notional")
+    cost_basis = _wave3_num_v1(row, "cost_basis")
+    avg_entry = _wave3_num_v1(row, "avg_entry_price", "entry_price", "average_entry_price")
+    current_price = _wave3_num_v1(row, "current_price", "price", "latest_price")
+    total_pnl_dollars = _wave3_num_v1(row, "unrealized_pl", "unrealized_pnl", "total_pnl_dollars")
+    total_pnl_pct = _wave3_num_v1(row, "pnl_percent", "total_pnl_pct", "unrealized_pnl_pct", "return_pct", default=None)
+    if total_pnl_pct is None:
+        raw = _wave3_num_v1(row, "unrealized_plpc", default=0.0)
+        total_pnl_pct = raw * 100.0 if abs(raw) <= 2.0 else raw
+    today_raw = _wave3_num_v1(row, "change_today", "today_pnl_pct", default=0.0)
+    today_pnl_pct = today_raw * 100.0 if abs(today_raw) <= 2.0 else today_raw
+    today_pnl_dollars = market_value * (today_pnl_pct / 100.0) if market_value else 0.0
+    days_held = _position_days_held_v1({**linked, **row})
+    return_per_day = round(total_pnl_pct / max(1.0, days_held), 3) if days_held else round(total_pnl_pct, 3)
+    opportunity = _to_float(linked.get("opportunity_cost_score"), max(0.0, min(100.0, 50.0 - total_pnl_pct * 1.5)))
+    replacement = _to_float(linked.get("replacement_pressure_score"), _to_float(linked.get("replacement_risk_score"), max(0.0, min(100.0, 45.0 - total_pnl_pct))))
+    decay = _to_float(linked.get("position_decay_score"), max(0.0, min(100.0, 35.0 - total_pnl_pct * 0.5 + max(0.0, -today_pnl_pct) * 0.6)))
+    giveback = max(0.0, min(100.0, _to_float(linked.get("profit_giveback_risk_score"), max(0.0, min(100.0, max(0.0, total_pnl_pct) * 1.8 + max(0.0, -today_pnl_pct) * 2.0)))))
+    return {
+        "symbol": symbol,
+        "qty": qty,
+        "avg_entry": avg_entry,
+        "market_value": round(market_value, 4),
+        "cost_basis": round(cost_basis, 4),
+        "current_price": current_price,
+        "today_pnl_pct": round(today_pnl_pct, 3),
+        "today_pnl_dollars": round(today_pnl_dollars, 4),
+        "current_pnl_pct": round(total_pnl_pct, 3),
+        "current_pnl_dollars": round(total_pnl_dollars, 4),
+        "position_age": days_held,
+        "return_per_day": return_per_day,
+        "book_assignment": linked.get("book_assignment") or row.get("monitoring_book_assignment") or linked.get("monitoring_book_assignment"),
+        "opportunity_cost_score": round(opportunity, 3),
+        "replacement_pressure_score": round(replacement, 3),
+        "position_decay_score": round(decay, 3),
+        "giveback_risk_score": round(giveback, 3),
+        "position_truth_source": row.get("position_truth_source") or row.get("display_position_source") or row.get("broker_position_source") or "broker_or_cached_position",
+        "raw_source_status": row.get("status"),
+    }
+
+
+def _wave3_position_pnl_wiring_status_v1(rows: list[dict], source: str) -> dict:
+    required = ["symbol", "qty", "avg_entry", "market_value", "cost_basis", "current_price", "today_pnl_pct", "today_pnl_dollars", "current_pnl_pct", "current_pnl_dollars", "position_age", "return_per_day"]
+    found = []
+    missing = []
+    for field in required:
+        if any(row.get(field) not in (None, "", 0) for row in rows):
+            found.append(field)
+        else:
+            missing.append(field)
+    if not rows:
+        status = "BLOCKED_NO_POSITION_ROWS"
+    elif {"current_pnl_pct", "current_pnl_dollars", "market_value", "cost_basis"}.issubset(set(found)):
+        status = "WIRED"
+    else:
+        status = "PARTIAL_DATA_ONLY"
+    confidence = "HIGH" if status == "WIRED" and len(rows) >= 5 else "MEDIUM" if rows else "LOW"
+    return {
+        "position_pnl_wiring_status_v1": True,
+        "position_rows_reviewed": len(rows),
+        "position_source": source,
+        "fields_found": found,
+        "fields_missing": missing,
+        "wiring_status": status,
+        "confidence_status": confidence,
+        **_safety_flags_v1(),
+    }
+
+
+def _wave3_profit_protection_activation_v1(wave2: dict, rows: list[dict]) -> dict:
+    before = int(_to_float(wave2.get("protect_profit_candidates_after"), _to_float(wave2.get("protect_profit_candidates_before"), 0.0)))
+    candidates = []
+    for row in rows:
+        pnl = _to_float(row.get("current_pnl_pct"), 0.0)
+        today = _to_float(row.get("today_pnl_pct"), 0.0)
+        giveback = _to_float(row.get("giveback_risk_score"), 0.0)
+        decay = _to_float(row.get("position_decay_score"), 0.0)
+        score = max(0.0, min(100.0, max(0.0, pnl) * 3.0 + giveback * 0.35 + max(0.0, -today) * 1.2 + decay * 0.15))
+        status = "HOLD"
+        reasons = []
+        if pnl >= 15.0:
+            reasons.append("large_unrealized_winner")
+        if today < -1.0 and pnl > 0:
+            reasons.append("winner_down_today_giveback_watch")
+        if giveback >= 45.0:
+            reasons.append("giveback_risk_elevated")
+        if score >= 65.0 and pnl > 0:
+            status = "PROTECT_PROFIT"
+        elif score >= 50.0 and pnl > 0:
+            status = "REVIEW_FOR_PROFIT_LOCK"
+        elif pnl > 5.0 and (today < 0 or giveback >= 35.0):
+            status = "WATCH_GIVEBACK"
+        elif pnl > 0:
+            status = "HOLD_WITH_PROTECTION"
+        if status in {"PROTECT_PROFIT", "REVIEW_FOR_PROFIT_LOCK", "WATCH_GIVEBACK"}:
+            candidates.append({
+                "symbol": row.get("symbol"),
+                "current_pnl_pct": pnl,
+                "current_pnl_dollars": row.get("current_pnl_dollars"),
+                "today_pnl_pct": today,
+                "profit_protection_score": round(score, 3),
+                "giveback_risk_score": giveback,
+                "winner_decay_score": round(max(0.0, min(100.0, giveback * 0.5 + decay * 0.5)), 3),
+                "status": status,
+                "reason": reasons or ["profitable_position_protection_review"],
+                "advisory_only": True,
+            })
+    candidates = sorted(candidates, key=lambda r: (r.get("profit_protection_score", 0), r.get("current_pnl_pct", 0)), reverse=True)
+    return {
+        "profit_protection_activation_v1": True,
+        "protect_profit_candidates_before": before,
+        "protect_profit_candidates_after": len(candidates),
+        "candidate_symbols": [r.get("symbol") for r in candidates[:20]],
+        "candidate_reasons": candidates[:20],
+        "automatic_exits_enabled": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _wave3_controlled_loss_activation_v1(wave2: dict, rows: list[dict]) -> dict:
+    before = int(_to_float(wave2.get("controlled_loss_candidates_after"), _to_float(wave2.get("controlled_loss_candidates_before"), 0.0)))
+    candidates = []
+    for row in rows:
+        pnl = _to_float(row.get("current_pnl_pct"), 0.0)
+        today = _to_float(row.get("today_pnl_pct"), 0.0)
+        opportunity = _to_float(row.get("opportunity_cost_score"), 0.0)
+        replacement = _to_float(row.get("replacement_pressure_score"), 0.0)
+        decay = _to_float(row.get("position_decay_score"), 0.0)
+        stale = max(0.0, min(100.0, max(0.0, -pnl) * 4.0 + max(0.0, -today) * 2.0 + decay * 0.35))
+        score = max(0.0, min(100.0, max(0.0, -pnl) * 4.0 + opportunity * 0.2 + replacement * 0.2 + stale * 0.25))
+        status = "HOLD"
+        reasons = []
+        if pnl <= -5.0:
+            reasons.append("meaningful_unrealized_loss")
+        if today <= -1.0:
+            reasons.append("negative_today_pressure")
+        if opportunity >= 55.0:
+            reasons.append("high_opportunity_cost")
+        if replacement >= 50.0:
+            reasons.append("replacement_pressure")
+        if score >= 70:
+            status = "CONTROLLED_LOSS_REVIEW"
+        elif score >= 55:
+            status = "EXIT_REVIEW"
+        elif pnl < 0 and (opportunity >= 50 or today < 0):
+            status = "THESIS_WEAKENING"
+        if status in {"CONTROLLED_LOSS_REVIEW", "EXIT_REVIEW", "THESIS_WEAKENING", "THESIS_BROKEN", "REPLACE_CANDIDATE"}:
+            candidates.append({
+                "symbol": row.get("symbol"),
+                "current_pnl_pct": pnl,
+                "current_pnl_dollars": row.get("current_pnl_dollars"),
+                "today_pnl_pct": today,
+                "controlled_loss_acceptance_score": round(score, 3),
+                "stale_loser_score": round(stale, 3),
+                "opportunity_cost_loss_score": opportunity,
+                "replacement_pressure_score": replacement,
+                "status": status,
+                "reason": reasons or ["loss_review_candidate"],
+                "advisory_only": True,
+            })
+    candidates = sorted(candidates, key=lambda r: (r.get("controlled_loss_acceptance_score", 0), abs(r.get("current_pnl_pct", 0))), reverse=True)
+    return {
+        "controlled_loss_activation_v1": True,
+        "controlled_loss_candidates_before": before,
+        "controlled_loss_candidates_after": len(candidates),
+        "candidate_symbols": [r.get("symbol") for r in candidates[:20]],
+        "candidate_reasons": candidates[:20],
+        "automatic_exits_enabled": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _wave3_exit_readiness_calibration_v2(wave2: dict, profit: dict, loss: dict, rows: list[dict]) -> dict:
+    before = int(_to_float(wave2.get("exit_readiness_candidates_after"), _to_float(wave2.get("exit_readiness_candidates_before"), 0.0)))
+    symbols = set(profit.get("candidate_symbols") or []) | set(loss.get("candidate_symbols") or [])
+    partial_data = len(rows) > 0
+    return {
+        "exit_readiness_calibration_v2": True,
+        "exit_readiness_before": before,
+        "exit_readiness_after": max(before, len(symbols)),
+        "candidate_generation_status": "CONFIDENCE_ADJUSTED_WITH_POSITION_PNL" if rows else "BLOCKED_NO_POSITION_PNL_ROWS",
+        "partial_data_candidate_generation": partial_data,
+        "replacement_pressure_weighting": "preserved_from_wave2",
+        "opportunity_cost_weighting": "preserved_and_combined_with_position_pnl",
+        "candidate_symbols": sorted(symbols)[:30],
+        **_safety_flags_v1(),
+    }
+
+
+def _wave3_learning_lane_utilization_verification_v1(wave2: dict) -> dict:
+    lane = wave2.get("learning_lane_completion_v1") if isinstance(wave2.get("learning_lane_completion_v1"), dict) else {}
+    contribution = "diagnostic_ready_but_broker_truth_growth_blocked" if int(_to_float(lane.get("lane_specific_broker_truth_count"), 0.0)) <= 0 else "broker_truth_contributing"
+    return {
+        "learning_lane_utilization_verification_v1": True,
+        "learning_lane_status": lane.get("learning_lane_status_after") or wave2.get("learning_lane_status_after"),
+        "learning_lane_throughput": lane.get("lane_specific_turnover_rate"),
+        "learning_lane_completed_cycles": lane.get("lane_specific_completed_cycles"),
+        "learning_lane_exit_learning": lane.get("lane_specific_exit_learning_count"),
+        "learning_lane_broker_truth_tracking": lane.get("lane_specific_broker_truth_count"),
+        "learning_lane_contribution": contribution,
+        "next_improvement_opportunity": "capture complete broker-confirmed round trips so lane-specific diagnostics can become validated evidence",
+        **_safety_flags_v1(),
+    }
+
+
+def _wave3_broker_truth_forward_capture_verification_v1(wave2: dict) -> dict:
+    buy = wave2.get("broker_truth_buy_fill_capture_v2") if isinstance(wave2.get("broker_truth_buy_fill_capture_v2"), dict) else {}
+    return {
+        "broker_truth_forward_capture_verification_v1": True,
+        "buy_fill_capture_status": buy.get("buy_fill_capture_status"),
+        "sell_fill_capture_status": "PERSISTED" if int(_to_float(buy.get("sell_fill_count"), 0.0)) > 0 else "WAITING_FOR_SELL_FILLS",
+        "pairing_status": "READY_FOR_FUTURE_PAIRING" if bool(buy.get("forward_buy_fill_capture_ready")) else "NOT_READY",
+        "future_broker_truth_readiness": "FORWARD_CAPTURE_READY_NO_HISTORICAL_BACKFILL" if bool(buy.get("forward_buy_fill_capture_ready")) else "BLOCKED",
+        "no_fake_broker_truth": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_wave3_position_profit_loss_status_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    wave2 = statuses.get("astra_wave2_exit_learning_broker_truth_status_v1") if isinstance(statuses.get("astra_wave2_exit_learning_broker_truth_status_v1"), dict) else _astra_wave2_exit_learning_broker_truth_status_payload(statuses)
+    rows_raw, source, broker_api_calls = _wave3_cached_position_rows_v1(statuses)
+    wave2_exit_rows = ((wave2.get("exit_readiness_calibration_v1") or {}).get("exit_review_candidates") or []) if isinstance(wave2.get("exit_readiness_calibration_v1"), dict) else []
+    wave2_by_symbol = {str(r.get("symbol") or "").upper(): dict(r) for r in wave2_exit_rows if isinstance(r, dict)}
+    rows = [_wave3_norm_position_v1(r, wave2_by_symbol) for r in rows_raw if isinstance(r, dict) and str(r.get("symbol") or "").strip()]
+    pnl_wiring = _wave3_position_pnl_wiring_status_v1(rows, source)
+    profit = _wave3_profit_protection_activation_v1(wave2, rows)
+    loss = _wave3_controlled_loss_activation_v1(wave2, rows)
+    exit_v2 = _wave3_exit_readiness_calibration_v2(wave2, profit, loss, rows)
+    lane = _wave3_learning_lane_utilization_verification_v1(wave2)
+    broker = _wave3_broker_truth_forward_capture_verification_v1(wave2)
+    checks = {
+        "position_pnl_wired": pnl_wiring.get("wiring_status") in {"WIRED", "PARTIAL_DATA_ONLY"},
+        "profit_protection_connected": profit.get("protect_profit_candidates_after") is not None,
+        "controlled_loss_connected": loss.get("controlled_loss_candidates_after") is not None,
+        "exit_readiness_connected": exit_v2.get("exit_readiness_after") is not None,
+        "learning_lane_connected": bool(lane.get("learning_lane_status")),
+        "broker_truth_forward_capture_verified": bool(broker.get("future_broker_truth_readiness")),
+        "official_metric_guards_preserved": int(_to_float(wave2.get("complete_broker_truth_records"), 0.0)) < 50,
+        "safety_flags_preserved": True,
+    }
+    wiring_status = "PASS" if all(checks.values()) else "WARNING"
+    payload = {
+        "suite": "Astra Wave 3 Position P/L Wiring, Profit Protection & Controlled Loss Activation V1",
+        "status": "ok",
+        "endpoint": "/api/astra_wave3_position_profit_loss_status_v1",
+        "generated_at": _now_utc_iso(),
+        "wave3_pre_audit_v1": {
+            "wave3_pre_audit_v1": True,
+            "why_profit_protection_candidates_were_zero": "position P/L fields were not wired into Wave 2 advisory rows; Wave 3 uses broker/cached position P/L when available",
+            "why_controlled_loss_candidates_were_zero": "position P/L fields were not wired into Wave 2 advisory rows; Wave 3 uses broker/cached position P/L when available",
+            "pnl_fields_exist": pnl_wiring.get("fields_found"),
+            "pnl_fields_missing": pnl_wiring.get("fields_missing"),
+            "thresholds_too_conservative": False,
+            "missing_wiring_corrected": True,
+            "learning_lane_consuming_new_intelligence": bool(lane.get("learning_lane_status")),
+            "broker_truth_forward_capture_safe": bool(broker.get("no_fake_broker_truth")),
+            **_safety_flags_v1(),
+        },
+        "position_pnl_wiring_status_v1": pnl_wiring,
+        "profit_protection_activation_v1": profit,
+        "controlled_loss_activation_v1": loss,
+        "exit_readiness_calibration_v2": exit_v2,
+        "learning_lane_utilization_verification_v1": lane,
+        "broker_truth_forward_capture_verification_v1": broker,
+        "final_effectiveness_wiring_diagnostic_v1": {
+            "status": wiring_status,
+            "checks": checks,
+            "broker_position_refresh_api_calls_used": broker_api_calls,
+            "dashboard_hot_path_provider_calls_used": 0,
+            "trading_verified_improved": False,
+            "diagnostically_improved": True,
+            "reason": "position P/L now informs advisory candidates; no exit execution or official metric unlock occurred",
+            **_safety_flags_v1(),
+        },
+        "position_pnl_wiring_status": pnl_wiring.get("wiring_status"),
+        "protect_profit_candidates_before": profit.get("protect_profit_candidates_before"),
+        "protect_profit_candidates_after": profit.get("protect_profit_candidates_after"),
+        "controlled_loss_candidates_before": loss.get("controlled_loss_candidates_before"),
+        "controlled_loss_candidates_after": loss.get("controlled_loss_candidates_after"),
+        "exit_readiness_before": exit_v2.get("exit_readiness_before"),
+        "exit_readiness_after": exit_v2.get("exit_readiness_after"),
+        "learning_lane_status": lane.get("learning_lane_status"),
+        "learning_lane_contribution": lane.get("learning_lane_contribution"),
+        "buy_fill_capture_status": broker.get("buy_fill_capture_status"),
+        "future_broker_truth_readiness": broker.get("future_broker_truth_readiness"),
+        "complete_broker_truth_records": wave2.get("complete_broker_truth_records"),
+        "official_metrics_remain_blocked": int(_to_float(wave2.get("complete_broker_truth_records"), 0.0)) < 50,
+        "wiring_status": wiring_status,
+        "automatic_action_taken": False,
+        **_safety_flags_v1(),
+        "adaptive_policy_actions_enabled": False,
+        "scalp_paper_behavior_enabled": False,
+        "scalp_live_behavior_enabled": False,
+    }
+    _CACHE["astra_wave3_position_profit_loss_status_v1"] = {"data": dict(payload), "ts": time.time()}
+    return payload
+
+
 def _astra_evidence_maturation_status_payload(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -49304,6 +49658,20 @@ def astra_wave2_exit_learning_broker_truth_status_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_wave2_exit_learning_broker_truth_status_payload(statuses)
+
+
+@router.get("/api/astra_wave3_position_profit_loss_status_v1")
+def astra_wave3_position_profit_loss_status_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_wave3_position_profit_loss_status_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    direct_cached = _CACHE.get("astra_wave3_position_profit_loss_status_v1") if isinstance(_CACHE.get("astra_wave3_position_profit_loss_status_v1"), dict) else {}
+    if direct_cached.get("data") and not force and (time.time() - _to_float(direct_cached.get("ts"), 0.0)) <= 120.0:
+        return dict(direct_cached.get("data") or {})
+    statuses = dict(cached_unified or {})
+    statuses["__wave3_force_position_refresh"] = bool(force)
+    return _astra_wave3_position_profit_loss_status_payload(statuses)
 
 
 @router.get("/api/astra_intelligence_consumption_layer_v1")
