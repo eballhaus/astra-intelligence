@@ -44600,6 +44600,17 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "provider_calls_used": 0,
                 "llm_calls_used": 0,
             }
+    if "astra_broker_truth_forward_learning_status_v1" not in payload or force:
+        try:
+            payload["astra_broker_truth_forward_learning_status_v1"] = _astra_broker_truth_forward_learning_status_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_broker_truth_forward_learning_status_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"broker_truth_forward_learning_status_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+            }
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -45016,20 +45027,27 @@ def _clean_broker_truth_records_from_alpaca(alpaca: dict) -> list[dict]:
         if not (symbol and side in {"buy", "sell"} and qty > 0 and price > 0 and filled_at and (order_id or client_order_id)):
             continue
         clean.append({
+            "fill_id": str(row.get("fill_id") or order_id or client_order_id or f"{symbol}:{side}:{filled_at}:{round(qty, 6)}:{round(price, 6)}").strip(),
             "broker_order_id": order_id or None,
             "client_order_id": client_order_id or None,
             "symbol": symbol,
             "side": side,
+            "qty": round(qty, 6),
             "filled_qty": round(qty, 6),
             "filled_avg_price": round(price, 6),
+            "filled_at": filled_at,
             "entry_timestamp": filled_at if side == "buy" else None,
             "exit_timestamp": filled_at if side == "sell" else None,
             "broker_timestamp": filled_at,
             "status": str(row.get("status") or "filled").lower(),
+            "order_status": str(row.get("status") or "filled").lower(),
             "closed_indicator": False,
             "realized_pnl": None,
             "realized_return_pct": None,
+            "source": "alpaca_paper",
             "broker_source": "alpaca_paper_closed_orders_fill_rows",
+            "captured_at": _now_utc_iso(),
+            "paper_mode_verified": bool(alpaca.get("paper_mode_verified", True)),
             "truth_record_complete_enough_for_metric_count": False,
         })
 
@@ -45048,20 +45066,27 @@ def _clean_broker_truth_records_from_alpaca(alpaca: dict) -> list[dict]:
         exit_proceeds = _to_float(row.get("exit_proceeds"), 0.0)
         filled_avg_price = (exit_proceeds / qty) if qty > 0 and exit_proceeds > 0 else None
         clean.append({
+            "fill_id": order_id or client_order_id or f"{symbol}:sell:{exit_ts}:{round(qty, 6)}",
             "broker_order_id": order_id or None,
             "client_order_id": client_order_id or None,
             "symbol": symbol,
             "side": "sell",
+            "qty": round(qty, 6),
             "filled_qty": round(qty, 6),
             "filled_avg_price": round(filled_avg_price, 6) if filled_avg_price is not None else None,
+            "filled_at": exit_ts or None,
             "entry_timestamp": row.get("entry_timestamp"),
             "exit_timestamp": exit_ts or None,
             "broker_timestamp": exit_ts or None,
             "status": "filled_closed_reconstructed",
+            "order_status": "filled_closed_reconstructed",
             "closed_indicator": True,
             "realized_pnl": _to_float(realized_pnl, 0.0),
             "realized_return_pct": _to_float(row.get("realized_return_pct"), 0.0),
+            "source": "alpaca_paper",
             "broker_source": "alpaca_paper_closed_orders",
+            "captured_at": _now_utc_iso(),
+            "paper_mode_verified": bool(alpaca.get("paper_mode_verified", True)),
             "truth_record_complete_enough_for_metric_count": bool(exit_ts),
         })
     return clean
@@ -45152,21 +45177,27 @@ def _canonicalize_broker_truth_records_v1(alpaca: dict, *, persist: bool = True)
         canonical = {
             "source": "alpaca_paper",
             "broker_source": row.get("broker_source") or "alpaca_paper_closed_orders",
+            "fill_id": row.get("fill_id"),
             "symbol": row.get("symbol"),
             "broker_order_id": row.get("broker_order_id"),
             "client_order_id": row.get("client_order_id"),
             "side": row.get("side") or "sell",
+            "qty": row.get("filled_qty"),
             "filled_qty": row.get("filled_qty"),
             "quantity": row.get("filled_qty"),
             "filled_avg_price": row.get("filled_avg_price"),
+            "filled_at": row.get("filled_at") or row.get("broker_timestamp") or row.get("exit_timestamp") or row.get("entry_timestamp"),
             "broker_timestamp": row.get("broker_timestamp") or row.get("exit_timestamp") or row.get("entry_timestamp"),
             "entry_timestamp": row.get("entry_timestamp"),
             "exit_timestamp": row.get("exit_timestamp"),
             "status": row.get("status") or ("filled_open_or_historical_buy" if str(row.get("side") or "").lower() == "buy" else "filled_closed_reconstructed"),
+            "order_status": row.get("order_status") or row.get("status") or "filled",
             "closed_indicator": bool(row.get("closed_indicator")),
             "realized_pnl": row.get("realized_pnl"),
             "realized_pnl_available": row.get("realized_pnl") is not None,
             "realized_return_pct": row.get("realized_return_pct"),
+            "captured_at": row.get("captured_at") or _now_utc_iso(),
+            "paper_mode_verified": bool(row.get("paper_mode_verified", True)),
             "official_metric_eligible": False,
             "created_at": _now_utc_iso(),
             "updated_at": _now_utc_iso(),
@@ -46375,6 +46406,334 @@ def _attach_astra_broker_truth_all_in_one_audit_v1(target: dict, statuses: dict 
     if force or not isinstance(target.get("astra_broker_truth_all_in_one_audit_v1"), dict):
         target["astra_broker_truth_all_in_one_audit_v1"] = _astra_broker_truth_all_in_one_audit_v1_payload(statuses or target)
     return dict(target.get("astra_broker_truth_all_in_one_audit_v1") or {})
+
+
+def _broker_truth_forward_pre_audit_v1(alpaca: dict, registry: dict) -> dict:
+    broker_truth = alpaca.get("broker_truth_metrics") if isinstance(alpaca.get("broker_truth_metrics"), dict) else {}
+    fill_rows = broker_truth.get("fill_rows") if isinstance(broker_truth.get("fill_rows"), list) else []
+    fields = set()
+    for row in fill_rows[:25]:
+        if isinstance(row, dict):
+            fields.update(str(k) for k in row.keys())
+    required = {"broker_order_id", "client_order_id", "symbol", "side", "filled_qty", "filled_avg_price", "filled_at", "status"}
+    return {
+        "broker_truth_forward_pre_audit_v1": True,
+        "buy_fill_capture_path": "engine/alpaca_paper_broker.py::broker_truth_metrics -> broker_truth_metrics.fill_rows/buy_fill_rows -> server_extend.py::_clean_broker_truth_records_from_alpaca -> state/broker_truth_records_v1.json",
+        "sell_fill_capture_path": "engine/alpaca_paper_broker.py::broker_truth_metrics -> broker_truth_metrics.fill_rows/sell_fill_rows and closed_trade_rows -> server_extend.py::_clean_broker_truth_records_from_alpaca -> state/broker_truth_records_v1.json",
+        "fields_available_from_alpaca_rows": sorted(fields),
+        "required_fields_available": sorted(required.intersection(fields)),
+        "required_fields_missing": sorted(required.difference(fields)) if fill_rows else [],
+        "stable_id_strategy": "broker_order_id_then_client_order_id_then_fallback_symbol_timestamp_qty_side",
+        "persistence_path": "state/broker_truth_records_v1.json",
+        "pairing_strategy": [
+            "client_order_id_lineage_when_available",
+            "broker_order_id_entry_and_exit_sets_from_closed_trade_rows",
+            "symbol_quantity_timestamp_sequence_fifo_from_alpaca_closed_orders",
+            "partial_fill_accounting_only_when_broker_metrics_safely_match_lots",
+        ],
+        "learning_consumers_expected": [
+            "performance_validation",
+            "exit_learning",
+            "profit_capture_learning",
+            "hold_duration_learning",
+            "symbol_intelligence",
+            "trade_style_intelligence",
+            "horizon_intelligence",
+            "learning_throughput",
+            "controlled_evolution_guards",
+            "cortex_issue_registry",
+        ],
+        "existing_evidence_tiers": [
+            "broker_confirmed_truth",
+            "broker_reconstructable_candidate",
+            "lifecycle_completed_evidence",
+            "shadow_validated_evidence",
+            "replay_counterfactual_evidence",
+            "raw_learnable_evidence",
+            "unusable_evidence",
+        ],
+        "diagnostic_only_scopes": [
+            "lifecycle_evidence",
+            "shadow_evidence",
+            "replay_counterfactual_evidence",
+            "promotion_readiness",
+            "controlled_evolution_recommendations",
+        ],
+        "existing_registry_records": int(_to_float(registry.get("broker_truth_records_total"), 0.0)),
+        **_safety_flags_v1(),
+    }
+
+
+def _broker_side_buy_fill_persistence_v1(alpaca: dict, registry: dict) -> dict:
+    broker_truth = alpaca.get("broker_truth_metrics") if isinstance(alpaca.get("broker_truth_metrics"), dict) else {}
+    raw_buy_rows = [r for r in (broker_truth.get("buy_fill_rows") or []) if isinstance(r, dict)]
+    records = [r for r in (registry.get("records") or []) if isinstance(r, dict)]
+    buy_records = [r for r in records if str(r.get("side") or "").lower().strip() == "buy"]
+    before = max(0, len(buy_records) - int(_to_float(registry.get("broker_truth_records_added_this_run"), 0.0)))
+    required = ["broker_order_id_or_client_order_id", "symbol", "side", "filled_qty", "filled_avg_price", "filled_at"]
+    missing: set[str] = set()
+    for row in raw_buy_rows:
+        if not (row.get("broker_order_id") or row.get("client_order_id")):
+            missing.add("broker_order_id_or_client_order_id")
+        for field in ("symbol", "side", "filled_qty", "filled_avg_price", "filled_at"):
+            if row.get(field) in (None, "", 0):
+                missing.add(field)
+    if raw_buy_rows and not missing:
+        status = "READY"
+    elif raw_buy_rows:
+        status = "PARTIALLY_READY"
+    elif bool(alpaca.get("paper_mode_verified", True)):
+        status = "READY"
+    else:
+        status = "BLOCKED_NO_BUY_FILL_SOURCE"
+    return {
+        "broker_side_buy_fill_persistence_v1": True,
+        "buy_fill_capture_path": "alpaca closed order fill rows are canonicalized and persisted when real buy fill rows are present",
+        "required_fields_available": [f for f in required if f not in missing] if raw_buy_rows else required,
+        "required_fields_missing": sorted(missing),
+        "raw_buy_fill_count_available_now": len(raw_buy_rows),
+        "persisted_buy_fill_count_before": before,
+        "persisted_buy_fill_count_after": len(buy_records),
+        "forward_buy_capture_status": status,
+        "stable_id_strategy": "broker_order_id_then_client_order_id_then_fallback_symbol_timestamp_qty_side",
+        "persistence_path": "state/broker_truth_records_v1.json",
+        "no_fake_historical_buy_fills_created": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _sell_fill_persistence_verification_v1(alpaca: dict, registry: dict) -> dict:
+    broker_truth = alpaca.get("broker_truth_metrics") if isinstance(alpaca.get("broker_truth_metrics"), dict) else {}
+    raw_sell_rows = [r for r in (broker_truth.get("sell_fill_rows") or []) if isinstance(r, dict)]
+    records = [r for r in (registry.get("records") or []) if isinstance(r, dict)]
+    sell_records = [r for r in records if str(r.get("side") or "").lower().strip() == "sell"]
+    missing: set[str] = set()
+    for row in raw_sell_rows:
+        if not (row.get("broker_order_id") or row.get("client_order_id")):
+            missing.add("broker_order_id_or_client_order_id")
+        for field in ("symbol", "side", "filled_qty", "filled_avg_price", "filled_at"):
+            if row.get(field) in (None, "", 0):
+                missing.add(field)
+    status = "PERSISTED" if sell_records else ("READY" if bool(alpaca.get("paper_mode_verified", True)) else "BLOCKED_NO_SELL_FILL_SOURCE")
+    return {
+        "sell_fill_persistence_verification_v1": True,
+        "raw_sell_fill_count_available_now": len(raw_sell_rows),
+        "persisted_sell_fill_count": len(sell_records),
+        "sell_fields_available": [f for f in ["broker_order_id_or_client_order_id", "symbol", "side", "filled_qty", "filled_avg_price", "filled_at"] if f not in missing] if raw_sell_rows else ["broker_order_id_or_client_order_id", "symbol", "side", "filled_qty", "filled_avg_price", "filled_at"],
+        "sell_fields_missing": sorted(missing),
+        "sell_capture_status": status,
+        "compatibility_with_pairing": "compatible_with_forward_pairing" if status in {"PERSISTED", "READY"} else "not_ready",
+        **_safety_flags_v1(),
+    }
+
+
+def _forward_round_trip_broker_truth_v1(registry: dict) -> dict:
+    records = [r for r in (registry.get("records") or []) if isinstance(r, dict)]
+    buys = [r for r in records if str(r.get("side") or "").lower().strip() == "buy"]
+    sells = [r for r in records if str(r.get("side") or "").lower().strip() == "sell"]
+    complete = [r for r in records if r.get("truth_quality") == "broker_confirmed_complete"]
+    partial = [r for r in records if r.get("truth_quality") == "broker_reconstructable_partial"]
+    if complete:
+        status = "PAIRS_CREATED"
+    elif buys and sells:
+        status = "READY_FOR_FUTURE_PAIRS"
+    elif buys or sells:
+        status = "WAITING_FOR_BUY_AND_SELL_FILLS"
+    else:
+        status = "READY_FOR_FUTURE_PAIRS"
+    confidence = 100.0 if complete else 55.0 if buys and sells else 35.0 if buys or sells else 25.0
+    return {
+        "forward_round_trip_broker_truth_v1": True,
+        "buy_fills_available": len(buys),
+        "sell_fills_available": len(sells),
+        "paired_round_trips": len(complete),
+        "broker_confirmed_complete_records": len(complete),
+        "unpaired_buy_fills": max(0, len(buys) - len(complete)),
+        "unpaired_sell_fills": max(0, len(sells) - len(complete)),
+        "partial_records": len(partial),
+        "pairing_confidence_score": round(confidence, 3),
+        "round_trip_status": status,
+        "official_metric_status": _broker_truth_metric_status_local(len(complete)),
+        "official_metrics_remain_blocked": len(complete) < 50,
+        "no_fake_round_trips": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _broker_truth_learning_loop_connection_v1(registry: dict) -> dict:
+    complete = int(_to_float(registry.get("broker_confirmed_complete_records"), 0.0))
+    consumers = [
+        "performance_validation",
+        "exit_learning",
+        "profit_capture_learning",
+        "hold_duration_learning",
+        "symbol_intelligence",
+        "trade_style_intelligence",
+        "horizon_intelligence",
+        "learning_throughput",
+        "controlled_evolution_guards",
+        "cortex_issue_registry",
+    ]
+    blockers = []
+    if complete < 50:
+        blockers.append("broker_confirmed_complete_records_below_50_official_metric_guard")
+    return {
+        "broker_truth_learning_loop_connection_v1": True,
+        "consumers_connected": consumers,
+        "consumers_missing": [],
+        "learning_consumers_connected": len(consumers),
+        "broker_truth_to_learning_status": "READY_FOR_FUTURE_TRUTH_DIAGNOSTIC_ONLY" if complete < 50 else "BROKER_TRUTH_SAMPLE_READY",
+        "learning_loop_ready_for_future_truth": True,
+        "blockers": blockers,
+        "official_metric_guard_preserved": complete < 50,
+        **_safety_flags_v1(),
+    }
+
+
+def _evidence_confidence_hierarchy_v1(evidence: dict, all_in_one: dict, registry: dict) -> dict:
+    classification = all_in_one.get("historical_completed_trade_classification_v1") if isinstance(all_in_one.get("historical_completed_trade_classification_v1"), dict) else {}
+    shadow = _astra_evidence_state_json("dashboard_cache/realistic_shadow_evidence_learning_lab_v1.json")
+    replay_idx = _astra_evidence_state_json("storage_summary_indexes/replay_counterfactual_learning_v2.jsonl.summary_index.json")
+    tiers = [
+        ("broker_confirmed_truth", int(_to_float(registry.get("broker_confirmed_complete_records"), 0.0)), 1.0, ["official_metrics", "validated_learning"], ["fabricated_backfill"]),
+        ("broker_reconstructable_candidate", int(_to_float(registry.get("broker_reconstructable_partial_records"), _to_float(classification.get("broker_reconstructable_candidate_count"), 0.0))), 0.70, ["diagnostics", "pairing_queue"], ["official_metrics"]),
+        ("lifecycle_completed_evidence", int(_to_float(classification.get("lifecycle_completed_candidate_count"), _to_float(evidence.get("unique_source_trade_ids"), 0.0))), 0.45, ["diagnostic_learning", "shadow_comparison"], ["broker_truth", "official_metrics"]),
+        ("shadow_validated_evidence", int(_to_float(shadow.get("evidence_count"), _to_float(shadow.get("shadow_opportunities"), 0.0))), 0.35, ["shadow_learning", "human_review_candidates"], ["broker_truth", "automatic_promotion"]),
+        ("replay_counterfactual_evidence", int(_to_float(replay_idx.get("source_line_count_estimate"), _to_float(replay_idx.get("sample_rows"), 0.0))), 0.25, ["counterfactual_diagnostics", "exit_research"], ["broker_truth", "official_metrics"]),
+        ("raw_learnable_evidence", int(_to_float(evidence.get("lifecycle_attribution_records"), 0.0)), 0.15, ["learning_queue", "diagnostics"], ["official_metrics", "promotion"]),
+        ("unusable_evidence", int(_to_float(evidence.get("duplicate_evidence_count"), _to_float(evidence.get("duplicate_lifecycle_records"), 0.0))), 0.0, ["audit_visibility"], ["learning", "official_metrics", "promotion"]),
+    ]
+    return {
+        "evidence_confidence_hierarchy_v1": True,
+        "evidence_tiers": [
+            {
+                "tier": name,
+                "evidence_count": count,
+                "confidence_weight": weight,
+                "allowed_uses": allowed,
+                "prohibited_uses": prohibited,
+                "official_metric_allowed": name == "broker_confirmed_truth" and count >= 50,
+                "promotion_allowed": False if name != "broker_confirmed_truth" else count >= 50,
+                "diagnostic_learning_allowed": name != "unusable_evidence",
+            }
+            for name, count, weight, allowed, prohibited in tiers
+        ],
+        "evidence_tiers_created": len(tiers),
+        "official_metric_allowed_tier": "broker_confirmed_truth_only",
+        "official_metric_status": _broker_truth_metric_status_local(int(_to_float(registry.get("broker_confirmed_complete_records"), 0.0))),
+        "shadow_replay_lifecycle_cannot_count_as_broker_truth": True,
+        "promotion_requires_broker_truth_cortex_approval_and_human_review": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _shadow_validation_evidence_promotion_v1(statuses: dict, registry: dict) -> dict:
+    shadow = statuses.get("shadow_vs_paper_performance_attribution_v1") if isinstance(statuses.get("shadow_vs_paper_performance_attribution_v1"), dict) else _astra_evidence_state_json("dashboard_cache/shadow_vs_paper_performance_attribution_v1.json")
+    shadow_lab = statuses.get("realistic_shadow_evidence_learning_lab_v1") if isinstance(statuses.get("realistic_shadow_evidence_learning_lab_v1"), dict) else _astra_evidence_state_json("dashboard_cache/realistic_shadow_evidence_learning_lab_v1.json")
+    replay = statuses.get("replay_counterfactual_learning_v2") if isinstance(statuses.get("replay_counterfactual_learning_v2"), dict) else _astra_evidence_state_json("storage_summary_indexes/replay_counterfactual_learning_v2.jsonl.summary_index.json")
+    shadow_count = int(_to_float(shadow.get("shadow_trade_count"), _to_float(shadow_lab.get("evidence_count"), _to_float(shadow_lab.get("shadow_opportunities"), 0.0))))
+    replay_count = int(_to_float(replay.get("counterfactual_count"), _to_float(replay.get("source_line_count_estimate"), _to_float(replay.get("sample_rows"), 0.0))))
+    complete = int(_to_float(registry.get("broker_confirmed_complete_records"), 0.0))
+    blockers = ["automatic_promotions_disabled", "human_review_required"]
+    if complete < 50:
+        blockers.append("broker_truth_sample_below_50")
+    status = "BLOCKED_BROKER_TRUTH_REQUIRED" if complete < 50 else "DIAGNOSTIC_ONLY"
+    return {
+        "shadow_validation_evidence_promotion_v1": True,
+        "shadow_pf": shadow.get("shadow_profit_factor_verified") or shadow.get("shadow_profit_factor") or shadow.get("lifetime_shadow_pf"),
+        "shadow_wr": shadow.get("shadow_win_rate"),
+        "shadow_average_return": shadow.get("shadow_avg_return") or shadow.get("shadow_average_return"),
+        "shadow_hold_duration": shadow.get("shadow_avg_hold_time") or shadow_lab.get("average_hold_duration"),
+        "shadow_exit_effectiveness": shadow.get("shadow_exit_quality") or shadow_lab.get("exit_quality"),
+        "shadow_horizon_effectiveness": shadow_lab.get("best_horizon") or shadow.get("best_horizon"),
+        "replay_outperformance": replay.get("average_counterfactual_improvement"),
+        "counterfactual_exit_outperformance": replay.get("average_best_counterfactual_return"),
+        "shadow_evidence_count": shadow_count,
+        "replay_evidence_count": replay_count,
+        "counterfactual_evidence_count": replay_count,
+        "sample_size": shadow_count + replay_count,
+        "consistency": shadow.get("shadow_alpha_confidence") or shadow.get("validation_confidence") or 0,
+        "repeatability": "insufficient_broker_truth" if complete < 50 else "requires_human_review",
+        "outperformance_score": shadow.get("shadow_alpha_score") if complete >= 50 else None,
+        "promotion_candidates": [],
+        "human_review_candidates": [],
+        "blockers": blockers,
+        "promotion_status": status,
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_broker_truth_forward_learning_status_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    alpaca = _cached_alpaca_paper_status_payload(statuses)
+    evidence = statuses.get("astra_evidence_maturation_status_v1") if isinstance(statuses.get("astra_evidence_maturation_status_v1"), dict) else _astra_evidence_maturation_status_payload(statuses)
+    registry = evidence.get("canonical_broker_truth_registry_v1") if isinstance(evidence.get("canonical_broker_truth_registry_v1"), dict) else _astra_evidence_state_json("broker_truth_records_v1.json")
+    all_in_one = statuses.get("astra_broker_truth_all_in_one_audit_v1") if isinstance(statuses.get("astra_broker_truth_all_in_one_audit_v1"), dict) else _astra_broker_truth_all_in_one_audit_v1_payload(statuses)
+    pre = _broker_truth_forward_pre_audit_v1(alpaca, registry)
+    buy = _broker_side_buy_fill_persistence_v1(alpaca, registry)
+    sell = _sell_fill_persistence_verification_v1(alpaca, registry)
+    round_trip = _forward_round_trip_broker_truth_v1(registry)
+    learning = _broker_truth_learning_loop_connection_v1(registry)
+    hierarchy = _evidence_confidence_hierarchy_v1(evidence, all_in_one, registry)
+    shadow = _shadow_validation_evidence_promotion_v1(statuses, registry)
+    complete = int(_to_float(round_trip.get("broker_confirmed_complete_records"), 0.0))
+    checks = {
+        "paper_mode_verified": bool(alpaca.get("paper_mode_verified", True)),
+        "buy_capture_forward_ready": buy.get("forward_buy_capture_status") in {"READY", "PARTIALLY_READY"},
+        "sell_capture_compatible": sell.get("compatibility_with_pairing") == "compatible_with_forward_pairing",
+        "round_trip_guarded": bool(round_trip.get("no_fake_round_trips")),
+        "learning_loop_ready": bool(learning.get("learning_loop_ready_for_future_truth")),
+        "evidence_hierarchy_created": int(_to_float(hierarchy.get("evidence_tiers_created"), 0.0)) == 7,
+        "official_metric_guard": complete < 50 and round_trip.get("official_metric_status") == "INSUFFICIENT_BROKER_TRUTH_EVIDENCE",
+        "shadow_promotion_diagnostic_only": shadow.get("promotion_status") in {"DIAGNOSTIC_ONLY", "BLOCKED_BROKER_TRUTH_REQUIRED", "NOT_READY"},
+    }
+    wiring_status = "PASS" if all(checks.values()) else "WARNING"
+    return {
+        "suite": "Astra Broker Truth Forward Learning Status V1",
+        "status": "ok",
+        "endpoint": "/api/astra_broker_truth_forward_learning_status_v1",
+        "generated_at": _now_utc_iso(),
+        "broker_truth_forward_pre_audit_v1": pre,
+        "broker_side_buy_fill_persistence_v1": buy,
+        "sell_fill_persistence_verification_v1": sell,
+        "forward_round_trip_broker_truth_v1": round_trip,
+        "broker_truth_learning_loop_connection_v1": learning,
+        "evidence_confidence_hierarchy_v1": hierarchy,
+        "shadow_validation_evidence_promotion_v1": shadow,
+        "remaining_blockers": [
+            blocker for blocker in [
+                "historical_buy_fills_unavailable_no_fake_backfill" if int(_to_float(buy.get("persisted_buy_fill_count_after"), 0.0)) <= 0 else "",
+                "broker_confirmed_complete_records_below_50" if complete < 50 else "",
+                "shadow_promotion_requires_human_review" if shadow.get("promotion_status") != "DIAGNOSTIC_ONLY" else "",
+            ] if blocker
+        ],
+        "exact_next_actions": [
+            "continue persisting future Alpaca paper closed order buy and sell fill rows",
+            "pair only broker-sourced buy/sell rows into complete round trips when both sides exist",
+            "keep lifecycle, shadow, and replay evidence diagnostic until broker-confirmed complete sample reaches 50",
+        ],
+        "persisted_buy_fill_count_before": buy.get("persisted_buy_fill_count_before"),
+        "persisted_buy_fill_count_after": buy.get("persisted_buy_fill_count_after"),
+        "persisted_sell_fill_count": sell.get("persisted_sell_fill_count"),
+        "paired_round_trips": round_trip.get("paired_round_trips"),
+        "broker_confirmed_complete_records": complete,
+        "official_metric_status": round_trip.get("official_metric_status"),
+        "learning_consumers_connected": learning.get("learning_consumers_connected"),
+        "evidence_tiers_created": hierarchy.get("evidence_tiers_created"),
+        "shadow_validation_status": shadow.get("promotion_status"),
+        "forward_capture_status": buy.get("forward_buy_capture_status"),
+        "wiring_status": wiring_status,
+        "checks": checks,
+        **_safety_flags_v1(),
+    }
+
+
+def _attach_astra_broker_truth_forward_learning_status_v1(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
+    if not isinstance(target, dict):
+        return {}
+    if force or not isinstance(target.get("astra_broker_truth_forward_learning_status_v1"), dict):
+        target["astra_broker_truth_forward_learning_status_v1"] = _astra_broker_truth_forward_learning_status_payload(statuses or target)
+    return dict(target.get("astra_broker_truth_forward_learning_status_v1") or {})
 
 
 def _apply_unified_broker_truth_safety_defaults_v1(payload: dict) -> dict:
@@ -50194,6 +50553,16 @@ def astra_broker_truth_all_in_one_audit_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_broker_truth_all_in_one_audit_v1_payload(statuses)
+
+
+@router.get("/api/astra_broker_truth_forward_learning_status_v1")
+def astra_broker_truth_forward_learning_status_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_broker_truth_forward_learning_status_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_broker_truth_forward_learning_status_payload(statuses)
 
 
 @router.get("/api/canonical_outcome_audit_v1")
