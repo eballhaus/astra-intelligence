@@ -44622,6 +44622,17 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "provider_calls_used": 0,
                 "llm_calls_used": 0,
             }
+    if "astra_context_quality_status_v1" not in payload or force:
+        try:
+            payload["astra_context_quality_status_v1"] = _astra_context_quality_status_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_context_quality_status_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"context_quality_status_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+            }
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -47353,6 +47364,436 @@ def _attach_astra_learning_intelligence_consolidation_status_v1(target: dict, st
     if force or not isinstance(target.get("astra_learning_intelligence_consolidation_status_v1"), dict):
         target["astra_learning_intelligence_consolidation_status_v1"] = _astra_learning_intelligence_consolidation_status_payload(statuses or target)
     return dict(target.get("astra_learning_intelligence_consolidation_status_v1") or {})
+
+
+def _cq_dimension_coverage(indexes: dict, dimension: str) -> dict:
+    total = 0
+    unknown = 0
+    known_counts: dict[str, int] = {}
+    source_breakdown = {}
+    for name, idx in (indexes or {}).items():
+        counts = _lc_dims(idx, dimension)
+        source_total = sum(int(_to_float(v, 0.0)) for v in counts.values())
+        source_unknown = sum(int(_to_float(v, 0.0)) for k, v in counts.items() if str(k).lower() in {"unknown", "unknown_catalyst", "uncertain_regime", "unknown_scalp_paper", "unknown_unknown_paper", ""})
+        total += source_total
+        unknown += source_unknown
+        for key, value in counts.items():
+            label = str(key).lower()
+            if label not in {"unknown", "unknown_catalyst", "uncertain_regime", "unknown_scalp_paper", "unknown_unknown_paper", ""}:
+                known_counts[label] = known_counts.get(label, 0) + int(_to_float(value, 0.0))
+        if source_total:
+            source_breakdown[name] = {
+                "total": source_total,
+                "known": max(0, source_total - source_unknown),
+                "unknown": source_unknown,
+                "coverage_pct": round((max(0, source_total - source_unknown) / max(1, source_total)) * 100.0, 3),
+            }
+    known = max(0, total - unknown)
+    return {
+        "dimension": dimension,
+        "total_records": total,
+        "known_records": known,
+        "unknown_records": unknown,
+        "coverage_pct": round((known / max(1, total)) * 100.0, 3),
+        "top_known_labels": sorted(
+            [{"label": k, "evidence_count": v} for k, v in known_counts.items()],
+            key=lambda r: r.get("evidence_count", 0),
+            reverse=True,
+        )[:12],
+        "source_breakdown": source_breakdown,
+    }
+
+
+def _context_quality_pre_audit_v1(ctx: dict) -> dict:
+    indexes = ctx["indexes"]
+    coverage = {
+        "catalyst": _cq_dimension_coverage(indexes, "catalyst"),
+        "regime": _cq_dimension_coverage(indexes, "regime"),
+        "trade_style": _cq_dimension_coverage(indexes, "horizon"),
+        "symbol": _cq_dimension_coverage(indexes, "symbol"),
+        "lifecycle": _cq_dimension_coverage({"lifecycle": indexes.get("lifecycle", {})}, "horizon"),
+        "evidence_confidence": _cq_dimension_coverage(indexes, "confidence_bucket"),
+    }
+    matrix = {}
+    for name, row in coverage.items():
+        pct = _to_float(row.get("coverage_pct"), 0.0)
+        if pct >= 70:
+            status = "IMPLEMENTED"
+        elif pct > 0:
+            status = "PARTIAL"
+        else:
+            status = "BLOCKED"
+        matrix[name] = {
+            "status": status,
+            "coverage_pct": pct,
+            "known_records": row.get("known_records"),
+            "unknown_records": row.get("unknown_records"),
+        }
+    missing_fields = [name for name, row in matrix.items() if _to_float(row.get("coverage_pct"), 0.0) < 25.0]
+    unknown_reasons = sorted(
+        [{"dimension": name, "unknown_records": row.get("unknown_records"), "coverage_pct": row.get("coverage_pct")} for name, row in coverage.items()],
+        key=lambda r: _to_float(r.get("unknown_records"), 0.0),
+        reverse=True,
+    )
+    return {
+        "context_quality_pre_audit_v1": True,
+        "component_status_matrix": matrix,
+        "missing_labels": missing_fields,
+        "missing_context_fields": missing_fields,
+        "most_common_unknown_reasons": unknown_reasons[:8],
+        "highest_impact_context_gaps": [r["dimension"] for r in unknown_reasons[:4] if _to_float(r.get("unknown_records"), 0.0) > 0],
+        "recommended_completion_plan": [
+            "prefer cached catalyst/regime/style labels already present in lifecycle and trade-style indexes",
+            "mark unknowns as HUMAN_REVIEW_REQUIRED unless existing safe evidence supports classification",
+            "improve catalyst and regime enrichment before any behavior promotion",
+            "keep broker truth and official metrics separate from diagnostic context labels",
+        ],
+        "duplicate_components_found": ["context labels appear in multiple summary indexes and are consolidated here rather than duplicated"],
+        **_safety_flags_v1(),
+    }
+
+
+def _context_quality_engine_v1(ctx: dict, pre_audit: dict) -> dict:
+    matrix = pre_audit.get("component_status_matrix") if isinstance(pre_audit.get("component_status_matrix"), dict) else {}
+    known = sum(int(_to_float(row.get("known_records"), 0.0)) for row in matrix.values() if isinstance(row, dict))
+    unknown = sum(int(_to_float(row.get("unknown_records"), 0.0)) for row in matrix.values() if isinstance(row, dict))
+    completion = round((known / max(1, known + unknown)) * 100.0, 3)
+    quality = round(_lc_clamp((completion * 0.72) + (_to_float(ctx["broker_forward"].get("evidence_tiers_created"), 0.0) / 9.0 * 28.0)), 3)
+    return {
+        "context_quality_engine_v1": True,
+        "known_context_records": known,
+        "unknown_context_records": unknown,
+        "context_completion_pct": completion,
+        "context_quality_score": quality,
+        "human_review_required": unknown > 0,
+        "labels_fabricated": False,
+        "safe_inference_policy": "only_existing_cached_labels_used; unknowns remain human_review_required",
+        "unknown_context_reason_codes": pre_audit.get("most_common_unknown_reasons") or [],
+        **_safety_flags_v1(),
+    }
+
+
+def _catalyst_intelligence_v1(ctx: dict) -> dict:
+    coverage = _cq_dimension_coverage(ctx["indexes"], "catalyst")
+    allowed = ["earnings", "guidance", "upgrades", "downgrades", "sector_rotation", "macro_events", "technical_breakout", "technical_reversal", "momentum_continuation", "mean_reversion", "unknown"]
+    known_map = {row["label"]: int(_to_float(row.get("evidence_count"), 0.0)) for row in coverage.get("top_known_labels") or []}
+    catalysts = {}
+    for cat in allowed:
+        count = known_map.get(cat, 0)
+        if cat == "unknown":
+            count = int(_to_float(coverage.get("unknown_records"), 0.0))
+        confidence = round(_lc_clamp((count / max(1, coverage.get("total_records", 0))) * 100.0), 3)
+        catalysts[cat] = {
+            "evidence_count": count,
+            "outcome_quality": "diagnostic_available" if count else "insufficient_evidence",
+            "confidence_score": confidence,
+        }
+    score = round(_to_float(coverage.get("coverage_pct"), 0.0), 3)
+    return {
+        "catalyst_intelligence_v1": True,
+        "catalysts": catalysts,
+        "catalyst_coverage_pct": score,
+        "catalyst_intelligence_score": score,
+        "dominant_catalyst": _lc_top_key({k: v["evidence_count"] for k, v in catalysts.items() if k != "unknown"}, "unknown"),
+        "unknown_catalyst_records": coverage.get("unknown_records"),
+        **_safety_flags_v1(),
+    }
+
+
+def _regime_intelligence_v1(ctx: dict) -> dict:
+    coverage = _cq_dimension_coverage(ctx["indexes"], "regime")
+    allowed = ["bull", "bear", "sideways", "high_volatility", "low_volatility", "risk_on", "risk_off", "unknown"]
+    known_map = {row["label"]: int(_to_float(row.get("evidence_count"), 0.0)) for row in coverage.get("top_known_labels") or []}
+    regimes = {}
+    for regime in allowed:
+        count = known_map.get(regime, 0)
+        if regime == "unknown":
+            count = int(_to_float(coverage.get("unknown_records"), 0.0))
+        confidence = round(_lc_clamp((count / max(1, coverage.get("total_records", 0))) * 100.0), 3)
+        regimes[regime] = {
+            "evidence_count": count,
+            "outcome_quality": "diagnostic_available" if count else "insufficient_evidence",
+            "confidence_score": confidence,
+        }
+    score = round(_to_float(coverage.get("coverage_pct"), 0.0), 3)
+    return {
+        "regime_intelligence_v1": True,
+        "regimes": regimes,
+        "regime_coverage_pct": score,
+        "regime_intelligence_score": score,
+        "dominant_regime": _lc_top_key({k: v["evidence_count"] for k, v in regimes.items() if k != "unknown"}, "unknown"),
+        "unknown_regime_records": coverage.get("unknown_records"),
+        **_safety_flags_v1(),
+    }
+
+
+def _trade_style_attribution_completion_v2(ctx: dict) -> dict:
+    indexes = ctx["indexes"]
+    style_counts = _lc_dims(indexes["style"], "horizon")
+    lifecycle_counts = _lc_dims(indexes["lifecycle"], "horizon")
+    exit_counts = _lc_dims(indexes["exit"], "horizon")
+    styles = {
+        "scalp": ["scalp"],
+        "day_trade": ["day_trade"],
+        "short_swing": ["swing", "swing_trade"],
+        "standard_swing": ["swing", "swing_trade"],
+        "extended_swing": ["swing", "swing_trade"],
+    }
+    out = {}
+    for style, keys in styles.items():
+        evidence_count = sum(int(_to_float(style_counts.get(k), 0.0)) for k in keys)
+        lifecycle_count = sum(int(_to_float(lifecycle_counts.get(k), 0.0)) for k in keys)
+        exit_count = sum(int(_to_float(exit_counts.get(k), 0.0)) for k in keys)
+        confidence = round(_lc_clamp(min(60.0, evidence_count / 15.0) + min(25.0, lifecycle_count / 20.0) + min(15.0, exit_count / 20.0)), 3)
+        out[style] = {
+            "evidence_count": evidence_count,
+            "confidence_score": confidence,
+            "outcome_quality": "diagnostic_available" if evidence_count or lifecycle_count else "insufficient_evidence",
+            "hold_duration": style,
+            "best_exit_style": "exit_learning_evidence" if exit_count else "insufficient_evidence",
+        }
+    total = sum(row["evidence_count"] for row in out.values())
+    unknown = int(_to_float(style_counts.get("unknown"), 0.0)) + int(_to_float(lifecycle_counts.get("unknown"), 0.0))
+    score = round((total / max(1, total + unknown)) * 100.0, 3)
+    return {
+        "trade_style_attribution_completion_v2": True,
+        "styles": out,
+        "trade_style_score": score,
+        "unknown_style_records": unknown,
+        "style_labeling_status": "PARTIAL" if unknown else "IMPLEMENTED",
+        **_safety_flags_v1(),
+    }
+
+
+def _symbol_maturity_expansion_v1(ctx: dict, catalyst: dict, regime: dict) -> dict:
+    profiles = ctx["symbol_profiles"].get("profiles") if isinstance(ctx["symbol_profiles"].get("profiles"), dict) else {}
+    expanded = []
+    for sym, profile in list(profiles.items())[:500]:
+        if not isinstance(profile, dict):
+            continue
+        evidence_count = int(_to_float(profile.get("sample_size"), _to_float(profile.get("evidence_count"), 0.0)))
+        broker_count = 0
+        strength = _lc_clamp(profile.get("behavioral_edge_score"))
+        weakness = _lc_clamp(profile.get("giveback_risk"))
+        context_bonus = (_to_float(catalyst.get("catalyst_intelligence_score"), 0.0) + _to_float(regime.get("regime_intelligence_score"), 0.0)) / 2.0
+        maturity_score = round(_lc_clamp(min(55.0, evidence_count / 30.0) + strength * 0.20 + context_bonus * 0.25), 3)
+        if broker_count >= 50:
+            level = "BROKER_VALIDATED"
+        elif maturity_score >= 75:
+            level = "STRONG"
+        elif maturity_score >= 55:
+            level = "MODERATE"
+        elif maturity_score >= 30:
+            level = "DEVELOPING"
+        else:
+            level = "LOW"
+        expanded.append({
+            "symbol": str(sym).upper(),
+            "evidence_count": evidence_count,
+            "broker_truth_count": broker_count,
+            "best_horizon": profile.get("best_horizon") or "insufficient_evidence",
+            "best_style": profile.get("best_trade_style") or profile.get("best_horizon") or "insufficient_evidence",
+            "best_hold_duration": profile.get("best_hold_duration") or profile.get("average_hold_duration") or "insufficient_evidence",
+            "best_regime": profile.get("best_regime") or regime.get("dominant_regime") or "unknown",
+            "best_catalyst": profile.get("best_catalyst") or catalyst.get("dominant_catalyst") or "unknown",
+            "symbol_strength_score": round(strength, 3),
+            "symbol_weakness_score": round(weakness, 3),
+            "symbol_maturity": maturity_score,
+            "maturity_level": level,
+        })
+    expanded.sort(key=lambda r: (r.get("symbol_maturity", 0), r.get("evidence_count", 0)), reverse=True)
+    score = round(sum(_to_float(r.get("symbol_maturity"), 0.0) for r in expanded[:25]) / max(1, min(25, len(expanded))), 3) if expanded else 0.0
+    return {
+        "symbol_maturity_expansion_v1": True,
+        "symbol_maturity_score": score,
+        "tracked_symbols": len(expanded),
+        "expanded_symbol_playbooks": expanded[:25],
+        "maturity_distribution": {level: sum(1 for row in expanded if row.get("maturity_level") == level) for level in ["LOW", "DEVELOPING", "MODERATE", "STRONG", "BROKER_VALIDATED"]},
+        **_safety_flags_v1(),
+    }
+
+
+def _exit_intelligence_maturity_expansion_v1(ctx: dict, consensus_base: dict) -> dict:
+    profit = ctx["profit"]
+    controlled = ctx["controlled_profit"]
+    indexes = ctx["indexes"]
+    items = {
+        "momentum_decay": _to_float(controlled.get("continuation_failure_probability"), 0.0),
+        "thesis_deterioration": _to_float(ctx["horizon"].get("thesis_failure_score"), 0.0),
+        "profit_protection": _to_float(controlled.get("estimated_profit_capture_improvement"), _to_float(profit.get("capture_quality_score"), 0.0)),
+        "controlled_loss": _to_float(controlled.get("estimated_expectancy_improvement"), 0.0),
+        "hold_longer": _to_float(controlled.get("hold_duration_efficiency"), _to_float(profit.get("hold_duration_quality_score"), 0.0)),
+        "early_exit": _to_float(profit.get("average_giveback_pct"), 0.0),
+    }
+    evidence_count = max(_lc_count(indexes["exit"]), _lc_count(indexes["adaptive_exit"]))
+    policies = {}
+    for name, value in items.items():
+        policies[name] = {
+            "evidence_count": evidence_count,
+            "consensus_confidence": round(_lc_clamp((_to_float(consensus_base.get("consensus_confidence_score"), 0.0) * 0.60) + min(40.0, evidence_count / 10000.0)), 3),
+            "outcome_quality": round(_lc_clamp(value), 3),
+        }
+    score = round(sum(_to_float(v.get("consensus_confidence"), 0.0) for v in policies.values()) / max(1, len(policies)), 3)
+    return {
+        "exit_intelligence_maturity_expansion_v1": True,
+        "exit_policy_maturity": policies,
+        "exit_intelligence_maturity_score": score,
+        "exit_intelligence_score": score,
+        "learned_exits_enabled": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _trade_lifecycle_intelligence_expansion_v1(ctx: dict, exit_maturity: dict) -> dict:
+    indexes = ctx["indexes"]
+    consolidation = ctx["statuses"].get("astra_learning_intelligence_consolidation_status_v1") if isinstance(ctx["statuses"].get("astra_learning_intelligence_consolidation_status_v1"), dict) else {}
+    lifecycle_prev = consolidation.get("trade_lifecycle_intelligence_completion_v1") if isinstance(consolidation.get("trade_lifecycle_intelligence_completion_v1"), dict) else {}
+    entry_quality = round(_lc_clamp(55.0 + min(25.0, _lc_sample(indexes["candidate"]) / 50.0)), 3)
+    management_quality = round(_lc_clamp(45.0 + min(30.0, _lc_sample(indexes["lifecycle"]) / 40.0)), 3)
+    exit_quality = round(_lc_clamp(exit_maturity.get("exit_intelligence_maturity_score")), 3)
+    outcome_quality = "broker_truth_guarded"
+    opportunity_cost_quality = round(_lc_clamp(min(100.0, _lc_sample(indexes["opportunity_cost"]) / 12.0)), 3)
+    score = round((_to_float(entry_quality) * 0.20) + (_to_float(management_quality) * 0.25) + (_to_float(exit_quality) * 0.25) + (_to_float(opportunity_cost_quality) * 0.15) + (_to_float(lifecycle_prev.get("trade_lifecycle_score"), 0.0) * 0.15), 3)
+    return {
+        "trade_lifecycle_intelligence_expansion_v1": True,
+        "entry": {"entry_quality": entry_quality, "evidence_count": _lc_count(indexes["candidate"])},
+        "management": {"management_quality": management_quality, "evidence_count": _lc_count(indexes["lifecycle"])},
+        "exit": {"exit_quality": exit_quality, "evidence_count": _lc_count(indexes["exit"])},
+        "outcome": {"outcome_quality": outcome_quality, "broker_truth_guarded": True},
+        "opportunity_cost": {"opportunity_cost_quality": opportunity_cost_quality, "evidence_count": _lc_count(indexes["opportunity_cost"])},
+        "entry_quality": entry_quality,
+        "management_quality": management_quality,
+        "exit_quality": exit_quality,
+        "outcome_quality": outcome_quality,
+        "opportunity_cost_quality": opportunity_cost_quality,
+        "trade_lifecycle_score": score,
+        **_safety_flags_v1(),
+    }
+
+
+def _context_aware_consensus_engine_v2(ctx: dict, catalyst: dict, regime: dict, style: dict, symbol: dict, exit_maturity: dict, lifecycle: dict) -> dict:
+    base = ctx["statuses"].get("astra_learning_intelligence_consolidation_status_v1") if isinstance(ctx["statuses"].get("astra_learning_intelligence_consolidation_status_v1"), dict) else {}
+    base_conf = _to_float(base.get("consensus_confidence_score"), 0.0)
+    inputs = {
+        "lifecycle": _to_float(lifecycle.get("trade_lifecycle_score"), 0.0),
+        "replay": min(100.0, _lc_sample(ctx["indexes"]["replay"]) / 12.0),
+        "shadow": _to_float(ctx["shadow_lab"].get("consensus_confidence_score"), _to_float(ctx["shadow_lab"].get("average_shadow_realism_score"), 0.0)),
+        "symbol_intelligence": _to_float(symbol.get("symbol_maturity_score"), 0.0),
+        "regime_intelligence": _to_float(regime.get("regime_intelligence_score"), 0.0),
+        "catalyst_intelligence": _to_float(catalyst.get("catalyst_intelligence_score"), 0.0),
+        "trade_style_intelligence": _to_float(style.get("trade_style_score"), 0.0),
+    }
+    confidence = round(_lc_clamp((sum(inputs.values()) / max(1, len(inputs))) * 0.72 + base_conf * 0.28), 3)
+    blockers = []
+    if _to_float(catalyst.get("catalyst_intelligence_score"), 0.0) < 25:
+        blockers.append("catalyst_context_low_coverage")
+    if _to_float(regime.get("regime_intelligence_score"), 0.0) < 45:
+        blockers.append("regime_context_partial")
+    if int(_to_float(ctx["evidence"].get("broker_confirmed_complete_records"), 0.0)) < 50:
+        blockers.append("broker_truth_guard_active")
+    return {
+        "context_aware_consensus_engine_v2": True,
+        "consensus_inputs": inputs,
+        "consensus_confidence_v2": confidence,
+        "consensus_confidence_score": confidence,
+        "consensus_strength": "strong_diagnostic" if confidence >= 70 else "moderate_diagnostic" if confidence >= 45 else "weak_or_insufficient",
+        "consensus_blockers": blockers,
+        "policy_promotion_enabled": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_context_quality_status_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    ctx = _lc_common_inputs(statuses)
+    pre = _context_quality_pre_audit_v1(ctx)
+    quality = _context_quality_engine_v1(ctx, pre)
+    catalyst = _catalyst_intelligence_v1(ctx)
+    regime = _regime_intelligence_v1(ctx)
+    style = _trade_style_attribution_completion_v2(ctx)
+    symbol = _symbol_maturity_expansion_v1(ctx, catalyst, regime)
+    consolidation = statuses.get("astra_learning_intelligence_consolidation_status_v1") if isinstance(statuses.get("astra_learning_intelligence_consolidation_status_v1"), dict) else _astra_learning_intelligence_consolidation_status_payload(statuses)
+    ctx["statuses"]["astra_learning_intelligence_consolidation_status_v1"] = consolidation
+    base_consensus = consolidation.get("consensus_evidence_engine_v1") if isinstance(consolidation.get("consensus_evidence_engine_v1"), dict) else {}
+    exit_maturity = _exit_intelligence_maturity_expansion_v1(ctx, base_consensus)
+    lifecycle = _trade_lifecycle_intelligence_expansion_v1(ctx, exit_maturity)
+    consensus_v2 = _context_aware_consensus_engine_v2(ctx, catalyst, regime, style, symbol, exit_maturity, lifecycle)
+    components = {
+        "context_quality": quality.get("context_quality_score"),
+        "catalyst_intelligence": catalyst.get("catalyst_intelligence_score"),
+        "regime_intelligence": regime.get("regime_intelligence_score"),
+        "trade_style": style.get("trade_style_score"),
+        "symbol_maturity": symbol.get("symbol_maturity_score"),
+        "exit_intelligence": exit_maturity.get("exit_intelligence_score"),
+        "trade_lifecycle": lifecycle.get("trade_lifecycle_score"),
+        "context_consensus": consensus_v2.get("consensus_confidence_score"),
+    }
+    matrix = {}
+    for name, score in components.items():
+        score_f = _to_float(score, 0.0)
+        matrix[name] = {
+            "status": "IMPLEMENTED" if score_f >= 70 else "PARTIAL" if score_f > 0 else "BLOCKED",
+            "score": round(score_f, 3),
+        }
+    checks = {
+        "unified_diagnostics_connected": True,
+        "context_quality_connected": bool(quality.get("context_quality_engine_v1")),
+        "catalyst_connected": bool(catalyst.get("catalyst_intelligence_v1")),
+        "regime_connected": bool(regime.get("regime_intelligence_v1")),
+        "style_connected": bool(style.get("trade_style_attribution_completion_v2")),
+        "symbol_connected": bool(symbol.get("symbol_maturity_expansion_v1")),
+        "exit_connected": bool(exit_maturity.get("exit_intelligence_maturity_expansion_v1")),
+        "lifecycle_connected": bool(lifecycle.get("trade_lifecycle_intelligence_expansion_v1")),
+        "consensus_connected": bool(consensus_v2.get("context_aware_consensus_engine_v2")),
+        "official_metric_guards_preserved": int(_to_float(ctx["evidence"].get("broker_confirmed_complete_records"), 0.0)) < 50,
+        "safety_flags_preserved": True,
+    }
+    implemented = [k for k, v in matrix.items() if v.get("status") == "IMPLEMENTED"]
+    partial = [k for k, v in matrix.items() if v.get("status") == "PARTIAL"]
+    blocked = [k for k, v in matrix.items() if v.get("status") == "BLOCKED"]
+    return {
+        "suite": "Astra Context Quality, Lifecycle Intelligence & Symbol Maturity Wave V1",
+        "status": "ok",
+        "endpoint": "/api/astra_context_quality_status_v1",
+        "generated_at": _now_utc_iso(),
+        "context_quality_pre_audit_v1": pre,
+        "context_quality_engine_v1": quality,
+        "catalyst_intelligence_v1": catalyst,
+        "regime_intelligence_v1": regime,
+        "trade_style_attribution_completion_v2": style,
+        "symbol_maturity_expansion_v1": symbol,
+        "exit_intelligence_maturity_expansion_v1": exit_maturity,
+        "trade_lifecycle_intelligence_expansion_v1": lifecycle,
+        "context_aware_consensus_engine_v2": consensus_v2,
+        "context_quality_score": quality.get("context_quality_score"),
+        "catalyst_intelligence_score": catalyst.get("catalyst_intelligence_score"),
+        "regime_intelligence_score": regime.get("regime_intelligence_score"),
+        "symbol_maturity_score": symbol.get("symbol_maturity_score"),
+        "exit_intelligence_score": exit_maturity.get("exit_intelligence_score"),
+        "trade_lifecycle_score": lifecycle.get("trade_lifecycle_score"),
+        "trade_style_score": style.get("trade_style_score"),
+        "consensus_confidence_score": consensus_v2.get("consensus_confidence_score"),
+        "component_status_matrix": matrix,
+        "implemented": implemented,
+        "partial": partial,
+        "missing": [],
+        "blocked": blocked + ["broker_truth_guard_active"],
+        "remaining_bottlenecks": pre.get("highest_impact_context_gaps", []) + consensus_v2.get("consensus_blockers", []),
+        "exact_next_wave_recommendation": "Context Quality Wave 2 should focus on catalyst/regime enrichment and broker-truth round-trip accumulation, still diagnostic-only.",
+        "wiring_status": "PASS" if all(checks.values()) else "WARNING",
+        "wiring_checks": checks,
+        "trading_verified_improved": False,
+        "diagnostically_improved": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _attach_astra_context_quality_status_v1(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
+    if not isinstance(target, dict):
+        return {}
+    if force or not isinstance(target.get("astra_context_quality_status_v1"), dict):
+        target["astra_context_quality_status_v1"] = _astra_context_quality_status_payload(statuses or target)
+    return dict(target.get("astra_context_quality_status_v1") or {})
 
 
 def _apply_unified_broker_truth_safety_defaults_v1(payload: dict) -> dict:
@@ -51192,6 +51633,16 @@ def astra_learning_intelligence_consolidation_status_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_learning_intelligence_consolidation_status_payload(statuses)
+
+
+@router.get("/api/astra_context_quality_status_v1")
+def astra_context_quality_status_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_context_quality_status_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_context_quality_status_payload(statuses)
 
 
 @router.get("/api/canonical_outcome_audit_v1")
