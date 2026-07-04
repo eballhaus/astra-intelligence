@@ -9,6 +9,12 @@ from datetime import datetime, timezone
 from statistics import mean, median
 from typing import Any
 
+try:
+    from engine.context_capture_utils_v1 import enrich_context_row
+except Exception:  # pragma: no cover - context writes should remain best-effort
+    def enrich_context_row(row, *, source_file):
+        return row
+
 VERSION = "1.0.0"
 MAX_TAIL_BYTES = 2_000_000
 MAX_ROWS = 1800
@@ -394,7 +400,8 @@ class MarketContextLearningSuiteV1:
             os.makedirs(os.path.dirname(self.state_path) or ".", exist_ok=True)
             with open(self.state_path, "a", encoding="utf-8") as handle:
                 for row in rows[-160:]:
-                    handle.write(json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n")
+                    enriched = enrich_context_row(row, source_file="market_context_learning_suite_v1.jsonl")
+                    handle.write(json.dumps(enriched, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n")
         except Exception:
             return
 

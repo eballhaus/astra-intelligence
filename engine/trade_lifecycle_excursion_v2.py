@@ -9,6 +9,12 @@ from datetime import datetime, timezone
 from statistics import mean
 from typing import Any
 
+try:
+    from engine.context_capture_utils_v1 import enrich_context_row
+except Exception:  # pragma: no cover - diagnostics must not break lifecycle writes
+    def enrich_context_row(row, *, source_file):
+        return row
+
 VERSION = "2.0.0"
 MAX_TAIL_BYTES = 1_800_000
 MAX_ROWS = 1500
@@ -215,7 +221,8 @@ class TradeLifecycleExcursionV2:
             os.makedirs(os.path.dirname(self.state_path) or ".", exist_ok=True)
             with open(self.state_path, "a", encoding="utf-8") as handle:
                 for row in rows[-80:]:
-                    handle.write(json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n")
+                    enriched = enrich_context_row(row, source_file="trade_lifecycle_excursion_v2.jsonl")
+                    handle.write(json.dumps(enriched, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n")
         except Exception:
             return
 
