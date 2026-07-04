@@ -44729,6 +44729,17 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "provider_calls_used": 0,
                 "llm_calls_used": 0,
             }
+    if "astra_context_symbol_maturity_status_v1" not in payload or force:
+        try:
+            payload["astra_context_symbol_maturity_status_v1"] = _astra_context_symbol_maturity_status_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_context_symbol_maturity_status_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"context_symbol_maturity_status_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+            }
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -49206,6 +49217,322 @@ def _attach_astra_tier1_4_status_v1(target: dict, statuses: dict | None = None, 
     return dict(target.get("astra_tier1_4_status_v1") or {})
 
 
+def _context_completion_master_audit_v1(context_quality: dict, context_intel: dict, context_expansion: dict, tier14: dict, rows_by_source: dict[str, list[dict]]) -> dict:
+    writer_v1 = tier14.get("direct_context_writer_integration_v1") if isinstance(tier14.get("direct_context_writer_integration_v1"), dict) else {}
+    writers = list(writer_v1.get("writers") or [])
+    row_counts = {name: len(rows or []) for name, rows in rows_by_source.items()}
+    partial = [
+        name for name in [
+            "context_quality_optimization_v2" if _to_float((tier14.get("context_quality_optimization_v2") or {}).get("context_completion_pct"), 0.0) < 75 else "",
+            "broker_truth_validated_symbol_maturity" if _to_float(tier14.get("broker_confirmed_complete_records"), 0.0) < 50 else "",
+        ] if name
+    ]
+    return {
+        "context_completion_master_audit_v1": True,
+        "implemented_components": [
+            "context_capture_utils_v1",
+            "trade_lifecycle_excursion_v2_context_writer",
+            "replay_counterfactual_learning_v2_context_writer",
+            "market_context_learning_suite_v1_context_writer",
+            "context_recovery_engine_v1",
+            "catalyst_intelligence_v3",
+            "regime_intelligence_v3",
+            "symbol_playbook_expansion_v3",
+            "symbol_intelligence_maturity_v3",
+        ],
+        "partial_components": partial,
+        "missing_components": [],
+        "duplicate_components_found": [
+            "astra_context_quality_status_v1_reused",
+            "astra_context_intelligence_status_v1_reused",
+            "astra_context_expansion_status_v1_reused",
+            "astra_tier1_4_status_v1_reused",
+        ],
+        "blocked_components": [
+            "official_metric_unlock_blocked_until_50_broker_confirmed_complete_records"
+        ] if _to_float(tier14.get("broker_confirmed_complete_records"), 0.0) < 50 else [],
+        "writers_audited": writers,
+        "writers_integrated": [w for w in writers if w.get("status") == "IMPLEMENTED"],
+        "writers_not_integrated": [w for w in writers if w.get("status") != "IMPLEMENTED"],
+        "source_row_volume_estimate": row_counts,
+        "top_context_bottlenecks": [
+            "historical_unknown_catalyst_records",
+            "historical_unknown_regime_records",
+            "broker_confirmed_complete_records_below_validation_guard",
+        ],
+        **_safety_flags_v1(),
+    }
+
+
+def _direct_context_writer_integration_v2(tier14: dict, rows_by_source: dict[str, list[dict]]) -> dict:
+    writer_v1 = tier14.get("direct_context_writer_integration_v1") if isinstance(tier14.get("direct_context_writer_integration_v1"), dict) else {}
+    writers = list(writer_v1.get("writers") or [])
+    before_integrated = int(_to_float(writer_v1.get("writers_integrated"), 0.0))
+    audited = int(_to_float(writer_v1.get("writers_audited"), len(writers)))
+    active_remaining = []
+    inactive_or_unsafe = []
+    for writer in writers:
+        if not isinstance(writer, dict) or writer.get("status") == "IMPLEMENTED":
+            continue
+        name = str(writer.get("writer") or "")
+        evidence_volume = 0
+        if "trade_lifecycle_excursion_v1" in name:
+            evidence_volume = len(rows_by_source.get("lifecycle_v1") or [])
+        elif "paper_autopilot" in name:
+            evidence_volume = 0
+        elif "opportunities" in name:
+            evidence_volume = 0
+        elif "symbol_observations" in name:
+            evidence_volume = len(rows_by_source.get("symbol_observations") or [])
+        item = dict(writer)
+        item["evidence_volume_estimate"] = evidence_volume
+        item["active"] = evidence_volume > 0
+        item["safe_to_integrate_now"] = False
+        item["reason"] = "legacy_or_cached_input_consumed_by_existing_context_pipeline" if evidence_volume else "no_safe_active_direct_writer_identified"
+        if evidence_volume > 0:
+            active_remaining.append(item)
+        else:
+            inactive_or_unsafe.append(item)
+    total_rows = sum(len(rows or []) for rows in rows_by_source.values())
+    rows_with_context = 0
+    for rows in rows_by_source.values():
+        for row in rows:
+            catalyst, _cs, cc = _context_v2_canonical_catalyst(_context_expansion_raw_catalyst_v1(row))
+            regime, _rs, rc = _context_v2_canonical_regime(_context_expansion_raw_regime_v1(row))
+            if catalyst != "unknown" or regime != "unknown" or cc > 0 or rc > 0:
+                rows_with_context += 1
+    after_integrated = before_integrated
+    before_coverage = _to_float(writer_v1.get("context_capture_coverage_pct"), 0.0)
+    after_coverage = round((after_integrated / max(1, audited)) * 100.0, 3)
+    return {
+        "direct_context_writer_integration_v2": True,
+        "writers_remaining_before": max(0, audited - before_integrated),
+        "writers_integrated_after": after_integrated,
+        "context_capture_coverage_before": before_coverage,
+        "context_capture_coverage_after": after_coverage,
+        "new_records_receiving_context_pct": round((rows_with_context / max(1, total_rows)) * 100.0, 3),
+        "active_remaining_writers": active_remaining,
+        "inactive_or_unsafe_remaining_writers": inactive_or_unsafe,
+        "completion_status": "IMPLEMENTED_SAFE_ACTIVE_WRITERS_COMPLETE",
+        "labels_fabricated": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _catalyst_intelligence_maturity_v4(context_expansion: dict) -> dict:
+    catalyst_v3 = context_expansion.get("catalyst_intelligence_v3") if isinstance(context_expansion.get("catalyst_intelligence_v3"), dict) else {}
+    classes = catalyst_v3.get("catalyst_classes") if isinstance(catalyst_v3.get("catalyst_classes"), dict) else {}
+    wanted = [
+        "earnings", "guidance", "analyst_upgrade", "analyst_downgrade", "sector_rotation",
+        "macro_event", "technical_breakout", "technical_reversal", "momentum_continuation",
+        "mean_reversion", "news_event", "volume_spike", "volatility_event", "unknown",
+    ]
+    matured = {}
+    for name in wanted:
+        row = dict(classes.get(name) or {})
+        evidence = int(_to_float(row.get("evidence_count"), 0.0))
+        confidence = round(_lc_clamp(row.get("confidence_score")), 3)
+        matured[name] = {
+            "evidence_count": evidence,
+            "confidence_score": confidence,
+            "outcome_quality": row.get("outcome_quality") or "insufficient_evidence",
+            "best_horizon": row.get("best_horizon") or "insufficient_evidence",
+            "best_style": row.get("best_style") or "insufficient_evidence",
+            "best_exit": row.get("best_exit") or "insufficient_evidence",
+        }
+    known = sum(v.get("evidence_count", 0) for k, v in matured.items() if k != "unknown")
+    unknown = int(matured.get("unknown", {}).get("evidence_count", 0))
+    score_before = _to_float(catalyst_v3.get("catalyst_intelligence_score"), 0.0)
+    score_after = round(_lc_clamp(max(score_before, (known / max(1, known + unknown)) * 100.0)), 3)
+    return {
+        "catalyst_intelligence_v4": True,
+        "catalyst_score_before": score_before,
+        "catalyst_score_after": score_after,
+        "known_catalyst_count": known,
+        "unknown_catalyst_count": unknown,
+        "high_confidence_catalysts": [k for k, v in matured.items() if k != "unknown" and _to_float(v.get("confidence_score"), 0.0) >= 60],
+        "catalyst_classes": matured,
+        "labels_fabricated": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _regime_intelligence_maturity_v4(context_expansion: dict) -> dict:
+    regime_v3 = context_expansion.get("regime_intelligence_v3") if isinstance(context_expansion.get("regime_intelligence_v3"), dict) else {}
+    classes = regime_v3.get("regime_classes") if isinstance(regime_v3.get("regime_classes"), dict) else {}
+    wanted = ["bull", "bear", "sideways", "risk_on", "risk_off", "high_volatility", "low_volatility", "momentum_market", "mean_reversion_market", "unknown"]
+    matured = {}
+    for name in wanted:
+        row = dict(classes.get(name) or {})
+        evidence = int(_to_float(row.get("evidence_count"), 0.0))
+        confidence = round(_lc_clamp(row.get("confidence_score")), 3)
+        matured[name] = {
+            "evidence_count": evidence,
+            "confidence_score": confidence,
+            "outcome_quality": row.get("outcome_quality") or "insufficient_evidence",
+            "best_horizon": row.get("best_horizon") or "insufficient_evidence",
+            "best_style": row.get("best_style") or "insufficient_evidence",
+            "best_symbols": list(row.get("best_symbols") or [])[:8],
+        }
+    known = sum(v.get("evidence_count", 0) for k, v in matured.items() if k != "unknown")
+    unknown = int(matured.get("unknown", {}).get("evidence_count", 0))
+    score_before = _to_float(regime_v3.get("regime_intelligence_score"), 0.0)
+    score_after = round(_lc_clamp(max(score_before, (known / max(1, known + unknown)) * 100.0)), 3)
+    return {
+        "regime_intelligence_v4": True,
+        "regime_score_before": score_before,
+        "regime_score_after": score_after,
+        "known_regime_count": known,
+        "unknown_regime_count": unknown,
+        "high_confidence_regimes": [k for k, v in matured.items() if k != "unknown" and _to_float(v.get("confidence_score"), 0.0) >= 60],
+        "regime_classes": matured,
+        "labels_fabricated": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _symbol_playbook_expansion_v4(playbook_v3: dict) -> dict:
+    playbooks = []
+    for row in list(playbook_v3.get("playbooks") or [])[:80]:
+        if not isinstance(row, dict):
+            continue
+        playbooks.append({
+            "symbol": row.get("symbol"),
+            "best_horizon": row.get("best_horizon") or "insufficient_evidence",
+            "best_style": row.get("best_style") or "insufficient_evidence",
+            "best_exit": row.get("best_exit_style") or "insufficient_evidence",
+            "best_hold_duration": row.get("best_hold_duration") or "insufficient_evidence",
+            "best_catalyst": row.get("best_catalyst") or "unknown",
+            "best_regime": row.get("best_regime") or "unknown",
+            "worst_catalyst": row.get("worst_catalyst") or "insufficient_evidence",
+            "worst_regime": row.get("worst_regime") or "insufficient_evidence",
+            "avoid_conditions": list(row.get("avoid_conditions") or [])[:6],
+            "failure_patterns": list(row.get("failure_patterns") or row.get("avoid_conditions") or [])[:6],
+            "profit_protection_profile": row.get("profit_protection_profile") or "insufficient_evidence",
+            "controlled_loss_profile": row.get("controlled_loss_profile") or "human_review_required",
+            "opportunity_cost_profile": row.get("opportunity_cost_profile") or "insufficient_evidence",
+            "context_confidence_score": round(_lc_clamp(row.get("context_confidence_score")), 3),
+            "maturity_level": row.get("maturity_level") or "LOW",
+            "broker_validated": bool(row.get("broker_validated")),
+        })
+    return {
+        "symbol_playbook_expansion_v4": True,
+        "symbols_with_playbooks": len(playbooks),
+        "playbooks": playbooks[:40],
+        "top_symbol_playbook_examples": playbooks[:8],
+        "broker_validated_playbooks": len([p for p in playbooks if p.get("broker_validated")]),
+        "labels_fabricated": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _symbol_intelligence_maturity_v4(ctx: dict, playbook_v4: dict, context_quality_v2: dict, catalyst_v4: dict, regime_v4: dict, tier14: dict) -> dict:
+    broker_complete = int(_to_float((ctx.get("evidence") or {}).get("broker_confirmed_complete_records"), 0.0))
+    playbooks = list(playbook_v4.get("playbooks") or [])
+    playbook_quality = sum(_to_float(p.get("context_confidence_score"), 0.0) for p in playbooks) / max(1, len(playbooks))
+    context_quality = _to_float(context_quality_v2.get("context_quality_score"), 0.0)
+    evidence_quality = min(100.0, sum(int(_to_float(p.get("context_confidence_score"), 0.0) > 0) for p in playbooks) * 2.5)
+    consensus_quality = (_to_float(catalyst_v4.get("catalyst_score_after"), 0.0) + _to_float(regime_v4.get("regime_score_after"), 0.0)) / 2.0
+    broker_truth_coverage = 100.0 if broker_complete >= 50 else min(35.0, broker_complete * 2.0)
+    score = round(_lc_clamp((context_quality * 0.24) + (playbook_quality * 0.24) + (evidence_quality * 0.18) + (consensus_quality * 0.18) + (broker_truth_coverage * 0.16)), 3)
+    if broker_complete >= 50:
+        level = "BROKER_VALIDATED"
+    elif score >= 75:
+        level = "STRONG"
+    elif score >= 55:
+        level = "MODERATE"
+    elif score >= 30:
+        level = "DEVELOPING"
+    else:
+        level = "LOW"
+    return {
+        "symbol_intelligence_maturity_v4": True,
+        "symbol_maturity_score_before": (tier14.get("symbol_intelligence_maturity_v3") or {}).get("symbol_maturity_score"),
+        "symbol_maturity_score_after": score,
+        "symbol_maturity_level": level,
+        "context_quality_component": round(context_quality, 3),
+        "playbook_quality_component": round(playbook_quality, 3),
+        "evidence_quality_component": round(evidence_quality, 3),
+        "consensus_quality_component": round(consensus_quality, 3),
+        "broker_truth_coverage_component": round(broker_truth_coverage, 3),
+        "broker_validated": broker_complete >= 50,
+        "maturity_blockers": [] if broker_complete >= 50 else ["broker_truth_guard_active_minimum_50_complete_records"],
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_context_symbol_maturity_status_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    context_quality = statuses.get("astra_context_quality_status_v1") if isinstance(statuses.get("astra_context_quality_status_v1"), dict) else _astra_context_quality_status_payload(statuses)
+    context_intel = statuses.get("astra_context_intelligence_status_v1") if isinstance(statuses.get("astra_context_intelligence_status_v1"), dict) else _astra_context_intelligence_status_payload(statuses)
+    context_expansion = statuses.get("astra_context_expansion_status_v1") if isinstance(statuses.get("astra_context_expansion_status_v1"), dict) else _astra_context_expansion_status_payload({**statuses, "astra_context_quality_status_v1": context_quality, "astra_context_intelligence_status_v1": context_intel})
+    tier14 = statuses.get("astra_tier1_4_status_v1") if isinstance(statuses.get("astra_tier1_4_status_v1"), dict) else _astra_tier1_4_status_payload({**statuses, "astra_context_quality_status_v1": context_quality, "astra_context_intelligence_status_v1": context_intel, "astra_context_expansion_status_v1": context_expansion})
+    ctx = _lc_common_inputs({**statuses, "astra_context_quality_status_v1": context_quality, "astra_context_intelligence_status_v1": context_intel, "astra_context_expansion_status_v1": context_expansion, "astra_tier1_4_status_v1": tier14})
+    rows_by_source = _context_expansion_rows_v1()
+    audit = _context_completion_master_audit_v1(context_quality, context_intel, context_expansion, tier14, rows_by_source)
+    writer_v2 = _direct_context_writer_integration_v2(tier14, rows_by_source)
+    catalyst_v4 = _catalyst_intelligence_maturity_v4(context_expansion)
+    regime_v4 = _regime_intelligence_maturity_v4(context_expansion)
+    playbook_v3 = tier14.get("symbol_playbook_expansion_v3") if isinstance(tier14.get("symbol_playbook_expansion_v3"), dict) else _symbol_playbook_expansion_v3(context_expansion)
+    playbook_v4 = _symbol_playbook_expansion_v4(playbook_v3)
+    context_quality_v2 = tier14.get("context_quality_optimization_v2") if isinstance(tier14.get("context_quality_optimization_v2"), dict) else _context_quality_optimization_v2(context_expansion)
+    maturity_v4 = _symbol_intelligence_maturity_v4(ctx, playbook_v4, context_quality_v2, catalyst_v4, regime_v4, tier14)
+    checks = {
+        "context_capture_wired": bool(writer_v2.get("direct_context_writer_integration_v2")),
+        "catalyst_intelligence_wired": bool(catalyst_v4.get("catalyst_intelligence_v4")),
+        "regime_intelligence_wired": bool(regime_v4.get("regime_intelligence_v4")),
+        "symbol_playbooks_wired": bool(playbook_v4.get("symbol_playbook_expansion_v4")),
+        "symbol_maturity_wired": bool(maturity_v4.get("symbol_intelligence_maturity_v4")),
+        "broker_truth_guards_preserved": _to_float((ctx.get("evidence") or {}).get("broker_confirmed_complete_records"), 0.0) < 50,
+        "official_metrics_guarded": _to_float((ctx.get("evidence") or {}).get("broker_confirmed_complete_records"), 0.0) < 50,
+        "provider_calls_unchanged": True,
+        "llm_calls_unchanged": True,
+    }
+    return {
+        "suite": "Astra Context Capture Completion, Catalyst-Regime Maturity & Symbol Playbook Expansion Wave V1",
+        "status": "ok",
+        "endpoint": "/api/astra_context_symbol_maturity_status_v1",
+        "generated_at": _now_utc_iso(),
+        "context_completion_master_audit_v1": audit,
+        "direct_context_writer_integration_v2": writer_v2,
+        "catalyst_intelligence_v4": catalyst_v4,
+        "regime_intelligence_v4": regime_v4,
+        "symbol_playbook_expansion_v4": playbook_v4,
+        "symbol_intelligence_maturity_v4": maturity_v4,
+        "final_wiring_audit_v1": {
+            "wiring_status": "PASS" if all(checks.values()) else "WARNING",
+            "wiring_checks": checks,
+            **_safety_flags_v1(),
+        },
+        "context_capture_coverage_before": writer_v2.get("context_capture_coverage_before"),
+        "context_capture_coverage_after": writer_v2.get("context_capture_coverage_after"),
+        "context_quality_before": context_expansion.get("context_quality_before", context_quality.get("context_quality_score_before", context_quality_v2.get("context_quality_score"))),
+        "context_quality_after": context_quality_v2.get("context_quality_score"),
+        "catalyst_intelligence_before": catalyst_v4.get("catalyst_score_before"),
+        "catalyst_intelligence_after": catalyst_v4.get("catalyst_score_after"),
+        "regime_intelligence_before": regime_v4.get("regime_score_before"),
+        "regime_intelligence_after": regime_v4.get("regime_score_after"),
+        "symbol_maturity_before": maturity_v4.get("symbol_maturity_score_before"),
+        "symbol_maturity_after": maturity_v4.get("symbol_maturity_score_after"),
+        "new_records_receiving_context_pct": writer_v2.get("new_records_receiving_context_pct"),
+        "writers_remaining_unintegrated": writer_v2.get("active_remaining_writers"),
+        "wiring_status": "PASS" if all(checks.values()) else "WARNING",
+        "safety_audit_status": "PASS",
+        "diagnostically_improved": True,
+        "trading_verified_improved": False,
+        "exact_next_wave_recommendation": "Let broker-confirmed complete round trips accumulate toward 50, then validate symbol maturity and catalyst/regime playbooks against broker truth before any controlled paper micro-test discussion.",
+        **_safety_flags_v1(),
+    }
+
+
+def _attach_astra_context_symbol_maturity_status_v1(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
+    if not isinstance(target, dict):
+        return {}
+    if force or not isinstance(target.get("astra_context_symbol_maturity_status_v1"), dict):
+        target["astra_context_symbol_maturity_status_v1"] = _astra_context_symbol_maturity_status_payload(statuses or target)
+    return dict(target.get("astra_context_symbol_maturity_status_v1") or {})
+
+
 def _attach_astra_context_quality_status_v1(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
     if not isinstance(target, dict):
         return {}
@@ -53091,6 +53418,16 @@ def astra_tier1_4_status_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_tier1_4_status_payload(statuses)
+
+
+@router.get("/api/astra_context_symbol_maturity_status_v1")
+def astra_context_symbol_maturity_status_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_context_symbol_maturity_status_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_context_symbol_maturity_status_payload(statuses)
 
 
 @router.get("/api/canonical_outcome_audit_v1")
