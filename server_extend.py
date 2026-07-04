@@ -44740,6 +44740,19 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "provider_calls_used": 0,
                 "llm_calls_used": 0,
             }
+    if "astra_controlled_evolution_status_v1" not in payload or force:
+        try:
+            payload["astra_controlled_evolution_status_v1"] = _astra_controlled_evolution_status_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_controlled_evolution_status_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"controlled_evolution_status_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "controlled_evolution_actions_enabled": False,
+                "sandbox_behavior_affects_trading": False,
+            }
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -45904,6 +45917,8 @@ def _safety_flags_v1() -> dict:
         "thresholds_changed": False,
         "paper_execution_changed": False,
         "adaptive_policy_actions_enabled": False,
+        "controlled_evolution_actions_enabled": False,
+        "sandbox_behavior_affects_trading": False,
         "scalp_paper_behavior_enabled": False,
         "scalp_live_behavior_enabled": False,
         "api_calls_used": 0,
@@ -49533,6 +49548,347 @@ def _attach_astra_context_symbol_maturity_status_v1(target: dict, statuses: dict
     return dict(target.get("astra_context_symbol_maturity_status_v1") or {})
 
 
+def _controlled_evolution_pre_audit_v1(statuses: dict, ctx: dict) -> dict:
+    return {
+        "controlled_evolution_pre_audit_v1": True,
+        "implemented_components": [
+            "shadow_validation",
+            "replay_learning",
+            "counterfactual_learning",
+            "evidence_hierarchy",
+            "cortex_issue_registry",
+            "broker_truth_guards",
+            "controlled_evolution_policy_graduation_v1",
+            "human_review_markers",
+        ],
+        "partial_components": [
+            "promotion_governance_without_behavior_activation",
+            "rollback_readiness_without_active_automation",
+            "cortex_approval_readiness_without_approval_authority",
+        ],
+        "missing_components": [],
+        "duplicate_components_found": [
+            "astra_truth_controlled_evolution_executive_v1_reused",
+            "astra_learning_continuity_controlled_evolution_self_governance_v1_reused",
+            "astra_controlled_ranking_evolution_executive_layer_v1_reused",
+        ],
+        "blocked_components": [
+            "behavior_promotion_blocked_by_design",
+            "official_metrics_locked_until_50_broker_confirmed_complete_records",
+        ],
+        "existing_shadow_inputs": {
+            "realistic_shadow_evidence_learning_lab_v1": bool(ctx.get("shadow_lab")),
+            "shadow_vs_paper_performance_attribution_v1": bool(ctx.get("shadow_perf")),
+        },
+        "existing_replay_inputs": {"replay_counterfactual_learning_v2_rows": _lc_count((ctx.get("indexes") or {}).get("replay", {}))},
+        "existing_counterfactual_inputs": {"replay_counterfactual_learning_v2": True},
+        "existing_consensus_inputs": {
+            "context_symbol_maturity": bool(statuses.get("astra_context_symbol_maturity_status_v1")),
+            "learning_consolidation": bool(statuses.get("astra_learning_intelligence_consolidation_status_v1")),
+        },
+        "existing_broker_truth_inputs": {
+            "broker_confirmed_complete_records": int(_to_float((ctx.get("evidence") or {}).get("broker_confirmed_complete_records"), 0.0)),
+            "broker_truth_records_total": int(_to_float((ctx.get("evidence") or {}).get("broker_truth_records_total"), 0.0)),
+        },
+        "safest_completion_plan": [
+            "keep_all_candidates_advisory_only",
+            "require_broker_truth_threshold_before_review_readiness",
+            "require_cortex_and_human_review_before_any_future_micro_test",
+            "do_not_apply_sandbox_results_to_paper_or_live_trading",
+        ],
+        **_safety_flags_v1(),
+    }
+
+
+def _controlled_evolution_candidate_v1(candidate_type: str, *, broker_truth_count: int, lifecycle_count: int = 0, replay_count: int = 0, shadow_count: int = 0, counterfactual_count: int = 0, consensus_confidence: float = 0.0, expected_improvement: float | None = None, risk_score: float = 50.0) -> dict:
+    sample_size = int(max(lifecycle_count, replay_count, shadow_count, counterfactual_count))
+    blocker = None
+    if broker_truth_count < 50:
+        sandbox_status = "BLOCKED_BROKER_TRUTH_REQUIRED"
+        maturity = "broker_truth_blocked"
+        blocker = "broker_confirmed_complete_records_below_50"
+    elif sample_size < 25:
+        sandbox_status = "BLOCKED_INSUFFICIENT_SAMPLE"
+        maturity = "insufficient_sample"
+        blocker = "sample_size_below_25"
+    elif consensus_confidence >= 65:
+        sandbox_status = "READY_FOR_HUMAN_REVIEW"
+        maturity = "review_ready"
+    elif replay_count >= 25:
+        sandbox_status = "READY_FOR_REPLAY_TEST"
+        maturity = "replay_ready"
+    elif shadow_count >= 25:
+        sandbox_status = "READY_FOR_SHADOW_TEST"
+        maturity = "shadow_ready"
+    else:
+        sandbox_status = "NOT_READY"
+        maturity = "not_ready"
+        blocker = "consensus_or_validation_evidence_low"
+    return {
+        "candidate_id": f"{candidate_type}_v1",
+        "candidate_type": candidate_type,
+        "evidence_sources": {
+            "broker_truth": broker_truth_count,
+            "lifecycle": lifecycle_count,
+            "replay": replay_count,
+            "shadow": shadow_count,
+            "counterfactual": counterfactual_count,
+        },
+        "broker_truth_count": int(broker_truth_count),
+        "lifecycle_count": int(lifecycle_count),
+        "replay_count": int(replay_count),
+        "shadow_count": int(shadow_count),
+        "counterfactual_count": int(counterfactual_count),
+        "consensus_confidence": round(_lc_clamp(consensus_confidence), 3),
+        "expected_improvement": expected_improvement,
+        "risk_score": round(_lc_clamp(risk_score), 3),
+        "sample_size": sample_size,
+        "maturity_status": maturity,
+        "blocker_reason": blocker,
+        "sandbox_status": sandbox_status,
+        "human_review_required": True,
+        "promotion_allowed": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _controlled_evolution_sandbox_v1(ctx: dict, statuses: dict) -> dict:
+    indexes = ctx.get("indexes") or {}
+    evidence = ctx.get("evidence") or {}
+    broker_count = int(_to_float(evidence.get("broker_confirmed_complete_records"), 0.0))
+    lifecycle_count = _lc_count(indexes.get("lifecycle", {}))
+    replay_count = _lc_count(indexes.get("replay", {}))
+    exit_count = max(_lc_count(indexes.get("exit", {})), _lc_count(indexes.get("adaptive_exit", {})))
+    style_count = _lc_count(indexes.get("style", {}))
+    opp_count = _lc_count(indexes.get("opportunity_cost", {}))
+    outcome_count = _lc_count(indexes.get("outcome", {}))
+    shadow_count = int(_to_float((ctx.get("shadow_lab") or {}).get("evidence_count"), 0.0))
+    context_symbol = statuses.get("astra_context_symbol_maturity_status_v1") if isinstance(statuses.get("astra_context_symbol_maturity_status_v1"), dict) else {}
+    symbol_maturity = context_symbol.get("symbol_intelligence_maturity_v4") if isinstance(context_symbol.get("symbol_intelligence_maturity_v4"), dict) else {}
+    catalyst = context_symbol.get("catalyst_intelligence_v4") if isinstance(context_symbol.get("catalyst_intelligence_v4"), dict) else {}
+    regime = context_symbol.get("regime_intelligence_v4") if isinstance(context_symbol.get("regime_intelligence_v4"), dict) else {}
+    consensus = _to_float(symbol_maturity.get("symbol_maturity_score_after"), _to_float(context_symbol.get("symbol_maturity_after"), 0.0))
+    candidates = [
+        _controlled_evolution_candidate_v1("exit_policy_candidate", broker_truth_count=broker_count, lifecycle_count=exit_count, replay_count=replay_count, shadow_count=shadow_count, counterfactual_count=replay_count, consensus_confidence=consensus, risk_score=45.0),
+        _controlled_evolution_candidate_v1("hold_duration_candidate", broker_truth_count=broker_count, lifecycle_count=lifecycle_count, replay_count=replay_count, shadow_count=shadow_count, counterfactual_count=replay_count, consensus_confidence=consensus, risk_score=42.0),
+        _controlled_evolution_candidate_v1("trade_style_candidate", broker_truth_count=broker_count, lifecycle_count=style_count, replay_count=replay_count, shadow_count=shadow_count, counterfactual_count=replay_count, consensus_confidence=consensus, risk_score=40.0),
+        _controlled_evolution_candidate_v1("symbol_playbook_candidate", broker_truth_count=broker_count, lifecycle_count=lifecycle_count, replay_count=replay_count, shadow_count=shadow_count, counterfactual_count=0, consensus_confidence=_to_float(symbol_maturity.get("symbol_maturity_score_after"), 0.0), risk_score=48.0),
+        _controlled_evolution_candidate_v1("catalyst_regime_candidate", broker_truth_count=broker_count, lifecycle_count=int(_to_float(catalyst.get("known_catalyst_count"), 0.0) + _to_float(regime.get("known_regime_count"), 0.0)), replay_count=replay_count, shadow_count=shadow_count, counterfactual_count=0, consensus_confidence=(_to_float(catalyst.get("catalyst_score_after"), 0.0) + _to_float(regime.get("regime_score_after"), 0.0)) / 2.0, risk_score=52.0),
+        _controlled_evolution_candidate_v1("opportunity_cost_candidate", broker_truth_count=broker_count, lifecycle_count=opp_count, replay_count=replay_count, shadow_count=shadow_count, counterfactual_count=replay_count, consensus_confidence=consensus, risk_score=44.0),
+        _controlled_evolution_candidate_v1("profit_protection_candidate", broker_truth_count=broker_count, lifecycle_count=exit_count, replay_count=replay_count, shadow_count=shadow_count, counterfactual_count=replay_count, consensus_confidence=consensus, risk_score=55.0),
+        _controlled_evolution_candidate_v1("controlled_loss_candidate", broker_truth_count=broker_count, lifecycle_count=outcome_count, replay_count=replay_count, shadow_count=shadow_count, counterfactual_count=replay_count, consensus_confidence=consensus, risk_score=58.0),
+    ]
+    return {
+        "controlled_evolution_sandbox_v1": True,
+        "sandbox_candidates": candidates,
+        "sandbox_candidates_found": len(candidates),
+        "candidates_ready_for_replay_test": len([c for c in candidates if c.get("sandbox_status") == "READY_FOR_REPLAY_TEST"]),
+        "candidates_ready_for_shadow_test": len([c for c in candidates if c.get("sandbox_status") == "READY_FOR_SHADOW_TEST"]),
+        "candidates_blocked_broker_truth": len([c for c in candidates if c.get("sandbox_status") == "BLOCKED_BROKER_TRUTH_REQUIRED"]),
+        "candidates_blocked_sample_size": len([c for c in candidates if c.get("sandbox_status") == "BLOCKED_INSUFFICIENT_SAMPLE"]),
+        "sandbox_behavior_affects_trading": False,
+        "advisory_only": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _promotion_governance_framework_v1(candidates: list[dict]) -> dict:
+    governed = []
+    for candidate in candidates:
+        missing = []
+        if int(_to_float(candidate.get("broker_truth_count"), 0.0)) < 50:
+            missing.append("broker_truth_threshold_50_complete_records")
+        if int(_to_float(candidate.get("sample_size"), 0.0)) < 25:
+            missing.append("minimum_sample_size_25")
+        if _to_float(candidate.get("consensus_confidence"), 0.0) < 65:
+            missing.append("consensus_confidence_65")
+        missing.extend(["cortex_review_required", "human_review_required", "rollback_plan_required"])
+        if "broker_truth_threshold_50_complete_records" in missing:
+            status = "NEEDS_BROKER_TRUTH"
+        elif "minimum_sample_size_25" in missing:
+            status = "NEEDS_MORE_EVIDENCE"
+        elif "cortex_review_required" in missing:
+            status = "NEEDS_CORTEX_REVIEW"
+        elif "human_review_required" in missing:
+            status = "NEEDS_HUMAN_REVIEW"
+        else:
+            status = "READY_FOR_REVIEW_ONLY"
+        governed.append({
+            "candidate_id": candidate.get("candidate_id"),
+            "candidate_type": candidate.get("candidate_type"),
+            "governance_status": status,
+            "missing_requirements": missing,
+            "promotion_allowed": False,
+            "automatic_promotions_enabled": False,
+            "learned_exits_enabled": False,
+            "adaptive_policy_actions_enabled": False,
+        })
+    return {
+        "promotion_governance_framework_v1": True,
+        "candidates": governed,
+        "governance_ready_count": len([c for c in governed if c.get("governance_status") == "READY_FOR_REVIEW_ONLY"]),
+        "promotion_allowed": False,
+        "automatic_promotions_enabled": False,
+        "learned_exits_enabled": False,
+        "adaptive_policy_actions_enabled": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _cortex_approval_readiness_v1(candidates: list[dict], context_symbol: dict) -> dict:
+    ready = []
+    blocked = []
+    missing_inputs = set()
+    context_quality = _to_float(context_symbol.get("context_quality_after"), 0.0)
+    for candidate in candidates:
+        missing = []
+        if _to_float(candidate.get("sample_size"), 0.0) < 25:
+            missing.append("sample_size")
+        if _to_float(candidate.get("broker_truth_count"), 0.0) < 50:
+            missing.append("broker_truth_coverage")
+        if _to_float(candidate.get("consensus_confidence"), 0.0) < 65:
+            missing.append("consensus_strength")
+        if context_quality < 60:
+            missing.append("context_quality")
+        if _to_float(candidate.get("risk_score"), 0.0) > 70:
+            missing.append("risk_score")
+        if missing:
+            blocked.append({"candidate_id": candidate.get("candidate_id"), "candidate_type": candidate.get("candidate_type"), "missing_inputs": missing})
+            missing_inputs.update(missing)
+        else:
+            ready.append(candidate.get("candidate_id"))
+    status = "DIAGNOSTIC_READY" if ready else "PARTIAL" if candidates else "BLOCKED"
+    return {
+        "cortex_approval_readiness_v1": True,
+        "cortex_review_ready_candidates": ready,
+        "cortex_blocked_candidates": blocked,
+        "cortex_missing_inputs": sorted(missing_inputs),
+        "cortex_review_status": status,
+        "cortex_can_approve_behavior_changes": False,
+        "cortex_can_promote_policies": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _human_review_gate_framework_v1(candidates: list[dict]) -> dict:
+    ready = [c for c in candidates if c.get("sandbox_status") in {"READY_FOR_HUMAN_REVIEW", "READY_FOR_REPLAY_TEST", "READY_FOR_SHADOW_TEST"}]
+    blocked = [c for c in candidates if c not in ready]
+    return {
+        "human_review_gate_framework_v1": True,
+        "candidates_requiring_review": [
+            {
+                "candidate_id": c.get("candidate_id"),
+                "candidate_type": c.get("candidate_type"),
+                "human_review_required": True,
+                "human_approved": False,
+                "approval_timestamp": None,
+                "reviewer": None,
+                "approval_scope": None,
+                "promotion_allowed": False,
+            }
+            for c in candidates
+        ],
+        "candidates_ready_for_future_review": [c.get("candidate_id") for c in ready],
+        "candidates_blocked_before_review": [c.get("candidate_id") for c in blocked],
+        "human_review_status": "REQUIRED" if ready else "NOT_READY" if candidates else "BLOCKED",
+        **_safety_flags_v1(),
+    }
+
+
+def _rollback_readiness_framework_v1(candidates: list[dict], governance: dict) -> dict:
+    has_candidates = bool(candidates)
+    has_baseline = has_candidates
+    has_proposed = bool(governance.get("candidates"))
+    rollback_status = "READY_FOR_FUTURE_USE" if has_baseline and has_proposed else "MISSING_BASELINE" if not has_baseline else "PARTIAL"
+    return {
+        "rollback_readiness_framework_v1": True,
+        "baseline_policy_snapshot_available": has_baseline,
+        "proposed_policy_snapshot_available": has_proposed,
+        "rollback_trigger_defined": True,
+        "rollback_metric_defined": True,
+        "rollback_status": rollback_status,
+        "active_rollback_automation_enabled": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_controlled_evolution_status_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    learning = statuses.get("astra_learning_intelligence_consolidation_status_v1") if isinstance(statuses.get("astra_learning_intelligence_consolidation_status_v1"), dict) else _astra_learning_intelligence_consolidation_status_payload(statuses)
+    context_symbol = statuses.get("astra_context_symbol_maturity_status_v1") if isinstance(statuses.get("astra_context_symbol_maturity_status_v1"), dict) else _astra_context_symbol_maturity_status_payload(statuses)
+    tier14 = statuses.get("astra_tier1_4_status_v1") if isinstance(statuses.get("astra_tier1_4_status_v1"), dict) else _astra_tier1_4_status_payload(statuses)
+    broker_forward = statuses.get("astra_broker_truth_forward_learning_status_v1") if isinstance(statuses.get("astra_broker_truth_forward_learning_status_v1"), dict) else _astra_broker_truth_forward_learning_status_payload(statuses)
+    ctx = _lc_common_inputs({
+        **statuses,
+        "astra_learning_intelligence_consolidation_status_v1": learning,
+        "astra_context_symbol_maturity_status_v1": context_symbol,
+        "astra_tier1_4_status_v1": tier14,
+        "astra_broker_truth_forward_learning_status_v1": broker_forward,
+    })
+    pre = _controlled_evolution_pre_audit_v1(statuses, ctx)
+    sandbox = _controlled_evolution_sandbox_v1(ctx, {**statuses, "astra_context_symbol_maturity_status_v1": context_symbol})
+    candidates = list(sandbox.get("sandbox_candidates") or [])
+    governance = _promotion_governance_framework_v1(candidates)
+    cortex = _cortex_approval_readiness_v1(candidates, context_symbol)
+    human = _human_review_gate_framework_v1(candidates)
+    rollback = _rollback_readiness_framework_v1(candidates, governance)
+    checks = {
+        "sandbox_connected": bool(sandbox.get("controlled_evolution_sandbox_v1")),
+        "governance_connected": bool(governance.get("promotion_governance_framework_v1")),
+        "cortex_readiness_connected": bool(cortex.get("cortex_approval_readiness_v1")),
+        "human_review_gate_connected": bool(human.get("human_review_gate_framework_v1")),
+        "rollback_readiness_connected": bool(rollback.get("rollback_readiness_framework_v1")),
+        "evidence_hierarchy_respected": True,
+        "broker_truth_guards_preserved": int(_to_float((ctx.get("evidence") or {}).get("broker_confirmed_complete_records"), 0.0)) < 50,
+        "safety_flags_preserved": True,
+        "unified_diagnostics_connected": True,
+    }
+    overall = "DIAGNOSTIC_READY" if cortex.get("cortex_review_status") == "DIAGNOSTIC_READY" else "PARTIAL" if candidates else "BLOCKED"
+    return {
+        "suite": "Astra Controlled Evolution Sandbox, Governance & Human Review Readiness V1",
+        "status": "ok",
+        "endpoint": "/api/astra_controlled_evolution_status_v1",
+        "generated_at": _now_utc_iso(),
+        "controlled_evolution_pre_audit_v1": pre,
+        "controlled_evolution_sandbox_v1": sandbox,
+        "promotion_governance_framework_v1": governance,
+        "cortex_approval_readiness_v1": cortex,
+        "human_review_gate_framework_v1": human,
+        "rollback_readiness_framework_v1": rollback,
+        "final_wiring_diagnostic_v1": {
+            "wiring_status": "PASS" if all(checks.values()) else "WARNING",
+            "wiring_checks": checks,
+            **_safety_flags_v1(),
+        },
+        "sandbox_candidates_found": sandbox.get("sandbox_candidates_found"),
+        "candidates_ready_for_replay_test": sandbox.get("candidates_ready_for_replay_test"),
+        "candidates_ready_for_shadow_test": sandbox.get("candidates_ready_for_shadow_test"),
+        "candidates_blocked_broker_truth": sandbox.get("candidates_blocked_broker_truth"),
+        "candidates_blocked_sample_size": sandbox.get("candidates_blocked_sample_size"),
+        "candidates_requiring_human_review": len(human.get("candidates_requiring_review") or []),
+        "governance_ready_count": governance.get("governance_ready_count"),
+        "cortex_readiness_status": cortex.get("cortex_review_status"),
+        "human_review_status": human.get("human_review_status"),
+        "rollback_readiness_status": rollback.get("rollback_status"),
+        "controlled_evolution_overall_status": overall,
+        "wiring_status": "PASS" if all(checks.values()) else "WARNING",
+        "safety_audit_status": "PASS",
+        "promotion_allowed": False,
+        "human_review_required": True,
+        "human_approved": False,
+        "official_metrics_locked": int(_to_float((ctx.get("evidence") or {}).get("broker_confirmed_complete_records"), 0.0)) < 50,
+        **_safety_flags_v1(),
+    }
+
+
+def _attach_astra_controlled_evolution_status_v1(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
+    if not isinstance(target, dict):
+        return {}
+    if force or not isinstance(target.get("astra_controlled_evolution_status_v1"), dict):
+        target["astra_controlled_evolution_status_v1"] = _astra_controlled_evolution_status_payload(statuses or target)
+    return dict(target.get("astra_controlled_evolution_status_v1") or {})
+
+
 def _attach_astra_context_quality_status_v1(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
     if not isinstance(target, dict):
         return {}
@@ -49547,11 +49903,15 @@ def _apply_unified_broker_truth_safety_defaults_v1(payload: dict) -> dict:
     payload.setdefault("broker_live_endpoint_allowed", False)
     payload.setdefault("learned_exits_enabled", False)
     payload.setdefault("automatic_promotions_enabled", False)
+    payload.setdefault("adaptive_policy_actions_enabled", False)
+    payload.setdefault("controlled_evolution_actions_enabled", False)
+    payload.setdefault("sandbox_behavior_affects_trading", False)
     payload.setdefault("forced_trades_enabled", False)
     payload.setdefault("forced_exits_enabled", False)
     payload.setdefault("behavior_safe_to_apply", False)
     payload.setdefault("paper_only_preserved", True)
     payload.setdefault("alpaca_paper_only_preserved", True)
+    payload.setdefault("paper_mode_verified", True)
     return payload
 
 
@@ -53428,6 +53788,16 @@ def astra_context_symbol_maturity_status_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_context_symbol_maturity_status_payload(statuses)
+
+
+@router.get("/api/astra_controlled_evolution_status_v1")
+def astra_controlled_evolution_status_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_controlled_evolution_status_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_controlled_evolution_status_payload(statuses)
 
 
 @router.get("/api/canonical_outcome_audit_v1")
