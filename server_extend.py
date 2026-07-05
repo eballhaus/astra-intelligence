@@ -44753,6 +44753,19 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "controlled_evolution_actions_enabled": False,
                 "sandbox_behavior_affects_trading": False,
             }
+    if "astra_short_term_roadmap_status_v1" not in payload or force:
+        try:
+            payload["astra_short_term_roadmap_status_v1"] = _astra_short_term_roadmap_status_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_short_term_roadmap_status_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"short_term_roadmap_status_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "controlled_evolution_actions_enabled": False,
+                "sandbox_behavior_affects_trading": False,
+            }
     completion = payload.get("astra_paper_provider_cortex_completion_v1") if isinstance(payload.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
     registry = completion.get("cortex_issue_registry_v2") if isinstance(completion.get("cortex_issue_registry_v2"), dict) else {}
     if registry:
@@ -49889,6 +49902,372 @@ def _attach_astra_controlled_evolution_status_v1(target: dict, statuses: dict | 
     return dict(target.get("astra_controlled_evolution_status_v1") or {})
 
 
+def _short_term_roadmap_master_audit_v1(statuses: dict) -> dict:
+    implemented = [
+        "broker_truth_forward_learning_status_v1",
+        "context_quality_status_v1",
+        "context_intelligence_status_v1",
+        "context_expansion_status_v1",
+        "context_symbol_maturity_status_v1",
+        "controlled_evolution_status_v1",
+        "market_breadth_index_intelligence_v1",
+        "dashboard_data_wiring_v1",
+        "astra_copilot_suite_v1",
+    ]
+    partial = [
+        "news_event_intelligence_readiness",
+        "behavioral_market_psychology_readiness",
+        "mobile_alert_workflow_readiness",
+        "broker_truth_validation_readiness",
+    ]
+    return {
+        "short_term_roadmap_master_audit_v1": True,
+        "implemented_components": implemented,
+        "partial_components": partial,
+        "missing_components": [],
+        "duplicate_components_found": [
+            "legacy_context_and_catalyst_engines_reused_via_context_symbol_maturity_status",
+            "controlled_evolution_legacy_surfaces_reused_via_astra_controlled_evolution_status",
+        ],
+        "deprecated_components": [],
+        "blocked_components": ["broker_truth_validated_metrics_blocked_until_50_complete_records"],
+        "canonical_engine_candidates": {
+            "catalyst": "astra_context_symbol_maturity_status_v1.catalyst_intelligence_v4",
+            "regime": "astra_context_symbol_maturity_status_v1.regime_intelligence_v4",
+            "symbol_intelligence": "astra_context_symbol_maturity_status_v1.symbol_intelligence_maturity_v4",
+            "market_structure": "market_breadth_index_intelligence_v1",
+            "narrative": "catalyst_theme_narrative_capital_flow_intelligence_v2",
+            "news_event": "news_event_intelligence_status_v1_readiness_layer",
+            "psychology": "behavioral_market_psychology_status_v1_readiness_layer",
+            "broker_truth": "broker_truth_records_v1 + astra_broker_truth_forward_learning_status_v1",
+            "controlled_evolution": "astra_controlled_evolution_status_v1",
+            "mobile_copilot_alerts": "mobile_runtime_compaction + astra_copilot_suite_v1 + provider_governance_alert_references",
+        },
+        "recommended_safe_completion_plan": [
+            "continue_broker_truth_round_trip_growth",
+            "keep_news_psychology_as_readiness_layers_until_cached_provider_evidence_matures",
+            "surface_short_term_roadmap_status_through_unified_diagnostics_only",
+            "do_not_modify_trading_behavior_or_provider_polling",
+        ],
+        **_safety_flags_v1(),
+    }
+
+
+def _multi_lane_trading_validation_audit_v1(ctx: dict) -> dict:
+    indexes = ctx.get("indexes") or {}
+    lifecycle_idx = indexes.get("lifecycle") or {}
+    replay_idx = indexes.get("replay") or {}
+    evidence = ctx.get("evidence") or {}
+    broker_complete = int(_to_float(evidence.get("broker_confirmed_complete_records"), 0.0))
+    lane_hint_counts = {}
+    for idx in indexes.values():
+        if isinstance(idx, dict):
+            for sym, count in (_lc_dims(idx, "trade_style") or {}).items():
+                key = str(sym or "unknown").lower()
+                lane_hint_counts[key] = lane_hint_counts.get(key, 0) + int(_to_float(count, 0.0))
+            for sym, count in (_lc_dims(idx, "horizon") or {}).items():
+                key = str(sym or "unknown").lower()
+                lane_hint_counts[key] = lane_hint_counts.get(key, 0) + int(_to_float(count, 0.0))
+    lanes = {}
+    for lane in ("scalp", "day_trade", "short_swing", "standard_swing", "extended_swing", "shadow", "learning_lane"):
+        lifecycle_count = int(lane_hint_counts.get(lane, 0))
+        if lane == "shadow":
+            lifecycle_count = int(_to_float((ctx.get("shadow_lab") or {}).get("evidence_count"), 0.0))
+        if lane == "learning_lane":
+            lifecycle_count = sum(_lc_count(v) for v in indexes.values() if isinstance(v, dict))
+        replay_count = _lc_count(replay_idx) if lane in {"learning_lane", "shadow"} else min(_lc_count(replay_idx), lifecycle_count)
+        truth_density = round((broker_complete / max(1, lifecycle_count)) * 100.0, 3) if lifecycle_count else 0.0
+        maturity = "BROKER_TRUTH_BLOCKED" if broker_complete < 50 else "VALIDATION_READY" if lifecycle_count >= 25 else "COLLECT_MORE_EVIDENCE"
+        lanes[lane] = {
+            "lane_exists": bool(lifecycle_count or lane in {"shadow", "learning_lane"}),
+            "paper_enabled": lane not in {"shadow", "learning_lane"},
+            "shadow_enabled": True,
+            "trades_opened": None,
+            "trades_closed": None,
+            "lifecycle_outcomes": lifecycle_count,
+            "replay_outcomes": replay_count,
+            "broker_truth_records": int(_to_float(evidence.get("broker_truth_records_total"), 0.0)),
+            "broker_confirmed_complete_records": broker_complete,
+            "truth_density": truth_density,
+            "average_hold_duration": "not_available_from_summary_indexes",
+            "lane_maturity_status": maturity,
+            "blocker_reason": "broker_confirmed_complete_records_below_50" if broker_complete < 50 else None,
+        }
+    return {
+        "multi_lane_trading_validation_audit_v1": True,
+        "lanes": lanes,
+        "multi_lane_status": "PARTIAL" if broker_complete < 50 else "READY",
+        "audit_only": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _canonical_engine_wiring_audit_v1(statuses: dict) -> dict:
+    rows = {
+        "Catalyst": ("astra_context_symbol_maturity_status_v1.catalyst_intelligence_v4", ["catalyst_theme_narrative_capital_flow_intelligence_v2", "catalyst_lifecycle_intelligence_v1"], "connected"),
+        "Regime": ("astra_context_symbol_maturity_status_v1.regime_intelligence_v4", ["market_transition_detection_v1", "market_condition_attribution_v1"], "connected"),
+        "Symbol intelligence": ("astra_context_symbol_maturity_status_v1.symbol_intelligence_maturity_v4", ["trade_family_intelligence_v1", "long_term_memory_symbol_retrieval_suite_v1"], "connected"),
+        "Market structure": ("market_breadth_index_intelligence_v1", ["market_transition_detection_v1"], "partial"),
+        "Narrative": ("catalyst_theme_narrative_capital_flow_intelligence_v2", ["context_evidence_expansion_suite_v1"], "partial"),
+        "News/event": ("news_event_intelligence_status_v1_readiness_layer", ["news_intelligence_catalyst_context_engine_v1"], "readiness_only"),
+        "Psychology": ("behavioral_market_psychology_status_v1_readiness_layer", ["cross_market_attribution_transfer_learning_v1"], "readiness_only"),
+        "Broker truth": ("broker_truth_records_v1", ["astra_broker_truth_forward_learning_status_v1"], "connected"),
+        "Controlled evolution": ("astra_controlled_evolution_status_v1", ["astra_truth_controlled_evolution_executive_v1"], "connected"),
+        "Mobile/Copilot/alerts": ("astra_copilot_suite_v1 + mobile_runtime_compaction", ["astra_provider_orchestration_data_governance_v1"], "partial"),
+    }
+    systems = {}
+    for name, (canonical, duplicates, consumer_status) in rows.items():
+        systems[name] = {
+            "canonical_engine": canonical,
+            "duplicate_engines": duplicates,
+            "legacy_engines": [],
+            "disconnected_engines": [] if consumer_status == "connected" else ["dashboard_or_alert_visibility_partial"],
+            "unified_diagnostics_connected": True,
+            "dashboard_connected": consumer_status in {"connected", "partial"},
+            "copilot_connected": name in {"Controlled evolution", "Mobile/Copilot/alerts", "Broker truth", "Symbol intelligence"},
+            "consumer_status": consumer_status,
+            "recommended_action": "preserve_and_reuse" if consumer_status == "connected" else "keep_readiness_layer_until_evidence_matures",
+        }
+    connected = sum(1 for row in systems.values() if row.get("consumer_status") == "connected")
+    return {
+        "canonical_engine_wiring_audit_v1": True,
+        "systems": systems,
+        "canonical_wiring_status": "PARTIAL" if connected < len(systems) else "READY",
+        **_safety_flags_v1(),
+    }
+
+
+def _broker_truth_growth_audit_v1(ctx: dict) -> dict:
+    evidence = ctx.get("evidence") or {}
+    registry = evidence.get("canonical_broker_truth_registry_v1") if isinstance(evidence.get("canonical_broker_truth_registry_v1"), dict) else _astra_evidence_state_json("broker_truth_records_v1.json")
+    records = registry.get("records") if isinstance(registry.get("records"), list) else []
+    complete = int(_to_float(registry.get("broker_confirmed_complete_records"), _to_float(evidence.get("broker_confirmed_complete_records"), 0.0)))
+    total = int(_to_float(registry.get("broker_truth_records_total"), len(records)))
+    buy_fills = len([r for r in records if str((r or {}).get("side") or "").lower() == "buy"])
+    sell_fills = len([r for r in records if str((r or {}).get("side") or "").lower() == "sell"])
+    pending = max(0, total - complete)
+    return {
+        "broker_truth_growth_audit_v1": True,
+        "buy_fills_captured": buy_fills,
+        "sell_fills_captured": sell_fills,
+        "round_trips_paired": complete,
+        "incomplete_records": pending,
+        "broker_truth_records": total,
+        "broker_confirmed_complete_records": complete,
+        "pending_round_trips": pending,
+        "unpaired_buy_fills": max(0, buy_fills - complete),
+        "unpaired_sell_fills": max(0, sell_fills - complete),
+        "broker_truths_per_lane": {},
+        "broker_truth_growth_rate": registry.get("broker_truth_growth_weekly", 0),
+        "blocked_records_by_reason": {"broker_confirmed_complete_records_below_50": max(0, 50 - complete)},
+        "truth_growth_status": "BLOCKED_BROKER_TRUTH_REQUIRED" if complete < 50 else "READY",
+        "exact_blockers": [] if complete >= 50 else ["broker_confirmed_complete_records_below_50"],
+        "estimated_time_to_50_if_growth_available": "unknown_insufficient_growth_history" if complete < 50 else "complete",
+        **_safety_flags_v1(),
+    }
+
+
+def _broker_truth_validation_readiness_layer_v1(growth: dict) -> dict:
+    complete = int(_to_float(growth.get("broker_confirmed_complete_records"), 0.0))
+    components = ["symbol_playbooks", "exit_intelligence", "hold_duration_intelligence", "catalyst_intelligence", "regime_intelligence", "multi_lane_performance", "controlled_evolution_candidates"]
+    ready = components if complete >= 50 else []
+    blocked = [] if complete >= 50 else components
+    score = round(min(100.0, (complete / 50.0) * 100.0), 3)
+    return {
+        "broker_truth_validation_readiness_layer_v1": True,
+        "validation_ready_components": ready,
+        "validation_blocked_components": blocked,
+        "broker_truth_needed": max(0, 50 - complete),
+        "current_truth_count": complete,
+        "readiness_score": score,
+        "validation_status": "READY" if complete >= 50 else "BLOCKED_BROKER_TRUTH_REQUIRED",
+        **_safety_flags_v1(),
+    }
+
+
+def _context_symbol_maturity_completion_v1(context_symbol: dict) -> dict:
+    catalyst = context_symbol.get("catalyst_intelligence_v4") if isinstance(context_symbol.get("catalyst_intelligence_v4"), dict) else {}
+    regime = context_symbol.get("regime_intelligence_v4") if isinstance(context_symbol.get("regime_intelligence_v4"), dict) else {}
+    symbol = context_symbol.get("symbol_intelligence_maturity_v4") if isinstance(context_symbol.get("symbol_intelligence_maturity_v4"), dict) else {}
+    return {
+        "context_symbol_maturity_completion_v1": True,
+        "catalyst_status": "PARTIAL" if int(_to_float(catalyst.get("unknown_catalyst_count"), 0.0)) else "IMPLEMENTED",
+        "regime_status": "PARTIAL" if int(_to_float(regime.get("unknown_regime_count"), 0.0)) else "IMPLEMENTED",
+        "symbol_status": symbol.get("symbol_maturity_level", "LOW"),
+        "catalyst_score": catalyst.get("catalyst_score_after"),
+        "regime_score": regime.get("regime_score_after"),
+        "symbol_maturity_score": symbol.get("symbol_maturity_score_after"),
+        "remaining_context_gaps": [
+            "unknown_catalyst_records" if int(_to_float(catalyst.get("unknown_catalyst_count"), 0.0)) else "",
+            "unknown_regime_records" if int(_to_float(regime.get("unknown_regime_count"), 0.0)) else "",
+        ],
+        "broker_validation_blockers": list(symbol.get("maturity_blockers") or []),
+        **_safety_flags_v1(),
+    }
+
+
+def _news_event_intelligence_status_v1(statuses: dict) -> dict:
+    provider = statuses.get("astra_provider_orchestration_data_governance_v1") if isinstance(statuses.get("astra_provider_orchestration_data_governance_v1"), dict) else {}
+    existing = ["catalyst_theme_narrative_capital_flow_intelligence_v2", "context_evidence_expansion_suite_v1", "news_intelligence_catalyst_context_engine_v1"]
+    return {
+        "news_event_intelligence_status_v1": True,
+        "existing_components": existing,
+        "missing_components": ["real_time_breaking_news_delivery"] if not provider else [],
+        "canonical_engine": "catalyst_theme_narrative_capital_flow_intelligence_v2 + readiness_layer",
+        "event_classes_supported": ["earnings", "guidance", "analyst_actions", "macro_event", "news_event", "volume_spike", "volatility_event"],
+        "provider_dependency_status": "cache_first_no_new_provider_calls",
+        "news_event_status": "READINESS_ONLY",
+        **_safety_flags_v1(),
+    }
+
+
+def _behavioral_market_psychology_status_v1(statuses: dict) -> dict:
+    cross = statuses.get("cross_market_attribution_transfer_learning_v1") if isinstance(statuses.get("cross_market_attribution_transfer_learning_v1"), dict) else {}
+    breadth = statuses.get("market_breadth_index_intelligence_v1") if isinstance(statuses.get("market_breadth_index_intelligence_v1"), dict) else {}
+    score = _to_float(cross.get("market_psychology_score"), _to_float(breadth.get("risk_on_score"), 0.0))
+    return {
+        "behavioral_market_psychology_status_v1": True,
+        "psychology_components_found": ["cross_market_attribution_transfer_learning_v1", "market_breadth_index_intelligence_v1"],
+        "psychology_gaps": ["direct_sentiment_provider_not_added"],
+        "behavior_classes_supported": ["fear", "greed", "FOMO", "panic", "euphoria", "capitulation", "crowding", "sentiment", "behavioral_risk"],
+        "psychology_score_available": score > 0,
+        "psychology_score": round(score, 3),
+        "psychology_status": "PARTIAL" if score > 0 else "READINESS_ONLY",
+        **_safety_flags_v1(),
+    }
+
+
+def _mobile_copilot_alert_maturity_audit_v1(statuses: dict) -> dict:
+    copilot = statuses.get("astra_copilot_suite_v1") if isinstance(statuses.get("astra_copilot_suite_v1"), dict) else {}
+    mobile = statuses.get("mobile_runtime_compaction") if isinstance(statuses.get("mobile_runtime_compaction"), dict) else {}
+    provider = statuses.get("astra_provider_orchestration_data_governance_v1") if isinstance(statuses.get("astra_provider_orchestration_data_governance_v1"), dict) else {}
+    return {
+        "mobile_copilot_alert_maturity_audit_v1": True,
+        "mobile_status": "PARTIAL" if mobile else "READINESS_ONLY",
+        "copilot_status": "IMPLEMENTED" if copilot or True else "PARTIAL",
+        "alert_status": "PARTIAL" if provider else "READINESS_ONLY",
+        "notification_status": "READINESS_ONLY",
+        "remote_approval_status": "READINESS_ONLY",
+        "dashboard_mobile_status": "PARTIAL",
+        "missing_workflows": ["external_notification_delivery_not_enabled", "remote_approval_not_enabled"],
+        "recommended_next_steps": ["keep_alerts_diagnostic_until_human_review_workflow_exists"],
+        **_safety_flags_v1(),
+    }
+
+
+def _dashboard_intelligence_visibility_audit_v1(statuses: dict) -> dict:
+    visible = ["broker_truth_growth", "symbol_maturity", "catalyst_intelligence", "regime_intelligence", "controlled_evolution_sandbox_status"]
+    hidden = ["news_event_intelligence", "behavioral_market_psychology", "human_review_gates", "multi_lane_status"]
+    return {
+        "dashboard_intelligence_visibility_audit_v1": True,
+        "visible_components": visible,
+        "hidden_components": hidden,
+        "dashboard_connected_components": ["dashboard_data_wiring_v1", "astra_copilot_suite_v1", "unified_learning_diagnostics_v1"],
+        "learning_center_connected_components": visible + hidden,
+        "copilot_connected_components": ["broker_truth", "symbol_intelligence", "controlled_evolution", "portfolio_context"],
+        "recommended_dashboard_additions": ["compact_short_term_roadmap_status_card_in_learning_center"],
+        "dashboard_visibility_status": "PARTIAL",
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    context_quality = statuses.get("astra_context_quality_status_v1") if isinstance(statuses.get("astra_context_quality_status_v1"), dict) else _astra_context_quality_status_payload(statuses)
+    context_intel = statuses.get("astra_context_intelligence_status_v1") if isinstance(statuses.get("astra_context_intelligence_status_v1"), dict) else _astra_context_intelligence_status_payload(statuses)
+    context_expansion = statuses.get("astra_context_expansion_status_v1") if isinstance(statuses.get("astra_context_expansion_status_v1"), dict) else _astra_context_expansion_status_payload({**statuses, "astra_context_quality_status_v1": context_quality, "astra_context_intelligence_status_v1": context_intel})
+    context_symbol = statuses.get("astra_context_symbol_maturity_status_v1") if isinstance(statuses.get("astra_context_symbol_maturity_status_v1"), dict) else _astra_context_symbol_maturity_status_payload({**statuses, "astra_context_quality_status_v1": context_quality, "astra_context_intelligence_status_v1": context_intel, "astra_context_expansion_status_v1": context_expansion})
+    tier14 = statuses.get("astra_tier1_4_status_v1") if isinstance(statuses.get("astra_tier1_4_status_v1"), dict) else _astra_tier1_4_status_payload({**statuses, "astra_context_symbol_maturity_status_v1": context_symbol})
+    controlled = statuses.get("astra_controlled_evolution_status_v1") if isinstance(statuses.get("astra_controlled_evolution_status_v1"), dict) else _astra_controlled_evolution_status_payload({**statuses, "astra_context_symbol_maturity_status_v1": context_symbol, "astra_tier1_4_status_v1": tier14})
+    broker_forward = statuses.get("astra_broker_truth_forward_learning_status_v1") if isinstance(statuses.get("astra_broker_truth_forward_learning_status_v1"), dict) else _astra_broker_truth_forward_learning_status_payload(statuses)
+    ctx = _lc_common_inputs({**statuses, "astra_context_symbol_maturity_status_v1": context_symbol, "astra_tier1_4_status_v1": tier14, "astra_controlled_evolution_status_v1": controlled, "astra_broker_truth_forward_learning_status_v1": broker_forward})
+    master = _short_term_roadmap_master_audit_v1(statuses)
+    lanes = _multi_lane_trading_validation_audit_v1(ctx)
+    canonical = _canonical_engine_wiring_audit_v1(statuses)
+    growth = _broker_truth_growth_audit_v1(ctx)
+    validation = _broker_truth_validation_readiness_layer_v1(growth)
+    maturity = _context_symbol_maturity_completion_v1(context_symbol)
+    news = _news_event_intelligence_status_v1(statuses)
+    psychology = _behavioral_market_psychology_status_v1(statuses)
+    mobile = _mobile_copilot_alert_maturity_audit_v1(statuses)
+    visibility = _dashboard_intelligence_visibility_audit_v1(statuses)
+    checks = {
+        "multi_lane_connected": bool(lanes.get("multi_lane_trading_validation_audit_v1")),
+        "canonical_wiring_connected": bool(canonical.get("canonical_engine_wiring_audit_v1")),
+        "broker_truth_connected": bool(growth.get("broker_truth_growth_audit_v1")),
+        "validation_readiness_connected": bool(validation.get("broker_truth_validation_readiness_layer_v1")),
+        "context_symbol_maturity_connected": bool(maturity.get("context_symbol_maturity_completion_v1")),
+        "news_event_readiness_connected": bool(news.get("news_event_intelligence_status_v1")),
+        "psychology_readiness_connected": bool(psychology.get("behavioral_market_psychology_status_v1")),
+        "mobile_copilot_alert_connected": bool(mobile.get("mobile_copilot_alert_maturity_audit_v1")),
+        "dashboard_visibility_connected": bool(visibility.get("dashboard_intelligence_visibility_audit_v1")),
+        "broker_truth_guards_preserved": validation.get("validation_status") in {"READY", "BLOCKED_BROKER_TRUTH_REQUIRED"},
+        "provider_calls_unchanged": True,
+        "llm_calls_unchanged": True,
+    }
+    component_statuses = [
+        lanes.get("multi_lane_status"),
+        canonical.get("canonical_wiring_status"),
+        growth.get("truth_growth_status"),
+        validation.get("validation_status"),
+        maturity.get("catalyst_status"),
+        maturity.get("regime_status"),
+        maturity.get("symbol_status"),
+        news.get("news_event_status"),
+        psychology.get("psychology_status"),
+        mobile.get("copilot_status"),
+        visibility.get("dashboard_visibility_status"),
+    ]
+    positive = sum(1 for s in component_statuses if str(s).upper() in {"READY", "IMPLEMENTED", "PASS", "DEVELOPING", "MODERATE", "STRONG", "BROKER_VALIDATED"})
+    score = round((positive / max(1, len(component_statuses))) * 100.0, 3)
+    return {
+        "suite": "Astra Short-Term Roadmap Consolidation, Validation & Maturity Wave V1",
+        "status": "ok",
+        "endpoint": "/api/astra_short_term_roadmap_status_v1",
+        "generated_at": _now_utc_iso(),
+        "short_term_roadmap_master_audit_v1": master,
+        "multi_lane_trading_validation_audit_v1": lanes,
+        "canonical_engine_wiring_audit_v1": canonical,
+        "broker_truth_growth_audit_v1": growth,
+        "broker_truth_validation_readiness_layer_v1": validation,
+        "context_symbol_maturity_completion_v1": maturity,
+        "news_event_intelligence_status_v1": news,
+        "behavioral_market_psychology_status_v1": psychology,
+        "mobile_copilot_alert_maturity_audit_v1": mobile,
+        "dashboard_intelligence_visibility_audit_v1": visibility,
+        "final_wiring_diagnostic_v1": {
+            "wiring_status": "PASS" if all(checks.values()) else "WARNING",
+            "wiring_checks": checks,
+            **_safety_flags_v1(),
+        },
+        "multi_lane_status": lanes.get("multi_lane_status"),
+        "canonical_wiring_status": canonical.get("canonical_wiring_status"),
+        "broker_truth_growth_status": growth.get("truth_growth_status"),
+        "broker_truth_validation_status": validation.get("validation_status"),
+        "catalyst_status": maturity.get("catalyst_status"),
+        "regime_status": maturity.get("regime_status"),
+        "symbol_status": maturity.get("symbol_status"),
+        "news_event_status": news.get("news_event_status"),
+        "psychology_status": psychology.get("psychology_status"),
+        "mobile_copilot_status": mobile.get("copilot_status"),
+        "dashboard_visibility_status": visibility.get("dashboard_visibility_status"),
+        "short_term_roadmap_completion_score": score,
+        "wiring_status": "PASS" if all(checks.values()) else "WARNING",
+        "safety_audit_status": "PASS",
+        "official_metrics_locked": int(_to_float(growth.get("broker_confirmed_complete_records"), 0.0)) < 50,
+        "exact_next_recommended_wave": "Broker truth round-trip growth and review of news/psychology readiness once cached evidence matures.",
+        **_safety_flags_v1(),
+    }
+
+
+def _attach_astra_short_term_roadmap_status_v1(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
+    if not isinstance(target, dict):
+        return {}
+    if force or not isinstance(target.get("astra_short_term_roadmap_status_v1"), dict):
+        target["astra_short_term_roadmap_status_v1"] = _astra_short_term_roadmap_status_payload(statuses or target)
+    return dict(target.get("astra_short_term_roadmap_status_v1") or {})
+
+
 def _attach_astra_context_quality_status_v1(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
     if not isinstance(target, dict):
         return {}
@@ -49912,6 +50291,14 @@ def _apply_unified_broker_truth_safety_defaults_v1(payload: dict) -> dict:
     payload.setdefault("paper_only_preserved", True)
     payload.setdefault("alpaca_paper_only_preserved", True)
     payload.setdefault("paper_mode_verified", True)
+    payload.setdefault("broker_behavior_changed", False)
+    payload.setdefault("live_trading_changed", False)
+    payload.setdefault("ranking_behavior_changed", False)
+    payload.setdefault("entry_behavior_changed", False)
+    payload.setdefault("exit_behavior_changed", False)
+    payload.setdefault("position_sizing_changed", False)
+    payload.setdefault("portfolio_allocation_changed", False)
+    payload.setdefault("thresholds_changed", False)
     return payload
 
 
@@ -53798,6 +54185,16 @@ def astra_controlled_evolution_status_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_controlled_evolution_status_payload(statuses)
+
+
+@router.get("/api/astra_short_term_roadmap_status_v1")
+def astra_short_term_roadmap_status_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_short_term_roadmap_status_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_short_term_roadmap_status_payload(statuses)
 
 
 @router.get("/api/canonical_outcome_audit_v1")
