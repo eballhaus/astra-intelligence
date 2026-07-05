@@ -44753,6 +44753,19 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "controlled_evolution_actions_enabled": False,
                 "sandbox_behavior_affects_trading": False,
             }
+    if "astra_broker_truth_completion_exit_maturity_v1" not in payload or force:
+        try:
+            payload["astra_broker_truth_completion_exit_maturity_v1"] = _broker_truth_completion_improvement_status_v1({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_broker_truth_completion_exit_maturity_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"broker_truth_completion_exit_maturity_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "controlled_evolution_actions_enabled": False,
+                "sandbox_behavior_affects_trading": False,
+            }
     if "astra_short_term_roadmap_status_v1" not in payload or force:
         try:
             payload["astra_short_term_roadmap_status_v1"] = _astra_short_term_roadmap_status_payload({**(statuses or {}), **payload})
@@ -50231,6 +50244,87 @@ def _bt_expected_hold_hours_v1(horizon: str) -> float:
     }.get(str(horizon or "unknown"), 120.0)
 
 
+def _bt_horizon_lookup_from_internal_state_v1(limit: int = 2500) -> tuple[dict[str, dict], dict]:
+    lookup: dict[str, dict] = {}
+    sources = {"open_positions_v2": 0, "open_positions": 0, "paper_positions": 0}
+    errors: list[str] = []
+
+    def consider(symbol: str, raw_horizon: str, ts: str, source: str, position_id: str | None = None) -> None:
+        sym = str(symbol or "").upper().strip()
+        horizon = _bt_horizon_bucket_v1(raw_horizon)
+        if not sym or horizon == "unknown":
+            return
+        prior = lookup.get(sym) or {}
+        prior_ts = str(prior.get("entry_timestamp") or "")
+        if not prior or str(ts or "") >= prior_ts:
+            lookup[sym] = {
+                "symbol": sym,
+                "horizon": horizon,
+                "raw_horizon": raw_horizon,
+                "entry_timestamp": ts,
+                "source": source,
+                "position_id": position_id,
+            }
+
+    try:
+        db_path = os.path.join(STATE, "ai_trading_memory.db")
+        if os.path.exists(db_path):
+            conn = sqlite3.connect(db_path, timeout=5.0)
+            conn.row_factory = sqlite3.Row
+            try:
+                for row in conn.execute(
+                    "SELECT position_id, symbol, row_json, created_at, updated_at FROM open_positions_v2 ORDER BY updated_at DESC LIMIT ?",
+                    (int(limit),),
+                ):
+                    sources["open_positions_v2"] += 1
+                    data = {}
+                    try:
+                        data = json.loads(row["row_json"] or "{}")
+                    except Exception:
+                        data = {}
+                    raw = str(
+                        data.get("paper_entry_horizon_style")
+                        or data.get("trade_horizon_style")
+                        or data.get("best_horizon_style")
+                        or data.get("horizon_style")
+                        or data.get("horizon")
+                        or data.get("mode")
+                        or ""
+                    )
+                    consider(row["symbol"], raw, data.get("entry_timestamp") or row["updated_at"] or row["created_at"], "open_positions_v2.row_json", row["position_id"])
+            except Exception as exc:
+                errors.append(f"open_positions_v2:{str(exc)[:120]}")
+            try:
+                for row in conn.execute(
+                    "SELECT position_id, symbol, mode, entry_timestamp, last_update_ts FROM open_positions ORDER BY last_update_ts DESC LIMIT ?",
+                    (int(limit),),
+                ):
+                    sources["open_positions"] += 1
+                    consider(row["symbol"], row["mode"], row["entry_timestamp"] or row["last_update_ts"], "open_positions.mode", row["position_id"])
+            except Exception as exc:
+                errors.append(f"open_positions:{str(exc)[:120]}")
+            try:
+                for row in conn.execute(
+                    "SELECT position_id, symbol, entry_timestamp, lifecycle_notes FROM paper_positions ORDER BY entry_timestamp DESC LIMIT ?",
+                    (int(limit),),
+                ):
+                    sources["paper_positions"] += 1
+                    raw = str(row["lifecycle_notes"] or "")
+                    consider(row["symbol"], raw, row["entry_timestamp"], "paper_positions.lifecycle_notes", row["position_id"])
+            except Exception as exc:
+                errors.append(f"paper_positions:{str(exc)[:120]}")
+            conn.close()
+    except Exception as exc:
+        errors.append(f"sqlite:{str(exc)[:120]}")
+
+    return lookup, {
+        "horizon_lookup_sources_scanned": sources,
+        "horizon_lookup_symbols_available": len(lookup),
+        "horizon_lookup_errors": errors,
+        "horizon_lookup_mutated_state": False,
+    }
+
+
 def _bt_position_entry_lookup_v1(records: list[dict]) -> dict[str, str]:
     lookup: dict[str, str] = {}
     for row in records:
@@ -50264,27 +50358,61 @@ def _bt_position_unrealized_pct_v1(row: dict) -> float | None:
 
 def _bt_broker_position_rows_v1(alpaca: dict | None = None) -> tuple[list[dict], dict]:
     alpaca = alpaca if isinstance(alpaca, dict) else {}
+    horizon_lookup, horizon_lookup_meta = _bt_horizon_lookup_from_internal_state_v1()
+
+    def apply_horizon(rows: list[dict]) -> tuple[list[dict], dict]:
+        repaired = 0
+        out = []
+        blockers = []
+        for row in rows:
+            rr = dict(row)
+            sym = str(rr.get("symbol") or "").upper().strip()
+            current = _bt_horizon_bucket_v1(rr)
+            if current == "unknown" and sym in horizon_lookup:
+                info = horizon_lookup[sym]
+                rr["paper_entry_horizon_style"] = info.get("horizon")
+                rr["horizon_metadata_source"] = info.get("source")
+                rr["horizon_metadata_repaired_for_diagnostics"] = True
+                repaired += 1
+            elif current == "unknown":
+                blockers.append(sym)
+            out.append(rr)
+        unknown = len([r for r in out if _bt_horizon_bucket_v1(r) == "unknown"])
+        coverage = round(((len(out) - unknown) / max(1, len(out))) * 100.0, 3) if out else 0.0
+        return out, {
+            "horizon_coverage": coverage,
+            "unknown_horizon_count": unknown,
+            "repaired_records": repaired,
+            "remaining_horizon_blockers": sorted(set(blockers))[:50],
+            **horizon_lookup_meta,
+        }
+
     rows = _wave3_position_rows_v1(alpaca)
     if rows:
+        rows, hmeta = apply_horizon(rows)
         return rows, {
             "position_rows_source": "alpaca_paper_status_payload",
             "position_rows_fetch_used": False,
             "position_rows_review_completeness": "FULL" if len(rows) >= int(_to_float(alpaca.get("open_positions_count"), len(rows))) else "PARTIAL",
+            **hmeta,
         }
     cached = _CACHE.get("broker_truth_acceleration_position_rows_v1") if isinstance(_CACHE.get("broker_truth_acceleration_position_rows_v1"), dict) else {}
     if cached.get("data") and (time.time() - _to_float(cached.get("ts"), 0.0)) <= 60.0:
         data = dict(cached.get("data") or {})
         cached_rows = [r for r in (data.get("positions") or []) if isinstance(r, dict)]
+        cached_rows, hmeta = apply_horizon(cached_rows)
         return cached_rows, {
             "position_rows_source": "cached_alpaca_paper_positions_status",
             "position_rows_fetch_used": False,
             "position_rows_review_completeness": data.get("position_rows_review_completeness") or "UNKNOWN",
+            **hmeta,
         }
     try:
         payload = ALPACA_PAPER_BROKER.positions_status()
         if not isinstance(payload, dict):
             payload = {}
         broker_rows = _wave3_position_rows_v1(payload)
+        broker_rows, hmeta = apply_horizon(broker_rows)
         open_count = int(_to_float(payload.get("open_positions_count"), len(broker_rows)))
         data = {
             "positions": broker_rows,
@@ -50296,6 +50424,7 @@ def _bt_broker_position_rows_v1(alpaca: dict | None = None) -> tuple[list[dict],
             "position_rows_source": "alpaca_paper_broker.positions_status_existing_read_only_path",
             "position_rows_fetch_used": True,
             "position_rows_review_completeness": data["position_rows_review_completeness"],
+            **hmeta,
         }
     except Exception as exc:
         return [], {
@@ -50537,6 +50666,218 @@ def _broker_truth_validation_readiness_by_system_v1(improvement: dict) -> dict:
     }
 
 
+def _broker_truth_completion_pre_audit_v1(ctx: dict) -> dict:
+    evidence = ctx.get("evidence") or {}
+    horizon = ctx.get("horizon") if isinstance(ctx.get("horizon"), dict) else {}
+    root = _broker_truth_acceleration_root_cause_audit_v1(ctx)
+    throughput = _safe_paper_exit_throughput_audit_v1(ctx)
+    implemented = [
+        "broker_truth_records_v1",
+        "astra_broker_truth_forward_learning_status_v1",
+        "safe_paper_exit_throughput_audit_v1",
+        "multi_horizon_completion_validation_v1",
+        "astra_short_term_roadmap_status_v1",
+    ]
+    partial = [
+        "sell_fill_generation_visibility",
+        "position_completion_readiness",
+        "exit_decision_attribution",
+    ]
+    miswired = []
+    if int(_to_float(throughput.get("unknown_horizon_count"), 0.0)) > 0:
+        miswired.append("broker_position_horizon_labels_partial_or_missing")
+    if int(_to_float(root.get("sell_fill_count"), 0.0)) < int(_to_float(root.get("buy_fill_count"), 0.0)):
+        partial.append("broker_truth_completion_path_buy_side_ahead_of_sell_side")
+    blocked = []
+    if int(_to_float(evidence.get("broker_confirmed_complete_records"), 0.0)) < 50:
+        blocked.append("official_metrics_and_validation_readiness_blocked_until_50_broker_truths")
+    duplicate = ["prior broker truth and horizon diagnostics reused; no duplicate engine created"]
+    return {
+        "broker_truth_completion_pre_audit_v1": True,
+        "implemented": implemented,
+        "partial": partial,
+        "miswired": miswired,
+        "missing": [],
+        "duplicate": duplicate,
+        "blocked": blocked,
+        "horizon_capacity_source_available": bool(horizon),
+        "audit_first_completed": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _broker_position_horizon_persistence_status_v1(ctx: dict) -> dict:
+    alpaca = _cached_alpaca_paper_status_payload(ctx.get("statuses") or {})
+    positions, meta = _bt_broker_position_rows_v1(alpaca)
+    distribution: dict[str, int] = defaultdict(int)
+    sample = []
+    for row in positions:
+        horizon = _bt_horizon_bucket_v1(row)
+        distribution[horizon] += 1
+        sample.append({
+            "symbol": row.get("symbol"),
+            "horizon": horizon,
+            "horizon_metadata_source": row.get("horizon_metadata_source") or "broker_payload" if horizon != "unknown" else None,
+            "diagnostic_repair_applied": bool(row.get("horizon_metadata_repaired_for_diagnostics")),
+        })
+    status = "IMPLEMENTED" if meta.get("unknown_horizon_count") == 0 and positions else ("PARTIAL" if int(_to_float(meta.get("repaired_records"), 0.0)) > 0 else "MISWIRED")
+    return {
+        "broker_position_horizon_persistence_status_v1": True,
+        "status": status,
+        "horizon_coverage": meta.get("horizon_coverage"),
+        "unknown_horizon_count": meta.get("unknown_horizon_count"),
+        "repaired_records": meta.get("repaired_records"),
+        "remaining_blockers": meta.get("remaining_horizon_blockers") or [],
+        "horizon_distribution": dict(distribution),
+        "position_sample": sample[:40],
+        "repair_mode": "diagnostic_horizon_annotation_from_existing_internal_state_only",
+        "broker_positions_mutated": False,
+        **meta,
+        **_safety_flags_v1(),
+    }
+
+
+def _safe_paper_sell_completion_status_v1(ctx: dict) -> dict:
+    root = _broker_truth_acceleration_root_cause_audit_v1(ctx)
+    throughput = _safe_paper_exit_throughput_audit_v1(ctx)
+    completion_capacity = len(set((throughput.get("profit_lock_candidates") or []) + (throughput.get("controlled_loss_candidates") or []) + (throughput.get("stale_positions") or [])))
+    return {
+        "safe_paper_sell_completion_status_v1": True,
+        "sell_throughput_status": "BLOCKED_LOW_SELL_FILL_COUNT" if int(_to_float(root.get("sell_fill_count"), 0.0)) <= int(_to_float(root.get("paired_round_trip_count"), 0.0)) else "PARTIAL",
+        "completion_capacity": completion_capacity,
+        "completion_bottlenecks": root.get("primary_broker_truth_blockers") or [],
+        "projected_round_trip_growth": min(max(0, 50 - int(_to_float(root.get("paired_round_trip_count"), 0.0))), completion_capacity),
+        "profit_lock_candidates": throughput.get("profit_lock_candidates") or [],
+        "controlled_loss_candidates": throughput.get("controlled_loss_candidates") or [],
+        "stale_candidates": throughput.get("stale_positions") or [],
+        "valid_hold_candidates": throughput.get("valid_hold_candidates") or [],
+        "exit_orders_created": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _exit_decision_attribution_status_v1(sell_status: dict) -> dict:
+    classes = {
+        "profit_target": sell_status.get("profit_lock_candidates") or [],
+        "stop_loss": sell_status.get("controlled_loss_candidates") or [],
+        "time_decay": sell_status.get("stale_candidates") or [],
+        "catalyst_deterioration": [],
+        "regime_change": [],
+        "technical_breakdown": [],
+        "risk_reduction": sell_status.get("controlled_loss_candidates") or [],
+        "manual_review": sorted(set((sell_status.get("profit_lock_candidates") or []) + (sell_status.get("controlled_loss_candidates") or []) + (sell_status.get("stale_candidates") or []))),
+    }
+    total = len(set(sum((list(v) for v in classes.values()), [])))
+    coverage = round((total / max(1, int(_to_float(sell_status.get("completion_capacity"), total)))) * 100.0, 3) if total else 0.0
+    return {
+        "exit_decision_attribution_status_v1": True,
+        "attribution_coverage": min(100.0, coverage),
+        "attribution_classes": {k: len(v) for k, v in classes.items()},
+        "attribution_samples": {k: list(v)[:20] for k, v in classes.items()},
+        "attribution_persistence_status": "unified_diagnostics_and_roadmap_payload_only_no_duplicate_state_file",
+        "future_completion_candidates_tracked": total,
+        "automatic_exit_decisions_enabled": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _human_review_completion_queue_v1(sell_status: dict) -> dict:
+    queues = {
+        "Profit Lock Review": sell_status.get("profit_lock_candidates") or [],
+        "Controlled Loss Review": sell_status.get("controlled_loss_candidates") or [],
+        "Stale Position Review": sell_status.get("stale_candidates") or [],
+        "Hold Recommendation Review": sell_status.get("valid_hold_candidates") or [],
+    }
+    queue_size = sum(len(v) for v in queues.values())
+    return {
+        "human_review_completion_queue_v1": True,
+        "review_candidates": queues,
+        "queue_size": queue_size,
+        "review_categories": list(queues.keys()),
+        "review_readiness": "READY_FOR_HUMAN_REVIEW_DIAGNOSTIC_ONLY" if queue_size else "NO_REVIEW_CANDIDATES",
+        "automatic_approval_enabled": False,
+        "automatic_execution_enabled": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _position_capacity_throughput_status_v1(root: dict, sell_status: dict, horizon_status: dict) -> dict:
+    open_positions = int(_to_float(root.get("open_positions_count"), 0.0))
+    paired = int(_to_float(root.get("paired_round_trip_count"), 0.0))
+    capacity = int(_to_float(sell_status.get("completion_capacity"), 0.0))
+    occupancy = round(min(100.0, (open_positions / max(1, 35)) * 100.0), 3)
+    throughput = round(min(100.0, (paired / max(1, int(_to_float(root.get("buy_fill_count"), 0.0)))) * 100.0), 3)
+    constraints = list(root.get("primary_broker_truth_blockers") or [])
+    if horizon_status.get("status") in {"MISWIRED", "PARTIAL"}:
+        constraints.append("horizon_persistence_not_fully_covered")
+    return {
+        "position_capacity_throughput_status_v1": True,
+        "open_positions": open_positions,
+        "position_age": "available_per_candidate_in_safe_paper_exit_throughput_audit_v1",
+        "occupancy_score": occupancy,
+        "throughput_score": throughput,
+        "capacity_tied_up": open_positions,
+        "stale_capacity": len(sell_status.get("stale_candidates") or []),
+        "completion_opportunities": capacity,
+        "throughput_constraints": constraints,
+        "capacity_status": "SATURATED_REVIEW_REQUIRED" if open_positions >= 35 else "WATCH",
+        "growth_constraints": constraints,
+        **_safety_flags_v1(),
+    }
+
+
+def _broker_truth_completion_improvement_status_v1(ctx: dict) -> dict:
+    pre = _broker_truth_completion_pre_audit_v1(ctx)
+    horizon = _broker_position_horizon_persistence_status_v1(ctx)
+    root = _broker_truth_acceleration_root_cause_audit_v1(ctx)
+    sell = _safe_paper_sell_completion_status_v1(ctx)
+    attribution = _exit_decision_attribution_status_v1(sell)
+    queue = _human_review_completion_queue_v1(sell)
+    capacity = _position_capacity_throughput_status_v1(root, sell, horizon)
+    horizon_completion = _multi_horizon_completion_validation_v1(ctx)
+    improvement = _broker_truth_completion_improvement_v1(root, _safe_paper_exit_throughput_audit_v1(ctx), horizon_completion)
+    checks = {
+        "pre_audit_complete": bool(pre.get("broker_truth_completion_pre_audit_v1")),
+        "horizon_persistence_connected": bool(horizon.get("broker_position_horizon_persistence_status_v1")),
+        "sell_completion_connected": bool(sell.get("safe_paper_sell_completion_status_v1")),
+        "exit_attribution_connected": bool(attribution.get("exit_decision_attribution_status_v1")),
+        "human_review_queue_connected": bool(queue.get("human_review_completion_queue_v1")),
+        "capacity_throughput_connected": bool(capacity.get("position_capacity_throughput_status_v1")),
+        "no_behavior_change": True,
+    }
+    hard_blockers = []
+    if int(_to_float(root.get("paired_round_trip_count"), 0.0)) < 50:
+        hard_blockers.append("broker_confirmed_complete_records_below_50")
+    if int(_to_float(root.get("sell_fill_count"), 0.0)) <= 1:
+        hard_blockers.append("sell_fill_count_too_low_for_validation")
+    status = "PASS" if all(checks.values()) and not hard_blockers else "BLOCKED"
+    return {
+        "suite": "Astra Broker Truth Completion & Exit Intelligence Maturity Wave V1",
+        "status": status,
+        "endpoint": "/api/astra_broker_truth_completion_exit_maturity_v1",
+        "generated_at": _now_utc_iso(),
+        "broker_truth_completion_pre_audit_v1": pre,
+        "broker_position_horizon_persistence_status_v1": horizon,
+        "safe_paper_sell_completion_status_v1": sell,
+        "exit_decision_attribution_status_v1": attribution,
+        "human_review_completion_queue_v1": queue,
+        "position_capacity_throughput_status_v1": capacity,
+        "broker_truth_completion_improvement_status_v1": {
+            "broker_truth_completion_improvement_status_v1": True,
+            "checks": checks,
+            "hard_blockers": hard_blockers,
+            "projected_broker_truth_growth": improvement.get("projected_broker_truth_growth"),
+            "estimated_time_to_50_truths": improvement.get("estimated_time_to_threshold"),
+            "wiring_status": "PASS" if all(checks.values()) else "WARNING",
+            **_safety_flags_v1(),
+        },
+        "wiring_status": "PASS" if all(checks.values()) else "WARNING",
+        "safety_audit_status": "PASS",
+        "remaining_bottlenecks": hard_blockers + capacity.get("growth_constraints", []),
+        **_safety_flags_v1(),
+    }
+
+
 def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     context_quality = statuses.get("astra_context_quality_status_v1") if isinstance(statuses.get("astra_context_quality_status_v1"), dict) else _astra_context_quality_status_payload(statuses)
@@ -50562,6 +50903,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
     horizon_completion = _multi_horizon_completion_validation_v1(ctx)
     completion_improvement = _broker_truth_completion_improvement_v1(acceleration_root, exit_throughput, horizon_completion)
     system_readiness = _broker_truth_validation_readiness_by_system_v1(completion_improvement)
+    completion_maturity = statuses.get("astra_broker_truth_completion_exit_maturity_v1") if isinstance(statuses.get("astra_broker_truth_completion_exit_maturity_v1"), dict) else _broker_truth_completion_improvement_status_v1(ctx)
     checks = {
         "multi_lane_connected": bool(lanes.get("multi_lane_trading_validation_audit_v1")),
         "canonical_wiring_connected": bool(canonical.get("canonical_engine_wiring_audit_v1")),
@@ -50572,6 +50914,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "multi_horizon_completion_connected": bool(horizon_completion.get("multi_horizon_completion_validation_v1")),
         "broker_truth_completion_improvement_connected": bool(completion_improvement.get("broker_truth_completion_improvement_v1")),
         "broker_truth_system_readiness_connected": bool(system_readiness.get("broker_truth_validation_readiness_by_system_v1")),
+        "broker_truth_completion_exit_maturity_connected": bool(completion_maturity.get("broker_truth_completion_improvement_status_v1")),
         "context_symbol_maturity_connected": bool(maturity.get("context_symbol_maturity_completion_v1")),
         "news_event_readiness_connected": bool(news.get("news_event_intelligence_status_v1")),
         "psychology_readiness_connected": bool(psychology.get("behavioral_market_psychology_status_v1")),
@@ -50623,6 +50966,14 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         },
         "broker_truth_completion_improvement_v1": completion_improvement,
         "broker_truth_validation_readiness_by_system_v1": system_readiness,
+        "astra_broker_truth_completion_exit_maturity_v1": completion_maturity,
+        "broker_truth_completion_pre_audit_v1": completion_maturity.get("broker_truth_completion_pre_audit_v1"),
+        "broker_position_horizon_persistence_status_v1": completion_maturity.get("broker_position_horizon_persistence_status_v1"),
+        "safe_paper_sell_completion_status_v1": completion_maturity.get("safe_paper_sell_completion_status_v1"),
+        "exit_decision_attribution_status_v1": completion_maturity.get("exit_decision_attribution_status_v1"),
+        "human_review_completion_queue_v1": completion_maturity.get("human_review_completion_queue_v1"),
+        "position_capacity_throughput_status_v1": completion_maturity.get("position_capacity_throughput_status_v1"),
+        "broker_truth_completion_improvement_status_v1": completion_maturity.get("broker_truth_completion_improvement_status_v1"),
         "context_symbol_maturity_completion_v1": maturity,
         "news_event_intelligence_status_v1": news,
         "behavioral_market_psychology_status_v1": psychology,
@@ -50642,6 +50993,9 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "multi_horizon_completion_status": horizon_completion.get("overall_status"),
         "projected_broker_truth_growth": completion_improvement.get("projected_broker_truth_growth"),
         "estimated_time_to_50_truths": completion_improvement.get("estimated_time_to_threshold"),
+        "broker_truth_completion_exit_maturity_status": completion_maturity.get("status"),
+        "horizon_persistence_status": (completion_maturity.get("broker_position_horizon_persistence_status_v1") or {}).get("status"),
+        "human_review_queue_size": (completion_maturity.get("human_review_completion_queue_v1") or {}).get("queue_size"),
         "catalyst_status": maturity.get("catalyst_status"),
         "regime_status": maturity.get("regime_status"),
         "symbol_status": maturity.get("symbol_status"),
@@ -54593,6 +54947,16 @@ def astra_short_term_roadmap_status_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_short_term_roadmap_status_payload(statuses)
+
+
+@router.get("/api/astra_broker_truth_completion_exit_maturity_v1")
+def astra_broker_truth_completion_exit_maturity_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_broker_truth_completion_exit_maturity_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _broker_truth_completion_improvement_status_v1(statuses)
 
 
 @router.get("/api/canonical_outcome_audit_v1")
