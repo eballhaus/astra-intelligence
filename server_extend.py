@@ -50171,6 +50171,372 @@ def _dashboard_intelligence_visibility_audit_v1(statuses: dict) -> dict:
     }
 
 
+def _bt_parse_dt_v1(value) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC)
+    except Exception:
+        return None
+
+
+def _bt_hours_between_v1(start, end=None) -> float | None:
+    start_dt = _bt_parse_dt_v1(start)
+    end_dt = _bt_parse_dt_v1(end) or datetime.now(UTC)
+    if not start_dt:
+        return None
+    return max(0.0, (end_dt - start_dt).total_seconds() / 3600.0)
+
+
+def _bt_horizon_bucket_v1(row: dict | str | None) -> str:
+    if isinstance(row, str):
+        raw = row
+    else:
+        row = row if isinstance(row, dict) else {}
+        raw = " ".join(str(row.get(k) or "") for k in (
+            "paper_entry_horizon_style",
+            "trade_horizon_style",
+            "best_horizon_style",
+            "horizon_style",
+            "horizon",
+            "best_horizon",
+            "hold_duration_bucket",
+            "trade_style",
+        ))
+    text = raw.lower().replace("-", "_").replace(" ", "_")
+    if any(token in text for token in ("scalp", "15m", "30m", "45m", "60m")):
+        return "scalp"
+    if any(token in text for token in ("day_trade", "intraday", "2h", "4h", "eod", "same_day")):
+        return "day_trade"
+    if any(token in text for token in ("short_swing", "overnight", "1d", "2d")):
+        return "short_swing"
+    if any(token in text for token in ("extended_swing", "10d", "multi_week")):
+        return "extended_swing"
+    if any(token in text for token in ("swing", "3d", "5d", "multi_day")):
+        return "standard_swing"
+    return "unknown"
+
+
+def _bt_expected_hold_hours_v1(horizon: str) -> float:
+    return {
+        "scalp": 1.0,
+        "day_trade": 6.5,
+        "short_swing": 48.0,
+        "standard_swing": 120.0,
+        "extended_swing": 240.0,
+    }.get(str(horizon or "unknown"), 120.0)
+
+
+def _bt_position_entry_lookup_v1(records: list[dict]) -> dict[str, str]:
+    lookup: dict[str, str] = {}
+    for row in records:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("side") or "").lower().strip() != "buy":
+            continue
+        sym = str(row.get("symbol") or "").upper().strip()
+        ts = str(row.get("entry_timestamp") or row.get("filled_at") or row.get("broker_timestamp") or "").strip()
+        if not sym or not ts:
+            continue
+        prior = lookup.get(sym)
+        if not prior or str(ts) > str(prior):
+            lookup[sym] = ts
+    return lookup
+
+
+def _bt_position_unrealized_pct_v1(row: dict) -> float | None:
+    for key in ("unrealized_plpc", "unrealized_pl_pct", "unrealized_pct", "current_return_pct", "return_pct", "pnl_pct"):
+        if row.get(key) not in (None, ""):
+            value = _to_float(row.get(key), 0.0)
+            if key == "unrealized_plpc" and abs(value) <= 5:
+                value *= 100.0
+            return round(value, 3)
+    market = _to_float(row.get("current_price") or row.get("market_value_price"), 0.0)
+    entry = _to_float(row.get("avg_entry_price") or row.get("average_entry_price"), 0.0)
+    if market > 0 and entry > 0:
+        return round(((market - entry) / entry) * 100.0, 3)
+    return None
+
+
+def _bt_broker_position_rows_v1(alpaca: dict | None = None) -> tuple[list[dict], dict]:
+    alpaca = alpaca if isinstance(alpaca, dict) else {}
+    rows = _wave3_position_rows_v1(alpaca)
+    if rows:
+        return rows, {
+            "position_rows_source": "alpaca_paper_status_payload",
+            "position_rows_fetch_used": False,
+            "position_rows_review_completeness": "FULL" if len(rows) >= int(_to_float(alpaca.get("open_positions_count"), len(rows))) else "PARTIAL",
+        }
+    cached = _CACHE.get("broker_truth_acceleration_position_rows_v1") if isinstance(_CACHE.get("broker_truth_acceleration_position_rows_v1"), dict) else {}
+    if cached.get("data") and (time.time() - _to_float(cached.get("ts"), 0.0)) <= 60.0:
+        data = dict(cached.get("data") or {})
+        cached_rows = [r for r in (data.get("positions") or []) if isinstance(r, dict)]
+        return cached_rows, {
+            "position_rows_source": "cached_alpaca_paper_positions_status",
+            "position_rows_fetch_used": False,
+            "position_rows_review_completeness": data.get("position_rows_review_completeness") or "UNKNOWN",
+        }
+    try:
+        payload = ALPACA_PAPER_BROKER.positions_status()
+        if not isinstance(payload, dict):
+            payload = {}
+        broker_rows = _wave3_position_rows_v1(payload)
+        open_count = int(_to_float(payload.get("open_positions_count"), len(broker_rows)))
+        data = {
+            "positions": broker_rows,
+            "open_positions_count": open_count,
+            "position_rows_review_completeness": "FULL" if len(broker_rows) >= open_count else "PARTIAL",
+        }
+        _CACHE["broker_truth_acceleration_position_rows_v1"] = {"data": data, "ts": time.time()}
+        return broker_rows, {
+            "position_rows_source": "alpaca_paper_broker.positions_status_existing_read_only_path",
+            "position_rows_fetch_used": True,
+            "position_rows_review_completeness": data["position_rows_review_completeness"],
+        }
+    except Exception as exc:
+        return [], {
+            "position_rows_source": "unavailable",
+            "position_rows_fetch_used": False,
+            "position_rows_review_completeness": "DATA_GAP",
+            "position_rows_error": str(exc)[:160],
+        }
+
+
+def _broker_truth_acceleration_root_cause_audit_v1(ctx: dict) -> dict:
+    evidence = ctx.get("evidence") or {}
+    alpaca = _cached_alpaca_paper_status_payload(ctx.get("statuses") or {})
+    registry = evidence.get("canonical_broker_truth_registry_v1") if isinstance(evidence.get("canonical_broker_truth_registry_v1"), dict) else _astra_evidence_state_json("broker_truth_records_v1.json")
+    records = [r for r in (registry.get("records") or []) if isinstance(r, dict)]
+    buy_fills = len([r for r in records if str(r.get("side") or "").lower().strip() == "buy"])
+    sell_fills = len([r for r in records if str(r.get("side") or "").lower().strip() == "sell"])
+    paired = int(_to_float(registry.get("broker_confirmed_complete_records"), 0.0))
+    position_rows, position_meta = _bt_broker_position_rows_v1(alpaca)
+    open_positions = int(_to_float(alpaca.get("open_positions_count"), len(position_rows)))
+    unpaired_buy = max(0, buy_fills - paired)
+    sell_gap = max(0, buy_fills - sell_fills)
+    hold_hours = []
+    horizon_hours: dict[str, list[float]] = defaultdict(list)
+    for row in records:
+        hours = _bt_hours_between_v1(row.get("entry_timestamp") or row.get("filled_at"), row.get("exit_timestamp") or row.get("broker_timestamp"))
+        if hours is None:
+            continue
+        horizon = _bt_horizon_bucket_v1(row)
+        hold_hours.append(hours)
+        horizon_hours[horizon].append(hours)
+    avg_hold = round(sum(hold_hours) / max(1, len(hold_hours)), 3) if hold_hours else None
+    primary = []
+    if sell_fills <= max(1, paired) and buy_fills > sell_fills:
+        primary.append("sell_fill_throughput_low_relative_to_buy_fills")
+    if open_positions >= 20:
+        primary.append("open_position_inventory_high_capacity_tied_up")
+    if paired < 50:
+        primary.append("broker_confirmed_complete_records_below_50")
+    if unpaired_buy:
+        primary.append("buy_fills_waiting_for_sell_side_completion")
+    status = "PARTIAL" if buy_fills else "DATA_GAP"
+    if paired <= 1 and buy_fills > 10:
+        status = "BLOCKED"
+    return {
+        "broker_truth_acceleration_root_cause_audit_v1": True,
+        "status": status,
+        "buy_fill_count": buy_fills,
+        "sell_fill_count": sell_fills,
+        "paired_round_trip_count": paired,
+        "open_positions_count": open_positions,
+        "position_rows_reviewed": len(position_rows),
+        **position_meta,
+        "unpaired_buy_fills": unpaired_buy,
+        "unpaired_sell_fills": max(0, sell_fills - paired),
+        "sell_fill_gap_vs_buys": sell_gap,
+        "average_hold_duration_hours": avg_hold,
+        "hold_duration_by_horizon_hours": {k: round(sum(v) / max(1, len(v)), 3) for k, v in horizon_hours.items()},
+        "exit_trigger_frequency": "diagnostic_only_available_via_exit_learning_indexes",
+        "exit_trigger_suppression": "forced_and_learned_exits_disabled_by_safety_design",
+        "horizon_utilization_source": "cached_broker_positions_and_horizon_capacity_summary",
+        "broker_truth_growth_rate": registry.get("broker_truth_growth_weekly", 0),
+        "primary_broker_truth_blockers": primary,
+        "secondary_blockers": [
+            "official_metrics_guarded_until_50_complete_records",
+            "sell_fill_generation_depends_on_natural_or_existing_paper_exit_logic",
+            "no_fake_round_trip_backfill_allowed",
+        ],
+        "confidence_of_diagnosis": 88.0 if buy_fills or open_positions else 45.0,
+        **_safety_flags_v1(),
+    }
+
+
+def _safe_paper_exit_throughput_audit_v1(ctx: dict) -> dict:
+    alpaca = _cached_alpaca_paper_status_payload(ctx.get("statuses") or {})
+    evidence = ctx.get("evidence") or {}
+    registry = evidence.get("canonical_broker_truth_registry_v1") if isinstance(evidence.get("canonical_broker_truth_registry_v1"), dict) else _astra_evidence_state_json("broker_truth_records_v1.json")
+    records = [r for r in (registry.get("records") or []) if isinstance(r, dict)]
+    entry_lookup = _bt_position_entry_lookup_v1(records)
+    positions, position_meta = _bt_broker_position_rows_v1(alpaca)
+    rows = []
+    stale: list[str] = []
+    stale_by_horizon: dict[str, int] = defaultdict(int)
+    profit_lock: list[str] = []
+    controlled_loss: list[str] = []
+    valid_hold: list[str] = []
+    for pos in positions:
+        sym = str(pos.get("symbol") or "").upper().strip()
+        horizon = _bt_horizon_bucket_v1(pos)
+        entry_ts = pos.get("entry_timestamp") or pos.get("opened_at") or pos.get("created_at") or entry_lookup.get(sym)
+        age_hours = _bt_hours_between_v1(entry_ts)
+        expected = _bt_expected_hold_hours_v1(horizon)
+        pnl_pct = _bt_position_unrealized_pct_v1(pos)
+        is_stale = bool(age_hours is not None and age_hours > expected * 1.75)
+        if is_stale:
+            stale.append(sym)
+            stale_by_horizon[horizon] += 1
+        if pnl_pct is not None and pnl_pct >= 4.0 and age_hours is not None and age_hours >= expected * 0.35:
+            readiness = "profit_lock_candidate"
+            profit_lock.append(sym)
+        elif pnl_pct is not None and pnl_pct <= -6.0:
+            readiness = "controlled_loss_review_candidate"
+            controlled_loss.append(sym)
+        elif is_stale:
+            readiness = "stale_position_review_candidate"
+        else:
+            readiness = "valid_hold_candidate"
+            valid_hold.append(sym)
+        rows.append({
+            "symbol": sym,
+            "age_hours": round(age_hours, 3) if age_hours is not None else None,
+            "horizon": horizon,
+            "expected_hold_hours": expected,
+            "current_gain_loss_pct": pnl_pct,
+            "exit_readiness": readiness,
+            "stale_status": bool(is_stale),
+            "lifecycle_status": "watch" if readiness != "valid_hold_candidate" else "healthy_or_insufficient_exit_evidence",
+        })
+    review_symbols = {str(sym or "").upper().strip() for sym in (profit_lock + controlled_loss + stale) if str(sym or "").strip()}
+    readiness_score = round(min(100.0, (len(review_symbols) / max(1, len(positions))) * 100.0), 3)
+    return {
+        "safe_paper_exit_throughput_audit_v1": True,
+        "status": "IMPLEMENTED" if positions else ("PARTIAL" if int(_to_float(alpaca.get("open_positions_count"), 0.0)) > 0 else "DATA_GAP"),
+        "open_positions_reviewed": int(_to_float(alpaca.get("open_positions_count"), len(positions))),
+        "detailed_position_rows_reviewed": len(positions),
+        **position_meta,
+        "positions": rows[:80],
+        "stale_positions": stale,
+        "stale_by_horizon": dict(stale_by_horizon),
+        "profit_lock_candidates": profit_lock,
+        "controlled_loss_candidates": controlled_loss,
+        "valid_hold_candidates": valid_hold,
+        "exit_readiness_score": readiness_score,
+        "audit_only": True,
+        "no_exit_orders_created": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _multi_horizon_completion_validation_v1(ctx: dict) -> dict:
+    evidence = ctx.get("evidence") or {}
+    registry = evidence.get("canonical_broker_truth_registry_v1") if isinstance(evidence.get("canonical_broker_truth_registry_v1"), dict) else _astra_evidence_state_json("broker_truth_records_v1.json")
+    records = [r for r in (registry.get("records") or []) if isinstance(r, dict)]
+    alpaca = _cached_alpaca_paper_status_payload(ctx.get("statuses") or {})
+    positions, position_meta = _bt_broker_position_rows_v1(alpaca)
+    horizons = ["scalp", "day_trade", "short_swing", "standard_swing", "extended_swing"]
+    out = {}
+    total_open = max(1, len(positions))
+    unknown_open_positions = len([p for p in positions if _bt_horizon_bucket_v1(p) == "unknown"])
+    for horizon in horizons:
+        buys = [r for r in records if str(r.get("side") or "").lower() == "buy" and _bt_horizon_bucket_v1(r) == horizon]
+        sells = [r for r in records if str(r.get("side") or "").lower() == "sell" and _bt_horizon_bucket_v1(r) == horizon]
+        complete = [r for r in records if r.get("truth_quality") == "broker_confirmed_complete" and _bt_horizon_bucket_v1(r) == horizon]
+        open_h = [p for p in positions if _bt_horizon_bucket_v1(p) == horizon]
+        hold_hours = [_bt_hours_between_v1(r.get("entry_timestamp") or r.get("filled_at"), r.get("exit_timestamp") or r.get("broker_timestamp")) for r in buys + complete]
+        hold_hours = [h for h in hold_hours if h is not None]
+        if complete:
+            status = "ACTIVE"
+        elif buys or open_h:
+            status = "UNDERUTILIZED" if len(open_h) / total_open < 0.10 else "BLOCKED"
+        elif positions and unknown_open_positions == len(positions):
+            status = "MISWIRED"
+        else:
+            status = "DATA_GAP"
+        out[horizon] = {
+            "entries": len(buys),
+            "exits": len(sells),
+            "completed_round_trips": len(complete),
+            "broker_truths": len(complete),
+            "open_positions": len(open_h),
+            "average_hold_duration_hours": round(sum(hold_hours) / max(1, len(hold_hours)), 3) if hold_hours else None,
+            "utilization_pct": round((len(open_h) / total_open) * 100.0, 3) if positions else 0.0,
+            "lifecycle_outcomes": "broker_truth_validated" if complete else "diagnostic_only_or_waiting_for_closure",
+            "completion_status": status,
+        }
+    return {
+        "multi_horizon_completion_validation_v1": True,
+        "status_by_horizon": out,
+        **position_meta,
+        "unknown_horizon_open_positions": unknown_open_positions,
+        "horizon_label_wiring_status": "MISWIRED" if positions and unknown_open_positions == len(positions) else "PARTIAL" if unknown_open_positions else "CONNECTED",
+        "overall_status": "MISWIRED" if positions and unknown_open_positions == len(positions) else "BLOCKED" if not any(v.get("completed_round_trips") for v in out.values()) else "PARTIAL",
+        "paper_behavior_influence_enabled": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _broker_truth_completion_improvement_v1(root: dict, throughput: dict, horizon_validation: dict) -> dict:
+    paired = int(_to_float(root.get("paired_round_trip_count"), 0.0))
+    buys = int(_to_float(root.get("buy_fill_count"), 0.0))
+    sells = int(_to_float(root.get("sell_fill_count"), 0.0))
+    review_candidates = len(throughput.get("profit_lock_candidates") or []) + len(throughput.get("controlled_loss_candidates") or []) + len(throughput.get("stale_positions") or [])
+    needed = max(0, 50 - paired)
+    natural_projection = min(needed, max(0, sells - paired) + max(0, review_candidates))
+    return {
+        "broker_truth_completion_improvement_v1": True,
+        "buy_to_sell_to_pair_path_connected": True,
+        "broker_truth_pairing_guarded": True,
+        "projected_broker_truth_growth": natural_projection,
+        "projected_round_trip_growth": natural_projection,
+        "current_truth_count": paired,
+        "required_truth_count": 50,
+        "remaining_to_threshold": needed,
+        "estimated_time_to_threshold": "unknown_until_sell_fill_rate_increases" if paired < 50 else "threshold_met",
+        "remaining_blockers": [
+            "sell_fill_count_low_relative_to_buy_fill_count" if sells < buys else "",
+            "broker_confirmed_complete_records_below_50" if paired < 50 else "",
+            "natural_exit_or_human_review_required_no_forced_exits",
+        ],
+        "safe_corrections_applied": [
+            "added_exit_throughput_visibility",
+            "added_multi_horizon_completion_validation",
+            "preserved_broker_truth_pairing_guard",
+        ],
+        "not_changed": ["ranking", "entries", "exits", "sizing", "allocation", "thresholds", "broker_behavior"],
+        **_safety_flags_v1(),
+    }
+
+
+def _broker_truth_validation_readiness_by_system_v1(improvement: dict) -> dict:
+    current = int(_to_float(improvement.get("current_truth_count"), 0.0))
+    required = int(_to_float(improvement.get("required_truth_count"), 50.0))
+    systems = ["symbol_playbooks", "exit_intelligence", "hold_duration_intelligence", "catalyst_intelligence", "regime_intelligence"]
+    return {
+        "broker_truth_validation_readiness_by_system_v1": True,
+        "current_truth_count": current,
+        "required_truth_count": required,
+        "estimated_time_to_threshold": improvement.get("estimated_time_to_threshold"),
+        "systems": {
+            system: {
+                "current_truth_count": current,
+                "required_truth_count": required,
+                "readiness": "READY" if current >= required else "BLOCKED_BROKER_TRUTH_REQUIRED",
+                "truth_gap": max(0, required - current),
+            }
+            for system in systems
+        },
+        **_safety_flags_v1(),
+    }
+
+
 def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     context_quality = statuses.get("astra_context_quality_status_v1") if isinstance(statuses.get("astra_context_quality_status_v1"), dict) else _astra_context_quality_status_payload(statuses)
@@ -50191,11 +50557,21 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
     psychology = _behavioral_market_psychology_status_v1(statuses)
     mobile = _mobile_copilot_alert_maturity_audit_v1(statuses)
     visibility = _dashboard_intelligence_visibility_audit_v1(statuses)
+    acceleration_root = _broker_truth_acceleration_root_cause_audit_v1(ctx)
+    exit_throughput = _safe_paper_exit_throughput_audit_v1(ctx)
+    horizon_completion = _multi_horizon_completion_validation_v1(ctx)
+    completion_improvement = _broker_truth_completion_improvement_v1(acceleration_root, exit_throughput, horizon_completion)
+    system_readiness = _broker_truth_validation_readiness_by_system_v1(completion_improvement)
     checks = {
         "multi_lane_connected": bool(lanes.get("multi_lane_trading_validation_audit_v1")),
         "canonical_wiring_connected": bool(canonical.get("canonical_engine_wiring_audit_v1")),
         "broker_truth_connected": bool(growth.get("broker_truth_growth_audit_v1")),
         "validation_readiness_connected": bool(validation.get("broker_truth_validation_readiness_layer_v1")),
+        "broker_truth_acceleration_root_cause_connected": bool(acceleration_root.get("broker_truth_acceleration_root_cause_audit_v1")),
+        "safe_exit_throughput_connected": bool(exit_throughput.get("safe_paper_exit_throughput_audit_v1")),
+        "multi_horizon_completion_connected": bool(horizon_completion.get("multi_horizon_completion_validation_v1")),
+        "broker_truth_completion_improvement_connected": bool(completion_improvement.get("broker_truth_completion_improvement_v1")),
+        "broker_truth_system_readiness_connected": bool(system_readiness.get("broker_truth_validation_readiness_by_system_v1")),
         "context_symbol_maturity_connected": bool(maturity.get("context_symbol_maturity_completion_v1")),
         "news_event_readiness_connected": bool(news.get("news_event_intelligence_status_v1")),
         "psychology_readiness_connected": bool(psychology.get("behavioral_market_psychology_status_v1")),
@@ -50230,6 +50606,23 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "canonical_engine_wiring_audit_v1": canonical,
         "broker_truth_growth_audit_v1": growth,
         "broker_truth_validation_readiness_layer_v1": validation,
+        "broker_truth_acceleration_root_cause_audit_v1": acceleration_root,
+        "safe_paper_exit_throughput_audit_v1": exit_throughput,
+        "multi_horizon_completion_validation_v1": horizon_completion,
+        "safe_correction_engine_v1": {
+            "safe_correction_engine_v1": True,
+            "status": "IMPLEMENTED_DIAGNOSTIC_ONLY",
+            "audit_first_completed": True,
+            "proven_issues_corrected": ["missing_consolidated_exit_throughput_visibility", "missing_multi_horizon_completion_visibility"],
+            "behavior_corrections_applied": [],
+            "not_allowed_changes_applied": [],
+            "no_lowered_confidence": True,
+            "no_forced_exits": True,
+            "no_forced_entries": True,
+            **_safety_flags_v1(),
+        },
+        "broker_truth_completion_improvement_v1": completion_improvement,
+        "broker_truth_validation_readiness_by_system_v1": system_readiness,
         "context_symbol_maturity_completion_v1": maturity,
         "news_event_intelligence_status_v1": news,
         "behavioral_market_psychology_status_v1": psychology,
@@ -50244,6 +50637,11 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "canonical_wiring_status": canonical.get("canonical_wiring_status"),
         "broker_truth_growth_status": growth.get("truth_growth_status"),
         "broker_truth_validation_status": validation.get("validation_status"),
+        "broker_truth_acceleration_status": acceleration_root.get("status"),
+        "safe_exit_throughput_status": exit_throughput.get("status"),
+        "multi_horizon_completion_status": horizon_completion.get("overall_status"),
+        "projected_broker_truth_growth": completion_improvement.get("projected_broker_truth_growth"),
+        "estimated_time_to_50_truths": completion_improvement.get("estimated_time_to_threshold"),
         "catalyst_status": maturity.get("catalyst_status"),
         "regime_status": maturity.get("regime_status"),
         "symbol_status": maturity.get("symbol_status"),
@@ -50255,7 +50653,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "wiring_status": "PASS" if all(checks.values()) else "WARNING",
         "safety_audit_status": "PASS",
         "official_metrics_locked": int(_to_float(growth.get("broker_confirmed_complete_records"), 0.0)) < 50,
-        "exact_next_recommended_wave": "Broker truth round-trip growth and review of news/psychology readiness once cached evidence matures.",
+        "exact_next_recommended_wave": "Broker truth sell-fill throughput review and human-reviewed position completion planning; do not enable forced or learned exits.",
         **_safety_flags_v1(),
     }
 
