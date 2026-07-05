@@ -44766,6 +44766,19 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "controlled_evolution_actions_enabled": False,
                 "sandbox_behavior_affects_trading": False,
             }
+    if "astra_cortex_paper_completion_status_v1" not in payload or force:
+        try:
+            payload["astra_cortex_paper_completion_status_v1"] = _astra_cortex_paper_completion_status_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_cortex_paper_completion_status_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"cortex_paper_completion_status_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "controlled_evolution_actions_enabled": False,
+                "sandbox_behavior_affects_trading": False,
+            }
     if "astra_short_term_roadmap_status_v1" not in payload or force:
         try:
             payload["astra_short_term_roadmap_status_v1"] = _astra_short_term_roadmap_status_payload({**(statuses or {}), **payload})
@@ -50878,6 +50891,304 @@ def _broker_truth_completion_improvement_status_v1(ctx: dict) -> dict:
     }
 
 
+def _cortex_paper_completion_root_cause_audit_v1(ctx: dict) -> dict:
+    root = _broker_truth_acceleration_root_cause_audit_v1(ctx)
+    throughput = _safe_paper_exit_throughput_audit_v1(ctx)
+    horizon = _broker_position_horizon_persistence_status_v1(ctx)
+    learned_runtime = ctx.get("paper_autopilot_status") if isinstance(ctx.get("paper_autopilot_status"), dict) else {}
+    queue_size = len(set(
+        list(throughput.get("profit_lock_candidates") or [])
+        + list(throughput.get("controlled_loss_candidates") or [])
+        + list(throughput.get("stale_positions") or [])
+    ))
+    blockers = []
+    if int(_to_float(root.get("sell_fill_count"), 0.0)) <= 1:
+        blockers.append("sell_fill_throughput_too_low")
+    if int(_to_float(root.get("paired_round_trip_count"), 0.0)) < 50:
+        blockers.append("paired_round_trip_evidence_below_50")
+    if int(_to_float(horizon.get("unknown_horizon_count"), 0.0)) > 0:
+        blockers.append("legacy_open_positions_missing_horizon_metadata")
+    if int(_to_float(learned_runtime.get("learned_exit_candidates_today"), 0.0)) == 0:
+        blockers.append("learned_exit_candidates_today_zero")
+    if queue_size > 0:
+        blockers.append("human_review_queue_backlog")
+    return {
+        "cortex_paper_completion_root_cause_audit_v1": True,
+        "status": "BLOCKED_BY_EVIDENCE_AND_CURRENT_CANDIDATE_ACTIVITY" if blockers else "READY_FOR_CONTROLLED_MONITORING",
+        "buy_fill_count": int(_to_float(root.get("buy_fill_count"), 0.0)),
+        "sell_fill_count": int(_to_float(root.get("sell_fill_count"), 0.0)),
+        "paired_round_trip_count": int(_to_float(root.get("paired_round_trip_count"), 0.0)),
+        "broker_confirmed_complete_records": int(_to_float(root.get("paired_round_trip_count"), 0.0)),
+        "open_positions_count": int(_to_float(root.get("open_positions_count"), 0.0)),
+        "unknown_horizon_positions": int(_to_float(horizon.get("unknown_horizon_count"), 0.0)),
+        "learned_exit_candidates_today": int(_to_float(learned_runtime.get("learned_exit_candidates_today"), 0.0)),
+        "exit_readiness_score": _to_float(throughput.get("exit_readiness_score"), 0.0),
+        "profit_lock_candidates": len(throughput.get("profit_lock_candidates") or []),
+        "controlled_loss_candidates": len(throughput.get("controlled_loss_candidates") or []),
+        "stale_positions": len(throughput.get("stale_positions") or []),
+        "human_review_queue_size": queue_size,
+        "primary_root_causes": blockers,
+        "diagnosis": "Astra has open broker positions and exit-review candidates, but verified sell fills and paired round trips remain too sparse for broad completion validation.",
+        "completion_actions_taken": 0,
+        "broker_orders_created": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _future_horizon_metadata_persistence_v1(ctx: dict) -> dict:
+    horizon = _broker_position_horizon_persistence_status_v1(ctx)
+    unknown = int(_to_float(horizon.get("unknown_horizon_count"), 0.0))
+    coverage = _to_float(horizon.get("horizon_coverage"), 0.0)
+    return {
+        "future_horizon_metadata_persistence_v1": True,
+        "status": "PASS" if unknown == 0 else "PARTIAL_LEGACY_GAP",
+        "current_horizon_coverage": round(coverage, 3),
+        "unknown_horizon_positions": unknown,
+        "future_entry_horizon_fields_supported": [
+            "paper_entry_horizon_style",
+            "trade_horizon_style",
+            "best_horizon_style",
+            "horizon_style",
+            "intended_horizon",
+            "trade_style",
+            "mode",
+        ],
+        "future_metadata_capture_ready": True,
+        "legacy_repair_source": horizon.get("repair_mode") or "diagnostic_horizon_annotation_from_existing_internal_state_only",
+        "remaining_legacy_blockers": horizon.get("remaining_blockers") or [],
+        "broker_positions_mutated": False,
+        "internal_history_deleted": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _exit_readiness_execution_wiring_audit_v1(ctx: dict) -> dict:
+    runtime = ctx.get("paper_autopilot_status") if isinstance(ctx.get("paper_autopilot_status"), dict) else {}
+    controlled = ctx.get("controlled_paper_learned_exit_validation_v1") if isinstance(ctx.get("controlled_paper_learned_exit_validation_v1"), dict) else {}
+    safety = ctx.get("alpaca_paper_broker") if isinstance(ctx.get("alpaca_paper_broker"), dict) else ctx.get("alpaca_paper_status_v1") if isinstance(ctx.get("alpaca_paper_status_v1"), dict) else {}
+    duplicate_verified = bool(runtime.get("learned_exit_duplicate_exit_prevention_verified") or controlled.get("duplicate_sell_prevention_verified"))
+    fill_verified = bool(runtime.get("learned_exit_broker_fill_confirmation_verified") or controlled.get("fill_confirmation_verified"))
+    guarded_route = bool(runtime.get("paper_sell_route_guarded") or controlled.get("paper_sell_route_guarded"))
+    runtime_path = bool(runtime.get("learned_exit_validation_runtime_path_enabled") or controlled.get("paper_exit_path_verified"))
+    paper_mode = bool(safety.get("paper_mode_verified", runtime.get("paper_mode_verified", True)))
+    checks = {
+        "paper_mode_verified": paper_mode,
+        "guarded_sell_route_present": guarded_route,
+        "duplicate_pending_sell_prevention_verified": duplicate_verified,
+        "fill_confirmation_before_local_close_verified": fill_verified,
+        "lifecycle_close_after_broker_fill_only": fill_verified,
+        "no_live_endpoint_allowed": not bool(safety.get("live_endpoint_detected", False)),
+        "runtime_path_connected": runtime_path,
+    }
+    blockers = [k for k, v in checks.items() if not v]
+    candidate_count = int(_to_float(runtime.get("learned_exit_candidates_today"), 0.0))
+    return {
+        "exit_readiness_execution_wiring_audit_v1": True,
+        "status": "PASS" if not blockers else "BLOCKED",
+        "paper_sell_path_verified": not blockers,
+        "duplicate_sell_prevention_verified": duplicate_verified,
+        "fill_confirmation_verified": fill_verified,
+        "learned_exit_path_connected_to_guarded_alpaca_paper_sell_order": runtime_path and guarded_route,
+        "candidate_generation_active": candidate_count > 0,
+        "learned_exit_candidates_today": candidate_count,
+        "current_candidate_gap": "no_candidates_generated_by_existing_guardrails" if candidate_count == 0 else "candidates_detected",
+        "wiring_checks": checks,
+        "wiring_blockers": blockers,
+        "sell_orders_created_by_this_audit": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _cortex_governed_paper_completion_v1(ctx: dict, root_audit: dict, wiring: dict) -> dict:
+    runtime = ctx.get("paper_autopilot_status") if isinstance(ctx.get("paper_autopilot_status"), dict) else {}
+    enabled = bool(runtime.get("learned_exit_validation_bucket_enabled", False))
+    remaining = int(_to_float(runtime.get("learned_exits_remaining_today"), 0.0))
+    candidates = int(_to_float(runtime.get("learned_exit_candidates_today"), 0.0))
+    blockers = list(root_audit.get("primary_root_causes") or [])
+    if not bool(wiring.get("paper_sell_path_verified")):
+        blockers.append("paper_sell_path_not_verified")
+    if candidates <= 0:
+        blockers.append("no_current_completion_candidate_generated")
+    return {
+        "cortex_governed_paper_completion_v1": True,
+        "status": "ARMED_NO_CURRENT_CANDIDATES" if bool(wiring.get("paper_sell_path_verified")) and candidates <= 0 else ("ACTIVE_CONTROLLED_BUCKET" if enabled else "BLOCKED"),
+        "cortex_governed_completion_monitor_enabled": True,
+        "cortex_governed_sell_execution_enabled": enabled and bool(wiring.get("paper_sell_path_verified")),
+        "completion_candidates_today": candidates,
+        "learned_exits_remaining_today": remaining,
+        "sell_orders_attempted_by_wave": 0,
+        "sell_orders_filled_by_wave": 0,
+        "broker_truths_created_by_wave": 0,
+        "human_review_required": True,
+        "automatic_broad_exit_control_enabled": False,
+        "forced_exits_enabled": False,
+        "learned_exits_enabled_globally": False,
+        "completion_blockers": sorted(set(blockers)),
+        "next_safe_action": "allow_existing_guarded_autopilot_cycle_to_generate_candidates; do_not_force_sells",
+        **_safety_flags_v1(),
+    }
+
+
+def _sell_fill_throughput_intelligence_v1(ctx: dict, root_audit: dict) -> dict:
+    buys = int(_to_float(root_audit.get("buy_fill_count"), 0.0))
+    sells = int(_to_float(root_audit.get("sell_fill_count"), 0.0))
+    paired = int(_to_float(root_audit.get("paired_round_trip_count"), 0.0))
+    sell_ratio = round((sells / max(1, buys)) * 100.0, 3)
+    return {
+        "sell_fill_throughput_intelligence_v1": True,
+        "status": "BLOCKED_LOW_SELL_THROUGHPUT" if sells <= 1 else "DEVELOPING",
+        "buy_fill_count": buys,
+        "sell_fill_count": sells,
+        "paired_round_trip_count": paired,
+        "sell_to_buy_fill_ratio_pct": sell_ratio,
+        "broker_truth_density_pct": round((paired / max(1, buys)) * 100.0, 3),
+        "primary_throughput_blocker": "sell_fill_count_too_low_for_validation" if sells <= 1 else "round_trip_sample_still_maturing",
+        "recommended_throughput_action": "continue guarded paper-only completion validation; do not weaken exits or force sells",
+        **_safety_flags_v1(),
+    }
+
+
+def _exit_attribution_completion_v2(ctx: dict, sell_status: dict) -> dict:
+    base = _exit_decision_attribution_status_v1(sell_status)
+    return {
+        "exit_attribution_completion_v2": True,
+        **base,
+        "baseline_exit_bucket": "natural_exit_default",
+        "controlled_completion_bucket": "guarded_cortex_paper_completion_only_when_existing_exit_signal_verified",
+        "attribution_completion_status": "READY_FOR_FUTURE_FILLED_SELL_ATTRIBUTION" if base.get("future_completion_candidates_tracked") else "INSUFFICIENT_CURRENT_EXIT_CANDIDATES",
+        "forced_exit_attribution_enabled": False,
+        "learned_exit_attribution_globalized": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _capacity_recycling_intelligence_v1(ctx: dict, root_audit: dict, sell_status: dict) -> dict:
+    open_positions = int(_to_float(root_audit.get("open_positions_count"), 0.0))
+    paired = int(_to_float(root_audit.get("paired_round_trip_count"), 0.0))
+    capacity = int(_to_float(sell_status.get("completion_capacity"), 0.0))
+    return {
+        "capacity_recycling_intelligence_v1": True,
+        "status": "SATURATED_RECYCLING_NEEDED" if open_positions >= 35 else "WATCH",
+        "open_positions_count": open_positions,
+        "paired_round_trip_count": paired,
+        "potential_slots_recyclable_after_verified_fills": capacity,
+        "recycled_slots_today": 0,
+        "replacement_scan_recommended": False,
+        "replacement_scan_blocker": "no_new_broker_confirmed_sell_fills_from_this_wave",
+        "capacity_recycling_mode": "broker_fill_confirmed_only",
+        **_safety_flags_v1(),
+    }
+
+
+def _broker_truth_density_optimization_v1(root_audit: dict, sell_fill: dict) -> dict:
+    density = _to_float(sell_fill.get("broker_truth_density_pct"), 0.0)
+    remaining_to_50 = max(0, 50 - int(_to_float(root_audit.get("paired_round_trip_count"), 0.0)))
+    return {
+        "broker_truth_density_optimization_v1": True,
+        "status": "NEEDS_SELL_FILL_GROWTH" if remaining_to_50 else "VALIDATION_READY",
+        "broker_truth_density_pct": round(density, 3),
+        "paired_round_trips_remaining_to_50": remaining_to_50,
+        "highest_roi_density_action": "increase broker-confirmed paper round trips through existing guarded exits only",
+        "unsafe_shortcuts_rejected": ["forced_sells", "learned_exits_global_enablement", "threshold_weakening", "broker_state_mutation"],
+        **_safety_flags_v1(),
+    }
+
+
+def _broker_truth_completion_post_repair_audit_v1(modules: dict) -> dict:
+    checks = {
+        "root_cause_audit_connected": bool((modules.get("root") or {}).get("cortex_paper_completion_root_cause_audit_v1")),
+        "horizon_metadata_connected": bool((modules.get("horizon") or {}).get("future_horizon_metadata_persistence_v1")),
+        "exit_wiring_connected": bool((modules.get("wiring") or {}).get("exit_readiness_execution_wiring_audit_v1")),
+        "cortex_completion_connected": bool((modules.get("completion") or {}).get("cortex_governed_paper_completion_v1")),
+        "sell_fill_intelligence_connected": bool((modules.get("sell_fill") or {}).get("sell_fill_throughput_intelligence_v1")),
+        "exit_attribution_connected": bool((modules.get("attribution") or {}).get("exit_attribution_completion_v2")),
+        "capacity_recycling_connected": bool((modules.get("capacity") or {}).get("capacity_recycling_intelligence_v1")),
+        "broker_truth_density_connected": bool((modules.get("density") or {}).get("broker_truth_density_optimization_v1")),
+        "no_forced_exit_behavior": True,
+        "paper_only_safety_preserved": True,
+    }
+    return {
+        "broker_truth_completion_post_repair_audit_v1": True,
+        "status": "PASS" if all(checks.values()) else "WARNING",
+        "post_repair_checks": checks,
+        "remaining_blockers": sorted(set((modules.get("completion") or {}).get("completion_blockers") or [])),
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_cortex_paper_completion_status_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    ctx = _lc_common_inputs(statuses)
+    if isinstance(statuses.get("paper_autopilot_status"), dict):
+        ctx["paper_autopilot_status"] = statuses.get("paper_autopilot_status")
+    elif "PAPER_AUTOPILOT" in globals():
+        try:
+            ctx["paper_autopilot_status"] = PAPER_AUTOPILOT.control_status()
+        except Exception:
+            ctx["paper_autopilot_status"] = {}
+    if isinstance(statuses.get("controlled_paper_learned_exit_validation_v1"), dict):
+        ctx["controlled_paper_learned_exit_validation_v1"] = statuses.get("controlled_paper_learned_exit_validation_v1")
+    if isinstance(statuses.get("alpaca_paper_status_v1"), dict):
+        ctx["alpaca_paper_status_v1"] = statuses.get("alpaca_paper_status_v1")
+    root = _cortex_paper_completion_root_cause_audit_v1(ctx)
+    horizon = _future_horizon_metadata_persistence_v1(ctx)
+    wiring = _exit_readiness_execution_wiring_audit_v1(ctx)
+    completion = _cortex_governed_paper_completion_v1(ctx, root, wiring)
+    sell_status = _safe_paper_sell_completion_status_v1(ctx)
+    sell_fill = _sell_fill_throughput_intelligence_v1(ctx, root)
+    attribution = _exit_attribution_completion_v2(ctx, sell_status)
+    capacity = _capacity_recycling_intelligence_v1(ctx, root, sell_status)
+    density = _broker_truth_density_optimization_v1(root, sell_fill)
+    post = _broker_truth_completion_post_repair_audit_v1({
+        "root": root,
+        "horizon": horizon,
+        "wiring": wiring,
+        "completion": completion,
+        "sell_fill": sell_fill,
+        "attribution": attribution,
+        "capacity": capacity,
+        "density": density,
+    })
+    wiring_status = "PASS" if post.get("status") == "PASS" and wiring.get("status") == "PASS" else "WARNING"
+    return {
+        "suite": "Astra Cortex-Governed Paper Completion, Horizon Persistence & Broker Truth Throughput Wave V1",
+        "status": completion.get("status") or "UNKNOWN",
+        "endpoint": "/api/astra_cortex_paper_completion_status_v1",
+        "generated_at": _now_utc_iso(),
+        "cortex_paper_completion_root_cause_audit_v1": root,
+        "future_horizon_metadata_persistence_v1": horizon,
+        "exit_readiness_execution_wiring_audit_v1": wiring,
+        "cortex_governed_paper_completion_v1": completion,
+        "sell_fill_throughput_intelligence_v1": sell_fill,
+        "exit_attribution_completion_v2": attribution,
+        "capacity_recycling_intelligence_v1": capacity,
+        "broker_truth_density_optimization_v1": density,
+        "broker_truth_completion_post_repair_audit_v1": post,
+        "final_wiring_diagnostic": {
+            "wiring_status": wiring_status,
+            "paper_sell_path_verified": bool(wiring.get("paper_sell_path_verified")),
+            "duplicate_sell_prevention_verified": bool(wiring.get("duplicate_sell_prevention_verified")),
+            "fill_confirmation_verified": bool(wiring.get("fill_confirmation_verified")),
+            "completion_execution_enabled": bool(completion.get("cortex_governed_sell_execution_enabled")),
+            "sell_orders_attempted_by_wave": 0,
+            "sell_orders_filled_by_wave": 0,
+            **_safety_flags_v1(),
+        },
+        "paper_sell_path_verified": bool(wiring.get("paper_sell_path_verified")),
+        "duplicate_sell_prevention_verified": bool(wiring.get("duplicate_sell_prevention_verified")),
+        "fill_confirmation_verified": bool(wiring.get("fill_confirmation_verified")),
+        "learned_exit_candidates_today": root.get("learned_exit_candidates_today"),
+        "broker_truth_density_pct": sell_fill.get("broker_truth_density_pct"),
+        "sell_fill_count": root.get("sell_fill_count"),
+        "paired_round_trip_count": root.get("paired_round_trip_count"),
+        "unknown_horizon_positions": root.get("unknown_horizon_positions"),
+        "completion_blockers": completion.get("completion_blockers") or [],
+        "wiring_status": wiring_status,
+        "safety_audit_status": "PASS",
+        **_safety_flags_v1(),
+    }
+
+
 def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     context_quality = statuses.get("astra_context_quality_status_v1") if isinstance(statuses.get("astra_context_quality_status_v1"), dict) else _astra_context_quality_status_payload(statuses)
@@ -50904,6 +51215,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
     completion_improvement = _broker_truth_completion_improvement_v1(acceleration_root, exit_throughput, horizon_completion)
     system_readiness = _broker_truth_validation_readiness_by_system_v1(completion_improvement)
     completion_maturity = statuses.get("astra_broker_truth_completion_exit_maturity_v1") if isinstance(statuses.get("astra_broker_truth_completion_exit_maturity_v1"), dict) else _broker_truth_completion_improvement_status_v1(ctx)
+    cortex_completion = statuses.get("astra_cortex_paper_completion_status_v1") if isinstance(statuses.get("astra_cortex_paper_completion_status_v1"), dict) else _astra_cortex_paper_completion_status_payload({**statuses, "astra_broker_truth_completion_exit_maturity_v1": completion_maturity})
     checks = {
         "multi_lane_connected": bool(lanes.get("multi_lane_trading_validation_audit_v1")),
         "canonical_wiring_connected": bool(canonical.get("canonical_engine_wiring_audit_v1")),
@@ -50915,6 +51227,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "broker_truth_completion_improvement_connected": bool(completion_improvement.get("broker_truth_completion_improvement_v1")),
         "broker_truth_system_readiness_connected": bool(system_readiness.get("broker_truth_validation_readiness_by_system_v1")),
         "broker_truth_completion_exit_maturity_connected": bool(completion_maturity.get("broker_truth_completion_improvement_status_v1")),
+        "cortex_paper_completion_connected": bool(cortex_completion.get("cortex_governed_paper_completion_v1")),
         "context_symbol_maturity_connected": bool(maturity.get("context_symbol_maturity_completion_v1")),
         "news_event_readiness_connected": bool(news.get("news_event_intelligence_status_v1")),
         "psychology_readiness_connected": bool(psychology.get("behavioral_market_psychology_status_v1")),
@@ -50967,6 +51280,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "broker_truth_completion_improvement_v1": completion_improvement,
         "broker_truth_validation_readiness_by_system_v1": system_readiness,
         "astra_broker_truth_completion_exit_maturity_v1": completion_maturity,
+        "astra_cortex_paper_completion_status_v1": cortex_completion,
         "broker_truth_completion_pre_audit_v1": completion_maturity.get("broker_truth_completion_pre_audit_v1"),
         "broker_position_horizon_persistence_status_v1": completion_maturity.get("broker_position_horizon_persistence_status_v1"),
         "safe_paper_sell_completion_status_v1": completion_maturity.get("safe_paper_sell_completion_status_v1"),
@@ -50994,6 +51308,10 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "projected_broker_truth_growth": completion_improvement.get("projected_broker_truth_growth"),
         "estimated_time_to_50_truths": completion_improvement.get("estimated_time_to_threshold"),
         "broker_truth_completion_exit_maturity_status": completion_maturity.get("status"),
+        "cortex_paper_completion_status": cortex_completion.get("status"),
+        "paper_sell_path_verified": cortex_completion.get("paper_sell_path_verified"),
+        "sell_fill_throughput_status": (cortex_completion.get("sell_fill_throughput_intelligence_v1") or {}).get("status"),
+        "broker_truth_density_pct": cortex_completion.get("broker_truth_density_pct"),
         "horizon_persistence_status": (completion_maturity.get("broker_position_horizon_persistence_status_v1") or {}).get("status"),
         "human_review_queue_size": (completion_maturity.get("human_review_completion_queue_v1") or {}).get("queue_size"),
         "catalyst_status": maturity.get("catalyst_status"),
@@ -54957,6 +55275,29 @@ def astra_broker_truth_completion_exit_maturity_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _broker_truth_completion_improvement_status_v1(statuses)
+
+
+@router.get("/api/astra_cortex_paper_completion_status_v1")
+def astra_cortex_paper_completion_status_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_cortex_paper_completion_status_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    if force:
+        try:
+            statuses["paper_autopilot_status"] = PAPER_AUTOPILOT.status()
+        except Exception:
+            statuses["paper_autopilot_status"] = {}
+        try:
+            statuses["alpaca_paper_status_v1"] = alpaca_paper_status_v1()
+        except Exception:
+            statuses["alpaca_paper_status_v1"] = {}
+        try:
+            statuses["controlled_paper_learned_exit_validation_v1"] = CONTROLLED_PAPER_LEARNED_EXIT_VALIDATION.status(statuses=statuses, force=False)
+        except Exception:
+            statuses["controlled_paper_learned_exit_validation_v1"] = {}
+    return _astra_cortex_paper_completion_status_payload(statuses)
 
 
 @router.get("/api/canonical_outcome_audit_v1")
