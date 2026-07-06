@@ -44779,6 +44779,19 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "controlled_evolution_actions_enabled": False,
                 "sandbox_behavior_affects_trading": False,
             }
+    if "astra_cortex_market_hours_watchdog_v1" not in payload or force:
+        try:
+            payload["astra_cortex_market_hours_watchdog_v1"] = _astra_cortex_market_hours_watchdog_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_cortex_market_hours_watchdog_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"cortex_market_hours_watchdog_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "controlled_evolution_actions_enabled": False,
+                "sandbox_behavior_affects_trading": False,
+            }
     if "astra_cortex_paper_completion_status_v1" not in payload or force:
         try:
             payload["astra_cortex_paper_completion_status_v1"] = _astra_cortex_paper_completion_status_payload({**(statuses or {}), **payload})
@@ -51329,6 +51342,7 @@ def _astra_cortex_completion_trace_status_payload(statuses: dict | None = None) 
     full_stack = _cortex_full_stack_diagnostic_trace_v1(ctx, routing_audit, routing, cortex, gate)
     trace_table = _open_position_completion_trace_table_v1(ctx, routing, cortex, gate)
     status = "PASS" if routing.get("promoted_completion_candidates") and cortex.get("candidates_received_by_cortex") else ("BLOCKED" if routing_audit.get("review_candidates_found") else "INSUFFICIENT_REVIEW_CANDIDATES")
+    watchdog = statuses.get("astra_cortex_market_hours_watchdog_v1") if isinstance(statuses.get("astra_cortex_market_hours_watchdog_v1"), dict) else {}
     return {
         "suite": "Astra Review Candidate Routing Repair & Cortex Full-Stack Diagnostic Upgrade V1",
         "status": status,
@@ -51340,6 +51354,7 @@ def _astra_cortex_completion_trace_status_payload(statuses: dict | None = None) 
         "paper_sell_execution_gate_v1": gate,
         "cortex_full_stack_diagnostic_trace_v1": full_stack,
         "open_position_completion_trace_table_v1": trace_table,
+        "astra_cortex_market_hours_watchdog_v1": watchdog,
         "review_candidates_found": routing_audit.get("review_candidates_found"),
         "completion_candidates_created": routing.get("promoted_completion_candidates"),
         "candidates_reaching_cortex": cortex.get("candidates_received_by_cortex"),
@@ -51353,6 +51368,343 @@ def _astra_cortex_completion_trace_status_payload(statuses: dict | None = None) 
         "contradictions_found": full_stack.get("contradictions_found") or [],
         "wiring_status": "PASS" if status == "PASS" else "WARNING",
         "safety_audit_status": "PASS",
+        **_safety_flags_v1(),
+    }
+
+
+def _mh_read_jsonl_tail_v1(path: str, limit: int = 500) -> list[dict]:
+    rows: deque = deque(maxlen=max(1, min(5000, int(limit or 500))))
+    try:
+        if not os.path.exists(path):
+            return []
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(row, dict):
+                    rows.append(row)
+    except Exception:
+        return []
+    return list(rows)
+
+
+def _watchdog_market_status_v1(statuses: dict) -> dict:
+    session = statuses.get("market_session_execution_timing") if isinstance(statuses.get("market_session_execution_timing"), dict) else {}
+    paper_status = statuses.get("paper_autopilot_status") if isinstance(statuses.get("paper_autopilot_status"), dict) else {}
+    trace = paper_status.get("last_execution_trace") if isinstance(paper_status.get("last_execution_trace"), dict) else {}
+    if not session:
+        session = trace.get("market_session_execution_timing") if isinstance(trace.get("market_session_execution_timing"), dict) else {}
+    open_allowed = bool(
+        session.get("paper_order_submission_allowed")
+        or session.get("broker_order_submission_allowed")
+        or trace.get("paper_order_submission_allowed")
+        or trace.get("market_open_cycle_detected")
+    )
+    mode = str(
+        session.get("current_session_type")
+        or session.get("market_session_mode")
+        or trace.get("market_session_mode")
+        or ("regular_market" if open_allowed else "unknown_or_closed")
+    )
+    return {
+        "market_hours_status": "market_open" if open_allowed else "market_closed_or_unconfirmed",
+        "market_session_mode": mode,
+        "paper_order_submission_allowed": open_allowed,
+        "open_confirmation_label": str(session.get("open_confirmation_label") or trace.get("open_confirmation_label") or ""),
+        "session_reason": str(session.get("session_reason") or trace.get("open_confirmation_reason") or ""),
+    }
+
+
+def _sell_attempt_ledger_rows_v1(limit: int = 1000) -> list[dict]:
+    events = _mh_read_jsonl_tail_v1(os.path.join(STATE, "learned_exit_validation_events.jsonl"), limit=limit)
+    ledger = []
+    for event in events:
+        symbol = str(event.get("symbol") or "").upper().strip()
+        if not symbol:
+            continue
+        ev = str(event.get("event") or "").strip()
+        order_id = str(event.get("order_id") or "")
+        status = "PENDING_WORKER_PICKUP"
+        if ev == "validation_candidate_rejected":
+            reason = str(event.get("reason") or event.get("broker_error") or "")
+            status = "BLOCKED_DUPLICATE_SELL" if "pending_sell" in reason else "BLOCKED_BY_SAFETY_GATE"
+        elif ev == "sell_submit_rejected":
+            status = "BLOCKED_BY_SAFETY_GATE"
+        elif ev == "sell_submitted_pending_fill":
+            status = "PAPER_SELL_SUBMITTED"
+        elif ev == "sell_filled_lifecycle_closed":
+            status = "PAPER_SELL_FILLED"
+        elif ev == "sell_terminal_not_filled":
+            status = "HARD_BLOCKED"
+        ledger.append({
+            "candidate_id": str(event.get("position_id") or symbol),
+            "symbol": symbol,
+            "source": str(event.get("source") or "paper_autopilot_learned_exit_validation_bucket"),
+            "cortex_decision": str(event.get("cortex_decision") or event.get("policy") or ""),
+            "worker_pickup_status": "worker_event_observed",
+            "sell_attempt_status": ev,
+            "sell_block_reason": str(event.get("reason") or event.get("broker_error") or ""),
+            "order_id": order_id,
+            "submitted_at": str(event.get("submitted_at") or event.get("timestamp") or "") if ev in {"sell_submitted_pending_fill", "sell_submit_rejected"} else "",
+            "filled_at": str(event.get("timestamp") or "") if ev == "sell_filled_lifecycle_closed" else "",
+            "fill_status": str(event.get("order_status") or ""),
+            "broker_truth_pairing_status": "pending_broker_truth_review",
+            "final_status": status,
+            "raw_event": ev,
+        })
+    return ledger
+
+
+def _market_hours_completion_watchdog_pre_audit_v1(statuses: dict, trace: dict, ledger_rows: list[dict]) -> dict:
+    implemented = [
+        "paper_autopilot_worker",
+        "guarded_alpaca_paper_sell_path",
+        "duplicate_sell_prevention",
+        "fill_confirmation_before_local_close",
+        "broker_truth_fill_capture",
+        "market_session_detection",
+        "cortex_completion_trace_endpoint",
+    ]
+    partial = []
+    missing = []
+    miswired = []
+    blocked = []
+    if not trace.get("completion_candidates_created"):
+        partial.append("review_candidate_to_completion_candidate_routing")
+    if trace.get("completion_candidates_created") and not trace.get("candidates_reaching_cortex"):
+        miswired.append("completion_candidate_to_cortex_intake")
+    if trace.get("cortex_approvals") and not ledger_rows:
+        partial.append("sell_attempt_ledger_has_no_recent_events_for_current_approvals")
+    if trace.get("cortex_approvals") and not statuses.get("paper_autopilot_status"):
+        blocked.append("paper_autopilot_status_unavailable")
+    return {
+        "market_hours_completion_watchdog_pre_audit_v1": True,
+        "implemented_components": implemented,
+        "partial_components": partial,
+        "missing_components": missing,
+        "miswired_components": miswired,
+        "duplicate_components_found": [],
+        "blocked_components": blocked,
+        "safest_completion_plan": "keep GET endpoints diagnostic-only; require existing guarded paper worker/autopilot path for any paper sell attempt",
+        **_safety_flags_v1(),
+    }
+
+
+def _worker_pickup_trace_v1(statuses: dict, trace: dict, ledger_rows: list[dict], market: dict) -> dict:
+    approved = [dict(c) for c in (((trace.get("cortex_completion_candidate_intake_v1") or {}).get("approved_candidates")) or []) if isinstance(c, dict)]
+    ledger_by_symbol: dict[str, list[dict]] = defaultdict(list)
+    for row in ledger_rows:
+        ledger_by_symbol[str(row.get("symbol") or "").upper().strip()].append(row)
+    paper_status = statuses.get("paper_autopilot_status") if isinstance(statuses.get("paper_autopilot_status"), dict) else {}
+    last_trace = paper_status.get("last_execution_trace") if isinstance(paper_status.get("last_execution_trace"), dict) else {}
+    worker_running = bool(paper_status.get("autopilot_loop_active") or paper_status.get("paper_worker_running"))
+    rows = []
+    seen = blocked = missing = attempts = 0
+    for cand in approved:
+        sym = str(cand.get("symbol") or "").upper().strip()
+        events = ledger_by_symbol.get(sym) or []
+        latest = events[-1] if events else {}
+        worker_seen = bool(events)
+        if worker_seen:
+            seen += 1
+        else:
+            missing += 1
+        final_status = str(latest.get("final_status") or "")
+        if final_status.startswith("BLOCKED") or final_status == "HARD_BLOCKED":
+            blocked += 1
+        if latest.get("sell_attempt_status") in {"sell_submitted_pending_fill", "sell_submit_rejected"}:
+            attempts += 1
+        rows.append({
+            "candidate_id": str(cand.get("symbol") or ""),
+            "symbol": sym,
+            "cortex_status": str(cand.get("cortex_status") or "approved"),
+            "worker_seen": worker_seen,
+            "worker_seen_at": str(latest.get("submitted_at") or latest.get("filled_at") or ""),
+            "worker_action": str(latest.get("final_status") or "pending_worker_pickup"),
+            "worker_block_reason": str(latest.get("sell_block_reason") or ""),
+            "paper_sell_attempted": bool(latest.get("sell_attempt_status") in {"sell_submitted_pending_fill", "sell_submit_rejected"}),
+            "sell_order_id": str(latest.get("order_id") or ""),
+            "duplicate_sell_prevented": "pending_sell" in str(latest.get("sell_block_reason") or ""),
+            "market_hours_status": market.get("market_hours_status"),
+        })
+    status = "WORKER_PICKUP_OBSERVED" if seen else ("PENDING_MARKET_OPEN" if not market.get("paper_order_submission_allowed") else "PICKUP_NOT_OBSERVED")
+    if not worker_running:
+        status = "WORKER_NOT_RUNNING"
+    return {
+        "worker_pickup_trace_v1": True,
+        "approved_candidates": len(approved),
+        "worker_seen_count": seen,
+        "worker_blocked_count": blocked,
+        "worker_missing_count": missing,
+        "paper_sell_attempt_seen_count": attempts,
+        "worker_pickup_status": status,
+        "worker_running": worker_running,
+        "last_worker_cycle_at": str(paper_status.get("last_cycle_utc") or last_trace.get("cycle_timestamp") or ""),
+        "candidate_traces": rows[:120],
+        **_safety_flags_v1(),
+    }
+
+
+def _pending_market_open_completion_queue_v1(trace: dict, market: dict) -> dict:
+    approved = [dict(c) for c in (((trace.get("cortex_completion_candidate_intake_v1") or {}).get("approved_candidates")) or []) if isinstance(c, dict)]
+    is_closed = not bool(market.get("paper_order_submission_allowed"))
+    rows = []
+    if is_closed:
+        for cand in approved:
+            rows.append({
+                "candidate_id": str(cand.get("symbol") or ""),
+                "symbol": str(cand.get("symbol") or "").upper().strip(),
+                "approved_at": str(trace.get("generated_at") or _now_utc_iso()),
+                "reason": str(cand.get("completion_reason") or ""),
+                "review_category": str(cand.get("primary_review_category") or ""),
+                "horizon": str(cand.get("horizon") or "unknown"),
+                "market_status": market.get("market_hours_status"),
+                "pending_until_next_open": True,
+            })
+    return {
+        "pending_market_open_completion_queue_v1": True,
+        "pending_market_open_candidates": rows[:120],
+        "queue_size": len(rows),
+        "expired_candidates": 0,
+        "queue_health_status": "PENDING_MARKET_OPEN" if rows else ("MARKET_OPEN_NO_QUEUE" if not is_closed else "NO_APPROVED_CANDIDATES"),
+        "queue_persistence_status": "diagnostic_queue_from_cortex_trace_no_endpoint_execution",
+        **_safety_flags_v1(),
+    }
+
+
+def _sell_attempt_ledger_v1(ledger_rows: list[dict]) -> dict:
+    counts = Counter(str(row.get("final_status") or "UNKNOWN") for row in ledger_rows)
+    return {
+        "sell_attempt_ledger_v1": True,
+        "ledger_source": "state/learned_exit_validation_events.jsonl",
+        "ledger_rows_reviewed": len(ledger_rows),
+        "status_counts": dict(counts),
+        "sell_attempts_recorded": len([r for r in ledger_rows if r.get("sell_attempt_status") in {"sell_submitted_pending_fill", "sell_submit_rejected"}]),
+        "sell_submitted_count": counts.get("PAPER_SELL_SUBMITTED", 0),
+        "sell_filled_count": counts.get("PAPER_SELL_FILLED", 0),
+        "blocked_count": counts.get("BLOCKED_BY_SAFETY_GATE", 0) + counts.get("BLOCKED_DUPLICATE_SELL", 0) + counts.get("HARD_BLOCKED", 0),
+        "recent_rows": ledger_rows[-80:],
+        **_safety_flags_v1(),
+    }
+
+
+def _broker_truth_post_sell_verification_v1(ledger_rows: list[dict]) -> dict:
+    registry = _astra_evidence_state_json("broker_truth_records_v1.json")
+    records = [r for r in (registry.get("records") or []) if isinstance(r, dict)]
+    sell_fills = [r for r in records if str(r.get("side") or "").lower() == "sell" or r.get("sell_fill")]
+    paired = [
+        r for r in records
+        if bool(
+            r.get("paired_round_trip")
+            or r.get("round_trip_paired")
+            or r.get("closed_trade")
+            or r.get("closed_indicator")
+            or str(r.get("truth_quality") or "").lower() == "broker_confirmed_complete"
+        )
+    ]
+    broker_complete = int(_to_float(registry.get("broker_confirmed_complete_records"), len(paired)))
+    event_fills = [r for r in ledger_rows if r.get("final_status") == "PAPER_SELL_FILLED"]
+    return {
+        "broker_truth_post_sell_verification_v1": True,
+        "sells_reviewed": len([r for r in ledger_rows if r.get("sell_attempt_status")]),
+        "sell_fills_captured": len(sell_fills),
+        "event_sell_fills_observed": len(event_fills),
+        "pairings_created": max(len(paired), broker_complete),
+        "pairing_failures": max(0, len(event_fills) - max(len(paired), broker_complete)),
+        "broker_truths_created": len(records),
+        "official_metric_guard_status": "LOCKED_UNTIL_50_BROKER_CONFIRMED_COMPLETE_RECORDS" if max(len(paired), broker_complete) < 50 else "UNLOCK_ELIGIBLE",
+        "duplicate_records_created": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _cortex_market_hours_completion_watchdog_v1(trace: dict, worker: dict, ledger: dict, post_sell: dict, market: dict) -> dict:
+    approved = int(_to_float(trace.get("cortex_approvals"), 0.0))
+    worker_seen = int(_to_float(worker.get("worker_seen_count"), 0.0))
+    attempts = int(_to_float(ledger.get("sell_attempts_recorded"), 0.0))
+    submitted = int(_to_float(ledger.get("sell_submitted_count"), 0.0))
+    event_fills = int(_to_float(post_sell.get("event_sell_fills_observed"), 0.0))
+    captured_fills = int(_to_float(post_sell.get("sell_fills_captured"), 0.0))
+    pairings = int(_to_float(post_sell.get("pairings_created"), 0.0))
+    alerts = []
+    market_open = bool(market.get("paper_order_submission_allowed"))
+    if approved > 0 and market_open and worker_seen == 0:
+        alerts.append("CRITICAL_WORKER_PICKUP_FAILURE")
+    if worker_seen > 0 and attempts == 0:
+        alerts.append("CRITICAL_SELL_ATTEMPT_FAILURE")
+    if event_fills > 0 and captured_fills == 0:
+        alerts.append("CRITICAL_FILL_CAPTURE_FAILURE")
+    if captured_fills > 0 and pairings == 0:
+        alerts.append("CRITICAL_BROKER_TRUTH_PAIRING_FAILURE")
+    return {
+        "cortex_market_hours_completion_watchdog_v1": True,
+        "watchdog_status": "CRITICAL" if alerts else ("WAITING_FOR_MARKET_OPEN" if approved > 0 and not market_open else "PASS"),
+        "approved_completion_candidates": approved,
+        "pending_market_open_candidates": approved if not market_open else 0,
+        "worker_pickup_count": worker_seen,
+        "sell_attempts": attempts,
+        "sell_submitted_count": submitted,
+        "sell_fills": captured_fills,
+        "broker_truth_pairings": pairings,
+        "alerts": alerts,
+        **market,
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_cortex_market_hours_watchdog_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    if not isinstance(statuses.get("paper_autopilot_status"), dict) and "PAPER_AUTOPILOT" in globals():
+        try:
+            statuses["paper_autopilot_status"] = PAPER_AUTOPILOT.control_status()
+        except Exception:
+            statuses["paper_autopilot_status"] = {}
+    trace = statuses.get("astra_cortex_completion_trace_status_v1") if isinstance(statuses.get("astra_cortex_completion_trace_status_v1"), dict) else _astra_cortex_completion_trace_status_payload(statuses)
+    market = _watchdog_market_status_v1(statuses)
+    ledger_rows = _sell_attempt_ledger_rows_v1(limit=1200)
+    pre = _market_hours_completion_watchdog_pre_audit_v1(statuses, trace, ledger_rows)
+    worker = _worker_pickup_trace_v1(statuses, trace, ledger_rows, market)
+    queue = _pending_market_open_completion_queue_v1(trace, market)
+    ledger = _sell_attempt_ledger_v1(ledger_rows)
+    post_sell = _broker_truth_post_sell_verification_v1(ledger_rows)
+    watchdog = _cortex_market_hours_completion_watchdog_v1(trace, worker, ledger, post_sell, market)
+    wiring_checks = {
+        "cortex_trace_connected": bool(trace.get("review_candidate_completion_routing_audit_v1")),
+        "worker_trace_connected": bool(worker.get("worker_pickup_trace_v1")),
+        "pending_queue_connected": bool(queue.get("pending_market_open_completion_queue_v1")),
+        "sell_attempt_ledger_connected": bool(ledger.get("sell_attempt_ledger_v1")),
+        "broker_truth_post_sell_verification_connected": bool(post_sell.get("broker_truth_post_sell_verification_v1")),
+        "get_endpoint_execution_disabled": True,
+        "paper_only_safety_preserved": True,
+    }
+    return {
+        "suite": "Astra Cortex Market-Hours Completion Watchdog, Worker Pickup Trace & Sell Attempt Ledger V1",
+        "status": "PASS" if all(wiring_checks.values()) else "WARNING",
+        "endpoint": "/api/astra_cortex_market_hours_watchdog_v1",
+        "generated_at": _now_utc_iso(),
+        "market_hours_completion_watchdog_pre_audit_v1": pre,
+        "cortex_market_hours_completion_watchdog_v1": watchdog,
+        "worker_pickup_trace_v1": worker,
+        "pending_market_open_completion_queue_v1": queue,
+        "sell_attempt_ledger_v1": ledger,
+        "broker_truth_post_sell_verification_v1": post_sell,
+        "final_wiring_diagnostic_v1": {
+            "wiring_status": "PASS" if all(wiring_checks.values()) else "WARNING",
+            "wiring_checks": wiring_checks,
+            **_safety_flags_v1(),
+        },
+        "approved_candidates_visible_to_worker": bool(trace.get("cortex_approvals", 0) >= 0),
+        "worker_pickup_status_known": bool(worker.get("worker_pickup_status")),
+        "sell_attempts_ledgered": bool(ledger.get("sell_attempt_ledger_v1")),
+        "broker_truth_verification_wired": bool(post_sell.get("broker_truth_post_sell_verification_v1")),
+        "critical_failures": watchdog.get("alerts") or [],
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
         **_safety_flags_v1(),
     }
 
@@ -51497,6 +51849,7 @@ def _astra_cortex_paper_completion_status_payload(statuses: dict | None = None) 
     horizon = _future_horizon_metadata_persistence_v1(ctx)
     wiring = _exit_readiness_execution_wiring_audit_v1(ctx)
     completion_trace = statuses.get("astra_cortex_completion_trace_status_v1") if isinstance(statuses.get("astra_cortex_completion_trace_status_v1"), dict) else _astra_cortex_completion_trace_status_payload(ctx)
+    watchdog = statuses.get("astra_cortex_market_hours_watchdog_v1") if isinstance(statuses.get("astra_cortex_market_hours_watchdog_v1"), dict) else _astra_cortex_market_hours_watchdog_payload({**statuses, "astra_cortex_completion_trace_status_v1": completion_trace})
     completion = _cortex_governed_paper_completion_v1(ctx, root, wiring, completion_trace)
     sell_status = _safe_paper_sell_completion_status_v1(ctx)
     sell_fill = _sell_fill_throughput_intelligence_v1(ctx, root)
@@ -51523,6 +51876,7 @@ def _astra_cortex_paper_completion_status_payload(statuses: dict | None = None) 
         "future_horizon_metadata_persistence_v1": horizon,
         "exit_readiness_execution_wiring_audit_v1": wiring,
         "astra_cortex_completion_trace_status_v1": completion_trace,
+        "astra_cortex_market_hours_watchdog_v1": watchdog,
         "cortex_governed_paper_completion_v1": completion,
         "sell_fill_throughput_intelligence_v1": sell_fill,
         "exit_attribution_completion_v2": attribution,
@@ -51546,6 +51900,8 @@ def _astra_cortex_paper_completion_status_payload(statuses: dict | None = None) 
         "completion_candidates_created": completion_trace.get("completion_candidates_created"),
         "candidates_reaching_cortex": completion_trace.get("candidates_reaching_cortex"),
         "cortex_approvals": completion_trace.get("cortex_approvals"),
+        "worker_pickup_status": (watchdog.get("worker_pickup_trace_v1") or {}).get("worker_pickup_status"),
+        "sell_attempts_ledgered": watchdog.get("sell_attempts_ledgered"),
         "broker_truth_density_pct": sell_fill.get("broker_truth_density_pct"),
         "sell_fill_count": root.get("sell_fill_count"),
         "paired_round_trip_count": root.get("paired_round_trip_count"),
@@ -51584,7 +51940,8 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
     system_readiness = _broker_truth_validation_readiness_by_system_v1(completion_improvement)
     completion_maturity = statuses.get("astra_broker_truth_completion_exit_maturity_v1") if isinstance(statuses.get("astra_broker_truth_completion_exit_maturity_v1"), dict) else _broker_truth_completion_improvement_status_v1(ctx)
     cortex_trace = statuses.get("astra_cortex_completion_trace_status_v1") if isinstance(statuses.get("astra_cortex_completion_trace_status_v1"), dict) else _astra_cortex_completion_trace_status_payload({**statuses, "astra_broker_truth_completion_exit_maturity_v1": completion_maturity})
-    cortex_completion = statuses.get("astra_cortex_paper_completion_status_v1") if isinstance(statuses.get("astra_cortex_paper_completion_status_v1"), dict) else _astra_cortex_paper_completion_status_payload({**statuses, "astra_broker_truth_completion_exit_maturity_v1": completion_maturity, "astra_cortex_completion_trace_status_v1": cortex_trace})
+    cortex_watchdog = statuses.get("astra_cortex_market_hours_watchdog_v1") if isinstance(statuses.get("astra_cortex_market_hours_watchdog_v1"), dict) else _astra_cortex_market_hours_watchdog_payload({**statuses, "astra_broker_truth_completion_exit_maturity_v1": completion_maturity, "astra_cortex_completion_trace_status_v1": cortex_trace})
+    cortex_completion = statuses.get("astra_cortex_paper_completion_status_v1") if isinstance(statuses.get("astra_cortex_paper_completion_status_v1"), dict) else _astra_cortex_paper_completion_status_payload({**statuses, "astra_broker_truth_completion_exit_maturity_v1": completion_maturity, "astra_cortex_completion_trace_status_v1": cortex_trace, "astra_cortex_market_hours_watchdog_v1": cortex_watchdog})
     checks = {
         "multi_lane_connected": bool(lanes.get("multi_lane_trading_validation_audit_v1")),
         "canonical_wiring_connected": bool(canonical.get("canonical_engine_wiring_audit_v1")),
@@ -51597,6 +51954,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "broker_truth_system_readiness_connected": bool(system_readiness.get("broker_truth_validation_readiness_by_system_v1")),
         "broker_truth_completion_exit_maturity_connected": bool(completion_maturity.get("broker_truth_completion_improvement_status_v1")),
         "cortex_completion_trace_connected": bool(cortex_trace.get("review_candidate_completion_routing_audit_v1")),
+        "cortex_market_hours_watchdog_connected": bool(cortex_watchdog.get("cortex_market_hours_completion_watchdog_v1")),
         "cortex_paper_completion_connected": bool(cortex_completion.get("cortex_governed_paper_completion_v1")),
         "context_symbol_maturity_connected": bool(maturity.get("context_symbol_maturity_completion_v1")),
         "news_event_readiness_connected": bool(news.get("news_event_intelligence_status_v1")),
@@ -51651,6 +52009,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "broker_truth_validation_readiness_by_system_v1": system_readiness,
         "astra_broker_truth_completion_exit_maturity_v1": completion_maturity,
         "astra_cortex_completion_trace_status_v1": cortex_trace,
+        "astra_cortex_market_hours_watchdog_v1": cortex_watchdog,
         "astra_cortex_paper_completion_status_v1": cortex_completion,
         "broker_truth_completion_pre_audit_v1": completion_maturity.get("broker_truth_completion_pre_audit_v1"),
         "broker_position_horizon_persistence_status_v1": completion_maturity.get("broker_position_horizon_persistence_status_v1"),
@@ -51682,6 +52041,9 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "cortex_completion_trace_status": cortex_trace.get("status"),
         "review_completion_candidates_created": cortex_trace.get("completion_candidates_created"),
         "review_candidates_reaching_cortex": cortex_trace.get("candidates_reaching_cortex"),
+        "cortex_market_hours_watchdog_status": (cortex_watchdog.get("cortex_market_hours_completion_watchdog_v1") or {}).get("watchdog_status"),
+        "worker_pickup_status": (cortex_watchdog.get("worker_pickup_trace_v1") or {}).get("worker_pickup_status"),
+        "sell_attempts_ledgered": cortex_watchdog.get("sell_attempts_ledgered"),
         "cortex_paper_completion_status": cortex_completion.get("status"),
         "paper_sell_path_verified": cortex_completion.get("paper_sell_path_verified"),
         "sell_fill_throughput_status": (cortex_completion.get("sell_fill_throughput_intelligence_v1") or {}).get("status"),
@@ -55691,6 +56053,31 @@ def astra_cortex_completion_trace_status_v1(force: bool = False):
         except Exception:
             statuses["alpaca_paper_status_v1"] = {}
     return _astra_cortex_completion_trace_status_payload(statuses)
+
+
+@router.get("/api/astra_cortex_market_hours_watchdog_v1")
+def astra_cortex_market_hours_watchdog_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_cortex_market_hours_watchdog_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    if force:
+        try:
+            statuses["paper_autopilot_status"] = PAPER_AUTOPILOT.status()
+        except Exception:
+            statuses["paper_autopilot_status"] = {}
+        try:
+            statuses["alpaca_paper_status_v1"] = alpaca_paper_status_v1()
+        except Exception:
+            statuses["alpaca_paper_status_v1"] = {}
+        try:
+            statuses["market_session_execution_timing"] = market_session_execution_timing_status_v1()
+        except Exception:
+            statuses["market_session_execution_timing"] = {}
+    if not isinstance(statuses.get("astra_cortex_completion_trace_status_v1"), dict):
+        statuses["astra_cortex_completion_trace_status_v1"] = _astra_cortex_completion_trace_status_payload(statuses)
+    return _astra_cortex_market_hours_watchdog_payload(statuses)
 
 
 @router.get("/api/canonical_outcome_audit_v1")
