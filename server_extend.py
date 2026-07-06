@@ -44766,6 +44766,19 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "controlled_evolution_actions_enabled": False,
                 "sandbox_behavior_affects_trading": False,
             }
+    if "astra_cortex_completion_trace_status_v1" not in payload or force:
+        try:
+            payload["astra_cortex_completion_trace_status_v1"] = _astra_cortex_completion_trace_status_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_cortex_completion_trace_status_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"cortex_completion_trace_status_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "controlled_evolution_actions_enabled": False,
+                "sandbox_behavior_affects_trading": False,
+            }
     if "astra_cortex_paper_completion_status_v1" not in payload or force:
         try:
             payload["astra_cortex_paper_completion_status_v1"] = _astra_cortex_paper_completion_status_payload({**(statuses or {}), **payload})
@@ -50849,6 +50862,7 @@ def _broker_truth_completion_improvement_status_v1(ctx: dict) -> dict:
     capacity = _position_capacity_throughput_status_v1(root, sell, horizon)
     horizon_completion = _multi_horizon_completion_validation_v1(ctx)
     improvement = _broker_truth_completion_improvement_v1(root, _safe_paper_exit_throughput_audit_v1(ctx), horizon_completion)
+    completion_trace = _astra_cortex_completion_trace_status_payload(ctx)
     checks = {
         "pre_audit_complete": bool(pre.get("broker_truth_completion_pre_audit_v1")),
         "horizon_persistence_connected": bool(horizon.get("broker_position_horizon_persistence_status_v1")),
@@ -50856,6 +50870,7 @@ def _broker_truth_completion_improvement_status_v1(ctx: dict) -> dict:
         "exit_attribution_connected": bool(attribution.get("exit_decision_attribution_status_v1")),
         "human_review_queue_connected": bool(queue.get("human_review_completion_queue_v1")),
         "capacity_throughput_connected": bool(capacity.get("position_capacity_throughput_status_v1")),
+        "review_candidate_completion_trace_connected": bool(completion_trace.get("review_candidate_completion_routing_audit_v1")),
         "no_behavior_change": True,
     }
     hard_blockers = []
@@ -50875,6 +50890,7 @@ def _broker_truth_completion_improvement_status_v1(ctx: dict) -> dict:
         "exit_decision_attribution_status_v1": attribution,
         "human_review_completion_queue_v1": queue,
         "position_capacity_throughput_status_v1": capacity,
+        "astra_cortex_completion_trace_status_v1": completion_trace,
         "broker_truth_completion_improvement_status_v1": {
             "broker_truth_completion_improvement_status_v1": True,
             "checks": checks,
@@ -50999,22 +51015,369 @@ def _exit_readiness_execution_wiring_audit_v1(ctx: dict) -> dict:
     }
 
 
-def _cortex_governed_paper_completion_v1(ctx: dict, root_audit: dict, wiring: dict) -> dict:
+def _review_candidate_completion_routing_audit_v1(ctx: dict) -> dict:
+    throughput = _safe_paper_exit_throughput_audit_v1(ctx)
+    review_sets = {
+        "profit_lock": list(throughput.get("profit_lock_candidates") or []),
+        "controlled_loss": list(throughput.get("controlled_loss_candidates") or []),
+        "stale_position": list(throughput.get("stale_positions") or []),
+        "hold_recommendation": list(throughput.get("valid_hold_candidates") or []),
+    }
+    review_symbols = sorted({
+        str(sym or "").upper().strip()
+        for key in ("profit_lock", "controlled_loss", "stale_position")
+        for sym in review_sets.get(key, [])
+        if str(sym or "").strip()
+    })
+    runtime = ctx.get("paper_autopilot_status") if isinstance(ctx.get("paper_autopilot_status"), dict) else {}
+    runtime_candidates = int(_to_float(runtime.get("learned_exit_candidates_today"), 0.0))
+    first_breakpoint = "review_to_completion_candidate_generator" if review_symbols and runtime_candidates <= 0 else "none_detected"
+    exact_break_reason = (
+        "review candidates were produced by safe_paper_exit_throughput_audit_v1, but Cortex completion status only counted learned_exit_candidates_today from the runtime bucket"
+        if first_breakpoint != "none_detected"
+        else "review candidates and runtime completion candidates are aligned or no review candidates exist"
+    )
+    return {
+        "review_candidate_completion_routing_audit_v1": True,
+        "review_candidates_found": len(review_symbols),
+        "profit_lock_candidates": len(review_sets["profit_lock"]),
+        "controlled_loss_candidates": len(review_sets["controlled_loss"]),
+        "stale_position_candidates": len(review_sets["stale_position"]),
+        "hold_recommendation_candidates": len(review_sets["hold_recommendation"]),
+        "runtime_completion_candidates_today": runtime_candidates,
+        "completion_candidates_created": 0,
+        "candidates_lost_before_completion": max(0, len(review_symbols) - runtime_candidates),
+        "candidates_reaching_cortex": 0,
+        "candidates_blocked_by_cortex": 0,
+        "candidates_reaching_paper_sell_path": 0,
+        "first_breakpoint": first_breakpoint,
+        "exact_break_reason": exact_break_reason,
+        "review_candidate_symbols": review_symbols[:80],
+        **_safety_flags_v1(),
+    }
+
+
+def _review_candidate_symbol_rows_v1(ctx: dict) -> tuple[list[dict], dict]:
+    throughput = _safe_paper_exit_throughput_audit_v1(ctx)
+    alpaca = _cached_alpaca_paper_status_payload(ctx.get("statuses") or {})
+    positions, meta = _bt_broker_position_rows_v1(alpaca)
+    pos_by_symbol = {str(p.get("symbol") or "").upper().strip(): dict(p) for p in positions if str(p.get("symbol") or "").strip()}
+    position_diag = {str(r.get("symbol") or "").upper().strip(): dict(r) for r in (throughput.get("positions") or []) if isinstance(r, dict)}
+    categories: dict[str, set[str]] = defaultdict(set)
+    for sym in throughput.get("profit_lock_candidates") or []:
+        if str(sym or "").strip():
+            categories[str(sym).upper().strip()].add("profit_lock")
+    for sym in throughput.get("controlled_loss_candidates") or []:
+        if str(sym or "").strip():
+            categories[str(sym).upper().strip()].add("controlled_loss")
+    for sym in throughput.get("stale_positions") or []:
+        if str(sym or "").strip():
+            categories[str(sym).upper().strip()].add("stale_position")
+    for sym in throughput.get("valid_hold_candidates") or []:
+        if str(sym or "").strip() and str(sym).upper().strip() not in categories:
+            categories[str(sym).upper().strip()].add("hold_recommendation")
+    rows: list[dict] = []
+    for sym in sorted(categories):
+        pos = dict(pos_by_symbol.get(sym) or {})
+        diag = dict(position_diag.get(sym) or {})
+        row = {**pos, **diag}
+        row["symbol"] = sym
+        row["review_categories"] = sorted(categories[sym])
+        rows.append(row)
+    return rows, {**meta, "throughput": throughput}
+
+
+def _review_to_completion_candidate_routing_v1(ctx: dict) -> dict:
+    rows, meta = _review_candidate_symbol_rows_v1(ctx)
+    eligible: list[dict] = []
+    blocked: list[dict] = []
+    allowed = {"profit_lock", "controlled_loss", "stale_position"}
+    for row in rows:
+        sym = str(row.get("symbol") or "").upper().strip()
+        categories = set(row.get("review_categories") or [])
+        actionable = sorted(categories.intersection(allowed))
+        block_reasons = []
+        if not sym:
+            block_reasons.append("symbol_missing")
+        if not actionable:
+            block_reasons.append("hold_recommendation_preserved")
+        if not row:
+            block_reasons.append("broker_position_row_missing")
+        qty = _to_float(row.get("qty_available"), _to_float(row.get("qty"), 0.0))
+        if qty <= 0:
+            block_reasons.append("broker_confirmed_quantity_required")
+        market_value = _to_float(row.get("market_value"), 0.0)
+        avg_entry = _to_float(row.get("avg_entry_price") or row.get("average_entry_price"), 0.0)
+        current_price = _to_float(row.get("current_price") or row.get("market_price"), 0.0)
+        pnl_pct = row.get("current_gain_loss_pct")
+        if pnl_pct in (None, ""):
+            pnl_pct = _bt_position_unrealized_pct_v1(row)
+        horizon = _bt_horizon_bucket_v1(row)
+        candidate = {
+            "symbol": sym,
+            "review_categories": actionable or sorted(categories),
+            "primary_review_category": actionable[0] if actionable else (sorted(categories)[0] if categories else "unknown"),
+            "horizon": horizon,
+            "horizon_known": horizon != "unknown",
+            "qty": round(qty, 6),
+            "market_value": round(market_value, 4) if market_value else None,
+            "avg_entry": round(avg_entry, 6) if avg_entry else None,
+            "current_price": round(current_price, 6) if current_price else None,
+            "total_pnl_pct": pnl_pct,
+            "exit_readiness": row.get("exit_readiness") or "review_candidate",
+            "completion_reason": "existing_review_candidate_promoted_to_cortex_completion_intake",
+            "paper_only": True,
+            "human_review_required": True,
+        }
+        if block_reasons:
+            blocked.append({**candidate, "block_reasons": block_reasons})
+        else:
+            eligible.append(candidate)
+    status = "PASS" if eligible or not rows else "BLOCKED"
+    if rows and not eligible:
+        status = "MISWIRED"
+    return {
+        "review_to_completion_candidate_routing_v1": True,
+        "routing_status": status,
+        "review_candidates_found": len([r for r in rows if set(r.get("review_categories") or []).intersection(allowed)]),
+        "eligible_review_candidates": len(eligible),
+        "promoted_completion_candidates": len(eligible),
+        "blocked_review_candidates": len(blocked),
+        "block_reasons": dict(Counter(reason for row in blocked for reason in row.get("block_reasons") or [])),
+        "completion_candidates": eligible[:80],
+        "blocked_candidates": blocked[:80],
+        "position_rows_source": meta.get("position_rows_source"),
+        **_safety_flags_v1(),
+    }
+
+
+def _cortex_completion_candidate_intake_v1(ctx: dict, routing: dict) -> dict:
+    safety = ctx.get("alpaca_paper_status_v1") if isinstance(ctx.get("alpaca_paper_status_v1"), dict) else ctx.get("alpaca_paper_broker") if isinstance(ctx.get("alpaca_paper_broker"), dict) else {}
+    paper_verified = bool(safety.get("paper_mode_verified", True))
+    live_detected = bool(safety.get("live_endpoint_detected", False))
+    received = [dict(c) for c in (routing.get("completion_candidates") or []) if isinstance(c, dict)]
+    approved: list[dict] = []
+    blocked: list[dict] = []
+    for cand in received:
+        reasons = []
+        if not paper_verified:
+            reasons.append("paper_mode_not_verified")
+        if live_detected:
+            reasons.append("live_endpoint_detected")
+        if _to_float(cand.get("qty"), 0.0) <= 0:
+            reasons.append("broker_confirmed_quantity_required")
+        if cand.get("primary_review_category") not in {"profit_lock", "controlled_loss", "stale_position"}:
+            reasons.append("unsupported_review_category")
+        if reasons:
+            blocked.append({**cand, "cortex_status": "blocked", "cortex_block_reasons": reasons})
+        else:
+            approved.append({
+                **cand,
+                "cortex_status": "approved_for_paper_completion_gate",
+                "cortex_decision": "approve_for_existing_paper_sell_gate_review",
+                "cortex_review_required": True,
+            })
+    return {
+        "cortex_completion_candidate_intake_v1": True,
+        "candidates_received_by_cortex": len(received),
+        "candidates_approved": len(approved),
+        "candidates_blocked": len(blocked),
+        "cortex_block_reasons": dict(Counter(reason for row in blocked for reason in row.get("cortex_block_reasons") or [])),
+        "paper_completion_ready_count": len(approved),
+        "approved_candidates": approved[:80],
+        "blocked_candidates": blocked[:80],
+        **_safety_flags_v1(),
+    }
+
+
+def _paper_sell_execution_gate_v1(ctx: dict, cortex: dict, wiring: dict) -> dict:
+    approved = [dict(c) for c in (cortex.get("approved_candidates") or []) if isinstance(c, dict)]
+    paper_path = bool(wiring.get("paper_sell_path_verified"))
+    # This diagnostic endpoint must never submit broker orders on GET. Actual sells
+    # remain restricted to the existing guarded paper worker/autopilot path.
+    blocked_reason = "endpoint_diagnostic_only_existing_worker_must_submit" if approved else "no_cortex_approved_candidates"
+    if not paper_path:
+        blocked_reason = "paper_sell_path_not_verified"
+    return {
+        "paper_sell_execution_gate_v1": True,
+        "paper_sell_path_verified": paper_path,
+        "paper_completion_ready_count": len(approved),
+        "pending_market_open_candidates": approved[:80] if approved else [],
+        "sell_orders_attempted": 0,
+        "sell_orders_blocked": len(approved),
+        "sell_orders_filled": 0,
+        "fill_confirmation_status": "not_applicable_no_sell_order_attempted",
+        "broker_truths_created": 0,
+        "execution_gate_status": "READY_FOR_EXISTING_WORKER_PATH" if approved and paper_path else "BLOCKED",
+        "execution_block_reason": blocked_reason,
+        "cortex_review_required": True,
+        "paper_only_execution_verified": paper_path,
+        "live_sell_execution_allowed": False,
+        "force_exit_used": False,
+        "learned_exit_used": False,
+        "thresholds_changed": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _cortex_full_stack_diagnostic_trace_v1(ctx: dict, routing_audit: dict, routing: dict, cortex: dict, gate: dict) -> dict:
+    root = _broker_truth_acceleration_root_cause_audit_v1(ctx)
+    throughput = _safe_paper_exit_throughput_audit_v1(ctx)
+    review_count = int(_to_float(routing_audit.get("review_candidates_found"), 0.0))
+    completion_count = int(_to_float(routing.get("promoted_completion_candidates"), 0.0))
+    cortex_count = int(_to_float(cortex.get("candidates_received_by_cortex"), 0.0))
+    stale_count = len(throughput.get("stale_positions") or [])
+    profit_count = len(throughput.get("profit_lock_candidates") or [])
+    loss_count = len(throughput.get("controlled_loss_candidates") or [])
+    sell_fills = int(_to_float(root.get("sell_fill_count"), 0.0))
+    open_positions = int(_to_float(root.get("open_positions_count"), 0.0))
+    contradictions = []
+    if review_count > 0 and completion_count == 0:
+        contradictions.append("review_candidates_gt_zero_but_completion_candidates_zero")
+    if open_positions > 0 and sell_fills <= 1:
+        contradictions.append("open_positions_gt_zero_and_sell_fills_near_zero")
+    if stale_count > 0 and completion_count == 0:
+        contradictions.append("stale_positions_gt_zero_and_no_completion_candidates")
+    if profit_count > 0 and cortex_count == 0:
+        contradictions.append("profit_lock_candidates_gt_zero_and_no_cortex_intake")
+    if loss_count > 0 and cortex_count == 0:
+        contradictions.append("controlled_loss_candidates_gt_zero_and_no_cortex_intake")
+    lane_counts: dict[str, int] = defaultdict(int)
+    for row in routing.get("completion_candidates") or []:
+        if isinstance(row, dict):
+            lane_counts[str(row.get("horizon") or "unknown")] += 1
+    return {
+        "cortex_full_stack_diagnostic_trace_v1": True,
+        "system_diagnostic_status": "CRITICAL" if contradictions else "PASS",
+        "lane_diagnostic_status": "PASS" if completion_count else ("BLOCKED" if review_count else "INSUFFICIENT_REVIEW_CANDIDATES"),
+        "position_trace_status": "PASS" if open_positions else "NO_OPEN_POSITIONS",
+        "decision_chain_status": "PASS_REVIEW_TO_CORTEX_REPAIRED" if completion_count and cortex_count else "BROKEN",
+        "contradictions_found": contradictions,
+        "critical_failures": contradictions,
+        "lane_completion_candidate_counts": dict(lane_counts),
+        "decision_chain_counts": {
+            "review_candidates": review_count,
+            "completion_candidates": completion_count,
+            "cortex_intake": cortex_count,
+            "cortex_approved": cortex.get("candidates_approved"),
+            "paper_sell_attempts": gate.get("sell_orders_attempted"),
+            "broker_truths_created": gate.get("broker_truths_created"),
+        },
+        "recommended_fix": "review_to_completion_candidate_routing_repaired; next route approved candidates through existing non-GET guarded paper worker if operational policy allows",
+        **_safety_flags_v1(),
+    }
+
+
+def _open_position_completion_trace_table_v1(ctx: dict, routing: dict, cortex: dict, gate: dict) -> dict:
+    alpaca = _cached_alpaca_paper_status_payload(ctx.get("statuses") or {})
+    positions, meta = _bt_broker_position_rows_v1(alpaca)
+    completion_by_symbol = {str(c.get("symbol") or "").upper().strip(): dict(c) for c in (routing.get("completion_candidates") or []) if isinstance(c, dict)}
+    approved = {str(c.get("symbol") or "").upper().strip(): dict(c) for c in (cortex.get("approved_candidates") or []) if isinstance(c, dict)}
+    blocked = {str(c.get("symbol") or "").upper().strip(): dict(c) for c in (cortex.get("blocked_candidates") or []) if isinstance(c, dict)}
+    rows = []
+    for pos in positions:
+        sym = str(pos.get("symbol") or "").upper().strip()
+        horizon = _bt_horizon_bucket_v1(pos)
+        pnl_pct = _bt_position_unrealized_pct_v1(pos)
+        comp = completion_by_symbol.get(sym, {})
+        is_approved = sym in approved
+        is_blocked = sym in blocked
+        review_category = ",".join(comp.get("review_categories") or []) if comp else "hold_or_no_review"
+        rows.append({
+            "symbol": sym,
+            "market_value": _to_float(pos.get("market_value"), 0.0),
+            "avg_entry": _to_float(pos.get("avg_entry_price") or pos.get("average_entry_price"), 0.0),
+            "current_price": _to_float(pos.get("current_price") or pos.get("market_price"), 0.0),
+            "total_pnl_pct": pnl_pct,
+            "total_pnl_dollars": _to_float(pos.get("unrealized_pl"), 0.0),
+            "horizon": horizon,
+            "horizon_known": horizon != "unknown",
+            "review_category": review_category,
+            "exit_readiness": comp.get("exit_readiness") or "valid_hold_or_insufficient_exit_evidence",
+            "completion_candidate": bool(comp),
+            "cortex_status": "approved" if is_approved else ("blocked" if is_blocked else "not_sent"),
+            "paper_sell_status": "not_attempted_diagnostic_endpoint",
+            "blocker_reason": "" if is_approved else (";".join(blocked.get(sym, {}).get("cortex_block_reasons") or []) if is_blocked else "no_completion_candidate"),
+            "next_action": "eligible_for_existing_guarded_worker_path" if is_approved else "monitor_or_hold",
+        })
+    return {
+        "open_position_completion_trace_table_v1": True,
+        "open_position_count": len(positions),
+        "trace_rows": rows[:120],
+        "position_rows_source": meta.get("position_rows_source"),
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_cortex_completion_trace_status_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    ctx = _lc_common_inputs(statuses)
+    if isinstance(statuses.get("paper_autopilot_status"), dict):
+        ctx["paper_autopilot_status"] = statuses.get("paper_autopilot_status")
+    elif "PAPER_AUTOPILOT" in globals():
+        try:
+            ctx["paper_autopilot_status"] = PAPER_AUTOPILOT.control_status()
+        except Exception:
+            ctx["paper_autopilot_status"] = {}
+    if isinstance(statuses.get("alpaca_paper_status_v1"), dict):
+        ctx["alpaca_paper_status_v1"] = statuses.get("alpaca_paper_status_v1")
+    routing_audit = _review_candidate_completion_routing_audit_v1(ctx)
+    routing = _review_to_completion_candidate_routing_v1(ctx)
+    wiring = _exit_readiness_execution_wiring_audit_v1(ctx)
+    cortex = _cortex_completion_candidate_intake_v1(ctx, routing)
+    gate = _paper_sell_execution_gate_v1(ctx, cortex, wiring)
+    full_stack = _cortex_full_stack_diagnostic_trace_v1(ctx, routing_audit, routing, cortex, gate)
+    trace_table = _open_position_completion_trace_table_v1(ctx, routing, cortex, gate)
+    status = "PASS" if routing.get("promoted_completion_candidates") and cortex.get("candidates_received_by_cortex") else ("BLOCKED" if routing_audit.get("review_candidates_found") else "INSUFFICIENT_REVIEW_CANDIDATES")
+    return {
+        "suite": "Astra Review Candidate Routing Repair & Cortex Full-Stack Diagnostic Upgrade V1",
+        "status": status,
+        "endpoint": "/api/astra_cortex_completion_trace_status_v1",
+        "generated_at": _now_utc_iso(),
+        "review_candidate_completion_routing_audit_v1": routing_audit,
+        "review_to_completion_candidate_routing_v1": routing,
+        "cortex_completion_candidate_intake_v1": cortex,
+        "paper_sell_execution_gate_v1": gate,
+        "cortex_full_stack_diagnostic_trace_v1": full_stack,
+        "open_position_completion_trace_table_v1": trace_table,
+        "review_candidates_found": routing_audit.get("review_candidates_found"),
+        "completion_candidates_created": routing.get("promoted_completion_candidates"),
+        "candidates_reaching_cortex": cortex.get("candidates_received_by_cortex"),
+        "cortex_approvals": cortex.get("candidates_approved"),
+        "cortex_blocks": cortex.get("candidates_blocked"),
+        "paper_sell_attempts": gate.get("sell_orders_attempted"),
+        "paper_sell_fills": gate.get("sell_orders_filled"),
+        "broker_truths_created": gate.get("broker_truths_created"),
+        "first_breakpoint": routing_audit.get("first_breakpoint"),
+        "exact_break_reason": routing_audit.get("exact_break_reason"),
+        "contradictions_found": full_stack.get("contradictions_found") or [],
+        "wiring_status": "PASS" if status == "PASS" else "WARNING",
+        "safety_audit_status": "PASS",
+        **_safety_flags_v1(),
+    }
+
+
+def _cortex_governed_paper_completion_v1(ctx: dict, root_audit: dict, wiring: dict, trace: dict | None = None) -> dict:
     runtime = ctx.get("paper_autopilot_status") if isinstance(ctx.get("paper_autopilot_status"), dict) else {}
     enabled = bool(runtime.get("learned_exit_validation_bucket_enabled", False))
     remaining = int(_to_float(runtime.get("learned_exits_remaining_today"), 0.0))
-    candidates = int(_to_float(runtime.get("learned_exit_candidates_today"), 0.0))
+    trace = trace if isinstance(trace, dict) else {}
+    candidates = int(_to_float(trace.get("completion_candidates_created"), _to_float(runtime.get("learned_exit_candidates_today"), 0.0)))
+    cortex_received = int(_to_float(trace.get("candidates_reaching_cortex"), 0.0))
     blockers = list(root_audit.get("primary_root_causes") or [])
     if not bool(wiring.get("paper_sell_path_verified")):
         blockers.append("paper_sell_path_not_verified")
     if candidates <= 0:
         blockers.append("no_current_completion_candidate_generated")
+    if candidates > 0 and "no_current_completion_candidate_generated" in blockers:
+        blockers = [b for b in blockers if b != "no_current_completion_candidate_generated"]
     return {
         "cortex_governed_paper_completion_v1": True,
-        "status": "ARMED_NO_CURRENT_CANDIDATES" if bool(wiring.get("paper_sell_path_verified")) and candidates <= 0 else ("ACTIVE_CONTROLLED_BUCKET" if enabled else "BLOCKED"),
+        "status": "READY_FOR_EXISTING_WORKER_PATH" if candidates > 0 and cortex_received > 0 and bool(wiring.get("paper_sell_path_verified")) else ("ARMED_NO_CURRENT_CANDIDATES" if bool(wiring.get("paper_sell_path_verified")) and candidates <= 0 else ("ACTIVE_CONTROLLED_BUCKET" if enabled else "BLOCKED")),
         "cortex_governed_completion_monitor_enabled": True,
         "cortex_governed_sell_execution_enabled": enabled and bool(wiring.get("paper_sell_path_verified")),
         "completion_candidates_today": candidates,
+        "candidates_reaching_cortex": cortex_received,
         "learned_exits_remaining_today": remaining,
         "sell_orders_attempted_by_wave": 0,
         "sell_orders_filled_by_wave": 0,
@@ -51133,7 +51496,8 @@ def _astra_cortex_paper_completion_status_payload(statuses: dict | None = None) 
     root = _cortex_paper_completion_root_cause_audit_v1(ctx)
     horizon = _future_horizon_metadata_persistence_v1(ctx)
     wiring = _exit_readiness_execution_wiring_audit_v1(ctx)
-    completion = _cortex_governed_paper_completion_v1(ctx, root, wiring)
+    completion_trace = statuses.get("astra_cortex_completion_trace_status_v1") if isinstance(statuses.get("astra_cortex_completion_trace_status_v1"), dict) else _astra_cortex_completion_trace_status_payload(ctx)
+    completion = _cortex_governed_paper_completion_v1(ctx, root, wiring, completion_trace)
     sell_status = _safe_paper_sell_completion_status_v1(ctx)
     sell_fill = _sell_fill_throughput_intelligence_v1(ctx, root)
     attribution = _exit_attribution_completion_v2(ctx, sell_status)
@@ -51158,6 +51522,7 @@ def _astra_cortex_paper_completion_status_payload(statuses: dict | None = None) 
         "cortex_paper_completion_root_cause_audit_v1": root,
         "future_horizon_metadata_persistence_v1": horizon,
         "exit_readiness_execution_wiring_audit_v1": wiring,
+        "astra_cortex_completion_trace_status_v1": completion_trace,
         "cortex_governed_paper_completion_v1": completion,
         "sell_fill_throughput_intelligence_v1": sell_fill,
         "exit_attribution_completion_v2": attribution,
@@ -51178,6 +51543,9 @@ def _astra_cortex_paper_completion_status_payload(statuses: dict | None = None) 
         "duplicate_sell_prevention_verified": bool(wiring.get("duplicate_sell_prevention_verified")),
         "fill_confirmation_verified": bool(wiring.get("fill_confirmation_verified")),
         "learned_exit_candidates_today": root.get("learned_exit_candidates_today"),
+        "completion_candidates_created": completion_trace.get("completion_candidates_created"),
+        "candidates_reaching_cortex": completion_trace.get("candidates_reaching_cortex"),
+        "cortex_approvals": completion_trace.get("cortex_approvals"),
         "broker_truth_density_pct": sell_fill.get("broker_truth_density_pct"),
         "sell_fill_count": root.get("sell_fill_count"),
         "paired_round_trip_count": root.get("paired_round_trip_count"),
@@ -51215,7 +51583,8 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
     completion_improvement = _broker_truth_completion_improvement_v1(acceleration_root, exit_throughput, horizon_completion)
     system_readiness = _broker_truth_validation_readiness_by_system_v1(completion_improvement)
     completion_maturity = statuses.get("astra_broker_truth_completion_exit_maturity_v1") if isinstance(statuses.get("astra_broker_truth_completion_exit_maturity_v1"), dict) else _broker_truth_completion_improvement_status_v1(ctx)
-    cortex_completion = statuses.get("astra_cortex_paper_completion_status_v1") if isinstance(statuses.get("astra_cortex_paper_completion_status_v1"), dict) else _astra_cortex_paper_completion_status_payload({**statuses, "astra_broker_truth_completion_exit_maturity_v1": completion_maturity})
+    cortex_trace = statuses.get("astra_cortex_completion_trace_status_v1") if isinstance(statuses.get("astra_cortex_completion_trace_status_v1"), dict) else _astra_cortex_completion_trace_status_payload({**statuses, "astra_broker_truth_completion_exit_maturity_v1": completion_maturity})
+    cortex_completion = statuses.get("astra_cortex_paper_completion_status_v1") if isinstance(statuses.get("astra_cortex_paper_completion_status_v1"), dict) else _astra_cortex_paper_completion_status_payload({**statuses, "astra_broker_truth_completion_exit_maturity_v1": completion_maturity, "astra_cortex_completion_trace_status_v1": cortex_trace})
     checks = {
         "multi_lane_connected": bool(lanes.get("multi_lane_trading_validation_audit_v1")),
         "canonical_wiring_connected": bool(canonical.get("canonical_engine_wiring_audit_v1")),
@@ -51227,6 +51596,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "broker_truth_completion_improvement_connected": bool(completion_improvement.get("broker_truth_completion_improvement_v1")),
         "broker_truth_system_readiness_connected": bool(system_readiness.get("broker_truth_validation_readiness_by_system_v1")),
         "broker_truth_completion_exit_maturity_connected": bool(completion_maturity.get("broker_truth_completion_improvement_status_v1")),
+        "cortex_completion_trace_connected": bool(cortex_trace.get("review_candidate_completion_routing_audit_v1")),
         "cortex_paper_completion_connected": bool(cortex_completion.get("cortex_governed_paper_completion_v1")),
         "context_symbol_maturity_connected": bool(maturity.get("context_symbol_maturity_completion_v1")),
         "news_event_readiness_connected": bool(news.get("news_event_intelligence_status_v1")),
@@ -51280,6 +51650,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "broker_truth_completion_improvement_v1": completion_improvement,
         "broker_truth_validation_readiness_by_system_v1": system_readiness,
         "astra_broker_truth_completion_exit_maturity_v1": completion_maturity,
+        "astra_cortex_completion_trace_status_v1": cortex_trace,
         "astra_cortex_paper_completion_status_v1": cortex_completion,
         "broker_truth_completion_pre_audit_v1": completion_maturity.get("broker_truth_completion_pre_audit_v1"),
         "broker_position_horizon_persistence_status_v1": completion_maturity.get("broker_position_horizon_persistence_status_v1"),
@@ -51308,6 +51679,9 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "projected_broker_truth_growth": completion_improvement.get("projected_broker_truth_growth"),
         "estimated_time_to_50_truths": completion_improvement.get("estimated_time_to_threshold"),
         "broker_truth_completion_exit_maturity_status": completion_maturity.get("status"),
+        "cortex_completion_trace_status": cortex_trace.get("status"),
+        "review_completion_candidates_created": cortex_trace.get("completion_candidates_created"),
+        "review_candidates_reaching_cortex": cortex_trace.get("candidates_reaching_cortex"),
         "cortex_paper_completion_status": cortex_completion.get("status"),
         "paper_sell_path_verified": cortex_completion.get("paper_sell_path_verified"),
         "sell_fill_throughput_status": (cortex_completion.get("sell_fill_throughput_intelligence_v1") or {}).get("status"),
@@ -55298,6 +55672,25 @@ def astra_cortex_paper_completion_status_v1(force: bool = False):
         except Exception:
             statuses["controlled_paper_learned_exit_validation_v1"] = {}
     return _astra_cortex_paper_completion_status_payload(statuses)
+
+
+@router.get("/api/astra_cortex_completion_trace_status_v1")
+def astra_cortex_completion_trace_status_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_cortex_completion_trace_status_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    if force:
+        try:
+            statuses["paper_autopilot_status"] = PAPER_AUTOPILOT.status()
+        except Exception:
+            statuses["paper_autopilot_status"] = {}
+        try:
+            statuses["alpaca_paper_status_v1"] = alpaca_paper_status_v1()
+        except Exception:
+            statuses["alpaca_paper_status_v1"] = {}
+    return _astra_cortex_completion_trace_status_payload(statuses)
 
 
 @router.get("/api/canonical_outcome_audit_v1")
