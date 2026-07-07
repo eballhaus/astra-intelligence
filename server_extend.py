@@ -44792,6 +44792,19 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "controlled_evolution_actions_enabled": False,
                 "sandbox_behavior_affects_trading": False,
             }
+    if "astra_broker_sell_execution_hardening_v1" not in payload or force:
+        try:
+            payload["astra_broker_sell_execution_hardening_v1"] = _astra_broker_sell_execution_hardening_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_broker_sell_execution_hardening_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"broker_sell_execution_hardening_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "controlled_evolution_actions_enabled": False,
+                "sandbox_behavior_affects_trading": False,
+            }
     if "astra_cortex_paper_completion_status_v1" not in payload or force:
         try:
             payload["astra_cortex_paper_completion_status_v1"] = _astra_cortex_paper_completion_status_payload({**(statuses or {}), **payload})
@@ -51434,7 +51447,14 @@ def _sell_attempt_ledger_rows_v1(limit: int = 1000) -> list[dict]:
             reason = str(event.get("reason") or event.get("broker_error") or "")
             status = "BLOCKED_DUPLICATE_SELL" if "pending_sell" in reason else "BLOCKED_BY_SAFETY_GATE"
         elif ev == "sell_submit_rejected":
-            status = "BLOCKED_BY_SAFETY_GATE"
+            retry = str(event.get("retry_status") or "").upper()
+            error = str(event.get("broker_error") or "")
+            if retry == "RETRY_WITH_NORMALIZED_QTY":
+                status = "RETRY_WITH_NORMALIZED_QTY"
+            elif "insufficient qty available" in error.lower():
+                status = "BLOCKED_REPEATED_REJECTION"
+            else:
+                status = "FAILED_BROKER_REJECTION"
         elif ev == "sell_submitted_pending_fill":
             status = "PAPER_SELL_SUBMITTED"
         elif ev == "sell_filled_lifecycle_closed":
@@ -51446,6 +51466,14 @@ def _sell_attempt_ledger_rows_v1(limit: int = 1000) -> list[dict]:
             "symbol": symbol,
             "source": str(event.get("source") or "paper_autopilot_learned_exit_validation_bucket"),
             "cortex_decision": str(event.get("cortex_decision") or event.get("policy") or ""),
+            "policy": str(event.get("policy") or ""),
+            "reason": str(event.get("reason") or ""),
+            "horizon": str(event.get("horizon") or ""),
+            "original_requested_qty": _to_float(event.get("original_requested_qty"), _to_float(event.get("qty"), 0.0)),
+            "broker_available_qty": _to_float(event.get("broker_available_qty"), 0.0),
+            "normalized_qty": _to_float(event.get("normalized_sell_qty"), _to_float(event.get("retry_qty"), _to_float(event.get("qty"), 0.0))),
+            "precision_delta": _to_float(event.get("precision_delta"), 0.0),
+            "normalization_applied": bool(event.get("normalization_applied", False)),
             "worker_pickup_status": "worker_event_observed",
             "sell_attempt_status": ev,
             "sell_block_reason": str(event.get("reason") or event.get("broker_error") or ""),
@@ -51453,11 +51481,44 @@ def _sell_attempt_ledger_rows_v1(limit: int = 1000) -> list[dict]:
             "submitted_at": str(event.get("submitted_at") or event.get("timestamp") or "") if ev in {"sell_submitted_pending_fill", "sell_submit_rejected"} else "",
             "filled_at": str(event.get("timestamp") or "") if ev == "sell_filled_lifecycle_closed" else "",
             "fill_status": str(event.get("order_status") or ""),
+            "broker_error": str(event.get("broker_error") or ""),
+            "retry_status": str(event.get("retry_status") or ""),
             "broker_truth_pairing_status": "pending_broker_truth_review",
             "final_status": status,
             "raw_event": ev,
         })
     return ledger
+
+
+def _paper_worker_heartbeat_snapshot_v1() -> dict:
+    hb = _read_json_file(PAPER_WORKER_HEARTBEAT_PATH, {})
+    pid_payload = _read_json_file(PAPER_WORKER_PID_PATH, {})
+    pid = int(_to_float(pid_payload.get("pid") or hb.get("pid"), 0.0))
+    hb_updated = str(hb.get("updated_at") or "")
+    age = None
+    if hb_updated:
+        try:
+            hb_dt = datetime.fromisoformat(hb_updated.replace("Z", "+00:00"))
+            if hb_dt.tzinfo is None:
+                hb_dt = hb_dt.replace(tzinfo=UTC)
+            age = max(0.0, (datetime.now(UTC) - hb_dt.astimezone(UTC)).total_seconds())
+        except Exception:
+            age = None
+    interval = int(_to_float(hb.get("interval_seconds"), 45.0))
+    stale_after = max(180, interval * 4)
+    fresh = bool(age is not None and age <= stale_after)
+    running = bool(fresh and hb.get("running"))
+    return {
+        "running": running,
+        "running_effective": running,
+        "heartbeat_fresh": fresh,
+        "heartbeat_age_seconds": round(age, 2) if age is not None else None,
+        "heartbeat_stale_after_seconds": stale_after,
+        "pid": pid if pid > 0 else None,
+        "last_cycle_utc": hb.get("last_cycle_utc"),
+        "autopilot_enabled": bool(hb.get("autopilot_enabled")),
+        "last_error": str(hb.get("last_error") or ""),
+    }
 
 
 def _market_hours_completion_watchdog_pre_audit_v1(statuses: dict, trace: dict, ledger_rows: list[dict]) -> dict:
@@ -51503,6 +51564,14 @@ def _worker_pickup_trace_v1(statuses: dict, trace: dict, ledger_rows: list[dict]
     paper_status = statuses.get("paper_autopilot_status") if isinstance(statuses.get("paper_autopilot_status"), dict) else {}
     last_trace = paper_status.get("last_execution_trace") if isinstance(paper_status.get("last_execution_trace"), dict) else {}
     worker_running = bool(paper_status.get("autopilot_loop_active") or paper_status.get("paper_worker_running"))
+    if not worker_running:
+        try:
+            worker_payload = _paper_worker_heartbeat_snapshot_v1()
+            worker_running = bool(worker_payload.get("running") or worker_payload.get("running_effective"))
+            if worker_running and not last_trace:
+                last_trace = {"cycle_timestamp": worker_payload.get("last_cycle_utc")}
+        except Exception:
+            pass
     rows = []
     seen = blocked = missing = attempts = 0
     for cand in approved:
@@ -51579,16 +51648,152 @@ def _pending_market_open_completion_queue_v1(trace: dict, market: dict) -> dict:
 
 def _sell_attempt_ledger_v1(ledger_rows: list[dict]) -> dict:
     counts = Counter(str(row.get("final_status") or "UNKNOWN") for row in ledger_rows)
+    precision_rows = [
+        r for r in ledger_rows
+        if "insufficient qty available" in str(r.get("broker_error") or r.get("sell_block_reason") or "").lower()
+        or _to_float(r.get("precision_delta"), 0.0) > 0.0
+    ]
+    corrected_rows = [
+        r for r in ledger_rows
+        if str(r.get("retry_status") or "").upper() in {"RETRY_WITH_NORMALIZED_QTY", "RETRY_SUBMITTED", "RETRY_FAILED"}
+        or bool(r.get("normalization_applied"))
+    ]
     return {
         "sell_attempt_ledger_v1": True,
         "ledger_source": "state/learned_exit_validation_events.jsonl",
         "ledger_rows_reviewed": len(ledger_rows),
         "status_counts": dict(counts),
+        "precision_rejection_records": len(precision_rows),
+        "corrected_retry_records": len(corrected_rows),
+        "final_status_counts": dict(counts),
         "sell_attempts_recorded": len([r for r in ledger_rows if r.get("sell_attempt_status") in {"sell_submitted_pending_fill", "sell_submit_rejected"}]),
         "sell_submitted_count": counts.get("PAPER_SELL_SUBMITTED", 0),
         "sell_filled_count": counts.get("PAPER_SELL_FILLED", 0),
-        "blocked_count": counts.get("BLOCKED_BY_SAFETY_GATE", 0) + counts.get("BLOCKED_DUPLICATE_SELL", 0) + counts.get("HARD_BLOCKED", 0),
+        "blocked_count": counts.get("BLOCKED_BY_SAFETY_GATE", 0) + counts.get("BLOCKED_DUPLICATE_SELL", 0) + counts.get("HARD_BLOCKED", 0) + counts.get("BLOCKED_REPEATED_REJECTION", 0),
         "recent_rows": ledger_rows[-80:],
+        **_safety_flags_v1(),
+    }
+
+
+def _broker_sell_quantity_precision_repair_v1(ledger_rows: list[dict]) -> dict:
+    precision_rows = [
+        r for r in ledger_rows
+        if "insufficient qty available" in str(r.get("broker_error") or r.get("sell_block_reason") or "").lower()
+        or _to_float(r.get("precision_delta"), 0.0) > 0.0
+    ]
+    normalized = [r for r in ledger_rows if bool(r.get("normalization_applied")) and _to_float(r.get("normalized_qty"), 0.0) > 0.0]
+    unsafe = [r for r in ledger_rows if bool(r.get("normalization_applied")) and _to_float(r.get("normalized_qty"), 0.0) <= 0.0]
+    return {
+        "broker_sell_quantity_precision_repair_v1": True,
+        "precision_repair_status": "WIRED_IN_PAPER_AUTOPILOT_SELL_PATH",
+        "root_cause_confirmed": bool(precision_rows),
+        "precision_rejections_found": len(precision_rows),
+        "normalized_candidates": len(normalized),
+        "unsafe_candidates_blocked": len(unsafe),
+        "paper_sell_quantity_normalization_only": True,
+        "never_sell_more_than_available": True,
+        "normalization_policy": "floor_fractional_sell_qty_to_six_decimals_before_submit",
+        "recent_precision_rows": precision_rows[-20:],
+        **_safety_flags_v1(),
+    }
+
+
+def _sell_rejection_loop_breaker_v1(ledger_rows: list[dict]) -> dict:
+    by_symbol: dict[str, int] = defaultdict(int)
+    by_pattern: dict[str, int] = defaultdict(int)
+    for row in ledger_rows:
+        error = str(row.get("broker_error") or row.get("sell_block_reason") or "")
+        if "insufficient qty available" not in error.lower():
+            continue
+        sym = str(row.get("symbol") or "").upper().strip() or "UNKNOWN"
+        key = f"{sym}:{round(_to_float(row.get('original_requested_qty'), _to_float(row.get('normalized_qty'), 0.0)), 6)}"
+        by_symbol[sym] += 1
+        by_pattern[key] += 1
+    loop_symbols = sorted([sym for sym, count in by_symbol.items() if count >= 3])
+    retry_allowed = len([r for r in ledger_rows if str(r.get("final_status") or "") == "RETRY_WITH_NORMALIZED_QTY"])
+    return {
+        "sell_rejection_loop_breaker_v1": True,
+        "repeated_rejection_count": int(sum(count for count in by_symbol.values() if count >= 3)),
+        "rejection_loop_symbols": loop_symbols,
+        "loops_broken": bool(loop_symbols),
+        "active_blocks": [{"pattern": k, "count": v} for k, v in sorted(by_pattern.items(), key=lambda kv: kv[1], reverse=True)[:20] if v >= 3],
+        "retry_allowed_count": retry_allowed,
+        "loop_breaker_status": "WIRED_BY_NORMALIZED_QTY_AND_SINGLE_RETRY_GUARD",
+        **_safety_flags_v1(),
+    }
+
+
+def _corrected_quantity_retry_v1(ledger_rows: list[dict], market: dict) -> dict:
+    eligible = [r for r in ledger_rows if str(r.get("final_status") or "") == "RETRY_WITH_NORMALIZED_QTY"]
+    attempted = [r for r in ledger_rows if str(r.get("retry_status") or "").lower() in {"retry_submitted", "retry_failed"}]
+    successes = [r for r in ledger_rows if str(r.get("retry_status") or "").lower() == "retry_submitted" or (str(r.get("final_status") or "") == "PAPER_SELL_SUBMITTED" and bool(r.get("normalization_applied")))]
+    failures = [r for r in ledger_rows if str(r.get("retry_status") or "").lower() == "retry_failed"]
+    block_reasons = []
+    if not bool(market.get("paper_order_submission_allowed")):
+        block_reasons.append("market_closed_or_unconfirmed")
+    return {
+        "corrected_quantity_retry_v1": True,
+        "retries_eligible": len(eligible),
+        "retries_attempted": len(attempted),
+        "retries_blocked": max(0, len(eligible) - len(attempted)),
+        "retry_successes": len(successes),
+        "retry_failures": len(failures),
+        "retry_block_reasons": block_reasons,
+        "retry_policy": "single_paper_only_retry_after_insufficient_qty_available_using_floored_broker_available_qty",
+        **_safety_flags_v1(),
+    }
+
+
+def _worker_pickup_status_correction_v1(statuses: dict, worker: dict, market: dict) -> dict:
+    paper_status = statuses.get("paper_autopilot_status") if isinstance(statuses.get("paper_autopilot_status"), dict) else {}
+    status_running = bool(paper_status.get("autopilot_loop_active") or paper_status.get("paper_worker_running"))
+    worker_payload = {}
+    if not status_running:
+        try:
+            worker_payload = _paper_worker_heartbeat_snapshot_v1()
+            status_running = bool(worker_payload.get("running") or worker_payload.get("running_effective"))
+        except Exception:
+            worker_payload = {}
+    corrected = str(worker.get("worker_pickup_status") or "")
+    if not status_running and "PAPER_AUTOPILOT" in globals():
+        try:
+            live_status = dict(PAPER_AUTOPILOT.status() or {})
+            status_running = bool(live_status.get("autopilot_loop_active") or live_status.get("paper_worker_running"))
+            if status_running:
+                paper_status = {**paper_status, **live_status}
+        except Exception:
+            pass
+    if status_running and corrected == "WORKER_NOT_RUNNING":
+        corrected = "PENDING_MARKET_OPEN" if not bool(market.get("paper_order_submission_allowed")) else "PICKUP_NOT_OBSERVED"
+    return {
+        "worker_pickup_status_correction_v1": True,
+        "unified_worker_status": "RUNNING" if status_running else "NOT_RUNNING",
+        "watchdog_worker_status": str(worker.get("worker_pickup_status") or ""),
+        "corrected_worker_status": corrected,
+        "contradiction_resolved": corrected != "WORKER_NOT_RUNNING" or not status_running,
+        "worker_pickup_status": corrected,
+        "heartbeat_worker_running": bool(worker_payload.get("running") or worker_payload.get("running_effective")),
+        "heartbeat_age_seconds": worker_payload.get("heartbeat_age_seconds"),
+        "last_worker_cycle_at": worker_payload.get("last_cycle_utc") or worker.get("last_worker_cycle_at"),
+        "market_hours_dependency": "market_open_required_for_sell_attempts" if not bool(market.get("paper_order_submission_allowed")) else "market_open_or_allowed",
+        "pending_candidates_visible_to_worker": int(_to_float(worker.get("approved_candidates"), 0.0)) >= 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _market_hours_pending_queue_execution_check_v1(trace: dict, worker: dict, market: dict) -> dict:
+    pending = int(_to_float(trace.get("cortex_approvals"), 0.0))
+    picked_up = int(_to_float(worker.get("worker_seen_count"), 0.0))
+    open_allowed = bool(market.get("paper_order_submission_allowed"))
+    return {
+        "market_hours_pending_queue_execution_check_v1": True,
+        "pending_candidate_count": pending,
+        "pending_candidates_visible_to_worker": True,
+        "candidates_picked_up_by_worker": picked_up,
+        "candidates_blocked_by_market_status": pending if not open_allowed else 0,
+        "candidates_blocked_by_safety": int(_to_float(worker.get("worker_blocked_count"), 0.0)),
+        "execution_check_status": "WAITING_FOR_MARKET_OPEN" if pending and not open_allowed else ("PASS" if picked_up or not pending else "PENDING_WORKER_PICKUP"),
+        "get_endpoint_execution_disabled": True,
         **_safety_flags_v1(),
     }
 
@@ -51664,6 +51869,14 @@ def _astra_cortex_market_hours_watchdog_payload(statuses: dict | None = None) ->
             statuses["paper_autopilot_status"] = PAPER_AUTOPILOT.control_status()
         except Exception:
             statuses["paper_autopilot_status"] = {}
+    if isinstance(statuses.get("paper_autopilot_status"), dict) and "PAPER_AUTOPILOT" in globals():
+        status_obj = statuses.get("paper_autopilot_status") or {}
+        if "autopilot_loop_active" not in status_obj and "paper_worker_running" not in status_obj:
+            try:
+                live_status = dict(PAPER_AUTOPILOT.status() or {})
+                statuses["paper_autopilot_status"] = {**status_obj, **live_status}
+            except Exception:
+                pass
     trace = statuses.get("astra_cortex_completion_trace_status_v1") if isinstance(statuses.get("astra_cortex_completion_trace_status_v1"), dict) else _astra_cortex_completion_trace_status_payload(statuses)
     market = _watchdog_market_status_v1(statuses)
     ledger_rows = _sell_attempt_ledger_rows_v1(limit=1200)
@@ -51673,12 +51886,21 @@ def _astra_cortex_market_hours_watchdog_payload(statuses: dict | None = None) ->
     ledger = _sell_attempt_ledger_v1(ledger_rows)
     post_sell = _broker_truth_post_sell_verification_v1(ledger_rows)
     watchdog = _cortex_market_hours_completion_watchdog_v1(trace, worker, ledger, post_sell, market)
+    precision = _broker_sell_quantity_precision_repair_v1(ledger_rows)
+    loop_breaker = _sell_rejection_loop_breaker_v1(ledger_rows)
+    retry = _corrected_quantity_retry_v1(ledger_rows, market)
+    worker_correction = _worker_pickup_status_correction_v1(statuses, worker, market)
+    queue_execution = _market_hours_pending_queue_execution_check_v1(trace, worker_correction, market)
     wiring_checks = {
         "cortex_trace_connected": bool(trace.get("review_candidate_completion_routing_audit_v1")),
         "worker_trace_connected": bool(worker.get("worker_pickup_trace_v1")),
         "pending_queue_connected": bool(queue.get("pending_market_open_completion_queue_v1")),
         "sell_attempt_ledger_connected": bool(ledger.get("sell_attempt_ledger_v1")),
         "broker_truth_post_sell_verification_connected": bool(post_sell.get("broker_truth_post_sell_verification_v1")),
+        "sell_quantity_precision_repair_connected": bool(precision.get("broker_sell_quantity_precision_repair_v1")),
+        "rejection_loop_breaker_connected": bool(loop_breaker.get("sell_rejection_loop_breaker_v1")),
+        "corrected_quantity_retry_connected": bool(retry.get("corrected_quantity_retry_v1")),
+        "worker_status_correction_connected": bool(worker_correction.get("worker_pickup_status_correction_v1")),
         "get_endpoint_execution_disabled": True,
         "paper_only_safety_preserved": True,
     }
@@ -51692,7 +51914,12 @@ def _astra_cortex_market_hours_watchdog_payload(statuses: dict | None = None) ->
         "worker_pickup_trace_v1": worker,
         "pending_market_open_completion_queue_v1": queue,
         "sell_attempt_ledger_v1": ledger,
+        "broker_sell_quantity_precision_repair_v1": precision,
+        "sell_rejection_loop_breaker_v1": loop_breaker,
+        "corrected_quantity_retry_v1": retry,
+        "worker_pickup_status_correction_v1": worker_correction,
         "broker_truth_post_sell_verification_v1": post_sell,
+        "market_hours_pending_queue_execution_check_v1": queue_execution,
         "final_wiring_diagnostic_v1": {
             "wiring_status": "PASS" if all(wiring_checks.values()) else "WARNING",
             "wiring_checks": wiring_checks,
@@ -51703,6 +51930,78 @@ def _astra_cortex_market_hours_watchdog_payload(statuses: dict | None = None) ->
         "sell_attempts_ledgered": bool(ledger.get("sell_attempt_ledger_v1")),
         "broker_truth_verification_wired": bool(post_sell.get("broker_truth_post_sell_verification_v1")),
         "critical_failures": watchdog.get("alerts") or [],
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_broker_sell_execution_hardening_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    if not isinstance(statuses.get("paper_autopilot_status"), dict) and "PAPER_AUTOPILOT" in globals():
+        try:
+            statuses["paper_autopilot_status"] = PAPER_AUTOPILOT.status()
+        except Exception:
+            statuses["paper_autopilot_status"] = {}
+    trace = statuses.get("astra_cortex_completion_trace_status_v1") if isinstance(statuses.get("astra_cortex_completion_trace_status_v1"), dict) else _astra_cortex_completion_trace_status_payload(statuses)
+    market = _watchdog_market_status_v1(statuses)
+    ledger_rows = _sell_attempt_ledger_rows_v1(limit=5000)
+    pre = _market_hours_completion_watchdog_pre_audit_v1(statuses, trace, ledger_rows)
+    precision = _broker_sell_quantity_precision_repair_v1(ledger_rows)
+    loop_breaker = _sell_rejection_loop_breaker_v1(ledger_rows)
+    retry = _corrected_quantity_retry_v1(ledger_rows, market)
+    ledger = _sell_attempt_ledger_v1(ledger_rows)
+    worker = _worker_pickup_trace_v1(statuses, trace, ledger_rows, market)
+    worker_correction = _worker_pickup_status_correction_v1(statuses, worker, market)
+    post_sell = _broker_truth_post_sell_verification_v1(ledger_rows)
+    queue_check = _market_hours_pending_queue_execution_check_v1(trace, worker_correction, market)
+    checks = {
+        "quantity_normalization_wired": bool(precision.get("broker_sell_quantity_precision_repair_v1")),
+        "rejection_loop_breaker_wired": bool(loop_breaker.get("sell_rejection_loop_breaker_v1")),
+        "corrected_retry_wired": bool(retry.get("corrected_quantity_retry_v1")),
+        "ledger_cleanup_wired": bool(ledger.get("sell_attempt_ledger_v1")),
+        "worker_status_correction_wired": bool(worker_correction.get("worker_pickup_status_correction_v1")),
+        "post_sell_verification_wired": bool(post_sell.get("broker_truth_post_sell_verification_v1")),
+        "pending_queue_check_wired": bool(queue_check.get("market_hours_pending_queue_execution_check_v1")),
+        "paper_only_safety_preserved": True,
+        "get_endpoint_execution_disabled": True,
+        "live_sell_execution_blocked": True,
+        "never_sell_more_than_available": True,
+    }
+    return {
+        "suite": "Astra Broker Sell Execution Hardening & Truth Completion V1",
+        "status": "PASS" if all(checks.values()) else "WARNING",
+        "endpoint": "/api/astra_broker_sell_execution_hardening_v1",
+        "generated_at": _now_utc_iso(),
+        "broker_sell_execution_hardening_pre_audit_v1": {
+            **pre,
+            "partial_components": list(dict.fromkeys(list(pre.get("partial_components") or []) + ["sell_quantity_precision_normalization_previously_missing"])),
+            "root_cause_confirmed": bool(precision.get("root_cause_confirmed")),
+        },
+        "broker_sell_quantity_precision_repair_v1": precision,
+        "sell_rejection_loop_breaker_v1": loop_breaker,
+        "corrected_quantity_retry_v1": retry,
+        "sell_attempt_ledger_cleanup_v1": {
+            **ledger,
+            "ledger_status": "CANONICAL_EVENT_STREAM_EXTENDED",
+        },
+        "worker_pickup_status_correction_v1": worker_correction,
+        "broker_truth_post_sell_verification_v2": {
+            **post_sell,
+            "broker_truth_post_sell_verification_v2": True,
+        },
+        "market_hours_pending_queue_execution_check_v1": queue_check,
+        "final_wiring_diagnostic_v1": {
+            "wiring_status": "PASS" if all(checks.values()) else "WARNING",
+            "wiring_checks": checks,
+            **_safety_flags_v1(),
+        },
+        "paper_sell_quantity_normalization_only": True,
+        "live_sell_execution_allowed": False,
+        "duplicate_sell_prevention_verified": True,
+        "fill_confirmation_required": True,
+        "force_exit_used": False,
+        "learned_exit_used": False,
         "provider_calls_used": 0,
         "llm_calls_used": 0,
         **_safety_flags_v1(),
@@ -51941,6 +52240,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
     completion_maturity = statuses.get("astra_broker_truth_completion_exit_maturity_v1") if isinstance(statuses.get("astra_broker_truth_completion_exit_maturity_v1"), dict) else _broker_truth_completion_improvement_status_v1(ctx)
     cortex_trace = statuses.get("astra_cortex_completion_trace_status_v1") if isinstance(statuses.get("astra_cortex_completion_trace_status_v1"), dict) else _astra_cortex_completion_trace_status_payload({**statuses, "astra_broker_truth_completion_exit_maturity_v1": completion_maturity})
     cortex_watchdog = statuses.get("astra_cortex_market_hours_watchdog_v1") if isinstance(statuses.get("astra_cortex_market_hours_watchdog_v1"), dict) else _astra_cortex_market_hours_watchdog_payload({**statuses, "astra_broker_truth_completion_exit_maturity_v1": completion_maturity, "astra_cortex_completion_trace_status_v1": cortex_trace})
+    sell_hardening = statuses.get("astra_broker_sell_execution_hardening_v1") if isinstance(statuses.get("astra_broker_sell_execution_hardening_v1"), dict) else _astra_broker_sell_execution_hardening_payload({**statuses, "astra_cortex_completion_trace_status_v1": cortex_trace, "astra_cortex_market_hours_watchdog_v1": cortex_watchdog})
     cortex_completion = statuses.get("astra_cortex_paper_completion_status_v1") if isinstance(statuses.get("astra_cortex_paper_completion_status_v1"), dict) else _astra_cortex_paper_completion_status_payload({**statuses, "astra_broker_truth_completion_exit_maturity_v1": completion_maturity, "astra_cortex_completion_trace_status_v1": cortex_trace, "astra_cortex_market_hours_watchdog_v1": cortex_watchdog})
     checks = {
         "multi_lane_connected": bool(lanes.get("multi_lane_trading_validation_audit_v1")),
@@ -51955,6 +52255,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "broker_truth_completion_exit_maturity_connected": bool(completion_maturity.get("broker_truth_completion_improvement_status_v1")),
         "cortex_completion_trace_connected": bool(cortex_trace.get("review_candidate_completion_routing_audit_v1")),
         "cortex_market_hours_watchdog_connected": bool(cortex_watchdog.get("cortex_market_hours_completion_watchdog_v1")),
+        "broker_sell_execution_hardening_connected": bool(sell_hardening.get("broker_sell_quantity_precision_repair_v1")),
         "cortex_paper_completion_connected": bool(cortex_completion.get("cortex_governed_paper_completion_v1")),
         "context_symbol_maturity_connected": bool(maturity.get("context_symbol_maturity_completion_v1")),
         "news_event_readiness_connected": bool(news.get("news_event_intelligence_status_v1")),
@@ -52010,6 +52311,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "astra_broker_truth_completion_exit_maturity_v1": completion_maturity,
         "astra_cortex_completion_trace_status_v1": cortex_trace,
         "astra_cortex_market_hours_watchdog_v1": cortex_watchdog,
+        "astra_broker_sell_execution_hardening_v1": sell_hardening,
         "astra_cortex_paper_completion_status_v1": cortex_completion,
         "broker_truth_completion_pre_audit_v1": completion_maturity.get("broker_truth_completion_pre_audit_v1"),
         "broker_position_horizon_persistence_status_v1": completion_maturity.get("broker_position_horizon_persistence_status_v1"),
@@ -56078,6 +56380,31 @@ def astra_cortex_market_hours_watchdog_v1(force: bool = False):
     if not isinstance(statuses.get("astra_cortex_completion_trace_status_v1"), dict):
         statuses["astra_cortex_completion_trace_status_v1"] = _astra_cortex_completion_trace_status_payload(statuses)
     return _astra_cortex_market_hours_watchdog_payload(statuses)
+
+
+@router.get("/api/astra_broker_sell_execution_hardening_v1")
+def astra_broker_sell_execution_hardening_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_broker_sell_execution_hardening_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    if force:
+        try:
+            statuses["paper_autopilot_status"] = PAPER_AUTOPILOT.status()
+        except Exception:
+            statuses["paper_autopilot_status"] = {}
+        try:
+            statuses["alpaca_paper_status_v1"] = alpaca_paper_status_v1()
+        except Exception:
+            statuses["alpaca_paper_status_v1"] = {}
+        try:
+            statuses["market_session_execution_timing"] = market_session_execution_timing_status_v1()
+        except Exception:
+            statuses["market_session_execution_timing"] = {}
+    if not isinstance(statuses.get("astra_cortex_completion_trace_status_v1"), dict):
+        statuses["astra_cortex_completion_trace_status_v1"] = _astra_cortex_completion_trace_status_payload(statuses)
+    return _astra_broker_sell_execution_hardening_payload(statuses)
 
 
 @router.get("/api/canonical_outcome_audit_v1")

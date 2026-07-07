@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -390,6 +391,21 @@ def _to_float(value: Any, default: float = 0.0) -> float:
 
 def _to_int(value: Any, default: int = 0) -> int:
     return int(round(_to_float(value, float(default))))
+
+
+def _floor_fractional_qty(value: Any, decimals: int = 6) -> float:
+    qty = _to_float(value, 0.0)
+    if qty <= 0.0:
+        return 0.0
+    scale = 10 ** max(0, int(decimals))
+    # Alpaca rejects sells that are even a few nanoshares above availability.
+    return int(qty * scale) / scale
+
+
+def _parse_available_qty_from_error(error: Any) -> float:
+    raw = str(error or "")
+    match = re.search(r"available:\s*([0-9]+(?:\.[0-9]+)?)", raw, re.IGNORECASE)
+    return _to_float(match.group(1), 0.0) if match else 0.0
 
 
 def _norm_asset(asset_type: Any) -> str:
@@ -1045,8 +1061,15 @@ class PaperAutopilotEngine:
                 "evidence_count": evidence,
                 "policy_confidence": round(confidence, 3),
             }
-        qty = _to_float(broker_position.get("qty_available"), _to_float(broker_position.get("qty"), _to_float(open_row.get("quantity"), 0.0)))
-        if qty <= 0.0:
+        broker_available_qty = _to_float(
+            broker_position.get("qty_available"),
+            _to_float(broker_position.get("qty"), _to_float(open_row.get("quantity"), 0.0)),
+        )
+        original_requested_qty = round(broker_available_qty, 6) if broker_available_qty > 0.0 else 0.0
+        normalized_qty = _floor_fractional_qty(broker_available_qty, 6)
+        precision_delta = max(0.0, original_requested_qty - broker_available_qty)
+        normalization_applied = bool(original_requested_qty > broker_available_qty or normalized_qty < original_requested_qty)
+        if normalized_qty <= 0.0:
             return {"eligible": False, "reason": "broker_confirmed_quantity_required", "evidence_count": evidence}
         return {
             "eligible": True,
@@ -1057,7 +1080,13 @@ class PaperAutopilotEngine:
             "horizon": horizon,
             "evidence_count": evidence,
             "policy_confidence": round(confidence, 3),
-            "qty": round(qty, 6),
+            "qty": normalized_qty,
+            "original_requested_qty": original_requested_qty,
+            "broker_available_qty": round(broker_available_qty, 9),
+            "normalized_sell_qty": normalized_qty,
+            "normalization_reason": "floor_to_broker_available_fractional_qty" if normalization_applied else "broker_available_qty_safe",
+            "precision_delta": round(precision_delta, 12),
+            "normalization_applied": normalization_applied,
             "entry_price": round(entry, 6),
             "current_price": round(current, 6),
             "unrealized_pnl_pct": round(ret, 4),
@@ -1104,13 +1133,17 @@ class PaperAutopilotEngine:
         broker = self.alpaca_paper_broker
         if broker is None or not hasattr(broker, "submit_paper_order"):
             return {"ok": False, "submitted": False, "reason": "alpaca_paper_broker_unavailable"}
+        normalized_qty = _to_float(candidate.get("normalized_sell_qty"), _to_float(candidate.get("qty"), 0.0))
+        if normalized_qty <= 0.0:
+            self._append_learned_exit_event({"event": "validation_candidate_rejected", **candidate, "reason": "normalized_sell_qty_zero"})
+            return {"ok": False, "submitted": False, "reason": "normalized_sell_qty_zero", "candidate": candidate}
         client_order_id = f"astra-lexit-{pid[:10] or symbol[:8]}-{self._learned_exit_today_key().replace('-', '')}"[:48]
         order = {
             "symbol": symbol,
             "side": "sell",
             "type": "market",
             "time_in_force": "day",
-            "qty": _to_float(candidate.get("qty"), 0.0),
+            "qty": normalized_qty,
             "client_order_id": client_order_id,
             "existing_exit_signal_verified": True,
             "learned_exit_validation_bucket": True,
@@ -1122,9 +1155,65 @@ class PaperAutopilotEngine:
             result = dict(broker.submit_paper_order(order) or {})
         except Exception as exc:
             result = {"ok": False, "error": f"broker_sell_submit_exception:{str(exc)[:120]}"}
+        retry_status = "not_needed"
+        retry_result: dict[str, Any] = {}
         if not bool(result.get("ok")):
-            self._append_learned_exit_event({"event": "sell_submit_rejected", **candidate, "broker_error": str(result.get("error") or "")[:140]})
-            return {"ok": False, "submitted": False, "reason": str(result.get("error") or "sell_submit_failed")[:140], "candidate": candidate}
+            broker_error = str(result.get("error") or "")[:180]
+            available_from_error = _parse_available_qty_from_error(broker_error)
+            retry_qty = _floor_fractional_qty(available_from_error, 6)
+            if (
+                "insufficient qty available" in broker_error.lower()
+                and retry_qty > 0.0
+                and retry_qty < normalized_qty
+            ):
+                retry_order = {**order, "qty": retry_qty, "client_order_id": f"{client_order_id[:39]}-r1"}
+                retry_candidate = {
+                    **candidate,
+                    "qty": retry_qty,
+                    "normalized_sell_qty": retry_qty,
+                    "broker_available_qty": round(available_from_error, 9),
+                    "normalization_applied": True,
+                    "normalization_reason": "retry_with_broker_error_available_qty",
+                    "precision_delta": round(max(0.0, normalized_qty - available_from_error), 12),
+                    "retry_status": "RETRY_WITH_NORMALIZED_QTY",
+                }
+                self._append_learned_exit_event({
+                    "event": "sell_submit_rejected",
+                    **candidate,
+                    "broker_error": broker_error,
+                    "retry_status": "RETRY_WITH_NORMALIZED_QTY",
+                    "retry_qty": retry_qty,
+                })
+                try:
+                    retry_result = dict(broker.submit_paper_order(retry_order) or {})
+                except Exception as exc:
+                    retry_result = {"ok": False, "error": f"broker_sell_retry_exception:{str(exc)[:120]}"}
+                if bool(retry_result.get("ok")):
+                    result = retry_result
+                    candidate = retry_candidate
+                    retry_status = "retry_submitted"
+                else:
+                    retry_status = "retry_failed"
+                    self._append_learned_exit_event({
+                        "event": "sell_submit_rejected",
+                        **retry_candidate,
+                        "broker_error": str(retry_result.get("error") or "retry_submit_failed")[:180],
+                        "retry_status": retry_status,
+                    })
+                    return {
+                        "ok": False,
+                        "submitted": False,
+                        "reason": str(retry_result.get("error") or broker_error or "sell_submit_failed")[:140],
+                        "candidate": retry_candidate,
+                    }
+            else:
+                self._append_learned_exit_event({
+                    "event": "sell_submit_rejected",
+                    **candidate,
+                    "broker_error": broker_error,
+                    "retry_status": "blocked_or_not_applicable",
+                })
+                return {"ok": False, "submitted": False, "reason": str(result.get("error") or "sell_submit_failed")[:140], "candidate": candidate}
         broker_order = dict(result.get("order") or {})
         pending_id = str(broker_order.get("id") or client_order_id)
         pending = self._learned_exit_pending_map()
@@ -1135,9 +1224,17 @@ class PaperAutopilotEngine:
             "submitted_at": _now_iso(),
             "status": str(broker_order.get("status") or "submitted"),
             "terminal": "false",
+            "retry_status": retry_status,
         }
         self._set_learned_exit_pending_map(pending)
-        self._append_learned_exit_event({"event": "sell_submitted_pending_fill", **candidate, "order_id": broker_order.get("id"), "client_order_id": client_order_id, "order_status": broker_order.get("status")})
+        self._append_learned_exit_event({
+            "event": "sell_submitted_pending_fill",
+            **candidate,
+            "order_id": broker_order.get("id"),
+            "client_order_id": broker_order.get("client_order_id") or client_order_id,
+            "order_status": broker_order.get("status"),
+            "retry_status": retry_status,
+        })
         return {"ok": True, "submitted": True, "pending_order_id": pending_id, "candidate": candidate}
 
     def _refresh_learned_exit_pending_sells(self) -> dict[str, Any]:
