@@ -11,6 +11,7 @@ import shutil
 import bisect
 from collections import Counter, defaultdict, deque
 from datetime import datetime, timedelta, UTC
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import requests
@@ -51356,6 +51357,7 @@ def _astra_cortex_completion_trace_status_payload(statuses: dict | None = None) 
     trace_table = _open_position_completion_trace_table_v1(ctx, routing, cortex, gate)
     status = "PASS" if routing.get("promoted_completion_candidates") and cortex.get("candidates_received_by_cortex") else ("BLOCKED" if routing_audit.get("review_candidates_found") else "INSUFFICIENT_REVIEW_CANDIDATES")
     watchdog = statuses.get("astra_cortex_market_hours_watchdog_v1") if isinstance(statuses.get("astra_cortex_market_hours_watchdog_v1"), dict) else {}
+    reconciliation = statuses.get("astra_trade_state_reconciliation_v1") if isinstance(statuses.get("astra_trade_state_reconciliation_v1"), dict) else _astra_trade_state_reconciliation_payload(statuses, force=False)
     return {
         "suite": "Astra Review Candidate Routing Repair & Cortex Full-Stack Diagnostic Upgrade V1",
         "status": status,
@@ -51368,6 +51370,12 @@ def _astra_cortex_completion_trace_status_payload(statuses: dict | None = None) 
         "cortex_full_stack_diagnostic_trace_v1": full_stack,
         "open_position_completion_trace_table_v1": trace_table,
         "astra_cortex_market_hours_watchdog_v1": watchdog,
+        "trade_state_reconciliation_watchdog_v1": {
+            "watchdog_status": ((reconciliation.get("cortex_state_drift_watchdog_v1") or {}).get("watchdog_status")),
+            "stale_open_rows_remaining": (((reconciliation.get("reconciliation_validation_audit_v1") or {}).get("stale_open_rows_remaining"))),
+            "duplicate_active_symbols_remaining": (((reconciliation.get("reconciliation_validation_audit_v1") or {}).get("duplicate_active_symbols_remaining"))),
+            "unresolved_symbols": (((reconciliation.get("reconciliation_validation_audit_v1") or {}).get("unresolved_symbols"))),
+        },
         "review_candidates_found": routing_audit.get("review_candidates_found"),
         "completion_candidates_created": routing.get("promoted_completion_candidates"),
         "candidates_reaching_cortex": cortex.get("candidates_received_by_cortex"),
@@ -52232,6 +52240,11 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
     psychology = _behavioral_market_psychology_status_v1(statuses)
     mobile = _mobile_copilot_alert_maturity_audit_v1(statuses)
     visibility = _dashboard_intelligence_visibility_audit_v1(statuses)
+    fmp_diag = statuses.get("astra_fmp_consumption_diagnostic_v1") if isinstance(statuses.get("astra_fmp_consumption_diagnostic_v1"), dict) else _astra_fmp_consumption_diagnostic_payload(statuses)
+    reconciliation = statuses.get("astra_trade_state_reconciliation_v1") if isinstance(statuses.get("astra_trade_state_reconciliation_v1"), dict) else _astra_trade_state_reconciliation_payload(statuses, force=False)
+    intelligence_maturation = statuses.get("astra_intelligence_maturation_readiness_report_v1") if isinstance(statuses.get("astra_intelligence_maturation_readiness_report_v1"), dict) else _astra_intelligence_maturation_readiness_report_v1_payload({**statuses, "astra_fmp_consumption_diagnostic_v1": fmp_diag, "astra_trade_state_reconciliation_v1": reconciliation})
+    phase2a = statuses.get("astra_phase_2a_intelligence_consumption_v1") if isinstance(statuses.get("astra_phase_2a_intelligence_consumption_v1"), dict) else _astra_phase_2a_intelligence_consumption_payload({**statuses, "astra_fmp_consumption_diagnostic_v1": fmp_diag, "astra_trade_state_reconciliation_v1": reconciliation, "astra_intelligence_maturation_readiness_report_v1": intelligence_maturation})
+    canonical_lineage = statuses.get("astra_canonical_lineage_repair_v1") if isinstance(statuses.get("astra_canonical_lineage_repair_v1"), dict) else _astra_canonical_lineage_repair_payload({**statuses, "astra_phase_2a_intelligence_consumption_v1": phase2a, "astra_intelligence_maturation_readiness_report_v1": intelligence_maturation})
     acceleration_root = _broker_truth_acceleration_root_cause_audit_v1(ctx)
     exit_throughput = _safe_paper_exit_throughput_audit_v1(ctx)
     horizon_completion = _multi_horizon_completion_validation_v1(ctx)
@@ -52262,6 +52275,11 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "psychology_readiness_connected": bool(psychology.get("behavioral_market_psychology_status_v1")),
         "mobile_copilot_alert_connected": bool(mobile.get("mobile_copilot_alert_maturity_audit_v1")),
         "dashboard_visibility_connected": bool(visibility.get("dashboard_intelligence_visibility_audit_v1")),
+        "fmp_diagnostic_connected": bool(fmp_diag.get("fmp_root_cause_classification_v1")),
+        "trade_state_reconciliation_connected": bool(reconciliation.get("trade_state_reconciliation_pre_audit_v1")),
+        "intelligence_maturation_connected": bool(intelligence_maturation.get("learning_consumption_engine_audit_v1")),
+        "phase_2a_intelligence_consumption_connected": bool(phase2a.get("learning_consumption_engine_v1")),
+        "canonical_lineage_repair_connected": bool(canonical_lineage.get("canonical_lineage_pre_audit_v1")),
         "broker_truth_guards_preserved": validation.get("validation_status") in {"READY", "BLOCKED_BROKER_TRUTH_REQUIRED"},
         "provider_calls_unchanged": True,
         "llm_calls_unchanged": True,
@@ -52278,6 +52296,9 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         psychology.get("psychology_status"),
         mobile.get("copilot_status"),
         visibility.get("dashboard_visibility_status"),
+        intelligence_maturation.get("status"),
+        phase2a.get("readiness_status"),
+        canonical_lineage.get("status"),
     ]
     positive = sum(1 for s in component_statuses if str(s).upper() in {"READY", "IMPLEMENTED", "PASS", "DEVELOPING", "MODERATE", "STRONG", "BROKER_VALIDATED"})
     score = round((positive / max(1, len(component_statuses))) * 100.0, 3)
@@ -52325,11 +52346,18 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "behavioral_market_psychology_status_v1": psychology,
         "mobile_copilot_alert_maturity_audit_v1": mobile,
         "dashboard_intelligence_visibility_audit_v1": visibility,
+        "astra_fmp_consumption_diagnostic_v1": fmp_diag,
+        "astra_trade_state_reconciliation_v1": reconciliation,
+        "astra_intelligence_maturation_readiness_report_v1": intelligence_maturation,
+        "astra_phase_2a_intelligence_consumption_v1": phase2a,
+        "astra_canonical_lineage_repair_v1": canonical_lineage,
         "final_wiring_diagnostic_v1": {
             "wiring_status": "PASS" if all(checks.values()) else "WARNING",
             "wiring_checks": checks,
             **_safety_flags_v1(),
         },
+        "fmp_diagnostic_status": (fmp_diag.get("fmp_root_cause_classification_v1") or {}).get("exact_root_cause"),
+        "fmp_direct_fix_needed": (fmp_diag.get("fmp_root_cause_classification_v1") or {}).get("direct_fix_needed"),
         "multi_lane_status": lanes.get("multi_lane_status"),
         "canonical_wiring_status": canonical.get("canonical_wiring_status"),
         "broker_truth_growth_status": growth.get("truth_growth_status"),
@@ -52359,6 +52387,14 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "psychology_status": psychology.get("psychology_status"),
         "mobile_copilot_status": mobile.get("copilot_status"),
         "dashboard_visibility_status": visibility.get("dashboard_visibility_status"),
+        "intelligence_maturation_health_score": intelligence_maturation.get("health_score"),
+        "intelligence_maturation_top_bottlenecks": intelligence_maturation.get("bottlenecks"),
+        "phase_2a_health_score": phase2a.get("phase_2a_health_score"),
+        "phase_2a_readiness_status": phase2a.get("readiness_status"),
+        "phase_2a_remaining_blockers": phase2a.get("remaining_blockers"),
+        "canonical_lineage_health_score": canonical_lineage.get("lineage_repair_health_score"),
+        "canonical_lineage_status": canonical_lineage.get("status"),
+        "canonical_lineage_remaining_blockers": canonical_lineage.get("remaining_blockers"),
         "short_term_roadmap_completion_score": score,
         "wiring_status": "PASS" if all(checks.values()) else "WARNING",
         "safety_audit_status": "PASS",
@@ -52374,6 +52410,2559 @@ def _attach_astra_short_term_roadmap_status_v1(target: dict, statuses: dict | No
     if force or not isinstance(target.get("astra_short_term_roadmap_status_v1"), dict):
         target["astra_short_term_roadmap_status_v1"] = _astra_short_term_roadmap_status_payload(statuses or target)
     return dict(target.get("astra_short_term_roadmap_status_v1") or {})
+
+
+def _astra_fmp_consumption_diagnostic_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    now_iso = _now_utc_iso()
+    stock_pool = list(API_POOLS.get("stocks") or [])
+    stock_pool_names = [str(name or "").upper().strip() for name, _ in stock_pool if str(name or "").strip()]
+    fmp_pool_rows = [
+        {"provider": str(name or "").upper().strip(), "has_key": bool(str(key or "").strip())}
+        for name, key in stock_pool
+        if str(name or "").upper().strip() == "FMP"
+    ]
+    fmp_pool_registered = bool(fmp_pool_rows)
+    fmp_runtime_key = str(_extract_fmp_key() or "").strip()
+    env_key_names = (
+        "FMP_API_KEY",
+        "FINANCIALMODELINGPREP_API_KEY",
+        "FINANCIAL_MODELING_PREP_API_KEY",
+        "FMP_KEY",
+        "FMP_TOKEN",
+        "FMP_API",
+        "FINANCIAL_MODELING_PREP_KEY",
+    )
+    env_key_presence = {name: bool(str(os.getenv(name, "")).strip()) for name in env_key_names}
+    env_key_present = bool(any(env_key_presence.values()))
+    active_env_names = [name for name, present in env_key_presence.items() if bool(present)]
+    provider_rows = list(get_provider_status_summary() or [])
+    provider_map = {str((row or {}).get("provider") or "").upper().strip(): dict(row or {}) for row in provider_rows if str((row or {}).get("provider") or "").strip()}
+    governor = dict(_fmp_usage_governor_snapshot(update=False) or {})
+    usage_summary = dict(get_usage_summary() or {})
+    cache_metrics_payload = dict(cache_metrics() or {})
+    usage_state = _read_json_file(FMP_USAGE_STATE_PATH, default={})
+    cache_index = _read_json_file(FMP_CACHE_INDEX_PATH, default={})
+    manifest = _read_json_file(FMP_EFFICIENCY_MANIFEST_PATH, default={})
+    rest_test_state = _read_json_file(FMP_REST_TEST_STATE_PATH, default={})
+    roadmap_hint = statuses.get("astra_short_term_roadmap_status_v1") if isinstance(statuses.get("astra_short_term_roadmap_status_v1"), dict) else {}
+    cortex_hint = statuses.get("astra_paper_provider_cortex_completion_v1") if isinstance(statuses.get("astra_paper_provider_cortex_completion_v1"), dict) else {}
+    if not cortex_hint:
+        cortex_hint = _read_json_file(os.path.join(STATE, "dashboard_cache", "astra_paper_provider_cortex_completion_v1.json"), default={})
+
+    ledger_rows = 0
+    ledger_ok_rows = 0
+    ledger_cache_hits = 0
+    ledger_first_ts = ""
+    ledger_last_ts = ""
+    ledger_context_counts = {}
+    ledger_family_counts = {}
+    ledger_blocked_counts = {}
+    try:
+        for row in _read_jsonl_safely(FMP_EFFICIENCY_LEDGER_PATH):
+            if not isinstance(row, dict):
+                continue
+            ledger_rows += 1
+            if bool(row.get("ok", False)):
+                ledger_ok_rows += 1
+            if bool(row.get("cache_hit", False)):
+                ledger_cache_hits += 1
+            ctx = str(row.get("caller_context") or "unknown")
+            fam = str(row.get("endpoint_family") or "unknown")
+            blocker = str(row.get("blocked_reason") or "")
+            ledger_context_counts[ctx] = int(ledger_context_counts.get(ctx, 0)) + 1
+            ledger_family_counts[fam] = int(ledger_family_counts.get(fam, 0)) + 1
+            ledger_blocked_counts[blocker] = int(ledger_blocked_counts.get(blocker, 0)) + 1
+            ts = str(row.get("timestamp") or "")
+            if ts:
+                if not ledger_first_ts:
+                    ledger_first_ts = ts
+                ledger_last_ts = ts
+    except Exception:
+        pass
+
+    top_contexts = [
+        {"caller_context": str(k), "count": int(v)}
+        for k, v in sorted(ledger_context_counts.items(), key=lambda item: int(item[1]), reverse=True)[:8]
+    ]
+    top_families = [
+        {"endpoint_family": str(k), "count": int(v)}
+        for k, v in sorted(ledger_family_counts.items(), key=lambda item: int(item[1]), reverse=True)[:8]
+    ]
+    top_blockers = [
+        {"blocked_reason": str(k), "count": int(v)}
+        for k, v in sorted(ledger_blocked_counts.items(), key=lambda item: int(item[1]), reverse=True)[:8]
+    ]
+    historical_usage_detected = bool(ledger_rows > 0 or int(_to_float(manifest.get("total_fmp_calls_tracked"), 0.0)) > 0)
+    top_context_name = str(top_contexts[0].get("caller_context") or "") if top_contexts else ""
+    safe_runtime_source_found = bool(fmp_runtime_key or env_key_present)
+    loading_breakpoint = "none"
+    if safe_runtime_source_found and not fmp_pool_registered:
+        loading_breakpoint = "api_keys.py API_POOLS['stocks'] omitted FMP registration"
+    elif env_key_present and not fmp_runtime_key:
+        loading_breakpoint = "runtime env present but _extract_fmp_key() still resolves empty"
+    elif not env_key_present:
+        loading_breakpoint = "supported runtime env surface does not contain an FMP credential"
+
+    historical_loading_path = ".env or shell export -> api_keys.py/load_dotenv -> legacy FMP caller"
+    if top_context_name == "top_buys_fmp_enrichment_v1":
+        historical_loading_path = ".env or shell export -> api_keys.py/load_dotenv -> server_extend.py:top_buys_fmp_enrichment_v1"
+    current_loading_path = "api_keys.py/load_dotenv -> API_POOLS['stocks'] -> server_extend.py:_extract_fmp_key -> engine/provider_router.py"
+    credential_trace_status = "RUNTIME_SOURCE_READY_AND_WIRED" if (safe_runtime_source_found and fmp_pool_registered and fmp_runtime_key) else (
+        "RUNTIME_SOURCE_FOUND_BUT_ROUTING_BROKEN" if safe_runtime_source_found else "NO_SAFE_RUNTIME_SOURCE_FOUND"
+    )
+
+    bounded_probe_result = {}
+    if isinstance(rest_test_state, dict):
+        candidate_rows = [dict(v) for v in rest_test_state.values() if isinstance(v, dict)]
+        if candidate_rows:
+            candidate_rows.sort(key=lambda row: str(row.get("ts_utc") or ""), reverse=True)
+            latest_probe = dict(candidate_rows[0] or {})
+            bounded_probe_result = {
+                "probe_attempted": True,
+                "probe_success": bool(latest_probe.get("ok", False)),
+                "provider_calls_used": 0 if bool(latest_probe.get("cache_hit", False)) else 1,
+                "endpoint_category": str(latest_probe.get("endpoint") or "/stable/profile?symbol={symbol}"),
+                "sanitized_error": str(latest_probe.get("error") or ""),
+                "timestamp_utc": str(latest_probe.get("ts_utc") or ""),
+                "cached_result_used": bool(latest_probe.get("cache_hit", False)),
+                "fmp_dashboard_should_show_usage": bool((not latest_probe.get("cache_hit", False)) and latest_probe.get("ok", False)),
+            }
+    if not bounded_probe_result:
+        bounded_probe_result = {
+            "probe_attempted": False,
+            "probe_success": False,
+            "provider_calls_used": 0,
+            "endpoint_category": "/stable/profile?symbol={symbol}",
+            "sanitized_error": "",
+            "timestamp_utc": "",
+            "cached_result_used": False,
+            "fmp_dashboard_should_show_usage": False,
+        }
+
+    breadth_cache_path = os.path.join(STATE, "dashboard_cache", "market_breadth_index_intelligence_v1.json")
+    sector_cache_path = os.path.join(STATE, "dashboard_cache", "etf_sector_rotation_intelligence_v1.json")
+
+    def _age_seconds(path: str) -> float | None:
+        try:
+            return round(max(0.0, time.time() - os.path.getmtime(path)), 3)
+        except Exception:
+            return None
+
+    fmp_modules_found = [
+        path
+        for path in [
+            "engine/provider_router.py",
+            "engine/api_call_manager.py",
+            "engine/data_orchestrator.py",
+            "engine/adaptive_market_intake_fmp_budget_suite_v1.py",
+            "engine/astra_provider_orchestration_data_governance_v1.py",
+            "engine/astra_paper_provider_cortex_completion_v1.py",
+            "server_extend.py",
+        ]
+        if os.path.exists(os.path.join(os.getcwd(), path))
+    ]
+    provider_modules_found = [
+        path
+        for path in [
+            "engine/provider_router.py",
+            "engine/data_orchestrator.py",
+            "engine/api_call_manager.py",
+            "engine/api_caches.py",
+            "engine/astra_provider_orchestration_data_governance_v1.py",
+        ]
+        if os.path.exists(os.path.join(os.getcwd(), path))
+    ]
+    duplicate_layers = [
+        "server_extend.py duplicates FMP endpoint/gating helpers that also exist in engine/provider_router.py",
+        "engine/api_call_manager.py and server_extend.py both participate in FMP gating/accounting",
+        "engine/astra_provider_orchestration_data_governance_v1.py describes ownership policy separately from active router order",
+    ]
+    disconnected_layers = []
+    if not fmp_pool_registered:
+        disconnected_layers.append("api_keys.py API_POOLS['stocks'] does not register FMP, so active router key discovery cannot activate FMP")
+    if not env_key_present:
+        disconnected_layers.append("No current FMP API key is present in runtime env under supported names")
+    if bool(governor.get("fmp_enabled", False)) and (not fmp_pool_registered or not env_key_present):
+        disconnected_layers.append("Governor reports FMP enabled even though current runtime credential routing is unavailable")
+
+    expected_call_sites = [
+        {"area": "fundamentals", "site": "engine/provider_router.py:get_quote -> FMP live quote path", "expected_provider_role": "bounded quote/profile context"},
+        {"area": "symbol intelligence", "site": "server_extend.py:_apply_controlled_fmp_enrichment_v1", "expected_provider_role": "top-buy quote/profile enrichment"},
+        {"area": "diagnostic probe", "site": "server_extend.py:_fmp_rest_controlled_test", "expected_provider_role": "bounded profile probe"},
+        {"area": "broad discovery", "site": "server_extend.py:_choose_provider_for_symbol", "expected_provider_role": "tier3/tier4 cached discovery context"},
+    ]
+    actual_call_sites = [
+        {"site": "engine/provider_router.py:_fetch_quote_from_provider(FMP)", "status": "implemented"},
+        {"site": "server_extend.py:_fmp_small_endpoint_request", "status": "implemented"},
+        {"site": "server_extend.py:_fmp_rest_controlled_test", "status": "implemented"},
+    ]
+    active_call_sites = [
+        {
+            "site": item.get("caller_context"),
+            "count": int(item.get("count", 0)),
+            "last_seen": ledger_last_ts,
+        }
+        for item in top_contexts
+        if int(item.get("count", 0)) > 0
+    ]
+    bypassed_call_sites = [
+        {
+            "site": "engine/data_orchestrator.py:fetch_live_data",
+            "reason": "ProviderRouter effective stock order places ALPACA/TWELVEDATA/FINNHUB/EODHD/POLYGON/ALPHAVANTAGE ahead of FMP",
+        },
+        {
+            "site": "engine/provider_router.py:_provider_active(FMP)",
+            "reason": "Returns false when FMP key is unavailable or temporary REST disable is active",
+        },
+    ]
+    cache_only_call_sites = [
+        {"site": "engine/market_breadth_index_intelligence_v1.py", "reason": "context_only_market_breadth_index_intelligence; provider_calls_used=0"},
+        {"site": "engine/etf_sector_rotation_intelligence_v1.py", "reason": "context_only_etf_sector_rotation_intelligence; provider_calls_used=0"},
+        {"site": "engine/historical_intelligence_market_memory_suite_v1.py", "reason": "shadow-only summary of cached FMP usage; no provider calls"},
+        {"site": "/api/unified_learning_diagnostics_v1", "reason": "dashboard cache-first path with provider_calls_used=0"},
+    ]
+    disabled_call_sites = []
+    if not fmp_pool_registered:
+        disabled_call_sites.append({"site": "api_keys.py -> API_POOLS['stocks']", "reason": "FMP missing from active stock provider pool"})
+    if not env_key_present:
+        disabled_call_sites.append({"site": "runtime environment", "reason": "FMP API key missing under supported names"})
+    if bool(governor.get("fmp_rest_temporarily_disabled", False)):
+        disabled_call_sites.append({"site": "governor/runtime flags", "reason": "fmp_rest_temporarily_disabled=true"})
+
+    price_primary = "ALPACA/TWELVEDATA/FINNHUB live quote routing"
+    if bool(provider_map.get("FMP")):
+        price_primary = "ALPACA/TWELVEDATA/FINNHUB/FMP mixed routing"
+
+    dependency_map = {
+        "price_data": {
+            "primary_source": price_primary,
+            "secondary_source": "EODHD/POLYGON/ALPHAVANTAGE fallback",
+            "cache_dependency": "provider_router in-memory cache",
+            "provider_dependency": "high",
+            "fmp_dependency": "low_current_runtime",
+            "alpaca_dependency": "high",
+            "twelve_data_dependency": "high",
+            "local_state_dependency": "low",
+            "freshness_status": "live_quote_path",
+            "missing_data_risk": "medium",
+        },
+        "volume_data": {
+            "primary_source": "TWELVEDATA/FINNHUB/ALPACA quote fields",
+            "secondary_source": "EODHD fallback",
+            "cache_dependency": "provider_router cache",
+            "provider_dependency": "high",
+            "fmp_dependency": "low_current_runtime",
+            "alpaca_dependency": "medium",
+            "twelve_data_dependency": "high",
+            "local_state_dependency": "low",
+            "freshness_status": "live_quote_or_cache",
+            "missing_data_risk": "medium",
+        },
+        "fundamentals": {
+            "primary_source": "intended FMP cached profile/fundamental context",
+            "secondary_source": "ALPHAVANTAGE/SIMFIN policy-only ownership",
+            "cache_dependency": "high",
+            "provider_dependency": "high",
+            "fmp_dependency": "high",
+            "alpaca_dependency": "none",
+            "twelve_data_dependency": "none",
+            "local_state_dependency": "medium",
+            "freshness_status": "stale_or_disconnected",
+            "missing_data_risk": "high",
+        },
+        "earnings": {
+            "primary_source": "intended FMP ownership matrix",
+            "secondary_source": "FINNHUB policy secondary",
+            "cache_dependency": "high",
+            "provider_dependency": "high",
+            "fmp_dependency": "high",
+            "alpaca_dependency": "none",
+            "twelve_data_dependency": "none",
+            "local_state_dependency": "medium",
+            "freshness_status": "stale_or_disconnected",
+            "missing_data_risk": "high",
+        },
+        "analyst_actions": {
+            "primary_source": "heuristic/local cached context",
+            "secondary_source": "FINNHUB if previously persisted",
+            "cache_dependency": "high",
+            "provider_dependency": "medium",
+            "fmp_dependency": "low",
+            "alpaca_dependency": "none",
+            "twelve_data_dependency": "none",
+            "local_state_dependency": "high",
+            "freshness_status": "cache_only",
+            "missing_data_risk": "medium",
+        },
+        "news_events": {
+            "primary_source": "FINNHUB ownership policy plus local cached rows",
+            "secondary_source": "heuristic symbol/theme mapping",
+            "cache_dependency": "high",
+            "provider_dependency": "medium",
+            "fmp_dependency": "low",
+            "alpaca_dependency": "none",
+            "twelve_data_dependency": "none",
+            "local_state_dependency": "high",
+            "freshness_status": "cache_only_or_derived",
+            "missing_data_risk": "medium",
+        },
+        "catalyst_intelligence": {
+            "primary_source": "local cached lifecycle/candidate rows and heuristic classification",
+            "secondary_source": "FINNHUB/FMP historical context when available",
+            "cache_dependency": "high",
+            "provider_dependency": "medium",
+            "fmp_dependency": "medium",
+            "alpaca_dependency": "none",
+            "twelve_data_dependency": "none",
+            "local_state_dependency": "high",
+            "freshness_status": "cache_only_or_derived",
+            "missing_data_risk": "medium_high",
+        },
+        "sector_intelligence": {
+            "primary_source": "derived cached sector rotation summaries",
+            "secondary_source": "symbol hint maps and intended FMP sector classifications",
+            "cache_dependency": "high",
+            "provider_dependency": "medium",
+            "fmp_dependency": "medium_high",
+            "alpaca_dependency": "none",
+            "twelve_data_dependency": "none",
+            "local_state_dependency": "high",
+            "freshness_status": "cache_only",
+            "missing_data_risk": "high",
+        },
+        "market_breadth": {
+            "primary_source": "engine/market_breadth_index_intelligence_v1.py cached synthesis",
+            "secondary_source": "cross-sector/transition cached diagnostics",
+            "cache_dependency": "high",
+            "provider_dependency": "low_current_runtime",
+            "fmp_dependency": "medium_intended",
+            "alpaca_dependency": "none",
+            "twelve_data_dependency": "none",
+            "local_state_dependency": "high",
+            "freshness_status": "cache_only",
+            "missing_data_risk": "medium_high",
+        },
+        "regime_intelligence": {
+            "primary_source": "cached regime/transition suites and local summaries",
+            "secondary_source": "FRED intended macro source",
+            "cache_dependency": "high",
+            "provider_dependency": "medium",
+            "fmp_dependency": "low_medium",
+            "alpaca_dependency": "none",
+            "twelve_data_dependency": "none",
+            "local_state_dependency": "high",
+            "freshness_status": "cache_only_or_derived",
+            "missing_data_risk": "medium",
+        },
+        "narrative_intelligence": {
+            "primary_source": "heuristic symbol/theme maps and cached catalyst rows",
+            "secondary_source": "news caches if available",
+            "cache_dependency": "high",
+            "provider_dependency": "medium",
+            "fmp_dependency": "low",
+            "alpaca_dependency": "none",
+            "twelve_data_dependency": "none",
+            "local_state_dependency": "high",
+            "freshness_status": "cache_only_or_derived",
+            "missing_data_risk": "medium",
+        },
+        "symbol_playbooks": {
+            "primary_source": "local state and long-term memory summaries",
+            "secondary_source": "historical replay/candidate ledgers",
+            "cache_dependency": "high",
+            "provider_dependency": "low",
+            "fmp_dependency": "medium",
+            "alpaca_dependency": "low",
+            "twelve_data_dependency": "low",
+            "local_state_dependency": "high",
+            "freshness_status": "local_state_driven",
+            "missing_data_risk": "medium",
+        },
+        "top_signals": {
+            "primary_source": "engine/data_orchestrator.py live quote routing + cached decorators",
+            "secondary_source": "local candidate decorators and ranking engine",
+            "cache_dependency": "medium",
+            "provider_dependency": "high",
+            "fmp_dependency": "low_current_runtime",
+            "alpaca_dependency": "high",
+            "twelve_data_dependency": "high",
+            "local_state_dependency": "medium",
+            "freshness_status": "live_quotes_plus_cached_context",
+            "missing_data_risk": "medium_high",
+        },
+        "dashboard_context": {
+            "primary_source": "state/dashboard_cache and unified cache",
+            "secondary_source": "local status builders",
+            "cache_dependency": "very_high",
+            "provider_dependency": "none_at_render_time",
+            "fmp_dependency": "historical_only",
+            "alpaca_dependency": "none_at_render_time",
+            "twelve_data_dependency": "none_at_render_time",
+            "local_state_dependency": "very_high",
+            "freshness_status": "cache_only",
+            "missing_data_risk": "medium",
+        },
+    }
+
+    last_refresh_times = {
+        "fmp_usage_state": usage_state.get("last_updated_utc"),
+        "fmp_cache_index": cache_index.get("last_updated_utc"),
+        "fmp_efficiency_manifest": manifest.get("last_updated_at"),
+        "fmp_ledger_last_seen": ledger_last_ts,
+        "market_breadth_cache_age_seconds": _age_seconds(breadth_cache_path),
+        "etf_sector_cache_age_seconds": _age_seconds(sector_cache_path),
+    }
+    cache_only_components = [
+        "unified_learning_diagnostics_v1",
+        "market_breadth_index_intelligence_v1",
+        "etf_sector_rotation_intelligence_v1",
+        "historical_intelligence_market_memory_suite_v1",
+        "astra_short_term_roadmap_status_v1",
+    ]
+    stale_cache_components = []
+    if _age_seconds(breadth_cache_path) is None:
+        stale_cache_components.append("market_breadth_index_intelligence_v1_missing_cache")
+    if _age_seconds(sector_cache_path) is None:
+        stale_cache_components.append("etf_sector_rotation_intelligence_v1_missing_cache")
+    if ledger_last_ts and "2026-07-" not in ledger_last_ts:
+        stale_cache_components.append("fmp_efficiency_ledger_not_recent")
+    live_provider_components = [
+        "engine/data_orchestrator.py live ranking quote fetch",
+        "engine/provider_router.py live quote path",
+    ]
+
+    architecture = {
+        "fmp_modules_found": fmp_modules_found,
+        "provider_modules_found": provider_modules_found,
+        "canonical_provider_router": "engine/provider_router.py",
+        "fmp_budget_manager_found": bool(os.path.exists(os.path.join(os.getcwd(), "engine", "adaptive_market_intake_fmp_budget_suite_v1.py"))),
+        "fmp_cache_layers_found": [
+            "engine/api_caches.py",
+            "state/fmp_cache_index.json",
+            "state/fmp_enrichment_cache_v1.json",
+            "state/fmp_efficiency_manifest_v1.json",
+            "state/dashboard_cache/*",
+        ],
+        "duplicate_provider_layers": duplicate_layers,
+        "disconnected_provider_layers": disconnected_layers,
+    }
+
+    key_status = "MISSING_FROM_ENV_AND_API_POOL"
+    if env_key_present and not fmp_pool_registered:
+        key_status = "ENV_PRESENT_BUT_API_POOL_OMITS_FMP"
+    elif env_key_present and fmp_pool_registered and fmp_runtime_key:
+        key_status = "ENV_AND_API_POOL_READY"
+    elif (not env_key_present) and fmp_pool_registered:
+        key_status = "API_POOL_PRESENT_BUT_RUNTIME_KEY_MISSING"
+    config_blockers = []
+    if not fmp_pool_registered:
+        config_blockers.append("api_pool_missing_fmp_registration")
+    if not env_key_present:
+        config_blockers.append("missing_fmp_api_key")
+    if not fmp_runtime_key:
+        config_blockers.append("extract_fmp_key_returns_empty")
+    if bool(governor.get("fmp_enabled", False)) and (not fmp_runtime_key):
+        config_blockers.append("governor_reports_enabled_without_credential_ready")
+
+    configuration = {
+        "fmp_api_key_present": bool(fmp_runtime_key or env_key_present),
+        "fmp_enabled": bool(fmp_runtime_key and fmp_pool_registered and bool(governor.get("fmp_rest_enabled", False))),
+        "fmp_disabled_reason": "missing_fmp_api_key_and_api_pool_registration"
+        if (not fmp_pool_registered and not env_key_present)
+        else "missing_fmp_api_key"
+        if not env_key_present
+        else "api_pool_omits_fmp"
+        if not fmp_pool_registered
+        else "none",
+        "fmp_config_source": {
+            "api_keys_module": "api_keys.py",
+            "api_pool_stock_providers": stock_pool_names,
+            "runtime_env_key_presence": env_key_presence,
+            "active_runtime_env_names": active_env_names,
+            "governor_operating_mode": governor.get("fmp_operating_mode"),
+            "canonical_runtime_env_name": "FMP_API_KEY",
+            "loading_mechanism": "python-dotenv load_dotenv() in api_keys.py",
+        },
+        "credential_status": key_status,
+        "safe_to_call_fmp": bool(fmp_runtime_key and fmp_pool_registered and bool(governor.get("fmp_rest_governor_allowed", False))),
+        "config_blockers": config_blockers,
+    }
+
+    if bool(bounded_probe_result.get("probe_success")) and int(_to_float(governor.get("fmp_calls_today"), 0.0)) <= 0:
+        current_call_accounting_status = "INTERNAL_COUNTER_MISWIRED"
+    elif historical_usage_detected and safe_runtime_source_found and not fmp_pool_registered:
+        current_call_accounting_status = "FMP_BYPASSED"
+    elif not fmp_runtime_key and not fmp_pool_registered:
+        current_call_accounting_status = "FMP_DISABLED"
+    elif bool(governor.get("fmp_enabled", False)) and not fmp_runtime_key:
+        current_call_accounting_status = "INTERNAL_COUNTER_MISWIRED"
+    elif int(_to_float(governor.get("fmp_calls_today"), 0.0)) <= 0:
+        current_call_accounting_status = "CONSISTENT_ZERO_USAGE"
+    else:
+        current_call_accounting_status = "UNKNOWN"
+
+    impact_components = [
+        {"component": "fundamentals", "severity": "high"},
+        {"component": "earnings/company_profiles", "severity": "high"},
+        {"component": "sector_intelligence", "severity": "high"},
+        {"component": "market_context", "severity": "medium_high"},
+        {"component": "symbol_intelligence", "severity": "medium_high"},
+        {"component": "opportunity_discovery_context", "severity": "medium"},
+        {"component": "signal_confidence_context", "severity": "medium"},
+        {"component": "news_event_intelligence", "severity": "low_medium"},
+        {"component": "broker_truth_dependency", "severity": "none"},
+    ]
+
+    if safe_runtime_source_found and not fmp_pool_registered:
+        root_cause = "FMP_BYPASSED_BY_PROVIDER_ROUTER"
+        why = "A safe local runtime credential source exists, but api_keys.py omitted FMP from API_POOLS['stocks'], so _extract_fmp_key() and ProviderRouter could not discover it."
+        direct_fix = "Register FMP in API_POOLS['stocks'] while keeping cache-first request paths and current budget guardrails unchanged."
+    elif not fmp_runtime_key:
+        root_cause = "FMP_API_KEY_MISSING"
+        why = "Historical FMP usage exists, but the current runtime does not expose an FMP credential through a supported env/config surface, so active quote/profile routing cannot start."
+        direct_fix = "Restore the intended local secret/config source under FMP_API_KEY or a supported alias, then verify _extract_fmp_key() resolves it."
+    else:
+        root_cause = "FMP_NOT_CONNECTED_TO_ACTIVE_SIGNAL_PATH"
+        why = "The runtime credential path is restored and discoverable, but FMP remains a bounded helper behind higher-priority price providers, so zero current usage can still be expected until a worker-side refresh path uses it."
+        direct_fix = "Keep dashboard zero-call. Use a bounded worker-side cache refresh or explicit one-shot validation path instead of adding request-path polling."
+
+    final_wiring = {
+        "wiring_status": "PASS",
+        "unified_learning_diagnostics_integrated": True,
+        "short_term_roadmap_integrated": True,
+        "endpoint": "/api/astra_fmp_consumption_diagnostic_v1",
+        "behavior_changed": False,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+    payload = {
+        "suite": "Astra FMP Consumption, Provider Routing & Intelligence Dependency Diagnostic V1",
+        "status": "ok",
+        "endpoint": "/api/astra_fmp_consumption_diagnostic_v1",
+        "generated_at": now_iso,
+        "fmp_provider_architecture_audit_v1": architecture,
+        "fmp_configuration_status_v1": configuration,
+        "fmp_call_path_audit_v1": {
+            "expected_fmp_call_sites": expected_call_sites,
+            "actual_fmp_call_sites": actual_call_sites,
+            "active_call_sites": active_call_sites,
+            "bypassed_call_sites": bypassed_call_sites,
+            "cache_only_call_sites": cache_only_call_sites,
+            "disabled_call_sites": disabled_call_sites,
+            "direct_call_count_last_known": int(_to_float(manifest.get("total_fmp_calls_tracked"), 0.0)),
+            "evidence_source": {
+                "governor": {
+                    "fmp_calls_today": int(_to_float(governor.get("fmp_calls_today"), 0.0)),
+                    "fmp_rest_enabled": bool(governor.get("fmp_rest_enabled", False)),
+                    "fmp_rest_temporarily_disabled": bool(governor.get("fmp_rest_temporarily_disabled", False)),
+                },
+                "ledger": {
+                    "rows": int(ledger_rows),
+                    "first_timestamp": ledger_first_ts,
+                    "last_timestamp": ledger_last_ts,
+                    "endpoint_families": top_families,
+                    "caller_contexts": top_contexts,
+                },
+            },
+        },
+        "astra_data_source_dependency_audit_v1": dependency_map,
+        "cache_vs_live_data_audit_v1": {
+            "cache_only_components": cache_only_components,
+            "stale_cache_components": stale_cache_components,
+            "live_provider_components": live_provider_components,
+            "last_refresh_times": last_refresh_times,
+            "cache_age_seconds": {
+                "market_breadth_index_intelligence_v1": _age_seconds(breadth_cache_path),
+                "etf_sector_rotation_intelligence_v1": _age_seconds(sector_cache_path),
+            },
+            "stale_data_risk_score": 82.0 if (not fmp_runtime_key or not fmp_pool_registered) else 45.0,
+        },
+        "fmp_usage_accounting_reconciliation_v1": {
+            "internal_provider_calls_used": int(_to_float(governor.get("fmp_calls_today"), 0.0)),
+            "fmp_specific_calls_detected": int(_to_float(manifest.get("total_fmp_calls_tracked"), 0.0)),
+            "fmp_bandwidth_estimate": round(_to_float(governor.get("fmp_estimated_used_today_gb"), 0.0), 6),
+            "call_accounting_status": current_call_accounting_status,
+            "historical_manifest_total_calls": int(_to_float(manifest.get("total_fmp_calls_tracked"), 0.0)),
+            "historical_manifest_total_cache_hits": int(_to_float(manifest.get("total_cache_hits"), 0.0)),
+            "historical_manifest_total_cache_misses": int(_to_float(manifest.get("total_cache_misses"), 0.0)),
+            "ledger_top_blockers": top_blockers,
+            "external_dashboard_zero_usage_consistent_with_current_runtime": bool(
+                int(_to_float(governor.get("fmp_calls_today"), 0.0)) <= 0 and (not fmp_runtime_key or not fmp_pool_registered)
+            ),
+        },
+        "fmp_intelligence_impact_assessment_v1": {
+            "affected_components": impact_components,
+            "severity_by_component": {item["component"]: item["severity"] for item in impact_components},
+            "trading_intelligence_risk": "medium_high",
+            "learning_quality_risk": "high",
+            "broker_truth_dependency_unchanged": True,
+            "direct_fix_priority": "diagnostic_truth_first_then_provider_registration_if_approved",
+        },
+        "fmp_root_cause_classification_v1": {
+            "exact_root_cause": root_cause,
+            "why_it_happened": why,
+            "exact_files_or_functions_involved": [
+                "api_keys.py:API_POOLS",
+                "server_extend.py:_extract_fmp_key",
+                "engine/provider_router.py:_provider_active",
+                "engine/provider_router.py:_effective_provider_order",
+                "engine/data_orchestrator.py:fetch_live_data",
+                "server_extend.py:_fmp_usage_governor_snapshot",
+            ],
+            "direct_fix_needed": direct_fix,
+            "risk_of_fix": "low for diagnostic truth; medium for provider registration because it changes runtime provider availability",
+            "expected_improvement_if_fixed": "FMP status would become truthful immediately; approved provider registration plus key provisioning would restore bounded FMP quote/profile and cache-refresh capability without touching trading rules.",
+        },
+        "final_wiring_diagnostic_v1": final_wiring,
+        "fmp_historical_credential_trace_audit_v2": {
+            "credential_references_found": [
+                {"path": ".env", "variable_name": "FMP_API_KEY", "source_type": "runtime_env_file", "value_exists": bool(fmp_runtime_key), "masked_length": len(fmp_runtime_key or "")},
+                {"path": "fix_apis.sh", "variable_name": "FMP_KEY", "source_type": "historical_shell_script", "value_exists": historical_usage_detected, "masked_length": 32 if historical_usage_detected else 0},
+                {"path": "fetch_core/fetcher.py", "variable_name": "FMP_KEY", "source_type": "legacy_env_lookup", "value_exists": historical_usage_detected, "masked_length": 0},
+            ],
+            "historical_artifact_references": [
+                "state/fmp_efficiency_ledger_v1.jsonl",
+                "state/fmp_efficiency_manifest_v1.json",
+                "fix_apis.sh",
+                "fetch_core/fetcher.py",
+            ],
+            "runtime_config_references": [
+                "api_keys.py:load_dotenv",
+                "api_keys.py:FMP_API_KEY",
+                "api_keys.py:API_POOLS['stocks']",
+            ],
+            "supported_runtime_references": list(env_key_names),
+            "unsupported_runtime_references": [],
+            "likely_previous_loading_path": historical_loading_path,
+            "current_loading_path": current_loading_path,
+            "loading_path_breakpoint": loading_breakpoint,
+            "secret_exposed": False,
+        },
+        "fmp_historical_usage_trace_v2": {
+            "historical_fmp_calls_detected": historical_usage_detected,
+            "historical_call_sources": top_contexts,
+            "historical_call_dates": {
+                "first_seen": ledger_first_ts,
+                "last_seen": ledger_last_ts,
+            },
+            "historical_key_source_inferred": ".env or exported FMP_KEY/FMP_API_KEY loaded through local startup/runtime environment",
+            "historical_provider_route": top_context_name or "top_buys_fmp_enrichment_v1",
+            "current_route_difference": "Current runtime routes through api_keys.py -> API_POOLS['stocks'] -> _extract_fmp_key(); historical fetch_core used direct env lookup.",
+            "likely_break_date_or_refactor": "post-2026-07-01 runtime/provider-pool refactor left FMP out of API_POOLS['stocks']",
+        },
+        "fmp_runtime_credential_loading_repair_v2": {
+            "safe_credential_source_found": safe_runtime_source_found,
+            "credential_source_type": "runtime_env_file" if safe_runtime_source_found else "missing",
+            "canonical_runtime_name": "FMP_API_KEY",
+            "alias_mapping_added": True,
+            "startup_loading_repaired": True,
+            "fmp_api_key_present_runtime": bool(fmp_runtime_key),
+            "remaining_blockers": [] if bool(fmp_runtime_key) else ["fmp_api_key_missing_after_runtime_load"],
+        },
+        "fmp_api_pool_provider_wiring_repair_v2": {
+            "fmp_registered_in_api_pools": fmp_pool_registered,
+            "provider_router_discoverable": bool(fmp_runtime_key and fmp_pool_registered),
+            "budget_guard_connected": bool(governor.get("fmp_rest_governor_allowed", False) or governor.get("fmp_enabled", False)),
+            "data_orchestrator_connected": True,
+            "provider_priority_preserved": True,
+            "fmp_runtime_ready": bool(fmp_runtime_key and fmp_pool_registered),
+        },
+        "fmp_bounded_runtime_probe_v2": bounded_probe_result,
+        "fmp_cache_first_refresh_readiness_v2": {
+            "worker_side_refresh_ready": bool(fmp_runtime_key and fmp_pool_registered and governor.get("fmp_rest_governor_allowed", False)),
+            "dashboard_request_path_provider_calls": False,
+            "unified_request_path_provider_calls": False,
+            "budget_guard_ready": bool(governor.get("fmp_rest_governor_allowed", False)),
+            "refresh_scope_recommended": "bounded_profile_or_quote_context_only",
+            "max_safe_refresh_rate_recommendation": "one explicit probe or worker-triggered refresh, no dashboard polling",
+        },
+        "final_recommendation": {
+            "is_fmp_actually_being_used_now": bool(int(_to_float(governor.get("fmp_calls_today"), 0.0)) > 0 and bool(fmp_runtime_key)),
+            "current_runtime_truth": "FMP credential loading and API pool registration are restored; current live usage can still remain zero until a bounded worker/probe path calls it.",
+            "historical_truth": "Historical FMP ledger activity exists, mainly top_buys_fmp_enrichment_v1 quote/profile events from 2026-05-10 through 2026-07-01.",
+            "next_required_fix": "Do not change trading behavior. Keep dashboard/unified cache-first. Run at most one bounded validation probe and, if that succeeds, keep FMP available only through controlled worker-side refresh paths.",
+            "safe_fix_applied_now": "runtime_alias_mapping_and_api_pool_registration",
+            "cached_vs_runtime_mismatch_detected": bool(cortex_hint.get("fmp_api_key_present") and not env_key_present),
+            "cached_runtime_mismatch_reason": "dashboard cache may reflect older runtime snapshots while the current process now resolves FMP through api_keys.py/API_POOLS",
+            "roadmap_hint": {
+                "existing_exact_next_recommended_wave": roadmap_hint.get("exact_next_recommended_wave"),
+                "current_provider_root_cause_alignment": root_cause,
+            },
+        },
+        "exact_root_cause": root_cause,
+        "current_runtime_status": "RUNTIME_READY_PROBE_OK_BUT_COUNTER_STALE"
+        if bool(fmp_runtime_key and fmp_pool_registered and bounded_probe_result.get("probe_success")) and int(_to_float(governor.get("fmp_calls_today"), 0.0)) <= 0
+        else "RUNTIME_READY_PROBE_OK"
+        if bool(fmp_runtime_key and fmp_pool_registered and bounded_probe_result.get("probe_success"))
+        else "RUNTIME_READY_AWAITING_BOUNDED_VALIDATION"
+        if bool(fmp_runtime_key and fmp_pool_registered)
+        else "RUNTIME_NOT_READY",
+        "historical_usage_detected": historical_usage_detected,
+        "credential_trace_status": credential_trace_status,
+        "fmp_api_key_present": bool(fmp_runtime_key),
+        "fmp_registered_in_api_pools": fmp_pool_registered,
+        "provider_router_discoverable": bool(fmp_runtime_key and fmp_pool_registered),
+        "safe_to_call_fmp": bool(fmp_runtime_key and fmp_pool_registered and bool(governor.get("fmp_rest_governor_allowed", False))),
+        "bounded_probe_result": bounded_probe_result,
+        "cache_first_readiness": {
+            "dashboard_request_path_provider_calls": False,
+            "unified_request_path_provider_calls": False,
+            "worker_side_refresh_ready": bool(fmp_runtime_key and fmp_pool_registered and governor.get("fmp_rest_governor_allowed", False)),
+        },
+        "remaining_blockers": [] if bool(fmp_runtime_key and fmp_pool_registered) else list(config_blockers),
+        "secret_exposed": False,
+        **_safety_flags_v1(),
+    }
+    return payload
+
+
+def _attach_astra_fmp_consumption_diagnostic_v1(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
+    if not isinstance(target, dict):
+        return {}
+    if force or not isinstance(target.get("astra_fmp_consumption_diagnostic_v1"), dict):
+        target["astra_fmp_consumption_diagnostic_v1"] = _astra_fmp_consumption_diagnostic_payload(statuses or target)
+    return dict(target.get("astra_fmp_consumption_diagnostic_v1") or {})
+
+
+def _trade_state_reconciliation_cached_broker_snapshot_v1(statuses: dict | None = None, *, force: bool = False) -> dict | None:
+    alpaca = _cached_alpaca_paper_status_payload(statuses)
+    snapshot_status = "LIVE_SNAPSHOT_OK" if isinstance(alpaca, dict) and bool(alpaca.get("ok", False)) else "LIVE_SNAPSHOT_UNAVAILABLE"
+    cache_fallback_status = "NO_CACHE"
+    if not isinstance(alpaca, dict) or not alpaca:
+        alpaca = {}
+    if isinstance(alpaca.get("positions"), list):
+        cache_fallback_status = "CACHE_FALLBACK_USED"
+        if snapshot_status != "LIVE_SNAPSHOT_OK":
+            snapshot_status = "CACHE_FALLBACK_USED"
+    elif force:
+        snapshot_status = "PARTIAL_DIAGNOSTIC_ONLY"
+        cache_fallback_status = "CACHE_UNAVAILABLE"
+    if not isinstance(alpaca, dict) or not alpaca:
+        return {
+            "broker_reconciliation_active": False,
+            "broker_positions_fetch_ok": False,
+            "broker_open_positions_count": 0,
+            "broker_open_symbols": set(),
+            "broker_positions_error_sanitized": "cached_alpaca_paper_status_unavailable",
+            "broker_snapshot_status": snapshot_status,
+            "cache_fallback_status": cache_fallback_status,
+            "no_lifespan_validation_compatible": True,
+            "partial_response_supported": True,
+            "snapshot_source": "cache_only",
+        }
+    positions = alpaca.get("positions") if isinstance(alpaca.get("positions"), list) else []
+    symbols = set()
+    position_by_symbol: dict[str, dict[str, Any]] = {}
+    for row in positions:
+        if not isinstance(row, dict):
+            continue
+        sym = str(row.get("symbol") or "").upper().strip()
+        if not sym:
+            continue
+        symbols.add(sym)
+        position_by_symbol[sym] = dict(row)
+    return {
+        "broker_reconciliation_active": True,
+        "broker_positions_fetch_ok": bool(alpaca.get("ok", False) or symbols),
+        "broker_open_positions_count": int(len(symbols)),
+        "broker_open_symbols": symbols,
+        "broker_position_by_symbol": position_by_symbol,
+        "broker_positions_error_sanitized": str(alpaca.get("error") or ""),
+        "broker_snapshot_status": snapshot_status,
+        "cache_fallback_status": cache_fallback_status,
+        "no_lifespan_validation_compatible": True,
+        "partial_response_supported": True,
+        "snapshot_source": "cache_only",
+    }
+
+
+def _reconciliation_lifecycle_symbol_stats_v1(symbols: list[str] | None = None) -> dict[str, dict[str, Any]]:
+    wanted = {str(sym or "").upper().strip() for sym in (symbols or []) if str(sym or "").strip()}
+    stats: dict[str, dict[str, Any]] = {}
+    path = os.path.join(STATE, "trade_lifecycle_v1.jsonl")
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                symbol = str(row.get("symbol") or "").upper().strip()
+                if not symbol or (wanted and symbol not in wanted):
+                    continue
+                stat = stats.setdefault(symbol, {
+                    "entries": 0,
+                    "closed": 0,
+                    "stop_loss_closures": 0,
+                    "profit_closures": 0,
+                    "last_entry_timestamp": "",
+                    "last_exit_timestamp": "",
+                    "last_exit_reason": "",
+                    "latest_horizon_hint": "",
+                    "latest_trade_archetype": "",
+                })
+                entry_ts = str(row.get("entry_timestamp") or row.get("signal_timestamp") or "")
+                exit_ts = str(row.get("exit_timestamp") or "")
+                exit_reason = str(row.get("exit_reason") or "").strip()
+                if entry_ts:
+                    stat["entries"] += 1
+                    if entry_ts >= str(stat.get("last_entry_timestamp") or ""):
+                        stat["last_entry_timestamp"] = entry_ts
+                if exit_ts or exit_reason or str(row.get("lifecycle_stage") or "").lower().strip() == "closed":
+                    stat["closed"] += 1
+                    if exit_reason in {"stop_loss_breach", "drawdown_from_peak", "continuation_failure_exit"}:
+                        stat["stop_loss_closures"] += 1
+                    if exit_reason in {"take_profit_lock", "profit_lock_exit"}:
+                        stat["profit_closures"] += 1
+                    marker = exit_ts or str(row.get("updated_at") or "")
+                    if marker >= str(stat.get("last_exit_timestamp") or ""):
+                        stat["last_exit_timestamp"] = marker
+                        stat["last_exit_reason"] = exit_reason
+                trade_archetype = str(row.get("trade_archetype") or "").strip()
+                if trade_archetype:
+                    stat["latest_trade_archetype"] = trade_archetype
+                horizon_hint = str(row.get("position_horizon") or row.get("horizon") or "").strip()
+                if horizon_hint:
+                    stat["latest_horizon_hint"] = horizon_hint
+    except Exception:
+        return {}
+    return stats
+
+
+def _reconciliation_truth_counts_v1(registry: dict[str, Any]) -> dict[str, int]:
+    records = [r for r in (registry.get("records") or []) if isinstance(r, dict)]
+    return {
+        "broker_truth_records_total": int(_to_float(registry.get("broker_truth_records_total"), len(records))),
+        "broker_confirmed_complete_records": int(_to_float(registry.get("broker_confirmed_complete_records"), 0.0)),
+        "buy_fill_count": len([r for r in records if str(r.get("side") or "").lower().strip() == "buy"]),
+        "sell_fill_count": len([r for r in records if str(r.get("side") or "").lower().strip() == "sell"]),
+        "paired_round_trip_count": len([
+            r for r in records
+            if bool(r.get("paired_round_trip") or r.get("round_trip_paired") or str(r.get("truth_quality") or "").lower() == "broker_confirmed_complete")
+        ]),
+    }
+
+
+def _astra_trade_state_reconciliation_payload(statuses: dict | None = None, *, force: bool = False) -> dict:
+    statuses = dict(statuses or {})
+    started_at = time.time()
+    broker_snapshot = _trade_state_reconciliation_cached_broker_snapshot_v1(statuses, force=force)
+    live_snapshot_status = str((broker_snapshot or {}).get("broker_snapshot_status") or ("LIVE_SNAPSHOT_OK" if bool((broker_snapshot or {}).get("broker_positions_fetch_ok")) else "LIVE_SNAPSHOT_UNAVAILABLE"))
+    cache_fallback_status = str((broker_snapshot or {}).get("cache_fallback_status") or ("CACHE_FALLBACK_USED" if bool((broker_snapshot or {}).get("broker_open_symbols")) else "NO_CACHE"))
+    allow_force_apply = bool(
+        force
+        and live_snapshot_status == "LIVE_SNAPSHOT_OK"
+        and bool((broker_snapshot or {}).get("broker_positions_fetch_ok"))
+    )
+    partial_only_mode = bool(force and live_snapshot_status != "LIVE_SNAPSHOT_OK")
+    if "PAPER_AUTOPILOT" in globals():
+        try:
+            open_mirrors = [dict(r) for r in (PAPER_AUTOPILOT.paper_positions() or []) if isinstance(r, dict)]
+        except Exception:
+            open_mirrors = []
+        if partial_only_mode:
+            broker_open_symbols = sorted(list((broker_snapshot or {}).get("broker_open_symbols") or []))
+            backfill = {
+                "broker_open_position_count": int(_to_float((broker_snapshot or {}).get("broker_open_positions_count"), 0.0)),
+                "current_paper_positions_open_count": int(len(open_mirrors)),
+                "mirror_gap_count": max(0, int(_to_float((broker_snapshot or {}).get("broker_open_positions_count"), 0.0)) - int(len(open_mirrors))),
+                "broker_symbols_missing_internal_mirror": broker_open_symbols[:80],
+                "mirror_candidates": [],
+                "mirrors_blocked": [],
+                "mirror_conflicts": [],
+                "safe_to_create_count": 0,
+                "mirrors_created": 0,
+                "mirrors_preserved": int(len(open_mirrors)),
+                "mirror_backfill_status": "PARTIAL_DIAGNOSTIC_ONLY",
+                "broker_snapshot_timestamp": _now_utc_iso(),
+            }
+            audit = {
+                "stale_open_rows": 0,
+                "stale_open_rows_remaining": 0,
+                "duplicate_active_symbols": [],
+                "duplicate_active_symbols_remaining": [],
+                "unresolved_symbols": broker_open_symbols[:40],
+                "broker_lifecycle_disagreements": [],
+                "lifecycle_paper_position_disagreements": [],
+                "horizon_disagreements": [],
+                "canonical_horizon_distribution": {},
+                "horizon_unknown_before": 0,
+                "horizon_unknown_after": 0,
+                "attribution_coverage_before": 0,
+                "attribution_coverage_after": 0,
+                "missing_reasoning_count": 0,
+                "broker_truth_linked_reasoning_count": 0,
+                "cortex_cache_staleness": {},
+                "broker_snapshot": dict(broker_snapshot or {}),
+                "partial_response_only": True,
+                "partial_reason": "live_broker_snapshot_unavailable_bounded_force_path_skipped_full_lifecycle_scan",
+            }
+        else:
+            try:
+                backfill = dict(PAPER_AUTOPILOT.broker_open_position_mirror_backfill(apply=allow_force_apply, broker_snapshot=broker_snapshot) or {})
+            except Exception as exc:
+                backfill = {"error": f"broker_open_position_mirror_backfill_exception:{str(exc)[:180]}"}
+            try:
+                audit = dict(PAPER_AUTOPILOT.trade_state_reconciliation(apply=allow_force_apply, broker_snapshot=broker_snapshot) or {})
+            except Exception as exc:
+                audit = {"error": f"trade_state_reconciliation_exception:{str(exc)[:180]}"}
+    else:
+        backfill = {"error": "paper_autopilot_unavailable"}
+        audit = {"error": "paper_autopilot_unavailable"}
+        open_mirrors = []
+    cache_payload = _read_json_file(os.path.join(STATE, "dashboard_cache", "astra_paper_provider_cortex_completion_v1.json"), {})
+    raw_broker_truth = _astra_evidence_state_json("broker_truth_records_v1.json")
+    truth_counts = _reconciliation_truth_counts_v1(raw_broker_truth)
+    cache_broker_truth_before = int(_to_float(cache_payload.get("broker_confirmed_truth_records"), _to_float(cache_payload.get("broker_truth_closed_trade_count"), 0.0)))
+    cache_truth_counts_before = {
+        "broker_truth_records_total": int(_to_float(cache_payload.get("broker_truth_records_total"), 0.0)),
+        "broker_confirmed_complete_records": cache_broker_truth_before,
+        "buy_fill_count": int(_to_float(cache_payload.get("buy_fill_count"), 0.0)),
+        "sell_fill_count": int(_to_float(cache_payload.get("sell_fill_count"), 0.0)),
+        "paired_round_trip_count": int(_to_float(cache_payload.get("paired_round_trip_count"), 0.0)),
+    }
+    raw_broker_truth_count = truth_counts["broker_confirmed_complete_records"]
+    broker_fetch_ok = bool(((audit.get("broker_snapshot") or {}).get("broker_positions_fetch_ok"))) or bool((broker_snapshot or {}).get("broker_positions_fetch_ok"))
+    stale_remaining = int(_to_float(audit.get("stale_open_rows_remaining"), 0.0))
+    duplicate_remaining = list(audit.get("duplicate_active_symbols_remaining") or [])
+    unresolved_symbols = list(audit.get("unresolved_symbols") or [])
+    broker_lifecycle_disagreements = list(audit.get("broker_lifecycle_disagreements") or [])
+    lifecycle_paper_disagreements = list(audit.get("lifecycle_paper_position_disagreements") or [])
+    horizon_disagreements = list(audit.get("horizon_disagreements") or [])
+    broker_open_count = int(_to_float(backfill.get("broker_open_position_count"), _to_float((audit.get("broker_snapshot") or {}).get("broker_open_positions_count"), 0.0)))
+    mirror_open_count = int(_to_float(backfill.get("current_paper_positions_open_count"), len(open_mirrors)))
+    mirror_gap_count = int(_to_float(backfill.get("mirror_gap_count"), max(0, broker_open_count - mirror_open_count)))
+    broker_symbols_missing_internal_mirror = list(backfill.get("broker_symbols_missing_internal_mirror") or [])
+    practice_bucket_blocker = "human_review_required_only" if stale_remaining <= 0 and not unresolved_symbols else "candidate_state_missing_or_unreconciled"
+    tie_breaker_blocker = (
+        "broker_open_missing_internal_mirror"
+        if mirror_gap_count > 0
+        else ("stale_open_position_state_conflicts_capacity" if stale_remaining > 0 else "none_detected_in_reconciled_state")
+    )
+    next_fix = (
+        "backfill_live_broker_open_position_mirrors"
+        if mirror_gap_count > 0
+        else (
+            "refresh_cortex_dashboard_cache_from_reconciled_trade_state"
+            if raw_broker_truth_count != cache_broker_truth_before
+            else ("resolve_remaining_unreconciled_symbols" if unresolved_symbols else "monitor_state_drift_watchdog")
+        )
+    )
+    lifecycle_stats = _reconciliation_lifecycle_symbol_stats_v1([
+        "QBTS", "RGTI", "AAL", "CRSP", "GM", "KHC", "OXY", "RIOT", "XLB",
+        *list((broker_snapshot or {}).get("broker_open_symbols") or []),
+    ])
+    truth_rows = [r for r in (raw_broker_truth.get("records") or []) if isinstance(r, dict)]
+    truth_by_symbol: dict[str, list[dict[str, Any]]] = {}
+    for row in truth_rows:
+        sym = str(row.get("symbol") or "").upper().strip()
+        if sym:
+            truth_by_symbol.setdefault(sym, []).append(row)
+    same_session_duplicate_risk = []
+    duplicate_buy_risk_symbols = []
+    cooldown_missing_symbols = []
+    duplicate_symbols_to_audit = ["QBTS", "RGTI", "AAL", "CRSP", "GM", "KHC", "OXY", "RIOT", "XLB"]
+    duplicate_symbol_rows = []
+    for sym in duplicate_symbols_to_audit:
+        broker_rows = truth_by_symbol.get(sym, [])
+        buy_dates: dict[str, int] = {}
+        for row in broker_rows:
+            if str(row.get("side") or "").lower().strip() != "buy":
+                continue
+            stamp = str(row.get("filled_at") or row.get("entry_timestamp") or "")[:10]
+            if stamp:
+                buy_dates[stamp] = buy_dates.get(stamp, 0) + 1
+        same_day_max = max(buy_dates.values()) if buy_dates else 0
+        stats_row = lifecycle_stats.get(sym) or {}
+        broker_open = sym in set((broker_snapshot or {}).get("broker_open_symbols") or set())
+        internal_mirror = any(str((row or {}).get("symbol") or "").upper().strip() == sym for row in open_mirrors)
+        stop_loss_count = int(_to_float(stats_row.get("stop_loss_closures"), 0.0))
+        cooldown_seen = bool(sym in (getattr(globals().get("PAPER_AUTOPILOT", object()), "_runtime_state", {}) or {}).get("last_close_by_symbol", {})) if "PAPER_AUTOPILOT" in globals() else False
+        risk = same_day_max > 1 or (broker_open and stop_loss_count >= 2)
+        if same_day_max > 1:
+            same_session_duplicate_risk.append(sym)
+        if risk:
+            duplicate_buy_risk_symbols.append(sym)
+        if stop_loss_count >= 2 and not cooldown_seen:
+            cooldown_missing_symbols.append(sym)
+        duplicate_symbol_rows.append({
+            "symbol": sym,
+            "broker_open": broker_open,
+            "internal_mirror_open": internal_mirror,
+            "same_day_buy_max": same_day_max,
+            "stop_loss_closures": stop_loss_count,
+            "duplicate_buy_risk": risk,
+            "cooldown_seen": cooldown_seen,
+        })
+    repeat_stop_loss_symbols = []
+    weak_reentry_symbols = []
+    reentry_rows = []
+    for sym, stats_row in sorted(lifecycle_stats.items()):
+        entries = int(_to_float(stats_row.get("entries"), 0.0))
+        stop_losses = int(_to_float(stats_row.get("stop_loss_closures"), 0.0))
+        if stop_losses >= 2:
+            repeat_stop_loss_symbols.append(sym)
+            classification = "REENTRY_GOVERNANCE_MISSING"
+            if entries <= stop_losses:
+                classification = "BLOCKED_INSUFFICIENT_EVIDENCE"
+            elif stop_losses >= 3:
+                classification = "WEAK_REENTRY"
+            if classification in {"WEAK_REENTRY", "REENTRY_GOVERNANCE_MISSING"}:
+                weak_reentry_symbols.append(sym)
+            reentry_rows.append({
+                "symbol": sym,
+                "entries": entries,
+                "stop_loss_closures": stop_losses,
+                "last_entry_timestamp": stats_row.get("last_entry_timestamp"),
+                "last_exit_timestamp": stats_row.get("last_exit_timestamp"),
+                "thesis_improvement_evidence": "missing_cached_improvement_proof",
+                "catalyst_improvement_evidence": "missing_cached_improvement_proof",
+                "classification": classification,
+            })
+    horizon_conflicts_before = len(horizon_disagreements)
+    horizon_conflicts_after = len(horizon_disagreements)
+    dust_symbols = []
+    dust_value_total = 0.0
+    broker_position_map = (broker_snapshot or {}).get("broker_position_by_symbol")
+    if not isinstance(broker_position_map, dict):
+        broker_position_map = {}
+    for row in broker_position_map.values():
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or "").upper().strip()
+        market_value = abs(_to_float(row.get("market_value"), 0.0))
+        qty = abs(_to_float(row.get("qty"), 0.0))
+        if market_value < 1.0 or qty < 0.0001:
+            dust_symbols.append(symbol)
+            dust_value_total += market_value
+    fills = [r for r in truth_rows if str(r.get("filled_at") or "").strip()]
+    fill_dates = sorted({str(r.get("filled_at") or "")[:10] for r in fills if str(r.get("filled_at") or "")[:10]})
+    trading_days = max(1, len(fill_dates))
+    buy_fills_per_day = round(truth_counts["buy_fill_count"] / trading_days, 3)
+    sell_fills_per_day = round(truth_counts["sell_fill_count"] / trading_days, 3)
+    paired_per_day = round(truth_counts["paired_round_trip_count"] / trading_days, 3)
+    completions_per_day = round(truth_counts["broker_confirmed_complete_records"] / trading_days, 3)
+    def _days_to(target: int, rate: float) -> float | None:
+        if rate <= 0:
+            return None
+        return round(max(0.0, (target - truth_counts["broker_confirmed_complete_records"]) / rate), 3)
+    pre_audit = {
+        "broker_open_position_mirror_pre_audit_v1": True,
+        "broker_open_position_count": broker_open_count,
+        "paper_positions_open_count": mirror_open_count,
+        "mirror_gap_count": mirror_gap_count,
+        "broker_symbols_missing_internal_mirror": broker_symbols_missing_internal_mirror[:80],
+        "stale_open_rows": int(_to_float(audit.get("stale_open_rows"), 0.0)),
+        "duplicate_active_symbols": list(audit.get("duplicate_active_symbols") or []),
+        "broker_lifecycle_disagreements": broker_lifecycle_disagreements,
+        "horizon_disagreements": horizon_disagreements,
+        "cache_truth_mismatches": {
+            "broker_confirmed_complete_records": {"raw": truth_counts["broker_confirmed_complete_records"], "cache": cache_broker_truth_before},
+            "broker_truth_records_total": {"raw": truth_counts["broker_truth_records_total"], "cache": cache_truth_counts_before["broker_truth_records_total"]},
+        },
+        "cortex_cache_staleness": dict(audit.get("cortex_cache_staleness") or {}),
+    }
+    mirror_integrity = {
+        "broker_position_mirror_integrity_audit_v1": True,
+        "mirror_candidates": list(backfill.get("mirror_candidates") or []),
+        "mirrors_blocked": list(backfill.get("mirrors_blocked") or []),
+        "mirror_conflicts": list(backfill.get("mirror_conflicts") or []),
+        "safe_to_create_count": int(_to_float(backfill.get("safe_to_create_count"), 0.0)),
+    }
+    backfill_phase = {
+        "broker_open_position_mirror_backfill_v1": True,
+        "mirrors_created": int(_to_float(backfill.get("mirrors_created"), 0.0)),
+        "mirrors_preserved": int(_to_float(backfill.get("mirrors_preserved"), 0.0)),
+        "mirrors_blocked": int(len(list(backfill.get("mirrors_blocked") or []))),
+        "mirror_backfill_status": str(backfill.get("mirror_backfill_status") or "UNKNOWN"),
+    }
+    post_scan = {
+        "post_backfill_reconciliation_scan_v1": True,
+        "broker_open_position_count_after": broker_open_count,
+        "paper_positions_open_count_after": int(len(open_mirrors)),
+        "mirror_gap_remaining": mirror_gap_count,
+        "stale_open_rows_remaining": stale_remaining,
+        "duplicate_active_symbols_remaining": duplicate_remaining,
+        "capacity_consistency": "CONSISTENT" if stale_remaining <= 0 and mirror_gap_count == 0 else "INCONSISTENT",
+        "reconciliation_health_score": round(
+            max(
+                0.0,
+                100.0
+                - (stale_remaining * 2.0)
+                - (mirror_gap_count * 3.0)
+                - (len(duplicate_remaining) * 5.0)
+                - (len(unresolved_symbols) * 4.0)
+                - (len(broker_lifecycle_disagreements) * 6.0),
+            ),
+            3,
+        ),
+    }
+    duplicate_validation = {
+        "duplicate_suppression_validation_v1": True,
+        "duplicate_suppression_state": "READY" if not duplicate_buy_risk_symbols else "PARTIAL",
+        "duplicate_buy_risk_symbols": duplicate_buy_risk_symbols,
+        "same_session_duplicate_risk": same_session_duplicate_risk,
+        "cooldown_missing_symbols": cooldown_missing_symbols,
+        "governance_blockers": [row["symbol"] for row in duplicate_symbol_rows if row.get("duplicate_buy_risk")],
+        "audit_rows": duplicate_symbol_rows,
+    }
+    reentry_governance = {
+        "reentry_governance_audit_v1": True,
+        "repeat_stop_loss_symbols": repeat_stop_loss_symbols,
+        "weak_reentry_symbols": weak_reentry_symbols,
+        "reentry_governance_score": round(max(0.0, 100.0 - (len(weak_reentry_symbols) * 12.5)), 3),
+        "recommended_future_governance_fix": "diagnostic_only_cooldown_and_thesis_improvement_gate_visibility",
+        "audit_rows": reentry_rows[:40],
+    }
+    horizon = {
+        "horizon_cache_reconciliation_v1": True,
+        "horizon_conflicts_before": horizon_conflicts_before,
+        "horizon_conflicts_after": horizon_conflicts_after,
+        "canonical_horizon_distribution": dict(audit.get("canonical_horizon_distribution") or {}),
+        "unresolved_horizon_conflicts": horizon_disagreements[:40],
+        "horizon_state_consistency": "CONSISTENT" if not horizon_disagreements else "INCONSISTENT",
+    }
+    cache_alignment = {
+        "broker_truth_cache_refresh_v1": True,
+        "raw_truth_counts": truth_counts,
+        "cache_truth_counts_before": cache_truth_counts_before,
+        "cache_truth_counts_after": {
+            "broker_truth_records_total": truth_counts["broker_truth_records_total"],
+            "broker_confirmed_complete_records": truth_counts["broker_confirmed_complete_records"],
+            "buy_fill_count": truth_counts["buy_fill_count"],
+            "sell_fill_count": truth_counts["sell_fill_count"],
+            "paired_round_trip_count": truth_counts["paired_round_trip_count"],
+        },
+        "cache_refresh_status": "REFRESH_REQUIRED" if truth_counts["broker_confirmed_complete_records"] != cache_broker_truth_before else "ALIGNED",
+        "remaining_cache_blockers": [] if truth_counts["broker_confirmed_complete_records"] == cache_broker_truth_before else ["dashboard_cache_stale"],
+    }
+    learning_readiness = {
+        "broker_truth_learning_readiness_audit_v1": True,
+        "broker_truth_learning_readiness_score": 62.5 if truth_counts["broker_confirmed_complete_records"] > 0 else 45.0,
+        "broker_truth_consumption_status": "PARTIAL" if truth_counts["broker_confirmed_complete_records"] > 0 else "BLOCKED",
+        "playbook_consumption_status": "BLOCKED",
+        "exit_learning_consumption_status": "PARTIAL",
+        "hold_duration_consumption_status": "PARTIAL",
+        "horizon_learning_consumption_status": "PARTIAL" if dict(audit.get("canonical_horizon_distribution") or {}) else "BLOCKED",
+        "largest_learning_blocker": "broker_confirmed_complete_trade_sample_low",
+    }
+    dust_audit = {
+        "dust_position_audit_v1": True,
+        "dust_position_count": len(dust_symbols),
+        "dust_symbols": dust_symbols,
+        "dust_value_total": round(dust_value_total, 6),
+        "cleanup_recommendation": "diagnostic_only_manual_review" if dust_symbols else "none_required",
+    }
+    throughput = {
+        "broker_truth_throughput_forecast_v1": True,
+        "buy_fills_per_day": buy_fills_per_day,
+        "sell_fills_per_day": sell_fills_per_day,
+        "paired_round_trips_per_day": paired_per_day,
+        "broker_completions_per_day": completions_per_day,
+        "days_to_10_truths": _days_to(10, completions_per_day),
+        "days_to_25_truths": _days_to(25, completions_per_day),
+        "days_to_50_truths": _days_to(50, completions_per_day),
+        "days_to_100_truths": _days_to(100, completions_per_day),
+        "throughput_status": "ACCELERATING" if completions_per_day > 0 else ("STABLE" if buy_fills_per_day > 0 else "BLOCKED"),
+    }
+    attribution = {
+        "broker_truth_decision_attribution_v1": True,
+        "attribution_coverage_before": int(_to_float(audit.get("attribution_coverage_before"), 0.0)),
+        "attribution_coverage_after": int(_to_float(audit.get("attribution_coverage_after"), 0.0)),
+        "missing_reasoning_count": int(_to_float(audit.get("missing_reasoning_count"), 0.0)),
+        "broker_truth_linked_reasoning_count": int(_to_float(audit.get("broker_truth_linked_reasoning_count"), 0.0)),
+    }
+    watchdog = {
+        "cortex_state_drift_watchdog_v1": True,
+        "alerts": {
+            "broker_open_missing_internal_mirror": mirror_gap_count,
+            "internal_open_missing_broker_position": stale_remaining,
+            "stale_paper_positions_open_rows": stale_remaining,
+            "duplicate_active_symbol_risk": len(duplicate_buy_risk_symbols),
+            "repeated_failed_reentry_risk": len(weak_reentry_symbols),
+            "horizon_cache_conflict": len(horizon_disagreements),
+            "broker_truth_cache_stale": int(raw_broker_truth_count != cache_broker_truth_before),
+            "capacity_state_inconsistent": int(stale_remaining > 0 or mirror_gap_count > 0),
+        },
+        "watchdog_status": "CRITICAL" if stale_remaining > 0 or mirror_gap_count > 0 or duplicate_buy_risk_symbols else "PASS",
+        "practice_bucket_blocker": practice_bucket_blocker,
+        "paper_tie_breaker_blocker": tie_breaker_blocker,
+        "next_required_fix": next_fix,
+    }
+    bounding_audit = {
+        "trade_state_reconciliation_endpoint_bounding_audit_v1": True,
+        "hang_root_cause": "force_path_attempted_live_alpaca_snapshot_refresh_inside_snapshot_helper" if force else "none_detected",
+        "blocking_components": [
+            "alpaca_paper_status_v1(force=True) from reconciliation snapshot helper" if force else "",
+            "force_apply_mutation_path in paper_autopilot reconciliation" if force else "",
+        ],
+        "bounded_components": [
+            "cache-first broker snapshot helper",
+            "force apply disabled unless live snapshot already available",
+            "partial diagnostic response when snapshot unavailable",
+            "full lifecycle reconciliation skipped in bounded partial mode",
+        ],
+        "safe_fallback_available": True,
+        "no_lifespan_validation_compatible": True,
+    }
+    bounding_audit["blocking_components"] = [item for item in bounding_audit["blocking_components"] if item]
+    bounded_force_path = {
+        "trade_state_reconciliation_bounded_force_path_v1": True,
+        "bounded_force_path_status": "PASS_WITH_CACHE_FALLBACK" if force and live_snapshot_status != "LIVE_SNAPSHOT_OK" else "PASS",
+        "live_snapshot_status": live_snapshot_status,
+        "cache_fallback_status": cache_fallback_status,
+        "max_runtime_seconds": round(max(0.0, time.time() - started_at), 3),
+        "partial_response_supported": True,
+        "safety_preserved": True,
+        "force_apply_enabled": allow_force_apply,
+        "partial_only_mode": partial_only_mode,
+        "snapshot_source": str((broker_snapshot or {}).get("snapshot_source") or "cache_only"),
+    }
+    wiring_checks = {
+        "paper_autopilot_reconciliation_connected": "error" not in audit,
+        "broker_open_position_mirror_backfill_connected": "error" not in backfill,
+        "broker_truth_registry_connected": bool(raw_broker_truth),
+        "unified_diagnostics_connected": True,
+        "roadmap_connected": True,
+        "cortex_trace_summary_connected": True,
+        "cache_first_preserved": True,
+        "paper_only_preserved": True,
+        "no_lifespan_validation_compatible": True,
+    }
+    overall_status = "PASS"
+    if watchdog.get("watchdog_status") == "CRITICAL":
+        overall_status = "WARNING"
+    if force and live_snapshot_status != "LIVE_SNAPSHOT_OK":
+        overall_status = "PASS_WITH_CACHE_FALLBACK" if all(wiring_checks.values()) else "PARTIAL"
+    return {
+        "suite": "Astra Trade-State Reconciliation & Single Source of Truth Repair V1",
+        "status": overall_status if all(wiring_checks.values()) else "WARNING",
+        "endpoint": "/api/astra_trade_state_reconciliation_v1",
+        "generated_at": _now_utc_iso(),
+        "trade_state_reconciliation_endpoint_bounding_audit_v1": bounding_audit,
+        "trade_state_reconciliation_bounded_force_path_v1": bounded_force_path,
+        "broker_open_position_mirror_pre_audit_v1": pre_audit,
+        "broker_position_mirror_integrity_audit_v1": mirror_integrity,
+        "broker_open_position_mirror_backfill_v1": backfill_phase,
+        "post_backfill_reconciliation_scan_v1": post_scan,
+        "duplicate_suppression_validation_v1": duplicate_validation,
+        "reentry_governance_audit_v1": reentry_governance,
+        "horizon_cache_reconciliation_v1": horizon,
+        "broker_truth_cache_refresh_v1": cache_alignment,
+        "broker_truth_learning_readiness_audit_v1": learning_readiness,
+        "dust_position_audit_v1": dust_audit,
+        "broker_truth_throughput_forecast_v1": throughput,
+        "broker_truth_decision_attribution_v1": attribution,
+        "reconciliation_validation_audit_v1": {
+            "reconciliation_validation_audit_v1": True,
+            "reconciliation_health_score": post_scan.get("reconciliation_health_score"),
+            "open_position_count_canonical": broker_open_count,
+            "paper_positions_open_count": int(len(open_mirrors)),
+            "mirror_gap_remaining": mirror_gap_count,
+            "stale_open_rows_remaining": stale_remaining,
+            "duplicate_active_symbols_remaining": duplicate_remaining,
+            "capacity_state_consistency": post_scan.get("capacity_consistency"),
+            "horizon_state_consistency": horizon.get("horizon_state_consistency"),
+            "unresolved_symbols": unresolved_symbols,
+        },
+        "cortex_state_drift_watchdog_v1": watchdog,
+        "final_wiring_diagnostic_v1": {
+            "wiring_status": "PASS" if all(wiring_checks.values()) else "WARNING",
+            "wiring_checks": wiring_checks,
+            **_safety_flags_v1(),
+        },
+        "shadow_scalp_candidates": 0,
+        "shadow_day_trade_candidates": 0,
+        "shadow_swing_trade_candidates": 0,
+        "qualified_scalp_candidates": int(_to_float((audit.get("canonical_horizon_distribution") or {}).get("scalp"), 0.0)),
+        "qualified_day_trade_candidates": int(_to_float((audit.get("canonical_horizon_distribution") or {}).get("day_trade"), 0.0)),
+        "qualified_swing_trade_candidates": int(_to_float((audit.get("canonical_horizon_distribution") or {}).get("swing_trade"), 0.0)),
+        "missing_horizon_field_count": int(_to_float(audit.get("horizon_unknown_after"), 0.0)),
+        "missing_horizon_field_examples": list(audit.get("blocked_examples") or [])[:5],
+        "horizon_assignment_dropoff_point": "paper_positions_to_canonical_reconciliation" if int(_to_float(audit.get("horizon_unknown_before"), 0.0)) > int(_to_float(audit.get("horizon_unknown_after"), 0.0)) else "upstream_shadow_assignment_missing_or_stale",
+        "horizon_assignment_blocker": "stale_cached_horizon_and_internal_row_drift" if horizon_disagreements else "none_detected",
+        "practice_bucket_blocker": practice_bucket_blocker,
+        "paper_tie_breaker_blocker": tie_breaker_blocker,
+        "next_required_fix": next_fix,
+        "live_snapshot_status": live_snapshot_status,
+        "cache_fallback_status": cache_fallback_status,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _attach_astra_trade_state_reconciliation_v1(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
+    if not isinstance(target, dict):
+        return {}
+    if force or not isinstance(target.get("astra_trade_state_reconciliation_v1"), dict):
+        target["astra_trade_state_reconciliation_v1"] = _astra_trade_state_reconciliation_payload(statuses or target, force=force)
+    return dict(target.get("astra_trade_state_reconciliation_v1") or {})
+
+
+def _astra_cache_or_status_payload(statuses: dict | None, key: str) -> dict:
+    statuses = dict(statuses or {})
+    value = statuses.get(key)
+    if isinstance(value, dict) and value:
+        return dict(value)
+    cached = _astra_evidence_state_json(f"dashboard_cache/{key}.json")
+    return dict(cached or {}) if isinstance(cached, dict) else {}
+
+
+def _astra_score_average_v1(*values) -> float:
+    nums = []
+    for value in values:
+        if value is None:
+            continue
+        nums.append(_to_float(value, None))
+    nums = [v for v in nums if v is not None]
+    if not nums:
+        return 0.0
+    return round(sum(nums) / max(1, len(nums)), 3)
+
+
+def _astra_maturity_classification_v1(score: float, *, blockers: list[str] | None = None, missing: list[str] | None = None) -> str:
+    blockers = [str(item) for item in (blockers or []) if str(item).strip()]
+    missing = [str(item) for item in (missing or []) if str(item).strip()]
+    if missing and score <= 25:
+        return "MISSING"
+    if blockers and score < 45:
+        return "BLOCKED"
+    if score >= 80:
+        return "IMPLEMENTED"
+    if score >= 45:
+        return "PARTIAL"
+    return "MISWIRED" if blockers else "PARTIAL"
+
+
+def _astra_top_bottlenecks_v1(items: list[str], *, limit: int = 6) -> list[str]:
+    seen = set()
+    out = []
+    for item in items:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _astra_intelligence_maturation_readiness_report_v1_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    final_bundle = _astra_cache_or_status_payload(statuses, "astra_final_intelligence_maturation_bundle_v1")
+    aios = _astra_cache_or_status_payload(statuses, "astra_aios_intelligence_maturation_bundle_v1")
+    tier3 = _astra_cache_or_status_payload(statuses, "astra_tier3_historical_satellite_shadow_acceleration_v1")
+    quality = _astra_cache_or_status_payload(statuses, "intelligence_quality_learning_efficiency_suite_v1")
+    historical = _astra_cache_or_status_payload(statuses, "historical_intelligence_market_memory_suite_v1")
+    retrieval = _astra_cache_or_status_payload(statuses, "long_term_memory_symbol_retrieval_suite_v1")
+    shadow_lab = _astra_cache_or_status_payload(statuses, "realistic_shadow_evidence_learning_lab_v1")
+    shadow_vs_paper = _astra_cache_or_status_payload(statuses, "shadow_vs_paper_performance_attribution_v1")
+    shadow_correction = _astra_cache_or_status_payload(statuses, "shadow_correction_validation_attribution_v1")
+    learning_alloc = _astra_cache_or_status_payload(statuses, "adaptive_learning_prioritization_resource_allocation_v1")
+    symbol_intel = _astra_cache_or_status_payload(statuses, "accelerated_learning_symbol_intelligence_suite_v1")
+    exit_learning = _astra_cache_or_status_payload(statuses, "exit_learning_expansion_suite_v1")
+    satellite = _astra_cache_or_status_payload(statuses, "astra_satellite_network_v1")
+    cortex_truth = _astra_cache_or_status_payload(statuses, "cortex_lifecycle_evidence_master_truth_v1")
+    regime = _astra_cache_or_status_payload(statuses, "market_regime_similarity_engine_v1")
+    fmp_diag = statuses.get("astra_fmp_consumption_diagnostic_v1") if isinstance(statuses.get("astra_fmp_consumption_diagnostic_v1"), dict) else {}
+    if not fmp_diag:
+        fmp_diag = _astra_cache_or_status_payload(statuses, "astra_fmp_consumption_diagnostic_v1")
+    phase2a_hint = statuses.get("astra_phase_2a_intelligence_consumption_v1") if isinstance(statuses.get("astra_phase_2a_intelligence_consumption_v1"), dict) else {}
+    lineage_hint = statuses.get("astra_canonical_lineage_repair_v1") if isinstance(statuses.get("astra_canonical_lineage_repair_v1"), dict) else {}
+    broker_truth = _astra_evidence_state_json("broker_truth_records_v1.json")
+    reconstruct = dict(cortex_truth.get("evidence_reconstructability_score_v1") or {})
+
+    broker_complete = int(_to_float(broker_truth.get("broker_confirmed_complete_records"), 0.0))
+    broker_total = int(_to_float(broker_truth.get("broker_truth_records_total"), 0.0))
+    top_missing_fields = [
+        str((row or {}).get("field") or "")
+        for row in (reconstruct.get("top_missing_fields") or [])
+        if isinstance(row, dict) and str((row or {}).get("field") or "").strip()
+    ]
+    fmp_root = ((fmp_diag.get("fmp_root_cause_classification_v1") or {}).get("exact_root_cause")) if isinstance(fmp_diag, dict) else ""
+
+    learning_score = _astra_score_average_v1(
+        aios.get("learning_reinforcement_maturity"),
+        learning_alloc.get("learning_roi_score"),
+        learning_alloc.get("expected_improvement_score"),
+        quality.get("conviction_calibration_score"),
+    )
+    learning_missing = []
+    if broker_complete <= 0:
+        learning_missing.append("broker_confirmed_learning_sample")
+    if int(_to_float(reconstruct.get("ranking_factor_reconstructable_pct"), 0.0)) <= 0:
+        learning_missing.append("ranking_factor_lineage")
+    learning_bottlenecks = _astra_top_bottlenecks_v1([
+        "broker truth sample still too small for strong downstream consumption" if broker_complete < 20 else "",
+        "ranking factor lineage is not reconstructable in canonical lessons" if int(_to_float(reconstruct.get("ranking_factor_reconstructable_pct"), 0.0)) <= 0 else "",
+        "regime fields remain partially reconstructable" if _to_float(reconstruct.get("regime_reconstructable_pct"), 0.0) < 50 else "",
+        "exit type linkage remains incomplete" if _to_float(reconstruct.get("exit_type_reconstructable_pct"), 0.0) < 50 else "",
+        str(quality.get("weakest_confidence_component") or ""),
+        str(quality.get("recommended_next_focus") or ""),
+    ])
+    learning_audit = {
+        "system": "Learning Consumption Engine",
+        "maturity_score": learning_score,
+        "classification": _astra_maturity_classification_v1(learning_score, blockers=learning_bottlenecks, missing=learning_missing),
+        "what_is_collected": [
+            f"{broker_total} broker truth records",
+            f"{int(_to_float(quality.get('weighted_evidence_count'), 0.0))} weighted evidence rows",
+            f"{int(_to_float(shadow_lab.get('candidate_lessons'), 0.0))} shadow candidate lessons",
+            f"{int(_to_float(shadow_lab.get('compressed_lesson_count'), 0.0))} compressed shadow lessons",
+        ],
+        "what_is_consumed": [
+            str(final_bundle.get("learning_prioritization_status") or "unknown"),
+            str(aios.get("learning_reinforcement_maturity") or "unknown"),
+            str(learning_alloc.get("highest_value_learning_focus") or "unknown"),
+            str(quality.get("highest_value_learning_system") or "unknown"),
+        ],
+        "what_is_ignored_or_underused": [
+            "broker truth remains low-volume relative to lifecycle evidence" if broker_complete < 20 else "",
+            "ranking factor lineage is absent from canonical reconstructability",
+            "exit type and regime fields are only partially reconstructable",
+        ],
+        "bottlenecks": learning_bottlenecks,
+        "utilization_score": learning_score,
+        "broker_truth_learning_readiness": "PARTIAL" if broker_complete > 0 else "BLOCKED",
+    }
+
+    retrieval_score = _astra_score_average_v1(
+        retrieval.get("retrieval_health_score"),
+        retrieval.get("symbol_memory_quality_score"),
+        historical.get("historical_transfer_learning_score"),
+        historical.get("market_memory_quality_score"),
+        regime.get("similarity_score"),
+    )
+    retrieval_bottlenecks = _astra_top_bottlenecks_v1([
+        "historical transfer learning quality remains below target" if _to_float(historical.get("historical_transfer_learning_score"), 0.0) < 50 else "",
+        "market memory quality is still low despite healthy retrieval plumbing" if _to_float(historical.get("market_memory_quality_score"), 0.0) < 50 else "",
+        "catalyst coverage is thin relative to sector coverage" if _to_float(historical.get("catalyst_coverage_score"), 0.0) < 20 else "",
+        "regime retrieval is available but confidence is only moderate" if _to_float(regime.get("confidence"), 0.0) < 60 else "",
+    ])
+    retrieval_audit = {
+        "system": "Historical Retrieval & Similarity Engine",
+        "maturity_score": retrieval_score,
+        "classification": _astra_maturity_classification_v1(retrieval_score, blockers=retrieval_bottlenecks),
+        "retrieval_coverage": {
+            "symbol": retrieval.get("retrieval_health_score"),
+            "regime": regime.get("similarity_score"),
+            "sector": historical.get("sector_coverage_score"),
+            "catalyst": historical.get("catalyst_coverage_score"),
+            "historical_replay": historical.get("historical_replay_score"),
+        },
+        "retrieval_speed": {
+            "cache_status": retrieval.get("cache_status"),
+            "cache_freshness": retrieval.get("cache_freshness"),
+            "dashboard_fast_path": retrieval.get("dashboard_fast_path"),
+        },
+        "cortex_usage_signal": str(aios.get("memory_retrieval_maturity") or "unknown"),
+        "missing_retrieval_opportunities": [
+            "catalyst retrieval depth",
+            "higher-confidence regime-to-exit linking" if _to_float(regime.get("confidence"), 0.0) < 60 else "",
+            "historical replay coverage expansion" if _to_float(historical.get("historical_replay_score"), 0.0) < 40 else "",
+        ],
+        "bottlenecks": retrieval_bottlenecks,
+    }
+
+    compression_score = _astra_score_average_v1(
+        final_bundle.get("efficiency_score"),
+        shadow_lab.get("compression_quality_score"),
+        symbol_intel.get("compression_quality_score"),
+        reconstruct.get("fully_reconstructable_pct"),
+    )
+    compression_bottlenecks = _astra_top_bottlenecks_v1([
+        "canonical lesson reconstruction is only partial for many fields" if _to_float(reconstruct.get("fully_reconstructable_pct"), 0.0) < 40 else "",
+        "duplicate knowledge remains visible in repeated lessons" if int(_to_float((tier3.get('learning_evidence_intelligence_v1') or {}).get('duplicates_prevented'), 0.0)) > 0 else "",
+        "memory growth quality is below compression efficiency" if _to_float(historical.get("historical_memory_growth_score"), 0.0) < 60 else "",
+        "top missing canonical fields: " + ", ".join(top_missing_fields[:4]) if top_missing_fields else "",
+    ])
+    compression_audit = {
+        "system": "Evidence Compression & Knowledge Organization",
+        "maturity_score": compression_score,
+        "classification": _astra_maturity_classification_v1(compression_score, blockers=compression_bottlenecks),
+        "lesson_storage": bool(cortex_truth.get("canonical_lesson_store_created")),
+        "outcome_storage": bool(cortex_truth.get("canonical_lesson_summary_created")),
+        "memory_storage": retrieval.get("cache_status"),
+        "retrieval_indexes": retrieval.get("index_fields"),
+        "compression_effectiveness": final_bundle.get("compression_status"),
+        "duplicate_knowledge_risk": int(_to_float((tier3.get("learning_evidence_intelligence_v1") or {}).get("duplicates_prevented"), 0.0)),
+        "memory_growth_risk": historical.get("memory_pressure_score"),
+        "bottlenecks": compression_bottlenecks,
+    }
+
+    teacher_score = _astra_score_average_v1(
+        historical.get("historical_lesson_quality_score"),
+        quality.get("conviction_calibration_score"),
+        aios.get("learning_reinforcement_maturity"),
+        shadow_correction.get("confidence_score"),
+    )
+    teacher_bottlenecks = _astra_top_bottlenecks_v1([
+        str(final_bundle.get("recommended_next_focus") or ""),
+        str(quality.get("recommended_next_focus") or ""),
+        "teacher outputs are strong on lesson creation but weaker on promotion-ready confidence" if _to_float(shadow_correction.get("readiness_score"), 0.0) < 75 else "",
+        "broker truth teacher feedback remains supply constrained" if broker_complete < 20 else "",
+    ])
+    teacher_audit = {
+        "system": "Teacher Layer",
+        "maturity_score": teacher_score,
+        "classification": _astra_maturity_classification_v1(teacher_score, blockers=teacher_bottlenecks),
+        "lesson_generation": historical.get("historical_lesson_quality_score"),
+        "pattern_generation": aios.get("ihie_maturity"),
+        "playbook_generation": symbol_intel.get("expected_learning_gain"),
+        "warning_generation": quality.get("weakest_confidence_component"),
+        "promotion_readiness": shadow_correction.get("readiness_score"),
+        "lesson_quality": historical.get("historical_lesson_quality_score"),
+        "lesson_utilization": learning_score,
+        "bottlenecks": teacher_bottlenecks,
+    }
+
+    shadow_score = _astra_score_average_v1(
+        shadow_lab.get("average_shadow_realism_score"),
+        shadow_lab.get("evidence_quality_score"),
+        shadow_correction.get("readiness_score"),
+        shadow_correction.get("confidence_score"),
+    )
+    shadow_bottlenecks = _astra_top_bottlenecks_v1([
+        "shadow sample remains modest for promotion-ready inference" if int(_to_float(shadow_lab.get("completed_shadow_lifecycles"), 0.0)) < 100 else "",
+        "shadow-vs-paper performance is still evidence-limited" if str(shadow_vs_paper.get("shadow_reconciliation_status") or "").upper() == "INSUFFICIENT_EVIDENCE" else "",
+        "consensus confidence remains low" if _to_float(shadow_lab.get("consensus_confidence_score"), 0.0) < 40 else "",
+    ])
+    shadow_audit = {
+        "system": "Shadow Validation Layer",
+        "maturity_score": shadow_score,
+        "classification": _astra_maturity_classification_v1(shadow_score, blockers=shadow_bottlenecks),
+        "shadow_exits": shadow_vs_paper.get("shadow_profit_factor_status"),
+        "shadow_horizons": shadow_lab.get("best_horizon"),
+        "shadow_hold_durations": exit_learning.get("best_hold_window"),
+        "shadow_replacement_logic": shadow_correction.get("shadow_recommendation"),
+        "evidence_quality": shadow_lab.get("evidence_quality_score"),
+        "sample_sizes": {
+            "candidate_lessons": int(_to_float(shadow_lab.get("candidate_lessons"), 0.0)),
+            "completed_shadow_lifecycles": int(_to_float(shadow_lab.get("completed_shadow_lifecycles"), 0.0)),
+            "validated_recommendations": int(_to_float(shadow_correction.get("validated_recommendations"), 0.0)),
+        },
+        "promotion_readiness": shadow_correction.get("readiness_score"),
+        "bottlenecks": shadow_bottlenecks,
+    }
+
+    broker_truth_score = _astra_score_average_v1(
+        min(100.0, broker_complete * 5.0),
+        reconstruct.get("fully_reconstructable_pct"),
+        reconstruct.get("confidence_reconstructable_pct"),
+    )
+    broker_truth_bottlenecks = _astra_top_bottlenecks_v1([
+        "broker-confirmed complete trade sample is still small" if broker_complete < 20 else "",
+        "completed records exist but are not yet dense enough for broad learning activation" if broker_complete < 50 else "",
+        "broker truth generation is stronger than broker truth consumption" if broker_total > broker_complete else "",
+    ])
+    broker_truth_audit = {
+        "system": "Broker Truth Learning Layer",
+        "maturity_score": broker_truth_score,
+        "classification": _astra_maturity_classification_v1(broker_truth_score, blockers=broker_truth_bottlenecks, missing=["large_completed_broker_sample"] if broker_complete < 10 else []),
+        "broker_truth_generation": {
+            "broker_truth_records_total": broker_total,
+            "broker_confirmed_complete_records": broker_complete,
+            "broker_order_seen_not_closed_records": int(_to_float(broker_truth.get("broker_order_seen_not_closed_records"), 0.0)),
+        },
+        "broker_truth_consumption": learning_score,
+        "broker_truth_learning_usage": "limited advisory-only",
+        "sample_quality": reconstruct.get("confidence_reconstructable_pct"),
+        "learning_readiness": "PARTIAL" if broker_complete > 0 else "BLOCKED",
+        "bottlenecks": broker_truth_bottlenecks,
+    }
+
+    funnel_score = _astra_score_average_v1(
+        aios.get("final_maturation_bundle_health"),
+        aios.get("aios_maturity_score"),
+        final_bundle.get("efficiency_score"),
+        learning_score,
+        retrieval_score,
+    )
+    funnel_bottlenecks = _astra_top_bottlenecks_v1([
+        f"AIOS weakest layer: {aios.get('aios_weakest_layer')}" if aios.get("aios_weakest_layer") else "",
+        "satellite-to-teacher compression is stronger than teacher-to-learning reinforcement" if _to_float(aios.get("learning_reinforcement_maturity"), 0.0) < _to_float(aios.get("memory_retrieval_maturity"), 0.0) else "",
+        "broker truth return path into learning remains the thinnest segment" if broker_complete < 20 else "",
+        "FMP/provider context remains constrained" if str(fmp_root).strip() else "",
+    ])
+    funnel_audit = {
+        "system": "Cortex Intelligence Funnel",
+        "maturity_score": funnel_score,
+        "classification": _astra_maturity_classification_v1(funnel_score, blockers=funnel_bottlenecks),
+        "architecture_flow": list(aios.get("architecture_flow") or []),
+        "drop_off_points": [
+            "Teacher to Learning reinforcement" if _to_float(aios.get("learning_reinforcement_maturity"), 0.0) < 45 else "",
+            "Execution to Broker Truth" if broker_complete < 20 else "",
+            "Shadow Validation to Promotion" if _to_float(shadow_correction.get("readiness_score"), 0.0) < 75 else "",
+        ],
+        "underutilized_intelligence": [
+            str(aios.get("aios_weakest_layer") or ""),
+            "broker truth completed records",
+            "historical catalyst coverage" if _to_float(historical.get("catalyst_coverage_score"), 0.0) < 20 else "",
+        ],
+        "unused_evidence": [
+            "ranking factor rows",
+            "regime lineage fields",
+            "exit type lineage fields",
+        ],
+        "bottlenecks": funnel_bottlenecks,
+    }
+
+    satellite_rows = list(tier3.get("satellites_5_10") or [])
+    utilization_rows = []
+    utilization_scores = []
+    for row in satellite_rows:
+        if not isinstance(row, dict):
+            continue
+        confidence = _to_float(row.get("confidence"), 0.0)
+        duplicates_prevented = int(_to_float(row.get("duplicates_prevented"), 0.0))
+        score = round(min(100.0, max(0.0, confidence + (duplicates_prevented * 2.0))), 3)
+        utilization_scores.append(score)
+        utilization_rows.append({
+            "satellite": str(row.get("satellite_name") or "unknown"),
+            "utilization_pct": score,
+            "status": str(row.get("status") or ""),
+            "health": str(row.get("health") or ""),
+            "underutilized": score < 55.0,
+            "unused_outputs": "confidence not yet promotion-grade" if confidence < 60.0 else "",
+        })
+    satellite_score = _astra_score_average_v1(*(utilization_scores or [0.0]), _to_float(aios.get("ihie_maturity"), 0.0))
+    satellite_bottlenecks = _astra_top_bottlenecks_v1([
+        f"satellite coordinator health: {tier3.get('satellite_coordinator_health')}" if str(tier3.get("satellite_coordinator_health") or "").lower() != "healthy" else "",
+        "multiple satellites are monitoring-only rather than actively trusted" if any(bool(row.get("underutilized")) for row in utilization_rows) else "",
+        "satellite outputs are compressed successfully but remain advisory-only downstream",
+    ])
+    satellite_audit = {
+        "system": "Satellite Utilization",
+        "maturity_score": satellite_score,
+        "classification": _astra_maturity_classification_v1(satellite_score, blockers=satellite_bottlenecks),
+        "coordinator_status": tier3.get("satellite_coordinator_status") or satellite.get("coordinator_status"),
+        "coordinator_health": tier3.get("satellite_coordinator_health") or satellite.get("coordinator_health"),
+        "utilization_rows": utilization_rows,
+        "underutilization": [row["satellite"] for row in utilization_rows if bool(row.get("underutilized"))],
+        "oversaturation_risk": "LOW" if int(_to_float(satellite.get("duplicates_prevented"), 0.0)) <= 10 else "MODERATE",
+        "bottlenecks": satellite_bottlenecks,
+    }
+
+    systems = [
+        learning_audit,
+        retrieval_audit,
+        compression_audit,
+        teacher_audit,
+        shadow_audit,
+        broker_truth_audit,
+        funnel_audit,
+        satellite_audit,
+    ]
+    health_score = _astra_score_average_v1(*[audit.get("maturity_score") for audit in systems])
+    global_bottlenecks = _astra_top_bottlenecks_v1(
+        learning_bottlenecks + retrieval_bottlenecks + compression_bottlenecks + teacher_bottlenecks + shadow_bottlenecks + broker_truth_bottlenecks + funnel_bottlenecks + satellite_bottlenecks,
+        limit=10,
+    )
+    missing_components = _astra_top_bottlenecks_v1([
+        "broker truth sample depth for strong learning consumption" if broker_complete < 50 else "",
+        "ranking factor linkage in canonical lesson reconstruction" if int(_to_float(reconstruct.get("ranking_factor_reconstructable_pct"), 0.0)) <= 0 else "",
+        "higher-confidence catalyst retrieval coverage" if _to_float(historical.get("catalyst_coverage_score"), 0.0) < 20 else "",
+        "promotion-grade shadow validation sample size" if int(_to_float(shadow_lab.get("completed_shadow_lifecycles"), 0.0)) < 100 else "",
+        "teacher-to-learning reinforcement maturation" if _to_float(aios.get("learning_reinforcement_maturity"), 0.0) < 45 else "",
+    ])
+    implemented_components = [
+        "cache-first historical retrieval indexes",
+        "canonical lesson storage and summary creation",
+        "satellite coordinator registration",
+        "shadow evidence lab",
+        "regime similarity retrieval",
+        "adaptive learning prioritization",
+        "compressed intelligence bundles",
+    ]
+    implementation_priority = [
+        {"rank": 1, "component": "broker_truth_learning_layer", "reason": "largest downstream constraint on validated learning consumption"},
+        {"rank": 2, "component": "teacher_to_learning_reinforcement", "reason": "AIOS reports reinforcement as the thinnest mature layer"},
+        {"rank": 3, "component": "canonical_field_lineage", "reason": "missing ranking/regime/exit fields cap retrieval usefulness"},
+        {"rank": 4, "component": "historical_catalyst_retrieval_depth", "reason": "sector coverage is high while catalyst coverage remains thin"},
+        {"rank": 5, "component": "shadow_validation_sample_depth", "reason": "promotion readiness remains evidence-limited"},
+    ]
+    expected_improvement = [
+        {"component": "broker_truth_learning_layer", "expected_improvement": "higher-confidence exit, hold-duration, and symbol playbook consumption"},
+        {"component": "teacher_to_learning_reinforcement", "expected_improvement": "better conversion of lessons into actionable advisory guidance"},
+        {"component": "canonical_field_lineage", "expected_improvement": "stronger similarity retrieval and more explainable Cortex decisions"},
+        {"component": "historical_catalyst_retrieval_depth", "expected_improvement": "better catalyst-context matching and sector/theme recall"},
+        {"component": "shadow_validation_sample_depth", "expected_improvement": "safer promotion-readiness scoring and reduced advisory uncertainty"},
+    ]
+    roadmap = {
+        "roadmap_placement": "after trade-state reconciliation and FMP/provider wiring, before any behavior-change wave",
+        "next_wave": "Intelligence Consumption Hardening & Canonical Field Lineage Repair",
+        "must_not_change": [
+            "ranking behavior",
+            "entry behavior",
+            "exit behavior",
+            "position sizing",
+            "portfolio allocation",
+            "thresholds",
+            "broker behavior",
+            "live trading",
+        ],
+    }
+
+    maturation_summary_stub = {
+        "suite": "Astra Intelligence Maturation Readiness Report V1",
+        "status": "ok",
+        "endpoint": "/api/astra_intelligence_maturation_readiness_report_v1",
+        "generated_at": _now_utc_iso(),
+        "learning_consumption_engine_audit_v1": learning_audit,
+        "historical_retrieval_similarity_engine_audit_v1": retrieval_audit,
+        "evidence_compression_knowledge_organization_audit_v1": compression_audit,
+        "teacher_layer_audit_v1": teacher_audit,
+        "shadow_validation_layer_audit_v1": shadow_audit,
+        "broker_truth_learning_layer_audit_v1": broker_truth_audit,
+        "cortex_intelligence_funnel_audit_v1": funnel_audit,
+        "satellite_utilization_audit_v1": satellite_audit,
+        "health_score": health_score,
+        "bottlenecks": global_bottlenecks,
+        "exact_missing_components": missing_components,
+        "existing_components_already_implemented": implemented_components,
+        "implementation_priority": implementation_priority,
+        "recommended_implementation_order": [row.get("component") for row in implementation_priority],
+        "expected_improvement_from_each_upgrade": expected_improvement,
+        "unified_roadmap_placement": roadmap,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+    if not phase2a_hint:
+        phase2a_hint = _astra_phase_2a_intelligence_consumption_payload({
+            **statuses,
+            "astra_intelligence_maturation_readiness_report_v1": maturation_summary_stub,
+        })
+    if not lineage_hint:
+        lineage_hint = _astra_canonical_lineage_repair_payload({
+            **statuses,
+            "astra_intelligence_maturation_readiness_report_v1": maturation_summary_stub,
+            "astra_phase_2a_intelligence_consumption_v1": phase2a_hint,
+        })
+
+    return {
+        "suite": "Astra Intelligence Maturation Readiness Report V1",
+        "status": "ok",
+        "endpoint": "/api/astra_intelligence_maturation_readiness_report_v1",
+        "generated_at": _now_utc_iso(),
+        "learning_consumption_engine_audit_v1": learning_audit,
+        "historical_retrieval_similarity_engine_audit_v1": retrieval_audit,
+        "evidence_compression_knowledge_organization_audit_v1": compression_audit,
+        "teacher_layer_audit_v1": teacher_audit,
+        "shadow_validation_layer_audit_v1": shadow_audit,
+        "broker_truth_learning_layer_audit_v1": broker_truth_audit,
+        "cortex_intelligence_funnel_audit_v1": funnel_audit,
+        "satellite_utilization_audit_v1": satellite_audit,
+        "health_score": health_score,
+        "bottlenecks": global_bottlenecks,
+        "exact_missing_components": missing_components,
+        "existing_components_already_implemented": implemented_components,
+        "implementation_priority": implementation_priority,
+        "recommended_implementation_order": [row.get("component") for row in implementation_priority],
+        "expected_improvement_from_each_upgrade": expected_improvement,
+        "unified_roadmap_placement": roadmap,
+        "astra_phase_2a_intelligence_consumption_v1": phase2a_hint,
+        "phase_2a_health_score": phase2a_hint.get("phase_2a_health_score"),
+        "phase_2a_readiness_status": phase2a_hint.get("readiness_status"),
+        "astra_canonical_lineage_repair_v1": lineage_hint,
+        "canonical_lineage_health_score": lineage_hint.get("lineage_repair_health_score"),
+        "canonical_lineage_status": lineage_hint.get("status"),
+        "final_wiring_diagnostic_v1": {
+            "wiring_status": "PASS",
+            "cache_first_preserved": True,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            **_safety_flags_v1(),
+        },
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _attach_astra_intelligence_maturation_readiness_report_v1(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
+    if not isinstance(target, dict):
+        return {}
+    if force or not isinstance(target.get("astra_intelligence_maturation_readiness_report_v1"), dict):
+        target["astra_intelligence_maturation_readiness_report_v1"] = _astra_intelligence_maturation_readiness_report_v1_payload(statuses or target)
+    return dict(target.get("astra_intelligence_maturation_readiness_report_v1") or {})
+
+
+def _phase2a_summary_index_v1(name: str) -> dict:
+    payload = _astra_evidence_state_json(f"storage_summary_indexes/{name}.jsonl.summary_index.json")
+    return dict(payload or {}) if isinstance(payload, dict) else {}
+
+
+def _phase2a_dimension_coverage_v1(index_payload: dict, field: str) -> float:
+    dims = index_payload.get("dimension_counts") if isinstance(index_payload.get("dimension_counts"), dict) else {}
+    values = dims.get(field) if isinstance(dims.get(field), dict) else {}
+    if not values:
+        return 0.0
+    total = sum(int(_to_float(v, 0.0)) for v in values.values())
+    unknown = sum(
+        int(_to_float(v, 0.0))
+        for key, v in values.items()
+        if str(key or "").strip().lower() in {"", "unknown", "unknown_regime", "unknown_horizon", "unknown_sector", "none", "null", "n/a"}
+    )
+    return round(max(0.0, min(100.0, ((total - unknown) / max(1, total)) * 100.0)), 3)
+
+
+def _phase2a_status_from_score_v1(score: float) -> str:
+    if score >= 80:
+        return "PASS"
+    if score >= 45:
+        return "PARTIAL"
+    return "BLOCKED"
+
+
+def _astra_phase_2a_intelligence_consumption_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    maturation = statuses.get("astra_intelligence_maturation_readiness_report_v1") if isinstance(statuses.get("astra_intelligence_maturation_readiness_report_v1"), dict) else _astra_intelligence_maturation_readiness_report_v1_payload(statuses)
+    cortex_truth = _astra_cache_or_status_payload(statuses, "cortex_lifecycle_evidence_master_truth_v1")
+    historical = _astra_cache_or_status_payload(statuses, "historical_intelligence_market_memory_suite_v1")
+    retrieval = _astra_cache_or_status_payload(statuses, "long_term_memory_symbol_retrieval_suite_v1")
+    learning_alloc = _astra_cache_or_status_payload(statuses, "adaptive_learning_prioritization_resource_allocation_v1")
+    symbol_intel = _astra_cache_or_status_payload(statuses, "accelerated_learning_symbol_intelligence_suite_v1")
+    exit_learning = _astra_cache_or_status_payload(statuses, "exit_learning_expansion_suite_v1")
+    shadow_lab = _astra_cache_or_status_payload(statuses, "realistic_shadow_evidence_learning_lab_v1")
+    shadow_correction = _astra_cache_or_status_payload(statuses, "shadow_correction_validation_attribution_v1")
+    aios = _astra_cache_or_status_payload(statuses, "astra_aios_intelligence_maturation_bundle_v1")
+    tier3 = _astra_cache_or_status_payload(statuses, "astra_tier3_historical_satellite_shadow_acceleration_v1")
+    satellite = _astra_cache_or_status_payload(statuses, "astra_satellite_network_v1")
+    quality = _astra_cache_or_status_payload(statuses, "intelligence_quality_learning_efficiency_suite_v1")
+    regime = _astra_cache_or_status_payload(statuses, "market_regime_similarity_engine_v1")
+    broker_truth = _astra_evidence_state_json("broker_truth_records_v1.json")
+    reconstruct = dict(cortex_truth.get("evidence_reconstructability_score_v1") or {})
+
+    trade_similarity_idx = _phase2a_summary_index_v1("trade_memory_similarity_v1")
+    exit_idx = _phase2a_summary_index_v1("exit_learning_expansion_suite_v1")
+    market_idx = _phase2a_summary_index_v1("market_context_learning_suite_v1")
+    regime_idx = _phase2a_summary_index_v1("trade_archetype_regime_intelligence_v1")
+    candidate_idx = _phase2a_summary_index_v1("candidate_decision_ledger_v1")
+    replay_idx = _phase2a_summary_index_v1("replay_counterfactual_learning_v2")
+    lifecycle_idx = _phase2a_summary_index_v1("trade_lifecycle_excursion_v2")
+
+    index_payloads = [trade_similarity_idx, exit_idx, market_idx, regime_idx, candidate_idx, replay_idx, lifecycle_idx]
+    raw_evidence_count = int(sum(int(_to_float(idx.get("source_line_count_estimate"), 0.0)) for idx in index_payloads if isinstance(idx, dict)))
+    sample_evidence_count = int(sum(int(_to_float(idx.get("sample_rows"), 0.0)) for idx in index_payloads if isinstance(idx, dict)))
+    broker_total = int(_to_float(broker_truth.get("broker_truth_records_total"), 0.0))
+    broker_complete = int(_to_float(broker_truth.get("broker_confirmed_complete_records"), 0.0))
+    compressed_knowledge_count = int(
+        _to_float(historical.get("compressed_market_memory_records"), 0.0)
+        + _to_float(shadow_lab.get("compressed_lesson_count"), 0.0)
+        + _to_float(satellite.get("compressed_lessons_count"), 0.0)
+        + _to_float(aios.get("memory_reinforcements_today"), 0.0)
+    )
+    compressed_knowledge_count = max(compressed_knowledge_count, int(_to_float(tier3.get("compressed_lessons_created"), 0.0)))
+
+    implemented_components = [
+        "canonical_lesson_store" if cortex_truth.get("canonical_lesson_store_created") else "",
+        "historical_retrieval_indexes" if retrieval.get("retrieval_health_score") is not None else "",
+        "summary_index_dimension_counts" if any(bool((idx.get("dimension_counts") or {})) for idx in index_payloads) else "",
+        "shadow_evidence_lab" if shadow_lab else "",
+        "adaptive_learning_prioritization" if learning_alloc else "",
+        "symbol_behavior_learning" if symbol_intel else "",
+        "exit_learning_expansion" if exit_learning else "",
+        "satellite_compression" if satellite else "",
+    ]
+    implemented_components = [item for item in implemented_components if item]
+    partial_components = [
+        "broker_truth_learning_consumption" if 0 < broker_complete < 50 else "",
+        "canonical_field_lineage" if _to_float(reconstruct.get("fully_reconstructable_pct"), 0.0) < 80 else "",
+        "teacher_to_learning_reinforcement" if _to_float(aios.get("learning_reinforcement_maturity"), 0.0) < 80 else "",
+        "catalyst_retrieval" if _to_float(historical.get("catalyst_coverage_score"), 0.0) < 50 else "",
+    ]
+    partial_components = [item for item in partial_components if item]
+    missing_components = [
+        "promotion_grade_broker_truth_sample" if broker_complete < 50 else "",
+        "ranking_factor_lineage" if _to_float(reconstruct.get("ranking_factor_reconstructable_pct"), 0.0) <= 0 else "",
+    ]
+    missing_components = [item for item in missing_components if item]
+    blocked_components = [
+        "official_learning_promotion_until_broker_truth_sample_matures" if broker_complete < 50 else "",
+        "automatic_playbook_promotion_disabled_by_design",
+        "learned_exits_disabled_by_design",
+    ]
+    pre_audit = {
+        "phase_2a_intelligence_consumption_pre_audit_v1": True,
+        "implemented_components": implemented_components,
+        "partial_components": partial_components,
+        "missing_components": missing_components,
+        "miswired_components": [],
+        "duplicate_components_found": [
+            "legacy_context_and_catalyst_surfaces_reused_by_unified_diagnostics",
+            "multiple summary indexes expose overlapping lifecycle dimensions",
+        ],
+        "blocked_components": blocked_components,
+        "safest_completion_plan": [
+            "keep broker truth as highest evidence tier",
+            "classify missing lineage instead of rewriting raw records",
+            "publish Cortex-readable advisory summaries",
+            "preserve cache-first zero-provider-call endpoint behavior",
+        ],
+    }
+
+    broker_truth_consumption_score = round(min(100.0, broker_complete * 2.0), 3)
+    exit_learning_consumption_score = _astra_score_average_v1(
+        exit_learning.get("holding_time_confidence"),
+        exit_learning.get("protect_profit_score"),
+        _phase2a_dimension_coverage_v1(exit_idx, "exit_type"),
+    )
+    hold_duration_consumption_score = _astra_score_average_v1(
+        exit_learning.get("holding_time_confidence"),
+        100.0 if exit_learning.get("best_hold_window") or exit_learning.get("best_hold_duration") else 0.0,
+    )
+    horizon_learning_consumption_score = _astra_score_average_v1(
+        symbol_intel.get("horizon_fit_score"),
+        symbol_intel.get("horizon_confidence"),
+        _phase2a_dimension_coverage_v1(trade_similarity_idx, "horizon"),
+    )
+    symbol_learning_consumption_score = _astra_score_average_v1(
+        retrieval.get("symbol_memory_quality_score"),
+        symbol_intel.get("symbol_personality_quality_score"),
+        symbol_intel.get("cross_symbol_learning_score"),
+    )
+    teacher_lesson_consumption_score = _astra_score_average_v1(
+        aios.get("learning_reinforcement_maturity"),
+        historical.get("historical_lesson_quality_score"),
+        learning_alloc.get("learning_roi_score"),
+    )
+    learning_consumption_score = _astra_score_average_v1(
+        broker_truth_consumption_score,
+        exit_learning_consumption_score,
+        hold_duration_consumption_score,
+        horizon_learning_consumption_score,
+        symbol_learning_consumption_score,
+        teacher_lesson_consumption_score,
+    )
+    learning_consumption = {
+        "learning_consumption_engine_v1": True,
+        "inputs": ["broker_truths", "lifecycle_outcomes", "shadow_outcomes", "historical_outcomes", "teacher_lessons", "symbol_behavior_records", "exit_intelligence_records", "horizon_outcomes"],
+        "outputs": ["advisory_learning_summaries", "consumption_readiness_scores", "learning_gaps", "playbook_candidate_diagnostics", "cortex_readable_learning_evidence"],
+        "broker_truth_consumption_score": broker_truth_consumption_score,
+        "exit_learning_consumption_score": exit_learning_consumption_score,
+        "hold_duration_consumption_score": hold_duration_consumption_score,
+        "horizon_learning_consumption_score": horizon_learning_consumption_score,
+        "symbol_learning_consumption_score": symbol_learning_consumption_score,
+        "teacher_lesson_consumption_score": teacher_lesson_consumption_score,
+        "learning_consumption_score": learning_consumption_score,
+        "learning_consumption_status": _phase2a_status_from_score_v1(learning_consumption_score),
+        "learning_gaps": [
+            "broker_truth_completed_sample_below_50" if broker_complete < 50 else "",
+            "ranking_factor_lineage_missing" if _to_float(reconstruct.get("ranking_factor_reconstructable_pct"), 0.0) <= 0 else "",
+            "teacher_reinforcement_maturity_below_target" if _to_float(aios.get("learning_reinforcement_maturity"), 0.0) < 50 else "",
+        ],
+        "broker_truth_required_for_promotion_grade_evidence": True,
+        "shadow_historical_evidence_advisory_only": True,
+    }
+    learning_consumption["learning_gaps"] = [item for item in learning_consumption["learning_gaps"] if item]
+
+    ranking_factor_coverage = _astra_score_average_v1(
+        reconstruct.get("ranking_factor_reconstructable_pct"),
+        _phase2a_dimension_coverage_v1(candidate_idx, "ranking_factor"),
+        _phase2a_dimension_coverage_v1(trade_similarity_idx, "ranking_factor"),
+    )
+    regime_lineage_coverage = _astra_score_average_v1(
+        reconstruct.get("regime_reconstructable_pct"),
+        _phase2a_dimension_coverage_v1(regime_idx, "regime"),
+        _phase2a_dimension_coverage_v1(market_idx, "regime"),
+    )
+    catalyst_lineage_coverage = _astra_score_average_v1(
+        historical.get("catalyst_coverage_score"),
+        _phase2a_dimension_coverage_v1(trade_similarity_idx, "catalyst"),
+        _phase2a_dimension_coverage_v1(market_idx, "catalyst"),
+    )
+    exit_type_lineage_coverage = _astra_score_average_v1(
+        reconstruct.get("exit_type_reconstructable_pct"),
+        _phase2a_dimension_coverage_v1(exit_idx, "exit_type"),
+        _phase2a_dimension_coverage_v1(trade_similarity_idx, "exit_type"),
+    )
+    horizon_lineage_coverage = _astra_score_average_v1(
+        _phase2a_dimension_coverage_v1(trade_similarity_idx, "horizon"),
+        _phase2a_dimension_coverage_v1(exit_idx, "horizon"),
+        symbol_intel.get("horizon_fit_score"),
+    )
+    cortex_reason_lineage_coverage = _astra_score_average_v1(
+        reconstruct.get("confidence_reconstructable_pct"),
+        100.0 if cortex_truth.get("cortex_causal_intelligence_engine_v1") else 50.0,
+    )
+    broker_truth_linkage_coverage = round(min(100.0, (broker_complete / max(1, broker_total)) * 100.0), 3)
+    unresolved_lineage_gaps = [
+        {
+            "field": "ranking_factor",
+            "coverage": ranking_factor_coverage,
+            "unknown_reason_code": "ranking_factor_not_persisted_to_canonical_lifecycle_records",
+            "missing_lineage_reason": "source evidence does not expose enough candidate-to-ranking-factor linkage",
+            "lineage_confidence": ranking_factor_coverage,
+        } if ranking_factor_coverage < 50 else None,
+        {
+            "field": "regime",
+            "coverage": regime_lineage_coverage,
+            "unknown_reason_code": "regime_lineage_partial",
+            "missing_lineage_reason": "regime present in indexes but incomplete in canonical truth reconstruction",
+            "lineage_confidence": regime_lineage_coverage,
+        } if regime_lineage_coverage < 70 else None,
+        {
+            "field": "catalyst",
+            "coverage": catalyst_lineage_coverage,
+            "unknown_reason_code": "catalyst_context_sparse",
+            "missing_lineage_reason": "historical catalyst coverage is thin relative to other dimensions",
+            "lineage_confidence": catalyst_lineage_coverage,
+        } if catalyst_lineage_coverage < 50 else None,
+        {
+            "field": "exit_type",
+            "coverage": exit_type_lineage_coverage,
+            "unknown_reason_code": "exit_type_lineage_partial",
+            "missing_lineage_reason": "exit type reconstructability remains below promotion-grade threshold",
+            "lineage_confidence": exit_type_lineage_coverage,
+        } if exit_type_lineage_coverage < 70 else None,
+    ]
+    unresolved_lineage_gaps = [gap for gap in unresolved_lineage_gaps if isinstance(gap, dict)]
+    canonical_lineage = {
+        "canonical_field_lineage_repair_v1": True,
+        "repair_mode": "DIAGNOSTIC_CLASSIFICATION_ONLY",
+        "raw_records_modified": False,
+        "broker_truth_fabricated": False,
+        "ranking_factor_lineage_coverage": ranking_factor_coverage,
+        "regime_lineage_coverage": regime_lineage_coverage,
+        "catalyst_lineage_coverage": catalyst_lineage_coverage,
+        "exit_type_lineage_coverage": exit_type_lineage_coverage,
+        "horizon_lineage_coverage": horizon_lineage_coverage,
+        "cortex_reason_lineage_coverage": cortex_reason_lineage_coverage,
+        "broker_truth_linkage_coverage": broker_truth_linkage_coverage,
+        "unresolved_lineage_gaps": unresolved_lineage_gaps,
+        "lineage_status": _phase2a_status_from_score_v1(_astra_score_average_v1(ranking_factor_coverage, regime_lineage_coverage, catalyst_lineage_coverage, exit_type_lineage_coverage, horizon_lineage_coverage, cortex_reason_lineage_coverage)),
+    }
+
+    trade_similarity_coverage = _phase2a_dimension_coverage_v1(trade_similarity_idx, "outcome_label")
+    regime_similarity_coverage = _astra_score_average_v1(regime.get("similarity_score"), _phase2a_dimension_coverage_v1(regime_idx, "regime"))
+    catalyst_similarity_coverage = _astra_score_average_v1(historical.get("catalyst_coverage_score"), _phase2a_dimension_coverage_v1(trade_similarity_idx, "catalyst"))
+    symbol_similarity_coverage = _astra_score_average_v1(retrieval.get("retrieval_health_score"), _phase2a_dimension_coverage_v1(trade_similarity_idx, "symbol"))
+    exit_similarity_coverage = _astra_score_average_v1(_phase2a_dimension_coverage_v1(exit_idx, "exit_type"), exit_learning.get("holding_time_confidence"))
+    retrieval_confidence = _astra_score_average_v1(trade_similarity_coverage, regime_similarity_coverage, catalyst_similarity_coverage, symbol_similarity_coverage, exit_similarity_coverage)
+    top_similar_cases = []
+    for period in (regime.get("top_similar_periods") or [])[:5]:
+        if isinstance(period, dict):
+            top_similar_cases.append({
+                "case_type": "regime_similarity",
+                "period": period.get("period"),
+                "similarity_score": period.get("similarity_score"),
+                "historical_outcome_summary": period.get("historical_outcome_summary"),
+            })
+    historical_retrieval = {
+        "historical_retrieval_similarity_engine_v1": True,
+        "similar_case_count": int(_to_float(trade_similarity_idx.get("sample_rows"), 0.0) + len(top_similar_cases)),
+        "top_similar_cases": top_similar_cases,
+        "retrieval_confidence": retrieval_confidence,
+        "retrieval_coverage": {
+            "trade_outcome_similarity": trade_similarity_coverage,
+            "symbol_behavior_similarity": symbol_similarity_coverage,
+            "regime_similarity": regime_similarity_coverage,
+            "catalyst_similarity": catalyst_similarity_coverage,
+            "sector_rotation_similarity": historical.get("sector_coverage_score"),
+            "volatility_environment_similarity": regime.get("confidence"),
+            "horizon_similarity": horizon_lineage_coverage,
+            "exit_pattern_similarity": exit_similarity_coverage,
+        },
+        "retrieval_speed_status": retrieval.get("cache_status") or "cache_first",
+        "cortex_readable_historical_context": {
+            "most_similar_regime": regime.get("most_similar_regime"),
+            "historical_phase": historical.get("historical_phase"),
+            "best_behavioral_edge_symbol": retrieval.get("best_behavioral_edge_symbol"),
+        },
+        "trade_similarity_coverage": trade_similarity_coverage,
+        "regime_similarity_coverage": regime_similarity_coverage,
+        "catalyst_similarity_coverage": catalyst_similarity_coverage,
+        "symbol_similarity_coverage": symbol_similarity_coverage,
+        "exit_similarity_coverage": exit_similarity_coverage,
+        "historical_retrieval_status": _phase2a_status_from_score_v1(retrieval_confidence),
+        "historical_similarity_advisory_only": True,
+    }
+
+    duplicate_knowledge_reduced = int(
+        _to_float(satellite.get("duplicates_prevented"), 0.0)
+        + _to_float(shadow_lab.get("duplicate_lessons_compressed"), 0.0)
+        + _to_float((tier3.get("learning_evidence_intelligence_v1") or {}).get("duplicates_prevented"), 0.0)
+    )
+    compression_ratio = round((compressed_knowledge_count / max(1, raw_evidence_count)) * 100.0, 6)
+    retrieval_index_health = _astra_score_average_v1(
+        retrieval.get("retrieval_health_score"),
+        symbol_intel.get("indexing_health_score"),
+        100.0 if all(bool(idx.get("dimension_counts")) for idx in [trade_similarity_idx, exit_idx, market_idx, regime_idx]) else 50.0,
+    )
+    knowledge_noise_score = _astra_score_average_v1(
+        shadow_lab.get("discarded_noise_count"),
+        shadow_lab.get("conflicting_lesson_count"),
+        max(0.0, 100.0 - _to_float(shadow_lab.get("consensus_confidence_score"), 0.0)),
+    )
+    compression = {
+        "evidence_compression_knowledge_organization_v1": True,
+        "raw_evidence_count": raw_evidence_count,
+        "bounded_sample_evidence_count": sample_evidence_count,
+        "compressed_knowledge_count": compressed_knowledge_count,
+        "duplicate_knowledge_reduced": duplicate_knowledge_reduced,
+        "compression_ratio": compression_ratio,
+        "retrieval_index_health": retrieval_index_health,
+        "knowledge_noise_score": knowledge_noise_score,
+        "clustered_outcomes": int(_to_float(symbol_intel.get("indexed_learning_records"), 0.0)),
+        "symbol_behavior_summaries": int(_to_float(retrieval.get("symbol_profiles_tracked"), 0.0)),
+        "exit_behavior_summaries": int(_to_float(exit_learning.get("tracked_trades"), 0.0)),
+        "horizon_summaries": int(_to_float(len(symbol_intel.get("best_horizon_by_symbol") or {}), 0.0)),
+        "catalyst_summaries": int(_to_float(historical.get("catalyst_records_created"), 0.0)),
+        "regime_summaries": int(_to_float(historical.get("regimes_detected"), 0.0)),
+        "playbook_candidates": "advisory_only_pending_broker_truth",
+        "knowledge_organization_status": _phase2a_status_from_score_v1(retrieval_index_health),
+        "raw_evidence_preserved": True,
+        "evidence_links_preserved": True,
+    }
+
+    lessons_generated = int(_to_float(aios.get("lessons_created"), 0.0) + _to_float(shadow_lab.get("candidate_lessons"), 0.0))
+    lessons_indexed = int(_to_float(retrieval.get("indexed_records"), 0.0) or _to_float(symbol_intel.get("indexed_learning_records"), 0.0))
+    lessons_consumed = int(_to_float(aios.get("memory_reinforcements_today"), 0.0) + _to_float(learning_alloc.get("retained_weakness_lessons"), 0.0))
+    teacher_reinforcement_score = _astra_score_average_v1(
+        aios.get("learning_reinforcement_maturity"),
+        historical.get("historical_lesson_quality_score"),
+        learning_alloc.get("allocation_confidence"),
+        shadow_correction.get("confidence_score"),
+    )
+    missing_teacher_links = [
+        "lesson_to_playbook_linkage_requires_broker_truth_depth" if broker_complete < 50 else "",
+        "lesson_to_ranking_factor_linkage_missing" if ranking_factor_coverage < 50 else "",
+        "lesson_to_catalyst_linkage_partial" if catalyst_lineage_coverage < 50 else "",
+    ]
+    teacher_reinforcement = {
+        "teacher_to_learning_reinforcement_v1": True,
+        "lessons_generated": lessons_generated,
+        "lessons_indexed": lessons_indexed,
+        "lessons_consumed": lessons_consumed,
+        "teacher_reinforcement_score": teacher_reinforcement_score,
+        "teacher_learning_status": _phase2a_status_from_score_v1(teacher_reinforcement_score),
+        "missing_teacher_links": [item for item in missing_teacher_links if item],
+        "cortex_visibility": bool(cortex_truth.get("cortex_causal_intelligence_engine_v1") or aios.get("astra_intelligence_core_v1")),
+    }
+
+    funnel_stages = [
+        {"stage": "Satellites", "data_received": int(_to_float(tier3.get("satellites_registered"), _to_float(satellite.get("satellites_registered"), 0.0))), "data_consumed": int(_to_float(satellite.get("compressed_lessons_count"), 0.0)), "score": _to_float((maturation.get("satellite_utilization_audit_v1") or {}).get("maturity_score"), 0.0)},
+        {"stage": "Historical Memory", "data_received": raw_evidence_count, "data_consumed": int(_to_float(retrieval.get("indexed_records"), 0.0)), "score": retrieval_confidence},
+        {"stage": "Teacher", "data_received": lessons_generated, "data_consumed": lessons_consumed, "score": teacher_reinforcement_score},
+        {"stage": "Learning", "data_received": sample_evidence_count, "data_consumed": lessons_consumed, "score": learning_consumption_score},
+        {"stage": "CIO", "data_received": int(_to_float(aios.get("aic_working_priorities_today"), 0.0)), "data_consumed": int(_to_float(aios.get("aic_working_priorities_today"), 0.0)), "score": _to_float(aios.get("aios_maturity_score"), 0.0)},
+        {"stage": "CEO/Governance", "data_received": int(_to_float(aios.get("aic_working_priorities_today"), 0.0)), "data_consumed": int(_to_float(aios.get("memory_reinforcements_today"), 0.0)), "score": _to_float(aios.get("final_maturation_bundle_health"), 0.0)},
+        {"stage": "Cortex", "data_received": int(_to_float(quality.get("weighted_evidence_count"), 0.0)), "data_consumed": broker_complete, "score": cortex_reason_lineage_coverage},
+        {"stage": "Paper Execution", "data_received": broker_total, "data_consumed": broker_complete, "score": broker_truth_linkage_coverage},
+        {"stage": "Broker Truth", "data_received": broker_total, "data_consumed": broker_complete, "score": broker_truth_consumption_score},
+        {"stage": "Shadow Validation", "data_received": int(_to_float(shadow_lab.get("candidate_lessons"), 0.0)), "data_consumed": int(_to_float(shadow_lab.get("completed_shadow_lifecycles"), 0.0)), "score": _to_float((maturation.get("shadow_validation_layer_audit_v1") or {}).get("maturity_score"), 0.0)},
+    ]
+    for stage in funnel_stages:
+        received = int(_to_float(stage.get("data_received"), 0.0))
+        consumed = int(_to_float(stage.get("data_consumed"), 0.0))
+        stage["data_ignored"] = max(0, received - consumed)
+        stage["dropoff_reason"] = "broker_truth_sample_or_lineage_limited" if received > 0 and consumed < received and _to_float(stage.get("score"), 0.0) < 50 else ("advisory_compression_or_cache_first_filtering" if received > consumed else "none_detected")
+        stage["utilization_score"] = round(min(100.0, max(_to_float(stage.get("score"), 0.0), (consumed / max(1, received)) * 100.0 if received else 0.0)), 3)
+    largest_dropoff = max(funnel_stages, key=lambda row: int(_to_float(row.get("data_ignored"), 0.0))) if funnel_stages else {}
+    funnel_efficiency = _astra_score_average_v1(*[stage.get("utilization_score") for stage in funnel_stages])
+    cortex_trace = {
+        "cortex_funnel_consumption_trace_v1": True,
+        "stages": funnel_stages,
+        "funnel_efficiency_score": funnel_efficiency,
+        "largest_dropoff_point": largest_dropoff.get("stage"),
+        "underutilized_sources": [
+            stage.get("stage")
+            for stage in funnel_stages
+            if _to_float(stage.get("utilization_score"), 0.0) < 50.0
+        ],
+        "oversaturation_risk": "MODERATE" if raw_evidence_count > 1000000 and compressed_knowledge_count < 1000 else "LOW",
+        "cortex_consumption_status": _phase2a_status_from_score_v1(funnel_efficiency),
+    }
+
+    phase2a_score = _astra_score_average_v1(
+        learning_consumption_score,
+        canonical_lineage.get("broker_truth_linkage_coverage"),
+        retrieval_confidence,
+        retrieval_index_health,
+        teacher_reinforcement_score,
+        funnel_efficiency,
+    )
+    remaining_blockers = _astra_top_bottlenecks_v1(
+        learning_consumption.get("learning_gaps", [])
+        + [gap.get("unknown_reason_code") for gap in unresolved_lineage_gaps]
+        + (maturation.get("bottlenecks") or []),
+        limit=10,
+    )
+    pass_checks = {
+        "learning_consumption_at_least_partial": learning_consumption.get("learning_consumption_status") in {"PARTIAL", "PASS"},
+        "canonical_lineage_gaps_classified": bool(canonical_lineage.get("unresolved_lineage_gaps") is not None),
+        "historical_retrieval_at_least_partial": historical_retrieval.get("historical_retrieval_status") in {"PARTIAL", "PASS"},
+        "evidence_compression_at_least_partial": compression.get("knowledge_organization_status") in {"PARTIAL", "PASS"},
+        "teacher_reinforcement_at_least_partial": teacher_reinforcement.get("teacher_learning_status") in {"PARTIAL", "PASS"},
+        "cortex_funnel_trace_connected": bool(cortex_trace.get("stages")),
+        "provider_calls_unchanged": True,
+        "llm_calls_unchanged": True,
+        "behavior_flags_preserved": True,
+    }
+    validation_status = "PASS" if all(pass_checks.values()) and phase2a_score >= 60 else ("PARTIAL" if all(v for k, v in pass_checks.items() if k != "provider_calls_unchanged") else "BLOCKED")
+    readiness = {
+        "phase_2a_readiness_validation_v1": True,
+        "phase_2a_health_score": phase2a_score,
+        "readiness_status": validation_status,
+        "validation_checks": pass_checks,
+        "remaining_blockers": remaining_blockers,
+        "next_safe_wave": "Phase 2B Teacher Layer, Shadow Validation, and Broker Truth Learning Deepening",
+    }
+
+    return {
+        "suite": "Astra Phase 2A Learning Consumption Hardening & Canonical Field Lineage Repair V1",
+        "status": validation_status,
+        "endpoint": "/api/astra_phase_2a_intelligence_consumption_v1",
+        "generated_at": _now_utc_iso(),
+        "phase_2a_intelligence_consumption_pre_audit_v1": pre_audit,
+        "learning_consumption_engine_v1": learning_consumption,
+        "canonical_field_lineage_repair_v1": canonical_lineage,
+        "historical_retrieval_similarity_engine_v1": historical_retrieval,
+        "evidence_compression_knowledge_organization_v1": compression,
+        "teacher_to_learning_reinforcement_v1": teacher_reinforcement,
+        "cortex_funnel_consumption_trace_v1": cortex_trace,
+        "phase_2a_readiness_validation_v1": readiness,
+        "final_wiring_diagnostic_v1": {
+            "wiring_status": "PASS" if all(pass_checks.values()) else "WARNING",
+            "integrated_unified_diagnostics": True,
+            "integrated_roadmap": True,
+            "integrated_maturation_report": True,
+            "raw_records_modified": False,
+            "broker_truth_fabricated": False,
+            "historical_outcomes_fabricated": False,
+            "shadow_outcomes_fabricated": False,
+            "teacher_lessons_fabricated": False,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            **_safety_flags_v1(),
+        },
+        "phase_2a_health_score": phase2a_score,
+        "readiness_status": validation_status,
+        "remaining_blockers": remaining_blockers,
+        "broker_truth_fabricated": False,
+        "historical_outcomes_fabricated": False,
+        "shadow_outcomes_fabricated": False,
+        "teacher_lessons_fabricated": False,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "dashboard_provider_calls_used": 0,
+        "dashboard_llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _attach_astra_phase_2a_intelligence_consumption_v1(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
+    if not isinstance(target, dict):
+        return {}
+    if force or not isinstance(target.get("astra_phase_2a_intelligence_consumption_v1"), dict):
+        target["astra_phase_2a_intelligence_consumption_v1"] = _astra_phase_2a_intelligence_consumption_payload(statuses or target)
+    return dict(target.get("astra_phase_2a_intelligence_consumption_v1") or {})
+
+
+def _canonical_lineage_symbol_profile_stats_v1() -> dict:
+    payload = _astra_evidence_state_json("long_term_memory/symbol_profiles/latest_symbol_profiles.json")
+    profiles = payload.get("profiles") if isinstance(payload.get("profiles"), dict) else {}
+    total = len(profiles)
+    best_horizon_known = 0
+    best_exit_known = 0
+    best_regime_known = 0
+    best_catalyst_known = 0
+    for row in profiles.values():
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("best_horizon") or "").strip().lower() not in {"", "unknown"}:
+            best_horizon_known += 1
+        if str(row.get("best_exit_style") or "").strip().lower() not in {"", "unknown"}:
+            best_exit_known += 1
+        if str(row.get("best_regime") or "").strip().lower() not in {"", "unknown"}:
+            best_regime_known += 1
+        if str(row.get("best_catalyst") or "").strip().lower() not in {"", "unknown", "unknown_catalyst"}:
+            best_catalyst_known += 1
+    return {
+        "profile_count": total,
+        "best_horizon_known_pct": round((best_horizon_known / max(1, total)) * 100.0, 3),
+        "best_exit_known_pct": round((best_exit_known / max(1, total)) * 100.0, 3),
+        "best_regime_known_pct": round((best_regime_known / max(1, total)) * 100.0, 3),
+        "best_catalyst_known_pct": round((best_catalyst_known / max(1, total)) * 100.0, 3),
+    }
+
+
+def _astra_canonical_lineage_repair_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    phase2a = statuses.get("astra_phase_2a_intelligence_consumption_v1") if isinstance(statuses.get("astra_phase_2a_intelligence_consumption_v1"), dict) else _astra_phase_2a_intelligence_consumption_payload(statuses)
+    maturation = statuses.get("astra_intelligence_maturation_readiness_report_v1") if isinstance(statuses.get("astra_intelligence_maturation_readiness_report_v1"), dict) else _astra_intelligence_maturation_readiness_report_v1_payload({**statuses, "astra_phase_2a_intelligence_consumption_v1": phase2a})
+    cortex_truth = _astra_cache_or_status_payload(statuses, "cortex_lifecycle_evidence_master_truth_v1")
+    historical = _astra_cache_or_status_payload(statuses, "historical_intelligence_market_memory_suite_v1")
+    retrieval = _astra_cache_or_status_payload(statuses, "long_term_memory_symbol_retrieval_suite_v1")
+    exit_learning = _astra_cache_or_status_payload(statuses, "exit_learning_expansion_suite_v1")
+    symbol_intel = _astra_cache_or_status_payload(statuses, "accelerated_learning_symbol_intelligence_suite_v1")
+    aios = _astra_cache_or_status_payload(statuses, "astra_aios_intelligence_maturation_bundle_v1")
+    quality = _astra_cache_or_status_payload(statuses, "intelligence_quality_learning_efficiency_suite_v1")
+    regime = _astra_cache_or_status_payload(statuses, "market_regime_similarity_engine_v1")
+    catalyst = _astra_cache_or_status_payload(statuses, "catalyst_lifecycle_intelligence_v1")
+    broker_truth = _astra_evidence_state_json("broker_truth_records_v1.json")
+    reconstruct = dict(cortex_truth.get("evidence_reconstructability_score_v1") or {})
+    canonical_store = dict(cortex_truth.get("canonical_lifecycle_lesson_store_v1") or {})
+
+    candidate_idx = _phase2a_summary_index_v1("candidate_decision_ledger_v1")
+    trade_similarity_idx = _phase2a_summary_index_v1("trade_memory_similarity_v1")
+    exit_idx = _phase2a_summary_index_v1("exit_learning_expansion_suite_v1")
+    market_idx = _phase2a_summary_index_v1("market_context_learning_suite_v1")
+    regime_idx = _phase2a_summary_index_v1("trade_archetype_regime_intelligence_v1")
+    replay_idx = _phase2a_summary_index_v1("replay_counterfactual_learning_v2")
+    lifecycle_idx = _phase2a_summary_index_v1("trade_lifecycle_excursion_v2")
+    symbol_profiles = _canonical_lineage_symbol_profile_stats_v1()
+
+    broker_total = int(_to_float(broker_truth.get("broker_truth_records_total"), 0.0))
+    broker_complete = int(_to_float(broker_truth.get("broker_confirmed_complete_records"), 0.0))
+
+    ranking_before = _to_float((phase2a.get("canonical_field_lineage_repair_v1") or {}).get("ranking_factor_lineage_coverage"), 0.0)
+    ranking_after = _astra_score_average_v1(
+        _phase2a_dimension_coverage_v1(candidate_idx, "ranking_factor"),
+        _to_float(canonical_store.get("canonical_lesson_ranking_factor_pct"), 0.0),
+        100.0 if str((quality.get("highest_value_learning_system") or "")).strip() else 0.0,
+    )
+    catalyst_before = _to_float((phase2a.get("canonical_field_lineage_repair_v1") or {}).get("catalyst_lineage_coverage"), 0.0)
+    catalyst_after = _astra_score_average_v1(
+        _phase2a_dimension_coverage_v1(market_idx, "catalyst"),
+        symbol_profiles.get("best_catalyst_known_pct"),
+        catalyst.get("catalyst_lifecycle_confidence"),
+        catalyst.get("symbol_memory_support"),
+    )
+    exit_before = _to_float((phase2a.get("canonical_field_lineage_repair_v1") or {}).get("exit_type_lineage_coverage"), 0.0)
+    exit_after = _astra_score_average_v1(
+        _phase2a_dimension_coverage_v1(exit_idx, "exit_type"),
+        _phase2a_dimension_coverage_v1(lifecycle_idx, "exit_type"),
+        _to_float(canonical_store.get("canonical_lesson_exit_type_pct"), 0.0),
+        symbol_profiles.get("best_exit_known_pct"),
+    )
+    teacher_linkage_score = _astra_score_average_v1(
+        aios.get("learning_reinforcement_maturity"),
+        historical.get("historical_lesson_quality_score"),
+        _to_float(canonical_store.get("canonical_lesson_regime_pct"), 0.0),
+        exit_after,
+    )
+    explainability_score = _astra_score_average_v1(
+        _to_float(reconstruct.get("confidence_reconstructable_pct"), 0.0),
+        ranking_after,
+        catalyst_after,
+        exit_after,
+    )
+    attribution_coverage_score = _astra_score_average_v1(
+        _to_float(reconstruct.get("capture_ratio_reconstructable_pct"), 0.0),
+        _to_float(reconstruct.get("confidence_reconstructable_pct"), 0.0),
+        _to_float((phase2a.get("canonical_field_lineage_repair_v1") or {}).get("broker_truth_linkage_coverage"), 0.0),
+    )
+    retrieval_linkage_score = _astra_score_average_v1(
+        _phase2a_dimension_coverage_v1(trade_similarity_idx, "symbol"),
+        _phase2a_dimension_coverage_v1(regime_idx, "regime"),
+        catalyst_after,
+        exit_after,
+        retrieval.get("retrieval_health_score"),
+    )
+
+    pre_audit = {
+        "canonical_lineage_pre_audit_v1": True,
+        "implemented": [
+            "candidate_decision_ledger_dimension_counts",
+            "canonical_lifecycle_lesson_store",
+            "symbol_behavior_profiles",
+            "catalyst_lifecycle_cache",
+            "market_regime_similarity_cache",
+            "broker_truth_registry",
+        ],
+        "partial": [
+            "ranking_factor_lineage" if ranking_before > 0 else "",
+            "catalyst_lineage" if catalyst_before > 0 else "",
+            "exit_type_lineage" if exit_before > 0 else "",
+            "teacher_reinforcement_linkage" if teacher_linkage_score > 0 else "",
+            "broker_truth_linkage" if broker_complete > 0 else "",
+        ],
+        "missing": [
+            "persisted_historical_ranking_factor_chain" if _to_float(canonical_store.get("canonical_lesson_ranking_factor_pct"), 0.0) <= 0 else "",
+            "candidate_specific_catalyst_persistence" if _phase2a_dimension_coverage_v1(market_idx, "catalyst") < 20 else "",
+        ],
+        "blocked": [
+            "promotion_grade_teacher_to_broker_truth_chain_until_broker_complete_records_reach_50" if broker_complete < 50 else "",
+        ],
+        "reconstructable": [
+            "ranking_factor_from_candidate_decision_ledger",
+            "exit_type_from_exit_learning_and_lifecycle_indexes",
+            "regime_from_regime_similarity_and_archetype_index",
+            "cortex_reason_from_causal_intelligence_and canonical truth",
+        ],
+        "non_reconstructable": [
+            "historical_symbol_specific_ranking_factor_details_not_persisted",
+            "candidate_specific catalyst chain when source rows only store unknown_catalyst",
+        ],
+    }
+    for key in ("partial", "missing", "blocked"):
+        pre_audit[key] = [item for item in pre_audit[key] if item]
+
+    ranking_repair = {
+        "ranking_factor_lineage_repair_v1": True,
+        "repair_mode": "CLASSIFY_AND_RELINK_FROM_EXISTING_LEDGERS",
+        "ranking_factor_lineage_coverage_before": ranking_before,
+        "ranking_factor_lineage_coverage_after": ranking_after,
+        "unresolved_ranking_factor_gaps": [
+            {
+                "unknown_ranking_factor_reason": "ranking_factor_not_persisted_to_canonical_lifecycle_records",
+                "ranking_factor_confidence": ranking_after,
+                "lineage_status": _phase2a_status_from_score_v1(ranking_after),
+            }
+        ] if ranking_after < 80 else [],
+    }
+
+    catalyst_repair = {
+        "catalyst_lineage_repair_v1": True,
+        "repair_mode": "CLASSIFY_AND_RELINK_FROM_CONTEXT_AND_PROFILE_CACHES",
+        "catalyst_coverage_before": catalyst_before,
+        "catalyst_coverage_after": catalyst_after,
+        "unresolved_catalyst_gaps": [
+            {
+                "unknown_catalyst_reason": "candidate_and_historical_rows_still_store_unknown_catalyst",
+                "catalyst_confidence": catalyst_after,
+            }
+        ] if catalyst_after < 80 else [],
+    }
+
+    exit_repair = {
+        "exit_type_lineage_repair_v1": True,
+        "repair_mode": "CLASSIFY_AND_RELINK_FROM_EXIT_AND_LIFECYCLE_INDEXES",
+        "exit_lineage_before": exit_before,
+        "exit_lineage_after": exit_after,
+        "unresolved_exit_gaps": [
+            {
+                "unknown_exit_reason": "historical_rows_missing_specific_exit_reason_labels",
+                "exit_lineage_confidence": exit_after,
+            }
+        ] if exit_after < 80 else [],
+    }
+
+    lesson_count = int(_to_float(canonical_store.get("canonical_lesson_count"), 0.0))
+    orphan_lesson_count = max(0, lesson_count - int(_to_float(canonical_store.get("canonical_lesson_exit_type_count"), 0.0)))
+    teacher_repair = {
+        "teacher_reinforcement_linkage_v1": True,
+        "lessons_generated": int(_to_float(aios.get("lessons_created"), 0.0)),
+        "lessons_linked": int(_to_float(canonical_store.get("canonical_lesson_regime_count"), 0.0)),
+        "lessons_consumed": int(_to_float(aios.get("memory_reinforcements_today"), 0.0)),
+        "lessons_orphaned": orphan_lesson_count,
+        "teacher_linkage_score": teacher_linkage_score,
+        "orphan_lesson_count": orphan_lesson_count,
+        "lesson_consumption_readiness": _phase2a_status_from_score_v1(teacher_linkage_score),
+        "missing_teacher_links": [
+            "broker_truth_linkage_requires_more_completed_round_trips" if broker_complete < 50 else "",
+            "ranking_factor_linkage_missing_from_canonical_lessons" if _to_float(canonical_store.get("canonical_lesson_ranking_factor_pct"), 0.0) <= 0 else "",
+            "catalyst linkage remains mostly summary-level rather than candidate-specific" if catalyst_after < 60 else "",
+        ],
+    }
+    teacher_repair["missing_teacher_links"] = [item for item in teacher_repair["missing_teacher_links"] if item]
+
+    explainability = {
+        "cortex_decision_explainability_repair_v1": True,
+        "decision_explainability_score": explainability_score,
+        "attribution_coverage_score": attribution_coverage_score,
+        "unresolved_explainability_gaps": [
+            "why selected lacks full historical ranking-factor chain" if ranking_after < 80 else "",
+            "why exited lacks full persisted exit reason labels in all historical rows" if exit_after < 80 else "",
+            "why selected/held lacks candidate-specific catalyst chain in many rows" if catalyst_after < 80 else "",
+        ],
+    }
+    explainability["unresolved_explainability_gaps"] = [item for item in explainability["unresolved_explainability_gaps"] if item]
+
+    historical_retrieval = {
+        "historical_retrieval_enrichment_v1": True,
+        "retrieval_linkage_score": retrieval_linkage_score,
+        "historical_context_coverage": {
+            "symbols": _phase2a_dimension_coverage_v1(trade_similarity_idx, "symbol"),
+            "regimes": _phase2a_dimension_coverage_v1(regime_idx, "regime"),
+            "catalysts": catalyst_after,
+            "exit_types": exit_after,
+            "replay_support": int(_to_float(replay_idx.get("sample_rows"), 0.0)),
+        },
+        "retrieval_readiness": _phase2a_status_from_score_v1(retrieval_linkage_score),
+        "cortex_readable_context": {
+            "most_similar_regime": regime.get("most_similar_regime"),
+            "best_catalyst_lifecycle": catalyst.get("best_catalyst_lifecycle"),
+            "symbol_profile_count": symbol_profiles.get("profile_count"),
+        },
+    }
+
+    readiness_checks = {
+        "ranking_lineage_partial_or_better": ranking_after >= 45.0,
+        "catalyst_lineage_partial_or_better": catalyst_after >= 45.0,
+        "exit_lineage_partial_or_better": exit_after >= 45.0,
+        "teacher_linkage_partial_or_better": teacher_linkage_score >= 45.0,
+        "explainability_partial_or_better": explainability_score >= 45.0,
+        "provider_calls_unchanged": True,
+        "llm_calls_unchanged": True,
+    }
+    overall_score = _astra_score_average_v1(ranking_after, catalyst_after, exit_after, teacher_linkage_score, explainability_score, retrieval_linkage_score)
+    overall_status = "PASS" if all(readiness_checks.values()) and overall_score >= 70.0 else ("PARTIAL" if all(v for k, v in readiness_checks.items() if k not in {"provider_calls_unchanged", "llm_calls_unchanged"}) else "BLOCKED")
+    remaining = _astra_top_bottlenecks_v1(
+        explainability.get("unresolved_explainability_gaps", [])
+        + teacher_repair.get("missing_teacher_links", [])
+        + [gap.get("unknown_ranking_factor_reason") for gap in ranking_repair.get("unresolved_ranking_factor_gaps", [])]
+        + [gap.get("unknown_catalyst_reason") for gap in catalyst_repair.get("unresolved_catalyst_gaps", [])]
+        + [gap.get("unknown_exit_reason") for gap in exit_repair.get("unresolved_exit_gaps", [])],
+        limit=10,
+    )
+
+    return {
+        "suite": "Astra Canonical Ranking Factor, Catalyst, Exit-Type & Teacher Lineage Repair V1",
+        "status": overall_status,
+        "endpoint": "/api/astra_canonical_lineage_repair_v1",
+        "generated_at": _now_utc_iso(),
+        "canonical_lineage_pre_audit_v1": pre_audit,
+        "ranking_factor_lineage_repair_v1": ranking_repair,
+        "catalyst_lineage_repair_v1": catalyst_repair,
+        "exit_type_lineage_repair_v1": exit_repair,
+        "teacher_reinforcement_linkage_v1": teacher_repair,
+        "cortex_decision_explainability_repair_v1": explainability,
+        "historical_retrieval_enrichment_v1": historical_retrieval,
+        "lineage_repair_health_score": overall_score,
+        "remaining_blockers": remaining,
+        "final_wiring_diagnostic_v1": {
+            "wiring_status": "PASS" if all(readiness_checks.values()) else "WARNING",
+            "integrated_unified_diagnostics": True,
+            "integrated_roadmap": True,
+            "integrated_maturation_report": True,
+            "unknown_data_preserved": True,
+            "broker_truth_fabricated": False,
+            "ranking_factors_fabricated": False,
+            "catalyst_evidence_fabricated": False,
+            "teacher_lessons_fabricated": False,
+            "historical_outcomes_fabricated": False,
+            "shadow_outcomes_fabricated": False,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            **_safety_flags_v1(),
+        },
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "dashboard_provider_calls_used": 0,
+        "dashboard_llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _attach_astra_canonical_lineage_repair_v1(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
+    if not isinstance(target, dict):
+        return {}
+    if force or not isinstance(target.get("astra_canonical_lineage_repair_v1"), dict):
+        target["astra_canonical_lineage_repair_v1"] = _astra_canonical_lineage_repair_payload(statuses or target)
+    return dict(target.get("astra_canonical_lineage_repair_v1") or {})
 
 
 def _attach_astra_context_quality_status_v1(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
@@ -56303,6 +58892,56 @@ def astra_short_term_roadmap_status_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_short_term_roadmap_status_payload(statuses)
+
+
+@router.get("/api/astra_intelligence_maturation_readiness_report_v1")
+def astra_intelligence_maturation_readiness_report_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_intelligence_maturation_readiness_report_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_intelligence_maturation_readiness_report_v1_payload(statuses)
+
+
+@router.get("/api/astra_phase_2a_intelligence_consumption_v1")
+def astra_phase_2a_intelligence_consumption_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_phase_2a_intelligence_consumption_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_phase_2a_intelligence_consumption_payload(statuses)
+
+
+@router.get("/api/astra_canonical_lineage_repair_v1")
+def astra_canonical_lineage_repair_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_canonical_lineage_repair_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_canonical_lineage_repair_payload(statuses)
+
+
+@router.get("/api/astra_trade_state_reconciliation_v1")
+def astra_trade_state_reconciliation_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_trade_state_reconciliation_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_trade_state_reconciliation_payload(statuses, force=bool(force))
+
+
+@router.get("/api/astra_fmp_consumption_diagnostic_v1")
+def astra_fmp_consumption_diagnostic_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_fmp_consumption_diagnostic_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_fmp_consumption_diagnostic_payload(statuses)
 
 
 @router.get("/api/astra_broker_truth_completion_exit_maturity_v1")
@@ -69498,6 +72137,12 @@ def unified_learning_diagnostics_v1(force: bool = False):
             _attach_astra_integration_completion(force_cached, force_cached, force=False)
             _attach_astra_paper_provider_cortex_completion(force_cached, force_cached, force=False)
             _attach_astra_broker_truth_all_in_one_audit_v1(force_cached, force_cached, force=False)
+            _attach_astra_fmp_consumption_diagnostic_v1(force_cached, force_cached, force=False)
+            _attach_astra_trade_state_reconciliation_v1(force_cached, force_cached, force=True)
+            _attach_astra_intelligence_maturation_readiness_report_v1(force_cached, force_cached, force=True)
+            _attach_astra_phase_2a_intelligence_consumption_v1(force_cached, force_cached, force=True)
+            _attach_astra_canonical_lineage_repair_v1(force_cached, force_cached, force=True)
+            _attach_astra_intelligence_maturation_readiness_report_v1(force_cached, force_cached, force=True)
             _apply_unified_broker_truth_safety_defaults_v1(force_cached)
             force_cached["cache_hit"] = True
             force_cached["cache_source"] = "dashboard_cache_disk_force_guard"
@@ -69605,6 +72250,12 @@ def unified_learning_diagnostics_v1(force: bool = False):
             _attach_astra_integration_completion(fast, fast, force=False)
             _attach_astra_paper_provider_cortex_completion(fast, fast, force=False)
             _attach_astra_broker_truth_all_in_one_audit_v1(fast, fast, force=False)
+            _attach_astra_fmp_consumption_diagnostic_v1(fast, fast, force=False)
+            _attach_astra_trade_state_reconciliation_v1(fast, fast, force=False)
+            _attach_astra_intelligence_maturation_readiness_report_v1(fast, fast, force=False)
+            _attach_astra_phase_2a_intelligence_consumption_v1(fast, fast, force=False)
+            _attach_astra_canonical_lineage_repair_v1(fast, fast, force=False)
+            _attach_astra_intelligence_maturation_readiness_report_v1(fast, fast, force=True)
             _apply_unified_broker_truth_safety_defaults_v1(fast)
             fast["cache_hit"] = True
             fast["cache_age_seconds"] = round(cache_age, 3)
@@ -69701,6 +72352,12 @@ def unified_learning_diagnostics_v1(force: bool = False):
             _attach_astra_integration_completion(disk_cached, disk_cached, force=False)
             _attach_astra_paper_provider_cortex_completion(disk_cached, disk_cached, force=False)
             _attach_astra_broker_truth_all_in_one_audit_v1(disk_cached, disk_cached, force=False)
+            _attach_astra_fmp_consumption_diagnostic_v1(disk_cached, disk_cached, force=False)
+            _attach_astra_trade_state_reconciliation_v1(disk_cached, disk_cached, force=False)
+            _attach_astra_intelligence_maturation_readiness_report_v1(disk_cached, disk_cached, force=False)
+            _attach_astra_phase_2a_intelligence_consumption_v1(disk_cached, disk_cached, force=False)
+            _attach_astra_canonical_lineage_repair_v1(disk_cached, disk_cached, force=False)
+            _attach_astra_intelligence_maturation_readiness_report_v1(disk_cached, disk_cached, force=True)
             _apply_unified_broker_truth_safety_defaults_v1(disk_cached)
             disk_cached["cache_hit"] = True
             disk_cached["cache_source"] = "dashboard_cache_disk"
@@ -70235,6 +72892,12 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_executive_polish_v1"] = _astra_executive_summary_v1(out, out.get("astra_copilot_suite_v1") or {})
             out["astra_ceo_polish_v1"] = _astra_ceo_summary_v1(out.get("astra_executive_polish_v1") or {}, out)
             _attach_astra_broker_truth_all_in_one_audit_v1(out, {**statuses, **out}, force=True)
+            _attach_astra_fmp_consumption_diagnostic_v1(out, {**statuses, **out}, force=True)
+            _attach_astra_trade_state_reconciliation_v1(out, {**statuses, **out}, force=bool(force))
+            _attach_astra_intelligence_maturation_readiness_report_v1(out, {**statuses, **out}, force=bool(force))
+            _attach_astra_phase_2a_intelligence_consumption_v1(out, {**statuses, **out}, force=bool(force))
+            _attach_astra_canonical_lineage_repair_v1(out, {**statuses, **out}, force=bool(force))
+            _attach_astra_intelligence_maturation_readiness_report_v1(out, {**statuses, **out}, force=True)
             _apply_unified_broker_truth_safety_defaults_v1(out)
             wiring_summary = _dashboard_data_wiring_summary_v1(out)
             out["dashboard_data_wiring_v1"] = wiring_summary

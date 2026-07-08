@@ -431,6 +431,38 @@ def _safe_json_load(raw: Any) -> dict[str, Any]:
     return {}
 
 
+def _parse_iso_utc(raw: Any) -> datetime | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+    except Exception:
+        return None
+
+
+def _pick_first_text(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _pick_first_number(*values: Any) -> float | None:
+    for value in values:
+        if value in (None, ""):
+            continue
+        try:
+            return float(value)
+        except Exception:
+            continue
+    return None
+
+
 def _bounded_score(value: Any, default: Any = None):
     score = _to_float(value, default if default is not None else 0.0)
     if value is None and default is None:
@@ -788,6 +820,23 @@ class PaperAutopilotEngine:
                 "row_json": "TEXT",
                 "created_at": "TEXT",
                 "updated_at": "TEXT",
+                "reconciled_at": "TEXT",
+                "reconciliation_reason": "TEXT",
+                "reconciliation_evidence_source": "TEXT",
+                "prior_status": "TEXT",
+                "canonical_horizon": "TEXT",
+                "canonical_horizon_source": "TEXT",
+                "canonical_horizon_confidence": "REAL",
+                "buy_reason": "TEXT",
+                "add_reason": "TEXT",
+                "hold_reason": "TEXT",
+                "unknown_reason_code": "TEXT",
+                "evidence_count": "INTEGER",
+                "reason_confidence": "REAL",
+                "source_candidate_id": "TEXT",
+                "source_lifecycle_id": "TEXT",
+                "source_broker_order_id": "TEXT",
+                "source_client_order_id": "TEXT",
             }
             for col, ddl in needed.items():
                 if col in cols:
@@ -4582,3 +4631,745 @@ class PaperAutopilotEngine:
             item["lifecycle_notes"] = _safe_json_load(row.get("lifecycle_notes"))
             out.append(item)
         return out
+
+    def _trade_state_state_dir(self) -> str:
+        return os.path.dirname(self.db_path) or "state"
+
+    def _trade_state_load_json(self, name: str) -> dict[str, Any]:
+        try:
+            path = os.path.join(self._trade_state_state_dir(), name)
+            with open(path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            return payload if isinstance(payload, dict) else {}
+        except Exception:
+            return {}
+
+    def _trade_state_load_lifecycle_index(self) -> dict[str, Any]:
+        path = os.path.join(self._trade_state_state_dir(), "trade_lifecycle_v1.jsonl")
+        by_symbol: dict[str, dict[str, Any]] = {}
+        by_lifecycle_id: dict[str, dict[str, Any]] = {}
+        lifecycle_open_count = 0
+        lifecycle_closed_count = 0
+        rows_scanned = 0
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(row, dict):
+                        continue
+                    rows_scanned += 1
+                    symbol = str(row.get("symbol") or "").upper().strip()
+                    lifecycle_id = str(row.get("lifecycle_id") or "").strip()
+                    marker = _pick_first_text(
+                        row.get("exit_timestamp"),
+                        row.get("updated_at"),
+                        row.get("entry_timestamp"),
+                        row.get("signal_timestamp"),
+                    )
+                    stage = str(row.get("lifecycle_stage") or "").lower().strip()
+                    closed = bool(
+                        row.get("exit_timestamp")
+                        or row.get("exit_reason")
+                        or row.get("outcome_label")
+                        or stage == "closed"
+                    )
+                    if closed:
+                        lifecycle_closed_count += 1
+                    else:
+                        lifecycle_open_count += 1
+                    enriched = {
+                        **row,
+                        "_marker": marker,
+                        "_closed": closed,
+                    }
+                    if symbol:
+                        previous = by_symbol.get(symbol) or {}
+                        if not previous or marker >= str(previous.get("_marker") or ""):
+                            by_symbol[symbol] = enriched
+                    if lifecycle_id:
+                        previous = by_lifecycle_id.get(lifecycle_id) or {}
+                        if not previous or marker >= str(previous.get("_marker") or ""):
+                            by_lifecycle_id[lifecycle_id] = enriched
+        except Exception:
+            pass
+        return {
+            "rows_scanned": rows_scanned,
+            "lifecycle_open_count": lifecycle_open_count,
+            "lifecycle_closed_count": lifecycle_closed_count,
+            "by_symbol": by_symbol,
+            "by_lifecycle_id": by_lifecycle_id,
+        }
+
+    def _trade_state_load_broker_truth_index(self) -> dict[str, Any]:
+        registry = self._trade_state_load_json("broker_truth_records_v1.json")
+        records = [r for r in (registry.get("records") or []) if isinstance(r, dict)]
+        net_qty_by_symbol: dict[str, float] = {}
+        order_rows_by_symbol: dict[str, list[dict[str, Any]]] = {}
+        for row in records:
+            symbol = str(row.get("symbol") or "").upper().strip()
+            if not symbol:
+                continue
+            side = str(row.get("side") or "").lower().strip()
+            qty = _to_float(row.get("qty"), 0.0)
+            if side == "buy":
+                net_qty_by_symbol[symbol] = net_qty_by_symbol.get(symbol, 0.0) + qty
+            elif side == "sell":
+                net_qty_by_symbol[symbol] = net_qty_by_symbol.get(symbol, 0.0) - qty
+            order_rows_by_symbol.setdefault(symbol, []).append(dict(row))
+        return {
+            "registry": registry,
+            "records": records,
+            "net_qty_by_symbol": net_qty_by_symbol,
+            "order_rows_by_symbol": order_rows_by_symbol,
+        }
+
+    def _trade_state_load_horizon_reference(self) -> dict[str, Any]:
+        cached = self._trade_state_load_json(os.path.join("dashboard_cache", "astra_paper_provider_cortex_completion_v1.json"))
+        best = cached.get("best_horizon_by_symbol") if isinstance(cached.get("best_horizon_by_symbol"), dict) else {}
+        return {
+            "cache_payload": cached,
+            "best_horizon_by_symbol": {
+                str(sym).upper().strip(): str(label or "").strip()
+                for sym, label in best.items()
+                if str(sym or "").strip()
+            },
+        }
+
+    def _trade_state_latest_history_by_symbol(self, symbols: list[str] | set[str]) -> dict[str, dict[str, Any]]:
+        wanted = sorted({str(sym or "").upper().strip() for sym in symbols if str(sym or "").strip()})
+        out: dict[str, dict[str, Any]] = {}
+        if not wanted:
+            return out
+        try:
+            with self._connect() as conn:
+                for symbol in wanted:
+                    row = conn.execute(
+                        """
+                        SELECT *
+                        FROM paper_positions
+                        WHERE symbol=?
+                        ORDER BY updated_at DESC, created_at DESC, entry_timestamp DESC
+                        LIMIT 1
+                        """,
+                        (symbol,),
+                    ).fetchone()
+                    if row:
+                        out[symbol] = dict(row or {})
+        except Exception:
+            return {}
+        return out
+
+    def _trade_state_open_mirrors_by_symbol(self) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        for row in self._fetch_open_positions():
+            symbol = str((row or {}).get("symbol") or "").upper().strip()
+            if symbol and symbol not in out:
+                out[symbol] = dict(row or {})
+        return out
+
+    def _trade_state_broker_position_rows(self, broker_snapshot: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        snapshot = dict(broker_snapshot or {}) if isinstance(broker_snapshot, dict) else {}
+        positions = snapshot.get("broker_position_by_symbol") if isinstance(snapshot.get("broker_position_by_symbol"), dict) else {}
+        out: list[dict[str, Any]] = []
+        for symbol, row in sorted(positions.items()):
+            if not isinstance(row, dict):
+                continue
+            sym = str(symbol or row.get("symbol") or "").upper().strip()
+            if not sym:
+                continue
+            out.append({"symbol": sym, **dict(row)})
+        return out
+
+    def _trade_state_detect_horizon(self, symbol: str, row: dict[str, Any], entry_meta: dict[str, Any], notes: dict[str, Any], lifecycle_row: dict[str, Any], horizon_ref: dict[str, Any]) -> tuple[str, str, float]:
+        candidates = [
+            ("row_json.assigned_horizon", entry_meta.get("assigned_horizon")),
+            ("row_json.horizon", entry_meta.get("horizon")),
+            ("row_json.expected_hold_window", entry_meta.get("expected_hold_window")),
+            ("lifecycle_notes.position_horizon", notes.get("position_horizon")),
+            ("lifecycle_notes.horizon", notes.get("horizon")),
+            ("lifecycle.trade_archetype", lifecycle_row.get("trade_archetype")),
+            ("dashboard.best_horizon_by_symbol", (horizon_ref.get("best_horizon_by_symbol") or {}).get(symbol)),
+        ]
+        for source, raw in candidates:
+            text = str(raw or "").lower().strip()
+            if not text:
+                continue
+            if "scalp" in text:
+                return "scalp", source, round(_to_float(entry_meta.get("horizon_confidence"), _to_float(lifecycle_row.get("confidence"), 75.0)), 3)
+            if "day" in text or "intraday" in text:
+                return "day_trade", source, round(_to_float(entry_meta.get("horizon_confidence"), _to_float(lifecycle_row.get("confidence"), 70.0)), 3)
+            if "swing" in text:
+                return "swing_trade", source, round(_to_float(entry_meta.get("horizon_confidence"), _to_float(lifecycle_row.get("confidence"), 65.0)), 3)
+        return "unknown", "", 0.0
+
+    def broker_open_position_mirror_backfill(self, apply: bool = False, broker_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+        broker_snapshot = dict(broker_snapshot or {}) if isinstance(broker_snapshot, dict) else self._broker_open_symbols_snapshot()
+        broker_fetch_ok = bool(broker_snapshot.get("broker_positions_fetch_ok", False))
+        broker_rows = self._trade_state_broker_position_rows(broker_snapshot)
+        lifecycle_index = self._trade_state_load_lifecycle_index()
+        broker_truth_index = self._trade_state_load_broker_truth_index()
+        horizon_ref = self._trade_state_load_horizon_reference()
+        history_by_symbol = self._trade_state_latest_history_by_symbol({row.get("symbol") for row in broker_rows})
+        open_by_symbol = self._trade_state_open_mirrors_by_symbol()
+        now_iso = _now_iso()
+        mirror_candidates: list[dict[str, Any]] = []
+        mirrors_created = 0
+        mirrors_preserved = 0
+        mirrors_blocked = 0
+        mirror_conflicts: list[dict[str, Any]] = []
+        blocked_details: list[dict[str, Any]] = []
+
+        if not broker_fetch_ok:
+            blocked_symbols = [str((row or {}).get("symbol") or "").upper().strip() for row in broker_rows if str((row or {}).get("symbol") or "").strip()]
+            return {
+                "broker_open_position_count": int(_to_float(broker_snapshot.get("broker_open_positions_count"), len(blocked_symbols))),
+                "current_paper_positions_open_count": int(len(open_by_symbol)),
+                "mirror_gap_count": max(0, int(_to_float(broker_snapshot.get("broker_open_positions_count"), len(blocked_symbols))) - int(len(open_by_symbol))),
+                "broker_symbols_missing_internal_mirror": sorted([sym for sym in blocked_symbols if sym and sym not in open_by_symbol]),
+                "mirror_candidates": [],
+                "mirrors_blocked": [
+                    {"symbol": sym, "reason": str(broker_snapshot.get("broker_positions_error_sanitized") or "broker_positions_unavailable")}
+                    for sym in sorted([sym for sym in blocked_symbols if sym and sym not in open_by_symbol])[:50]
+                ],
+                "mirror_conflicts": [],
+                "safe_to_create_count": 0,
+                "mirrors_created": 0,
+                "mirrors_preserved": int(len(open_by_symbol)),
+                "mirror_backfill_status": "BLOCKED_BROKER_SNAPSHOT_UNAVAILABLE",
+                "broker_snapshot_timestamp": now_iso,
+            }
+
+        with self._connect() as conn:
+            for broker_row in broker_rows:
+                symbol = str(broker_row.get("symbol") or "").upper().strip()
+                existing_open = dict(open_by_symbol.get(symbol) or {})
+                historical_row = dict(history_by_symbol.get(symbol) or {})
+                historical_meta = _safe_json_load(historical_row.get("row_json"))
+                historical_notes = _safe_json_load(historical_row.get("lifecycle_notes"))
+                lifecycle_row = dict((lifecycle_index.get("by_symbol") or {}).get(symbol) or {})
+                broker_truth_rows = list((broker_truth_index.get("order_rows_by_symbol") or {}).get(symbol) or [])
+                candidate_id = _pick_first_text(
+                    historical_row.get("source_candidate_id"),
+                    historical_meta.get("candidate_id"),
+                    historical_meta.get("source_candidate_id"),
+                )
+                lifecycle_id = _pick_first_text(
+                    historical_row.get("source_lifecycle_id"),
+                    lifecycle_row.get("lifecycle_id"),
+                )
+                broker_order_id = _pick_first_text(
+                    historical_row.get("source_broker_order_id"),
+                    ((broker_truth_rows[0] if broker_truth_rows else {}) or {}).get("broker_order_id"),
+                )
+                client_order_id = _pick_first_text(
+                    historical_row.get("source_client_order_id"),
+                    ((broker_truth_rows[0] if broker_truth_rows else {}) or {}).get("client_order_id"),
+                )
+                canonical_horizon, horizon_source, horizon_confidence = self._trade_state_detect_horizon(
+                    symbol,
+                    broker_row,
+                    historical_meta,
+                    historical_notes,
+                    lifecycle_row,
+                    horizon_ref,
+                )
+                qty = round(_to_float(broker_row.get("qty"), _to_float(broker_row.get("quantity"), 0.0)), 6)
+                avg_entry = _to_float(broker_row.get("avg_entry_price"), _to_float(historical_row.get("entry_price"), 0.0))
+                market_value = _to_float(broker_row.get("market_value"), 0.0)
+                current_price = _to_float(broker_row.get("current_price"), 0.0)
+                unrealized_pl = _to_float(broker_row.get("unrealized_pl"), 0.0)
+                mirror_status = "MIRROR_EXISTS" if existing_open else "MIRROR_MISSING_SAFE_TO_CREATE"
+                blocked_reason = ""
+                if qty <= 0 or avg_entry <= 0:
+                    mirror_status = "MIRROR_MISSING_BLOCKED"
+                    blocked_reason = "broker_qty_or_avg_entry_missing"
+                elif existing_open and str(existing_open.get("source_bucket") or "").upper().strip() not in {"BROKER_MIRRORED_OPEN", "BROKER_MIRROR", ""}:
+                    mirror_status = "MIRROR_CONFLICT"
+                    blocked_reason = "existing_open_row_not_broker_mirror"
+
+                row = {
+                    "symbol": symbol,
+                    "qty": qty,
+                    "avg_entry": round(avg_entry, 6),
+                    "market_value": round(market_value, 6),
+                    "current_pl": round(unrealized_pl, 6),
+                    "broker_order_id": broker_order_id or None,
+                    "client_order_id": client_order_id or None,
+                    "lifecycle_linkage": lifecycle_id or None,
+                    "broker_truth_linkage": broker_order_id or client_order_id or None,
+                    "horizon": canonical_horizon,
+                    "horizon_source": horizon_source or "unknown",
+                    "horizon_confidence": round(horizon_confidence, 3),
+                    "candidate_linkage": candidate_id or None,
+                    "mirror_status": mirror_status,
+                    "safe_to_create": mirror_status == "MIRROR_MISSING_SAFE_TO_CREATE",
+                    "blocked_reason": blocked_reason,
+                }
+                mirror_candidates.append(row)
+
+                if mirror_status == "MIRROR_EXISTS":
+                    mirrors_preserved += 1
+                    continue
+                if mirror_status == "MIRROR_CONFLICT":
+                    mirrors_blocked += 1
+                    mirror_conflicts.append(row)
+                    continue
+                if mirror_status == "MIRROR_MISSING_BLOCKED":
+                    mirrors_blocked += 1
+                    blocked_details.append(row)
+                    continue
+
+                if apply:
+                    mirror_position_id = f"broker_mirror:{symbol}:{int(time.time())}"
+                    mirror_notes = {
+                        "source": "BROKER_MIRRORED_OPEN",
+                        "broker_confirmed": True,
+                        "paper_only": True,
+                        "broker_snapshot_timestamp": now_iso,
+                        "reconciliation_reason": "broker_open_missing_internal_mirror",
+                        "broker_truth_link": broker_order_id or client_order_id or None,
+                        "lifecycle_link": lifecycle_id or None,
+                        "candidate_link": candidate_id or None,
+                        "horizon": canonical_horizon,
+                        "horizon_source": horizon_source or "unknown",
+                        "horizon_confidence": round(horizon_confidence, 3),
+                        "unknown_reason_code": "broker_open_position_mirror_created_from_snapshot" if not candidate_id else "",
+                    }
+                    mirror_row_json = {
+                        "source": "BROKER_MIRRORED_OPEN",
+                        "broker_confirmed": True,
+                        "paper_only": True,
+                        "symbol": symbol,
+                        "qty": qty,
+                        "avg_entry_price": round(avg_entry, 6),
+                        "market_value": round(market_value, 6),
+                        "current_price": round(current_price, 6),
+                        "unrealized_pl": round(unrealized_pl, 6),
+                        "broker_snapshot_timestamp": now_iso,
+                        "broker_truth_link": broker_order_id or client_order_id or None,
+                        "candidate_id": candidate_id or None,
+                        "assigned_horizon": canonical_horizon if canonical_horizon != "unknown" else None,
+                        "horizon_confidence": round(horizon_confidence, 3),
+                    }
+                    conn.execute(
+                        """
+                        INSERT INTO paper_positions(
+                            position_id, symbol, asset_type, status, quantity,
+                            entry_price, exit_price, return_percent, friction_adjusted_return,
+                            entry_timestamp, exit_timestamp, hold_seconds,
+                            source_bucket, lifecycle_notes, row_json, created_at, updated_at,
+                            reconciled_at, reconciliation_reason, reconciliation_evidence_source,
+                            prior_status, canonical_horizon, canonical_horizon_source,
+                            canonical_horizon_confidence, buy_reason, add_reason, hold_reason,
+                            unknown_reason_code, evidence_count, reason_confidence,
+                            source_candidate_id, source_lifecycle_id, source_broker_order_id,
+                            source_client_order_id
+                        ) VALUES (?, ?, ?, 'OPEN', ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            mirror_position_id,
+                            symbol,
+                            "stock",
+                            qty,
+                            avg_entry,
+                            now_iso,
+                            "BROKER_MIRRORED_OPEN",
+                            _safe_json(mirror_notes),
+                            _safe_json(mirror_row_json),
+                            now_iso,
+                            now_iso,
+                            now_iso,
+                            "broker_open_missing_internal_mirror",
+                            "broker_open_position_snapshot",
+                            "OPEN",
+                            canonical_horizon if canonical_horizon != "unknown" else None,
+                            horizon_source or None,
+                            horizon_confidence if horizon_confidence > 0 else None,
+                            "broker_open_position_mirror",
+                            None,
+                            _pick_first_text(historical_row.get("hold_reason"), historical_notes.get("hold_posture")),
+                            "candidate_link_missing" if not candidate_id else "",
+                            max(1, len([x for x in [broker_order_id, client_order_id, lifecycle_id, candidate_id, canonical_horizon if canonical_horizon != "unknown" else ""] if x])),
+                            horizon_confidence if horizon_confidence > 0 else None,
+                            candidate_id or None,
+                            lifecycle_id or None,
+                            broker_order_id or None,
+                            client_order_id or None,
+                        ),
+                    )
+                    open_by_symbol[symbol] = {"position_id": mirror_position_id, "source_bucket": "BROKER_MIRRORED_OPEN"}
+                mirrors_created += 1
+            if apply:
+                conn.commit()
+
+        missing_symbols = sorted([
+            str((row or {}).get("symbol") or "").upper().strip()
+            for row in broker_rows
+            if str((row or {}).get("symbol") or "").upper().strip() and str((row or {}).get("symbol") or "").upper().strip() not in open_by_symbol
+        ])
+        return {
+            "broker_open_position_count": int(len(broker_rows)),
+            "current_paper_positions_open_count": int(len(self._trade_state_open_mirrors_by_symbol())),
+            "mirror_gap_count": int(len(missing_symbols)),
+            "broker_symbols_missing_internal_mirror": missing_symbols[:80],
+            "mirror_candidates": mirror_candidates[:80],
+            "mirrors_blocked": (mirror_conflicts + blocked_details)[:80],
+            "mirror_conflicts": mirror_conflicts[:40],
+            "safe_to_create_count": int(len([row for row in mirror_candidates if row.get("safe_to_create")])),
+            "mirrors_created": int(mirrors_created if apply else len([row for row in mirror_candidates if row.get("safe_to_create")])),
+            "mirrors_preserved": int(mirrors_preserved),
+            "mirror_backfill_status": (
+                "PASS"
+                if not missing_symbols
+                else ("PARTIAL" if apply and mirrors_created > 0 else ("READY_TO_CREATE" if not apply and any(row.get("safe_to_create") for row in mirror_candidates) else "BLOCKED"))
+            ),
+            "broker_snapshot_timestamp": now_iso,
+        }
+
+    def trade_state_reconciliation(self, apply: bool = False, broker_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+        lifecycle_index = self._trade_state_load_lifecycle_index()
+        broker_truth_index = self._trade_state_load_broker_truth_index()
+        horizon_ref = self._trade_state_load_horizon_reference()
+        broker_snapshot = dict(broker_snapshot or {}) if isinstance(broker_snapshot, dict) and broker_snapshot else self._broker_open_symbols_snapshot()
+        broker_open_symbols = set(broker_snapshot.get("broker_open_symbols") or set())
+        broker_fetch_ok = bool(broker_snapshot.get("broker_positions_fetch_ok", False))
+        broker_truth_open_symbols = {
+            sym for sym, qty in (broker_truth_index.get("net_qty_by_symbol") or {}).items()
+            if _to_float(qty, 0.0) > 0.000001
+        }
+        now = datetime.now(UTC)
+        now_iso = _now_iso()
+        with self._connect() as conn:
+            open_rows = [dict(r or {}) for r in (conn.execute("SELECT * FROM paper_positions WHERE status='OPEN' ORDER BY entry_timestamp ASC").fetchall() or [])]
+            symbol_counts: dict[str, int] = {}
+            newest_id_by_symbol: dict[str, str] = {}
+            newest_ts_by_symbol: dict[str, str] = {}
+            for row in open_rows:
+                symbol = str(row.get("symbol") or "").upper().strip()
+                if not symbol:
+                    continue
+                symbol_counts[symbol] = symbol_counts.get(symbol, 0) + 1
+                marker = str(row.get("entry_timestamp") or row.get("updated_at") or "")
+                if marker >= newest_ts_by_symbol.get(symbol, ""):
+                    newest_ts_by_symbol[symbol] = marker
+                    newest_id_by_symbol[symbol] = str(row.get("position_id") or "")
+
+            rows_reconciled = 0
+            rows_preserved = 0
+            rows_blocked = 0
+            stale_examples: list[dict[str, Any]] = []
+            blocked_examples: list[dict[str, Any]] = []
+            duplicate_active_symbols: list[str] = sorted([sym for sym, count in symbol_counts.items() if count > 1])
+            broker_lifecycle_disagreements: list[dict[str, Any]] = []
+            lifecycle_paper_disagreements: list[dict[str, Any]] = []
+            horizon_disagreements: list[dict[str, Any]] = []
+            reviewed_symbols: set[str] = set()
+            unresolved_symbols: set[str] = set()
+            attribution_coverage_before = 0
+            attribution_coverage_after = 0
+            horizon_unknown_before = 0
+            horizon_unknown_after = 0
+            broker_truth_linked_reasoning_count = 0
+            missing_reasoning_count = 0
+            horizon_distribution: dict[str, int] = {}
+
+            for row in open_rows:
+                symbol = str(row.get("symbol") or "").upper().strip()
+                position_id = str(row.get("position_id") or "").strip()
+                if symbol:
+                    reviewed_symbols.add(symbol)
+                entry_meta = _safe_json_load(row.get("row_json"))
+                notes = _safe_json_load(row.get("lifecycle_notes"))
+                lifecycle_row = dict((lifecycle_index.get("by_lifecycle_id") or {}).get(position_id) or (lifecycle_index.get("by_symbol") or {}).get(symbol) or {})
+                lifecycle_stage = str(lifecycle_row.get("lifecycle_stage") or "").lower().strip()
+                lifecycle_closed = bool(
+                    lifecycle_row.get("exit_timestamp")
+                    or lifecycle_row.get("exit_reason")
+                    or lifecycle_row.get("outcome_label")
+                    or lifecycle_stage == "closed"
+                )
+                lifecycle_open = bool(lifecycle_row) and not lifecycle_closed
+                broker_active = bool(symbol and broker_fetch_ok and symbol in broker_open_symbols)
+                broker_truth_open = bool(symbol and symbol in broker_truth_open_symbols)
+                entry_dt = _parse_iso_utc(row.get("entry_timestamp"))
+                age_hours = round(max(0.0, (now - entry_dt).total_seconds()) / 3600.0, 3) if entry_dt else None
+                canonical_horizon, horizon_source, horizon_confidence = self._trade_state_detect_horizon(symbol, row, entry_meta, notes, lifecycle_row, horizon_ref)
+                if canonical_horizon == "unknown":
+                    horizon_unknown_before += 1
+                buy_reason = _pick_first_text(
+                    row.get("buy_reason"),
+                    entry_meta.get("buy_reason"),
+                    entry_meta.get("action_label"),
+                    entry_meta.get("allocation_reason"),
+                )
+                hold_reason = _pick_first_text(
+                    row.get("hold_reason"),
+                    notes.get("hold_posture"),
+                    notes.get("review_state"),
+                    lifecycle_row.get("lifecycle_stage"),
+                )
+                add_reason = _pick_first_text(
+                    row.get("add_reason"),
+                    entry_meta.get("add_reason"),
+                    "same_symbol_duplicate_open_rows" if symbol_counts.get(symbol, 0) > 1 else "",
+                )
+                unknown_reason_code = "" if (buy_reason or hold_reason or add_reason) else "reasoning_not_persisted"
+                evidence_count = int(sum(
+                    1 for value in (
+                        buy_reason,
+                        hold_reason,
+                        add_reason,
+                        lifecycle_row.get("exit_reason"),
+                        lifecycle_row.get("lifecycle_stage"),
+                        entry_meta.get("confidence"),
+                        entry_meta.get("candidate_id"),
+                    )
+                    if value not in (None, "", False)
+                ))
+                reason_confidence = _pick_first_number(
+                    row.get("reason_confidence"),
+                    entry_meta.get("confidence"),
+                    lifecycle_row.get("confidence"),
+                    horizon_confidence,
+                )
+                if buy_reason or hold_reason or add_reason:
+                    attribution_coverage_before += 1
+                else:
+                    missing_reasoning_count += 1
+
+                candidate_id = _pick_first_text(
+                    row.get("source_candidate_id"),
+                    entry_meta.get("candidate_id"),
+                    entry_meta.get("source_candidate_id"),
+                )
+                source_lifecycle_id = _pick_first_text(
+                    row.get("source_lifecycle_id"),
+                    lifecycle_row.get("lifecycle_id"),
+                    position_id,
+                )
+                broker_rows = list((broker_truth_index.get("order_rows_by_symbol") or {}).get(symbol) or [])
+                source_broker_order_id = _pick_first_text(
+                    row.get("source_broker_order_id"),
+                    entry_meta.get("broker_order_id"),
+                    ((broker_rows[0] if broker_rows else {}) or {}).get("broker_order_id"),
+                )
+                source_client_order_id = _pick_first_text(
+                    row.get("source_client_order_id"),
+                    entry_meta.get("client_order_id"),
+                    ((broker_rows[0] if broker_rows else {}) or {}).get("client_order_id"),
+                )
+                if source_broker_order_id or source_client_order_id:
+                    broker_truth_linked_reasoning_count += 1
+
+                evidence_sources = []
+                if broker_fetch_ok and not broker_active:
+                    evidence_sources.append("broker_current_position_absent")
+                if lifecycle_closed:
+                    evidence_sources.append("lifecycle_closed")
+                elif lifecycle_open:
+                    evidence_sources.append("lifecycle_stale_open")
+                if not broker_truth_open:
+                    evidence_sources.append("broker_truth_no_open_qty")
+                if symbol_counts.get(symbol, 0) > 1:
+                    evidence_sources.append("duplicate_internal_open_rows")
+
+                reconcile_status = "PRESERVED"
+                reconcile_reason = ""
+                if broker_fetch_ok and not broker_active:
+                    if lifecycle_closed:
+                        reconcile_status = "CLOSED_STALE_RECONCILED"
+                        reconcile_reason = "lifecycle_closed_and_broker_currently_flat"
+                    elif not broker_truth_open and age_hours is not None and age_hours >= 24.0:
+                        reconcile_status = "DUPLICATE_STALE" if symbol_counts.get(symbol, 0) > 1 and newest_id_by_symbol.get(symbol) != position_id else "CLOSED_STALE_RECONCILED"
+                        reconcile_reason = "aged_open_without_broker_confirmation"
+                if broker_fetch_ok and broker_active and lifecycle_closed:
+                    broker_lifecycle_disagreements.append({
+                        "symbol": symbol,
+                        "position_id": position_id,
+                        "broker_state": "open",
+                        "lifecycle_state": "closed",
+                        "exit_reason": str(lifecycle_row.get("exit_reason") or ""),
+                    })
+                if broker_fetch_ok and not broker_active and lifecycle_open:
+                    lifecycle_paper_disagreements.append({
+                        "symbol": symbol,
+                        "position_id": position_id,
+                        "broker_state": "closed_or_absent",
+                        "lifecycle_state": "open",
+                        "lifecycle_stage": str(lifecycle_row.get("lifecycle_stage") or ""),
+                    })
+                cached_horizon = str(((horizon_ref.get("best_horizon_by_symbol") or {}).get(symbol) or "")).strip()
+                if cached_horizon and canonical_horizon != "unknown" and cached_horizon != canonical_horizon:
+                    horizon_disagreements.append({
+                        "symbol": symbol,
+                        "position_id": position_id,
+                        "canonical_horizon": canonical_horizon,
+                        "cached_horizon": cached_horizon,
+                    })
+
+                if canonical_horizon == "unknown":
+                    horizon_unknown_after += 1
+                else:
+                    horizon_distribution[canonical_horizon] = horizon_distribution.get(canonical_horizon, 0) + 1
+                if buy_reason or hold_reason or add_reason or unknown_reason_code:
+                    attribution_coverage_after += 1
+
+                if apply:
+                    merged_notes = dict(notes or {})
+                    merged_notes["reconciliation_snapshot"] = {
+                        "reconciled_at": now_iso,
+                        "reconciliation_status": reconcile_status,
+                        "reconciliation_reason": reconcile_reason,
+                        "evidence_source": list(evidence_sources),
+                        "broker_active": broker_active,
+                        "broker_truth_open": broker_truth_open,
+                        "lifecycle_closed": lifecycle_closed,
+                        "lifecycle_stage": str(lifecycle_row.get("lifecycle_stage") or ""),
+                    }
+                    conn.execute(
+                        """
+                        UPDATE paper_positions
+                        SET status=?,
+                            updated_at=?,
+                            reconciled_at=?,
+                            reconciliation_reason=?,
+                            reconciliation_evidence_source=?,
+                            prior_status=COALESCE(prior_status, status),
+                            canonical_horizon=?,
+                            canonical_horizon_source=?,
+                            canonical_horizon_confidence=?,
+                            buy_reason=?,
+                            add_reason=?,
+                            hold_reason=?,
+                            unknown_reason_code=?,
+                            evidence_count=?,
+                            reason_confidence=?,
+                            source_candidate_id=?,
+                            source_lifecycle_id=?,
+                            source_broker_order_id=?,
+                            source_client_order_id=?,
+                            lifecycle_notes=?
+                        WHERE position_id=?
+                        """,
+                        (
+                            reconcile_status if reconcile_status in {"CLOSED_STALE_RECONCILED", "DUPLICATE_STALE"} else "OPEN",
+                            now_iso,
+                            now_iso if reconcile_status in {"CLOSED_STALE_RECONCILED", "DUPLICATE_STALE"} else row.get("reconciled_at"),
+                            reconcile_reason,
+                            ",".join(evidence_sources[:6]),
+                            canonical_horizon if canonical_horizon != "unknown" else row.get("canonical_horizon"),
+                            horizon_source or row.get("canonical_horizon_source"),
+                            horizon_confidence if horizon_confidence > 0 else row.get("canonical_horizon_confidence"),
+                            buy_reason or row.get("buy_reason"),
+                            add_reason or row.get("add_reason"),
+                            hold_reason or row.get("hold_reason"),
+                            unknown_reason_code or row.get("unknown_reason_code"),
+                            evidence_count,
+                            reason_confidence if reason_confidence is not None else row.get("reason_confidence"),
+                            candidate_id or row.get("source_candidate_id"),
+                            source_lifecycle_id or row.get("source_lifecycle_id"),
+                            source_broker_order_id or row.get("source_broker_order_id"),
+                            source_client_order_id or row.get("source_client_order_id"),
+                            _safe_json(merged_notes),
+                            position_id,
+                        ),
+                    )
+
+                sample = {
+                    "symbol": symbol,
+                    "position_id": position_id,
+                    "status_before": "OPEN",
+                    "status_after": reconcile_status if reconcile_status in {"CLOSED_STALE_RECONCILED", "DUPLICATE_STALE"} else "OPEN",
+                    "entry_timestamp": str(row.get("entry_timestamp") or ""),
+                    "age_hours": age_hours,
+                    "broker_active": broker_active,
+                    "broker_truth_open": broker_truth_open,
+                    "lifecycle_closed": lifecycle_closed,
+                    "lifecycle_stage": str(lifecycle_row.get("lifecycle_stage") or ""),
+                    "reconciliation_reason": reconcile_reason,
+                    "evidence_source": list(evidence_sources),
+                    "canonical_horizon": canonical_horizon,
+                    "horizon_source": horizon_source,
+                    "buy_reason": buy_reason,
+                    "hold_reason": hold_reason,
+                    "unknown_reason_code": unknown_reason_code,
+                }
+                if reconcile_status in {"CLOSED_STALE_RECONCILED", "DUPLICATE_STALE"}:
+                    rows_reconciled += 1
+                    if len(stale_examples) < 15:
+                        stale_examples.append(sample)
+                elif broker_fetch_ok and not broker_active and age_hours is not None and age_hours >= 24.0:
+                    rows_blocked += 1
+                    if symbol:
+                        unresolved_symbols.add(symbol)
+                    if len(blocked_examples) < 15:
+                        blocked_examples.append(sample)
+                else:
+                    rows_preserved += 1
+                    if broker_fetch_ok and not broker_active and symbol:
+                        unresolved_symbols.add(symbol)
+
+            if apply:
+                conn.commit()
+            stale_open_rows_after = int(conn.execute("SELECT COUNT(*) FROM paper_positions WHERE status='OPEN'").fetchone()[0])
+
+        open_rows_remaining = self._fetch_open_positions()
+        stale_open_rows_remaining = 0
+        if broker_fetch_ok:
+            stale_open_rows_remaining = int(sum(
+                1
+                for row in open_rows_remaining
+                if str((row or {}).get("symbol") or "").upper().strip() not in broker_open_symbols
+            ))
+        open_symbol_set = {str((row or {}).get("symbol") or "").upper().strip() for row in open_rows_remaining if str((row or {}).get("symbol") or "").strip()}
+        return {
+            "apply_performed": bool(apply),
+            "broker_truth_state_count": int(_to_float((broker_truth_index.get("registry") or {}).get("broker_truth_records_total"), len(broker_truth_index.get("records") or []))),
+            "broker_confirmed_complete_records": int(_to_float((broker_truth_index.get("registry") or {}).get("broker_confirmed_complete_records"), 0.0)),
+            "lifecycle_open_count": int(_to_float(lifecycle_index.get("lifecycle_open_count"), 0.0)),
+            "lifecycle_closed_count": int(_to_float(lifecycle_index.get("lifecycle_closed_count"), 0.0)),
+            "paper_positions_open_count": int(len(open_rows)),
+            "stale_open_rows": int(sum(1 for row in open_rows if str(row.get("symbol") or "").upper().strip() not in broker_open_symbols)) if broker_fetch_ok else 0,
+            "stale_open_rows_before": int(len(open_rows)),
+            "stale_open_rows_after": int(stale_open_rows_after),
+            "stale_open_rows_remaining": int(stale_open_rows_remaining),
+            "rows_reviewed": int(len(open_rows)),
+            "rows_reconciled": int(rows_reconciled),
+            "rows_preserved": int(rows_preserved),
+            "rows_blocked": int(rows_blocked),
+            "duplicate_active_symbols": list(duplicate_active_symbols),
+            "duplicate_active_symbols_remaining": sorted([sym for sym in open_symbol_set if sum(1 for row in open_rows_remaining if str((row or {}).get("symbol") or "").upper().strip() == sym) > 1]),
+            "broker_lifecycle_disagreements": list(broker_lifecycle_disagreements[:25]),
+            "lifecycle_paper_position_disagreements": list(lifecycle_paper_disagreements[:25]),
+            "horizon_disagreements": list(horizon_disagreements[:25]),
+            "cortex_cache_staleness": {
+                "cached_broker_confirmed_truth_records": int(_to_float((horizon_ref.get("cache_payload") or {}).get("broker_confirmed_truth_records"), 0.0)),
+                "cached_open_positions_count": int(_to_float((horizon_ref.get("cache_payload") or {}).get("open_positions_count"), 0.0)),
+                "cache_generated_payload_available": bool(horizon_ref.get("cache_payload")),
+            },
+            "broker_snapshot": {
+                "broker_reconciliation_active": bool(broker_snapshot.get("broker_reconciliation_active", False)),
+                "broker_positions_fetch_ok": broker_fetch_ok,
+                "broker_open_positions_count": int(_to_float(broker_snapshot.get("broker_open_positions_count"), 0.0)),
+                "broker_positions_error_sanitized": str(broker_snapshot.get("broker_positions_error_sanitized") or ""),
+                "broker_open_symbols": sorted(list(broker_open_symbols))[:50],
+            },
+            "reviewed_symbols_count": int(len(reviewed_symbols)),
+            "unresolved_symbols": sorted(list(unresolved_symbols))[:40],
+            "horizon_unknown_before": int(horizon_unknown_before),
+            "horizon_unknown_after": int(horizon_unknown_after),
+            "canonical_horizon_distribution": dict(sorted(horizon_distribution.items())),
+            "attribution_coverage_before": int(attribution_coverage_before),
+            "attribution_coverage_after": int(attribution_coverage_after),
+            "missing_reasoning_count": int(missing_reasoning_count),
+            "broker_truth_linked_reasoning_count": int(broker_truth_linked_reasoning_count),
+            "reconciled_examples": stale_examples,
+            "blocked_examples": blocked_examples,
+            "broker_truth_open_symbols": sorted(list(broker_truth_open_symbols))[:80],
+        }

@@ -10,6 +10,27 @@ from random import choice
 # Load .env variables
 load_dotenv()
 
+
+def _first_env(*names):
+    """Resolve the first non-empty env var from a list of accepted aliases."""
+    for name in names:
+        value = str(os.getenv(name, "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _sync_canonical_env(canonical_name, *aliases):
+    """Backfill a canonical env var from accepted aliases without hardcoding secrets."""
+    current = str(os.getenv(canonical_name, "") or "").strip()
+    if current:
+        return current
+    value = _first_env(*aliases)
+    if value:
+        os.environ[canonical_name] = value
+        return value
+    return ""
+
 # ==========================================================
 # === STOCK / ETF / FUNDAMENTAL APIs =======================
 # ==========================================================
@@ -18,6 +39,15 @@ TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
 EODHD_API_KEY = os.getenv("EODHD_API_KEY", "")
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "")
+FMP_API_KEY = _sync_canonical_env(
+    "FMP_API_KEY",
+    "FINANCIALMODELINGPREP_API_KEY",
+    "FINANCIAL_MODELING_PREP_API_KEY",
+    "FMP_KEY",
+    "FMP_TOKEN",
+    "FMP_API",
+    "FINANCIAL_MODELING_PREP_KEY",
+)
 NASDAQ_API_KEY = os.getenv("NASDAQ_API_KEY", "")
 DATAJOCKEY_API_KEY = os.getenv("DATAJOCKEY_API_KEY", "")
 SIMFIN_API_KEY = os.getenv("SIMFIN_API_KEY", "")
@@ -37,6 +67,7 @@ API_POOLS = {
         ("FINNHUB", FINNHUB_API_KEY),
         ("EODHD", EODHD_API_KEY),
         ("POLYGON", POLYGON_API_KEY),
+        ("FMP", FMP_API_KEY),
     ],
     "fundamentals": [
         ("NASDAQ", NASDAQ_API_KEY),
