@@ -402,6 +402,34 @@ def _floor_fractional_qty(value: Any, decimals: int = 6) -> float:
     return int(qty * scale) / scale
 
 
+def _normalize_paper_sell_qty(requested_qty: Any, broker_available_qty: Any, decimals: int = 6) -> dict[str, Any]:
+    requested = max(0.0, _to_float(requested_qty, 0.0))
+    available = max(0.0, _to_float(broker_available_qty, 0.0))
+    precision = max(0, int(decimals))
+    scale = 10 ** precision
+    epsilon = 1.0 / scale
+    capped = min(requested if requested > 0.0 else available, available)
+    floored = _floor_fractional_qty(capped, precision)
+    epsilon_applied = False
+    if floored > 0.0 and available > 0.0 and floored >= available:
+        floored = _floor_fractional_qty(max(0.0, floored - epsilon), precision)
+        epsilon_applied = True
+    dust = available > 0.0 and floored <= 0.0
+    safe = floored > 0.0 and floored <= available
+    return {
+        "original_requested_qty": round(requested, 9),
+        "broker_available_qty": round(available, 9),
+        "normalized_sell_qty": floored,
+        "qty_adjusted": bool(abs(floored - requested) > 0.0 or capped < requested),
+        "floor_precision_applied": True,
+        "epsilon_applied": epsilon_applied,
+        "dust_position_detected": dust,
+        "sell_safe_to_submit": safe,
+        "normalization_reason": "dust_position_below_fractional_precision" if dust else ("floor_to_broker_available_fractional_qty_with_epsilon" if epsilon_applied else "floor_to_broker_available_fractional_qty"),
+        "precision_delta": round(max(0.0, requested - floored), 12),
+    }
+
+
 def _parse_available_qty_from_error(error: Any) -> float:
     raw = str(error or "")
     match = re.search(r"available:\s*([0-9]+(?:\.[0-9]+)?)", raw, re.IGNORECASE)
@@ -984,6 +1012,56 @@ class PaperAutopilotEngine:
         except Exception:
             return
 
+    def _sell_rejection_loop_state(self) -> dict[str, Any]:
+        return dict(self._runtime_state.get("sell_rejection_loop_breaker_v1") or {})
+
+    def _set_sell_rejection_loop_state(self, state: dict[str, Any]) -> None:
+        self._runtime_state["sell_rejection_loop_breaker_v1"] = dict(state or {})
+
+    def _sell_rejection_loop_key(self, symbol: str, position_id: str, reason: str) -> str:
+        sym = str(symbol or "").upper().strip()
+        pid = str(position_id or "").strip()[:18]
+        reason_key = re.sub(r"[^a-z0-9_]+", "_", str(reason or "").lower()).strip("_")[:48]
+        return f"{sym}:{pid}:{reason_key}"
+
+    def _sell_rejection_loop_blocked(self, symbol: str, position_id: str, reason: str, *, limit: int = 2, ttl_seconds: int = 1800) -> tuple[bool, dict[str, Any]]:
+        state = self._sell_rejection_loop_state()
+        key = self._sell_rejection_loop_key(symbol, position_id, reason)
+        now = time.time()
+        row = dict(state.get(key) or {})
+        first_ts = _to_float(row.get("first_ts"), now)
+        if now - first_ts > float(ttl_seconds):
+            row = {"first_ts": now, "count": 0, "prevented": 0}
+        count = _to_int(row.get("count"), 0) + 1
+        prevented = _to_int(row.get("prevented"), 0)
+        blocked = count > int(limit)
+        if blocked:
+            prevented += 1
+        row.update({
+            "key": key,
+            "symbol": str(symbol or "").upper().strip(),
+            "position_id": str(position_id or ""),
+            "reason": str(reason or ""),
+            "count": count,
+            "prevented": prevented,
+            "first_ts": first_ts,
+            "last_ts": now,
+            "loop_breaker_applied": blocked,
+        })
+        state[key] = row
+        self._set_sell_rejection_loop_state(state)
+        return blocked, row
+
+    def _sell_rejection_loop_active(self, symbol: str, position_id: str, reason: str, *, limit: int = 2, ttl_seconds: int = 1800) -> tuple[bool, dict[str, Any]]:
+        state = self._sell_rejection_loop_state()
+        key = self._sell_rejection_loop_key(symbol, position_id, reason)
+        row = dict(state.get(key) or {})
+        if not row:
+            return False, {}
+        if time.time() - _to_float(row.get("first_ts"), 0.0) > float(ttl_seconds):
+            return False, row
+        return _to_int(row.get("count"), 0) >= int(limit), row
+
     def _learned_exit_bucket_enabled_runtime(self) -> tuple[bool, str]:
         if not self.learned_exit_validation_bucket_configured:
             return False, "validation_bucket_config_disabled"
@@ -1114,12 +1192,16 @@ class PaperAutopilotEngine:
             broker_position.get("qty_available"),
             _to_float(broker_position.get("qty"), _to_float(open_row.get("quantity"), 0.0)),
         )
-        original_requested_qty = round(broker_available_qty, 6) if broker_available_qty > 0.0 else 0.0
-        normalized_qty = _floor_fractional_qty(broker_available_qty, 6)
-        precision_delta = max(0.0, original_requested_qty - broker_available_qty)
-        normalization_applied = bool(original_requested_qty > broker_available_qty or normalized_qty < original_requested_qty)
-        if normalized_qty <= 0.0:
-            return {"eligible": False, "reason": "broker_confirmed_quantity_required", "evidence_count": evidence}
+        requested_qty = _to_float(open_row.get("quantity"), broker_available_qty)
+        qty_norm = _normalize_paper_sell_qty(requested_qty, broker_available_qty, 6)
+        normalized_qty = _to_float(qty_norm.get("normalized_sell_qty"), 0.0)
+        if normalized_qty <= 0.0 or not bool(qty_norm.get("sell_safe_to_submit")):
+            return {
+                "eligible": False,
+                "reason": "dust_position_detected" if qty_norm.get("dust_position_detected") else "broker_confirmed_quantity_required",
+                "evidence_count": evidence,
+                **qty_norm,
+            }
         return {
             "eligible": True,
             "symbol": symbol,
@@ -1130,12 +1212,8 @@ class PaperAutopilotEngine:
             "evidence_count": evidence,
             "policy_confidence": round(confidence, 3),
             "qty": normalized_qty,
-            "original_requested_qty": original_requested_qty,
-            "broker_available_qty": round(broker_available_qty, 9),
-            "normalized_sell_qty": normalized_qty,
-            "normalization_reason": "floor_to_broker_available_fractional_qty" if normalization_applied else "broker_available_qty_safe",
-            "precision_delta": round(precision_delta, 12),
-            "normalization_applied": normalization_applied,
+            **qty_norm,
+            "normalization_applied": bool(qty_norm.get("qty_adjusted")),
             "entry_price": round(entry, 6),
             "current_price": round(current, 6),
             "unrealized_pnl_pct": round(ret, 4),
@@ -1168,7 +1246,13 @@ class PaperAutopilotEngine:
             reasons.append(str(candidate.get("reason") or "candidate_not_eligible"))
             state["rejection_reasons"] = reasons[-20:]
             self._update_learned_exit_daily_state(state)
-            self._append_learned_exit_event({"event": "validation_candidate_rejected", **candidate})
+            reason_key = str(candidate.get("reason") or "candidate_not_eligible")
+            classification = (
+                "learned_exit_shadow_rejected_expected" if reason_key == "no_evidence_backed_learned_exit_signal"
+                else "policy_confidence_below_threshold" if reason_key == "policy_confidence_below_threshold"
+                else "validation_candidate_rejected"
+            )
+            self._append_learned_exit_event({"event": "validation_candidate_rejected", **candidate, "exit_validation_classification": classification})
             return {"ok": False, "submitted": False, "reason": str(candidate.get("reason") or "candidate_not_eligible"), "candidate": candidate}
         symbol = str(candidate.get("symbol") or "").upper().strip()
         pid = str(candidate.get("position_id") or "").strip()
@@ -1186,6 +1270,15 @@ class PaperAutopilotEngine:
         if normalized_qty <= 0.0:
             self._append_learned_exit_event({"event": "validation_candidate_rejected", **candidate, "reason": "normalized_sell_qty_zero"})
             return {"ok": False, "submitted": False, "reason": "normalized_sell_qty_zero", "candidate": candidate}
+        loop_active, loop_row = self._sell_rejection_loop_active(symbol, pid, "insufficient_qty_available")
+        if loop_active:
+            self._append_learned_exit_event({
+                "event": "sell_rejection_loop_prevented",
+                **candidate,
+                "reason": "sell_rejection_loop_breaker_active",
+                "loop_breaker": loop_row,
+            })
+            return {"ok": False, "submitted": False, "reason": "sell_rejection_loop_breaker_active", "candidate": candidate, "loop_breaker": loop_row}
         client_order_id = f"astra-lexit-{pid[:10] or symbol[:8]}-{self._learned_exit_today_key().replace('-', '')}"[:48]
         order = {
             "symbol": symbol,
@@ -1209,7 +1302,8 @@ class PaperAutopilotEngine:
         if not bool(result.get("ok")):
             broker_error = str(result.get("error") or "")[:180]
             available_from_error = _parse_available_qty_from_error(broker_error)
-            retry_qty = _floor_fractional_qty(available_from_error, 6)
+            retry_norm = _normalize_paper_sell_qty(normalized_qty, available_from_error, 6)
+            retry_qty = _to_float(retry_norm.get("normalized_sell_qty"), 0.0)
             if (
                 "insufficient qty available" in broker_error.lower()
                 and retry_qty > 0.0
@@ -1220,7 +1314,7 @@ class PaperAutopilotEngine:
                     **candidate,
                     "qty": retry_qty,
                     "normalized_sell_qty": retry_qty,
-                    "broker_available_qty": round(available_from_error, 9),
+                    **retry_norm,
                     "normalization_applied": True,
                     "normalization_reason": "retry_with_broker_error_available_qty",
                     "precision_delta": round(max(0.0, normalized_qty - available_from_error), 12),
@@ -1243,11 +1337,15 @@ class PaperAutopilotEngine:
                     retry_status = "retry_submitted"
                 else:
                     retry_status = "retry_failed"
+                    blocked, loop_row = self._sell_rejection_loop_blocked(symbol, pid, "insufficient_qty_available")
                     self._append_learned_exit_event({
                         "event": "sell_submit_rejected",
                         **retry_candidate,
                         "broker_error": str(retry_result.get("error") or "retry_submit_failed")[:180],
                         "retry_status": retry_status,
+                        "exit_validation_classification": "broker_quantity_rejection",
+                        "loop_breaker_applied": blocked,
+                        "loop_breaker": loop_row,
                     })
                     return {
                         "ok": False,
@@ -1256,11 +1354,16 @@ class PaperAutopilotEngine:
                         "candidate": retry_candidate,
                     }
             else:
+                classification = "broker_quantity_rejection" if "insufficient qty available" in broker_error.lower() else "broker_sell_submission_rejection"
+                blocked, loop_row = self._sell_rejection_loop_blocked(symbol, pid, "insufficient_qty_available" if classification == "broker_quantity_rejection" else broker_error[:80])
                 self._append_learned_exit_event({
                     "event": "sell_submit_rejected",
                     **candidate,
                     "broker_error": broker_error,
                     "retry_status": "blocked_or_not_applicable",
+                    "exit_validation_classification": classification,
+                    "loop_breaker_applied": blocked,
+                    "loop_breaker": loop_row,
                 })
                 return {"ok": False, "submitted": False, "reason": str(result.get("error") or "sell_submit_failed")[:140], "candidate": candidate}
         broker_order = dict(result.get("order") or {})

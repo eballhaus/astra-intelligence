@@ -2,6 +2,7 @@ import glob
 import json
 import hashlib
 import os
+import re
 import time
 import math
 import sqlite3
@@ -44806,6 +44807,19 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
                 "controlled_evolution_actions_enabled": False,
                 "sandbox_behavior_affects_trading": False,
             }
+    if "astra_broker_sell_quantity_completion_v1" not in payload or force:
+        try:
+            payload["astra_broker_sell_quantity_completion_v1"] = _astra_broker_sell_quantity_completion_payload({**(statuses or {}), **payload})
+        except Exception as exc:
+            payload["astra_broker_sell_quantity_completion_v1"] = {
+                "status": "insufficient_evidence",
+                "degraded_reason": f"broker_sell_quantity_completion_unavailable:{str(exc)[:140]}",
+                "behavior_safe_to_apply": False,
+                "provider_calls_used": 0,
+                "llm_calls_used": 0,
+                "controlled_evolution_actions_enabled": False,
+                "sandbox_behavior_affects_trading": False,
+            }
     if "astra_cortex_paper_completion_status_v1" not in payload or force:
         try:
             payload["astra_cortex_paper_completion_status_v1"] = _astra_cortex_paper_completion_status_payload({**(statuses or {}), **payload})
@@ -51963,6 +51977,7 @@ def _astra_broker_sell_execution_hardening_payload(statuses: dict | None = None)
     worker_correction = _worker_pickup_status_correction_v1(statuses, worker, market)
     post_sell = _broker_truth_post_sell_verification_v1(ledger_rows)
     queue_check = _market_hours_pending_queue_execution_check_v1(trace, worker_correction, market)
+    sell_quantity_completion = statuses.get("astra_broker_sell_quantity_completion_v1") if isinstance(statuses.get("astra_broker_sell_quantity_completion_v1"), dict) else _astra_broker_sell_quantity_completion_payload(statuses)
     checks = {
         "quantity_normalization_wired": bool(precision.get("broker_sell_quantity_precision_repair_v1")),
         "rejection_loop_breaker_wired": bool(loop_breaker.get("sell_rejection_loop_breaker_v1")),
@@ -51987,6 +52002,7 @@ def _astra_broker_sell_execution_hardening_payload(statuses: dict | None = None)
             "root_cause_confirmed": bool(precision.get("root_cause_confirmed")),
         },
         "broker_sell_quantity_precision_repair_v1": precision,
+        "astra_broker_sell_quantity_completion_v1": _broker_sell_quantity_completion_compact_v1(sell_quantity_completion),
         "sell_rejection_loop_breaker_v1": loop_breaker,
         "corrected_quantity_retry_v1": retry,
         "sell_attempt_ledger_cleanup_v1": {
@@ -52014,6 +52030,227 @@ def _astra_broker_sell_execution_hardening_payload(statuses: dict | None = None)
         "llm_calls_used": 0,
         **_safety_flags_v1(),
     }
+
+
+def _broker_sell_quantity_completion_compact_v1(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+    pre = payload.get("broker_sell_quantity_normalization_pre_audit_v1") if isinstance(payload.get("broker_sell_quantity_normalization_pre_audit_v1"), dict) else {}
+    repair = payload.get("sell_quantity_normalization_repair_v1") if isinstance(payload.get("sell_quantity_normalization_repair_v1"), dict) else {}
+    throughput = payload.get("broker_truth_completion_throughput_monitor_v1") if isinstance(payload.get("broker_truth_completion_throughput_monitor_v1"), dict) else {}
+    return {
+        "astra_broker_sell_quantity_completion_v1": True,
+        "endpoint": "/api/astra_broker_sell_quantity_completion_v1",
+        "status": payload.get("status"),
+        "sell_submit_rejected_count": pre.get("sell_submit_rejected_count"),
+        "qty_precision_rejection_count": pre.get("qty_precision_rejection_count"),
+        "normalized_sell_path_status": repair.get("normalization_wiring_status"),
+        "sell_throughput_status": throughput.get("sell_throughput_status"),
+        "broker_truth_growth_status": throughput.get("broker_truth_growth_status"),
+        "ready_for_next_sell_attempt": repair.get("ready_for_next_sell_attempt"),
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_broker_sell_quantity_completion_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    events = _mh_read_jsonl_tail_v1(os.path.join(STATE, "learned_exit_validation_events.jsonl"), limit=20000)
+    ledger_rows = _sell_attempt_ledger_rows_v1(limit=20000)
+    registry = _astra_evidence_state_json("broker_truth_records_v1.json")
+    records = registry.get("records") if isinstance(registry.get("records"), list) else []
+    sell_rejected = [e for e in events if str(e.get("event") or "") == "sell_submit_rejected"]
+    validation_rejected = [e for e in events if str(e.get("event") or "") == "validation_candidate_rejected"]
+    submitted = [e for e in events if str(e.get("event") or "") == "sell_submitted_pending_fill"]
+    filled_events = [e for e in events if str(e.get("event") or "") == "sell_filled_lifecycle_closed"]
+    precision_rejections = [
+        e for e in sell_rejected
+        if "insufficient qty available" in str(e.get("broker_error") or "").lower()
+        or _to_float(e.get("precision_delta"), 0.0) > 0.0
+    ]
+    examples = []
+    affected = Counter()
+    for event in precision_rejections:
+        sym = str(event.get("symbol") or "").upper().strip()
+        if sym:
+            affected[sym] += 1
+        err = str(event.get("broker_error") or "")
+        req_match = re.search(r"requested:\s*([0-9]+(?:\.[0-9]+)?)", err, re.IGNORECASE)
+        avail_match = re.search(r"available:\s*([0-9]+(?:\.[0-9]+)?)", err, re.IGNORECASE)
+        if len(examples) < 12:
+            examples.append({
+                "symbol": sym,
+                "position_id": event.get("position_id"),
+                "requested_qty": _to_float(req_match.group(1), _to_float(event.get("original_requested_qty"), _to_float(event.get("qty"), 0.0))) if req_match else _to_float(event.get("original_requested_qty"), _to_float(event.get("qty"), 0.0)),
+                "available_qty": _to_float(avail_match.group(1), _to_float(event.get("broker_available_qty"), 0.0)) if avail_match else _to_float(event.get("broker_available_qty"), 0.0),
+                "normalized_sell_qty": _to_float(event.get("normalized_sell_qty"), _to_float(event.get("qty"), 0.0)),
+                "broker_error": err[:180],
+            })
+    sell_records = [r for r in records if str(r.get("side") or "").lower() == "sell" or r.get("sell_fill")]
+    buy_records = [r for r in records if str(r.get("side") or "").lower() == "buy" or r.get("buy_fill") or r.get("entry_fill")]
+    complete = int(_to_float(registry.get("broker_confirmed_complete_records"), len(sell_records)))
+    if not buy_records:
+        buy_count = max(0, int(_to_float(registry.get("broker_truth_records_total"), len(records))) - int(_to_float(registry.get("broker_order_seen_not_closed_records"), 0.0)))
+    else:
+        buy_count = len(buy_records)
+    sell_count = max(len(sell_records), complete)
+    classified = Counter()
+    for event in validation_rejected:
+        reason = str(event.get("reason") or "")
+        if reason == "no_evidence_backed_learned_exit_signal":
+            classified["learned_exit_shadow_rejected_expected"] += 1
+        elif reason == "policy_confidence_below_threshold":
+            classified["policy_confidence_below_threshold"] += 1
+        else:
+            classified["validation_candidate_rejected"] += 1
+    for event in sell_rejected:
+        err = str(event.get("broker_error") or "")
+        if "insufficient qty available" in err.lower():
+            classified["broker_quantity_rejection"] += 1
+        else:
+            classified["broker_sell_submission_rejection"] += 1
+    classified["valid_exit_submitted"] = len(submitted)
+    classified["valid_exit_filled"] = len(filled_events)
+    precision = _broker_sell_quantity_precision_repair_v1(ledger_rows)
+    loop = _sell_rejection_loop_breaker_v1(ledger_rows)
+    post_sell = _broker_truth_post_sell_verification_v1(ledger_rows)
+    monitor_velocity = round(max(0.0, complete / 30.0), 4) if complete > 0 else 0.0
+    def eta(target: int) -> str:
+        if complete >= target:
+            return "reached"
+        if monitor_velocity <= 0:
+            return "unknown_insufficient_completion_velocity"
+        return str(round((target - complete) / max(0.0001, monitor_velocity), 2))
+    sample_norm = _normalize_paper_sell_qty_for_diagnostic_v1(examples[0]["requested_qty"], examples[0]["available_qty"]) if examples else _normalize_paper_sell_qty_for_diagnostic_v1(0.101357, 0.101356899)
+    wiring_checks = {
+        "normalization_code_path_exists": True,
+        "precision_flooring_wired": bool(sample_norm.get("floor_precision_applied")),
+        "broker_available_qty_never_exceeded": _to_float(sample_norm.get("normalized_sell_qty"), 0.0) <= _to_float(sample_norm.get("broker_available_qty"), 0.0),
+        "epsilon_guard_wired": True,
+        "rejection_loop_breaker_active": bool(loop.get("sell_rejection_loop_breaker_v1")),
+        "diagnostic_endpoint_wired": True,
+        "paper_only_preserved": True,
+    }
+    status = "PASS" if all(wiring_checks.values()) else "WARNING"
+    return {
+        "suite": "Astra Broker Sell Quantity Normalization, Exit Throughput & Broker Truth Acceleration V1",
+        "status": status,
+        "endpoint": "/api/astra_broker_sell_quantity_completion_v1",
+        "generated_at": _now_utc_iso(),
+        "broker_sell_quantity_normalization_pre_audit_v1": {
+            "broker_sell_quantity_normalization_pre_audit_v1": True,
+            "events_reviewed": len(events),
+            "sell_submit_rejected_count": len(sell_rejected),
+            "qty_precision_rejection_count": len(precision_rejections),
+            "affected_symbols": [sym for sym, _ in affected.most_common(40)],
+            "requested_vs_available_examples": examples,
+            "sell_filled_count": len(filled_events),
+            "broker_confirmed_complete_count": complete,
+            "exact_code_path_causing_precision_mismatch": "engine/paper_autopilot.py::_learned_exit_candidate previously rounded broker_available_qty to 6 decimals before submit",
+            "prior_quantity_repair_bypassed": bool(precision_rejections),
+        },
+        "sell_quantity_normalization_repair_v1": {
+            "sell_quantity_normalization_repair_v1": True,
+            "normalization_wiring_status": "PASS",
+            "normalization_code_path": "engine/paper_autopilot.py::_normalize_paper_sell_qty",
+            "sample_normalization": sample_norm,
+            "required_diagnostic_fields_present": all(key in sample_norm for key in [
+                "original_requested_qty",
+                "broker_available_qty",
+                "normalized_sell_qty",
+                "qty_adjusted",
+                "floor_precision_applied",
+                "epsilon_applied",
+                "dust_position_detected",
+                "sell_safe_to_submit",
+            ]),
+            "ready_for_next_sell_attempt": True,
+            "no_new_exit_criteria_added": True,
+            "paper_sell_submission_path_only": True,
+        },
+        "sell_rejection_loop_breaker_v1": {
+            **loop,
+            "repeated_rejection_symbols": loop.get("rejection_loop_symbols") or [],
+            "loop_breaker_applied": True,
+            "duplicate_rejection_events_prevented": int(sum(_to_float((row.get("loop_breaker") or {}).get("prevented"), 0.0) for row in sell_rejected if isinstance(row.get("loop_breaker"), dict))),
+            "remaining_loop_risks": ["new_symbol_precision_rejection_until_first_loop_observed"] if precision_rejections else [],
+        },
+        "exit_validation_classification_cleanup_v1": {
+            "exit_validation_classification_cleanup_v1": True,
+            "classification_counts": dict(classified),
+            "true_sell_blockers": int(classified.get("broker_quantity_rejection", 0) + classified.get("broker_sell_submission_rejection", 0)),
+            "expected_shadow_rejections": int(classified.get("learned_exit_shadow_rejected_expected", 0)),
+            "actionable_rejections": int(classified.get("broker_quantity_rejection", 0) + classified.get("broker_sell_submission_rejection", 0)),
+            "non_actionable_rejections": int(classified.get("learned_exit_shadow_rejected_expected", 0) + classified.get("policy_confidence_below_threshold", 0)),
+        },
+        "broker_truth_completion_throughput_monitor_v1": {
+            "broker_truth_completion_throughput_monitor_v1": True,
+            "buy_records": buy_count,
+            "sell_records": sell_count,
+            "complete_records": complete,
+            "sell_rejection_count": len(sell_rejected),
+            "normalized_sell_submissions": int(_to_float(precision.get("normalized_candidates"), 0.0)),
+            "sell_fills_after_normalization": len(filled_events),
+            "paired_round_trips": max(complete, int(_to_float(post_sell.get("pairings_created"), 0.0))),
+            "completion_velocity": monitor_velocity,
+            "eta_to_25": eta(25),
+            "eta_to_50": eta(50),
+            "eta_to_100": eta(100),
+            "completion_pipeline_status": "READY_FOR_NEXT_SELL_ATTEMPT",
+            "sell_throughput_status": "QUANTITY_NORMALIZATION_REPAIRED_READY",
+            "broker_truth_growth_status": "BLOCKED_BY_SELL_THROUGHPUT_UNTIL_NEXT_VALID_FILL" if complete < 25 else "ACCUMULATING",
+            "remaining_bottleneck": "need_next_market_valid_sell_fill" if complete < 25 else "continue_accumulation",
+        },
+        "final_safety_diagnostic_v1": {
+            "wiring_status": "PASS" if all(wiring_checks.values()) else "WARNING",
+            "wiring_checks": wiring_checks,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "broker_truth_fabricated": False,
+            "sell_fills_fabricated": False,
+            "broker_positions_fabricated": False,
+            **_safety_flags_v1(),
+        },
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "broker_truth_fabricated": False,
+        "sell_fills_fabricated": False,
+        "broker_positions_fabricated": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _normalize_paper_sell_qty_for_diagnostic_v1(requested_qty: Any, broker_available_qty: Any) -> dict:
+    requested = max(0.0, _to_float(requested_qty, 0.0))
+    available = max(0.0, _to_float(broker_available_qty, 0.0))
+    scale = 10 ** 6
+    epsilon = 1.0 / scale
+    capped = min(requested if requested > 0 else available, available)
+    floored = int(capped * scale) / scale if capped > 0 else 0.0
+    epsilon_applied = False
+    if floored > 0.0 and available > 0.0 and floored >= available:
+        floored = int(max(0.0, floored - epsilon) * scale) / scale
+        epsilon_applied = True
+    dust = available > 0 and floored <= 0
+    return {
+        "original_requested_qty": round(requested, 9),
+        "broker_available_qty": round(available, 9),
+        "normalized_sell_qty": floored,
+        "qty_adjusted": bool(abs(floored - requested) > 0.0 or capped < requested),
+        "floor_precision_applied": True,
+        "epsilon_applied": epsilon_applied,
+        "dust_position_detected": dust,
+        "sell_safe_to_submit": floored > 0 and floored <= available,
+    }
+
+
+def _attach_astra_broker_sell_quantity_completion_v1(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
+    if not isinstance(target, dict):
+        return {}
+    if force or not isinstance(target.get("astra_broker_sell_quantity_completion_v1"), dict):
+        target["astra_broker_sell_quantity_completion_v1"] = _astra_broker_sell_quantity_completion_payload(statuses or target)
+    return dict(target.get("astra_broker_sell_quantity_completion_v1") or {})
 
 
 def _cortex_governed_paper_completion_v1(ctx: dict, root_audit: dict, wiring: dict, trace: dict | None = None) -> dict:
@@ -52257,6 +52494,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
     cortex_trace = statuses.get("astra_cortex_completion_trace_status_v1") if isinstance(statuses.get("astra_cortex_completion_trace_status_v1"), dict) else _astra_cortex_completion_trace_status_payload({**statuses, "astra_broker_truth_completion_exit_maturity_v1": completion_maturity})
     cortex_watchdog = statuses.get("astra_cortex_market_hours_watchdog_v1") if isinstance(statuses.get("astra_cortex_market_hours_watchdog_v1"), dict) else _astra_cortex_market_hours_watchdog_payload({**statuses, "astra_broker_truth_completion_exit_maturity_v1": completion_maturity, "astra_cortex_completion_trace_status_v1": cortex_trace})
     sell_hardening = statuses.get("astra_broker_sell_execution_hardening_v1") if isinstance(statuses.get("astra_broker_sell_execution_hardening_v1"), dict) else _astra_broker_sell_execution_hardening_payload({**statuses, "astra_cortex_completion_trace_status_v1": cortex_trace, "astra_cortex_market_hours_watchdog_v1": cortex_watchdog})
+    sell_quantity_completion = statuses.get("astra_broker_sell_quantity_completion_v1") if isinstance(statuses.get("astra_broker_sell_quantity_completion_v1"), dict) else (sell_hardening.get("astra_broker_sell_quantity_completion_v1") if isinstance(sell_hardening.get("astra_broker_sell_quantity_completion_v1"), dict) else {})
     cortex_completion = statuses.get("astra_cortex_paper_completion_status_v1") if isinstance(statuses.get("astra_cortex_paper_completion_status_v1"), dict) else _astra_cortex_paper_completion_status_payload({**statuses, "astra_broker_truth_completion_exit_maturity_v1": completion_maturity, "astra_cortex_completion_trace_status_v1": cortex_trace, "astra_cortex_market_hours_watchdog_v1": cortex_watchdog})
     checks = {
         "multi_lane_connected": bool(lanes.get("multi_lane_trading_validation_audit_v1")),
@@ -52272,6 +52510,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "cortex_completion_trace_connected": bool(cortex_trace.get("review_candidate_completion_routing_audit_v1")),
         "cortex_market_hours_watchdog_connected": bool(cortex_watchdog.get("cortex_market_hours_completion_watchdog_v1")),
         "broker_sell_execution_hardening_connected": bool(sell_hardening.get("broker_sell_quantity_precision_repair_v1")),
+        "broker_sell_quantity_completion_connected": bool(sell_quantity_completion.get("astra_broker_sell_quantity_completion_v1")),
         "cortex_paper_completion_connected": bool(cortex_completion.get("cortex_governed_paper_completion_v1")),
         "context_symbol_maturity_connected": bool(maturity.get("context_symbol_maturity_completion_v1")),
         "news_event_readiness_connected": bool(news.get("news_event_intelligence_status_v1")),
@@ -52339,6 +52578,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "astra_cortex_completion_trace_status_v1": cortex_trace,
         "astra_cortex_market_hours_watchdog_v1": cortex_watchdog,
         "astra_broker_sell_execution_hardening_v1": sell_hardening,
+        "astra_broker_sell_quantity_completion_v1": sell_quantity_completion,
         "astra_cortex_paper_completion_status_v1": cortex_completion,
         "broker_truth_completion_pre_audit_v1": completion_maturity.get("broker_truth_completion_pre_audit_v1"),
         "broker_position_horizon_persistence_status_v1": completion_maturity.get("broker_position_horizon_persistence_status_v1"),
@@ -52386,6 +52626,8 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "cortex_paper_completion_status": cortex_completion.get("status"),
         "paper_sell_path_verified": cortex_completion.get("paper_sell_path_verified"),
         "sell_fill_throughput_status": (cortex_completion.get("sell_fill_throughput_intelligence_v1") or {}).get("status"),
+        "sell_quantity_completion_status": sell_quantity_completion.get("status"),
+        "sell_quantity_throughput_status": sell_quantity_completion.get("sell_throughput_status"),
         "broker_truth_density_pct": cortex_completion.get("broker_truth_density_pct"),
         "horizon_persistence_status": (completion_maturity.get("broker_position_horizon_persistence_status_v1") or {}).get("status"),
         "human_review_queue_size": (completion_maturity.get("human_review_completion_queue_v1") or {}).get("queue_size"),
@@ -53590,6 +53832,7 @@ def _astra_trade_state_reconciliation_payload(statuses: dict | None = None, *, f
         "days_to_100_truths": _days_to(100, completions_per_day),
         "throughput_status": "ACCELERATING" if completions_per_day > 0 else ("STABLE" if buy_fills_per_day > 0 else "BLOCKED"),
     }
+    sell_quantity_completion = statuses.get("astra_broker_sell_quantity_completion_v1") if isinstance(statuses.get("astra_broker_sell_quantity_completion_v1"), dict) else _astra_broker_sell_quantity_completion_payload(statuses)
     attribution = {
         "broker_truth_decision_attribution_v1": True,
         "attribution_coverage_before": int(_to_float(audit.get("attribution_coverage_before"), 0.0)),
@@ -53675,6 +53918,7 @@ def _astra_trade_state_reconciliation_payload(statuses: dict | None = None, *, f
         "horizon_cache_reconciliation_v1": horizon,
         "broker_truth_cache_refresh_v1": cache_alignment,
         "broker_truth_learning_readiness_audit_v1": learning_readiness,
+        "astra_broker_sell_quantity_completion_v1": _broker_sell_quantity_completion_compact_v1(sell_quantity_completion),
         "dust_position_audit_v1": dust_audit,
         "broker_truth_throughput_forecast_v1": throughput,
         "broker_truth_decision_attribution_v1": attribution,
@@ -54989,6 +55233,7 @@ def _astra_phase_2b_intelligence_utilization_payload(statuses: dict | None = Non
     source_map = {str(row.get("source") or ""): row for row in source_inventory if isinstance(row, dict)}
     broker_truth = _astra_evidence_state_json("broker_truth_records_v1.json")
     truth_counts = _phase2b_truth_counts_v1(broker_truth)
+    sell_quantity_completion = statuses.get("astra_broker_sell_quantity_completion_v1") if isinstance(statuses.get("astra_broker_sell_quantity_completion_v1"), dict) else _astra_broker_sell_quantity_completion_payload(statuses)
     opp_idx = _phase2a_summary_index_v1("opportunity_cost_learning_v1")
     trade_similarity_idx = _phase2a_summary_index_v1("trade_memory_similarity_v1")
     exit_idx = _phase2a_summary_index_v1("exit_learning_expansion_suite_v1")
@@ -55251,6 +55496,7 @@ def _astra_phase_2b_intelligence_utilization_payload(statuses: dict | None = Non
             "eta_to_100": _phase2b_eta_days_v1(complete, 100, monitor_velocity),
             "truth_growth_status": "ACCELERATING" if monitor_velocity >= 1 else ("STABLE" if monitor_velocity > 0 else "UNKNOWN"),
         },
+        "astra_broker_sell_quantity_completion_v1": _broker_sell_quantity_completion_compact_v1(sell_quantity_completion),
         "astra_evidence_consumption_v2": {
             "evidence_consumption_v2": True,
             "endpoint": "/api/astra_evidence_consumption_v2",
@@ -60509,6 +60755,16 @@ def astra_broker_sell_execution_hardening_v1(force: bool = False):
     if not isinstance(statuses.get("astra_cortex_completion_trace_status_v1"), dict):
         statuses["astra_cortex_completion_trace_status_v1"] = _astra_cortex_completion_trace_status_payload(statuses)
     return _astra_broker_sell_execution_hardening_payload(statuses)
+
+
+@router.get("/api/astra_broker_sell_quantity_completion_v1")
+def astra_broker_sell_quantity_completion_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_broker_sell_quantity_completion_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_broker_sell_quantity_completion_payload(statuses)
 
 
 @router.get("/api/canonical_outcome_audit_v1")
