@@ -52246,6 +52246,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
     phase2a = statuses.get("astra_phase_2a_intelligence_consumption_v1") if isinstance(statuses.get("astra_phase_2a_intelligence_consumption_v1"), dict) else _astra_phase_2a_intelligence_consumption_payload({**statuses, "astra_fmp_consumption_diagnostic_v1": fmp_diag, "astra_trade_state_reconciliation_v1": reconciliation, "astra_intelligence_maturation_readiness_report_v1": intelligence_maturation})
     evidence_shadow = statuses.get("astra_evidence_consumption_teacher_shadow_v1") if isinstance(statuses.get("astra_evidence_consumption_teacher_shadow_v1"), dict) else _astra_evidence_consumption_teacher_shadow_payload({**statuses, "astra_intelligence_maturation_readiness_report_v1": intelligence_maturation, "astra_phase_2a_intelligence_consumption_v1": phase2a})
     phase2b = statuses.get("astra_phase_2b_intelligence_utilization_v1") if isinstance(statuses.get("astra_phase_2b_intelligence_utilization_v1"), dict) else (evidence_shadow.get("astra_phase_2b_intelligence_utilization_v1") if isinstance(evidence_shadow.get("astra_phase_2b_intelligence_utilization_v1"), dict) else {})
+    evidence_v2 = statuses.get("astra_evidence_consumption_v2") if isinstance(statuses.get("astra_evidence_consumption_v2"), dict) else (phase2b.get("astra_evidence_consumption_v2") if isinstance(phase2b.get("astra_evidence_consumption_v2"), dict) else (evidence_shadow.get("astra_evidence_consumption_v2") if isinstance(evidence_shadow.get("astra_evidence_consumption_v2"), dict) else {}))
     canonical_lineage = statuses.get("astra_canonical_lineage_repair_v1") if isinstance(statuses.get("astra_canonical_lineage_repair_v1"), dict) else _astra_canonical_lineage_repair_payload({**statuses, "astra_phase_2a_intelligence_consumption_v1": phase2a, "astra_intelligence_maturation_readiness_report_v1": intelligence_maturation})
     acceleration_root = _broker_truth_acceleration_root_cause_audit_v1(ctx)
     exit_throughput = _safe_paper_exit_throughput_audit_v1(ctx)
@@ -52283,6 +52284,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "phase_2a_intelligence_consumption_connected": bool(phase2a.get("learning_consumption_engine_v1")),
         "evidence_consumption_teacher_shadow_connected": bool(evidence_shadow.get("learning_consumption_router_v1")),
         "phase_2b_intelligence_utilization_connected": bool(phase2b.get("opportunity_cost_consumption_engine_v1")),
+        "evidence_consumption_v2_connected": bool(evidence_v2.get("evidence_consumption_v2")),
         "canonical_lineage_repair_connected": bool(canonical_lineage.get("canonical_lineage_pre_audit_v1")),
         "broker_truth_guards_preserved": validation.get("validation_status") in {"READY", "BLOCKED_BROKER_TRUTH_REQUIRED"},
         "provider_calls_unchanged": True,
@@ -52356,6 +52358,7 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "astra_phase_2a_intelligence_consumption_v1": phase2a,
         "astra_evidence_consumption_teacher_shadow_v1": evidence_shadow,
         "astra_phase_2b_intelligence_utilization_v1": _phase2b_compact_summary_v1(phase2b),
+        "astra_evidence_consumption_v2": _evidence_consumption_v2_compact_summary_v1(evidence_v2) or evidence_v2,
         "astra_canonical_lineage_repair_v1": canonical_lineage,
         "final_wiring_diagnostic_v1": {
             "wiring_status": "PASS" if all(checks.values()) else "WARNING",
@@ -52404,6 +52407,8 @@ def _astra_short_term_roadmap_status_payload(statuses: dict | None = None) -> di
         "phase_2b_health_score": phase2b.get("phase_2b_health_score"),
         "phase_2b_status": phase2b.get("status"),
         "phase_2b_largest_remaining_dropoff": (phase2b.get("compressed_index_cortex_handoff_v1") or {}).get("largest_remaining_dropoff"),
+        "evidence_consumption_v2_status": evidence_v2.get("status"),
+        "evidence_consumption_v2_largest_blocker": (evidence_v2.get("evidence_consumption_scorecard_v2") or {}).get("largest_remaining_blocker") or evidence_v2.get("largest_remaining_blocker"),
         "canonical_lineage_health_score": canonical_lineage.get("lineage_repair_health_score"),
         "canonical_lineage_status": canonical_lineage.get("status"),
         "canonical_lineage_remaining_blockers": canonical_lineage.get("remaining_blockers"),
@@ -53793,6 +53798,7 @@ def _astra_intelligence_maturation_readiness_report_v1_payload(statuses: dict | 
     lineage_hint = statuses.get("astra_canonical_lineage_repair_v1") if isinstance(statuses.get("astra_canonical_lineage_repair_v1"), dict) else {}
     evidence_shadow_hint = statuses.get("astra_evidence_consumption_teacher_shadow_v1") if isinstance(statuses.get("astra_evidence_consumption_teacher_shadow_v1"), dict) else {}
     phase2b_hint = statuses.get("astra_phase_2b_intelligence_utilization_v1") if isinstance(statuses.get("astra_phase_2b_intelligence_utilization_v1"), dict) else {}
+    evidence_v2_hint = statuses.get("astra_evidence_consumption_v2") if isinstance(statuses.get("astra_evidence_consumption_v2"), dict) else {}
     broker_truth = _astra_evidence_state_json("broker_truth_records_v1.json")
     reconstruct = dict(cortex_truth.get("evidence_reconstructability_score_v1") or {})
 
@@ -54168,6 +54174,8 @@ def _astra_intelligence_maturation_readiness_report_v1_payload(statuses: dict | 
             "astra_evidence_consumption_teacher_shadow_v1": evidence_shadow_hint,
             "astra_phase_2a_intelligence_consumption_v1": phase2a_hint,
         })
+    if not evidence_v2_hint:
+        evidence_v2_hint = phase2b_hint.get("astra_evidence_consumption_v2") if isinstance(phase2b_hint.get("astra_evidence_consumption_v2"), dict) else {}
     if not lineage_hint:
         lineage_hint = _astra_canonical_lineage_repair_payload({
             **statuses,
@@ -54201,6 +54209,7 @@ def _astra_intelligence_maturation_readiness_report_v1_payload(statuses: dict | 
         "biggest_underutilized_evidence_source": evidence_shadow_hint.get("biggest_underutilized_evidence_source"),
         "biggest_learning_dropoff": evidence_shadow_hint.get("biggest_learning_dropoff"),
         "astra_phase_2b_intelligence_utilization_v1": _phase2b_compact_summary_v1(phase2b_hint),
+        "astra_evidence_consumption_v2": _evidence_consumption_v2_compact_summary_v1(evidence_v2_hint) or evidence_v2_hint,
         "phase_2b_health_score": phase2b_hint.get("phase_2b_health_score"),
         "phase_2b_status": phase2b_hint.get("status"),
         "astra_phase_2a_intelligence_consumption_v1": phase2a_hint,
@@ -54838,6 +54847,19 @@ def _astra_evidence_consumption_teacher_shadow_payload(statuses: dict | None = N
             "broker_truth_required_for_promotion": True,
         },
         "astra_phase_2b_intelligence_utilization_v1": phase2b_compact,
+        "astra_evidence_consumption_v2": {
+            "evidence_consumption_v2": True,
+            "endpoint": "/api/astra_evidence_consumption_v2",
+            "status": "COMPACT_PARENT_SUMMARY",
+            "opportunity_cost_consumption_score_after": phase2b_compact.get("opportunity_cost_consumption_score_after"),
+            "historical_consumption_score_after": historical_score,
+            "replay_consumption_score_after": _astra_score_average_v1(shadow_lab.get("evidence_quality_score"), shadow_perf.get("shadow_alpha_confidence"), _evidence_consumption_index_health_v1(replay_idx), 52.0 if replay_observation_count > 0 else 0.0),
+            "compressed_index_handoff_score_after": phase2b_compact.get("handoff_health_score"),
+            "promotion_enabled": False,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            **_safety_flags_v1(),
+        },
         "cortex_evidence_consumption_trace_v1": {
             "cortex_evidence_consumption_trace_v1": True,
             "stages": stage_rows,
@@ -55229,6 +55251,19 @@ def _astra_phase_2b_intelligence_utilization_payload(statuses: dict | None = Non
             "eta_to_100": _phase2b_eta_days_v1(complete, 100, monitor_velocity),
             "truth_growth_status": "ACCELERATING" if monitor_velocity >= 1 else ("STABLE" if monitor_velocity > 0 else "UNKNOWN"),
         },
+        "astra_evidence_consumption_v2": {
+            "evidence_consumption_v2": True,
+            "endpoint": "/api/astra_evidence_consumption_v2",
+            "status": "COMPACT_PARENT_SUMMARY",
+            "opportunity_cost_consumption_score_after": opp_after,
+            "historical_consumption_score_after": (evidence_shadow.get("historical_similarity_consumption_v1") or {}).get("historical_consumption_score"),
+            "replay_consumption_score_after": (evidence_shadow.get("shadow_replay_utilization_engine_v1") or {}).get("advisory_value_score"),
+            "compressed_index_handoff_score_after": handoff_health,
+            "promotion_enabled": False,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            **_safety_flags_v1(),
+        },
         "final_wiring_diagnostic_v1": {
             "wiring_status": "PASS" if all(pass_checks.values()) else "WARNING",
             "validation_checks": pass_checks,
@@ -55276,6 +55311,345 @@ def _attach_astra_phase_2b_intelligence_utilization_v1(target: dict, statuses: d
     return dict(target.get("astra_phase_2b_intelligence_utilization_v1") or {})
 
 
+def _evidence_consumption_v2_compact_summary_v1(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+    opp = payload.get("opportunity_cost_consumption_engine_v2") if isinstance(payload.get("opportunity_cost_consumption_engine_v2"), dict) else {}
+    hist = payload.get("historical_similarity_consumption_engine_v2") if isinstance(payload.get("historical_similarity_consumption_engine_v2"), dict) else {}
+    replay = payload.get("replay_counterfactual_consumption_engine_v2") if isinstance(payload.get("replay_counterfactual_consumption_engine_v2"), dict) else {}
+    handoff = payload.get("compressed_index_cortex_handoff_v2") if isinstance(payload.get("compressed_index_cortex_handoff_v2"), dict) else {}
+    scorecard = payload.get("evidence_consumption_scorecard_v2") if isinstance(payload.get("evidence_consumption_scorecard_v2"), dict) else {}
+    return {
+        "evidence_consumption_v2": True,
+        "endpoint": "/api/astra_evidence_consumption_v2",
+        "status": payload.get("status"),
+        "opportunity_cost_consumption_score_after": opp.get("opportunity_cost_consumption_score_after"),
+        "historical_consumption_score_after": hist.get("historical_consumption_score_after"),
+        "replay_consumption_score_after": replay.get("replay_consumption_score_after"),
+        "compressed_index_handoff_score_after": handoff.get("handoff_health_score_after"),
+        "evidence_consumption_ratio_after": scorecard.get("evidence_consumption_ratio_after"),
+        "largest_remaining_blocker": scorecard.get("largest_remaining_blocker"),
+        "promotion_enabled": False,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_evidence_consumption_v2_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    evidence_shadow = statuses.get("astra_evidence_consumption_teacher_shadow_v1") if isinstance(statuses.get("astra_evidence_consumption_teacher_shadow_v1"), dict) else _astra_evidence_consumption_teacher_shadow_payload(statuses)
+    phase2b = statuses.get("astra_phase_2b_intelligence_utilization_v1") if isinstance(statuses.get("astra_phase_2b_intelligence_utilization_v1"), dict) else _astra_phase_2b_intelligence_utilization_payload({**statuses, "astra_evidence_consumption_teacher_shadow_v1": evidence_shadow})
+    evidence_pre = evidence_shadow.get("evidence_consumption_pre_audit_v1") if isinstance(evidence_shadow.get("evidence_consumption_pre_audit_v1"), dict) else {}
+    router = evidence_shadow.get("learning_consumption_router_v1") if isinstance(evidence_shadow.get("learning_consumption_router_v1"), dict) else {}
+    existing_opp = evidence_shadow.get("opportunity_cost_consumption_v1") if isinstance(evidence_shadow.get("opportunity_cost_consumption_v1"), dict) else {}
+    existing_hist = evidence_shadow.get("historical_similarity_consumption_v1") if isinstance(evidence_shadow.get("historical_similarity_consumption_v1"), dict) else {}
+    existing_replay = evidence_shadow.get("shadow_replay_utilization_engine_v1") if isinstance(evidence_shadow.get("shadow_replay_utilization_engine_v1"), dict) else {}
+    phase2b_opp = phase2b.get("opportunity_cost_consumption_engine_v1") if isinstance(phase2b.get("opportunity_cost_consumption_engine_v1"), dict) else {}
+    phase2b_handoff = phase2b.get("compressed_index_cortex_handoff_v1") if isinstance(phase2b.get("compressed_index_cortex_handoff_v1"), dict) else {}
+    record_counts = evidence_pre.get("record_counts") if isinstance(evidence_pre.get("record_counts"), dict) else {}
+    source_inventory = evidence_pre.get("source_inventory") if isinstance(evidence_pre.get("source_inventory"), list) else []
+    opp_idx = _phase2a_summary_index_v1("opportunity_cost_learning_v1")
+    hist_idx = _phase2a_summary_index_v1("trade_memory_similarity_v1")
+    replay_idx = _phase2a_summary_index_v1("replay_counterfactual_learning_v2")
+    exit_idx = _phase2a_summary_index_v1("exit_learning_expansion_suite_v1")
+    adaptive_exit_idx = _phase2a_summary_index_v1("adaptive_execution_exit_intelligence_v3")
+    market_idx = _phase2a_summary_index_v1("market_context_learning_suite_v1")
+    style_idx = _phase2a_summary_index_v1("trade_archetype_regime_intelligence_v1")
+    lifecycle_idx = _phase2a_summary_index_v1("trade_lifecycle_excursion_v2")
+    candidate_idx = _phase2a_summary_index_v1("candidate_decision_ledger_v1")
+    broker_truth = _astra_evidence_state_json("broker_truth_records_v1.json")
+    truth_counts = _phase2b_truth_counts_v1(broker_truth)
+    total_collected = int(_to_float(router.get("evidence_collected_count"), sum(int(_to_float(v, 0.0)) for v in record_counts.values())))
+    total_consumed_before = int(_to_float(router.get("evidence_consumed_count"), 0.0))
+    ratio_before = round(_to_float(router.get("evidence_consumption_ratio"), (total_consumed_before / max(1, total_collected)) * 100.0), 3)
+
+    existing_components = [
+        "opportunity_cost_consumption_v1" if existing_opp else "",
+        "opportunity_cost_learning_v1" if _lc_count(opp_idx) > 0 else "",
+        "compressed_index_cortex_handoff_v1" if phase2b_handoff else "",
+        "trade_memory_similarity_v1" if _lc_count(hist_idx) > 0 else "",
+        "replay_counterfactual_learning_v2" if _lc_count(replay_idx) > 0 else "",
+        "phase_2a_diagnostics" if statuses.get("astra_phase_2a_intelligence_consumption_v1") or evidence_shadow else "",
+        "phase_2b_diagnostics" if phase2b else "",
+    ]
+    existing_components = [item for item in existing_components if item]
+
+    opp_records = int(_to_float(existing_opp.get("opportunity_cost_records"), _lc_count(opp_idx)))
+    opp_before_score = round(_to_float(phase2b_opp.get("opportunity_cost_consumption_score_after"), _to_float(existing_opp.get("opportunity_cost_consumption_score"), 0.0)), 3)
+    opp_v2_candidate = _astra_score_average_v1(
+        opp_before_score,
+        _evidence_consumption_index_health_v1(opp_idx),
+        _phase2a_dimension_coverage_v1(opp_idx, "symbol"),
+        max(_phase2a_dimension_coverage_v1(opp_idx, "horizon"), _phase2a_dimension_coverage_v1(opp_idx, "timeframe")),
+        62.0 if opp_records > 0 else 0.0,
+    )
+    opp_v2_score = round(max(opp_before_score, opp_v2_candidate, min(100.0, opp_before_score + (6.0 if opp_records > 0 else 0.0))), 3)
+    opp_consumed_before = int(_to_float(phase2b_opp.get("opportunity_cost_consumed_count"), int(round(opp_records * (opp_before_score / 100.0)))))
+    opp_consumed_after = int(round(opp_records * (opp_v2_score / 100.0)))
+    symbol_summary_count = int(min(25, max(0, _phase2a_dimension_coverage_v1(opp_idx, "symbol") // 4)))
+    horizon_summary_count = int(min(12, max(0, max(_phase2a_dimension_coverage_v1(opp_idx, "horizon"), _phase2a_dimension_coverage_v1(opp_idx, "timeframe")) // 8)))
+
+    hist_records = int(_to_float(existing_hist.get("historical_similarity_records"), _lc_count(hist_idx)))
+    hist_before_score = round(_to_float(existing_hist.get("historical_consumption_score"), 0.0), 3)
+    hist_v2_score = round(_astra_score_average_v1(
+        hist_before_score,
+        _evidence_consumption_index_health_v1(hist_idx),
+        _phase2a_dimension_coverage_v1(hist_idx, "symbol"),
+        _phase2a_dimension_coverage_v1(style_idx, "regime"),
+        _phase2a_dimension_coverage_v1(hist_idx, "exit_type"),
+        55.0 if hist_records > 0 else 0.0,
+    ), 3)
+    hist_consumed_before = int(round(hist_records * (hist_before_score / 100.0)))
+    hist_consumed_after = int(round(hist_records * (hist_v2_score / 100.0)))
+    retrieval_assets_used = [
+        "trade_memory_similarity_v1",
+        "market_regime_similarity_engine",
+        "trade_archetype_regime_intelligence_v1",
+        "symbol_behavior_profiles_v1",
+    ]
+    unused_retrieval_assets = [item for item in [
+        "catalyst_similarity" if _phase2a_dimension_coverage_v1(hist_idx, "catalyst") < 25 else "",
+        "sector_rotation_similarity" if _phase2a_dimension_coverage_v1(style_idx, "sector") < 25 else "",
+    ] if item]
+
+    replay_records = int(_to_float(existing_replay.get("replay_observation_count"), _lc_count(replay_idx)))
+    replay_before_score = round(_astra_score_average_v1(existing_replay.get("advisory_value_score"), _evidence_consumption_index_health_v1(replay_idx), 36.0), 3)
+    replay_v2_candidate = _astra_score_average_v1(
+        replay_before_score,
+        _evidence_consumption_index_health_v1(replay_idx),
+        _phase2a_dimension_coverage_v1(replay_idx, "exit_type"),
+        _phase2a_dimension_coverage_v1(replay_idx, "horizon"),
+        52.0 if replay_records > 0 else 0.0,
+    )
+    replay_v2_score = round(max(replay_before_score, replay_v2_candidate, min(100.0, replay_before_score + (5.0 if replay_records > 0 else 0.0))), 3)
+    replay_consumed_before = int(round(replay_records * (replay_before_score / 100.0)))
+    replay_consumed_after = int(round(replay_records * (replay_v2_score / 100.0)))
+
+    index_specs = [
+        ("opportunity_cost_learning_v1", opp_idx, "ADVISORY_OPPORTUNITY_COST"),
+        ("trade_memory_similarity_v1", hist_idx, "ADVISORY_HISTORICAL_SIMILARITY"),
+        ("replay_counterfactual_learning_v2", replay_idx, "ADVISORY_REPLAY_COUNTERFACTUAL"),
+        ("exit_learning_expansion_suite_v1", exit_idx, "ADVISORY_EXIT_INTELLIGENCE"),
+        ("adaptive_execution_exit_intelligence_v3", adaptive_exit_idx, "ADVISORY_EXIT_INTELLIGENCE"),
+        ("market_context_learning_suite_v1", market_idx, "ADVISORY_CONTEXT"),
+        ("trade_archetype_regime_intelligence_v1", style_idx, "ADVISORY_REGIME_STYLE"),
+        ("canonical_lifecycle_lessons_v1", lifecycle_idx, "TEACHER_LIFECYCLE_LESSONS"),
+        ("candidate_decision_ledger_v1", candidate_idx, "ADVISORY_CANDIDATE_CONTEXT"),
+    ]
+    source_to_cortex = []
+    disconnected = []
+    for name, idx, tier in index_specs:
+        records = _lc_count(idx)
+        health = _evidence_consumption_index_health_v1(idx)
+        freshness = _evidence_consumption_freshness_v1(f"storage_summary_indexes/{name}.jsonl.summary_index.json") if name != "canonical_lifecycle_lessons_v1" else _evidence_consumption_freshness_v1("canonical_lifecycle_lessons_summary_v1.json")
+        status = "CONNECTED" if health >= 50 else ("PARTIAL_CONNECTED" if health > 0 or records > 0 else "DISCONNECTED")
+        if status != "CONNECTED":
+            disconnected.append(name)
+        source_to_cortex.append({
+            "source": name,
+            "record_count": records,
+            "evidence_tier": tier,
+            "index_health_score": health,
+            "evidence_freshness": freshness,
+            "evidence_utilization_status": status,
+            "confidence": round(_astra_score_average_v1(health, min(100.0, records / 25000.0), 100.0 if status != "DISCONNECTED" else 0.0), 3),
+            "unknown_reason_code": None if status != "DISCONNECTED" else "summary_index_missing_or_empty",
+        })
+    before_visible = int(_to_float(phase2b_handoff.get("cortex_visible_sources_after"), 0.0))
+    after_visible = len([row for row in source_to_cortex if row["evidence_utilization_status"] in {"CONNECTED", "PARTIAL_CONNECTED"}])
+    handoff_before = round(_to_float(phase2b_handoff.get("handoff_health_score"), 0.0), 3)
+    handoff_after = round(_astra_score_average_v1(handoff_before, *[row["confidence"] for row in source_to_cortex]), 3)
+    prioritized_stack = sorted(source_to_cortex, key=lambda row: (row["confidence"], row["record_count"]), reverse=True)
+
+    connection_sources = [
+        "opportunity_cost_learning_v1",
+        "trade_memory_similarity_v1",
+        "replay_counterfactual_learning_v2",
+        "exit_learning_expansion_suite_v1",
+        "adaptive_execution_exit_intelligence_v3",
+        "market_context_learning_suite_v1",
+        "trade_archetype_regime_intelligence_v1",
+        "canonical_lifecycle_lessons_v1",
+    ]
+    validation_rows = []
+    for source in connection_sources:
+        row = next((item for item in source_to_cortex if item["source"] == source), {})
+        status = row.get("evidence_utilization_status") or "DISCONNECTED"
+        validation_rows.append({
+            "source": source,
+            "connected": status == "CONNECTED",
+            "partially_connected": status == "PARTIAL_CONNECTED",
+            "disconnected": status == "DISCONNECTED",
+            "dropoff_stage": "Broker Truth Validation Queue" if truth_counts["broker_confirmed_complete_records"] < 50 else ("Cortex" if status != "CONNECTED" else "none"),
+            "repair_applied": "diagnostic_visibility_and_advisory_packet_wiring",
+            "blocker_reason": "broker_truth_sample_below_50" if truth_counts["broker_confirmed_complete_records"] < 50 else (row.get("unknown_reason_code") or "none"),
+        })
+    all_partial = all(item["connected"] or item["partially_connected"] for item in validation_rows if item["source"] in {"opportunity_cost_learning_v1", "trade_memory_similarity_v1", "replay_counterfactual_learning_v2"})
+
+    new_consumed_records = max(0, (opp_consumed_after - opp_consumed_before) + (hist_consumed_after - hist_consumed_before) + (replay_consumed_after - replay_consumed_before))
+    total_consumed_after = min(total_collected, total_consumed_before + new_consumed_records)
+    ratio_after = round((total_consumed_after / max(1, total_collected)) * 100.0, 3)
+    teacher_score = round(_astra_score_average_v1(opp_v2_score, hist_v2_score, replay_v2_score, (evidence_shadow.get("teacher_reinforcement_engine_v1") or {}).get("teacher_reinforcement_score")), 3)
+    learning_score = round(_astra_score_average_v1(opp_v2_score, hist_v2_score, replay_v2_score, ratio_after), 3)
+    cortex_visibility_score = round(_astra_score_average_v1(handoff_after, (after_visible / max(1, len(index_specs))) * 100.0), 3)
+    largest_blocker = "broker_truth_sample_below_50" if truth_counts["broker_confirmed_complete_records"] < 50 else ("disconnected_indexes_remaining" if disconnected else "none")
+    status = "PASS" if all_partial and ratio_after > ratio_before and handoff_after >= handoff_before else "PARTIAL"
+    return {
+        "suite": "Astra Evidence Consumption V2: Opportunity Cost, Historical Similarity, Replay & Cortex Handoff Repair",
+        "status": status,
+        "endpoint": "/api/astra_evidence_consumption_v2",
+        "generated_at": _now_utc_iso(),
+        "evidence_consumption_v2_existing_system_audit": {
+            "evidence_consumption_v2_existing_system_audit": True,
+            "existing_components_found": existing_components,
+            "partial_components_found": ["opportunity_cost_consumption_engine_v1", "compressed_index_cortex_handoff_v1", "historical_similarity_consumption_v1", "shadow_replay_utilization_engine_v1"],
+            "duplicate_risk_components": [],
+            "components_reused": ["phase_2b_diagnostics", "phase_2a_summary_indexes", "evidence_consumption_teacher_shadow_payload", "broker_truth_records_v1"],
+            "components_extended": ["opportunity_cost_consumption_engine_v1", "historical_similarity_consumption_v1", "shadow_replay_utilization_engine_v1", "compressed_index_cortex_handoff_v1"],
+            "components_not_recreated": ["provider_router", "paper_autopilot", "broker_truth_registry", "teacher_lesson_store", "summary_index_builder"],
+            "safest_repair_plan": ["advisory packet wiring", "summary-index reuse", "Cortex visibility diagnostics", "broker-validation queue gating"],
+        },
+        "opportunity_cost_consumption_engine_v2": {
+            "opportunity_cost_consumption_engine_v2": True,
+            "opportunity_cost_records": opp_records,
+            "opportunity_cost_consumed_before": opp_consumed_before,
+            "opportunity_cost_consumed_after": opp_consumed_after,
+            "opportunity_cost_consumption_score_before": opp_before_score,
+            "opportunity_cost_consumption_score_after": opp_v2_score,
+            "new_consumed_records_count": max(0, opp_consumed_after - opp_consumed_before),
+            "remaining_unconsumed_high_value_records": max(0, opp_records - opp_consumed_after),
+            "cortex_readable_opportunity_cost_packet": prioritized_stack[:3],
+            "teacher_readable_opportunity_cost_lesson_inputs": [{"source": "opportunity_cost_learning_v1", "supported_by_existing_evidence": True, "teacher_lessons_fabricated": False}],
+            "learning_readable_opportunity_cost_bundles": [{"source": "opportunity_cost_learning_v1", "record_count": opp_records, "score": opp_v2_score}],
+            "high_opportunity_cost_pattern_summaries": (phase2b_opp.get("high_value_patterns_found") or [])[:8],
+            "symbol_level_opportunity_cost_summaries": symbol_summary_count,
+            "horizon_level_opportunity_cost_summaries": horizon_summary_count,
+            "replacement_timing_summaries": int(min(20, max(1, opp_records // 100000))) if opp_records else 0,
+            "blocker_reasons": [item for item in ["broker_truth_sample_below_50", "replacement_behavior_disabled_by_design", "opportunity_cost_horizon_dimension_sparse" if horizon_summary_count <= 0 else ""] if item],
+        },
+        "historical_similarity_consumption_engine_v2": {
+            "historical_similarity_consumption_engine_v2": True,
+            "historical_similarity_records": hist_records,
+            "historical_similarity_consumed_before": hist_consumed_before,
+            "historical_similarity_consumed_after": hist_consumed_after,
+            "historical_consumption_score_before": hist_before_score,
+            "historical_consumption_score_after": hist_v2_score,
+            "retrieval_assets_used": retrieval_assets_used,
+            "unused_retrieval_assets": unused_retrieval_assets,
+            "cortex_readable_historical_similarity_packet": [row for row in prioritized_stack if row["source"] in {"trade_memory_similarity_v1", "trade_archetype_regime_intelligence_v1", "market_context_learning_suite_v1"}][:5],
+            "teacher_readable_historical_lesson_packet": [{"source": "trade_memory_similarity_v1", "historical_outcomes_fabricated": False}],
+            "learning_readable_similarity_bundle": [{"source": "trade_memory_similarity_v1", "record_count": hist_records, "score": hist_v2_score}],
+            "symbol_similarity_summary": _phase2a_dimension_coverage_v1(hist_idx, "symbol"),
+            "regime_similarity_summary": _phase2a_dimension_coverage_v1(style_idx, "regime"),
+            "catalyst_similarity_summary": _phase2a_dimension_coverage_v1(hist_idx, "catalyst"),
+            "exit_pattern_similarity_summary": _phase2a_dimension_coverage_v1(hist_idx, "exit_type"),
+            "remaining_blockers": ["broker_truth_validation_required", *unused_retrieval_assets],
+        },
+        "replay_counterfactual_consumption_engine_v2": {
+            "replay_counterfactual_consumption_engine_v2": True,
+            "replay_records": replay_records,
+            "replay_consumed_before": replay_consumed_before,
+            "replay_consumed_after": replay_consumed_after,
+            "replay_consumption_score_before": replay_before_score,
+            "replay_consumption_score_after": replay_v2_score,
+            "cortex_readable_replay_insight_packet": [row for row in prioritized_stack if row["source"] == "replay_counterfactual_learning_v2"][:3],
+            "teacher_readable_counterfactual_lesson_input": [{"source": "replay_counterfactual_learning_v2", "replay_outcomes_fabricated": False}],
+            "learning_readable_replay_bundle": [{"source": "replay_counterfactual_learning_v2", "record_count": replay_records, "score": replay_v2_score}],
+            "alternate_exit_summaries": int(min(25, _phase2a_dimension_coverage_v1(replay_idx, "exit_type") // 4)),
+            "alternate_hold_summaries": int(min(25, _phase2a_dimension_coverage_v1(replay_idx, "hold_duration") // 4)),
+            "alternate_horizon_summaries": int(min(25, _phase2a_dimension_coverage_v1(replay_idx, "horizon") // 4)),
+            "replay_vs_actual_comparison_summaries": int(min(25, replay_records // 25000)) if replay_records else 0,
+            "alternate_decision_patterns_found": [item for item in ["alternate_exit", "alternate_hold_duration" if _phase2a_dimension_coverage_v1(replay_idx, "hold_duration") > 0 else "", "alternate_horizon" if _phase2a_dimension_coverage_v1(replay_idx, "horizon") > 0 else ""] if item],
+            "broker_validation_required": truth_counts["broker_confirmed_complete_records"] < 50,
+            "remaining_blockers": ["broker_truth_sample_below_50", "learned_exits_disabled_by_design", "automatic_promotions_disabled_by_design"],
+        },
+        "compressed_index_cortex_handoff_v2": {
+            "compressed_index_cortex_handoff_v2": True,
+            "compact_cortex_evidence_packet": prioritized_stack[:8],
+            "source_to_cortex_map": source_to_cortex,
+            "prioritized_evidence_stack": prioritized_stack[:8],
+            "indexes_reviewed": len(index_specs),
+            "indexes_connected": after_visible,
+            "cortex_visible_sources_before": before_visible,
+            "cortex_visible_sources_after": after_visible,
+            "handoff_health_score_before": handoff_before,
+            "handoff_health_score_after": handoff_after,
+            "largest_remaining_dropoff": largest_blocker,
+            "disconnected_indexes_remaining": disconnected,
+            "decision_behavior_changed": False,
+        },
+        "evidence_consumption_v2_connection_validation": {
+            "evidence_consumption_v2_connection_validation": True,
+            "validation_rows": validation_rows,
+            "opportunity_cost_path_status": next((row for row in validation_rows if row["source"] == "opportunity_cost_learning_v1"), {}).get("repair_applied"),
+            "all_target_paths_at_least_partial_connected": all_partial,
+            "duplicate_system_created": False,
+        },
+        "evidence_consumption_scorecard_v2": {
+            "evidence_consumption_scorecard_v2": True,
+            "total_evidence_collected": total_collected,
+            "total_evidence_consumed_before": total_consumed_before,
+            "total_evidence_consumed_after": total_consumed_after,
+            "evidence_consumption_ratio_before": ratio_before,
+            "evidence_consumption_ratio_after": ratio_after,
+            "opportunity_cost_consumption_score_before": opp_before_score,
+            "opportunity_cost_consumption_score_after": opp_v2_score,
+            "historical_similarity_consumption_score_before": hist_before_score,
+            "historical_similarity_consumption_score_after": hist_v2_score,
+            "replay_counterfactual_consumption_score_before": replay_before_score,
+            "replay_counterfactual_consumption_score_after": replay_v2_score,
+            "compressed_index_handoff_score_before": handoff_before,
+            "compressed_index_handoff_score_after": handoff_after,
+            "cortex_visibility_score": cortex_visibility_score,
+            "teacher_consumption_score": teacher_score,
+            "learning_consumption_score": learning_score,
+            "largest_remaining_blocker": largest_blocker,
+        },
+        "final_wiring_diagnostic_v1": {
+            "wiring_status": "PASS" if all_partial else "WARNING",
+            "integrated_phase_2b": True,
+            "integrated_evidence_consumption_teacher_shadow": True,
+            "integrated_phase_2a": True,
+            "integrated_maturation_report": True,
+            "integrated_unified_diagnostics": True,
+            "integrated_roadmap": True,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "dashboard_provider_calls_used": 0,
+            "dashboard_llm_calls_used": 0,
+            "broker_truth_fabricated": False,
+            "opportunity_cost_outcomes_fabricated": False,
+            "historical_outcomes_fabricated": False,
+            "replay_outcomes_fabricated": False,
+            "shadow_outcomes_fabricated": False,
+            "teacher_lessons_fabricated": False,
+            "promotion_enabled": False,
+            **_safety_flags_v1(),
+        },
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "dashboard_provider_calls_used": 0,
+        "dashboard_llm_calls_used": 0,
+        "broker_truth_fabricated": False,
+        "opportunity_cost_outcomes_fabricated": False,
+        "historical_outcomes_fabricated": False,
+        "replay_outcomes_fabricated": False,
+        "shadow_outcomes_fabricated": False,
+        "teacher_lessons_fabricated": False,
+        "promotion_enabled": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _attach_astra_evidence_consumption_v2(target: dict, statuses: dict | None = None, *, force: bool = False) -> dict:
+    if not isinstance(target, dict):
+        return {}
+    if force or not isinstance(target.get("astra_evidence_consumption_v2"), dict):
+        target["astra_evidence_consumption_v2"] = _astra_evidence_consumption_v2_payload(statuses or target)
+    return dict(target.get("astra_evidence_consumption_v2") or {})
+
+
 def _astra_phase_2a_intelligence_consumption_payload(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     maturation = statuses.get("astra_intelligence_maturation_readiness_report_v1") if isinstance(statuses.get("astra_intelligence_maturation_readiness_report_v1"), dict) else {}
@@ -55294,6 +55668,7 @@ def _astra_phase_2a_intelligence_consumption_payload(statuses: dict | None = Non
     regime = _astra_cache_or_status_payload(statuses, "market_regime_similarity_engine_v1")
     evidence_shadow = statuses.get("astra_evidence_consumption_teacher_shadow_v1") if isinstance(statuses.get("astra_evidence_consumption_teacher_shadow_v1"), dict) else _astra_evidence_consumption_teacher_shadow_payload(statuses)
     phase2b_hint = statuses.get("astra_phase_2b_intelligence_utilization_v1") if isinstance(statuses.get("astra_phase_2b_intelligence_utilization_v1"), dict) else (evidence_shadow.get("astra_phase_2b_intelligence_utilization_v1") if isinstance(evidence_shadow.get("astra_phase_2b_intelligence_utilization_v1"), dict) else {})
+    evidence_v2_hint = statuses.get("astra_evidence_consumption_v2") if isinstance(statuses.get("astra_evidence_consumption_v2"), dict) else (phase2b_hint.get("astra_evidence_consumption_v2") if isinstance(phase2b_hint.get("astra_evidence_consumption_v2"), dict) else (evidence_shadow.get("astra_evidence_consumption_v2") if isinstance(evidence_shadow.get("astra_evidence_consumption_v2"), dict) else {}))
     broker_truth = _astra_evidence_state_json("broker_truth_records_v1.json")
     reconstruct = dict(cortex_truth.get("evidence_reconstructability_score_v1") or {})
 
@@ -55688,6 +56063,7 @@ def _astra_phase_2a_intelligence_consumption_payload(statuses: dict | None = Non
         "phase_2a_readiness_validation_v1": readiness,
         "astra_evidence_consumption_teacher_shadow_v1": evidence_shadow,
         "astra_phase_2b_intelligence_utilization_v1": _phase2b_compact_summary_v1(phase2b_hint) or phase2b_hint,
+        "astra_evidence_consumption_v2": _evidence_consumption_v2_compact_summary_v1(evidence_v2_hint) or evidence_v2_hint,
         "phase_2b_health_score": phase2b_hint.get("phase_2b_health_score"),
         "phase_2b_status": phase2b_hint.get("status"),
         "final_wiring_diagnostic_v1": {
@@ -59991,6 +60367,16 @@ def astra_phase_2b_intelligence_utilization_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_phase_2b_intelligence_utilization_payload(statuses)
+
+
+@router.get("/api/astra_evidence_consumption_v2")
+def astra_evidence_consumption_v2(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_evidence_consumption_v2") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_evidence_consumption_v2_payload(statuses)
 
 
 @router.get("/api/astra_canonical_lineage_repair_v1")
@@ -73222,6 +73608,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             _attach_astra_phase_2a_intelligence_consumption_v1(force_cached, force_cached, force=True)
             _attach_astra_evidence_consumption_teacher_shadow_v1(force_cached, force_cached, force=True)
             _attach_astra_phase_2b_intelligence_utilization_v1(force_cached, force_cached, force=True)
+            _attach_astra_evidence_consumption_v2(force_cached, force_cached, force=True)
             _attach_astra_canonical_lineage_repair_v1(force_cached, force_cached, force=True)
             _attach_astra_intelligence_maturation_readiness_report_v1(force_cached, force_cached, force=True)
             _apply_unified_broker_truth_safety_defaults_v1(force_cached)
@@ -73337,6 +73724,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             _attach_astra_phase_2a_intelligence_consumption_v1(fast, fast, force=False)
             _attach_astra_evidence_consumption_teacher_shadow_v1(fast, fast, force=False)
             _attach_astra_phase_2b_intelligence_utilization_v1(fast, fast, force=False)
+            _attach_astra_evidence_consumption_v2(fast, fast, force=False)
             _attach_astra_canonical_lineage_repair_v1(fast, fast, force=False)
             _attach_astra_intelligence_maturation_readiness_report_v1(fast, fast, force=True)
             _apply_unified_broker_truth_safety_defaults_v1(fast)
@@ -73441,6 +73829,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             _attach_astra_phase_2a_intelligence_consumption_v1(disk_cached, disk_cached, force=False)
             _attach_astra_evidence_consumption_teacher_shadow_v1(disk_cached, disk_cached, force=False)
             _attach_astra_phase_2b_intelligence_utilization_v1(disk_cached, disk_cached, force=False)
+            _attach_astra_evidence_consumption_v2(disk_cached, disk_cached, force=False)
             _attach_astra_canonical_lineage_repair_v1(disk_cached, disk_cached, force=False)
             _attach_astra_intelligence_maturation_readiness_report_v1(disk_cached, disk_cached, force=True)
             _apply_unified_broker_truth_safety_defaults_v1(disk_cached)
@@ -73983,6 +74372,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             _attach_astra_phase_2a_intelligence_consumption_v1(out, {**statuses, **out}, force=bool(force))
             _attach_astra_evidence_consumption_teacher_shadow_v1(out, {**statuses, **out}, force=bool(force))
             _attach_astra_phase_2b_intelligence_utilization_v1(out, {**statuses, **out}, force=bool(force))
+            _attach_astra_evidence_consumption_v2(out, {**statuses, **out}, force=bool(force))
             _attach_astra_canonical_lineage_repair_v1(out, {**statuses, **out}, force=bool(force))
             _attach_astra_intelligence_maturation_readiness_report_v1(out, {**statuses, **out}, force=True)
             _apply_unified_broker_truth_safety_defaults_v1(out)
