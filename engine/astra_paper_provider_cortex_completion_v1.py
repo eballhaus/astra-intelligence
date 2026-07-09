@@ -18,6 +18,7 @@ MAX_LESSONS = 1500
 MAX_CLOSED = 1200
 ISSUE_REGISTRY = "cortex_issue_registry_v1.json"
 CLOSED_REGISTRY = "closed_trade_truth_registry_v1.json"
+BROKER_TRUTH_REGISTRY = "broker_truth_records_v1.json"
 FMP_USAGE = "fmp_usage_state.json"
 FMP_CACHE = "fmp_cache_index.json"
 FMP_MANIFEST = "fmp_efficiency_manifest_v1.json"
@@ -147,6 +148,38 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         has_order_id = present(row.get("broker_order_id")) or present(row.get("client_order_id"))
         return bool(has_order_id and present(row.get("exit_time")) and row.get("realized_pnl") is not None)
 
+    def _canonical_broker_truth_counts(self) -> dict[str, Any]:
+        registry = self._read_json(BROKER_TRUTH_REGISTRY)
+        records = [r for r in (registry.get("records") or []) if isinstance(r, dict)]
+        complete_records = [
+            r for r in records
+            if str(r.get("truth_quality") or "").lower() == "broker_confirmed_complete"
+            or bool(r.get("closed_indicator") and r.get("realized_pnl_available"))
+        ]
+        buy_fills = sum(1 for r in records if str(r.get("side") or "").lower() == "buy")
+        sell_fills = sum(1 for r in records if str(r.get("side") or "").lower() == "sell")
+        complete = to_int(registry.get("broker_confirmed_complete_records"), len(complete_records))
+        official = to_int(registry.get("official_metric_eligible_records"), complete)
+        total = to_int(registry.get("broker_truth_records_total"), len(records))
+        return {
+            "broker_truth_records_total": total,
+            "broker_confirmed_complete_records": complete,
+            "broker_confirmed_truth_records": complete,
+            "official_metric_eligible_records": official,
+            "broker_truth_closed_trade_count": complete,
+            "broker_truth_closed_trades": complete,
+            "buy_fill_count": to_int(registry.get("buy_fills"), buy_fills),
+            "sell_fill_count": to_int(registry.get("sell_fills"), sell_fills),
+            "paired_round_trip_count": to_int(registry.get("paired_round_trips"), complete),
+            "truth_source": BROKER_TRUTH_REGISTRY,
+            "legacy_compatibility_applied": True,
+            "official_metric_status": broker_metrics_status(complete),
+            "official_broker_truth_metric_status": broker_metrics_status(complete),
+            "verified_trading_metrics_status": broker_metrics_status(complete),
+            "minimum_broker_truth_records_required": 50,
+            "official_metrics_guarded": complete < 50,
+        }
+
     def _truth_integrity_audit(self, rows: list[dict[str, Any]], broker_closed: int = 0) -> dict[str, Any]:
         source_ids = [
             str(row.get("source_trade_id") or row.get("trade_id") or "").strip()
@@ -164,8 +197,10 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             source_name = str(row.get("source") or row.get("evidence_source") or row.get("record_type") or "").lower()
             if "replay" in source_name or "counterfactual" in source_name:
                 replay_records += 1
-        broker_truth_records = sum(1 for row in rows if self._is_broker_confirmed_truth_record(row))
-        missing_truth = len(rows) - broker_truth_records
+        legacy_broker_truth_records = sum(1 for row in rows if self._is_broker_confirmed_truth_record(row))
+        canonical = self._canonical_broker_truth_counts()
+        broker_truth_records = to_int(canonical.get("broker_confirmed_complete_records"), legacy_broker_truth_records)
+        missing_truth = len(rows) - legacy_broker_truth_records
         duplicate_source_ids = sum(1 for _, count in source_counts.items() if count > 1)
         duplicate_record_count = max(0, len(source_ids) - len(source_counts))
         advisory_records = sum(
@@ -180,16 +215,21 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         )
         maturity = broker_truth_maturity_label(broker_truth_records)
         metrics_status = broker_metrics_status(broker_truth_records)
-        inflation = bool(rows and (broker_truth_records < len(rows) or duplicate_record_count > 0))
+        inflation = bool(rows and (legacy_broker_truth_records < len(rows) or duplicate_record_count > 0))
         return {
             "status": "ok",
             "generated_at": now_iso(),
-            "registry_name": CLOSED_REGISTRY,
-            "registry_label_accuracy": "legacy_filename_misleading_lifecycle_advisory_registry_not_broker_truth",
+            "registry_name": BROKER_TRUTH_REGISTRY,
+            "legacy_registry_name": CLOSED_REGISTRY,
+            "registry_label_accuracy": "official_broker_truth_registry",
             "registry_recommended_label": "lifecycle_attribution_registry_v1",
             "record_count": len(rows),
             "broker_reported_closed_trades": to_int(broker_closed, 0),
+            "broker_confirmed_complete_records": broker_truth_records,
             "broker_confirmed_truth_records": broker_truth_records,
+            "official_metric_eligible_records": canonical.get("official_metric_eligible_records"),
+            "broker_truth_records_total": canonical.get("broker_truth_records_total"),
+            "legacy_registry_broker_confirmed_truth_records": legacy_broker_truth_records,
             "lifecycle_attribution_records": len(rows),
             "advisory_only_records": advisory_records,
             "replay_counterfactual_records": replay_records,
@@ -208,10 +248,15 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "broker_truth_maturity": maturity,
             "minimum_broker_truth_records_required": 50,
             "performance_metrics_safe_to_trust": bool(broker_truth_records >= 50),
+            "official_broker_truth": canonical,
             "advisory_lifecycle_evidence_available": bool(rows),
             "advisory_lifecycle_only": True,
             "diagnostic_only": True,
             "not_broker_verified": True,
+            "lifecycle_advisory_records_excluded": True,
+            "shadow_records_excluded": True,
+            "replay_records_excluded": True,
+            "counterfactual_records_excluded": True,
             "raw_registry_records_modified": False,
             **safe_flags(),
         }
@@ -477,7 +522,9 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "generated_at": now_iso(),
             "records": registry_rows,
             "record_count": len(registry_rows),
-            "broker_truth_closed_trades": broker_closed,
+            "broker_truth_closed_trades": audit.get("broker_confirmed_truth_records"),
+            "broker_confirmed_complete_records": audit.get("broker_confirmed_complete_records"),
+            "official_metric_eligible_records": audit.get("official_metric_eligible_records"),
             "lifecycle_learning_closed_records": len(lifecycle_rows),
             "truth_integrity_audit_v1": audit,
             "registry_label_accuracy": audit.get("registry_label_accuracy"),
@@ -504,7 +551,9 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "tracked_closed_trades_after": len(registry_rows),
             "tracked_lifecycle_attribution_records_after": len(registry_rows),
             "attributed_paper_trade_count": len(registry_rows),
-            "broker_truth_closed_trades": broker_closed,
+            "broker_truth_closed_trades": broker_truth_records,
+            "broker_confirmed_complete_records": broker_truth_records,
+            "official_metric_eligible_records": audit.get("official_metric_eligible_records"),
             "broker_confirmed_truth_records": broker_truth_records,
             "lifecycle_closed_trades_available": len(lifecycle_rows),
             "lifecycle_attribution_records": len(registry_rows),
@@ -539,6 +588,7 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         return rounded(gross_profit, 3) if gross_profit > 0 else 0.0
 
     def _real_paper_performance(self, closed: dict[str, Any], statuses: dict[str, Any]) -> dict[str, Any]:
+        canonical = self._canonical_broker_truth_counts()
         registry = self._read_json(CLOSED_REGISTRY)
         rows = registry.get("records") if isinstance(registry.get("records"), list) else []
         broker_rows = [r for r in rows if self._is_broker_confirmed_truth_record(r)]
@@ -548,8 +598,8 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         lifecycle_losses = [v for v in lifecycle_returns if v < 0]
         broker_wins = [v for v in broker_returns if v > 0]
         broker_losses = [v for v in broker_returns if v < 0]
-        broker_reported_closed_count = to_int(closed.get("broker_truth_closed_trades"), 0)
-        broker_truth_count = len(broker_rows)
+        broker_reported_closed_count = to_int(closed.get("broker_truth_closed_trades"), canonical.get("broker_confirmed_truth_records"))
+        broker_truth_count = to_int(canonical.get("broker_confirmed_truth_records"), len(broker_rows))
         maturity = broker_truth_maturity_label(broker_truth_count)
         metrics_status = broker_metrics_status(broker_truth_count)
         official_available = broker_truth_count >= 50
@@ -570,7 +620,10 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         return {
             "broker_truth_closed_trade_count": broker_truth_count,
             "broker_truth_closed_trades": broker_truth_count,
+            "broker_confirmed_complete_records": broker_truth_count,
             "broker_confirmed_truth_records": broker_truth_count,
+            "official_metric_eligible_records": canonical.get("official_metric_eligible_records"),
+            "broker_truth_records_total": canonical.get("broker_truth_records_total"),
             "broker_reported_closed_trade_count": broker_reported_closed_count,
             "attributed_paper_trade_count": attributed_count,
             "attributed_paper_trades": attributed_count,
@@ -601,6 +654,8 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "paper_performance_blocker_if_below_60": None if score >= 60 else "broker-confirmed closed trade sample remains below 50; lifecycle attribution is useful but official Paper PF/WR/Avg Return remain blocked",
             "broker_truth_paper_metrics": {
                 "closed_trades": broker_truth_count,
+                "official_metric_eligible_records": canonical.get("official_metric_eligible_records"),
+                "broker_truth_records_total": canonical.get("broker_truth_records_total"),
                 "paper_metric_trust_level": maturity,
                 "verified_trading_metrics_status": metrics_status,
                 "ready_for_performance_judgment": bool(official_available),
@@ -1630,6 +1685,7 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         }
 
     def _broker_truth_completion(self, closed: dict[str, Any], performance: dict[str, Any], statuses: dict[str, Any]) -> dict[str, Any]:
+        canonical = self._canonical_broker_truth_counts()
         alpaca = statuses.get("alpaca_paper_status_v1") if isinstance(statuses.get("alpaca_paper_status_v1"), dict) else {}
         broker_closed = to_int(performance.get("broker_truth_closed_trade_count"), closed.get("broker_truth_closed_trades"))
         broker_open = to_int(alpaca.get("open_positions_count"), to_int(alpaca.get("broker_confirmed_positions"), 0))
@@ -1641,7 +1697,7 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
         rows = registry.get("records") if isinstance(registry.get("records"), list) else []
         broker_rows = [r for r in rows if self._is_broker_confirmed_truth_record(r)]
         broker_reported_closed = broker_closed
-        broker_closed = len(broker_rows)
+        broker_closed = to_int(canonical.get("broker_confirmed_truth_records"), len(broker_rows))
         returns = [to_float(r.get("return_pct"), 0.0) for r in broker_rows if present(r.get("return_pct"))]
         gross_profit = sum(v for v in returns if v > 0)
         gross_loss = abs(sum(v for v in returns if v < 0))
@@ -1655,7 +1711,10 @@ class AstraPaperProviderCortexCompletionV1(CachedDiagnosticModule):
             "status": "ok",
             "broker_truth_closed_trades_before": broker_closed,
             "broker_truth_closed_trades_after": broker_closed,
+            "broker_confirmed_complete_records": broker_closed,
             "broker_confirmed_truth_records": broker_closed,
+            "official_metric_eligible_records": canonical.get("official_metric_eligible_records"),
+            "broker_truth_records_total": canonical.get("broker_truth_records_total"),
             "broker_reported_closed_trade_count": broker_reported_closed,
             "broker_truth_open_positions": broker_open,
             "broker_truth_orders_reviewed": orders_reviewed,

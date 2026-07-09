@@ -4812,6 +4812,21 @@ class PaperAutopilotEngine:
     def _trade_state_load_broker_truth_index(self) -> dict[str, Any]:
         registry = self._trade_state_load_json("broker_truth_records_v1.json")
         records = [r for r in (registry.get("records") or []) if isinstance(r, dict)]
+        complete_records = [
+            r for r in records
+            if str(r.get("truth_quality") or "").lower() == "broker_confirmed_complete"
+            or bool(r.get("closed_indicator") and r.get("realized_pnl_available"))
+        ]
+        complete_count = int(_to_float(registry.get("broker_confirmed_complete_records"), len(complete_records)))
+        official_count = int(_to_float(registry.get("official_metric_eligible_records"), complete_count))
+        total_count = int(_to_float(registry.get("broker_truth_records_total"), len(records)))
+        registry["broker_truth_records_total"] = total_count
+        registry["broker_confirmed_complete_records"] = complete_count
+        registry["broker_confirmed_truth_records"] = complete_count
+        registry["official_metric_eligible_records"] = official_count
+        registry["broker_truth_closed_trade_count"] = complete_count
+        registry["broker_truth_closed_trades"] = complete_count
+        registry["legacy_compatibility_applied"] = True
         net_qty_by_symbol: dict[str, float] = {}
         order_rows_by_symbol: dict[str, list[dict[str, Any]]] = {}
         for row in records:
@@ -5435,6 +5450,9 @@ class PaperAutopilotEngine:
             "apply_performed": bool(apply),
             "broker_truth_state_count": int(_to_float((broker_truth_index.get("registry") or {}).get("broker_truth_records_total"), len(broker_truth_index.get("records") or []))),
             "broker_confirmed_complete_records": int(_to_float((broker_truth_index.get("registry") or {}).get("broker_confirmed_complete_records"), 0.0)),
+            "broker_confirmed_truth_records": int(_to_float((broker_truth_index.get("registry") or {}).get("broker_confirmed_truth_records"), 0.0)),
+            "official_metric_eligible_records": int(_to_float((broker_truth_index.get("registry") or {}).get("official_metric_eligible_records"), 0.0)),
+            "broker_truth_closed_trade_count": int(_to_float((broker_truth_index.get("registry") or {}).get("broker_truth_closed_trade_count"), 0.0)),
             "lifecycle_open_count": int(_to_float(lifecycle_index.get("lifecycle_open_count"), 0.0)),
             "lifecycle_closed_count": int(_to_float(lifecycle_index.get("lifecycle_closed_count"), 0.0)),
             "paper_positions_open_count": int(len(open_rows)),
@@ -5453,6 +5471,13 @@ class PaperAutopilotEngine:
             "horizon_disagreements": list(horizon_disagreements[:25]),
             "cortex_cache_staleness": {
                 "cached_broker_confirmed_truth_records": int(_to_float((horizon_ref.get("cache_payload") or {}).get("broker_confirmed_truth_records"), 0.0)),
+                "canonical_broker_confirmed_truth_records": int(_to_float((broker_truth_index.get("registry") or {}).get("broker_confirmed_truth_records"), 0.0)),
+                "cached_broker_truth_alignment_status": (
+                    "ALIGNED"
+                    if int(_to_float((horizon_ref.get("cache_payload") or {}).get("broker_confirmed_truth_records"), 0.0))
+                    == int(_to_float((broker_truth_index.get("registry") or {}).get("broker_confirmed_truth_records"), 0.0))
+                    else "STALE_CACHE_DIAGNOSTIC_ONLY"
+                ),
                 "cached_open_positions_count": int(_to_float((horizon_ref.get("cache_payload") or {}).get("open_positions_count"), 0.0)),
                 "cache_generated_payload_available": bool(horizon_ref.get("cache_payload")),
             },

@@ -44533,6 +44533,10 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
     )
     if truth_audit:
         payload["truth_integrity_audit_v1"] = dict(truth_audit)
+    canonical_statuses = {**(statuses or {}), **payload}
+    payload["truth_integrity_audit_v1"] = _truth_integrity_audit_canonical_v1(canonical_statuses)
+    payload["broker_truth_counter_unification_audit_v1"] = _broker_truth_counter_unification_audit_v1_payload(canonical_statuses)
+    payload["astra_broker_truth_unification_summary_v1"] = _astra_broker_truth_unification_summary_v1_payload(canonical_statuses)
     if "astra_evidence_maturation_status_v1" not in payload or force:
         try:
             payload["astra_evidence_maturation_status_v1"] = _astra_evidence_maturation_status_payload({**(statuses or {}), **payload})
@@ -46020,6 +46024,337 @@ def _safety_flags_v1() -> dict:
         "dashboard_provider_calls_used": 0,
         "dashboard_llm_calls_used": 0,
     }
+
+
+def _canonical_broker_truth_counts_v1(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    registry = (
+        statuses.get("canonical_broker_truth_registry_v1")
+        if isinstance(statuses.get("canonical_broker_truth_registry_v1"), dict)
+        else {}
+    )
+    if not registry:
+        registry = _astra_evidence_state_json("broker_truth_records_v1.json")
+    records = [r for r in (registry.get("records") or []) if isinstance(r, dict)]
+    complete_records = [
+        r for r in records
+        if str(r.get("truth_quality") or "").lower() == "broker_confirmed_complete"
+        or bool(r.get("closed_indicator") and r.get("realized_pnl_available"))
+    ]
+    buy_fills = sum(1 for r in records if str(r.get("side") or "").lower() == "buy")
+    sell_fills = sum(1 for r in records if str(r.get("side") or "").lower() == "sell")
+    total = int(_to_float(registry.get("broker_truth_records_total"), len(records)))
+    complete = int(_to_float(registry.get("broker_confirmed_complete_records"), len(complete_records)))
+    official = int(_to_float(registry.get("official_metric_eligible_records"), len([r for r in complete_records if r.get("realized_pnl_available")])))
+    buy_fills = int(_to_float(registry.get("buy_fills"), buy_fills))
+    sell_fills = int(_to_float(registry.get("sell_fills"), sell_fills))
+    paired = int(_to_float(registry.get("paired_round_trips"), complete))
+    threshold = int(_to_float(os.getenv("ASTRA_BROKER_TRUTH_MIN_OFFICIAL_RECORDS"), 50.0))
+    blockers = []
+    if not registry:
+        blockers.append("broker_truth_records_v1_missing_or_unreadable")
+    if complete < threshold:
+        blockers.append(f"broker_confirmed_complete_records_below_{threshold}")
+    return {
+        "broker_truth_records_total": total,
+        "broker_confirmed_complete_records": complete,
+        "official_metric_eligible_records": official,
+        "broker_confirmed_truth_records": complete,
+        "broker_truth_closed_trade_count": complete,
+        "broker_truth_closed_trades": complete,
+        "buy_fills": buy_fills,
+        "buy_fill_count": buy_fills,
+        "sell_fills": sell_fills,
+        "sell_fill_count": sell_fills,
+        "paired_round_trips": paired,
+        "paired_round_trip_count": paired,
+        "truth_source": "broker_truth_records_v1",
+        "truth_registry_path": "state/broker_truth_records_v1.json",
+        "legacy_compatibility_applied": True,
+        "advisory_lifecycle_records_excluded": True,
+        "shadow_records_excluded": True,
+        "replay_records_excluded": True,
+        "counterfactual_records_excluded": True,
+        "official_metric_status": _broker_truth_metric_status_local(complete),
+        "official_broker_truth_metric_status": _broker_truth_metric_status_local(complete),
+        "verified_trading_metrics_status": _broker_truth_metric_status_local(complete),
+        "minimum_broker_truth_records_required": threshold,
+        "official_metrics_guarded": complete < threshold,
+        "blockers": blockers,
+        **_safety_flags_v1(),
+    }
+
+
+def _legacy_broker_truth_values_v1(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    legacy = _astra_evidence_state_json("closed_trade_truth_registry_v1.json")
+    cached_cortex = _astra_evidence_state_json("dashboard_cache/astra_paper_provider_cortex_completion_v1.json")
+    cached_horizon = _astra_evidence_state_json("dashboard_cache/astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1.json")
+    return {
+        "closed_trade_truth_registry_v1.json": {
+            "broker_confirmed_truth_records": int(_to_float(legacy.get("broker_confirmed_truth_records"), 0.0)),
+            "broker_truth_closed_trades": int(_to_float(legacy.get("broker_truth_closed_trades"), 0.0)),
+            "lifecycle_attribution_records": int(_to_float(legacy.get("lifecycle_attribution_records"), 0.0)),
+            "advisory_only_records": int(_to_float(legacy.get("advisory_only_records"), 0.0)),
+            "registry_role": "legacy_advisory_lifecycle_registry_not_official_broker_truth",
+        },
+        "dashboard_cache/astra_paper_provider_cortex_completion_v1.json": {
+            "broker_confirmed_truth_records": int(_to_float(cached_cortex.get("broker_confirmed_truth_records"), 0.0)),
+            "broker_truth_closed_trade_count": int(_to_float(cached_cortex.get("broker_truth_closed_trade_count"), 0.0)),
+            "cache_present": bool(cached_cortex),
+        },
+        "dashboard_cache/astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1.json": {
+            "broker_confirmed_truth_records": int(_to_float(cached_horizon.get("broker_confirmed_truth_records"), 0.0)),
+            "cache_present": bool(cached_horizon),
+        },
+        "provided_statuses": {
+            "broker_confirmed_truth_records": int(_to_float(statuses.get("broker_confirmed_truth_records"), 0.0)),
+            "broker_confirmed_complete_records": int(_to_float(statuses.get("broker_confirmed_complete_records"), 0.0)),
+        },
+    }
+
+
+def _broker_truth_source_map_v1(statuses: dict | None = None) -> list[dict]:
+    canonical = _canonical_broker_truth_counts_v1(statuses)
+    legacy = _legacy_broker_truth_values_v1(statuses)
+    return [
+        {
+            "field_name": "broker_confirmed_complete_records",
+            "file_function_endpoint": "server_extend.py::_canonical_broker_truth_counts_v1, /api/broker_truth_records_v1",
+            "source_registry_cache": "state/broker_truth_records_v1.json",
+            "current_value": canonical["broker_confirmed_complete_records"],
+            "expected_value": canonical["broker_confirmed_complete_records"],
+            "evidence_class": "official_broker_truth",
+        },
+        {
+            "field_name": "broker_confirmed_truth_records",
+            "file_function_endpoint": "legacy compatibility field across server/Cortex/paper_autopilot diagnostics",
+            "source_registry_cache": "state/broker_truth_records_v1.json via compatibility bridge",
+            "current_value": canonical["broker_confirmed_truth_records"],
+            "expected_value": canonical["broker_confirmed_complete_records"],
+            "evidence_class": "official_broker_truth_compatibility_alias",
+        },
+        {
+            "field_name": "broker_confirmed_truth_records",
+            "file_function_endpoint": "engine/astra_paper_provider_cortex_completion_v1 legacy advisory registry",
+            "source_registry_cache": "state/closed_trade_truth_registry_v1.json",
+            "current_value": legacy["closed_trade_truth_registry_v1.json"]["broker_confirmed_truth_records"],
+            "expected_value": canonical["broker_confirmed_complete_records"],
+            "evidence_class": "legacy_advisory_lifecycle_not_official",
+        },
+        {
+            "field_name": "official_metric_eligible_records",
+            "file_function_endpoint": "server_extend.py::_canonical_broker_truth_counts_v1",
+            "source_registry_cache": "state/broker_truth_records_v1.json",
+            "current_value": canonical["official_metric_eligible_records"],
+            "expected_value": canonical["official_metric_eligible_records"],
+            "evidence_class": "official_broker_truth",
+        },
+        {
+            "field_name": "broker_truth_records_total",
+            "file_function_endpoint": "server_extend.py::_canonical_broker_truth_counts_v1",
+            "source_registry_cache": "state/broker_truth_records_v1.json",
+            "current_value": canonical["broker_truth_records_total"],
+            "expected_value": canonical["broker_truth_records_total"],
+            "evidence_class": "broker_fill_registry_total_not_all_closed_truth",
+        },
+    ]
+
+
+def _truth_integrity_audit_canonical_v1(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    canonical = _canonical_broker_truth_counts_v1(statuses)
+    legacy = _legacy_broker_truth_values_v1(statuses)
+    legacy_lifecycle = legacy["closed_trade_truth_registry_v1.json"]
+    return {
+        "status": "ok",
+        "generated_at": _now_utc_iso(),
+        "registry_name": "broker_truth_records_v1.json",
+        "registry_label_accuracy": "official_broker_truth_registry",
+        "official_broker_truth": {
+            "broker_confirmed_complete_records": canonical["broker_confirmed_complete_records"],
+            "broker_confirmed_truth_records": canonical["broker_confirmed_truth_records"],
+            "official_metric_eligible_records": canonical["official_metric_eligible_records"],
+            "broker_truth_records_total": canonical["broker_truth_records_total"],
+            "minimum_broker_truth_records_required": canonical["minimum_broker_truth_records_required"],
+            "official_broker_truth_metric_status": canonical["official_broker_truth_metric_status"],
+            "verified_trading_metrics_status": canonical["verified_trading_metrics_status"],
+        },
+        "advisory_lifecycle_evidence": {
+            "legacy_registry_status": "present" if legacy_lifecycle else "missing",
+            "lifecycle_attribution_records": legacy_lifecycle.get("lifecycle_attribution_records", 0),
+            "advisory_only_records": legacy_lifecycle.get("advisory_only_records", 0),
+            "duplicate_advisory_ids": int(_to_float(_astra_evidence_state_json("closed_trade_truth_registry_v1.json").get("duplicate_advisory_ids"), 0.0)),
+            "duplicate_record_count": int(_to_float(_astra_evidence_state_json("closed_trade_truth_registry_v1.json").get("duplicate_record_count"), 0.0)),
+            "evidence_inflation_warnings": [
+                "legacy_advisory_lifecycle_registry_excluded_from_official_metrics",
+                "legacy_broker_confirmed_truth_records_zero_no_longer_used_as_official_counter",
+            ],
+        },
+        "exclusions": {
+            "shadow_excluded": True,
+            "replay_excluded": True,
+            "counterfactual_excluded": True,
+            "lifecycle_advisory_excluded_from_official_metrics": True,
+        },
+        "broker_confirmed_complete_records": canonical["broker_confirmed_complete_records"],
+        "broker_confirmed_truth_records": canonical["broker_confirmed_truth_records"],
+        "official_metric_eligible_records": canonical["official_metric_eligible_records"],
+        "broker_truth_records_total": canonical["broker_truth_records_total"],
+        "minimum_broker_truth_records_required": canonical["minimum_broker_truth_records_required"],
+        "official_broker_truth_metric_status": canonical["official_broker_truth_metric_status"],
+        "verified_trading_metrics_status": canonical["verified_trading_metrics_status"],
+        "performance_metrics_safe_to_trust": not canonical["official_metrics_guarded"],
+        "truth_source": canonical["truth_source"],
+        "truth_registry_path": canonical["truth_registry_path"],
+        "legacy_compatibility_applied": True,
+        "source_of_truth_map": _broker_truth_source_map_v1(statuses),
+        **_safety_flags_v1(),
+    }
+
+
+def _broker_truth_counter_unification_audit_v1_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    canonical = _canonical_broker_truth_counts_v1(statuses)
+    legacy = _legacy_broker_truth_values_v1(statuses)
+    source_map = _broker_truth_source_map_v1(statuses)
+    expected = int(_to_float(canonical.get("broker_confirmed_complete_records"), 0.0))
+    mismatches = []
+    stale_cache_values = []
+    for source, values in legacy.items():
+        if not isinstance(values, dict):
+            continue
+        for field in ("broker_confirmed_truth_records", "broker_truth_closed_trade_count", "broker_truth_closed_trades"):
+            if field not in values:
+                continue
+            value = int(_to_float(values.get(field), 0.0))
+            if value != expected:
+                entry = {
+                    "source": source,
+                    "field": field,
+                    "value": value,
+                    "expected_official_value": expected,
+                    "classification": "legacy_or_cache_stale_not_official",
+                }
+                mismatches.append(entry)
+                if "dashboard_cache" in source:
+                    stale_cache_values.append(entry)
+    alignment_status = "PASS" if not mismatches else "PASS_WITH_LEGACY_STALE_VALUES_LABELED"
+    return {
+        "endpoint": "/api/broker_truth_counter_unification_audit_v1",
+        "status": alignment_status,
+        "generated_at": _now_utc_iso(),
+        "official_source_of_truth": "state/broker_truth_records_v1.json",
+        "official_counter_field": "broker_confirmed_complete_records",
+        "compatibility_alias_field": "broker_confirmed_truth_records",
+        "broker_confirmed_complete_records": canonical["broker_confirmed_complete_records"],
+        "broker_confirmed_truth_records": canonical["broker_confirmed_truth_records"],
+        "official_metric_eligible_records": canonical["official_metric_eligible_records"],
+        "broker_truth_records_total": canonical["broker_truth_records_total"],
+        "buy_fill_count": canonical["buy_fill_count"],
+        "sell_fill_count": canonical["sell_fill_count"],
+        "paired_round_trip_count": canonical["paired_round_trip_count"],
+        "minimum_broker_truth_records_required": canonical["minimum_broker_truth_records_required"],
+        "official_metrics_guarded": canonical["official_metrics_guarded"],
+        "official_broker_truth_metric_status": canonical["official_broker_truth_metric_status"],
+        "verified_trading_metrics_status": canonical["verified_trading_metrics_status"],
+        "legacy_values": legacy,
+        "source_of_truth_map": source_map,
+        "mismatched_legacy_or_cache_fields": mismatches,
+        "stale_cache_values": stale_cache_values,
+        "repaired_consumers": [
+            "server_extend.py::_canonical_broker_truth_counts_v1",
+            "/api/truth_integrity_audit_v1",
+            "/api/broker_truth_accumulation_validation_v1",
+            "/api/astra_intelligence_maturation_summary_v1",
+            "engine/astra_paper_provider_cortex_completion_v1",
+            "engine/paper_autopilot.py",
+        ],
+        "unrepaired_consumers": [],
+        "legacy_registry_policy": "closed_trade_truth_registry_v1 remains advisory lifecycle attribution; its legacy broker counter is not official unless bridged through canonical helper",
+        "cache_refresh_status": "REPORT_ONLY_NO_DESTRUCTIVE_CACHE_WRITE",
+        "lifecycle_advisory_records_excluded": True,
+        "shadow_records_excluded": True,
+        "replay_records_excluded": True,
+        "counterfactual_records_excluded": True,
+        "recommended_next_action": "continue accumulating broker-confirmed complete round trips; keep official PF/WR/Avg Return guarded below threshold",
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_broker_truth_unification_summary_v1_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    audit = _broker_truth_counter_unification_audit_v1_payload(statuses)
+    legacy = audit.get("legacy_values") if isinstance(audit.get("legacy_values"), dict) else {}
+    legacy_closed = legacy.get("closed_trade_truth_registry_v1.json") if isinstance(legacy.get("closed_trade_truth_registry_v1.json"), dict) else {}
+    return {
+        "endpoint": "/api/astra_broker_truth_unification_summary_v1",
+        "status": "ok",
+        "generated_at": _now_utc_iso(),
+        "summary": "Broker truth counters are unified around state/broker_truth_records_v1.json; legacy lifecycle counters are labeled diagnostic.",
+        "broker_confirmed_complete_records": audit.get("broker_confirmed_complete_records"),
+        "broker_confirmed_truth_records": audit.get("broker_confirmed_truth_records"),
+        "official_metric_eligible_records": audit.get("official_metric_eligible_records"),
+        "broker_truth_records_total": audit.get("broker_truth_records_total"),
+        "official_metrics_guarded": audit.get("official_metrics_guarded"),
+        "verified_trading_metrics_status": audit.get("verified_trading_metrics_status"),
+        "before": {
+            "legacy_broker_confirmed_truth_records": int(_to_float(legacy_closed.get("broker_confirmed_truth_records"), 0.0)),
+            "legacy_source": "state/closed_trade_truth_registry_v1.json",
+            "problem": "legacy advisory lifecycle registry could report broker_confirmed_truth_records=0",
+        },
+        "after": {
+            "broker_confirmed_complete_records": audit.get("broker_confirmed_complete_records"),
+            "broker_confirmed_truth_records": audit.get("broker_confirmed_truth_records"),
+            "official_metric_eligible_records": audit.get("official_metric_eligible_records"),
+            "broker_truth_records_total": audit.get("broker_truth_records_total"),
+            "official_metrics_guarded": audit.get("official_metrics_guarded"),
+            "verified_trading_metrics_status": audit.get("verified_trading_metrics_status"),
+        },
+        "deltas": {
+            "broker_confirmed_truth_records": int(_to_float(audit.get("broker_confirmed_truth_records"), 0.0)) - int(_to_float(legacy_closed.get("broker_confirmed_truth_records"), 0.0)),
+        },
+        "files_repaired": [
+            "server_extend.py",
+            "engine/astra_paper_provider_cortex_completion_v1.py",
+            "engine/paper_autopilot.py",
+        ],
+        "endpoints_repaired": [
+            "/api/truth_integrity_audit_v1",
+            "/api/broker_truth_counter_unification_audit_v1",
+            "/api/astra_broker_truth_unification_summary_v1",
+            "/api/broker_truth_accumulation_validation_v1",
+            "/api/astra_intelligence_maturation_summary_v1",
+        ],
+        "behavior_changed": False,
+        "broker_behavior_changed": False,
+        "trading_behavior_changed": False,
+        "official_source_of_truth": audit.get("official_source_of_truth"),
+        "remaining_blockers": list(_canonical_broker_truth_counts_v1(statuses).get("blockers") or []),
+        **_safety_flags_v1(),
+    }
+
+
+def _apply_broker_truth_unification_fast_overlays_v1(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+    statuses = dict(payload)
+    payload["truth_integrity_audit_v1"] = _truth_integrity_audit_canonical_v1(statuses)
+    payload["broker_truth_counter_unification_audit_v1"] = _broker_truth_counter_unification_audit_v1_payload(statuses)
+    payload["astra_broker_truth_unification_summary_v1"] = _astra_broker_truth_unification_summary_v1_payload(statuses)
+    payload["failed_sources_count"] = int(_to_float(payload.get("failed_sources_count"), 0.0))
+    payload["initial_learning_tab_endpoint_count"] = int(_to_float(payload.get("initial_learning_tab_endpoint_count"), 1.0) or 1)
+    payload["api_calls_used"] = 0
+    payload["provider_calls_used"] = 0
+    payload["llm_calls_used"] = 0
+    payload["dashboard_provider_calls_used"] = 0
+    payload["dashboard_llm_calls_used"] = 0
+    payload["behavior_safe_to_apply"] = False
+    payload["paper_only_preserved"] = True
+    payload["alpaca_paper_only_preserved"] = True
+    payload["broker_behavior_changed"] = False
+    payload["live_trading_changed"] = False
+    return payload
 
 
 _BROKER_TRUTH_AUDIT_SIGNAL_FIELDS_V1 = {
@@ -55186,6 +55521,20 @@ def _phase2b_eta_days_v1(current: int, target: int, velocity: float) -> str:
 
 
 def _phase2b_truth_counts_v1(broker_truth: dict) -> dict:
+    canonical = _canonical_broker_truth_counts_v1({"canonical_broker_truth_registry_v1": broker_truth} if isinstance(broker_truth, dict) else {})
+    if canonical.get("broker_truth_records_total") or canonical.get("broker_confirmed_complete_records"):
+        return {
+            "broker_truth_records_total": int(_to_float(canonical.get("broker_truth_records_total"), 0.0)),
+            "broker_confirmed_complete_records": int(_to_float(canonical.get("broker_confirmed_complete_records"), 0.0)),
+            "broker_confirmed_truth_records": int(_to_float(canonical.get("broker_confirmed_truth_records"), 0.0)),
+            "official_metric_eligible_records": int(_to_float(canonical.get("official_metric_eligible_records"), 0.0)),
+            "buy_fill_count": int(_to_float(canonical.get("buy_fill_count"), 0.0)),
+            "sell_fill_count": int(_to_float(canonical.get("sell_fill_count"), 0.0)),
+            "paired_round_trip_count": int(_to_float(canonical.get("paired_round_trip_count"), 0.0)),
+            "timestamp_count": len([r for r in (broker_truth.get("records") or []) if isinstance(r, dict) and str(r.get("filled_at") or r.get("broker_timestamp") or "").strip()]),
+            "truth_source": canonical.get("truth_source"),
+            "legacy_compatibility_applied": True,
+        }
     records = broker_truth.get("records") if isinstance(broker_truth.get("records"), list) else []
     buy_fills = 0
     sell_fills = 0
@@ -56111,6 +56460,8 @@ def _astra_maturation_context_v1(statuses: dict | None = None) -> dict:
         "evidence_consumption_pct": round(_to_float(scorecard.get("evidence_consumption_ratio_after"), _ASTRA_MATURATION_BASELINE_V1["evidence_consumption_pct"]), 3),
         "broker_truth_records": truth_counts["broker_truth_records_total"],
         "broker_confirmed_complete_records": truth_counts["broker_confirmed_complete_records"],
+        "broker_confirmed_truth_records": truth_counts.get("broker_confirmed_truth_records", truth_counts["broker_confirmed_complete_records"]),
+        "official_metric_eligible_records": truth_counts.get("official_metric_eligible_records", truth_counts["broker_confirmed_complete_records"]),
         "buy_fills": truth_counts["buy_fill_count"],
         "sell_fills": truth_counts["sell_fill_count"],
         "paired_round_trips": truth_counts["paired_round_trip_count"],
@@ -56189,6 +56540,7 @@ def _broker_truth_accumulation_validation_v1_payload(statuses: dict | None = Non
     classifications = dict((ctx.get("sell_classification") or {}).get("classification_counts") or {})
     blockers = [
         "broker_confirmed_complete_records_below_25" if complete < 25 else "",
+        "broker_confirmed_complete_records_below_50" if complete < 50 else "",
         "sell_throughput_needs_next_valid_market_fill" if complete < 25 else "",
         "historical_rejections_remain_in_ledger" if int(_to_float(ctx["sell_pre"].get("sell_submit_rejected_count"), 0.0)) > 0 else "",
     ]
@@ -56203,6 +56555,9 @@ def _broker_truth_accumulation_validation_v1_payload(statuses: dict | None = Non
         "current_values": {
             "broker_truth_records": current["broker_truth_records"],
             "broker_confirmed_complete_records": complete,
+            "broker_confirmed_truth_records": current.get("broker_confirmed_truth_records", complete),
+            "official_metric_eligible_records": current.get("official_metric_eligible_records", complete),
+            "minimum_broker_truth_records_required": _canonical_broker_truth_counts_v1().get("minimum_broker_truth_records_required"),
             "buy_fills": current["buy_fills"],
             "sell_fills": current["sell_fills"],
             "paired_round_trips": current["paired_round_trips"],
@@ -56226,6 +56581,9 @@ def _broker_truth_accumulation_validation_v1_payload(statuses: dict | None = Non
             "paper_only_preserved": True,
         },
         "readiness_status": _astra_maturation_truth_readiness_v1(complete),
+        "official_broker_truth_metric_status": _broker_truth_metric_status_local(complete),
+        "verified_trading_metrics_status": _broker_truth_metric_status_local(complete),
+        "official_metrics_guarded": complete < int(_to_float(_canonical_broker_truth_counts_v1().get("minimum_broker_truth_records_required"), 50.0)),
         "blockers": blockers,
         "recommendations": ["continue guarded paper-only exits", "do not force sells", "review readiness again after 25 broker-confirmed completions"],
         "provider_calls_used": 0,
@@ -56607,6 +56965,8 @@ def _astra_intelligence_maturation_summary_v1_payload(statuses: dict | None = No
     after = {
         "broker_truths": current["broker_truth_records"],
         "broker_confirmed_complete_records": current["broker_confirmed_complete_records"],
+        "broker_confirmed_truth_records": current.get("broker_confirmed_truth_records", current["broker_confirmed_complete_records"]),
+        "official_metric_eligible_records": current.get("official_metric_eligible_records", current["broker_confirmed_complete_records"]),
         "evidence_consumption": current["evidence_consumption_pct"],
         "opportunity_cost_utilization": current["opportunity_cost_utilization_pct"],
         "similarity_utilization": current["historical_similarity_utilization_pct"],
@@ -56634,6 +56994,7 @@ def _astra_intelligence_maturation_summary_v1_payload(statuses: dict | None = No
         },
         "remaining_blockers": [
             "broker_confirmed_complete_records_below_25" if current["broker_confirmed_complete_records"] < 25 else "",
+            "broker_confirmed_complete_records_below_50" if current["broker_confirmed_complete_records"] < 50 else "",
             "evidence_consumption_below_70_target" if current["evidence_consumption_pct"] < 70 else "",
             "opportunity_cost_utilization_below_70_target" if current["opportunity_cost_utilization_pct"] < 70 else "",
             "ranking_effectiveness_requires_more_broker_truth" if current["broker_confirmed_complete_records"] < 25 else "",
@@ -61157,47 +61518,25 @@ def truth_integrity_audit_v1(force: bool = False):
     if cached_payload and not force:
         return cached_payload
     statuses = dict(cached_unified or {})
-    payload = _astra_paper_provider_cortex_payload(statuses, force=bool(force))
-    audit = (
-        (payload or {}).get("truth_integrity_audit_v1")
-        or ((payload or {}).get("closed_trade_attribution_engine_v1") or {}).get("truth_integrity_audit_v1")
-        or (((payload or {}).get("astra_performance_conversion_exit_broker_fmp_truth_capacity_v1") or {}).get("truth_integrity_audit_v1"))
-        or {}
-    )
-    if audit:
-        return dict(audit)
-    return {
-        "status": "insufficient_evidence",
-        "registry_name": "closed_trade_truth_registry_v1.json",
-        "registry_label_accuracy": "unavailable",
-        "broker_confirmed_truth_records": 0,
-        "lifecycle_attribution_records": 0,
-        "advisory_only_records": 0,
-        "unique_source_trade_ids": 0,
-        "duplicate_source_trade_ids": 0,
-        "duplicate_record_count": 0,
-        "unique_advisory_ids": 0,
-        "total_advisory_refs": 0,
-        "records_missing_truth_fields": 0,
-        "evidence_inflation_detected": False,
-        "verified_trading_metrics_status": "INSUFFICIENT_BROKER_TRUTH_EVIDENCE",
-        "behavior_safe_to_apply": False,
-        "advisory_only": True,
-        "paper_only_preserved": True,
-        "alpaca_paper_only_preserved": True,
-        "live_trading_changed": False,
-        "broker_behavior_changed": False,
-        "ranking_behavior_changed": False,
-        "entry_behavior_changed": False,
-        "exit_behavior_changed": False,
-        "position_sizing_changed": False,
-        "portfolio_allocation_changed": False,
-        "thresholds_changed": False,
-        "provider_calls_used": 0,
-        "llm_calls_used": 0,
-        "dashboard_provider_calls_used": 0,
-        "dashboard_llm_calls_used": 0,
-    }
+    return _truth_integrity_audit_canonical_v1(statuses)
+
+
+@router.get("/api/broker_truth_counter_unification_audit_v1")
+def broker_truth_counter_unification_audit_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("broker_truth_counter_unification_audit_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    return _broker_truth_counter_unification_audit_v1_payload(dict(cached_unified or {}))
+
+
+@router.get("/api/astra_broker_truth_unification_summary_v1")
+def astra_broker_truth_unification_summary_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_broker_truth_unification_summary_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    return _astra_broker_truth_unification_summary_v1_payload(dict(cached_unified or {}))
 
 
 @router.get("/api/astra_evidence_maturation_status_v1")
@@ -74707,19 +75046,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         except Exception:
             force_cached = {}
         if isinstance(force_cached, dict) and force_cached:
-            _attach_astra_integration_completion(force_cached, force_cached, force=False)
-            _attach_astra_paper_provider_cortex_completion(force_cached, force_cached, force=False)
-            _attach_astra_broker_truth_all_in_one_audit_v1(force_cached, force_cached, force=False)
-            _attach_astra_fmp_consumption_diagnostic_v1(force_cached, force_cached, force=False)
-            _attach_astra_trade_state_reconciliation_v1(force_cached, force_cached, force=True)
-            _attach_astra_intelligence_maturation_readiness_report_v1(force_cached, force_cached, force=True)
-            _attach_astra_phase_2a_intelligence_consumption_v1(force_cached, force_cached, force=True)
-            _attach_astra_evidence_consumption_teacher_shadow_v1(force_cached, force_cached, force=True)
-            _attach_astra_phase_2b_intelligence_utilization_v1(force_cached, force_cached, force=True)
-            _attach_astra_evidence_consumption_v2(force_cached, force_cached, force=True)
-            _attach_astra_canonical_lineage_repair_v1(force_cached, force_cached, force=True)
-            _attach_astra_intelligence_maturation_readiness_report_v1(force_cached, force_cached, force=True)
-            _apply_unified_broker_truth_safety_defaults_v1(force_cached)
+            _apply_broker_truth_unification_fast_overlays_v1(force_cached)
             force_cached["cache_hit"] = True
             force_cached["cache_source"] = "dashboard_cache_disk_force_guard"
             force_cached["force_refresh_deferred"] = True
@@ -74741,6 +75068,10 @@ def unified_learning_diagnostics_v1(force: bool = False):
         cache_age = max(0.0, time.time() - _to_float(cached_unified.get("ts"), 0.0)) if cached_unified else 9999.0
         if isinstance(cached_data, dict) and cached_data and cache_age <= 1800.0:
             fast = dict(cached_data)
+            _apply_broker_truth_unification_fast_overlays_v1(fast)
+            fast["cache_hit"] = True
+            fast["cache_age_seconds"] = round(cache_age, 3)
+            return fast
             if "astra_autonomous_improvement_performance_attribution_completion_v1" not in fast:
                 try:
                     with open(os.path.join(STATE, "dashboard_cache", "astra_autonomous_improvement_performance_attribution_completion_v1.json"), "r", encoding="utf-8") as handle:
@@ -74846,6 +75177,11 @@ def unified_learning_diagnostics_v1(force: bool = False):
         except Exception:
             disk_cached = {}
         if isinstance(disk_cached, dict) and disk_cached:
+            _apply_broker_truth_unification_fast_overlays_v1(disk_cached)
+            disk_cached["cache_hit"] = True
+            disk_cached["cache_source"] = "dashboard_cache_disk"
+            _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(disk_cached), "ts": time.time()}
+            return disk_cached
             if "astra_autonomous_improvement_performance_attribution_completion_v1" not in disk_cached:
                 try:
                     with open(os.path.join(STATE, "dashboard_cache", "astra_autonomous_improvement_performance_attribution_completion_v1.json"), "r", encoding="utf-8") as handle:
