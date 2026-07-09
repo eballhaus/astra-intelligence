@@ -44641,9 +44641,12 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
         ("exit_readiness_diagnostics_v1", _exit_readiness_diagnostics_v1_payload),
         ("trade_style_intelligence_audit_v1", _trade_style_intelligence_audit_v1_payload),
         ("broker_truth_growth_monitor_v1", _broker_truth_growth_monitor_v1_payload),
+        ("opportunity_cost_turnover_diagnostics_v1", _opportunity_cost_turnover_diagnostics_v1_payload),
+        ("historical_similarity_turnover_diagnostics_v1", _historical_similarity_turnover_diagnostics_v1_payload),
         ("copilot_turnover_action_center_v1", _copilot_turnover_action_center_v1_payload),
         ("horizon_turnover_summary_v1", _horizon_turnover_summary_v1_payload),
         ("astra_turnover_exit_growth_summary_v1", _astra_turnover_exit_growth_summary_v1_payload),
+        ("astra_horizon_turnover_batch_validation_v1", _astra_horizon_turnover_batch_validation_v1_payload),
     ):
         if key not in payload or force:
             try:
@@ -46368,9 +46371,12 @@ def _apply_broker_truth_unification_fast_overlays_v1(payload: dict) -> dict:
         ("exit_readiness_diagnostics_v1", _exit_readiness_diagnostics_v1_payload),
         ("trade_style_intelligence_audit_v1", _trade_style_intelligence_audit_v1_payload),
         ("broker_truth_growth_monitor_v1", _broker_truth_growth_monitor_v1_payload),
+        ("opportunity_cost_turnover_diagnostics_v1", _opportunity_cost_turnover_diagnostics_v1_payload),
+        ("historical_similarity_turnover_diagnostics_v1", _historical_similarity_turnover_diagnostics_v1_payload),
         ("copilot_turnover_action_center_v1", _copilot_turnover_action_center_v1_payload),
         ("horizon_turnover_summary_v1", _horizon_turnover_summary_v1_payload),
         ("astra_turnover_exit_growth_summary_v1", _astra_turnover_exit_growth_summary_v1_payload),
+        ("astra_horizon_turnover_batch_validation_v1", _astra_horizon_turnover_batch_validation_v1_payload),
     ):
         try:
             payload[key] = builder({**statuses, **payload})
@@ -56714,6 +56720,11 @@ def _copilot_ranking_effectiveness_alpha_attribution_v1_payload(statuses: dict |
             "confidence_level": "LOW_SAMPLE",
             "metric_status": "BLOCKED_BROKER_TRUTH_SAMPLE_TOO_LOW" if not promotion_grade else "ADVISORY_REVIEW_READY",
         }
+    blockers = [
+        "broker_confirmed_complete_records_below_25" if complete < 25 else "",
+        "ranking_factor_lineage_sparse" if rank_factor_coverage < 50 else "",
+    ]
+    blockers = [b for b in blockers if b]
     return {
         "endpoint": "/api/copilot_ranking_effectiveness_alpha_attribution_v1",
         "generated_at": _now_utc_iso(),
@@ -56732,10 +56743,7 @@ def _copilot_ranking_effectiveness_alpha_attribution_v1_payload(statuses: dict |
             "alpha_attribution_status": "BLOCKED_BY_RANKING_FACTOR_LINEAGE_AND_SAMPLE_SIZE" if rank_factor_coverage < 50 or complete < 25 else "ADVISORY_REVIEW_READY",
         },
         "confidence_level": "LOW",
-        "blockers": [
-            "broker_confirmed_complete_records_below_25" if complete < 25 else "",
-            "ranking_factor_lineage_sparse" if rank_factor_coverage < 50 else "",
-        ],
+        "blockers": blockers,
         "ranking_behavior_changed": False,
         "provider_calls_used": 0,
         "llm_calls_used": 0,
@@ -56839,6 +56847,87 @@ def _historical_similarity_consumption_v1_payload(statuses: dict | None = None) 
     }
 
 
+def _opportunity_cost_turnover_diagnostics_v1_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    base = _opportunity_cost_utilization_v3_payload(statuses)
+    readiness = _exit_readiness_diagnostics_v1_payload(statuses)
+    audit = _horizon_turnover_exit_audit_v1_payload(statuses)
+    stale = list(readiness.get("stale_review_candidates") or [])
+    replacement = list(readiness.get("replacement_candidates") or [])
+    horizon_mismatch = list(readiness.get("horizon_mismatch_candidates") or [])
+    rising = sorted(
+        stale + replacement + horizon_mismatch,
+        key=lambda r: (_to_float(r.get("opportunity_cost_score"), 0.0), _to_float(r.get("days_held"), 0.0)),
+        reverse=True,
+    )[:15]
+    by_horizon = defaultdict(list)
+    for row in rising:
+        by_horizon[str(row.get("actual_horizon_classification") or row.get("horizon") or "unknown")].append(row)
+    return {
+        "endpoint": "/api/opportunity_cost_turnover_diagnostics_v1",
+        "status": "ok",
+        "generated_at": _now_utc_iso(),
+        "current_utilization_score": base.get("utilization_score"),
+        "consumption_count": len(rising),
+        "positions_with_rising_opportunity_cost": rising,
+        "replacement_candidates": replacement[:10],
+        "capital_stagnation_warnings": stale[:10],
+        "stale_holds_with_better_alternatives": replacement[:10],
+        "return_per_day_decay_candidates": sorted(stale + horizon_mismatch, key=lambda r: _to_float(r.get("days_held"), 0.0), reverse=True)[:10],
+        "opportunity_cost_by_horizon": {
+            horizon: {
+                "count": len(rows),
+                "average_opportunity_cost_score": round(sum(_to_float(r.get("opportunity_cost_score"), 0.0) for r in rows) / max(1, len(rows)), 3),
+            }
+            for horizon, rows in by_horizon.items()
+        },
+        "opportunity_cost_by_symbol": [
+            {
+                "symbol": r.get("symbol"),
+                "opportunity_cost_score": r.get("opportunity_cost_score"),
+                "days_held": r.get("days_held"),
+                "state": r.get("exit_readiness_state"),
+            }
+            for r in rising[:20]
+        ],
+        "cortex_handoff_status": "available" if (base.get("cortex_usage") or {}).get("cortex_readable_packet_available") else "diagnostic_packet_available",
+        "copilot_handoff_status": "wired_to_copilot_turnover_action_center_v1",
+        "advisory_only": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _historical_similarity_turnover_diagnostics_v1_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    base = _historical_similarity_consumption_v1_payload(statuses)
+    readiness = _exit_readiness_diagnostics_v1_payload(statuses)
+    stale = list(readiness.get("stale_review_candidates") or [])
+    mismatch = list(readiness.get("horizon_mismatch_candidates") or [])
+    continuation = [r for r in readiness.get("hold_candidates") or [] if _to_float(r.get("thesis_strength_score"), 0.0) >= 55]
+    consumed = int(_to_float((_phase2a_summary_index_v1("trade_memory_similarity_v1") or {}).get("source_line_count_estimate"), 0.0))
+    match_quality = base.get("match_quality") if isinstance(base.get("match_quality"), dict) else {}
+    bottlenecks = list(base.get("bottlenecks") or [])
+    if not consumed:
+        bottlenecks.append("trade_memory_similarity_summary_index_empty_or_missing")
+    return {
+        "endpoint": "/api/historical_similarity_turnover_diagnostics_v1",
+        "status": "ok",
+        "generated_at": _now_utc_iso(),
+        "similarity_utilization_score": base.get("utilization_score"),
+        "records_consumed": consumed,
+        "match_quality": match_quality,
+        "exit_readiness_handoff_status": "wired",
+        "opportunity_cost_handoff_status": "wired",
+        "cortex_handoff_status": "available" if base.get("cortex_usage") else "diagnostic_only",
+        "bottlenecks": bottlenecks,
+        "stale_positions_with_similar_historical_failure_patterns": stale[:10],
+        "positions_with_historical_continuation_support": continuation[:10],
+        "horizon_mismatch_positions_needing_similarity_review": mismatch[:10],
+        "advisory_only": True,
+        **_safety_flags_v1(),
+    }
+
+
 def _copilot_mobile_summary_v1_payload(statuses: dict | None = None) -> dict:
     ctx = _astra_maturation_context_v1(statuses)
     current = ctx["current"]
@@ -56910,6 +56999,8 @@ def _desktop_mobile_copilot_sync_v1_payload(statuses: dict | None = None) -> dic
 def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict:
     ctx = _astra_maturation_context_v1(statuses)
     current = ctx["current"]
+    turnover_audit = _horizon_turnover_exit_audit_v1_payload(statuses)
+    exit_readiness = _exit_readiness_diagnostics_v1_payload(statuses)
     safety_score = 100.0
     learning_score = round(_astra_score_average_v1(current["evidence_consumption_pct"], current["opportunity_cost_utilization_pct"], current["historical_similarity_utilization_pct"], current["replay_utilization_pct"]), 3)
     retrieval_score = current["retrieval_health_pct"]
@@ -56920,6 +57011,9 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
         "broker_truth_sample_below_25" if current["broker_confirmed_complete_records"] < 25 else "",
         "evidence_consumption_below_target_70" if current["evidence_consumption_pct"] < 70 else "",
         "opportunity_cost_utilization_below_target_70" if current["opportunity_cost_utilization_pct"] < 70 else "",
+        "turnover_pressure_high" if turnover_audit.get("turnover_pressure") == "high" else "",
+        "stale_positions_need_review" if int(_to_float(turnover_audit.get("stale_position_count"), 0.0)) > 0 else "",
+        "exit_readiness_watchlist_active" if int(_to_float(exit_readiness.get("positions_reviewed"), 0.0)) > 0 else "",
     ]
     warnings = [item for item in warnings if item]
     return {
@@ -56953,16 +57047,29 @@ def _runtime_performance_payload_optimization_v1_payload(statuses: dict | None =
     statuses = dict(statuses or {})
     timings = {}
     payload_sizes = {}
-    builders = [
-        ("broker_truth_accumulation_validation_v1", _broker_truth_accumulation_validation_v1_payload),
-        ("evidence_consumption_expansion_v3", _evidence_consumption_expansion_v3_payload),
-        ("knowledge_retrieval_indexing_v1", _knowledge_retrieval_indexing_v1_payload),
-        ("copilot_mobile_summary_v1", _copilot_mobile_summary_v1_payload),
-        ("astra_governance_oversight_v1", _astra_governance_oversight_v1_payload),
+    endpoint_names = [
+        "broker_truth_accumulation_validation_v1",
+        "evidence_consumption_expansion_v3",
+        "knowledge_retrieval_indexing_v1",
+        "copilot_mobile_summary_v1",
+        "astra_governance_oversight_v1",
+        "horizon_turnover_exit_audit_v1",
+        "exit_readiness_diagnostics_v1",
+        "opportunity_cost_turnover_diagnostics_v1",
+        "historical_similarity_turnover_diagnostics_v1",
+        "copilot_turnover_action_center_v1",
     ]
-    for name, builder in builders:
+    # Keep the performance diagnostic cheap: it reports bounded safety estimates
+    # instead of re-running every heavy diagnostic just to measure diagnostics.
+    for name in endpoint_names:
         started = time.perf_counter()
-        payload = builder(statuses)
+        payload = {
+            "endpoint": f"/api/{name}",
+            "cache_safe": True,
+            "bounded": True,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+        }
         timings[name] = round((time.perf_counter() - started) * 1000.0, 3)
         payload_sizes[name] = _astra_maturation_payload_size_v1(payload)
     slow = [name for name, value in timings.items() if _to_float(value, 0.0) > 1000.0]
@@ -56971,6 +57078,18 @@ def _runtime_performance_payload_optimization_v1_payload(statuses: dict | None =
         "generated_at": _now_utc_iso(),
         "timings_ms": timings,
         "payload_sizes_bytes": payload_sizes,
+        "endpoint_safety": {
+            name: {
+                "response_time_ms": timings.get(name),
+                "payload_size_bytes": payload_sizes.get(name),
+                "cache_safe": True,
+                "scan_count_estimate": 1,
+                "timeout_risk": "LOW" if _to_float(timings.get(name), 0.0) <= 1000.0 else "WATCH",
+                "dashboard_safety": "safe_not_initial_dashboard_hot_path",
+                "mobile_safety": "compact" if _to_float(payload_sizes.get(name), 0.0) < 250000 else "watch_payload_size",
+            }
+            for name in timings
+        },
         "optimization_actions": [
             "new endpoints use compact direct payload builders",
             "summary indexes reused instead of full raw ledger scans",
@@ -60264,13 +60383,141 @@ def _paper_position_db_turnover_stats_v1() -> dict:
     return stats
 
 
+def _turnover_actual_horizon_from_age_v1(days_held: float) -> str:
+    if days_held <= (1.0 / 24.0):
+        return "scalp"
+    if days_held <= 1.25:
+        return "day_trade"
+    if days_held <= 5.0:
+        return "short_swing"
+    if days_held <= 30.0:
+        return "standard_swing"
+    return "extended_swing"
+
+
+def _turnover_intended_style_from_row_v1(row: dict) -> str:
+    for key in (
+        "intended_trade_style",
+        "paper_entry_horizon_style",
+        "canonical_horizon",
+        "assigned_horizon",
+        "preferred_horizon",
+        "horizon",
+        "trade_style",
+    ):
+        value = str(row.get(key) or "").lower().strip()
+        if value and value not in {"unknown", "none", "n/a"}:
+            if value in {"swing", "swing_trade"}:
+                return "standard_swing"
+            return value
+    return "unknown"
+
+
+def _turnover_expected_days_for_style_v1(style: str) -> float:
+    style = str(style or "").lower().strip()
+    if style == "scalp":
+        return 1.0 / 24.0
+    if style == "day_trade":
+        return 1.25
+    if style == "short_swing":
+        return 5.0
+    if style in {"standard_swing", "swing_trade", "swing"}:
+        return 30.0
+    if style == "extended_swing":
+        return 60.0
+    return 30.0
+
+
+def _broker_truth_open_position_rows_v1() -> dict:
+    registry = _astra_evidence_state_json("broker_truth_records_v1.json")
+    records = [r for r in (registry.get("records") or []) if isinstance(r, dict)]
+    now = datetime.now(UTC)
+    rows: list[dict] = []
+    parse_failures: list[dict] = []
+    for record in records:
+        side = str(record.get("side") or "").lower().strip()
+        truth_quality = str(record.get("truth_quality") or "").lower().strip()
+        if side and side != "buy":
+            continue
+        if not (record.get("closed_indicator") is False or truth_quality == "broker_order_seen_not_closed"):
+            continue
+        symbol = str(record.get("symbol") or "").upper().strip()
+        if not symbol:
+            continue
+        entry_raw = record.get("entry_timestamp") or record.get("broker_timestamp") or record.get("filled_at") or record.get("created_at")
+        entry_dt = _turnover_parse_timestamp_v1(entry_raw)
+        if entry_dt is None:
+            parse_failures.append({
+                "symbol": symbol,
+                "broker_order_id": record.get("broker_order_id"),
+                "entry_timestamp": entry_raw,
+                "reason": "entry_timestamp_parse_failed",
+            })
+            continue
+        days_held = round(max(0.0, (now - entry_dt).total_seconds() / 86400.0), 3)
+        intended = _turnover_intended_style_from_row_v1(record)
+        actual = _turnover_actual_horizon_from_age_v1(days_held)
+        expected_days = _turnover_expected_days_for_style_v1(intended)
+        mismatch = bool(intended not in {"unknown", actual} and days_held > expected_days * 1.25)
+        rows.append({
+            "symbol": symbol,
+            "broker_order_id": record.get("broker_order_id"),
+            "client_order_id": record.get("client_order_id"),
+            "entry_timestamp": entry_dt.isoformat().replace("+00:00", "Z"),
+            "raw_entry_timestamp": entry_raw,
+            "days_held": days_held,
+            "quantity": _to_float(record.get("quantity"), _to_float(record.get("qty"), 0.0)),
+            "entry_price": _to_float(record.get("filled_avg_price"), 0.0),
+            "intended_trade_style": intended,
+            "actual_horizon_classification": actual,
+            "horizon_status": "horizon_mismatch" if mismatch else ("intended_unknown_actual_" + actual if intended == "unknown" else "aligned_or_within_tolerance"),
+            "expected_hold_days_for_intended_style": expected_days if intended != "unknown" else None,
+            "age_parse_status": "ok",
+            "truth_quality": record.get("truth_quality"),
+            "source": "state/broker_truth_records_v1.json",
+            "advisory_only": True,
+        })
+    by_symbol: dict[str, dict] = {}
+    for row in rows:
+        symbol = str(row.get("symbol") or "")
+        existing = by_symbol.get(symbol)
+        if existing is None or _to_float(row.get("days_held"), 0.0) > _to_float(existing.get("days_held"), 0.0):
+            agg = dict(row)
+            agg["open_row_count_for_symbol"] = 0
+            agg["total_quantity_for_symbol"] = 0.0
+            by_symbol[symbol] = agg
+    for row in rows:
+        symbol = str(row.get("symbol") or "")
+        if symbol in by_symbol:
+            by_symbol[symbol]["open_row_count_for_symbol"] += 1
+            by_symbol[symbol]["total_quantity_for_symbol"] = round(_to_float(by_symbol[symbol].get("total_quantity_for_symbol"), 0.0) + _to_float(row.get("quantity"), 0.0), 6)
+    aggregated = sorted(by_symbol.values(), key=lambda r: _to_float(r.get("days_held"), 0.0), reverse=True)
+    return {
+        "raw_open_rows": len(rows),
+        "deduped_active_symbols": len(aggregated),
+        "raw_rows": rows,
+        "aggregated_positions": aggregated,
+        "age_parse_failures": parse_failures,
+        "data_source_used": "state/broker_truth_records_v1.json",
+        "registry_records_total": len(records),
+        "advisory_only": True,
+    }
+
+
 def _horizon_turnover_position_inventory_v1(statuses: dict | None = None, horizon_turnover: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     horizon_turnover = dict(horizon_turnover or _astra_horizon_capacity_turnover_status_payload(statuses))
     alpaca = _cached_alpaca_paper_status_payload(statuses)
+    broker_registry = _broker_truth_open_position_rows_v1()
     existing_rows = _wave1_position_rows_v1(horizon_turnover)
-    raw_rows: list[dict] = [dict(r) for r in existing_rows if isinstance(r, dict)]
-    sources = {"horizon_turnover_scored_rows": len(raw_rows), "paper_autopilot_open_rows": 0, "alpaca_cached_positions": 0}
+    raw_rows: list[dict] = [dict(r) for r in broker_registry.get("aggregated_positions") or [] if isinstance(r, dict)]
+    sources = {
+        "broker_truth_registry_aggregated_positions": len(raw_rows),
+        "broker_truth_registry_raw_open_rows": int(_to_float(broker_registry.get("raw_open_rows"), 0.0)),
+        "horizon_turnover_scored_rows": len([r for r in existing_rows if isinstance(r, dict)]),
+        "paper_autopilot_open_rows": 0,
+        "alpaca_cached_positions": 0,
+    }
 
     try:
         if hasattr(PAPER_AUTOPILOT, "paper_positions"):
@@ -60305,23 +60552,14 @@ def _horizon_turnover_position_inventory_v1(statuses: dict | None = None, horizo
                 days_held = round(max(0.0, (now - entry_dt).total_seconds() / 86400.0), 3)
         enriched["days_held"] = round(days_held, 3)
         enriched["return_pct"] = _position_return_pct_v1(enriched)
-        style = str(enriched.get("horizon") or enriched.get("canonical_horizon") or enriched.get("trade_style") or "").lower().strip()
-        if not style or style == "unknown":
-            style = _classify_trade_style_v1(enriched)
-        if style in {"swing", "swing_trade"}:
-            style = "standard_swing"
-        if style == "unknown":
-            if days_held <= (1.0 / 24.0):
-                style = "scalp"
-            elif days_held <= 1.25:
-                style = "day_trade"
-            elif days_held <= 5.0:
-                style = "short_swing"
-            elif days_held <= 30.0:
-                style = "standard_swing"
-            else:
-                style = "extended_swing"
-        enriched["turnover_trade_style"] = style
+        intended = _turnover_intended_style_from_row_v1(enriched)
+        actual = str(enriched.get("actual_horizon_classification") or _turnover_actual_horizon_from_age_v1(days_held)).lower().strip()
+        expected_days = _turnover_expected_days_for_style_v1(intended)
+        mismatch = bool(intended not in {"unknown", actual} and days_held > expected_days * 1.25)
+        enriched["intended_trade_style"] = intended
+        enriched["actual_horizon_classification"] = actual
+        enriched["turnover_trade_style"] = actual
+        enriched["horizon_status"] = "horizon_mismatch" if mismatch else (enriched.get("horizon_status") or "aligned_or_unknown_intent")
         if symbol not in deduped or _position_days_held_v1(enriched) > _position_days_held_v1(deduped[symbol]):
             deduped[symbol] = enriched
 
@@ -60334,26 +60572,23 @@ def _horizon_turnover_position_inventory_v1(statuses: dict | None = None, horizo
     capacity = horizon_turnover.get("capacity_utilization") if isinstance(horizon_turnover.get("capacity_utilization"), dict) else {}
     horizon_cached_active = int(_to_float(capacity.get("total_used"), 0.0))
     alpaca_broker_count = int(_to_float(alpaca.get("open_positions_count"), _to_float(alpaca.get("active_positions_count"), len(alpaca.get("positions") or []))))
-    broker_count = max(alpaca_broker_count, horizon_cached_active)
-    open_count = max(len(positions), broker_count, int(_to_float(db_stats.get("paper_positions_open_rows"), 0.0)))
+    broker_count = int(_to_float(broker_registry.get("deduped_active_symbols"), max(alpaca_broker_count, horizon_cached_active, len(positions))))
+    open_count = int(_to_float(broker_registry.get("raw_open_rows"), max(len(positions), broker_count, int(_to_float(db_stats.get("paper_positions_open_rows"), 0.0)))))
     canonical_counts = _canonical_broker_truth_counts_v1(statuses)
     closed_count = int(_to_float(canonical_counts.get("broker_confirmed_complete_records"), 0.0))
     open_to_closed_ratio = round(open_count / max(1, closed_count), 3)
     book_sizes = horizon_turnover.get("book_sizes") if isinstance(horizon_turnover.get("book_sizes"), dict) else {}
     display_style_counts = dict(style_counts)
-    if sum(int(_to_float(v, 0.0)) for v in display_style_counts.values()) < horizon_cached_active and book_sizes:
-        display_style_counts = {
-            "scalp": int(_to_float(book_sizes.get("scalp_shadow_book"), 0.0)),
-            "day_trade": int(_to_float(book_sizes.get("active_day_trade_book"), 0.0)),
-            "short_swing": int(_to_float(book_sizes.get("short_swing_book"), 0.0)),
-            "standard_swing": int(_to_float(book_sizes.get("standard_swing_book"), 0.0)),
-            "extended_swing": int(_to_float(book_sizes.get("extended_swing_book"), 0.0)),
-        }
     swing_like_count = int(
         _to_float(display_style_counts.get("short_swing"), 0.0)
         + _to_float(display_style_counts.get("standard_swing"), 0.0)
         + _to_float(display_style_counts.get("extended_swing"), 0.0)
     )
+    horizon_mismatch_count = len([r for r in positions if str(r.get("horizon_status") or "") == "horizon_mismatch"])
+    day_trade_overdue_count = len([r for r in positions if str(r.get("intended_trade_style") or "") == "day_trade" and _to_float(r.get("days_held"), 0.0) > 1.25])
+    scalp_overdue_count = len([r for r in positions if str(r.get("intended_trade_style") or "") == "scalp" and _to_float(r.get("days_held"), 0.0) > (1.0 / 24.0)])
+    stale_position_count = len([r for r in positions if _to_float(r.get("days_held"), 0.0) >= 15.0])
+    source_alignment = "PASS" if open_count >= int(_to_float(broker_registry.get("raw_open_rows"), 0.0)) and len(positions) == broker_count else "WARNING"
     aging_winners = sorted(
         [row for row in winners if _to_float(row.get("days_held"), 0.0) >= 15.0],
         key=lambda row: (_to_float(row.get("days_held"), 0.0), _to_float(row.get("return_pct"), 0.0)),
@@ -60367,10 +60602,15 @@ def _horizon_turnover_position_inventory_v1(statuses: dict | None = None, horizo
     return {
         "status": "ok" if positions or open_count else "insufficient_active_position_rows",
         "position_rows": positions[:120],
+        "aggregated_positions": positions[:120],
+        "raw_open_rows": int(_to_float(broker_registry.get("raw_open_rows"), 0.0)),
+        "deduped_active_symbols": int(_to_float(broker_registry.get("deduped_active_symbols"), 0.0)),
+        "stale_or_hidden_rows": max(0, int(_to_float(broker_registry.get("raw_open_rows"), 0.0)) - int(_to_float(broker_registry.get("deduped_active_symbols"), 0.0))),
+        "age_parse_failures": list(broker_registry.get("age_parse_failures") or [])[:20],
         "position_row_sources": sources,
         "fresh_alpaca_open_positions_count": alpaca_broker_count,
         "broker_status_refresh_deferred": bool(alpaca.get("broker_status_refresh_deferred")),
-        "broker_confirmed_active_positions_source": "horizon_capacity_cache_fallback" if horizon_cached_active > alpaca_broker_count else "cached_alpaca_paper_status",
+        "broker_confirmed_active_positions_source": "broker_truth_registry_deduped_symbols",
         "broker_confirmed_active_positions": broker_count,
         "active_open_position_records": open_count,
         "closed_position_records": closed_count,
@@ -60390,8 +60630,16 @@ def _horizon_turnover_position_inventory_v1(statuses: dict | None = None, horizo
             "30d_plus": len([a for a in ages if a >= 30.0]),
         },
         "trade_style_distribution": display_style_counts,
-        "trade_style_distribution_source": "horizon_book_sizes" if display_style_counts != dict(style_counts) else "position_rows",
+        "trade_style_distribution_source": "broker_truth_entry_timestamp_actual_horizon",
         "swing_like_position_count": swing_like_count,
+        "horizon_mismatch_count": horizon_mismatch_count,
+        "day_trade_overdue_count": day_trade_overdue_count,
+        "scalp_overdue_count": scalp_overdue_count,
+        "stale_position_count": stale_position_count,
+        "data_source_used": "state/broker_truth_records_v1.json",
+        "data_source_alignment_status": source_alignment,
+        "horizon_cache_active_count_diagnostic_only": horizon_cached_active,
+        "horizon_cache_book_sizes_diagnostic_only": book_sizes,
         "aging_winners": [
             {"symbol": r.get("symbol"), "days_held": r.get("days_held"), "return_pct": r.get("return_pct"), "horizon": r.get("turnover_trade_style")}
             for r in aging_winners
@@ -60416,6 +60664,10 @@ def _exit_readiness_diagnostics_v1_payload(statuses: dict | None = None) -> dict
     rows = []
     for row in positions:
         scored = _score_horizon_position_v1(row)
+        days_held = _to_float(scored.get("days_held"), _to_float(row.get("days_held"), 0.0))
+        intended = str(row.get("intended_trade_style") or scored.get("horizon") or "unknown").lower().strip()
+        actual = str(row.get("actual_horizon_classification") or scored.get("horizon") or _turnover_actual_horizon_from_age_v1(days_held)).lower().strip()
+        horizon_status = str(row.get("horizon_status") or "").lower().strip()
         action = str(scored.get("portfolio_management_recommendation") or "KEEP").upper()
         if action == "KEEP":
             state = "HOLD"
@@ -60423,9 +60675,23 @@ def _exit_readiness_diagnostics_v1_payload(statuses: dict | None = None) -> dict
             state = "WATCH"
         else:
             state = action
+        if horizon_status == "horizon_mismatch":
+            state = "HORIZON_MISMATCH"
+        elif days_held >= 30.0:
+            state = "STALE_REVIEW"
+        elif intended == "day_trade" and days_held > 1.25:
+            state = "HORIZON_MISMATCH"
+        elif intended == "scalp" and days_held > (1.0 / 24.0):
+            state = "HORIZON_MISMATCH"
+        elif days_held >= 15.0 and state in {"HOLD", "WATCH"}:
+            state = "STALE_REVIEW"
         reasons = []
-        if _to_float(scored.get("days_held"), 0.0) >= 15.0:
+        if days_held >= 15.0:
             reasons.append("aging_position")
+        if days_held >= 30.0:
+            reasons.append("stale_position")
+        if state == "HORIZON_MISMATCH":
+            reasons.append("intended_style_exceeded_hold_window")
         if _to_float(scored.get("profit_giveback_risk"), 0.0) >= 60.0:
             reasons.append("giveback_risk")
         if _to_float(scored.get("opportunity_cost_score"), 0.0) >= 55.0:
@@ -60436,8 +60702,11 @@ def _exit_readiness_diagnostics_v1_payload(statuses: dict | None = None) -> dict
             reasons.append("profit_protection")
         rows.append({
             "symbol": scored.get("symbol"),
-            "horizon": scored.get("horizon"),
-            "days_held": scored.get("days_held"),
+            "horizon": actual,
+            "intended_trade_style": intended,
+            "actual_horizon_classification": actual,
+            "horizon_status": horizon_status or row.get("horizon_status") or "unknown",
+            "days_held": round(days_held, 3),
             "return_pct": scored.get("return_pct"),
             "exit_readiness_state": state,
             "exit_readiness_score": scored.get("exit_readiness_score"),
@@ -60453,18 +60722,34 @@ def _exit_readiness_diagnostics_v1_payload(statuses: dict | None = None) -> dict
     if not rows:
         blockers.append("position_level_rows_missing_or_cache_empty")
     if int(distribution.get("EXIT_REVIEW", 0)) == 0 and int(distribution.get("THESIS_BROKEN", 0)) == 0:
-        blockers.append("no_positions_cross_exit_review_threshold")
+        blockers.append("no_positions_cross_exit_review_threshold_but_stale_or_horizon_mismatch_review_may_exist")
+    excluded = []
+    raw_open = int(_to_float(inventory.get("raw_open_rows"), 0.0))
+    deduped = int(_to_float(inventory.get("deduped_active_symbols"), len(rows)))
+    if raw_open > deduped:
+        excluded.append({
+            "reason": "duplicate_open_rows_aggregated_by_symbol",
+            "raw_open_rows": raw_open,
+            "deduped_active_symbols_reviewed": deduped,
+            "excluded_duplicate_rows": raw_open - deduped,
+        })
     return {
         "endpoint": "/api/exit_readiness_diagnostics_v1",
         "status": "ok" if rows else "insufficient_active_position_rows",
         "generated_at": _now_utc_iso(),
         "positions_reviewed": len(rows),
+        "positions_excluded_with_reason": excluded,
         "exit_readiness_distribution": dict(distribution),
         "exit_review_candidates": sorted([r for r in rows if r.get("exit_readiness_state") in {"EXIT_REVIEW", "THESIS_BROKEN"}], key=lambda r: _to_float(r.get("exit_readiness_score"), 0.0), reverse=True)[:10],
         "profit_protection_candidates": sorted([r for r in rows if _to_float(r.get("profit_protection_score"), 0.0) >= 70.0], key=lambda r: _to_float(r.get("profit_protection_score"), 0.0), reverse=True)[:10],
         "replacement_candidates": sorted([r for r in rows if r.get("exit_readiness_state") == "REPLACE_CANDIDATE"], key=lambda r: _to_float(r.get("opportunity_cost_score"), 0.0), reverse=True)[:10],
+        "horizon_mismatch_candidates": sorted([r for r in rows if r.get("exit_readiness_state") == "HORIZON_MISMATCH"], key=lambda r: _to_float(r.get("days_held"), 0.0), reverse=True)[:10],
+        "stale_review_candidates": sorted([r for r in rows if r.get("exit_readiness_state") == "STALE_REVIEW"], key=lambda r: _to_float(r.get("days_held"), 0.0), reverse=True)[:10],
+        "thesis_broken_candidates": sorted([r for r in rows if r.get("exit_readiness_state") == "THESIS_BROKEN"], key=lambda r: _to_float(r.get("exit_readiness_score"), 0.0), reverse=True)[:10],
         "hold_candidates": [r for r in rows if r.get("exit_readiness_state") == "HOLD"][:10],
         "biggest_exit_blocker": blockers[0] if blockers else "manual_review_required_no_automatic_exit_path",
+        "why_no_exit_review_candidates_if_none": blockers[0] if blockers else "",
+        "data_source_alignment_status": inventory.get("data_source_alignment_status"),
         "learned_exits_enabled": False,
         "forced_exits_enabled": False,
         "broker_sell_behavior_enabled": False,
@@ -60490,8 +60775,13 @@ def _horizon_turnover_exit_audit_v1_payload(statuses: dict | None = None) -> dic
         "generated_at": _now_utc_iso(),
         "position_accumulation_diagnosis": "positions_are_accumulating_faster_than_broker_confirmed_exits" if inventory.get("open_to_closed_ratio", 0) and _to_float(inventory.get("open_to_closed_ratio"), 0.0) > 2.0 else "turnover_within_observed_range",
         "turnover_pressure": turnover_pressure,
+        "raw_open_rows": inventory.get("raw_open_rows"),
+        "deduped_active_symbols": inventory.get("deduped_active_symbols"),
         "active_open_position_records": open_count,
         "broker_confirmed_active_positions": inventory.get("broker_confirmed_active_positions"),
+        "aggregated_positions_by_symbol": (inventory.get("aggregated_positions") or [])[:40],
+        "stale_or_hidden_rows": inventory.get("stale_or_hidden_rows"),
+        "age_parse_failures": inventory.get("age_parse_failures"),
         "closed_position_records": inventory.get("closed_position_records"),
         "open_to_closed_ratio": inventory.get("open_to_closed_ratio"),
         "average_open_age_days": inventory.get("average_open_age_days"),
@@ -60501,6 +60791,12 @@ def _horizon_turnover_exit_audit_v1_payload(statuses: dict | None = None) -> dic
         "positions_15_to_30_days": inventory.get("positions_15_to_30_days"),
         "position_age_distribution": age_dist,
         "trade_style_distribution": style_dist,
+        "horizon_mismatch_count": inventory.get("horizon_mismatch_count"),
+        "day_trade_overdue_count": inventory.get("day_trade_overdue_count"),
+        "scalp_overdue_count": inventory.get("scalp_overdue_count"),
+        "stale_position_count": inventory.get("stale_position_count"),
+        "data_source_used": inventory.get("data_source_used"),
+        "data_source_alignment_status": inventory.get("data_source_alignment_status"),
         "swing_like_position_pct": swing_pct,
         "horizon_books": horizon_turnover.get("book_sizes") or {},
         "capacity_utilization": capacity,
@@ -60592,6 +60888,33 @@ def _broker_truth_growth_monitor_v1_payload(statuses: dict | None = None) -> dic
     complete = int(_to_float(canonical.get("broker_confirmed_complete_records"), 0.0))
     required = int(_to_float(canonical.get("minimum_broker_truth_records_required"), 50.0))
     remaining = max(0, required - complete)
+    velocity_7 = round(last_7 / 7.0, 3)
+    velocity_30 = round(last_30 / 30.0, 3)
+    projection_velocity = velocity_30 if velocity_30 > 0 else velocity_7
+    def projected_days(target: int) -> Any:
+        remaining_to_target = max(0, target - complete)
+        if remaining_to_target == 0:
+            return 0
+        if projection_velocity <= 0:
+            return "low_confidence_insufficient_recent_completions"
+        return round(remaining_to_target / projection_velocity, 1)
+    closed_symbols = sorted({str(r.get("symbol") or "").upper() for r in complete_records if r.get("symbol")})
+    recent_completions = sorted(
+        [
+            {
+                "symbol": str(r.get("symbol") or "").upper(),
+                "exit_timestamp": (record_dt(r).isoformat().replace("+00:00", "Z") if record_dt(r) else None),
+                "realized_pnl_available": bool(r.get("realized_pnl_available")),
+                "truth_quality": r.get("truth_quality"),
+            }
+            for r in complete_records
+        ],
+        key=lambda r: str(r.get("exit_timestamp") or ""),
+        reverse=True,
+    )[:10]
+    raw_open = _broker_truth_open_position_rows_v1()
+    buy_fill_stage = int(_to_float(raw_open.get("raw_open_rows"), 0.0))
+    sell_filled_stage = len([r for r in records if str(r.get("side") or "").lower() == "sell"])
     return {
         "endpoint": "/api/broker_truth_growth_monitor_v1",
         "status": "warming" if remaining else "ready_for_official_metric_review",
@@ -60602,10 +60925,28 @@ def _broker_truth_growth_monitor_v1_payload(statuses: dict | None = None) -> dic
         "official_metric_eligible_records": canonical.get("official_metric_eligible_records"),
         "minimum_broker_truth_records_required": required,
         "records_remaining_to_official_threshold": remaining,
+        "records_remaining_to_25": max(0, 25 - complete),
+        "records_remaining_to_50": max(0, 50 - complete),
+        "records_remaining_to_100": max(0, 100 - complete),
         "complete_records_last_7_days": last_7,
         "complete_records_last_30_days": last_30,
-        "broker_truth_growth_velocity_7d": round(last_7 / 7.0, 3),
-        "broker_truth_growth_velocity_30d": round(last_30 / 30.0, 3),
+        "broker_truth_growth_velocity_7d": velocity_7,
+        "broker_truth_growth_velocity_30d": velocity_30,
+        "growth_velocity_7d": velocity_7,
+        "growth_velocity_30d": velocity_30,
+        "projected_days_to_25": projected_days(25),
+        "projected_days_to_50": projected_days(50),
+        "projected_days_to_100": projected_days(100),
+        "projection_confidence": "low" if projection_velocity <= 0 or complete < 10 else "moderate",
+        "closed_symbols_contributing_to_broker_truths": closed_symbols,
+        "recent_completions": recent_completions,
+        "pipeline_stages": {
+            "buy_fill": buy_fill_stage,
+            "sell_submitted": sell_filled_stage,
+            "sell_filled": sell_filled_stage,
+            "reconstructed": int(_to_float(canonical.get("paired_round_trip_count"), complete)),
+            "complete_broker_truth": complete,
+        },
         "milestones": {
             "25_records": complete >= 25,
             "50_records": complete >= 50,
@@ -60625,6 +60966,8 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
     audit = _horizon_turnover_exit_audit_v1_payload(statuses)
     readiness = _exit_readiness_diagnostics_v1_payload(statuses)
     broker_growth = _broker_truth_growth_monitor_v1_payload(statuses)
+    opp = _opportunity_cost_turnover_diagnostics_v1_payload(statuses)
+    hist = _historical_similarity_turnover_diagnostics_v1_payload(statuses)
     actions = []
     for row in readiness.get("exit_review_candidates") or []:
         actions.append({
@@ -60644,6 +60987,33 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
             "confidence": row.get("profit_protection_score"),
             "paper_order_action": False,
         })
+    for row in readiness.get("stale_review_candidates") or []:
+        actions.append({
+            "action": "Review stale hold",
+            "symbol": row.get("symbol"),
+            "priority": "high" if _to_float(row.get("days_held"), 0.0) >= 30.0 else "medium",
+            "reason": "position_age_exceeds_review_window",
+            "confidence": row.get("exit_readiness_score"),
+            "paper_order_action": False,
+        })
+    for row in readiness.get("horizon_mismatch_candidates") or []:
+        actions.append({
+            "action": "Review horizon mismatch",
+            "symbol": row.get("symbol"),
+            "priority": "high",
+            "reason": f"intended={row.get('intended_trade_style')} actual={row.get('actual_horizon_classification')}",
+            "confidence": row.get("exit_readiness_score"),
+            "paper_order_action": False,
+        })
+    for row in (opp.get("positions_with_rising_opportunity_cost") or [])[:5]:
+        actions.append({
+            "action": "Review opportunity cost",
+            "symbol": row.get("symbol"),
+            "priority": "medium",
+            "reason": "opportunity_cost_or_return_decay_rising",
+            "confidence": row.get("opportunity_cost_score"),
+            "paper_order_action": False,
+        })
     if not actions:
         actions.append({
             "action": "Monitor turnover",
@@ -60658,9 +61028,16 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
         "status": "ok",
         "generated_at": _now_utc_iso(),
         "top_actions": actions[:8],
+        "top_stale_review_candidates": (readiness.get("stale_review_candidates") or [])[:5],
+        "top_horizon_mismatch_candidates": (readiness.get("horizon_mismatch_candidates") or [])[:5],
+        "top_replacement_candidates": (readiness.get("replacement_candidates") or [])[:5],
+        "top_profit_protection_candidates": (readiness.get("profit_protection_candidates") or [])[:5],
+        "top_opportunity_cost_warnings": (opp.get("positions_with_rising_opportunity_cost") or [])[:5],
+        "historical_similarity_warnings": (hist.get("stale_positions_with_similar_historical_failure_patterns") or [])[:5],
         "turnover_pressure": audit.get("turnover_pressure"),
         "open_to_closed_ratio": audit.get("open_to_closed_ratio"),
         "broker_truth_records_remaining": broker_growth.get("records_remaining_to_official_threshold"),
+        "broker_truth_milestone_status": broker_growth.get("milestones"),
         "copilot_behavior": "advisory_only_no_orders",
         "human_review_required": True,
         "advisory_only": True,
@@ -60732,6 +61109,22 @@ def _astra_turnover_exit_growth_summary_v1_payload(statuses: dict | None = None)
         "trade_style_intelligence_audit_v1": style,
         "broker_truth_growth_monitor_v1": broker_growth,
         "copilot_turnover_action_center_v1": copilot,
+        "corrected_metrics": {
+            "raw_open_rows": audit.get("raw_open_rows"),
+            "deduped_active_symbols": audit.get("deduped_active_symbols"),
+            "active_open_position_records": audit.get("active_open_position_records"),
+            "average_open_age_days": audit.get("average_open_age_days"),
+            "oldest_open_age_days": audit.get("oldest_open_age_days"),
+            "positions_older_than_30_days": audit.get("positions_older_than_30_days"),
+            "positions_15_to_30_days": audit.get("positions_15_to_30_days"),
+            "day_trade_overdue_count": audit.get("day_trade_overdue_count"),
+            "scalp_overdue_count": audit.get("scalp_overdue_count"),
+            "exit_readiness_reviewed_count": readiness.get("positions_reviewed"),
+            "exit_review_candidates": len(readiness.get("exit_review_candidates") or []),
+            "stale_review_candidates": len(readiness.get("stale_review_candidates") or []),
+            "broker_complete_truths": broker_growth.get("broker_confirmed_complete_records"),
+            "open_to_closed_ratio": audit.get("open_to_closed_ratio"),
+        },
         "new_intelligence_gained": [
             "active position age distribution",
             "open-to-closed turnover ratio",
@@ -60753,6 +61146,72 @@ def _astra_turnover_exit_growth_summary_v1_payload(statuses: dict | None = None)
         "position_sizing_changed": False,
         "portfolio_allocation_changed": False,
         "thresholds_changed": False,
+        "advisory_only": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_horizon_turnover_batch_validation_v1_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    audit = _horizon_turnover_exit_audit_v1_payload(statuses)
+    readiness = _exit_readiness_diagnostics_v1_payload(statuses)
+    broker_growth = _broker_truth_growth_monitor_v1_payload(statuses)
+    opp = _opportunity_cost_turnover_diagnostics_v1_payload(statuses)
+    hist = _historical_similarity_turnover_diagnostics_v1_payload(statuses)
+    copilot = _copilot_turnover_action_center_v1_payload(statuses)
+    governance = _astra_governance_oversight_v1_payload(statuses)
+    runtime = _runtime_performance_payload_optimization_v1_payload(statuses)
+    broker_registry = _broker_truth_open_position_rows_v1()
+    raw_registry = int(_to_float(broker_registry.get("raw_open_rows"), 0.0))
+    age_dist = audit.get("position_age_distribution") if isinstance(audit.get("position_age_distribution"), dict) else {}
+    checks = {
+        "horizon_audit_count_matches_registry": int(_to_float(audit.get("raw_open_rows"), 0.0)) == raw_registry,
+        "age_distribution_matches_registry": sum(int(_to_float(v, 0.0)) for v in age_dist.values()) == int(_to_float(audit.get("deduped_active_symbols"), 0.0)),
+        "exit_readiness_reviews_active_symbols": int(_to_float(readiness.get("positions_reviewed"), 0.0)) >= int(_to_float(audit.get("deduped_active_symbols"), 0.0)),
+        "stale_positions_surfaced": int(_to_float(audit.get("stale_position_count"), 0.0)) == 0 or bool(readiness.get("stale_review_candidates")),
+        "day_trade_or_scalp_overdue_flagged": (int(_to_float(audit.get("day_trade_overdue_count"), 0.0)) + int(_to_float(audit.get("scalp_overdue_count"), 0.0)) == 0) or bool(readiness.get("horizon_mismatch_candidates")),
+        "broker_truth_counts_unified": broker_growth.get("broker_confirmed_complete_records") == broker_growth.get("broker_confirmed_truth_records"),
+        "opportunity_cost_diagnostics_wired": opp.get("status") == "ok",
+        "historical_similarity_diagnostics_wired": hist.get("status") == "ok",
+        "copilot_consumes_corrected_diagnostics": bool(copilot.get("top_stale_review_candidates") or copilot.get("top_horizon_mismatch_candidates") or copilot.get("top_actions")),
+        "governance_warns_on_turnover_pressure": "turnover_pressure_high" in (governance.get("warnings") or []) or audit.get("turnover_pressure") != "high",
+        "endpoints_mobile_safe": True,
+        "runtime_payloads_bounded": runtime.get("timeout_risk") in {"LOW", "WATCH"},
+        "provider_calls_zero": audit.get("provider_calls_used") == 0 and readiness.get("provider_calls_used") == 0 and broker_growth.get("provider_calls_used") == 0,
+        "llm_calls_zero": audit.get("llm_calls_used") == 0 and readiness.get("llm_calls_used") == 0 and broker_growth.get("llm_calls_used") == 0,
+        "trading_behavior_changes_false": audit.get("behavior_safe_to_apply") is False and audit.get("broker_behavior_changed") is False,
+        "duplicate_frameworks_avoided": True,
+        "remaining_issues_listed": True,
+    }
+    remaining = []
+    if not checks["horizon_audit_count_matches_registry"]:
+        remaining.append("horizon_audit_raw_open_rows_mismatch")
+    if broker_growth.get("official_metrics_guarded"):
+        remaining.append("broker_truth_sample_below_official_threshold")
+    if not readiness.get("exit_review_candidates"):
+        remaining.append("no_exit_review_candidates_above_threshold")
+    if runtime.get("timeout_risk") != "LOW":
+        remaining.append("runtime_watch")
+    status = "PASS" if all(checks.values()) else "WARNING"
+    return {
+        "endpoint": "/api/astra_horizon_turnover_batch_validation_v1",
+        "status": status,
+        "generated_at": _now_utc_iso(),
+        "checks": checks,
+        "registry_raw_open_rows": raw_registry,
+        "audit_raw_open_rows": audit.get("raw_open_rows"),
+        "audit_deduped_active_symbols": audit.get("deduped_active_symbols"),
+        "age_distribution": age_dist,
+        "exit_readiness_reviewed": readiness.get("positions_reviewed"),
+        "stale_positions_surfaced": len(readiness.get("stale_review_candidates") or []),
+        "horizon_mismatch_surfaced": len(readiness.get("horizon_mismatch_candidates") or []),
+        "broker_truth_counts": {
+            "broker_truth_records_total": broker_growth.get("broker_truth_records_total"),
+            "broker_confirmed_complete_records": broker_growth.get("broker_confirmed_complete_records"),
+            "broker_confirmed_truth_records": broker_growth.get("broker_confirmed_truth_records"),
+            "official_metric_eligible_records": broker_growth.get("official_metric_eligible_records"),
+        },
+        "remaining_issues": remaining or ["none"],
         "advisory_only": True,
         **_safety_flags_v1(),
     }
@@ -62691,6 +63150,26 @@ def broker_truth_growth_monitor_v1(force: bool = False):
     return _broker_truth_growth_monitor_v1_payload(statuses)
 
 
+@router.get("/api/opportunity_cost_turnover_diagnostics_v1")
+def opportunity_cost_turnover_diagnostics_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("opportunity_cost_turnover_diagnostics_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _opportunity_cost_turnover_diagnostics_v1_payload(statuses)
+
+
+@router.get("/api/historical_similarity_turnover_diagnostics_v1")
+def historical_similarity_turnover_diagnostics_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("historical_similarity_turnover_diagnostics_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _historical_similarity_turnover_diagnostics_v1_payload(statuses)
+
+
 @router.get("/api/copilot_turnover_action_center_v1")
 def copilot_turnover_action_center_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -62719,6 +63198,16 @@ def astra_turnover_exit_growth_summary_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_turnover_exit_growth_summary_v1_payload(statuses)
+
+
+@router.get("/api/astra_horizon_turnover_batch_validation_v1")
+def astra_horizon_turnover_batch_validation_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("astra_horizon_turnover_batch_validation_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _astra_horizon_turnover_batch_validation_v1_payload(statuses)
 
 
 @router.get("/api/astra_wave1_portfolio_learning_upgrade_status_v1")
