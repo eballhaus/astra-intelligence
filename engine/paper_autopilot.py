@@ -569,6 +569,16 @@ def _expected_hold_window(horizon: str) -> str:
     return "unknown"
 
 
+def _expected_hold_minutes(horizon: str) -> float:
+    if horizon == "scalp":
+        return 60.0
+    if horizon == "day_trade":
+        return 390.0
+    if horizon == "swing_trade":
+        return 10.0 * 24.0 * 60.0
+    return 0.0
+
+
 def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
     r = dict(row or {})
     score, source = _entry_bridge_quality(r)
@@ -591,9 +601,17 @@ def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
     if horizon:
         r.setdefault("trade_horizon_style", horizon)
         r.setdefault("best_horizon_style", horizon)
+        r.setdefault("intended_trade_style", horizon)
+        r.setdefault("actual_horizon_classification", horizon)
+        r.setdefault("turnover_trade_style", horizon)
         r["paper_entry_horizon_style"] = horizon
         r["paper_entry_horizon_source"] = horizon_source
         r["paper_entry_horizon_inferred"] = bool(inferred)
+        r["horizon_source"] = horizon_source
+        r["expected_hold_window"] = _expected_hold_window(horizon)
+        r["expected_hold_minutes"] = _expected_hold_minutes(horizon)
+        r["expected_hold_days"] = round(_expected_hold_minutes(horizon) / 1440.0, 4)
+        r["horizon_persistence_bundle_v1"] = True
     action = str(r.get("action") or r.get("prediction") or "").strip().lower()
     readiness = " ".join(
         str(r.get(k) or "").strip().lower()
@@ -2494,6 +2512,17 @@ class PaperAutopilotEngine:
             "type": "market",
             "time_in_force": "day",
             "trade_horizon_style": str(r.get("trade_horizon_style") or r.get("best_horizon_style") or ""),
+            "best_horizon_style": str(r.get("best_horizon_style") or r.get("trade_horizon_style") or ""),
+            "paper_entry_horizon_style": str(r.get("paper_entry_horizon_style") or r.get("trade_horizon_style") or ""),
+            "intended_trade_style": str(r.get("intended_trade_style") or r.get("trade_horizon_style") or ""),
+            "actual_horizon_classification": str(r.get("actual_horizon_classification") or r.get("trade_horizon_style") or ""),
+            "turnover_trade_style": str(r.get("turnover_trade_style") or r.get("trade_horizon_style") or ""),
+            "horizon_source": str(r.get("horizon_source") or r.get("paper_entry_horizon_source") or ""),
+            "paper_entry_horizon_source": str(r.get("paper_entry_horizon_source") or r.get("horizon_source") or ""),
+            "paper_entry_horizon_inferred": bool(r.get("paper_entry_horizon_inferred", False)),
+            "expected_hold_window": str(r.get("expected_hold_window") or ""),
+            "expected_hold_minutes": round(_to_float(r.get("expected_hold_minutes"), 0.0), 3),
+            "expected_hold_days": round(_to_float(r.get("expected_hold_days"), 0.0), 4),
             "astra_paper_logic_passed": True,
             "paper_logic_passed": True,
             "paper_ready": True,
@@ -2579,6 +2608,18 @@ class PaperAutopilotEngine:
             "entry_paper_bridge_score": round(_to_float(r.get("paper_entry_bridge_score"), 0.0), 2),
             "entry_paper_bridge_score_source": str(r.get("paper_entry_bridge_score_source") or ""),
             "trade_horizon_style": str(r.get("trade_horizon_style") or r.get("best_horizon_style") or ""),
+            "best_horizon_style": str(r.get("best_horizon_style") or r.get("trade_horizon_style") or ""),
+            "paper_entry_horizon_style": str(r.get("paper_entry_horizon_style") or r.get("trade_horizon_style") or ""),
+            "intended_trade_style": str(r.get("intended_trade_style") or r.get("trade_horizon_style") or ""),
+            "actual_horizon_classification": str(r.get("actual_horizon_classification") or r.get("trade_horizon_style") or ""),
+            "turnover_trade_style": str(r.get("turnover_trade_style") or r.get("trade_horizon_style") or ""),
+            "horizon_source": str(r.get("horizon_source") or r.get("paper_entry_horizon_source") or ""),
+            "paper_entry_horizon_source": str(r.get("paper_entry_horizon_source") or r.get("horizon_source") or ""),
+            "paper_entry_horizon_inferred": bool(r.get("paper_entry_horizon_inferred", False)),
+            "expected_hold_window": str(r.get("expected_hold_window") or ""),
+            "expected_hold_minutes": round(_to_float(r.get("expected_hold_minutes"), 0.0), 3),
+            "expected_hold_days": round(_to_float(r.get("expected_hold_days"), 0.0), 4),
+            "horizon_persistence_bundle_v1": bool(r.get("horizon_persistence_bundle_v1", False)),
             "trade_archetype": str(r.get("trade_archetype") or "unknown"),
             "opportunity_quality_score": round(_to_float(r.get("opportunity_quality_score"), 0.0), 2),
             "opportunity_quality_label": str(r.get("opportunity_quality_label") or ""),
@@ -2724,6 +2765,32 @@ class PaperAutopilotEngine:
         entry_context = self._build_entry_context_v1(submit_row, entry_price, source_bucket, gate_meta=gate_meta)
         entry_context["position_id"] = pid
         entry_context["alpaca_paper_order"] = broker_order
+        broker_order_payload = dict(broker_order.get("order") or {}) if isinstance(broker_order, dict) else {}
+        source_broker_order_id = str(
+            broker_order_payload.get("id")
+            or broker_order_payload.get("broker_order_id")
+            or (broker_order.get("broker_order_id") if isinstance(broker_order, dict) else "")
+            or (broker_order.get("order_id") if isinstance(broker_order, dict) else "")
+            or ""
+        ).strip()
+        source_client_order_id = str(
+            broker_order_payload.get("client_order_id")
+            or (broker_order.get("client_order_id") if isinstance(broker_order, dict) else "")
+            or entry_row.get("client_order_id")
+            or ""
+        ).strip()
+        canonical_horizon = str(
+            entry_context.get("paper_entry_horizon_style")
+            or entry_context.get("trade_horizon_style")
+            or entry_context.get("best_horizon_style")
+            or ""
+        ).strip().lower()
+        canonical_horizon_source = str(
+            entry_context.get("paper_entry_horizon_source")
+            or entry_context.get("horizon_source")
+            or ""
+        ).strip()
+        canonical_horizon_confidence = 65.0 if bool(entry_context.get("paper_entry_horizon_inferred")) else 95.0
 
         with self._connect() as conn:
             conn.execute(
@@ -2732,8 +2799,10 @@ class PaperAutopilotEngine:
                     position_id, symbol, asset_type, status, quantity,
                     entry_price, exit_price, return_percent, friction_adjusted_return,
                     entry_timestamp, exit_timestamp, hold_seconds,
+                    canonical_horizon, canonical_horizon_source, canonical_horizon_confidence,
+                    source_broker_order_id, source_client_order_id,
                     source_bucket, lifecycle_notes, row_json, created_at, updated_at
-                ) VALUES (?, ?, ?, 'OPEN', ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, 'OPEN', ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     pid,
@@ -2742,6 +2811,11 @@ class PaperAutopilotEngine:
                     1.0,
                     entry_price,
                     now_iso,
+                    canonical_horizon,
+                    canonical_horizon_source,
+                    canonical_horizon_confidence,
+                    source_broker_order_id,
+                    source_client_order_id,
                     source_bucket,
                     _safe_json(entry_context),
                     _safe_json(entry_row),
@@ -2788,6 +2862,18 @@ class PaperAutopilotEngine:
                         "entry_quality_score": _to_float(row.get("entry_quality_score"), _to_float(row.get("paper_entry_bridge_score"), 0.0)),
                         "entry_quality_band": str(row.get("entry_quality_band") or "unknown"),
                         "trade_horizon_style": str(row.get("trade_horizon_style") or row.get("best_horizon_style") or ""),
+                        "best_horizon_style": str(row.get("best_horizon_style") or row.get("trade_horizon_style") or ""),
+                        "paper_entry_horizon_style": str(row.get("paper_entry_horizon_style") or row.get("trade_horizon_style") or ""),
+                        "intended_trade_style": str(row.get("intended_trade_style") or row.get("trade_horizon_style") or ""),
+                        "actual_horizon_classification": str(row.get("actual_horizon_classification") or row.get("trade_horizon_style") or ""),
+                        "turnover_trade_style": str(row.get("turnover_trade_style") or row.get("trade_horizon_style") or ""),
+                        "horizon_source": str(row.get("horizon_source") or row.get("paper_entry_horizon_source") or ""),
+                        "paper_entry_horizon_source": str(row.get("paper_entry_horizon_source") or row.get("horizon_source") or ""),
+                        "paper_entry_horizon_inferred": bool(row.get("paper_entry_horizon_inferred", False)),
+                        "expected_hold_window": str(row.get("expected_hold_window") or ""),
+                        "expected_hold_minutes": _to_float(row.get("expected_hold_minutes"), 0.0),
+                        "expected_hold_days": _to_float(row.get("expected_hold_days"), 0.0),
+                        "horizon_persistence_bundle_v1": bool(row.get("horizon_persistence_bundle_v1", False)),
                         "trade_archetype": str(row.get("setup_type") or "unknown"),
                         "catalyst_context": str(row.get("regime_context") or row.get("market_regime") or ""),
                         "source_endpoint": "paper_autopilot",

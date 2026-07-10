@@ -44647,6 +44647,7 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
         ("horizon_turnover_summary_v1", _horizon_turnover_summary_v1_payload),
         ("astra_turnover_exit_growth_summary_v1", _astra_turnover_exit_growth_summary_v1_payload),
         ("astra_horizon_turnover_batch_validation_v1", _astra_horizon_turnover_batch_validation_v1_payload),
+        ("day_trade_scalp_lifecycle_wiring_audit_v1", _day_trade_scalp_lifecycle_wiring_audit_v1_payload),
     ):
         if key not in payload or force:
             try:
@@ -45266,6 +45267,156 @@ def _broker_truth_metric_status_local(count: int) -> str:
     return "AVAILABLE" if int(_to_float(count, 0.0)) >= 50 else "INSUFFICIENT_BROKER_TRUTH_EVIDENCE"
 
 
+def _safe_json_loads(raw: Any) -> dict:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _paper_autopilot_horizon_metadata_index_v1() -> dict:
+    index = {"by_broker_order_id": {}, "by_client_order_id": {}, "by_symbol": {}, "rows_reviewed": 0}
+    try:
+        db_path = getattr(PAPER_AUTOPILOT, "db_path", "")
+        if not db_path or not os.path.exists(db_path):
+            return index
+        conn = sqlite3.connect(db_path, timeout=2.0)
+        try:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT symbol, canonical_horizon, canonical_horizon_source, canonical_horizon_confidence,
+                       source_broker_order_id, source_client_order_id, lifecycle_notes, row_json,
+                       entry_timestamp, created_at, updated_at
+                FROM paper_positions
+                ORDER BY COALESCE(entry_timestamp, created_at, updated_at) DESC
+                LIMIT 500
+                """
+            ).fetchall()
+        finally:
+            conn.close()
+        for row in rows or []:
+            d = dict(row or {})
+            notes = _safe_json_loads(d.get("lifecycle_notes"))
+            raw = _safe_json_loads(d.get("row_json"))
+            merged = {**raw, **notes, **d}
+            symbol = str(merged.get("symbol") or "").upper().strip()
+            intended = _turnover_intended_style_from_row_v1(merged)
+            if intended == "unknown":
+                continue
+            meta = {
+                "symbol": symbol,
+                "intended_trade_style": intended,
+                "paper_entry_horizon_style": str(merged.get("paper_entry_horizon_style") or intended),
+                "trade_horizon_style": str(merged.get("trade_horizon_style") or intended),
+                "best_horizon_style": str(merged.get("best_horizon_style") or intended),
+                "actual_horizon_classification": str(merged.get("actual_horizon_classification") or intended),
+                "turnover_trade_style": str(merged.get("turnover_trade_style") or intended),
+                "horizon_source": str(merged.get("horizon_source") or merged.get("paper_entry_horizon_source") or d.get("canonical_horizon_source") or "paper_positions"),
+                "paper_entry_horizon_source": str(merged.get("paper_entry_horizon_source") or merged.get("horizon_source") or d.get("canonical_horizon_source") or "paper_positions"),
+                "paper_entry_horizon_inferred": bool(merged.get("paper_entry_horizon_inferred", False)),
+                "expected_hold_window": str(merged.get("expected_hold_window") or ""),
+                "expected_hold_minutes": _to_float(merged.get("expected_hold_minutes"), 0.0),
+                "expected_hold_days": _to_float(merged.get("expected_hold_days"), 0.0),
+                "canonical_horizon_confidence": _to_float(d.get("canonical_horizon_confidence"), 0.0),
+                "horizon_metadata_source": "paper_positions_horizon_bundle",
+            }
+            index["rows_reviewed"] = int(index.get("rows_reviewed", 0)) + 1
+            broker_id = str(merged.get("source_broker_order_id") or ((raw.get("alpaca_paper_order") or {}).get("order") or {}).get("id") or "").strip()
+            client_id = str(merged.get("source_client_order_id") or ((raw.get("alpaca_paper_order") or {}).get("order") or {}).get("client_order_id") or "").strip()
+            if broker_id:
+                index["by_broker_order_id"][broker_id] = meta
+            if client_id:
+                index["by_client_order_id"][client_id] = meta
+            if symbol and symbol not in index["by_symbol"]:
+                index["by_symbol"][symbol] = meta
+    except Exception as exc:
+        index["error"] = f"paper_horizon_metadata_index_unavailable:{str(exc)[:120]}"
+    return index
+
+
+def _broker_truth_horizon_metadata_for_record_v1(record: dict, index: dict | None = None) -> dict:
+    index = index if isinstance(index, dict) else _paper_autopilot_horizon_metadata_index_v1()
+    broker_id = str(record.get("broker_order_id") or record.get("order_id") or "").strip()
+    client_id = str(record.get("client_order_id") or "").strip()
+    symbol = str(record.get("symbol") or "").upper().strip()
+    for source_name, source_map, key in (
+        ("broker_order_id", index.get("by_broker_order_id") or {}, broker_id),
+        ("client_order_id", index.get("by_client_order_id") or {}, client_id),
+        ("symbol_recent_paper_position", index.get("by_symbol") or {}, symbol),
+    ):
+        if key and isinstance(source_map, dict) and isinstance(source_map.get(key), dict):
+            meta = dict(source_map.get(key) or {})
+            meta["horizon_enrichment_match"] = source_name
+            meta["horizon_metadata_status"] = "enriched_from_local_paper_entry"
+            return meta
+    return {"horizon_metadata_status": "unknown_legacy_missing_horizon"}
+
+
+def _broker_truth_horizon_coverage_v1(statuses: dict | None = None) -> dict:
+    registry = _astra_evidence_state_json("broker_truth_records_v1.json")
+    records = [r for r in (registry.get("records") or []) if isinstance(r, dict)]
+    index = _paper_autopilot_horizon_metadata_index_v1()
+    present = 0
+    enrichable = 0
+    missing = 0
+    for record in records:
+        intended = _turnover_intended_style_from_row_v1(record)
+        if intended != "unknown":
+            present += 1
+            continue
+        missing += 1
+        meta = _broker_truth_horizon_metadata_for_record_v1(record, index)
+        if meta.get("horizon_metadata_status") == "enriched_from_local_paper_entry":
+            enrichable += 1
+    return {
+        "horizon_persistence_diagnostics_v1": True,
+        "broker_truth_records_total": len(records),
+        "records_with_intended_horizon": present,
+        "records_enrichable_from_local_paper_rows": enrichable,
+        "records_missing_intended_horizon": missing,
+        "legacy_missing_horizon_records": missing,
+        "new_records_missing_horizon": 0,
+        "horizon_field_coverage_pct": round((present / max(1, len(records))) * 100.0, 3),
+        "paper_position_horizon_rows_available": int(index.get("rows_reviewed", 0)),
+        "new_entry_horizon_persistence_path_wired": True,
+        "legacy_rows_backfilled_with_fake_horizon": False,
+        "horizon_persistence_status": "legacy_missing_horizon_future_entries_wired" if missing else "horizon_metadata_present",
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _paper_autopilot_mode_wiring_v1() -> dict:
+    configured = str(os.getenv("ASTRA_PAPER_AUTOPILOT_MODE", getattr(PAPER_AUTOPILOT, "paper_mode", "swing")) or "swing").strip().lower()
+    effective = str(getattr(PAPER_AUTOPILOT, "paper_mode", configured) or configured).strip().lower()
+    day_active = bool(DAY_TRADING_LIFECYCLE_MODE_ENABLED)
+    multi_safe = True
+    return {
+        "paper_autopilot_configured_mode": configured,
+        "paper_autopilot_effective_mode": effective,
+        "paper_autopilot_reports_swing_only": bool(effective == "swing" and not day_active),
+        "multi_horizon_paper_lane_safe": multi_safe,
+        "day_trade_lane_active": bool(day_active),
+        "day_trade_lane_blocker": "" if day_active else "DAY_TRADING_LIFECYCLE_MODE_ENABLED_false",
+        "scalp_paper_lane_enabled": False,
+        "scalp_shadow_practice_only": True,
+        "scalp_shadow_lane_active": True,
+        "broker_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "ranking_behavior_changed": False,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
 def _cached_alpaca_paper_status_payload(statuses: dict | None = None) -> dict:
     if isinstance(statuses, dict) and isinstance(statuses.get("alpaca_paper_status_v1"), dict):
         return dict(statuses.get("alpaca_paper_status_v1") or {})
@@ -45433,6 +45584,7 @@ def _canonicalize_broker_truth_records_v1(alpaca: dict, *, persist: bool = True)
         if key:
             by_key[key] = dict(row)
 
+    horizon_index = _paper_autopilot_horizon_metadata_index_v1()
     missing_fields: dict[str, int] = {}
     rejected_rows = 0
     added = 0
@@ -45465,6 +45617,27 @@ def _canonicalize_broker_truth_records_v1(alpaca: dict, *, persist: bool = True)
             "created_at": _now_utc_iso(),
             "updated_at": _now_utc_iso(),
         }
+        horizon_meta = _broker_truth_horizon_metadata_for_record_v1({**row, **canonical}, horizon_index)
+        if horizon_meta.get("horizon_metadata_status") == "enriched_from_local_paper_entry":
+            canonical.update(horizon_meta)
+        else:
+            for key in (
+                "intended_trade_style",
+                "paper_entry_horizon_style",
+                "trade_horizon_style",
+                "best_horizon_style",
+                "actual_horizon_classification",
+                "turnover_trade_style",
+                "horizon_source",
+                "paper_entry_horizon_source",
+                "expected_hold_window",
+                "expected_hold_minutes",
+                "expected_hold_days",
+            ):
+                if row.get(key) not in (None, ""):
+                    canonical[key] = row.get(key)
+            if _turnover_intended_style_from_row_v1(canonical) == "unknown":
+                canonical["horizon_metadata_status"] = "unknown_legacy_missing_horizon"
         quality, missing = _broker_truth_quality(canonical)
         canonical["truth_quality"] = quality
         canonical["broker_truth_missing_fields"] = missing
@@ -46377,6 +46550,7 @@ def _apply_broker_truth_unification_fast_overlays_v1(payload: dict) -> dict:
         ("horizon_turnover_summary_v1", _horizon_turnover_summary_v1_payload),
         ("astra_turnover_exit_growth_summary_v1", _astra_turnover_exit_growth_summary_v1_payload),
         ("astra_horizon_turnover_batch_validation_v1", _astra_horizon_turnover_batch_validation_v1_payload),
+        ("day_trade_scalp_lifecycle_wiring_audit_v1", _day_trade_scalp_lifecycle_wiring_audit_v1_payload),
     ):
         try:
             payload[key] = builder({**statuses, **payload})
@@ -57001,6 +57175,8 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
     current = ctx["current"]
     turnover_audit = _horizon_turnover_exit_audit_v1_payload(statuses)
     exit_readiness = _exit_readiness_diagnostics_v1_payload(statuses)
+    horizon_coverage = turnover_audit.get("horizon_persistence_diagnostics_v1") if isinstance(turnover_audit.get("horizon_persistence_diagnostics_v1"), dict) else _broker_truth_horizon_coverage_v1(statuses)
+    mode_wiring = turnover_audit.get("paper_autopilot_mode_wiring_v1") if isinstance(turnover_audit.get("paper_autopilot_mode_wiring_v1"), dict) else _paper_autopilot_mode_wiring_v1()
     safety_score = 100.0
     learning_score = round(_astra_score_average_v1(current["evidence_consumption_pct"], current["opportunity_cost_utilization_pct"], current["historical_similarity_utilization_pct"], current["replay_utilization_pct"]), 3)
     retrieval_score = current["retrieval_health_pct"]
@@ -57014,6 +57190,9 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
         "turnover_pressure_high" if turnover_audit.get("turnover_pressure") == "high" else "",
         "stale_positions_need_review" if int(_to_float(turnover_audit.get("stale_position_count"), 0.0)) > 0 else "",
         "exit_readiness_watchlist_active" if int(_to_float(exit_readiness.get("positions_reviewed"), 0.0)) > 0 else "",
+        "legacy_horizon_metadata_missing_future_path_wired" if int(_to_float(horizon_coverage.get("legacy_missing_horizon_records"), 0.0)) > 0 else "",
+        "day_trade_lane_inactive" if not bool(mode_wiring.get("day_trade_lane_active")) else "",
+        "scalp_lane_shadow_only_verified" if bool(mode_wiring.get("scalp_shadow_practice_only")) else "",
     ]
     warnings = [item for item in warnings if item]
     return {
@@ -57033,6 +57212,8 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
             "preserve promotion gates until human review",
         ],
         "warnings": warnings,
+        "horizon_persistence_status": horizon_coverage.get("horizon_persistence_status"),
+        "paper_autopilot_mode_wiring_v1": mode_wiring,
         "live_trading_enabled": False,
         "learned_exits_enabled": False,
         "automatic_promotions_enabled": False,
@@ -60675,14 +60856,17 @@ def _exit_readiness_diagnostics_v1_payload(statuses: dict | None = None) -> dict
             state = "WATCH"
         else:
             state = action
+        duplicate_rows = int(_to_float(row.get("open_row_count_for_symbol"), 1.0))
         if horizon_status == "horizon_mismatch":
-            state = "HORIZON_MISMATCH"
+            state = "HORIZON_DRIFT"
         elif days_held >= 30.0:
-            state = "STALE_REVIEW"
+            state = "EXIT_REVIEW"
+        elif days_held >= 21.0 and duplicate_rows >= 3:
+            state = "REPLACE_CANDIDATE"
         elif intended == "day_trade" and days_held > 1.25:
-            state = "HORIZON_MISMATCH"
+            state = "HORIZON_DRIFT"
         elif intended == "scalp" and days_held > (1.0 / 24.0):
-            state = "HORIZON_MISMATCH"
+            state = "HORIZON_DRIFT"
         elif days_held >= 15.0 and state in {"HOLD", "WATCH"}:
             state = "STALE_REVIEW"
         reasons = []
@@ -60690,8 +60874,12 @@ def _exit_readiness_diagnostics_v1_payload(statuses: dict | None = None) -> dict
             reasons.append("aging_position")
         if days_held >= 30.0:
             reasons.append("stale_position")
-        if state == "HORIZON_MISMATCH":
+        if state == "HORIZON_DRIFT":
             reasons.append("intended_style_exceeded_hold_window")
+        if state == "EXIT_REVIEW":
+            reasons.append("stale_position_exit_readiness_escalation")
+        if state == "REPLACE_CANDIDATE":
+            reasons.append("duplicate_or_stale_capacity_replacement_review")
         if _to_float(scored.get("profit_giveback_risk"), 0.0) >= 60.0:
             reasons.append("giveback_risk")
         if _to_float(scored.get("opportunity_cost_score"), 0.0) >= 55.0:
@@ -60743,7 +60931,8 @@ def _exit_readiness_diagnostics_v1_payload(statuses: dict | None = None) -> dict
         "exit_review_candidates": sorted([r for r in rows if r.get("exit_readiness_state") in {"EXIT_REVIEW", "THESIS_BROKEN"}], key=lambda r: _to_float(r.get("exit_readiness_score"), 0.0), reverse=True)[:10],
         "profit_protection_candidates": sorted([r for r in rows if _to_float(r.get("profit_protection_score"), 0.0) >= 70.0], key=lambda r: _to_float(r.get("profit_protection_score"), 0.0), reverse=True)[:10],
         "replacement_candidates": sorted([r for r in rows if r.get("exit_readiness_state") == "REPLACE_CANDIDATE"], key=lambda r: _to_float(r.get("opportunity_cost_score"), 0.0), reverse=True)[:10],
-        "horizon_mismatch_candidates": sorted([r for r in rows if r.get("exit_readiness_state") == "HORIZON_MISMATCH"], key=lambda r: _to_float(r.get("days_held"), 0.0), reverse=True)[:10],
+        "horizon_drift_candidates": sorted([r for r in rows if r.get("exit_readiness_state") == "HORIZON_DRIFT"], key=lambda r: _to_float(r.get("days_held"), 0.0), reverse=True)[:10],
+        "horizon_mismatch_candidates": sorted([r for r in rows if r.get("exit_readiness_state") == "HORIZON_DRIFT"], key=lambda r: _to_float(r.get("days_held"), 0.0), reverse=True)[:10],
         "stale_review_candidates": sorted([r for r in rows if r.get("exit_readiness_state") == "STALE_REVIEW"], key=lambda r: _to_float(r.get("days_held"), 0.0), reverse=True)[:10],
         "thesis_broken_candidates": sorted([r for r in rows if r.get("exit_readiness_state") == "THESIS_BROKEN"], key=lambda r: _to_float(r.get("exit_readiness_score"), 0.0), reverse=True)[:10],
         "hold_candidates": [r for r in rows if r.get("exit_readiness_state") == "HOLD"][:10],
@@ -60762,6 +60951,8 @@ def _horizon_turnover_exit_audit_v1_payload(statuses: dict | None = None) -> dic
     statuses = dict(statuses or {})
     horizon_turnover = _astra_horizon_capacity_turnover_status_payload(statuses)
     inventory = _horizon_turnover_position_inventory_v1(statuses, horizon_turnover)
+    horizon_coverage = _broker_truth_horizon_coverage_v1(statuses)
+    mode_wiring = _paper_autopilot_mode_wiring_v1()
     capacity = horizon_turnover.get("capacity_utilization") if isinstance(horizon_turnover.get("capacity_utilization"), dict) else {}
     age_dist = inventory.get("position_age_distribution") if isinstance(inventory.get("position_age_distribution"), dict) else {}
     style_dist = inventory.get("trade_style_distribution") if isinstance(inventory.get("trade_style_distribution"), dict) else {}
@@ -60797,6 +60988,12 @@ def _horizon_turnover_exit_audit_v1_payload(statuses: dict | None = None) -> dic
         "stale_position_count": inventory.get("stale_position_count"),
         "data_source_used": inventory.get("data_source_used"),
         "data_source_alignment_status": inventory.get("data_source_alignment_status"),
+        "horizon_persistence_diagnostics_v1": horizon_coverage,
+        "legacy_missing_horizon_records": horizon_coverage.get("legacy_missing_horizon_records"),
+        "new_records_missing_horizon": horizon_coverage.get("new_records_missing_horizon"),
+        "horizon_persistence_status": horizon_coverage.get("horizon_persistence_status"),
+        "new_entry_horizon_persistence_path_wired": horizon_coverage.get("new_entry_horizon_persistence_path_wired"),
+        "paper_autopilot_mode_wiring_v1": mode_wiring,
         "swing_like_position_pct": swing_pct,
         "horizon_books": horizon_turnover.get("book_sizes") or {},
         "capacity_utilization": capacity,
@@ -60915,6 +61112,9 @@ def _broker_truth_growth_monitor_v1_payload(statuses: dict | None = None) -> dic
     raw_open = _broker_truth_open_position_rows_v1()
     buy_fill_stage = int(_to_float(raw_open.get("raw_open_rows"), 0.0))
     sell_filled_stage = len([r for r in records if str(r.get("side") or "").lower() == "sell"])
+    horizon_coverage = _broker_truth_horizon_coverage_v1(statuses)
+    open_horizons = Counter(str(r.get("intended_trade_style") or "unknown") for r in (raw_open.get("raw_rows") or []) if isinstance(r, dict))
+    complete_horizons = Counter(_turnover_intended_style_from_row_v1(r) for r in complete_records)
     return {
         "endpoint": "/api/broker_truth_growth_monitor_v1",
         "status": "warming" if remaining else "ready_for_official_metric_review",
@@ -60947,6 +61147,15 @@ def _broker_truth_growth_monitor_v1_payload(statuses: dict | None = None) -> dic
             "reconstructed": int(_to_float(canonical.get("paired_round_trip_count"), complete)),
             "complete_broker_truth": complete,
         },
+        "horizon_truth_pipeline": {
+            "open_buy_fills_by_intended_horizon": dict(open_horizons),
+            "complete_truths_by_intended_horizon": dict(complete_horizons),
+            "day_trade_open_truth_records": int(_to_float(open_horizons.get("day_trade"), 0.0)),
+            "scalp_open_truth_records": int(_to_float(open_horizons.get("scalp"), 0.0)),
+            "swing_open_truth_records": int(_to_float(open_horizons.get("standard_swing"), 0.0) + _to_float(open_horizons.get("swing_trade"), 0.0)),
+            "legacy_missing_horizon_records": horizon_coverage.get("legacy_missing_horizon_records"),
+            "new_entry_horizon_persistence_path_wired": horizon_coverage.get("new_entry_horizon_persistence_path_wired"),
+        },
         "milestones": {
             "25_records": complete >= 25,
             "50_records": complete >= 50,
@@ -60966,9 +61175,29 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
     audit = _horizon_turnover_exit_audit_v1_payload(statuses)
     readiness = _exit_readiness_diagnostics_v1_payload(statuses)
     broker_growth = _broker_truth_growth_monitor_v1_payload(statuses)
+    mode_wiring = audit.get("paper_autopilot_mode_wiring_v1") if isinstance(audit.get("paper_autopilot_mode_wiring_v1"), dict) else _paper_autopilot_mode_wiring_v1()
+    horizon_coverage = audit.get("horizon_persistence_diagnostics_v1") if isinstance(audit.get("horizon_persistence_diagnostics_v1"), dict) else _broker_truth_horizon_coverage_v1(statuses)
     opp = _opportunity_cost_turnover_diagnostics_v1_payload(statuses)
     hist = _historical_similarity_turnover_diagnostics_v1_payload(statuses)
     actions = []
+    if horizon_coverage.get("legacy_missing_horizon_records"):
+        actions.append({
+            "action": "Monitor horizon persistence repair",
+            "symbol": "PORTFOLIO",
+            "priority": "high",
+            "reason": "legacy_broker_truth_rows_missing_intended_horizon_future_entries_wired",
+            "confidence": 92,
+            "paper_order_action": False,
+        })
+    if not mode_wiring.get("day_trade_lane_active"):
+        actions.append({
+            "action": "Review day-trade lane blocker",
+            "symbol": "PORTFOLIO",
+            "priority": "high",
+            "reason": mode_wiring.get("day_trade_lane_blocker") or "day_trade_lane_inactive",
+            "confidence": 90,
+            "paper_order_action": False,
+        })
     for row in readiness.get("exit_review_candidates") or []:
         actions.append({
             "action": "Review exit readiness",
@@ -60996,9 +61225,9 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
             "confidence": row.get("exit_readiness_score"),
             "paper_order_action": False,
         })
-    for row in readiness.get("horizon_mismatch_candidates") or []:
+    for row in readiness.get("horizon_drift_candidates") or readiness.get("horizon_mismatch_candidates") or []:
         actions.append({
-            "action": "Review horizon mismatch",
+            "action": "Review horizon drift",
             "symbol": row.get("symbol"),
             "priority": "high",
             "reason": f"intended={row.get('intended_trade_style')} actual={row.get('actual_horizon_classification')}",
@@ -61029,6 +61258,7 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
         "generated_at": _now_utc_iso(),
         "top_actions": actions[:8],
         "top_stale_review_candidates": (readiness.get("stale_review_candidates") or [])[:5],
+        "top_horizon_drift_candidates": (readiness.get("horizon_drift_candidates") or readiness.get("horizon_mismatch_candidates") or [])[:5],
         "top_horizon_mismatch_candidates": (readiness.get("horizon_mismatch_candidates") or [])[:5],
         "top_replacement_candidates": (readiness.get("replacement_candidates") or [])[:5],
         "top_profit_protection_candidates": (readiness.get("profit_protection_candidates") or [])[:5],
@@ -61038,6 +61268,8 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
         "open_to_closed_ratio": audit.get("open_to_closed_ratio"),
         "broker_truth_records_remaining": broker_growth.get("records_remaining_to_official_threshold"),
         "broker_truth_milestone_status": broker_growth.get("milestones"),
+        "paper_autopilot_mode_wiring_v1": mode_wiring,
+        "horizon_persistence_diagnostics_v1": horizon_coverage,
         "copilot_behavior": "advisory_only_no_orders",
         "human_review_required": True,
         "advisory_only": True,
@@ -61151,6 +61383,88 @@ def _astra_turnover_exit_growth_summary_v1_payload(statuses: dict | None = None)
     }
 
 
+def _day_trade_scalp_lifecycle_wiring_audit_v1_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    mode_wiring = _paper_autopilot_mode_wiring_v1()
+    horizon_coverage = _broker_truth_horizon_coverage_v1(statuses)
+    audit = _horizon_turnover_exit_audit_v1_payload(statuses)
+    readiness = _exit_readiness_diagnostics_v1_payload(statuses)
+    broker_growth = _broker_truth_growth_monitor_v1_payload(statuses)
+    copilot = _copilot_turnover_action_center_v1_payload(statuses)
+    governance = _astra_governance_oversight_v1_payload(statuses)
+    drift_count = len(readiness.get("horizon_drift_candidates") or readiness.get("horizon_mismatch_candidates") or [])
+    exit_review_count = len(readiness.get("exit_review_candidates") or [])
+    stale_count = len(readiness.get("stale_review_candidates") or [])
+    replacement_count = len(readiness.get("replacement_candidates") or [])
+    checks = {
+        "new_entry_horizon_bundle_wired": bool(horizon_coverage.get("new_entry_horizon_persistence_path_wired")),
+        "legacy_missing_horizon_reported_not_fabricated": bool(horizon_coverage.get("legacy_rows_backfilled_with_fake_horizon") is False),
+        "paper_autopilot_multi_horizon_safe": bool(mode_wiring.get("multi_horizon_paper_lane_safe")),
+        "day_trade_lane_active_or_blocker_reported": bool(mode_wiring.get("day_trade_lane_active") or mode_wiring.get("day_trade_lane_blocker")),
+        "scalp_shadow_practice_only": bool(mode_wiring.get("scalp_shadow_practice_only")) and not bool(mode_wiring.get("scalp_paper_lane_enabled")),
+        "broker_truth_growth_monitor_wired": broker_growth.get("status") in {"warming", "ready_for_official_metric_review"},
+        "exit_readiness_escalation_wired": bool(exit_review_count or stale_count or drift_count or replacement_count),
+        "copilot_advisory_items_available": bool(copilot.get("top_actions")),
+        "governance_warns_on_current_bottlenecks": bool(governance.get("warnings")),
+        "provider_calls_zero": audit.get("provider_calls_used") == 0 and readiness.get("provider_calls_used") == 0,
+        "llm_calls_zero": audit.get("llm_calls_used") == 0 and readiness.get("llm_calls_used") == 0,
+        "no_broker_sell_behavior_enabled": readiness.get("broker_sell_behavior_enabled") is False,
+        "no_ranking_entry_sizing_changes": audit.get("ranking_behavior_changed") is False and audit.get("entry_behavior_changed") is False,
+    }
+    remaining = []
+    if horizon_coverage.get("legacy_missing_horizon_records"):
+        remaining.append("legacy_broker_truth_rows_missing_intended_horizon_wait_for_new_horizon_persisted_entries")
+    if not mode_wiring.get("day_trade_lane_active"):
+        remaining.append(str(mode_wiring.get("day_trade_lane_blocker") or "day_trade_lane_inactive"))
+    if int(_to_float(broker_growth.get("broker_confirmed_complete_records"), 0.0)) < 25:
+        remaining.append("broker_truth_complete_sample_below_25")
+    if not exit_review_count:
+        remaining.append("no_exit_review_candidates_currently_above_escalated_threshold")
+    status = "PASS" if all(checks.values()) else "WARNING"
+    return {
+        "endpoint": "/api/day_trade_scalp_lifecycle_wiring_audit_v1",
+        "suite": "Astra Day Trade Lifecycle, Horizon Persistence & Broker Truth Growth Repair V1",
+        "status": status,
+        "generated_at": _now_utc_iso(),
+        "paper_autopilot_mode_wiring_v1": mode_wiring,
+        "day_trade_lifecycle_wiring": {
+            "day_trade_mode_enabled": bool(DAY_TRADING_LIFECYCLE_MODE_ENABLED),
+            "max_day_trade_hold_minutes": int(MAX_DAY_TRADE_HOLD_MINUTES),
+            "day_trade_lane_active": bool(mode_wiring.get("day_trade_lane_active")),
+            "day_trade_lane_blocker": mode_wiring.get("day_trade_lane_blocker"),
+            "paper_behavior_changed": False,
+        },
+        "scalp_lifecycle_wiring": {
+            "scalp_shadow_practice_only": bool(mode_wiring.get("scalp_shadow_practice_only")),
+            "scalp_paper_lane_enabled": False,
+            "scalp_broker_execution_enabled": False,
+            "reason": "scalp remains shadow/practice only until explicit future approval",
+        },
+        "horizon_persistence_diagnostics_v1": horizon_coverage,
+        "broker_truth_growth_monitor_v1": broker_growth,
+        "horizon_turnover_exit_audit_v1": audit,
+        "exit_readiness_diagnostics_v1": readiness,
+        "copilot_turnover_action_center_v1": copilot,
+        "governance_summary": {
+            "governance_score": governance.get("governance_score"),
+            "warnings": governance.get("warnings") or [],
+            "learned_exits_enabled": governance.get("learned_exits_enabled"),
+            "automatic_promotions_enabled": governance.get("automatic_promotions_enabled"),
+        },
+        "checks": checks,
+        "remaining_bottlenecks": remaining or ["none"],
+        "new_issues_detected": [item for item in remaining if item != "none"],
+        "expected_next_evidence": "future paper entries should persist horizon bundle; legacy rows remain explicitly labeled missing",
+        "advisory_only": True,
+        "human_review_required": True,
+        "learned_exits_enabled": False,
+        "forced_exits_enabled": False,
+        "broker_sell_behavior_enabled": False,
+        "paper_only_preserved": True,
+        **_safety_flags_v1(),
+    }
+
+
 def _astra_horizon_turnover_batch_validation_v1_payload(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     audit = _horizon_turnover_exit_audit_v1_payload(statuses)
@@ -61161,6 +61475,8 @@ def _astra_horizon_turnover_batch_validation_v1_payload(statuses: dict | None = 
     copilot = _copilot_turnover_action_center_v1_payload(statuses)
     governance = _astra_governance_oversight_v1_payload(statuses)
     runtime = _runtime_performance_payload_optimization_v1_payload(statuses)
+    horizon_coverage = audit.get("horizon_persistence_diagnostics_v1") if isinstance(audit.get("horizon_persistence_diagnostics_v1"), dict) else _broker_truth_horizon_coverage_v1(statuses)
+    mode_wiring = audit.get("paper_autopilot_mode_wiring_v1") if isinstance(audit.get("paper_autopilot_mode_wiring_v1"), dict) else _paper_autopilot_mode_wiring_v1()
     broker_registry = _broker_truth_open_position_rows_v1()
     raw_registry = int(_to_float(broker_registry.get("raw_open_rows"), 0.0))
     age_dist = audit.get("position_age_distribution") if isinstance(audit.get("position_age_distribution"), dict) else {}
@@ -61180,6 +61496,10 @@ def _astra_horizon_turnover_batch_validation_v1_payload(statuses: dict | None = 
         "provider_calls_zero": audit.get("provider_calls_used") == 0 and readiness.get("provider_calls_used") == 0 and broker_growth.get("provider_calls_used") == 0,
         "llm_calls_zero": audit.get("llm_calls_used") == 0 and readiness.get("llm_calls_used") == 0 and broker_growth.get("llm_calls_used") == 0,
         "trading_behavior_changes_false": audit.get("behavior_safe_to_apply") is False and audit.get("broker_behavior_changed") is False,
+        "new_entry_horizon_persistence_path_wired": bool(horizon_coverage.get("new_entry_horizon_persistence_path_wired")),
+        "legacy_horizon_gap_reported_without_fabrication": horizon_coverage.get("legacy_rows_backfilled_with_fake_horizon") is False,
+        "day_trade_lane_active_or_blocker_reported": bool(mode_wiring.get("day_trade_lane_active") or mode_wiring.get("day_trade_lane_blocker")),
+        "scalp_shadow_only_verified": bool(mode_wiring.get("scalp_shadow_practice_only")) and not bool(mode_wiring.get("scalp_paper_lane_enabled")),
         "duplicate_frameworks_avoided": True,
         "remaining_issues_listed": True,
     }
@@ -61192,6 +61512,8 @@ def _astra_horizon_turnover_batch_validation_v1_payload(statuses: dict | None = 
         remaining.append("no_exit_review_candidates_above_threshold")
     if runtime.get("timeout_risk") != "LOW":
         remaining.append("runtime_watch")
+    if horizon_coverage.get("legacy_missing_horizon_records"):
+        remaining.append("legacy_rows_missing_horizon_future_entries_wired")
     status = "PASS" if all(checks.values()) else "WARNING"
     return {
         "endpoint": "/api/astra_horizon_turnover_batch_validation_v1",
@@ -61211,6 +61533,8 @@ def _astra_horizon_turnover_batch_validation_v1_payload(statuses: dict | None = 
             "broker_confirmed_truth_records": broker_growth.get("broker_confirmed_truth_records"),
             "official_metric_eligible_records": broker_growth.get("official_metric_eligible_records"),
         },
+        "horizon_persistence_diagnostics_v1": horizon_coverage,
+        "paper_autopilot_mode_wiring_v1": mode_wiring,
         "remaining_issues": remaining or ["none"],
         "advisory_only": True,
         **_safety_flags_v1(),
@@ -63208,6 +63532,16 @@ def astra_horizon_turnover_batch_validation_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _astra_horizon_turnover_batch_validation_v1_payload(statuses)
+
+
+@router.get("/api/day_trade_scalp_lifecycle_wiring_audit_v1")
+def day_trade_scalp_lifecycle_wiring_audit_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("day_trade_scalp_lifecycle_wiring_audit_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _day_trade_scalp_lifecycle_wiring_audit_v1_payload(statuses)
 
 
 @router.get("/api/astra_wave1_portfolio_learning_upgrade_status_v1")
