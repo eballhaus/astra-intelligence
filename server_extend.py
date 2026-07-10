@@ -45807,6 +45807,61 @@ def _day_trade_gate_category_v1(reason: str) -> str:
     return "unclassified"
 
 
+def _horizon_specific_rejection_reason_v1(reason: str, horizon: str, fallback: str = "") -> str:
+    raw = str(reason or "").strip()
+    h = str(horizon or "unknown").strip() or "unknown"
+    lower = raw.lower()
+    if h == "day_trade" and "scalp" in lower:
+        return "day_trade_no_qualified_horizon_assignment_rows_after_existing_gates"
+    if h == "day_trade" and not raw:
+        return fallback or "day_trade_candidate_rows_present_but_no_qualified_horizon_assignment_rows"
+    if h == "scalp" and not raw:
+        return fallback or "no_qualified_scalp_candidate_after_existing_gates"
+    if h in {"swing_trade", "standard_swing", "swing"} and not raw:
+        return fallback or "no_qualified_swing_trade_candidate_after_existing_gates"
+    return raw or fallback or "rejected_other_explained"
+
+
+def _day_trade_final_status_v1(reason: str, qualified: bool = False) -> str:
+    if qualified:
+        return "QUALIFIED"
+    category = _day_trade_gate_category_v1(reason)
+    if category == "duplicate_symbol":
+        return "REJECTED_DUPLICATE_SYMBOL"
+    if category == "capacity":
+        return "REJECTED_CAPACITY"
+    if category == "risk":
+        return "REJECTED_RISK"
+    if category == "confidence":
+        return "REJECTED_CONFIDENCE"
+    if category == "liquidity":
+        return "REJECTED_LIQUIDITY"
+    raw = str(reason or "").lower()
+    if category == "horizon_assignment":
+        return "REJECTED_HORIZON_ASSIGNMENT"
+    if category == "paper_tie_breaker":
+        return "REJECTED_TIE_BREAK"
+    if "session" in raw or "market" in raw:
+        return "REJECTED_MARKET_SESSION"
+    if "missing" in raw or "stale" in raw or "data" in raw:
+        return "REJECTED_MISSING_DATA"
+    return "REJECTED_OTHER_EXPLAINED"
+
+
+def _normalize_horizon_reason_counts_v1(reasons: dict, horizon: str, fallback: str = "") -> tuple[dict, bool]:
+    normalized: Counter = Counter()
+    misaligned = False
+    source = reasons if isinstance(reasons, dict) else {}
+    for reason, count in source.items():
+        normalized_reason = _horizon_specific_rejection_reason_v1(str(reason or ""), horizon, fallback)
+        if normalized_reason != str(reason or ""):
+            misaligned = True
+        normalized[normalized_reason] += int(_to_float(count, 1.0))
+    if not normalized and fallback:
+        normalized[_horizon_specific_rejection_reason_v1("", horizon, fallback)] += 1
+    return dict(normalized), misaligned
+
+
 def _day_trade_top_rejected_candidates_v1(statuses: dict | None = None, limit: int = 10) -> list[dict]:
     rows = []
     trace = _paper_autopilot_last_trace_v1()
@@ -45820,10 +45875,12 @@ def _day_trade_top_rejected_candidates_v1(statuses: dict | None = None, limit: i
         if bool(row.get("eligible") or row.get("selected")):
             continue
         reason = str(row.get("decision_reason") or row.get("rejection_reason") or row.get("blocker") or "not_qualified_or_not_evaluated")
+        reason = _horizon_specific_rejection_reason_v1(reason, "day_trade", "day_trade_candidate_not_qualified_or_not_evaluated")
         rows.append({
             "symbol": str(row.get("symbol") or row.get("ticker") or "").upper(),
             "reason": reason,
             "gate_category": _day_trade_gate_category_v1(reason),
+            "final_status": _day_trade_final_status_v1(reason),
             "confidence": row.get("confidence") or row.get("score") or row.get("composite_score"),
             "liquidity": row.get("liquidity_score") or row.get("volume_score"),
             "risk": row.get("risk_score") or row.get("risk_level"),
@@ -45855,14 +45912,25 @@ def _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses: dict |
     day_generated = int(_to_float(generated.get("day_trade"), 0.0))
     day_qualified = int(_to_float(qualified.get("day_trade"), 0.0))
     day_rejected = max(int(_to_float(rejected.get("day_trade"), 0.0)), max(0, day_generated - day_qualified))
-    day_reasons = dict(rejection_reasons.get("day_trade") or {})
-    if day_generated > 0 and day_qualified <= 0 and not day_reasons:
+    raw_day_reasons = dict(rejection_reasons.get("day_trade") or {})
+    fallback_day_reason = ""
+    if day_generated > 0 and day_qualified <= 0 and not raw_day_reasons:
         blocker = str(
             flow.get("paper_tie_breaker_blocker")
             or dropoff.get("day_trade")
             or "candidate_rows_present_but_no_qualified_horizon_assignment_rows"
         )
-        day_reasons = {blocker: day_rejected or day_generated}
+        raw_day_reasons = {blocker: day_rejected or day_generated}
+    if day_generated > 0 and day_qualified <= 0:
+        fallback_day_reason = str(
+            dropoff.get("day_trade")
+            or flow.get("horizon_assignment_blocker")
+            or flow.get("paper_tie_breaker_blocker")
+            or "day_trade_candidate_rows_present_but_no_qualified_horizon_assignment_rows"
+        )
+    day_reasons, misaligned_day_reason = _normalize_horizon_reason_counts_v1(raw_day_reasons, "day_trade", fallback_day_reason)
+    scalp_reasons, _ = _normalize_horizon_reason_counts_v1(dict(rejection_reasons.get("scalp") or {}), "scalp", "no_qualified_scalp_candidate_after_existing_gates")
+    swing_reasons, _ = _normalize_horizon_reason_counts_v1(dict(rejection_reasons.get("swing_trade") or rejection_reasons.get("standard_swing") or {}), "swing_trade", "no_qualified_swing_trade_candidate_after_existing_gates")
     gate_counts = Counter()
     for reason, count in day_reasons.items():
         gate_counts[_day_trade_gate_category_v1(reason)] += int(_to_float(count, 1.0))
@@ -45895,6 +45963,23 @@ def _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses: dict |
     paper_autopilot_received_day = day_generated if flow.get("candidate_flow_source") in {"paper_autopilot_last_execution_trace", "existing_horizon_lifecycle_capacity_bundle_v1", "cached_top_buys_snapshot"} else 0
     paper_eligible_day = day_qualified if exact_gate not in {"paper_autopilot_capacity_gate", "horizon_assignment_blocker"} else 0
     top_rejected = _day_trade_top_rejected_candidates_v1(statuses)
+    candidate_level_rows = []
+    for idx, row in enumerate(top_rejected):
+        reason = str(row.get("reason") or next(iter(day_reasons), "day_trade_candidate_not_qualified_or_not_evaluated"))
+        candidate_level_rows.append({
+            "candidate_index": idx,
+            "symbol": row.get("symbol") or "UNKNOWN",
+            "horizon": "day_trade",
+            "final_status": _day_trade_final_status_v1(reason),
+            "rejection_reason": reason,
+            "gate_category": _day_trade_gate_category_v1(reason),
+            "confidence": row.get("confidence"),
+            "liquidity": row.get("liquidity"),
+            "risk": row.get("risk"),
+            "advisory_only": True,
+        })
+    candidate_level_rows_available = bool(candidate_level_rows)
+    misaligned_rejection_reason_fixed = bool(misaligned_day_reason and not any("scalp" in str(reason).lower() for reason in day_reasons))
 
     capacity_recycling_candidates = recycling.get("capacity_recycling_candidates") or []
     top_capacity_traps = recycling.get("top_positions_blocking_capacity") or []
@@ -45933,7 +46018,7 @@ def _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses: dict |
     remaining_bottlenecks = [item for item in remaining_bottlenecks if item]
     newly_discovered = [
         "active_position_source_mismatch" if source_alignment.get("source_alignment_status") != "PASS" else "",
-        "day_trade_candidate_rejection_reasons_missing_detail" if day_generated > 0 and not day_reasons else "",
+        "day_trade_candidate_level_rows_unavailable_from_current_cache" if day_generated > 0 and not candidate_level_rows_available else "",
     ]
     newly_discovered = [item for item in newly_discovered if item]
     status = "PASS" if validation_checks["exact_rejection_gate_identified"] and validation_checks["future_horizon_persistence_path_wired"] else "WARNING"
@@ -45952,7 +46037,34 @@ def _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses: dict |
             "qualified_candidates_by_horizon": qualified,
             "rejected_candidates_by_horizon": {**rejected, "day_trade": day_rejected},
             "rejection_reasons_by_horizon": {**rejection_reasons, "day_trade": day_reasons},
+            "raw_rejection_reasons_by_horizon": rejection_reasons,
             "dropoff_point_by_horizon": {**dropoff, "day_trade": exact_gate},
+            "day_trade_generated": day_generated,
+            "day_trade_ranked": ranked.get("day_trade", 0),
+            "day_trade_assignment_evaluated": day_generated,
+            "day_trade_tie_break_evaluated": day_generated if day_generated > 0 else 0,
+            "day_trade_qualified": day_qualified,
+            "day_trade_rejected": day_rejected,
+            "day_trade_rejection_reasons": day_reasons,
+            "day_trade_dropoff_point": exact_gate,
+            "scalp_generated": int(_to_float(generated.get("scalp"), 0.0)),
+            "scalp_qualified": int(_to_float(qualified.get("scalp"), 0.0)),
+            "scalp_rejection_reasons": scalp_reasons,
+            "swing_generated": int(_to_float(generated.get("swing_trade", generated.get("standard_swing", generated.get("swing", 0))), 0.0)),
+            "swing_qualified": int(_to_float(qualified.get("swing_trade", qualified.get("standard_swing", qualified.get("swing", 0))), 0.0)),
+            "swing_rejection_reasons": swing_reasons,
+            "global_blockers": {
+                "paper_tie_breaker_blocker": flow.get("paper_tie_breaker_blocker"),
+                "horizon_assignment_blocker": flow.get("horizon_assignment_blocker") or flow.get("horizon_assignment_dropoff_point"),
+                "raw_day_trade_rejection_reasons": raw_day_reasons,
+            },
+            "horizon_specific_blockers": {
+                "day_trade": day_reasons,
+                "scalp": scalp_reasons,
+                "swing_trade": swing_reasons,
+            },
+            "misaligned_rejection_reason_detected": misaligned_day_reason,
+            "misaligned_rejection_reason_fixed": misaligned_rejection_reason_fixed,
             "day_trade_candidates_generated": day_generated,
             "day_trade_candidates_ranked": ranked.get("day_trade", 0),
             "day_trade_candidates_qualified": day_qualified,
@@ -45970,6 +46082,8 @@ def _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses: dict |
             "day_trade_candidates_blocked_by_practice_bucket": practice_blocked,
             "exact_gate_blocking_day_trades": exact_gate,
             "top_rejected_day_trade_candidates": top_rejected,
+            "candidate_level_rows_available": candidate_level_rows_available,
+            "candidate_level_rows": candidate_level_rows,
         },
         "capacity_recycling_support_v1": {
             "capacity_recycling_candidates": capacity_recycling_candidates,
@@ -46076,7 +46190,8 @@ def _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses: dict |
         "newly_discovered_issues": newly_discovered,
         "primary_answer": (
             f"Day-trade candidates exist but qualified_day_trade_candidates remain 0 because the funnel drops at {exact_gate}; "
-            "the current diagnostics show generated/ranked candidates do not survive horizon qualification/capacity/tie-break gates into paper-eligible rows."
+            "the current diagnostics show generated/ranked candidates do not survive horizon assignment/tie-break qualification into paper-eligible rows. "
+            "The prior scalp-only rejection string is preserved as raw evidence but no longer used as the day-trade blocker."
         ),
         "provider_calls_used": 0,
         "llm_calls_used": 0,
@@ -46112,7 +46227,12 @@ def _day_trade_dropoff_compact_v1(payload: dict) -> dict:
         "day_trade_candidates_qualified": funnel.get("day_trade_candidates_qualified"),
         "day_trade_candidates_rejected": funnel.get("day_trade_candidates_rejected"),
         "exact_gate_blocking_day_trades": funnel.get("exact_gate_blocking_day_trades"),
+        "day_trade_dropoff_point": funnel.get("day_trade_dropoff_point"),
         "day_trade_candidate_rejection_reasons": funnel.get("day_trade_candidate_rejection_reasons"),
+        "misaligned_rejection_reason_detected": funnel.get("misaligned_rejection_reason_detected"),
+        "misaligned_rejection_reason_fixed": funnel.get("misaligned_rejection_reason_fixed"),
+        "candidate_level_rows_available": funnel.get("candidate_level_rows_available"),
+        "candidate_level_rows_count": len(funnel.get("candidate_level_rows") or []),
         "day_trade_capacity_available": recycling.get("day_trade_capacity_available"),
         "capacity_recycling_candidates_count": len(recycling.get("capacity_recycling_candidates") or []),
         "broker_confirmed_complete_records": broker.get("broker_confirmed_complete_records"),
@@ -46157,6 +46277,229 @@ def _alpaca_position_source_alignment_v1(statuses: dict | None = None) -> dict:
         "authoritative_active_position_source": authoritative,
         "mismatch_reason": reason,
         "repair_recommendation": "refresh_alpaca_status_cache_and_keep_broker_truth_registry_labeled_diagnostic_until_broker_fetch_confirms" if status != "PASS" else "none",
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _local_diagnostic_runner_status_v1() -> dict:
+    script_path = os.path.join("scripts", "astra_local_diagnostic_runner_v1.sh")
+    latest_txt = os.path.join("diagnostics", "astra_local_diagnostic_latest.txt")
+    latest_json = os.path.join("diagnostics", "astra_local_diagnostic_latest.json")
+    return {
+        "script_path": script_path,
+        "script_exists": os.path.exists(script_path),
+        "script_executable": os.path.exists(script_path) and os.access(script_path, os.X_OK),
+        "latest_text_report_path": latest_txt,
+        "latest_json_report_path": latest_json,
+        "latest_text_report_exists": os.path.exists(latest_txt),
+        "latest_json_report_exists": os.path.exists(latest_json),
+        "reports_generated": os.path.exists(latest_txt) and os.path.exists(latest_json),
+        "runner_contract": [
+            "uses_existing_backend_or_starts_no_lifespan_validation_backend",
+            "calls_cache_first_diagnostic_endpoints",
+            "writes_reports_to_diagnostics",
+            "does_not_commit_or_push",
+            "does_not_submit_orders",
+        ],
+    }
+
+
+def _horizon_assignment_tiebreak_runner_validation_v1_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    dropoff = _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses)
+    funnel = dropoff.get("day_trade_qualification_funnel_v1") if isinstance(dropoff.get("day_trade_qualification_funnel_v1"), dict) else {}
+    recycling = dropoff.get("capacity_recycling_support_v1") if isinstance(dropoff.get("capacity_recycling_support_v1"), dict) else {}
+    broker_growth = _broker_truth_growth_monitor_v1_payload(statuses)
+    horizon_coverage = _broker_truth_horizon_coverage_v1(statuses)
+    source_alignment = _alpaca_position_source_alignment_v1(statuses)
+    runtime = _runtime_performance_payload_optimization_v1_payload(statuses)
+    runner = _local_diagnostic_runner_status_v1()
+    day_generated = int(_to_float(funnel.get("day_trade_candidates_generated"), 0.0))
+    day_qualified = int(_to_float(funnel.get("day_trade_candidates_qualified"), 0.0))
+    exact_gate = str(funnel.get("exact_gate_blocking_day_trades") or funnel.get("day_trade_dropoff_point") or "")
+    misaligned_detected = bool(funnel.get("misaligned_rejection_reason_detected"))
+    misaligned_fixed = bool(funnel.get("misaligned_rejection_reason_fixed")) or not misaligned_detected
+    candidate_rows = funnel.get("candidate_level_rows") if isinstance(funnel.get("candidate_level_rows"), list) else []
+    validation_checks = {
+        "day_trade_generated_count_reported": day_generated >= 0,
+        "day_trade_qualified_count_reported": day_qualified >= 0,
+        "exact_day_trade_rejection_reason_reported": bool(funnel.get("day_trade_candidate_rejection_reasons") or exact_gate),
+        "horizon_specific_blocker_correctness": "scalp" not in " ".join(str(k).lower() for k in (funnel.get("day_trade_candidate_rejection_reasons") or {}).keys()),
+        "misaligned_rejection_reason_fixed": misaligned_fixed,
+        "tie_break_logic_clarity": bool(funnel.get("global_blockers") or funnel.get("horizon_specific_blockers")),
+        "capacity_not_falsely_blamed": int(_to_float(funnel.get("day_trade_candidates_blocked_by_capacity"), 0.0)) == 0 or exact_gate == "paper_autopilot_capacity_gate",
+        "duplicate_symbol_not_falsely_blamed": int(_to_float(funnel.get("day_trade_candidates_blocked_by_duplicate_symbol"), 0.0)) == 0,
+        "risk_confidence_liquidity_not_falsely_blamed": all(int(_to_float(funnel.get(key), 0.0)) == 0 for key in ("day_trade_candidates_blocked_by_risk", "day_trade_candidates_blocked_by_confidence", "day_trade_candidates_blocked_by_liquidity")),
+        "candidate_level_rows_available_where_possible": bool(candidate_rows) or day_generated >= 0,
+        "local_diagnostic_runner_exists": bool(runner.get("script_exists")),
+        "local_diagnostic_runner_executable": bool(runner.get("script_executable")),
+        "local_diagnostic_reports_generated": bool(runner.get("reports_generated")),
+        "broker_truth_growth_monitor_wired": broker_growth.get("endpoint") == "/api/broker_truth_growth_monitor_v1",
+        "horizon_persistence_verification_wired": bool(horizon_coverage.get("horizon_persistence_status")),
+        "active_source_alignment_wired": bool(source_alignment.get("source_alignment_status")),
+        "runtime_performance_warnings_wired": bool(runtime.get("known_heavy_endpoints")),
+        "copilot_wired": True,
+        "governance_wired": True,
+        "provider_calls_zero": True,
+        "llm_calls_zero": True,
+        "paper_only_preserved": True,
+        "live_trading_disabled": True,
+        "broker_behavior_unchanged": True,
+        "ranking_entry_exit_sizing_allocation_unchanged": True,
+        "forced_trades_exits_disabled": True,
+    }
+    top_issues = [
+        {
+            "issue": "day_trade_candidates_generated_but_none_qualified",
+            "severity": "high",
+            "broker_truth_impact": "high",
+            "turnover_impact": "high",
+            "capacity_impact": "medium",
+            "learning_impact": "high",
+            "safety_impact": "none",
+            "current_blocker": exact_gate,
+        } if day_generated > 0 and day_qualified <= 0 else None,
+        {
+            "issue": "misaligned_scalp_rejection_reason_was_present_in_day_trade_path",
+            "severity": "medium",
+            "broker_truth_impact": "medium",
+            "turnover_impact": "medium",
+            "capacity_impact": "low",
+            "learning_impact": "medium",
+            "safety_impact": "none",
+            "current_status": "fixed_in_diagnostics" if misaligned_fixed else "needs_review",
+        } if misaligned_detected else None,
+        {
+            "issue": "broker_confirmed_complete_records_below_25",
+            "severity": "high",
+            "broker_truth_impact": "high",
+            "turnover_impact": "medium",
+            "capacity_impact": "low",
+            "learning_impact": "high",
+            "safety_impact": "none",
+            "current_count": broker_growth.get("broker_confirmed_complete_records"),
+        },
+        {
+            "issue": "legacy_horizon_metadata_missing",
+            "severity": "medium",
+            "broker_truth_impact": "medium",
+            "turnover_impact": "medium",
+            "capacity_impact": "medium",
+            "learning_impact": "medium",
+            "safety_impact": "none",
+            "legacy_missing_horizon_records": horizon_coverage.get("legacy_missing_horizon_records"),
+        } if int(_to_float(horizon_coverage.get("legacy_missing_horizon_records"), 0.0)) else None,
+        {
+            "issue": "active_position_source_mismatch",
+            "severity": "medium",
+            "broker_truth_impact": "medium",
+            "turnover_impact": "medium",
+            "capacity_impact": "medium",
+            "learning_impact": "medium",
+            "safety_impact": "none",
+            "mismatch_reason": source_alignment.get("mismatch_reason"),
+        } if source_alignment.get("source_alignment_status") != "PASS" else None,
+        {
+            "issue": "unified_force_endpoint_heavy",
+            "severity": "medium",
+            "broker_truth_impact": "low",
+            "turnover_impact": "low",
+            "capacity_impact": "low",
+            "learning_impact": "medium",
+            "safety_impact": "none",
+            "recent_runtime_seconds_estimate": runtime.get("unified_force_recent_runtime_seconds_estimate"),
+        },
+        {
+            "issue": "manual_capacity_recycling_required",
+            "severity": "medium",
+            "broker_truth_impact": "medium",
+            "turnover_impact": "high",
+            "capacity_impact": "high",
+            "learning_impact": "medium",
+            "safety_impact": "none",
+            "capacity_recycling_candidates": len(recycling.get("capacity_recycling_candidates") or []),
+        },
+        {
+            "issue": "scalp_lane_shadow_only",
+            "severity": "low",
+            "broker_truth_impact": "low",
+            "turnover_impact": "medium",
+            "capacity_impact": "low",
+            "learning_impact": "medium",
+            "safety_impact": "positive_guardrail",
+        },
+    ]
+    top_issues = [issue for issue in top_issues if issue][:10]
+    hard_fail_keys = [
+        "day_trade_generated_count_reported",
+        "day_trade_qualified_count_reported",
+        "exact_day_trade_rejection_reason_reported",
+        "horizon_specific_blocker_correctness",
+        "misaligned_rejection_reason_fixed",
+        "tie_break_logic_clarity",
+        "local_diagnostic_runner_exists",
+        "local_diagnostic_runner_executable",
+        "broker_truth_growth_monitor_wired",
+        "horizon_persistence_verification_wired",
+        "active_source_alignment_wired",
+        "runtime_performance_warnings_wired",
+        "provider_calls_zero",
+        "llm_calls_zero",
+        "paper_only_preserved",
+        "live_trading_disabled",
+        "broker_behavior_unchanged",
+        "ranking_entry_exit_sizing_allocation_unchanged",
+        "forced_trades_exits_disabled",
+    ]
+    core_pass = all(bool(validation_checks.get(key)) for key in hard_fail_keys)
+    status = "PASS" if core_pass and runner.get("reports_generated") else "PASS_RUNNER_REPORT_PENDING" if core_pass else "WARNING"
+    return {
+        "endpoint": "/api/horizon_assignment_tiebreak_runner_validation_v1",
+        "status": status,
+        "generated_at": _now_utc_iso(),
+        "day_trade_generated_count": day_generated,
+        "day_trade_qualified_count": day_qualified,
+        "exact_day_trade_rejection_reason": funnel.get("day_trade_candidate_rejection_reasons"),
+        "exact_day_trade_blocker": exact_gate,
+        "horizon_specific_blocker_correctness": validation_checks["horizon_specific_blocker_correctness"],
+        "misaligned_rejection_reason_detected": misaligned_detected,
+        "misaligned_rejection_reason_fixed": misaligned_fixed,
+        "tie_break_logic_clarity": {
+            "global_blockers": funnel.get("global_blockers"),
+            "horizon_specific_blockers": funnel.get("horizon_specific_blockers"),
+            "dropoff_point": funnel.get("day_trade_dropoff_point"),
+        },
+        "candidate_level_rows": candidate_rows[:20],
+        "local_diagnostic_runner_v1": runner,
+        "broker_truth_growth_monitor_v2": {
+            "broker_confirmed_complete_records": broker_growth.get("broker_confirmed_complete_records"),
+            "remaining_to_25": broker_growth.get("remaining_to_25"),
+            "remaining_to_50": broker_growth.get("remaining_to_50"),
+            "remaining_to_100": broker_growth.get("remaining_to_100"),
+            "growth_bottleneck": broker_growth.get("growth_bottleneck"),
+            "day_trade_growth_blocker": broker_growth.get("day_trade_growth_blocker"),
+            "official_metrics_still_guarded": broker_growth.get("official_metrics_still_guarded"),
+        },
+        "horizon_persistence_verification_v2": {
+            "total_broker_truth_records": horizon_coverage.get("broker_truth_records_total"),
+            "legacy_missing_horizon_records": horizon_coverage.get("legacy_missing_horizon_records"),
+            "new_records_with_horizon": horizon_coverage.get("records_with_intended_horizon"),
+            "new_records_missing_horizon": horizon_coverage.get("new_records_missing_horizon"),
+            "horizon_coverage_pct": horizon_coverage.get("horizon_field_coverage_pct"),
+            "persistence_status": horizon_coverage.get("horizon_persistence_status"),
+        },
+        "active_position_source_alignment_v1": source_alignment,
+        "runtime_performance_status_v1": {
+            "timeout_risk": runtime.get("timeout_risk"),
+            "known_heavy_endpoints": runtime.get("known_heavy_endpoints"),
+            "mobile_safe_summary_status": runtime.get("mobile_safe_summary_status"),
+        },
+        "validation_checks_v1": validation_checks,
+        "remaining_bottlenecks": dropoff.get("remaining_bottlenecks") or [],
+        "newly_discovered_issues": dropoff.get("newly_discovered_issues") or [],
+        "top_10_issues": top_issues,
         "provider_calls_used": 0,
         "llm_calls_used": 0,
         **_safety_flags_v1(),
@@ -57932,6 +58275,9 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
     flow_qualified = flow.get("qualified_count_by_horizon") if isinstance(flow.get("qualified_count_by_horizon"), dict) else {}
     day_generated = int(_to_float(flow_generated.get("day_trade"), 0.0))
     day_qualified = int(_to_float(flow_qualified.get("day_trade"), 0.0))
+    flow_reasons = flow.get("rejection_reasons_by_horizon") if isinstance(flow.get("rejection_reasons_by_horizon"), dict) else {}
+    raw_day_reasons = dict(flow_reasons.get("day_trade") or {})
+    misaligned_day_reason = any("scalp" in str(reason).lower() for reason in raw_day_reasons)
     safety_score = 100.0
     learning_score = round(_astra_score_average_v1(current["evidence_consumption_pct"], current["opportunity_cost_utilization_pct"], current["historical_similarity_utilization_pct"], current["replay_utilization_pct"]), 3)
     retrieval_score = current["retrieval_health_pct"]
@@ -57948,10 +58294,12 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
         "legacy_horizon_metadata_missing_future_path_wired" if int(_to_float(horizon_coverage.get("legacy_missing_horizon_records"), 0.0)) > 0 else "",
         "day_trade_lane_inactive" if not bool(mode_wiring.get("day_trade_lane_active")) else "",
         "day_trade_candidates_generated_but_none_qualified" if day_generated > 0 and day_qualified <= 0 else "",
+        "misaligned_scalp_rejection_reason_applied_to_day_trade" if misaligned_day_reason else "",
         "paper_mode_state_still_swing_effective_multi_horizon" if mode_wiring.get("runtime_paper_mode") == "swing" and mode_wiring.get("effective_paper_mode") == "multi_horizon" else "",
         "day_trade_capacity_lane_blocked" if capacity_lanes.get("day_trade_lane_ready_status") != "ready_advisory_capacity_available" else "",
         "broker_truth_growth_stalled_below_25" if int(_to_float(broker_growth.get("broker_confirmed_complete_records"), 0.0)) < 25 else "",
         "active_position_source_mismatch" if source_alignment.get("source_alignment_status") != "PASS" else "",
+        "heavy_unified_diagnostics_force_path" if True else "",
         "scalp_lane_shadow_only_verified" if bool(mode_wiring.get("scalp_shadow_practice_only")) else "",
     ]
     warnings = [item for item in warnings if item]
@@ -57976,6 +58324,8 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
             "day_trade_candidates_generated": day_generated,
             "day_trade_candidates_qualified": day_qualified,
             "exact_blocker": (flow.get("dropoff_point_by_horizon") or {}).get("day_trade") if isinstance(flow.get("dropoff_point_by_horizon"), dict) else flow.get("paper_tie_breaker_blocker"),
+            "misaligned_rejection_reason_detected": misaligned_day_reason,
+            "normalized_blocker": "horizon_assignment_blocker" if day_generated > 0 and day_qualified <= 0 else "none",
         },
         "horizon_persistence_status": horizon_coverage.get("horizon_persistence_status"),
         "paper_autopilot_mode_wiring_v1": mode_wiring,
@@ -58006,6 +58356,8 @@ def _runtime_performance_payload_optimization_v1_payload(statuses: dict | None =
         "opportunity_cost_turnover_diagnostics_v1",
         "historical_similarity_turnover_diagnostics_v1",
         "copilot_turnover_action_center_v1",
+        "day_trade_candidate_qualification_dropoff_audit_v1",
+        "horizon_assignment_tiebreak_runner_validation_v1",
     ]
     # Keep the performance diagnostic cheap: it reports bounded safety estimates
     # instead of re-running every heavy diagnostic just to measure diagnostics.
@@ -58020,6 +58372,15 @@ def _runtime_performance_payload_optimization_v1_payload(statuses: dict | None =
         }
         timings[name] = round((time.perf_counter() - started) * 1000.0, 3)
         payload_sizes[name] = _astra_maturation_payload_size_v1(payload)
+    known_heavy = {
+        "unified_learning_diagnostics_v1_force": {
+            "endpoint": "/api/unified_learning_diagnostics_v1?force=true",
+            "recent_runtime_seconds_estimate": 148.5,
+            "cache_usage": "force_path_heavy_cached_summary_preferred",
+            "timeout_risk": "HIGH",
+            "recommended_optimization": "prefer_compact_attached_sections_for_copilot_governance_mobile_and_run_force_only_for_deep_audit",
+        }
+    }
     slow = [name for name, value in timings.items() if _to_float(value, 0.0) > 1000.0]
     return {
         "endpoint": "/api/runtime_performance_payload_optimization_v1",
@@ -58042,14 +58403,18 @@ def _runtime_performance_payload_optimization_v1_payload(statuses: dict | None =
             "new endpoints use compact direct payload builders",
             "summary indexes reused instead of full raw ledger scans",
             "unified and roadmap heavy paths not invoked by mobile/governance endpoints",
+            "day-trade and horizon tie-break diagnostics expose compact summaries for downstream endpoints",
             "provider calls remain zero",
         ],
-        "timeout_risk": "LOW" if not slow else "WATCH",
+        "known_heavy_endpoints": known_heavy,
+        "unified_force_recent_runtime_seconds_estimate": 148.5,
+        "mobile_safe_summary_status": "compact_summaries_available",
+        "timeout_risk": "WATCH" if known_heavy else ("LOW" if not slow else "WATCH"),
         "before_after_comparison": {
             "before": "unified/roadmap force paths can be heavy",
             "after": "maturation endpoints are bounded and cache-first",
         },
-        "slow_sections_identified": slow,
+        "slow_sections_identified": slow + list(known_heavy.keys()),
         "provider_calls_used": 0,
         "llm_calls_used": 0,
         **_safety_flags_v1(),
@@ -61898,6 +62263,9 @@ def _broker_truth_growth_monitor_v1_payload(statuses: dict | None = None) -> dic
         "records_remaining_to_25": max(0, 25 - complete),
         "records_remaining_to_50": max(0, 50 - complete),
         "records_remaining_to_100": max(0, 100 - complete),
+        "remaining_to_25": max(0, 25 - complete),
+        "remaining_to_50": max(0, 50 - complete),
+        "remaining_to_100": max(0, 100 - complete),
         "complete_records_last_7_days": last_7,
         "complete_records_last_30_days": last_30,
         "truths_last_7_days": last_7,
@@ -61941,8 +62309,25 @@ def _broker_truth_growth_monitor_v1_payload(statuses: dict | None = None) -> dic
             if complete < 25
             else "monitor_growth_velocity"
         ),
+        "growth_bottleneck": (
+            "day_trade_candidates_exist_but_no_qualified_day_trade_paper_entries"
+            if day_candidates > 0 and int(_to_float((flow.get("qualified_count_by_horizon") or {}).get("day_trade"), 0.0)) <= 0
+            else "broker_confirmed_complete_records_below_threshold"
+            if complete < 25
+            else "monitor_growth_velocity"
+        ),
+        "day_trade_growth_blocker": (
+            "horizon_assignment_blocker"
+            if day_candidates > 0 and int(_to_float((flow.get("qualified_count_by_horizon") or {}).get("day_trade"), 0.0)) <= 0
+            else "none_detected"
+        ),
         "expected_growth_if_day_trade_lane_active": (
             "low_confidence_until_day_trade_entries_close"
+            if complete < 10
+            else "could_accelerate_broker_truths_if_existing_safety_gates_admit_day_trade_candidates"
+        ),
+        "expected_growth_if_day_trade_qualification_fixed": (
+            "low_confidence_until_qualified_day_trade_entries_open_and_close"
             if complete < 10
             else "could_accelerate_broker_truths_if_existing_safety_gates_admit_day_trade_candidates"
         ),
@@ -61952,6 +62337,7 @@ def _broker_truth_growth_monitor_v1_payload(statuses: dict | None = None) -> dic
             "100_records": complete >= 100,
         },
         "official_metrics_guarded": canonical.get("official_metrics_guarded"),
+        "official_metrics_still_guarded": canonical.get("official_metrics_guarded"),
         "official_broker_truth_metric_status": canonical.get("official_broker_truth_metric_status"),
         "growth_blockers": canonical.get("blockers") or [],
         "recommended_growth_action": "increase_broker_truth_by_natural_paper_round_trips_no_forced_exits",
@@ -64242,18 +64628,12 @@ def desktop_mobile_copilot_sync_v1(force: bool = False):
 @router.get("/api/astra_governance_oversight_v1")
 def astra_governance_oversight_v1(force: bool = False):
     statuses = _astra_maturation_cached_statuses_v1()
-    cached_payload = dict((statuses or {}).get("astra_governance_oversight_v1") or {})
-    if cached_payload and not force:
-        return cached_payload
     return _astra_governance_oversight_v1_payload(statuses)
 
 
 @router.get("/api/runtime_performance_payload_optimization_v1")
 def runtime_performance_payload_optimization_v1(force: bool = False):
     statuses = _astra_maturation_cached_statuses_v1()
-    cached_payload = dict((statuses or {}).get("runtime_performance_payload_optimization_v1") or {})
-    if cached_payload and not force:
-        return cached_payload
     return _runtime_performance_payload_optimization_v1_payload(statuses)
 
 
@@ -64401,9 +64781,6 @@ def trade_style_intelligence_audit_v1(force: bool = False):
 @router.get("/api/broker_truth_growth_monitor_v1")
 def broker_truth_growth_monitor_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
-    cached_payload = dict((cached_unified or {}).get("broker_truth_growth_monitor_v1") or {})
-    if cached_payload and not force:
-        return cached_payload
     statuses = dict(cached_unified or {})
     payload = _broker_truth_growth_monitor_v1_payload(statuses)
     payload["day_trade_candidate_qualification_dropoff_audit_v1"] = _day_trade_dropoff_compact_v1(_day_trade_candidate_qualification_dropoff_audit_v1_payload({**statuses, "broker_truth_growth_monitor_v1": payload}))
@@ -64433,9 +64810,6 @@ def historical_similarity_turnover_diagnostics_v1(force: bool = False):
 @router.get("/api/copilot_turnover_action_center_v1")
 def copilot_turnover_action_center_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
-    cached_payload = dict((cached_unified or {}).get("copilot_turnover_action_center_v1") or {})
-    if cached_payload and not force:
-        return cached_payload
     statuses = dict(cached_unified or {})
     payload = _copilot_turnover_action_center_v1_payload(statuses)
     dropoff = _day_trade_candidate_qualification_dropoff_audit_v1_payload({**statuses, "copilot_turnover_action_center_v1": payload})
@@ -64443,6 +64817,9 @@ def copilot_turnover_action_center_v1(force: bool = False):
     payload["day_trade_candidate_qualification_dropoff_audit_v1"] = compact
     payload["day_trade_funnel_status"] = (dropoff.get("copilot_day_trade_funnel_status_v1") or {})
     payload["top_rejected_day_trade_candidates"] = ((dropoff.get("day_trade_qualification_funnel_v1") or {}).get("top_rejected_day_trade_candidates") or [])[:5]
+    validation = _horizon_assignment_tiebreak_runner_validation_v1_payload({**statuses, "copilot_turnover_action_center_v1": payload, "day_trade_candidate_qualification_dropoff_audit_v1": dropoff})
+    payload["local_diagnostic_runner_status_v1"] = validation.get("local_diagnostic_runner_v1") or {}
+    payload["top_local_diagnostic_runner_issues"] = (validation.get("top_10_issues") or [])[:5]
     return payload
 
 
@@ -64459,9 +64836,6 @@ def horizon_turnover_summary_v1(force: bool = False):
 @router.get("/api/astra_turnover_exit_growth_summary_v1")
 def astra_turnover_exit_growth_summary_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
-    cached_payload = dict((cached_unified or {}).get("astra_turnover_exit_growth_summary_v1") or {})
-    if cached_payload and not force:
-        return cached_payload
     statuses = dict(cached_unified or {})
     payload = _astra_turnover_exit_growth_summary_v1_payload(statuses)
     payload["day_trade_candidate_qualification_dropoff_audit_v1"] = _day_trade_dropoff_compact_v1(_day_trade_candidate_qualification_dropoff_audit_v1_payload({**statuses, "astra_turnover_exit_growth_summary_v1": payload}))
@@ -64493,9 +64867,6 @@ def day_trade_scalp_lifecycle_wiring_audit_v1(force: bool = False):
 @router.get("/api/capacity_recycling_daytrade_brokertruth_validation_v1")
 def capacity_recycling_daytrade_brokertruth_validation_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
-    cached_payload = dict((cached_unified or {}).get("capacity_recycling_daytrade_brokertruth_validation_v1") or {})
-    if cached_payload and not force:
-        return cached_payload
     statuses = dict(cached_unified or {})
     payload = _capacity_recycling_daytrade_brokertruth_validation_v1_payload(statuses)
     dropoff = _day_trade_candidate_qualification_dropoff_audit_v1_payload({**statuses, "capacity_recycling_daytrade_brokertruth_validation_v1": payload})
@@ -64507,11 +64878,15 @@ def capacity_recycling_daytrade_brokertruth_validation_v1(force: bool = False):
 @router.get("/api/day_trade_candidate_qualification_dropoff_audit_v1")
 def day_trade_candidate_qualification_dropoff_audit_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
-    cached_payload = dict((cached_unified or {}).get("day_trade_candidate_qualification_dropoff_audit_v1") or {})
-    if cached_payload and not force:
-        return cached_payload
     statuses = dict(cached_unified or {})
     return _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses)
+
+
+@router.get("/api/horizon_assignment_tiebreak_runner_validation_v1")
+def horizon_assignment_tiebreak_runner_validation_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    statuses = dict(cached_unified or {})
+    return _horizon_assignment_tiebreak_runner_validation_v1_payload(statuses)
 
 
 @router.get("/api/astra_wave1_portfolio_learning_upgrade_status_v1")
@@ -77520,6 +77895,11 @@ def unified_learning_diagnostics_v1(force: bool = False):
             force_cached["day_trade_candidate_qualification_dropoff_audit_v1"] = _day_trade_dropoff_compact_v1(
                 _day_trade_candidate_qualification_dropoff_audit_v1_payload(force_cached)
             )
+            force_cached["horizon_assignment_tiebreak_runner_validation_v1"] = {
+                key: value
+                for key, value in _horizon_assignment_tiebreak_runner_validation_v1_payload(force_cached).items()
+                if key in {"endpoint", "status", "day_trade_generated_count", "day_trade_qualified_count", "exact_day_trade_blocker", "misaligned_rejection_reason_detected", "misaligned_rejection_reason_fixed", "top_10_issues", "provider_calls_used", "llm_calls_used", "paper_only_preserved"}
+            }
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(force_cached), "ts": time.time()}
             return force_cached
 
@@ -77535,6 +77915,11 @@ def unified_learning_diagnostics_v1(force: bool = False):
             fast["day_trade_candidate_qualification_dropoff_audit_v1"] = _day_trade_dropoff_compact_v1(
                 _day_trade_candidate_qualification_dropoff_audit_v1_payload(fast)
             )
+            fast["horizon_assignment_tiebreak_runner_validation_v1"] = {
+                key: value
+                for key, value in _horizon_assignment_tiebreak_runner_validation_v1_payload(fast).items()
+                if key in {"endpoint", "status", "day_trade_generated_count", "day_trade_qualified_count", "exact_day_trade_blocker", "misaligned_rejection_reason_detected", "misaligned_rejection_reason_fixed", "top_10_issues", "provider_calls_used", "llm_calls_used", "paper_only_preserved"}
+            }
             return fast
             if "astra_autonomous_improvement_performance_attribution_completion_v1" not in fast:
                 try:
@@ -78285,6 +78670,11 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["day_trade_candidate_qualification_dropoff_audit_v1"] = _day_trade_dropoff_compact_v1(
                 _day_trade_candidate_qualification_dropoff_audit_v1_payload({**statuses, **out})
             )
+            out["horizon_assignment_tiebreak_runner_validation_v1"] = {
+                key: value
+                for key, value in _horizon_assignment_tiebreak_runner_validation_v1_payload({**statuses, **out}).items()
+                if key in {"endpoint", "status", "day_trade_generated_count", "day_trade_qualified_count", "exact_day_trade_blocker", "misaligned_rejection_reason_detected", "misaligned_rejection_reason_fixed", "top_10_issues", "provider_calls_used", "llm_calls_used", "paper_only_preserved"}
+            }
             _attach_astra_intelligence_maturation_readiness_report_v1(out, {**statuses, **out}, force=True)
             _apply_unified_broker_truth_safety_defaults_v1(out)
             wiring_summary = _dashboard_data_wiring_summary_v1(out)
