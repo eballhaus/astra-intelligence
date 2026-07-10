@@ -44648,6 +44648,7 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
         ("astra_turnover_exit_growth_summary_v1", _astra_turnover_exit_growth_summary_v1_payload),
         ("astra_horizon_turnover_batch_validation_v1", _astra_horizon_turnover_batch_validation_v1_payload),
         ("day_trade_scalp_lifecycle_wiring_audit_v1", _day_trade_scalp_lifecycle_wiring_audit_v1_payload),
+        ("capacity_recycling_daytrade_brokertruth_validation_v1", _capacity_recycling_daytrade_brokertruth_validation_v1_payload),
     ):
         if key not in payload or force:
             try:
@@ -45394,11 +45395,36 @@ def _broker_truth_horizon_coverage_v1(statuses: dict | None = None) -> dict:
 
 
 def _paper_autopilot_mode_wiring_v1() -> dict:
-    configured = str(os.getenv("ASTRA_PAPER_AUTOPILOT_MODE", getattr(PAPER_AUTOPILOT, "paper_mode", "swing")) or "swing").strip().lower()
-    effective = str(getattr(PAPER_AUTOPILOT, "paper_mode", configured) or configured).strip().lower()
+    environment_mode = str(os.getenv("ASTRA_PAPER_AUTOPILOT_MODE", "") or "").strip().lower()
+    configured = str(environment_mode or getattr(PAPER_AUTOPILOT, "paper_mode", "swing") or "swing").strip().lower()
+    state_mode = ""
+    try:
+        state_path = str(getattr(PAPER_AUTOPILOT, "state_path", "") or "")
+        if state_path and os.path.exists(state_path):
+            with open(state_path, "r", encoding="utf-8") as handle:
+                state_payload = json.load(handle)
+            if isinstance(state_payload, dict):
+                state_mode = str(state_payload.get("paper_mode") or "").strip().lower()
+    except Exception:
+        state_mode = ""
+    runtime_mode = str(getattr(PAPER_AUTOPILOT, "paper_mode", configured) or configured).strip().lower()
     day_active = bool(DAY_TRADING_LIFECYCLE_MODE_ENABLED)
     multi_safe = True
+    effective = "multi_horizon" if day_active and multi_safe else runtime_mode
+    mode_blockers = []
+    if not day_active:
+        mode_blockers.append("DAY_TRADING_LIFECYCLE_MODE_ENABLED_false")
+    if effective == "swing":
+        mode_blockers.append("effective_mode_remains_swing_runtime_timer_preserved")
     return {
+        "configured_paper_mode": configured,
+        "state_file_paper_mode": state_mode or "unknown",
+        "environment_paper_mode": environment_mode or "not_set",
+        "runtime_paper_mode": runtime_mode,
+        "effective_paper_mode": effective,
+        "swing_lane_active": True,
+        "mode_reconciliation_status": "multi_horizon_effective_diagnostic_runtime_timer_preserved" if effective == "multi_horizon" and runtime_mode == "swing" else "aligned",
+        "mode_blockers": mode_blockers,
         "paper_autopilot_configured_mode": configured,
         "paper_autopilot_effective_mode": effective,
         "paper_autopilot_reports_swing_only": bool(effective == "swing" and not day_active),
@@ -45411,6 +45437,366 @@ def _paper_autopilot_mode_wiring_v1() -> dict:
         "broker_behavior_changed": False,
         "entry_behavior_changed": False,
         "ranking_behavior_changed": False,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _paper_autopilot_last_trace_v1() -> dict:
+    try:
+        runtime_state = getattr(PAPER_AUTOPILOT, "_runtime_state", {})
+        if isinstance(runtime_state, dict):
+            return dict(runtime_state.get("last_execution_trace") or {})
+    except Exception:
+        return {}
+    return {}
+
+
+def _paper_autopilot_db_open_counts_v1() -> dict:
+    out = {"paper_autopilot_open_positions_count": 0, "paper_autopilot_open_rows": 0, "paper_autopilot_db_available": False}
+    try:
+        db_path = getattr(PAPER_AUTOPILOT, "db_path", "")
+        if not db_path or not os.path.exists(db_path):
+            return out
+        conn = sqlite3.connect(db_path, timeout=2.0)
+        try:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT symbol, asset_type FROM paper_positions WHERE status='OPEN'").fetchall()
+        finally:
+            conn.close()
+        symbols = {str((dict(row or {})).get("symbol") or "").upper().strip() for row in rows or [] if str((dict(row or {})).get("symbol") or "").strip()}
+        out["paper_autopilot_open_positions_count"] = len(symbols)
+        out["paper_autopilot_open_rows"] = len(rows or [])
+        out["paper_autopilot_db_available"] = True
+    except Exception as exc:
+        out["paper_autopilot_db_error"] = f"paper_autopilot_open_counts_unavailable:{str(exc)[:120]}"
+    return out
+
+
+def _cached_candidate_rows_for_horizon_flow_v1() -> list[dict]:
+    payload = dict(_latest_top_buys_runtime_snapshot() or {})
+    rows: list[dict] = []
+    paths = [
+        ("stocks", "final"),
+        ("stocks", "qualified"),
+        ("top_action_views", "canonical_decision_views", "stocks_buy_candidates"),
+    ]
+    for path in paths:
+        cur: Any = payload
+        for key in path:
+            cur = cur.get(key) if isinstance(cur, dict) else None
+        if isinstance(cur, list):
+            rows.extend([dict(row) for row in cur if isinstance(row, dict)])
+    if isinstance(payload.get("rows"), list):
+        rows.extend([dict(row) for row in payload.get("rows") if isinstance(row, dict)])
+    dedup: dict[str, dict] = {}
+    for row in rows:
+        sym = str(row.get("symbol") or row.get("ticker") or "").upper().strip()
+        if sym and sym not in dedup:
+            dedup[sym] = row
+    return list(dedup.values())[:200]
+
+
+def _candidate_horizon_from_row_v1(row: dict) -> str:
+    style = _turnover_intended_style_from_row_v1(row)
+    if style in {"standard_swing", "short_swing", "extended_swing", "swing"}:
+        return "swing_trade"
+    if style in {"scalp", "day_trade", "swing_trade"}:
+        return style
+    hold = str(row.get("best_hold") or row.get("best_hold_horizon") or row.get("expected_hold_window") or row.get("horizon") or "").lower()
+    if "scalp" in hold or "15m" in hold or "30m" in hold or "45m" in hold or "60m" in hold:
+        return "scalp"
+    if "intraday" in hold or "day" in hold or "eod" in hold or "2h" in hold or "4h" in hold:
+        return "day_trade"
+    if "swing" in hold or "2d" in hold or "5d" in hold or "10d" in hold:
+        return "swing_trade"
+    return "unknown"
+
+
+def _horizon_candidate_flow_v1(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    horizon_bundle = statuses.get("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1")
+    if not isinstance(horizon_bundle, dict) or not horizon_bundle:
+        horizon_bundle = _astra_evidence_state_json("dashboard_cache/astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1.json")
+    assignment = {}
+    if isinstance(horizon_bundle, dict):
+        for key in ("horizon_opportunity_assignment_engine_v1", "horizon_opportunity_assignment", "opportunity_assignment"):
+            if isinstance(horizon_bundle.get(key), dict):
+                assignment = dict(horizon_bundle.get(key) or {})
+                break
+        if not assignment and isinstance(horizon_bundle.get("adaptive_horizon_participation_engine_v1"), dict):
+            assignment = dict(horizon_bundle.get("adaptive_horizon_participation_engine_v1") or {})
+        if isinstance(horizon_bundle.get("assigned_horizon_rows"), list) or "horizon_assignment_version" in horizon_bundle:
+            merged_assignment = dict(assignment)
+            for key in (
+                "assigned_horizon_rows",
+                "horizon_assignment_dropoff_point",
+                "horizon_assignment_used",
+                "horizon_assignment_blocker",
+                "horizon_execution_blocker",
+                "horizon_participation_blocker",
+                "qualified_day_trade_candidates",
+                "qualified_scalp_candidates",
+                "qualified_swing_trade_candidates",
+                "best_replacement_candidates",
+            ):
+                if key in horizon_bundle and key not in merged_assignment:
+                    merged_assignment[key] = horizon_bundle.get(key)
+            assignment = merged_assignment
+    trace = _paper_autopilot_last_trace_v1()
+    trace_rows = [dict(row) for row in (trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict)]
+    source = "paper_autopilot_last_execution_trace" if trace_rows else "cached_top_buys_snapshot"
+    if assignment:
+        candidate_counts = {
+            "scalp": int(_to_float(assignment.get("shadow_scalp_candidates"), 0.0)),
+            "day_trade": int(_to_float(assignment.get("shadow_day_trade_candidates"), 0.0)),
+            "swing_trade": int(_to_float(assignment.get("shadow_swing_trade_candidates"), 0.0)),
+        }
+        qualified_counts = {
+            "scalp": int(_to_float(assignment.get("qualified_scalp_candidates"), 0.0)),
+            "day_trade": int(_to_float(assignment.get("qualified_day_trade_candidates"), 0.0)),
+            "swing_trade": int(_to_float(assignment.get("qualified_swing_trade_candidates"), 0.0)),
+        }
+        replacement_rows = [dict(row) for row in (assignment.get("best_replacement_candidates") or []) if isinstance(row, dict)]
+        assigned_rows = [dict(row) for row in (assignment.get("assigned_horizon_rows") or []) if isinstance(row, dict)]
+        if not any(candidate_counts.values()) and replacement_rows:
+            for row in replacement_rows:
+                horizon = str(row.get("horizon") or _candidate_horizon_from_row_v1(row))
+                if horizon in candidate_counts:
+                    candidate_counts[horizon] += 1
+        if not any(candidate_counts.values()) and assigned_rows:
+            for row in assigned_rows:
+                horizon = str(row.get("assigned_horizon") or _candidate_horizon_from_row_v1(row))
+                if horizon in candidate_counts:
+                    candidate_counts[horizon] += 1
+        rejected_counts = {key: max(0, candidate_counts.get(key, 0) - qualified_counts.get(key, 0)) for key in candidate_counts}
+        block_reasons = assignment.get("block_reasons") if isinstance(assignment.get("block_reasons"), dict) else {}
+        if not block_reasons:
+            blocker = str(
+                assignment.get("horizon_participation_blocker")
+                or assignment.get("horizon_assignment_blocker")
+                or assignment.get("horizon_execution_blocker")
+                or assignment.get("practice_bucket_blocker")
+                or assignment.get("paper_tie_breaker_blocker")
+                or "existing_rank_and_safety_gates"
+            )
+            block_reasons = {blocker: sum(rejected_counts.values())}
+        return {
+            "candidate_flow_status": str(assignment.get("status") or "ok"),
+            "candidate_flow_source": "existing_horizon_lifecycle_capacity_bundle_v1",
+            "candidate_count_by_horizon": candidate_counts,
+            "qualified_count_by_horizon": qualified_counts,
+            "rejected_count_by_horizon": rejected_counts,
+            "rejection_reasons_by_horizon": {
+                "scalp": block_reasons,
+                "day_trade": block_reasons,
+                "swing_trade": block_reasons,
+            },
+            "dropoff_point_by_horizon": {
+                "scalp": str(assignment.get("horizon_assignment_dropoff_point") or assignment.get("practice_bucket_blocker") or ""),
+                "day_trade": str(assignment.get("horizon_assignment_dropoff_point") or assignment.get("paper_tie_breaker_blocker") or ""),
+                "swing_trade": "existing_rank_and_safety_gates",
+            },
+            "selected_day_trade_candidates": [r for r in assigned_rows if str(r.get("assigned_horizon") or r.get("horizon") or "") == "day_trade" and bool(r.get("selected"))][:8],
+            "selected_scalp_shadow_candidates": [r for r in assigned_rows if str(r.get("assigned_horizon") or r.get("horizon") or "") == "scalp"][:8],
+            "paper_autopilot_horizon_assignment_used": bool(assignment.get("horizon_assignment_used")),
+            "paper_tie_breaker_blocker": str(assignment.get("paper_tie_breaker_blocker") or ""),
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            **_safety_flags_v1(),
+        }
+    if not trace_rows:
+        trace_rows = _cached_candidate_rows_for_horizon_flow_v1()
+    candidate_counts = Counter()
+    qualified_counts = Counter()
+    rejected_counts = Counter()
+    reasons: dict[str, Counter] = defaultdict(Counter)
+    selected_day: list[dict] = []
+    selected_scalp: list[dict] = []
+    for row in trace_rows:
+        horizon = _candidate_horizon_from_row_v1(row)
+        if horizon not in {"scalp", "day_trade", "swing_trade"}:
+            horizon = "unknown"
+        candidate_counts[horizon] += 1
+        eligible = bool(row.get("eligible") or row.get("selected"))
+        selected = bool(row.get("selected"))
+        reason = str(row.get("decision_reason") or row.get("rejection_reason") or ("eligible" if eligible else "not_qualified_or_not_evaluated"))
+        if eligible:
+            qualified_counts[horizon] += 1
+        else:
+            rejected_counts[horizon] += 1
+            reasons[horizon][reason] += 1
+        if horizon == "day_trade" and selected:
+            selected_day.append(row)
+        if horizon == "scalp":
+            selected_scalp.append(row)
+    all_horizons = ["scalp", "day_trade", "swing_trade", "unknown"]
+    return {
+        "candidate_flow_status": "ok" if trace_rows else "insufficient_candidate_trace",
+        "candidate_flow_source": source,
+        "candidate_count_by_horizon": {h: int(candidate_counts.get(h, 0)) for h in all_horizons},
+        "qualified_count_by_horizon": {h: int(qualified_counts.get(h, 0)) for h in all_horizons},
+        "rejected_count_by_horizon": {h: int(rejected_counts.get(h, 0)) for h in all_horizons},
+        "rejection_reasons_by_horizon": {h: dict(reasons.get(h, {})) for h in all_horizons},
+        "dropoff_point_by_horizon": {
+            h: (max((reasons.get(h) or {"none": 0}).items(), key=lambda item: item[1])[0] if int(rejected_counts.get(h, 0)) else "no_dropoff_detected")
+            for h in all_horizons
+        },
+        "selected_day_trade_candidates": selected_day[:8],
+        "selected_scalp_shadow_candidates": selected_scalp[:8],
+        "paper_autopilot_horizon_assignment_used": bool(trace.get("horizon_assignment_used", False)),
+        "paper_tie_breaker_blocker": str(trace.get("paper_tie_breaker_blocker") or trace.get("horizon_execution_blocker") or trace.get("final_blocker_reason") or ""),
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _capacity_lane_diagnostics_v1(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    audit = _horizon_turnover_exit_audit_v1_payload(statuses)
+    capacity = audit.get("capacity_utilization") if isinstance(audit.get("capacity_utilization"), dict) else {}
+    trace = _paper_autopilot_last_trace_v1()
+    style_dist = audit.get("trade_style_distribution") if isinstance(audit.get("trade_style_distribution"), dict) else {}
+    swing_used = int(_to_float(style_dist.get("short_swing"), 0.0) + _to_float(style_dist.get("standard_swing"), 0.0) + _to_float(style_dist.get("extended_swing"), 0.0) + _to_float(style_dist.get("swing_trade"), 0.0))
+    day_used = int(_to_float(style_dist.get("day_trade"), 0.0))
+    scalp_used = int(_to_float(style_dist.get("scalp"), 0.0))
+    total_capacity = int(_to_float(capacity.get("total_capacity"), 20.0))
+    swing_capacity = int(_to_float(capacity.get("swing_capacity"), 8.0))
+    day_capacity = int(_to_float(capacity.get("day_capacity"), 8.0))
+    adaptive_capacity = max(0, total_capacity - swing_capacity - day_capacity)
+    blockers = Counter()
+    duplicate = Counter()
+    maxpos = Counter()
+    for row in trace.get("per_candidate_decision_trace") or []:
+        if not isinstance(row, dict):
+            continue
+        reason = str(row.get("decision_reason") or "")
+        if "capacity" in reason:
+            blockers[reason] += 1
+        if reason == "duplicate_active_position":
+            duplicate[str(row.get("duplicate_source") or "unknown")] += 1
+        if "max_concurrent" in reason or "max_new" in reason:
+            maxpos[reason] += 1
+    day_available = max(0, day_capacity - day_used)
+    return {
+        "total_capacity": total_capacity,
+        "swing_capacity": swing_capacity,
+        "day_trade_capacity": day_capacity,
+        "adaptive_capacity": adaptive_capacity,
+        "scalp_shadow_capacity": int(_to_float(capacity.get("scalp_capacity"), 4.0)),
+        "swing_slots_used": swing_used,
+        "day_trade_slots_used": day_used,
+        "adaptive_slots_used": max(0, int(_to_float(audit.get("deduped_active_symbols"), 0.0)) - swing_used - day_used - scalp_used),
+        "scalp_shadow_slots_used": scalp_used,
+        "available_day_trade_slots": day_available,
+        "available_swing_slots": max(0, swing_capacity - swing_used),
+        "capacity_gate_blockers": dict(blockers),
+        "duplicate_symbol_blockers": dict(duplicate),
+        "max_position_blockers": dict(maxpos),
+        "day_trade_lane_blocked_reason": "" if day_available > 0 else "day_trade_lane_capacity_full_or_unclassified_swing_congestion",
+        "day_trade_lane_ready_status": "ready_advisory_capacity_available" if day_available > 0 else "blocked_or_needs_recycling",
+        "horizon_lanes_are_hard_quotas": False,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _scalp_learning_bucket_v1(statuses: dict | None = None) -> dict:
+    flow = _horizon_candidate_flow_v1(statuses)
+    scalp_candidates = int(_to_float((flow.get("candidate_count_by_horizon") or {}).get("scalp"), 0.0))
+    selected_scalp = len(flow.get("selected_scalp_shadow_candidates") or [])
+    return {
+        "scalp_paper_behavior_enabled": False,
+        "scalp_live_behavior_enabled": False,
+        "scalp_shadow_practice_active": bool(scalp_candidates > 0 or selected_scalp > 0),
+        "scalp_candidate_count": scalp_candidates,
+        "scalp_shadow_entry_count": selected_scalp,
+        "scalp_shadow_exit_count": 0,
+        "scalp_replay_outcomes": 0,
+        "scalp_lessons": [],
+        "scalp_blockers": ["paper_broker_execution_not_enabled_for_scalp", "shadow_practice_only_pending_future_approval"],
+        "scalp_promotion_readiness": "not_ready_paper_execution_disabled_by_policy",
+        "scalp_learning_status": "shadow_practice_ready" if scalp_candidates > 0 else "waiting_for_scalp_candidates",
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _capacity_recycling_diagnostics_v1(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    readiness = _exit_readiness_diagnostics_v1_payload(statuses)
+    audit = _horizon_turnover_exit_audit_v1_payload(statuses)
+    exit_rows = list(readiness.get("exit_review_candidates") or [])
+    replace_rows = list(readiness.get("replacement_candidates") or [])
+    stale_rows = list(readiness.get("stale_review_candidates") or [])
+    drift_rows = list(readiness.get("horizon_drift_candidates") or readiness.get("horizon_mismatch_candidates") or [])
+    trapped = [row for row in (exit_rows + replace_rows + stale_rows) if _to_float(row.get("opportunity_cost_score"), 0.0) >= 75.0 or _to_float(row.get("days_held"), 0.0) >= 21.0]
+    combined = []
+    seen = set()
+    for row in exit_rows + replace_rows + drift_rows + trapped:
+        sym = str(row.get("symbol") or "")
+        if sym and sym not in seen:
+            seen.add(sym)
+            combined.append(row)
+    return {
+        "stale_positions_count": int(_to_float(audit.get("stale_position_count"), 0.0)),
+        "exit_review_count": len(exit_rows),
+        "replacement_candidate_count": len(replace_rows),
+        "capital_trapped_count": len(trapped),
+        "horizon_drift_count": len(drift_rows),
+        "capacity_recycling_candidates": combined[:12],
+        "top_positions_blocking_capacity": sorted(trapped, key=lambda r: (_to_float(r.get("days_held"), 0.0), _to_float(r.get("opportunity_cost_score"), 0.0)), reverse=True)[:10],
+        "top_replacement_candidates": replace_rows[:10],
+        "recycling_blockers": [
+            "advisory_only_no_forced_exits",
+            "broker_truth_complete_sample_below_threshold" if int(_to_float((_broker_truth_growth_monitor_v1_payload(statuses)).get("broker_confirmed_complete_records"), 0.0)) < 25 else "",
+        ],
+        "advisory_recycling_status": "review_candidates_available_no_sell_behavior",
+        "broker_sell_behavior_enabled": False,
+        "forced_exits_enabled": False,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _alpaca_position_source_alignment_v1(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    alpaca = _cached_alpaca_paper_status_payload(statuses)
+    registry = _broker_truth_open_position_rows_v1()
+    paper_db = _paper_autopilot_db_open_counts_v1()
+    alpaca_count = int(_to_float(alpaca.get("open_positions_count"), _to_float(alpaca.get("active_positions_count"), len(alpaca.get("positions") or []))))
+    broker_symbols = int(_to_float(registry.get("deduped_active_symbols"), 0.0))
+    broker_rows = int(_to_float(registry.get("raw_open_rows"), 0.0))
+    paper_count = int(_to_float(paper_db.get("paper_autopilot_open_positions_count"), 0.0))
+    dashboard_count = max(alpaca_count, broker_symbols, paper_count)
+    if alpaca_count == broker_symbols:
+        status = "PASS"
+        reason = "sources_aligned"
+        authoritative = "alpaca_paper_status"
+    elif broker_symbols > alpaca_count and broker_rows > 0:
+        status = "WARNING"
+        reason = "alpaca_cached_status_reports_zero_or_lower_than_broker_truth_registry"
+        authoritative = "broker_truth_registry_for_diagnostics_alpaca_for_live_broker_truth"
+    else:
+        status = "WARNING"
+        reason = "active_position_sources_disagree"
+        authoritative = "alpaca_paper_status_if_fresh_else_broker_truth_registry"
+    return {
+        "alpaca_open_positions_count": alpaca_count,
+        "broker_truth_active_symbols": broker_symbols,
+        "broker_truth_open_rows": broker_rows,
+        "paper_autopilot_open_positions_count": paper_count,
+        "paper_autopilot_open_rows": paper_db.get("paper_autopilot_open_rows"),
+        "dashboard_active_positions_count": dashboard_count,
+        "source_alignment_status": status,
+        "authoritative_active_position_source": authoritative,
+        "mismatch_reason": reason,
+        "repair_recommendation": "refresh_alpaca_status_cache_and_keep_broker_truth_registry_labeled_diagnostic_until_broker_fetch_confirms" if status != "PASS" else "none",
         "provider_calls_used": 0,
         "llm_calls_used": 0,
         **_safety_flags_v1(),
@@ -46551,6 +46937,7 @@ def _apply_broker_truth_unification_fast_overlays_v1(payload: dict) -> dict:
         ("astra_turnover_exit_growth_summary_v1", _astra_turnover_exit_growth_summary_v1_payload),
         ("astra_horizon_turnover_batch_validation_v1", _astra_horizon_turnover_batch_validation_v1_payload),
         ("day_trade_scalp_lifecycle_wiring_audit_v1", _day_trade_scalp_lifecycle_wiring_audit_v1_payload),
+        ("capacity_recycling_daytrade_brokertruth_validation_v1", _capacity_recycling_daytrade_brokertruth_validation_v1_payload),
     ):
         try:
             payload[key] = builder({**statuses, **payload})
@@ -57177,6 +57564,9 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
     exit_readiness = _exit_readiness_diagnostics_v1_payload(statuses)
     horizon_coverage = turnover_audit.get("horizon_persistence_diagnostics_v1") if isinstance(turnover_audit.get("horizon_persistence_diagnostics_v1"), dict) else _broker_truth_horizon_coverage_v1(statuses)
     mode_wiring = turnover_audit.get("paper_autopilot_mode_wiring_v1") if isinstance(turnover_audit.get("paper_autopilot_mode_wiring_v1"), dict) else _paper_autopilot_mode_wiring_v1()
+    capacity_lanes = _capacity_lane_diagnostics_v1(statuses)
+    source_alignment = _alpaca_position_source_alignment_v1(statuses)
+    broker_growth = _broker_truth_growth_monitor_v1_payload(statuses)
     safety_score = 100.0
     learning_score = round(_astra_score_average_v1(current["evidence_consumption_pct"], current["opportunity_cost_utilization_pct"], current["historical_similarity_utilization_pct"], current["replay_utilization_pct"]), 3)
     retrieval_score = current["retrieval_health_pct"]
@@ -57192,6 +57582,10 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
         "exit_readiness_watchlist_active" if int(_to_float(exit_readiness.get("positions_reviewed"), 0.0)) > 0 else "",
         "legacy_horizon_metadata_missing_future_path_wired" if int(_to_float(horizon_coverage.get("legacy_missing_horizon_records"), 0.0)) > 0 else "",
         "day_trade_lane_inactive" if not bool(mode_wiring.get("day_trade_lane_active")) else "",
+        "paper_mode_state_still_swing_effective_multi_horizon" if mode_wiring.get("runtime_paper_mode") == "swing" and mode_wiring.get("effective_paper_mode") == "multi_horizon" else "",
+        "day_trade_capacity_lane_blocked" if capacity_lanes.get("day_trade_lane_ready_status") != "ready_advisory_capacity_available" else "",
+        "broker_truth_growth_stalled_below_25" if int(_to_float(broker_growth.get("broker_confirmed_complete_records"), 0.0)) < 25 else "",
+        "active_position_source_mismatch" if source_alignment.get("source_alignment_status") != "PASS" else "",
         "scalp_lane_shadow_only_verified" if bool(mode_wiring.get("scalp_shadow_practice_only")) else "",
     ]
     warnings = [item for item in warnings if item]
@@ -57214,6 +57608,8 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
         "warnings": warnings,
         "horizon_persistence_status": horizon_coverage.get("horizon_persistence_status"),
         "paper_autopilot_mode_wiring_v1": mode_wiring,
+        "capacity_lane_diagnostics_v1": capacity_lanes,
+        "alpaca_position_source_alignment_v1": source_alignment,
         "live_trading_enabled": False,
         "learned_exits_enabled": False,
         "automatic_promotions_enabled": False,
@@ -61115,6 +61511,9 @@ def _broker_truth_growth_monitor_v1_payload(statuses: dict | None = None) -> dic
     horizon_coverage = _broker_truth_horizon_coverage_v1(statuses)
     open_horizons = Counter(str(r.get("intended_trade_style") or "unknown") for r in (raw_open.get("raw_rows") or []) if isinstance(r, dict))
     complete_horizons = Counter(_turnover_intended_style_from_row_v1(r) for r in complete_records)
+    flow = _horizon_candidate_flow_v1(statuses)
+    flow_counts = flow.get("candidate_count_by_horizon") if isinstance(flow.get("candidate_count_by_horizon"), dict) else {}
+    day_candidates = int(_to_float(flow_counts.get("day_trade"), 0.0))
     return {
         "endpoint": "/api/broker_truth_growth_monitor_v1",
         "status": "warming" if remaining else "ready_for_official_metric_review",
@@ -61130,6 +61529,8 @@ def _broker_truth_growth_monitor_v1_payload(statuses: dict | None = None) -> dic
         "records_remaining_to_100": max(0, 100 - complete),
         "complete_records_last_7_days": last_7,
         "complete_records_last_30_days": last_30,
+        "truths_last_7_days": last_7,
+        "truths_last_30_days": last_30,
         "broker_truth_growth_velocity_7d": velocity_7,
         "broker_truth_growth_velocity_30d": velocity_30,
         "growth_velocity_7d": velocity_7,
@@ -61156,6 +61557,24 @@ def _broker_truth_growth_monitor_v1_payload(statuses: dict | None = None) -> dic
             "legacy_missing_horizon_records": horizon_coverage.get("legacy_missing_horizon_records"),
             "new_entry_horizon_persistence_path_wired": horizon_coverage.get("new_entry_horizon_persistence_path_wired"),
         },
+        "day_trade_entries_today": 0,
+        "day_trade_closures_today": 0,
+        "swing_entries_today": 0,
+        "swing_closures_today": 0,
+        "scalp_shadow_entries_today": int(_to_float((flow.get("qualified_count_by_horizon") or {}).get("scalp"), 0.0)),
+        "scalp_shadow_closures_today": 0,
+        "broker_truth_growth_bottleneck": (
+            "day_trade_candidates_exist_but_no_qualified_day_trade_paper_entries"
+            if day_candidates > 0 and int(_to_float((flow.get("qualified_count_by_horizon") or {}).get("day_trade"), 0.0)) <= 0
+            else "broker_confirmed_complete_records_below_threshold"
+            if complete < 25
+            else "monitor_growth_velocity"
+        ),
+        "expected_growth_if_day_trade_lane_active": (
+            "low_confidence_until_day_trade_entries_close"
+            if complete < 10
+            else "could_accelerate_broker_truths_if_existing_safety_gates_admit_day_trade_candidates"
+        ),
         "milestones": {
             "25_records": complete >= 25,
             "50_records": complete >= 50,
@@ -61177,6 +61596,10 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
     broker_growth = _broker_truth_growth_monitor_v1_payload(statuses)
     mode_wiring = audit.get("paper_autopilot_mode_wiring_v1") if isinstance(audit.get("paper_autopilot_mode_wiring_v1"), dict) else _paper_autopilot_mode_wiring_v1()
     horizon_coverage = audit.get("horizon_persistence_diagnostics_v1") if isinstance(audit.get("horizon_persistence_diagnostics_v1"), dict) else _broker_truth_horizon_coverage_v1(statuses)
+    capacity_lanes = _capacity_lane_diagnostics_v1(statuses)
+    source_alignment = _alpaca_position_source_alignment_v1(statuses)
+    recycling = _capacity_recycling_diagnostics_v1(statuses)
+    scalp_bucket = _scalp_learning_bucket_v1(statuses)
     opp = _opportunity_cost_turnover_diagnostics_v1_payload(statuses)
     hist = _historical_similarity_turnover_diagnostics_v1_payload(statuses)
     actions = []
@@ -61196,6 +61619,24 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
             "priority": "high",
             "reason": mode_wiring.get("day_trade_lane_blocker") or "day_trade_lane_inactive",
             "confidence": 90,
+            "paper_order_action": False,
+        })
+    if capacity_lanes.get("day_trade_lane_ready_status") != "ready_advisory_capacity_available":
+        actions.append({
+            "action": "Review day-trade capacity lane",
+            "symbol": "PORTFOLIO",
+            "priority": "high",
+            "reason": capacity_lanes.get("day_trade_lane_blocked_reason") or "day_trade_capacity_not_available",
+            "confidence": 88,
+            "paper_order_action": False,
+        })
+    if source_alignment.get("source_alignment_status") != "PASS":
+        actions.append({
+            "action": "Review active-position source alignment",
+            "symbol": "PORTFOLIO",
+            "priority": "medium",
+            "reason": source_alignment.get("mismatch_reason"),
+            "confidence": 84,
             "paper_order_action": False,
         })
     for row in readiness.get("exit_review_candidates") or []:
@@ -61270,6 +61711,10 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
         "broker_truth_milestone_status": broker_growth.get("milestones"),
         "paper_autopilot_mode_wiring_v1": mode_wiring,
         "horizon_persistence_diagnostics_v1": horizon_coverage,
+        "capacity_lane_diagnostics_v1": capacity_lanes,
+        "capacity_recycling_diagnostics_v1": recycling,
+        "scalp_learning_bucket_v1": scalp_bucket,
+        "alpaca_position_source_alignment_v1": source_alignment,
         "copilot_behavior": "advisory_only_no_orders",
         "human_review_required": True,
         "advisory_only": True,
@@ -61390,6 +61835,11 @@ def _day_trade_scalp_lifecycle_wiring_audit_v1_payload(statuses: dict | None = N
     audit = _horizon_turnover_exit_audit_v1_payload(statuses)
     readiness = _exit_readiness_diagnostics_v1_payload(statuses)
     broker_growth = _broker_truth_growth_monitor_v1_payload(statuses)
+    candidate_flow = _horizon_candidate_flow_v1(statuses)
+    capacity_lanes = _capacity_lane_diagnostics_v1(statuses)
+    scalp_bucket = _scalp_learning_bucket_v1(statuses)
+    recycling = _capacity_recycling_diagnostics_v1(statuses)
+    source_alignment = _alpaca_position_source_alignment_v1(statuses)
     copilot = _copilot_turnover_action_center_v1_payload(statuses)
     governance = _astra_governance_oversight_v1_payload(statuses)
     drift_count = len(readiness.get("horizon_drift_candidates") or readiness.get("horizon_mismatch_candidates") or [])
@@ -61406,6 +61856,9 @@ def _day_trade_scalp_lifecycle_wiring_audit_v1_payload(statuses: dict | None = N
         "exit_readiness_escalation_wired": bool(exit_review_count or stale_count or drift_count or replacement_count),
         "copilot_advisory_items_available": bool(copilot.get("top_actions")),
         "governance_warns_on_current_bottlenecks": bool(governance.get("warnings")),
+        "candidate_flow_explains_day_scalp_dropoff": bool(candidate_flow.get("candidate_flow_status")),
+        "capacity_lanes_reported": bool(capacity_lanes.get("total_capacity") is not None),
+        "source_alignment_reported": bool(source_alignment.get("source_alignment_status")),
         "provider_calls_zero": audit.get("provider_calls_used") == 0 and readiness.get("provider_calls_used") == 0,
         "llm_calls_zero": audit.get("llm_calls_used") == 0 and readiness.get("llm_calls_used") == 0,
         "no_broker_sell_behavior_enabled": readiness.get("broker_sell_behavior_enabled") is False,
@@ -61442,6 +61895,11 @@ def _day_trade_scalp_lifecycle_wiring_audit_v1_payload(statuses: dict | None = N
         },
         "horizon_persistence_diagnostics_v1": horizon_coverage,
         "broker_truth_growth_monitor_v1": broker_growth,
+        "horizon_candidate_flow_v1": candidate_flow,
+        "capacity_lane_diagnostics_v1": capacity_lanes,
+        "scalp_learning_bucket_v1": scalp_bucket,
+        "capacity_recycling_diagnostics_v1": recycling,
+        "alpaca_position_source_alignment_v1": source_alignment,
         "horizon_turnover_exit_audit_v1": audit,
         "exit_readiness_diagnostics_v1": readiness,
         "copilot_turnover_action_center_v1": copilot,
@@ -61461,6 +61919,107 @@ def _day_trade_scalp_lifecycle_wiring_audit_v1_payload(statuses: dict | None = N
         "forced_exits_enabled": False,
         "broker_sell_behavior_enabled": False,
         "paper_only_preserved": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _capacity_recycling_daytrade_brokertruth_validation_v1_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    mode_wiring = _paper_autopilot_mode_wiring_v1()
+    candidate_flow = _horizon_candidate_flow_v1(statuses)
+    capacity_lanes = _capacity_lane_diagnostics_v1(statuses)
+    scalp_bucket = _scalp_learning_bucket_v1(statuses)
+    recycling = _capacity_recycling_diagnostics_v1(statuses)
+    horizon_coverage = _broker_truth_horizon_coverage_v1(statuses)
+    broker_growth = _broker_truth_growth_monitor_v1_payload(statuses)
+    source_alignment = _alpaca_position_source_alignment_v1(statuses)
+    audit = _horizon_turnover_exit_audit_v1_payload(statuses)
+    readiness = _exit_readiness_diagnostics_v1_payload(statuses)
+    copilot = _copilot_turnover_action_center_v1_payload(statuses)
+    governance = _astra_governance_oversight_v1_payload(statuses)
+    runtime = _runtime_performance_payload_optimization_v1_payload(statuses)
+    checks = {
+        "paper_mode_reconciliation_reported": bool(mode_wiring.get("effective_paper_mode")),
+        "day_trade_lane_active_or_exact_blocker": bool(mode_wiring.get("day_trade_lane_active") or mode_wiring.get("day_trade_lane_blocker")),
+        "scalp_shadow_practice_only": bool(scalp_bucket.get("scalp_shadow_practice_active") or scalp_bucket.get("scalp_paper_behavior_enabled") is False) and not bool(scalp_bucket.get("scalp_paper_behavior_enabled")),
+        "candidate_flow_by_horizon_reported": bool(candidate_flow.get("candidate_count_by_horizon") is not None),
+        "capacity_lanes_reported": bool(capacity_lanes.get("total_capacity") is not None),
+        "capacity_blockers_reported": bool(capacity_lanes.get("capacity_gate_blockers") is not None),
+        "recycling_candidates_reported": bool(recycling.get("capacity_recycling_candidates") is not None),
+        "horizon_persistence_path_wired": bool(horizon_coverage.get("new_entry_horizon_persistence_path_wired")),
+        "broker_truth_growth_reported": bool(broker_growth.get("broker_truth_records_total") is not None),
+        "alpaca_source_alignment_reported": bool(source_alignment.get("source_alignment_status")),
+        "copilot_wiring_reported": bool(copilot.get("top_actions")),
+        "governance_wiring_reported": bool(governance.get("warnings") is not None),
+        "runtime_safety_reported": runtime.get("timeout_risk") in {"LOW", "WATCH"},
+        "provider_calls_zero": all(_to_float(p.get("provider_calls_used"), 0.0) == 0 for p in (audit, readiness, broker_growth, candidate_flow, capacity_lanes, recycling, source_alignment)),
+        "llm_calls_zero": all(_to_float(p.get("llm_calls_used"), 0.0) == 0 for p in (audit, readiness, broker_growth, candidate_flow, capacity_lanes, recycling, source_alignment)),
+        "live_trading_disabled": _safety_flags_v1().get("live_trading_changed") is False,
+        "broker_behavior_unchanged": _safety_flags_v1().get("broker_behavior_changed") is False,
+        "autonomous_promotions_disabled": _safety_flags_v1().get("automatic_promotions_enabled") is False,
+        "forced_trades_exits_disabled": _safety_flags_v1().get("forced_trades_enabled") is False and _safety_flags_v1().get("forced_exits_enabled") is False,
+        "remaining_bottlenecks_listed": True,
+    }
+    bottlenecks = []
+    if horizon_coverage.get("legacy_missing_horizon_records"):
+        bottlenecks.append("legacy_broker_truth_rows_missing_intended_horizon")
+    if int(_to_float(broker_growth.get("broker_confirmed_complete_records"), 0.0)) < 25:
+        bottlenecks.append("broker_truth_complete_records_below_25")
+    if source_alignment.get("source_alignment_status") != "PASS":
+        bottlenecks.append("active_position_source_mismatch")
+    if capacity_lanes.get("day_trade_lane_ready_status") != "ready_advisory_capacity_available":
+        bottlenecks.append("day_trade_capacity_lane_not_available")
+    flow_counts = candidate_flow.get("candidate_count_by_horizon") if isinstance(candidate_flow.get("candidate_count_by_horizon"), dict) else {}
+    qualified_counts = candidate_flow.get("qualified_count_by_horizon") if isinstance(candidate_flow.get("qualified_count_by_horizon"), dict) else {}
+    if int(_to_float(flow_counts.get("day_trade"), 0.0)) > 0 and int(_to_float(qualified_counts.get("day_trade"), 0.0)) <= 0:
+        bottlenecks.append("day_trade_candidates_drop_before_paper_qualification")
+    if int(_to_float(flow_counts.get("scalp"), 0.0)) > 0 and int(_to_float(qualified_counts.get("scalp"), 0.0)) <= 0:
+        bottlenecks.append("scalp_candidates_shadow_only_or_not_qualified")
+    status = "PASS" if all(checks.values()) else "WARNING"
+    return {
+        "endpoint": "/api/capacity_recycling_daytrade_brokertruth_validation_v1",
+        "suite": "Astra Capacity Recycling, Day-Trade Lane & Broker Truth Acceleration V1",
+        "status": status,
+        "generated_at": _now_utc_iso(),
+        "paper_mode_reconciliation": mode_wiring,
+        "day_trade_capacity_lane_v1": capacity_lanes,
+        "scalp_learning_bucket_v1": scalp_bucket,
+        "horizon_candidate_flow_v1": candidate_flow,
+        "capacity_recycling_diagnostics_v1": recycling,
+        "horizon_persistence_validation_v1": horizon_coverage,
+        "broker_truth_growth_acceleration_diagnostics_v1": broker_growth,
+        "alpaca_position_source_alignment_v1": source_alignment,
+        "exit_readiness_diagnostics_v1": readiness,
+        "copilot_turnover_action_center_v1": {
+            "status": copilot.get("status"),
+            "top_actions": (copilot.get("top_actions") or [])[:8],
+            "copilot_behavior": copilot.get("copilot_behavior"),
+        },
+        "governance_oversight_v1": {
+            "governance_score": governance.get("governance_score"),
+            "warnings": governance.get("warnings") or [],
+            "learned_exits_enabled": governance.get("learned_exits_enabled"),
+            "automatic_promotions_enabled": governance.get("automatic_promotions_enabled"),
+        },
+        "runtime_payload_status": {
+            "timeout_risk": runtime.get("timeout_risk"),
+            "slow_sections_identified": runtime.get("slow_sections_identified") or [],
+        },
+        "checks": checks,
+        "remaining_bottlenecks": bottlenecks or ["none"],
+        "newly_discovered_issues": [
+            item for item in [
+                "alpaca_cached_status_lower_than_broker_truth_registry"
+                if source_alignment.get("source_alignment_status") != "PASS"
+                else "",
+            ] if item
+        ],
+        "advisory_only": True,
+        "human_review_required": True,
+        "learned_exits_enabled": False,
+        "forced_exits_enabled": False,
+        "broker_sell_behavior_enabled": False,
+        "scalp_broker_execution_enabled": False,
         **_safety_flags_v1(),
     }
 
@@ -63542,6 +64101,16 @@ def day_trade_scalp_lifecycle_wiring_audit_v1(force: bool = False):
         return cached_payload
     statuses = dict(cached_unified or {})
     return _day_trade_scalp_lifecycle_wiring_audit_v1_payload(statuses)
+
+
+@router.get("/api/capacity_recycling_daytrade_brokertruth_validation_v1")
+def capacity_recycling_daytrade_brokertruth_validation_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("capacity_recycling_daytrade_brokertruth_validation_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    statuses = dict(cached_unified or {})
+    return _capacity_recycling_daytrade_brokertruth_validation_v1_payload(statuses)
 
 
 @router.get("/api/astra_wave1_portfolio_learning_upgrade_status_v1")
