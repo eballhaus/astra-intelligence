@@ -5,8 +5,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR" || exit 1
 
 MODE="audit"
+DEEP_MODE="false"
 for arg in "$@"; do
   case "$arg" in
+    audit|status|report) MODE="audit" ;;
+    --deep) DEEP_MODE="true" ;;
     *safe-repair) MODE="safe_repair" ;;
     *) echo "Unknown argument: $arg" >&2; exit 2 ;;
   esac
@@ -100,6 +103,7 @@ ASTRA_DIAGNOSTIC_BASE_URL="$BASE_URL" \
 ASTRA_DIAGNOSTIC_JSON_OUT="$JSON_OUT" \
 ASTRA_DIAGNOSTIC_TXT_OUT="$TXT_OUT" \
 ASTRA_DIAGNOSTIC_MODE="$MODE" \
+ASTRA_DIAGNOSTIC_DEEP_MODE="$DEEP_MODE" \
 "$PYTHON_BIN" <<'PY'
 import json
 import os
@@ -113,6 +117,7 @@ base = os.environ["ASTRA_DIAGNOSTIC_BASE_URL"].rstrip("/")
 json_out = os.environ["ASTRA_DIAGNOSTIC_JSON_OUT"]
 txt_out = os.environ["ASTRA_DIAGNOSTIC_TXT_OUT"]
 mode = os.environ["ASTRA_DIAGNOSTIC_MODE"]
+deep_mode = os.environ.get("ASTRA_DIAGNOSTIC_DEEP_MODE", "false").lower() == "true"
 
 endpoints = [
     "/api/health",
@@ -127,6 +132,29 @@ endpoints = [
     "/api/astra_safe_auto_audit_horizon_runner_validation_v1",
     "/api/unified_learning_diagnostics_v1?force=true",
 ]
+
+deep_endpoints = [
+    "/api/crypto_shadow_learning_v1",
+    "/api/crypto_rankings",
+    "/api/crypto_paper_lane_validation_v1",
+    "/api/crypto_candidate_funnel_v1",
+    "/api/crypto_position_reconciliation_v1",
+    "/api/learning_throughput_accelerator_v1",
+    "/api/momentum_exit_loss_acceptance_v1",
+    "/api/crypto_broker_truth_accumulation_v1",
+    "/api/cross_market_meta_learning_v1",
+    "/api/broker_truth_asset_class_separation_audit_v1",
+    "/api/knowledge_retrieval_indexing_v1",
+    "/api/knowledge_retrieval_health_v1",
+    "/api/evidence_consumption_expansion_v3",
+    "/api/symbol_intelligence_behavioral_memory_v1",
+    "/api/symbol_memory_health_v1",
+    "/api/asset_class_api_budget_routing_v1",
+    "/api/astra_high_roi_learning_crypto_validation_v1",
+]
+
+if deep_mode:
+    endpoints.extend(path for path in deep_endpoints if path not in endpoints)
 
 
 def fetch(path):
@@ -201,6 +229,7 @@ blocked_unsafe_repairs = [
 summary = {
     "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     "mode": mode,
+    "deep_mode": deep_mode,
     "base_url": base,
     "executive_status": "PASS" if not endpoint_failures and not script_failures else "WARNING",
     "safety_status": {
@@ -253,6 +282,14 @@ summary = {
         "remaining_to_25": broker.get("records_remaining_to_25"),
         "bottleneck": broker.get("broker_truth_growth_bottleneck"),
     },
+    "crypto": {
+        "lane_validation": payload("/api/crypto_paper_lane_validation_v1") if deep_mode else {},
+        "candidate_funnel": payload("/api/crypto_candidate_funnel_v1") if deep_mode else {},
+        "position_reconciliation": payload("/api/crypto_position_reconciliation_v1") if deep_mode else {},
+        "truth_accumulation": payload("/api/crypto_broker_truth_accumulation_v1") if deep_mode else {},
+    },
+    "combined_lifecycle": payload("/api/learning_throughput_accelerator_v1") if deep_mode else {},
+    "api_budget": payload("/api/asset_class_api_budget_routing_v1") if deep_mode else {},
     "horizon_persistence": horizon,
     "active_position_alignment": alignment,
     "unified_diagnostic_performance": {
