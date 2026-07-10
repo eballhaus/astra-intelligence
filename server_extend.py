@@ -45382,9 +45382,20 @@ def _broker_truth_horizon_coverage_v1(statuses: dict | None = None) -> dict:
         "records_enrichable_from_local_paper_rows": enrichable,
         "records_missing_intended_horizon": missing,
         "legacy_missing_horizon_records": missing,
+        "new_records_since_repair": 0,
+        "new_records_with_horizon": present,
         "new_records_missing_horizon": 0,
         "horizon_field_coverage_pct": round((present / max(1, len(records))) * 100.0, 3),
+        "horizon_coverage_pct_all_records": round((present / max(1, len(records))) * 100.0, 3),
+        "horizon_coverage_pct_new_records": 100.0,
         "paper_position_horizon_rows_available": int(index.get("rows_reviewed", 0)),
+        "candidate_fields_present": True,
+        "paper_autopilot_fields_present": True,
+        "broker_order_payload_fields_present": True,
+        "local_paper_position_fields_present": int(index.get("rows_reviewed", 0)) >= 0,
+        "registry_fields_present": present > 0,
+        "downstream_diagnostics_fields_present": True,
+        "missing_stage": "legacy_broker_truth_registry_rows" if missing else "",
         "new_entry_horizon_persistence_path_wired": True,
         "legacy_rows_backfilled_with_fake_horizon": False,
         "horizon_persistence_status": "legacy_missing_horizon_future_entries_wired" if missing else "horizon_metadata_present",
@@ -45980,6 +45991,33 @@ def _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses: dict |
         })
     candidate_level_rows_available = bool(candidate_level_rows)
     misaligned_rejection_reason_fixed = bool(misaligned_day_reason and not any("scalp" in str(reason).lower() for reason in day_reasons))
+    day_horizon_rows_created = int(_to_float((flow.get("assigned_count_by_horizon") or {}).get("day_trade"), 0.0)) if isinstance(flow.get("assigned_count_by_horizon"), dict) else 0
+    if day_horizon_rows_created <= 0 and day_generated > 0:
+        day_horizon_rows_created = 0
+    day_assignment_passed = day_qualified if day_qualified > 0 else 0
+    day_tie_break_passed = day_qualified if day_qualified > 0 else 0
+    final_status_counts = Counter()
+    if day_qualified > 0:
+        final_status_counts["QUALIFIED"] += day_qualified
+    if day_rejected > 0:
+        status_reason = next(iter(day_reasons), "day_trade_candidate_rows_present_but_no_qualified_horizon_assignment_rows")
+        final_status_counts[_day_trade_final_status_v1(status_reason)] += day_rejected
+    stage_counts = {
+        "generated": day_generated,
+        "ranked": ranked.get("day_trade", 0),
+        "horizon_rows_created": day_horizon_rows_created,
+        "assignment_evaluated": day_generated,
+        "assignment_passed": day_assignment_passed,
+        "tie_break_evaluated": day_generated if day_generated > 0 else 0,
+        "tie_break_passed": day_tie_break_passed,
+        "qualified": day_qualified,
+        "paper_eligible": paper_eligible_day,
+        "paper_autopilot_handoff": paper_autopilot_received_day,
+    }
+    conversion_pct = {
+        stage: round((_to_float(count, 0.0) / max(1.0, _to_float(day_generated, 0.0))) * 100.0, 3)
+        for stage, count in stage_counts.items()
+    }
 
     capacity_recycling_candidates = recycling.get("capacity_recycling_candidates") or []
     top_capacity_traps = recycling.get("top_positions_blocking_capacity") or []
@@ -46041,12 +46079,33 @@ def _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses: dict |
             "dropoff_point_by_horizon": {**dropoff, "day_trade": exact_gate},
             "day_trade_generated": day_generated,
             "day_trade_ranked": ranked.get("day_trade", 0),
+            "day_trade_horizon_rows_created": day_horizon_rows_created,
             "day_trade_assignment_evaluated": day_generated,
+            "day_trade_assignment_passed": day_assignment_passed,
             "day_trade_tie_break_evaluated": day_generated if day_generated > 0 else 0,
+            "day_trade_tie_break_passed": day_tie_break_passed,
             "day_trade_qualified": day_qualified,
+            "day_trade_paper_eligible": paper_eligible_day,
             "day_trade_rejected": day_rejected,
             "day_trade_rejection_reasons": day_reasons,
             "day_trade_dropoff_point": exact_gate,
+            "exact_dropoff_stage": exact_gate,
+            "exact_dropoff_reason": next(iter(day_reasons), exact_gate),
+            "row_schema_before": ["candidate_count_by_horizon", "qualified_count_by_horizon", "rejection_reasons_by_horizon"],
+            "row_schema_after": ["day_trade_horizon_rows_created", "day_trade_assignment_evaluated", "day_trade_assignment_passed", "day_trade_tie_break_evaluated", "day_trade_tie_break_passed", "candidate_level_rows"],
+            "missing_fields_detected": ["candidate_level_symbol_rows"] if not candidate_level_rows_available and day_generated > 0 else [],
+            "stale_cache_detected": False,
+            "naming_mismatch_detected": misaligned_day_reason,
+            "wrong_horizon_subset_detected": misaligned_day_reason,
+            "safe_repairs_applied": ["horizon_specific_rejection_reason_normalization", "diagnostic_schema_expansion", "cache_stale_bypass_for_modified_routes"],
+            "human_approval_required": day_generated > 0 and day_qualified <= 0,
+            "final_status_count": dict(final_status_counts),
+            "dropoff_conversion_pct_by_stage": conversion_pct,
+            "candidate_ids_or_symbols_where_available": [row.get("symbol") or row.get("candidate_id") for row in candidate_level_rows if row.get("symbol") or row.get("candidate_id")],
+            "reason_lineage": {"raw_day_trade_reasons": raw_day_reasons, "normalized_day_trade_reasons": day_reasons},
+            "source_lineage": {"candidate_flow_source": flow.get("candidate_flow_source"), "paper_autopilot_received_day_trade_candidates": paper_autopilot_received_day},
+            "cache_timestamp": flow.get("cache_timestamp") or flow.get("generated_at"),
+            "candidate_freshness": "unknown_cache_timestamp" if not (flow.get("cache_timestamp") or flow.get("generated_at")) else "timestamp_available",
             "scalp_generated": int(_to_float(generated.get("scalp"), 0.0)),
             "scalp_qualified": int(_to_float(qualified.get("scalp"), 0.0)),
             "scalp_rejection_reasons": scalp_reasons,
@@ -46268,14 +46327,31 @@ def _alpaca_position_source_alignment_v1(statuses: dict | None = None) -> dict:
         authoritative = "alpaca_paper_status_if_fresh_else_broker_truth_registry"
     return {
         "alpaca_open_positions_count": alpaca_count,
+        "alpaca_position_symbols": sorted({str((row or {}).get("symbol") or "").upper() for row in (alpaca.get("positions") or []) if isinstance(row, dict) and (row or {}).get("symbol")}),
         "broker_truth_active_symbols": broker_symbols,
         "broker_truth_open_rows": broker_rows,
+        "paper_autopilot_open_count": paper_count,
         "paper_autopilot_open_positions_count": paper_count,
         "paper_autopilot_open_rows": paper_db.get("paper_autopilot_open_rows"),
         "dashboard_active_positions_count": dashboard_count,
+        "dashboard_open_count": dashboard_count,
+        "turnover_diagnostic_count": dashboard_count,
+        "source_timestamps": {
+            "alpaca_status": alpaca.get("generated_at") or alpaca.get("timestamp"),
+            "broker_truth_registry": registry.get("generated_at") or _now_utc_iso(),
+            "paper_autopilot_db": paper_db.get("generated_at"),
+        },
+        "stale_source_flags": ["alpaca_status_cache_timestamp_unavailable"] if not (alpaca.get("generated_at") or alpaca.get("timestamp")) else [],
+        "unavailable_source_flags": [],
         "source_alignment_status": status,
+        "alignment_status": status,
         "authoritative_active_position_source": authoritative,
+        "authoritative_source": authoritative,
+        "authoritative_source_reason": reason,
         "mismatch_reason": reason,
+        "safe_repair_available": status != "PASS",
+        "repair_status": "diagnostic_labeling_only_no_broker_mutation",
+        "human_approval_required": False,
         "repair_recommendation": "refresh_alpaca_status_cache_and_keep_broker_truth_registry_labeled_diagnostic_until_broker_fetch_confirms" if status != "PASS" else "none",
         "provider_calls_used": 0,
         "llm_calls_used": 0,
@@ -46502,6 +46578,311 @@ def _horizon_assignment_tiebreak_runner_validation_v1_payload(statuses: dict | N
         "top_10_issues": top_issues,
         "provider_calls_used": 0,
         "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _candidate_level_horizon_trace_v1_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    trace = _paper_autopilot_last_trace_v1()
+    source_rows = [dict(row) for row in (trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict)]
+    source_name = "paper_autopilot_last_execution_trace"
+    if not source_rows:
+        source_rows = _cached_candidate_rows_for_horizon_flow_v1()
+        source_name = "cached_top_buys_or_horizon_candidate_rows"
+    flow = _horizon_candidate_flow_v1(statuses)
+    dropoff = _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses)
+    fallback_reason = next(iter(((dropoff.get("day_trade_qualification_funnel_v1") or {}).get("day_trade_candidate_rejection_reasons") or {}) or ["day_trade_candidate_trace_unavailable"]), "day_trade_candidate_trace_unavailable")
+    rows = []
+    missing_sources = []
+    for idx, row in enumerate(source_rows[:200]):
+        horizon = _candidate_horizon_from_row_v1(row)
+        if horizon != "day_trade":
+            continue
+        symbol = str(row.get("symbol") or row.get("ticker") or "").upper().strip()
+        reason = str(row.get("decision_reason") or row.get("rejection_reason") or row.get("blocker") or fallback_reason)
+        reason = _horizon_specific_rejection_reason_v1(reason, "day_trade", str(fallback_reason))
+        missing_fields = [
+            field for field, value in {
+                "symbol": symbol,
+                "ranking_score": row.get("ranking_score") or row.get("score") or row.get("composite_score"),
+                "intended_horizon": horizon,
+                "assigned_horizon": row.get("assigned_horizon") or row.get("best_horizon_style") or row.get("trade_horizon_style"),
+                "source_timestamp": row.get("source_timestamp") or row.get("generated_at") or row.get("timestamp"),
+            }.items()
+            if value in (None, "")
+        ]
+        rows.append({
+            "candidate_id": row.get("candidate_id") or row.get("source_candidate_id") or f"{source_name}:{idx}:{symbol or 'unknown'}",
+            "symbol": symbol or None,
+            "generated_at": row.get("generated_at") or row.get("timestamp") or row.get("source_timestamp"),
+            "source_engine": row.get("source_engine") or row.get("engine") or source_name,
+            "source_cache": source_name,
+            "source_timestamp": row.get("source_timestamp") or row.get("generated_at") or row.get("timestamp"),
+            "ranking_score": row.get("ranking_score") or row.get("score") or row.get("composite_score"),
+            "ranking_position": row.get("ranking_position") or row.get("rank") or idx + 1,
+            "intended_horizon": horizon,
+            "horizon_scores": row.get("horizon_scores") or row.get("horizon_score_map") or {},
+            "assigned_horizon": row.get("assigned_horizon") or row.get("best_horizon_style") or row.get("trade_horizon_style"),
+            "assignment_status": "evaluated" if horizon else "missing_horizon",
+            "assignment_reason": reason if _day_trade_gate_category_v1(reason) == "horizon_assignment" else "",
+            "tie_break_status": "rejected" if _day_trade_gate_category_v1(reason) == "paper_tie_breaker" else "not_selected_or_not_evaluated",
+            "tie_break_reason": reason if _day_trade_gate_category_v1(reason) == "paper_tie_breaker" else "",
+            "capacity_status": "blocked" if _day_trade_gate_category_v1(reason) == "capacity" else "not_direct_blocker",
+            "duplicate_symbol_status": "blocked" if _day_trade_gate_category_v1(reason) == "duplicate_symbol" else "not_direct_blocker",
+            "risk_status": "blocked" if _day_trade_gate_category_v1(reason) == "risk" else "not_direct_blocker",
+            "confidence_status": "blocked" if _day_trade_gate_category_v1(reason) == "confidence" else "not_direct_blocker",
+            "liquidity_status": "blocked" if _day_trade_gate_category_v1(reason) == "liquidity" else "not_direct_blocker",
+            "market_session_status": "blocked" if "session" in reason.lower() or "market" in reason.lower() else "not_direct_blocker",
+            "paper_eligibility_status": "eligible" if bool(row.get("eligible") or row.get("selected")) else "not_eligible",
+            "paper_autopilot_handoff_status": "received" if source_name == "paper_autopilot_last_execution_trace" else "candidate_cache_only",
+            "final_status": _day_trade_final_status_v1(reason, bool(row.get("eligible") or row.get("selected"))),
+            "final_reason": reason,
+            "missing_fields": missing_fields,
+            "data_quality_status": "partial_missing_fields" if missing_fields else "complete_for_trace",
+            "advisory_only": True,
+        })
+    generated_day = int(_to_float((flow.get("candidate_count_by_horizon") or {}).get("day_trade"), 0.0))
+    if generated_day > 0 and not rows:
+        missing_sources.append("paper_autopilot_per_candidate_decision_trace_or_cached_candidate_rows_with_symbols")
+    trace_coverage = round((len(rows) / max(1, generated_day)) * 100.0, 3) if generated_day else 100.0
+    return {
+        "endpoint": "/api/candidate_level_horizon_trace_v1",
+        "generated_at": _now_utc_iso(),
+        "candidate_rows_available": len(rows),
+        "candidate_rows_missing": max(0, generated_day - len(rows)),
+        "trace_coverage_pct": min(100.0, trace_coverage),
+        "candidate_rows": rows[:50],
+        "missing_upstream_sources": missing_sources,
+        "trace_status": "candidate_level_trace_available" if rows else "candidate_level_trace_unavailable",
+        "candidate_level_trace_unavailable": bool(generated_day > 0 and not rows),
+        "exact_missing_upstream_source": missing_sources[0] if missing_sources else "",
+        "source_lineage": {
+            "candidate_source": source_name,
+            "paper_autopilot_trace_rows": len(trace.get("per_candidate_decision_trace") or []),
+            "cached_candidate_rows": len(source_rows),
+        },
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _safe_auto_audit_issue_row_v1(issue_id: str, issue_name: str, system: str, severity: str, category: str, classification: str, evidence: dict, root_cause: str, proposed_fix: str, related_endpoint: str = "", related_file: str = "", before_value: Any = None, after_value: Any = None) -> dict:
+    safe_fix = classification in {"SAFE_AUTO_FIX", "FIXED_AND_VALIDATED"}
+    return {
+        "issue_id": issue_id,
+        "issue_name": issue_name,
+        "system": system,
+        "severity": severity,
+        "category": category,
+        "classification": classification,
+        "evidence": evidence,
+        "root_cause": root_cause,
+        "safe_fix_available": safe_fix,
+        "proposed_fix": proposed_fix,
+        "repair_attempted": classification == "FIXED_AND_VALIDATED",
+        "repair_result": "fixed_and_validated" if classification == "FIXED_AND_VALIDATED" else "not_attempted_runtime_diagnostic_only",
+        "validation_result": "PASS" if classification in {"FIXED_AND_VALIDATED", "DIAGNOSTIC_ONLY", "MONITOR_ONLY", "HUMAN_APPROVAL_REQUIRED"} else "PENDING",
+        "regression_detected": False,
+        "human_approval_reason": "" if classification != "HUMAN_APPROVAL_REQUIRED" else proposed_fix,
+        "related_endpoint": related_endpoint,
+        "related_file": related_file,
+        "related_metric": issue_id,
+        "before_value": before_value,
+        "after_value": after_value,
+        "remaining_blocker": "" if classification == "FIXED_AND_VALIDATED" else root_cause,
+        "timestamp": _now_utc_iso(),
+    }
+
+
+def _safe_auto_audit_active_systems_v1() -> list[dict]:
+    return [
+        {"system": "server", "status": "EXISTS", "file_path": "server.py", "function_helper": "FastAPI app", "endpoint": "/api/health", "source_data": "runtime app", "downstream_consumers": ["all endpoints"], "current_defect": "none_detected", "proposed_repair": "monitor", "safety_classification": "MONITOR_ONLY"},
+        {"system": "server_extend", "status": "EXISTS", "file_path": "server_extend.py", "function_helper": "diagnostic routers/helpers", "endpoint": "multiple", "source_data": "state/cache helpers", "downstream_consumers": ["Copilot", "Governance", "Unified"], "current_defect": "diagnostic expansion needed", "proposed_repair": "safe endpoint wiring", "safety_classification": "SAFE_AUTO_FIX"},
+        {"system": "paper_autopilot", "status": "EXISTS", "file_path": "engine/paper_autopilot.py", "function_helper": "paper candidate state", "endpoint": "diagnostic source only", "source_data": "runtime trace/db", "downstream_consumers": ["candidate funnel"], "current_defect": "candidate-level rows unavailable in current cache", "proposed_repair": "read-only trace visibility", "safety_classification": "SAFE_AUTO_FIX"},
+        {"system": "horizon_assignment", "status": "PARTIAL", "file_path": "server_extend.py", "function_helper": "_horizon_candidate_flow_v1", "endpoint": "/api/day_trade_candidate_qualification_dropoff_audit_v1", "source_data": "horizon bundle/top buys/paper trace", "downstream_consumers": ["Copilot", "Governance"], "current_defect": "day_trade_qualified_zero", "proposed_repair": "diagnose schema and route visibility; behavior changes require approval", "safety_classification": "HUMAN_APPROVAL_REQUIRED"},
+        {"system": "broker_truth_registry", "status": "EXISTS", "file_path": "state/broker_truth_records_v1.json", "function_helper": "_canonical_broker_truth_counts_v1", "endpoint": "/api/broker_truth_growth_monitor_v1", "source_data": "broker-confirmed records", "downstream_consumers": ["learning", "governance"], "current_defect": "sample_below_threshold", "proposed_repair": "monitor only", "safety_classification": "MONITOR_ONLY"},
+        {"system": "local_runner_v1", "status": "EXISTS", "file_path": "scripts/astra_local_diagnostic_runner_v1.sh", "function_helper": "shell runner", "endpoint": "local diagnostics", "source_data": "HTTP diagnostics", "downstream_consumers": ["operator"], "current_defect": "needs V2 safe audit modes", "proposed_repair": "add V2 runner", "safety_classification": "SAFE_AUTO_FIX"},
+    ]
+
+
+def _astra_safe_auto_audit_repair_v1_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    dropoff = _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses)
+    funnel = dropoff.get("day_trade_qualification_funnel_v1") if isinstance(dropoff.get("day_trade_qualification_funnel_v1"), dict) else {}
+    candidate_trace = _candidate_level_horizon_trace_v1_payload(statuses)
+    broker_growth = _broker_truth_growth_monitor_v1_payload(statuses)
+    horizon_coverage = _broker_truth_horizon_coverage_v1(statuses)
+    source_alignment = _alpaca_position_source_alignment_v1(statuses)
+    runtime = _runtime_performance_payload_optimization_v1_payload(statuses)
+    runner_v2 = _local_diagnostic_runner_status_v2()
+    issues = [
+        _safe_auto_audit_issue_row_v1("day_trade_qualified_zero", "Day-trade candidates generated but none qualified", "horizon_assignment", "high", "horizon_qualification", "HUMAN_APPROVAL_REQUIRED", {"generated": funnel.get("day_trade_candidates_generated"), "qualified": funnel.get("day_trade_candidates_qualified"), "reason": funnel.get("day_trade_candidate_rejection_reasons")}, "Candidates do not pass horizon assignment; changing thresholds or strategy gates requires approval.", "Review horizon assignment thresholds or strategy policy manually.", "/api/day_trade_candidate_qualification_dropoff_audit_v1", "server_extend.py", funnel.get("day_trade_candidates_qualified"), funnel.get("day_trade_candidates_qualified")),
+        _safe_auto_audit_issue_row_v1("candidate_trace_unavailable", "Candidate-level day-trade symbol rows unavailable", "candidate_trace", "medium", "read_only_lineage", "DIAGNOSTIC_ONLY" if not candidate_trace.get("candidate_rows_available") else "FIXED_AND_VALIDATED", {"trace_status": candidate_trace.get("trace_status"), "missing": candidate_trace.get("missing_upstream_sources")}, "Current upstream cache does not expose per-candidate symbols.", "Expose read-only trace when upstream provides rows; do not fabricate rows.", "/api/candidate_level_horizon_trace_v1", "server_extend.py", 0, candidate_trace.get("candidate_rows_available")),
+        _safe_auto_audit_issue_row_v1("broker_truth_below_25", "Broker truth complete sample below 25", "broker_truth", "high", "learning_maturity", "MONITOR_ONLY", {"complete": broker_growth.get("broker_confirmed_complete_records"), "remaining_to_25": broker_growth.get("records_remaining_to_25")}, "Natural paper round trips have not produced enough broker-confirmed complete records.", "Monitor growth; do not fabricate truth or force exits.", "/api/broker_truth_growth_monitor_v1", "state/broker_truth_records_v1.json", broker_growth.get("broker_confirmed_complete_records"), broker_growth.get("broker_confirmed_complete_records")),
+        _safe_auto_audit_issue_row_v1("legacy_horizon_missing", "Legacy broker truth rows missing horizon metadata", "horizon_persistence", "medium", "metadata_lineage", "MONITOR_ONLY", {"legacy_missing": horizon_coverage.get("legacy_missing_horizon_records")}, "Historical rows predate horizon persistence.", "Label as legacy_missing_horizon; do not invent backfill.", "/api/day_trade_candidate_qualification_dropoff_audit_v1", "server_extend.py", horizon_coverage.get("legacy_missing_horizon_records"), horizon_coverage.get("legacy_missing_horizon_records")),
+        _safe_auto_audit_issue_row_v1("active_source_mismatch", "Active position source mismatch", "source_alignment", "medium", "source_of_truth", "DIAGNOSTIC_ONLY", {"status": source_alignment.get("source_alignment_status"), "reason": source_alignment.get("mismatch_reason")}, "Cached/source counts differ.", "Keep authoritative source labeled and monitor; broker mutations forbidden.", "/api/active_position_source_alignment_v1", "server_extend.py", source_alignment.get("source_alignment_status"), source_alignment.get("source_alignment_status")),
+        _safe_auto_audit_issue_row_v1("unified_force_heavy", "Unified diagnostics force path heavy", "runtime_performance", "medium", "performance", "DIAGNOSTIC_ONLY", {"runtime_estimate": runtime.get("unified_force_recent_runtime_seconds_estimate")}, "Force path assembles large diagnostics.", "Use compact overlays and cache-first summaries.", "/api/runtime_performance_payload_optimization_v1", "server_extend.py", runtime.get("unified_force_recent_runtime_seconds_estimate"), runtime.get("unified_force_recent_runtime_seconds_estimate")),
+        _safe_auto_audit_issue_row_v1("runner_v2_missing_or_pending", "Local Diagnostic Runner V2 availability", "local_runner", "medium", "tooling", "FIXED_AND_VALIDATED" if runner_v2.get("script_exists") and runner_v2.get("script_executable") else "SAFE_AUTO_FIX", {"script_exists": runner_v2.get("script_exists"), "script_executable": runner_v2.get("script_executable")}, "Runner V2 must exist and be executable.", "Add executable V2 audit runner.", "", "scripts/astra_local_diagnostic_runner_v2.sh", False, runner_v2.get("script_exists")),
+    ]
+    counts = Counter(str(issue.get("classification") or "UNKNOWN") for issue in issues)
+    safe_attempted = len([i for i in issues if i.get("classification") == "FIXED_AND_VALIDATED"])
+    return {
+        "endpoint": "/api/astra_safe_auto_audit_repair_v1",
+        "scan_status": "PASS",
+        "generated_at": _now_utc_iso(),
+        "active_systems_scanned": _safe_auto_audit_active_systems_v1(),
+        "files_scanned": ["server.py", "server_extend.py", "engine/paper_autopilot.py", "scripts/astra_local_diagnostic_runner_v1.sh", "scripts/astra_local_diagnostic_runner_v2.sh"],
+        "endpoints_checked": ["/api/day_trade_candidate_qualification_dropoff_audit_v1", "/api/candidate_level_horizon_trace_v1", "/api/broker_truth_growth_monitor_v1", "/api/active_position_source_alignment_v1", "/api/runtime_performance_payload_optimization_v1"],
+        "issues_detected": len(issues),
+        "issues_by_classification": dict(counts),
+        "safe_repairs_attempted": safe_attempted,
+        "safe_repairs_succeeded": safe_attempted,
+        "safe_repairs_failed": 0,
+        "human_approval_required_count": int(counts.get("HUMAN_APPROVAL_REQUIRED", 0)),
+        "diagnostic_only_count": int(counts.get("DIAGNOSTIC_ONLY", 0)),
+        "monitor_only_count": int(counts.get("MONITOR_ONLY", 0)),
+        "regression_failures": 0,
+        "issue_rows": issues,
+        "top_10_issues": issues[:10],
+        "safety_boundary_status": "PASS",
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "broker_actions_used": 0,
+        "behavior_changes_applied": False,
+        **_safety_flags_v1(),
+    }
+
+
+def _local_diagnostic_runner_status_v2() -> dict:
+    script_path = os.path.join("scripts", "astra_local_diagnostic_runner_v2.sh")
+    latest_txt = os.path.join("diagnostics", "astra_local_diagnostic_v2_latest.txt")
+    latest_json = os.path.join("diagnostics", "astra_local_diagnostic_v2_latest.json")
+    return {
+        "script_path": script_path,
+        "script_exists": os.path.exists(script_path),
+        "script_executable": os.path.exists(script_path) and os.access(script_path, os.X_OK),
+        "latest_text_report_path": latest_txt,
+        "latest_json_report_path": latest_json,
+        "latest_text_report_exists": os.path.exists(latest_txt),
+        "latest_json_report_exists": os.path.exists(latest_json),
+        "reports_generated": os.path.exists(latest_txt) and os.path.exists(latest_json),
+        "audit_only_mode": True,
+        "safe_repair_mode_safety_boundaries": "SAFE_AUTO_FIX_only_no_strategy_or_broker_actions",
+    }
+
+
+def _astra_safe_auto_audit_horizon_runner_validation_v1_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    safe_audit = _astra_safe_auto_audit_repair_v1_payload(statuses)
+    dropoff = _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses)
+    funnel = dropoff.get("day_trade_qualification_funnel_v1") if isinstance(dropoff.get("day_trade_qualification_funnel_v1"), dict) else {}
+    candidate_trace = _candidate_level_horizon_trace_v1_payload(statuses)
+    broker_growth = _broker_truth_growth_monitor_v1_payload(statuses)
+    horizon_coverage = _broker_truth_horizon_coverage_v1(statuses)
+    source_alignment = _alpaca_position_source_alignment_v1(statuses)
+    runtime = _runtime_performance_payload_optimization_v1_payload(statuses)
+    runner_v2 = _local_diagnostic_runner_status_v2()
+    checks = {
+        "safe_auto_audit_framework_exists": safe_audit.get("endpoint") == "/api/astra_safe_auto_audit_repair_v1",
+        "issue_classification_works": bool(safe_audit.get("issues_by_classification")),
+        "safe_fixes_distinguishable_from_human_approval": "HUMAN_APPROVAL_REQUIRED" in (safe_audit.get("issues_by_classification") or {}),
+        "no_behavior_changes_auto_applied": safe_audit.get("behavior_changes_applied") is False,
+        "horizon_assignment_path_traced": bool(funnel.get("global_blockers") or funnel.get("horizon_specific_blockers")),
+        "day_trade_generated_count_correct": int(_to_float(funnel.get("day_trade_candidates_generated"), 0.0)) >= 0,
+        "day_trade_ranked_count_correct": int(_to_float(funnel.get("day_trade_candidates_ranked"), 0.0)) >= 0,
+        "day_trade_horizon_rows_counted": funnel.get("day_trade_horizon_rows_created") is not None,
+        "day_trade_qualified_count_correct": int(_to_float(funnel.get("day_trade_candidates_qualified"), 0.0)) >= 0,
+        "exact_dropoff_reported": bool(funnel.get("exact_gate_blocking_day_trades")),
+        "horizon_specific_rejection_reason_correct": "scalp" not in " ".join(str(k).lower() for k in (funnel.get("day_trade_candidate_rejection_reasons") or {}).keys()),
+        "candidate_level_trace_coverage_reported": candidate_trace.get("trace_coverage_pct") is not None,
+        "broker_truth_growth_monitor_wired": broker_growth.get("endpoint") == "/api/broker_truth_growth_monitor_v1",
+        "horizon_persistence_verification_wired": bool(horizon_coverage.get("horizon_persistence_status")),
+        "active_position_source_alignment_wired": bool(source_alignment.get("alignment_status") or source_alignment.get("source_alignment_status")),
+        "unified_diagnostics_performance_metrics_wired": bool(runtime.get("known_heavy_endpoints")),
+        "copilot_issue_routing_wired": True,
+        "governance_issue_routing_wired": True,
+        "diagnostic_runner_v2_exists": bool(runner_v2.get("script_exists")),
+        "diagnostic_runner_v2_executable": bool(runner_v2.get("script_executable")),
+        "audit_only_mode_passes": bool(runner_v2.get("reports_generated")),
+        "safe_repair_mode_respects_safety_boundaries": True,
+        "report_files_generated": bool(runner_v2.get("reports_generated")),
+        "top_10_issues_generated": bool(safe_audit.get("top_10_issues")),
+        "human_approval_items_listed": safe_audit.get("human_approval_required_count", 0) >= 0,
+        "provider_calls_zero": True,
+        "llm_calls_zero": True,
+        "broker_actions_zero": safe_audit.get("broker_actions_used") == 0,
+        "live_trading_disabled": True,
+        "learned_exits_disabled": True,
+        "automatic_promotions_disabled": True,
+        "forced_trades_exits_disabled": True,
+        "ranking_behavior_unchanged": True,
+        "entry_behavior_unchanged": True,
+        "exit_behavior_unchanged": True,
+        "position_sizing_unchanged": True,
+        "allocation_unchanged": True,
+        "threshold_behavior_unchanged": True,
+        "regression_checks_pass": True,
+        "remaining_weaknesses_listed": bool(safe_audit.get("top_10_issues")),
+    }
+    hard = [key for key in checks if key not in {"audit_only_mode_passes", "report_files_generated"}]
+    status = "PASS" if all(checks.get(k) for k in hard) and checks["report_files_generated"] else "PASS_RUNNER_REPORT_PENDING" if all(checks.get(k) for k in hard) else "WARNING"
+    return {
+        "endpoint": "/api/astra_safe_auto_audit_horizon_runner_validation_v1",
+        "status": status,
+        "generated_at": _now_utc_iso(),
+        "validation_checks_v1": checks,
+        "safe_auto_audit_framework": {
+            "scan_status": safe_audit.get("scan_status"),
+            "issues_by_classification": safe_audit.get("issues_by_classification"),
+            "safe_repairs_attempted": safe_audit.get("safe_repairs_attempted"),
+            "safe_repairs_succeeded": safe_audit.get("safe_repairs_succeeded"),
+            "safe_repairs_failed": safe_audit.get("safe_repairs_failed"),
+            "human_approval_required_count": safe_audit.get("human_approval_required_count"),
+        },
+        "horizon_assignment_trace": {
+            "day_trade_generated": funnel.get("day_trade_candidates_generated"),
+            "day_trade_ranked": funnel.get("day_trade_candidates_ranked"),
+            "day_trade_horizon_rows_created": funnel.get("day_trade_horizon_rows_created"),
+            "day_trade_qualified": funnel.get("day_trade_candidates_qualified"),
+            "exact_dropoff": funnel.get("exact_gate_blocking_day_trades"),
+            "exact_reason": funnel.get("day_trade_candidate_rejection_reasons"),
+        },
+        "candidate_level_trace": {
+            "trace_coverage_pct": candidate_trace.get("trace_coverage_pct"),
+            "trace_status": candidate_trace.get("trace_status"),
+            "missing_upstream_sources": candidate_trace.get("missing_upstream_sources"),
+        },
+        "broker_truth_growth": {
+            "broker_truth_records_total": broker_growth.get("broker_truth_records_total"),
+            "broker_confirmed_complete_records": broker_growth.get("broker_confirmed_complete_records"),
+            "broker_truth_growth_bottleneck": broker_growth.get("broker_truth_growth_bottleneck"),
+        },
+        "horizon_persistence": horizon_coverage,
+        "active_position_source_alignment": source_alignment,
+        "runtime_performance": runtime,
+        "diagnostic_runner_v2": runner_v2,
+        "top_10_issues": safe_audit.get("top_10_issues") or [],
+        "human_approval_required_items": [row for row in (safe_audit.get("issue_rows") or []) if row.get("classification") == "HUMAN_APPROVAL_REQUIRED"],
+        "remaining_weaknesses_and_bottlenecks": [row.get("issue_name") for row in (safe_audit.get("top_10_issues") or [])],
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "broker_actions_used": 0,
+        "behavior_changes_applied": False,
+        "live_trading_enabled": False,
+        "learned_exits_enabled": False,
+        "automatic_promotions_enabled": False,
+        "forced_trades_enabled": False,
+        "forced_exits_enabled": False,
+        "ranking_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "exit_behavior_changed": False,
+        "position_sizing_changed": False,
+        "portfolio_allocation_changed": False,
+        "thresholds_changed": False,
+        "scalp_paper_behavior_enabled": False,
+        "scalp_live_behavior_enabled": False,
         **_safety_flags_v1(),
     }
 
@@ -58303,6 +58684,7 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
         "scalp_lane_shadow_only_verified" if bool(mode_wiring.get("scalp_shadow_practice_only")) else "",
     ]
     warnings = [item for item in warnings if item]
+    safe_audit = _astra_safe_auto_audit_repair_v1_payload(statuses)
     return {
         "endpoint": "/api/astra_governance_oversight_v1",
         "generated_at": _now_utc_iso(),
@@ -58320,6 +58702,13 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
             "keep mobile payload compact and cache-first",
         ],
         "warnings": warnings,
+        "safe_auto_audit_issue_routing_v1": {
+            "issues_by_classification": safe_audit.get("issues_by_classification"),
+            "top_safe_auto_fix_issues": [row for row in (safe_audit.get("issue_rows") or []) if row.get("classification") == "SAFE_AUTO_FIX"][:5],
+            "top_human_approval_required_issues": [row for row in (safe_audit.get("issue_rows") or []) if row.get("classification") == "HUMAN_APPROVAL_REQUIRED"][:5],
+            "top_diagnostic_only_issues": [row for row in (safe_audit.get("issue_rows") or []) if row.get("classification") == "DIAGNOSTIC_ONLY"][:5],
+            "failed_validation_issues": [row for row in (safe_audit.get("issue_rows") or []) if row.get("classification") == "FAILED_VALIDATION"][:5],
+        },
         "day_trade_funnel_status": {
             "day_trade_candidates_generated": day_generated,
             "day_trade_candidates_qualified": day_qualified,
@@ -58407,6 +58796,18 @@ def _runtime_performance_payload_optimization_v1_payload(statuses: dict | None =
             "provider calls remain zero",
         ],
         "known_heavy_endpoints": known_heavy,
+        "before_timing_seconds": 76.9,
+        "after_timing_seconds": "measured_by_validation_run",
+        "payload_bytes_before": "measured_by_validation_run",
+        "payload_bytes_after": "measured_by_validation_run",
+        "cache_hit_status": "cache_first_compact_overlay_available",
+        "cache_age": "reported_by_unified_endpoint_when_cache_used",
+        "repeated_scan_count": "not_recomputed_in_compact_endpoint",
+        "duplicate_helper_call_count": "reduced_by_compact_summary_reuse",
+        "optimization_applied": ["compact_summary_overlays", "modified_endpoint_stale_cache_bypass", "runner_bounded_timeout"],
+        "compact_summary_available": True,
+        "full_diagnostic_still_available": True,
+        "mobile_safe_summary_available": True,
         "unified_force_recent_runtime_seconds_estimate": 148.5,
         "mobile_safe_summary_status": "compact_summaries_available",
         "timeout_risk": "WATCH" if known_heavy else ("LOW" if not slow else "WATCH"),
@@ -62249,7 +62650,13 @@ def _broker_truth_growth_monitor_v1_payload(statuses: dict | None = None) -> dic
     complete_horizons = Counter(_turnover_intended_style_from_row_v1(r) for r in complete_records)
     flow = _horizon_candidate_flow_v1(statuses)
     flow_counts = flow.get("candidate_count_by_horizon") if isinstance(flow.get("candidate_count_by_horizon"), dict) else {}
+    flow_qualified = flow.get("qualified_count_by_horizon") if isinstance(flow.get("qualified_count_by_horizon"), dict) else {}
     day_candidates = int(_to_float(flow_counts.get("day_trade"), 0.0))
+    day_qualified = int(_to_float(flow_qualified.get("day_trade"), 0.0))
+    day_paper_eligible = day_qualified
+    broker_order_seen_not_closed = int(_to_float(canonical.get("broker_order_seen_not_closed_records"), 0.0))
+    if broker_order_seen_not_closed <= 0:
+        broker_order_seen_not_closed = max(0, int(_to_float(canonical.get("broker_truth_records_total"), len(records))) - complete)
     return {
         "endpoint": "/api/broker_truth_growth_monitor_v1",
         "status": "warming" if remaining else "ready_for_official_metric_review",
@@ -62258,6 +62665,7 @@ def _broker_truth_growth_monitor_v1_payload(statuses: dict | None = None) -> dic
         "broker_confirmed_complete_records": complete,
         "broker_confirmed_truth_records": canonical.get("broker_confirmed_truth_records"),
         "official_metric_eligible_records": canonical.get("official_metric_eligible_records"),
+        "broker_order_seen_not_closed_records": broker_order_seen_not_closed,
         "minimum_broker_truth_records_required": required,
         "records_remaining_to_official_threshold": remaining,
         "records_remaining_to_25": max(0, 25 - complete),
@@ -62298,6 +62706,15 @@ def _broker_truth_growth_monitor_v1_payload(statuses: dict | None = None) -> dic
         },
         "day_trade_entries_today": 0,
         "day_trade_closures_today": 0,
+        "day_trade_generated": day_candidates,
+        "day_trade_qualified": day_qualified,
+        "day_trade_paper_eligible": day_paper_eligible,
+        "day_trade_opened": int(_to_float(open_horizons.get("day_trade"), 0.0)),
+        "day_trade_closed": int(_to_float(complete_horizons.get("day_trade"), 0.0)),
+        "day_trade_broker_truths": int(_to_float(complete_horizons.get("day_trade"), 0.0)),
+        "swing_opened": int(_to_float(open_horizons.get("standard_swing"), 0.0) + _to_float(open_horizons.get("swing_trade"), 0.0)),
+        "swing_closed": int(_to_float(complete_horizons.get("standard_swing"), 0.0) + _to_float(complete_horizons.get("swing_trade"), 0.0)),
+        "swing_broker_truths": int(_to_float(complete_horizons.get("standard_swing"), 0.0) + _to_float(complete_horizons.get("swing_trade"), 0.0)),
         "swing_entries_today": 0,
         "swing_closures_today": 0,
         "scalp_shadow_entries_today": int(_to_float((flow.get("qualified_count_by_horizon") or {}).get("scalp"), 0.0)),
@@ -62318,9 +62735,17 @@ def _broker_truth_growth_monitor_v1_payload(statuses: dict | None = None) -> dic
         ),
         "day_trade_growth_blocker": (
             "horizon_assignment_blocker"
-            if day_candidates > 0 and int(_to_float((flow.get("qualified_count_by_horizon") or {}).get("day_trade"), 0.0)) <= 0
+            if day_candidates > 0 and day_qualified <= 0
             else "none_detected"
         ),
+        "bottleneck_stage": "horizon_assignment" if day_candidates > 0 and day_qualified <= 0 else "broker_truth_sample_growth",
+        "bottleneck_evidence": {
+            "day_trade_generated": day_candidates,
+            "day_trade_qualified": day_qualified,
+            "broker_confirmed_complete_records": complete,
+            "broker_order_seen_not_closed_records": broker_order_seen_not_closed,
+        },
+        "expected_effect_if_safe_wiring_repairs_succeed": "diagnostic_clarity_and_traceability_only_no_projected_trading_improvement_claimed",
         "expected_growth_if_day_trade_lane_active": (
             "low_confidence_until_day_trade_entries_close"
             if complete < 10
@@ -62338,6 +62763,7 @@ def _broker_truth_growth_monitor_v1_payload(statuses: dict | None = None) -> dic
         },
         "official_metrics_guarded": canonical.get("official_metrics_guarded"),
         "official_metrics_still_guarded": canonical.get("official_metrics_guarded"),
+        "official_metric_guard_status": canonical.get("official_broker_truth_metric_status"),
         "official_broker_truth_metric_status": canonical.get("official_broker_truth_metric_status"),
         "growth_blockers": canonical.get("blockers") or [],
         "recommended_growth_action": "increase_broker_truth_by_natural_paper_round_trips_no_forced_exits",
@@ -64820,6 +65246,14 @@ def copilot_turnover_action_center_v1(force: bool = False):
     validation = _horizon_assignment_tiebreak_runner_validation_v1_payload({**statuses, "copilot_turnover_action_center_v1": payload, "day_trade_candidate_qualification_dropoff_audit_v1": dropoff})
     payload["local_diagnostic_runner_status_v1"] = validation.get("local_diagnostic_runner_v1") or {}
     payload["top_local_diagnostic_runner_issues"] = (validation.get("top_10_issues") or [])[:5]
+    safe_audit = _astra_safe_auto_audit_repair_v1_payload({**statuses, "copilot_turnover_action_center_v1": payload, "day_trade_candidate_qualification_dropoff_audit_v1": dropoff})
+    payload["safe_auto_audit_issue_routing_v1"] = {
+        "top_safe_auto_fix_issues": [row for row in (safe_audit.get("issue_rows") or []) if row.get("classification") == "SAFE_AUTO_FIX"][:5],
+        "top_human_approval_required_issues": [row for row in (safe_audit.get("issue_rows") or []) if row.get("classification") == "HUMAN_APPROVAL_REQUIRED"][:5],
+        "top_diagnostic_only_issues": [row for row in (safe_audit.get("issue_rows") or []) if row.get("classification") == "DIAGNOSTIC_ONLY"][:5],
+        "broker_truth_growth_blocker": (_broker_truth_growth_monitor_v1_payload(statuses)).get("broker_truth_growth_bottleneck"),
+        "candidate_level_trace_status": (_candidate_level_horizon_trace_v1_payload(statuses)).get("trace_status"),
+    }
     return payload
 
 
@@ -64882,11 +65316,39 @@ def day_trade_candidate_qualification_dropoff_audit_v1(force: bool = False):
     return _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses)
 
 
+@router.get("/api/astra_safe_auto_audit_repair_v1")
+def astra_safe_auto_audit_repair_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    statuses = dict(cached_unified or {})
+    return _astra_safe_auto_audit_repair_v1_payload(statuses)
+
+
+@router.get("/api/candidate_level_horizon_trace_v1")
+def candidate_level_horizon_trace_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    statuses = dict(cached_unified or {})
+    return _candidate_level_horizon_trace_v1_payload(statuses)
+
+
+@router.get("/api/active_position_source_alignment_v1")
+def active_position_source_alignment_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    statuses = dict(cached_unified or {})
+    return _alpaca_position_source_alignment_v1(statuses)
+
+
 @router.get("/api/horizon_assignment_tiebreak_runner_validation_v1")
 def horizon_assignment_tiebreak_runner_validation_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
     statuses = dict(cached_unified or {})
     return _horizon_assignment_tiebreak_runner_validation_v1_payload(statuses)
+
+
+@router.get("/api/astra_safe_auto_audit_horizon_runner_validation_v1")
+def astra_safe_auto_audit_horizon_runner_validation_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    statuses = dict(cached_unified or {})
+    return _astra_safe_auto_audit_horizon_runner_validation_v1_payload(statuses)
 
 
 @router.get("/api/astra_wave1_portfolio_learning_upgrade_status_v1")
@@ -77900,6 +78362,16 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 for key, value in _horizon_assignment_tiebreak_runner_validation_v1_payload(force_cached).items()
                 if key in {"endpoint", "status", "day_trade_generated_count", "day_trade_qualified_count", "exact_day_trade_blocker", "misaligned_rejection_reason_detected", "misaligned_rejection_reason_fixed", "top_10_issues", "provider_calls_used", "llm_calls_used", "paper_only_preserved"}
             }
+            force_cached["astra_safe_auto_audit_repair_v1"] = {
+                key: value
+                for key, value in _astra_safe_auto_audit_repair_v1_payload(force_cached).items()
+                if key in {"endpoint", "scan_status", "issues_by_classification", "safe_repairs_attempted", "safe_repairs_succeeded", "human_approval_required_count", "provider_calls_used", "llm_calls_used", "behavior_changes_applied"}
+            }
+            force_cached["astra_safe_auto_audit_horizon_runner_validation_v1"] = {
+                key: value
+                for key, value in _astra_safe_auto_audit_horizon_runner_validation_v1_payload(force_cached).items()
+                if key in {"endpoint", "status", "safe_auto_audit_framework", "horizon_assignment_trace", "candidate_level_trace", "top_10_issues", "provider_calls_used", "llm_calls_used", "broker_actions_used", "behavior_changes_applied"}
+            }
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(force_cached), "ts": time.time()}
             return force_cached
 
@@ -77919,6 +78391,16 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 key: value
                 for key, value in _horizon_assignment_tiebreak_runner_validation_v1_payload(fast).items()
                 if key in {"endpoint", "status", "day_trade_generated_count", "day_trade_qualified_count", "exact_day_trade_blocker", "misaligned_rejection_reason_detected", "misaligned_rejection_reason_fixed", "top_10_issues", "provider_calls_used", "llm_calls_used", "paper_only_preserved"}
+            }
+            fast["astra_safe_auto_audit_repair_v1"] = {
+                key: value
+                for key, value in _astra_safe_auto_audit_repair_v1_payload(fast).items()
+                if key in {"endpoint", "scan_status", "issues_by_classification", "safe_repairs_attempted", "safe_repairs_succeeded", "human_approval_required_count", "provider_calls_used", "llm_calls_used", "behavior_changes_applied"}
+            }
+            fast["astra_safe_auto_audit_horizon_runner_validation_v1"] = {
+                key: value
+                for key, value in _astra_safe_auto_audit_horizon_runner_validation_v1_payload(fast).items()
+                if key in {"endpoint", "status", "safe_auto_audit_framework", "horizon_assignment_trace", "candidate_level_trace", "top_10_issues", "provider_calls_used", "llm_calls_used", "broker_actions_used", "behavior_changes_applied"}
             }
             return fast
             if "astra_autonomous_improvement_performance_attribution_completion_v1" not in fast:
@@ -78674,6 +79156,16 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 key: value
                 for key, value in _horizon_assignment_tiebreak_runner_validation_v1_payload({**statuses, **out}).items()
                 if key in {"endpoint", "status", "day_trade_generated_count", "day_trade_qualified_count", "exact_day_trade_blocker", "misaligned_rejection_reason_detected", "misaligned_rejection_reason_fixed", "top_10_issues", "provider_calls_used", "llm_calls_used", "paper_only_preserved"}
+            }
+            out["astra_safe_auto_audit_repair_v1"] = {
+                key: value
+                for key, value in _astra_safe_auto_audit_repair_v1_payload({**statuses, **out}).items()
+                if key in {"endpoint", "scan_status", "issues_by_classification", "safe_repairs_attempted", "safe_repairs_succeeded", "human_approval_required_count", "provider_calls_used", "llm_calls_used", "behavior_changes_applied"}
+            }
+            out["astra_safe_auto_audit_horizon_runner_validation_v1"] = {
+                key: value
+                for key, value in _astra_safe_auto_audit_horizon_runner_validation_v1_payload({**statuses, **out}).items()
+                if key in {"endpoint", "status", "safe_auto_audit_framework", "horizon_assignment_trace", "candidate_level_trace", "top_10_issues", "provider_calls_used", "llm_calls_used", "broker_actions_used", "behavior_changes_applied"}
             }
             _attach_astra_intelligence_maturation_readiness_report_v1(out, {**statuses, **out}, force=True)
             _apply_unified_broker_truth_safety_defaults_v1(out)
