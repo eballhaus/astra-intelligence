@@ -305,6 +305,35 @@ function DecisionWorkspace({ row }) {
   );
 }
 
+function MobileActionCard({ row, selected, onSelect }) {
+  const state = stateLabel(row);
+  const attention = ["LOSING_MOMENTUM", "PROTECT_PROFIT", "APPROACHING_SELL", "SELL_RECOMMENDED", "DATA_STALE", "INSUFFICIENT_EVIDENCE", "BLOCKED"].includes(state) || (row.blockers || []).length > 0;
+  return <button type="button" className={`copilot-mobile-card ${selected ? "selected" : ""}`} onClick={() => onSelect(row.recommendation_id)} aria-pressed={selected}><div className="copilot-mobile-card-top"><strong>{text(row.symbol)}</strong><span className={stateClass(state)}>{titleCase(state)}</span></div><div className="copilot-mobile-card-company">{text(displayValue(row, "company_name", "company", "asset_name"), "Asset name unavailable")}</div><div className="copilot-mobile-card-metrics"><span>{text(row.confidence, "Unavailable")}{present(row.confidence) ? "%" : ""}</span><span>{titleCase(row.preferred_horizon || row.horizon)}</span><span>{titleCase(row.evidence_quality)}</span></div><p>{text(row.simple_why || row.why_astra_chose_it, "No explanation is available yet.")}</p><footer><span>{row.paper_autopilot_eligible ? "Paper eligible" : "Advisory only"}</span><span>{attention ? "Attention" : titleCase(row.freshness)}</span></footer></button>;
+}
+
+function MobileCopilotView({ payload, rows, error }) {
+  const [tab, setTab] = useState("TOP_ACTIONS");
+  const [selectedId, setSelectedId] = useState(rows[0]?.recommendation_id || "");
+  const [compareId, setCompareId] = useState("");
+  const selectedRow = rows.find((row) => row.recommendation_id === selectedId) || rows[0] || null;
+  const tabRows = tab === "OPPORTUNITIES" ? rows.filter((row) => matchesFilter(row, "OPPORTUNITIES")) : tab === "POSITIONS" ? rows.filter((row) => matchesFilter(row, "CURRENT_POSITIONS")) : tab === "ATTENTION" ? rows.filter((row) => matchesFilter(row, "NEEDS_ATTENTION")) : rows;
+  const attentionCount = rows.filter((row) => matchesFilter(row, "NEEDS_ATTENTION")).length;
+  const choose = (id) => { setSelectedId(id); setTab("TOP_ACTIONS"); };
+  const first = rows[0] || {};
+  return <div className="copilot-mobile-page">
+    <header className="copilot-mobile-header"><div><div className="copilot-kicker">Astra Intelligence</div><h1>Astra Copilot</h1><p>{error ? "Backend unavailable. Cached recommendations may be incomplete." : "Decision support, kept clear on the move."}</p></div><div className="copilot-mobile-header-status"><span className={error ? "danger" : "good"}>{error ? "Offline" : text(payload.status, "Warming Up")}</span><span>{titleCase(first.freshness || "Cached")}</span><span>{attentionCount} attention</span><small>Updated {formatTimestamp(payload.generated_at)}</small></div></header>
+    {error ? <div className="copilot-alert copilot-alert-danger" role="alert">{error}. No fallback recommendation was created.</div> : null}
+    <div className="copilot-mobile-tabs" role="tablist" aria-label="Copilot mobile views">{[["TOP_ACTIONS", "Top Actions"], ["OPPORTUNITIES", "Opportunities"], ["POSITIONS", "Portfolio"], ["ATTENTION", `Needs Attention${attentionCount ? ` (${attentionCount})` : ""}`], ["HISTORY", "History"]].map(([value, label]) => <button type="button" role="tab" aria-selected={tab === value} className={tab === value ? "active" : ""} onClick={() => setTab(value)} key={value}>{label}</button>)}</div>
+    {tab === "HISTORY" ? <div className="copilot-mobile-panel"><HistoryView row={selectedRow} /><ChangesView row={selectedRow} /></div> : <>
+      <section className="copilot-mobile-actions" aria-label="Top actions">{tabRows.length ? tabRows.slice(0, 5).map((row) => <MobileActionCard key={row.recommendation_id} row={row} selected={selectedRow?.recommendation_id === row.recommendation_id} onSelect={choose} />) : <div className="copilot-empty copilot-empty-compact"><h2>No actions in this view</h2><p>Astra has not supplied a matching canonical recommendation.</p></div>}</section>
+      <div className="copilot-mobile-quick-ask" aria-label="Quick Copilot questions"><span>Quick ask</span>{[["Why buy?", "TOP_ACTIONS"], ["Biggest risk?", "ATTENTION"], ["What changed?", "HISTORY"], ["Show eligible", "OPPORTUNITIES"], ["Compare", "TOP_ACTIONS"]].map(([label, target]) => <button type="button" key={label} onClick={() => { if (label === "Compare") setCompareId(rows.find((row) => row.recommendation_id !== selectedRow?.recommendation_id)?.recommendation_id || ""); else setTab(target); }}>{label}</button>)}</div>
+      {selectedRow ? <section className="copilot-mobile-detail" aria-label={`Mobile decision detail for ${selectedRow.symbol}`}><div className="copilot-mobile-detail-heading"><div><div className="copilot-kicker">Selected decision</div><h2>{selectedRow.symbol}</h2></div><span className={stateClass(stateLabel(selectedRow))}>{titleCase(stateLabel(selectedRow))}</span></div><div className="copilot-mobile-readiness"><Metric label="Confidence" value={present(selectedRow.confidence) ? `${selectedRow.confidence}%` : null} tone="blue" /><Metric label="Evidence" value={titleCase(selectedRow.evidence_quality)} /><Metric label="Horizon" value={titleCase(selectedRow.preferred_horizon || selectedRow.horizon)} /></div><ExecutionState row={selectedRow} /><section className="copilot-detail-block copilot-recommendation"><h3>Why Astra likes it</h3><p>{text(selectedRow.why_astra_chose_it || selectedRow.simple_why, "No recommendation explanation is available yet.")}</p></section><FactorList title="What concerns Astra" items={[...(selectedRow.weakening_factors || []), ...(selectedRow.blockers || []), selectedRow.risk_reason].filter(present)} empty="No concerns are available in the cached payload." /><section className="copilot-detail-block"><h3>What would change the view</h3><div className="copilot-change-box">{text(selectedRow.what_would_change, "No change condition is available yet.")}</div></section><section className="copilot-detail-block"><h3>Decision timeline</h3><Timeline row={selectedRow} /></section><HistoryView row={selectedRow} /></section> : null}
+      {compareId ? <ComparisonWorkspace baseRow={selectedRow} rows={rows} compareId={compareId} onCompare={setCompareId} /> : null}
+    </>}
+    <footer className="copilot-mobile-safety">Paper-safe advisory interface · Provider {text(payload.provider_calls_used, "0")} · Broker {text(payload.broker_actions_used, "0")} · LLM {text(payload.llm_calls_used, "0")} · Behavior safe to apply: false</footer>
+  </div>;
+}
+
 export default function CopilotPage({ selectedSymbol = "", onSelectSymbol }) {
   const [payload, setPayload] = useState(null);
   const [error, setError] = useState("");
@@ -312,6 +341,7 @@ export default function CopilotPage({ selectedSymbol = "", onSelectSymbol }) {
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [compareId, setCompareId] = useState("");
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 600px)").matches);
 
   useEffect(() => {
     let mounted = true;
@@ -321,6 +351,14 @@ export default function CopilotPage({ selectedSymbol = "", onSelectSymbol }) {
       setError(result.ok ? "" : result.error || "copilot_endpoint_unavailable");
     });
     return () => { mounted = false; };
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 600px)");
+    const update = () => setIsMobile(media.matches);
+    update();
+    media.addEventListener?.("change", update);
+    return () => media.removeEventListener?.("change", update);
   }, []);
 
   const rows = useMemo(() => Array.isArray(payload?.recommendations) ? payload.recommendations : [], [payload]);
@@ -337,6 +375,8 @@ export default function CopilotPage({ selectedSymbol = "", onSelectSymbol }) {
   };
 
   if (payload === null) return <div className="copilot-page"><div className="copilot-loading"><div className="copilot-loader" /><h1>Connecting Astra Copilot</h1><p>Loading one canonical recommendation payload.</p></div></div>;
+
+  if (isMobile) return <MobileCopilotView payload={payload} rows={rows} error={error} />;
 
   return (
     <div className="copilot-page">

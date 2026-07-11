@@ -3,6 +3,8 @@
   gap: 16px;
   color: #eef6ff;
   min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .copilot-command-header,
@@ -61,7 +63,7 @@
 .copilot-context-item span, .copilot-metric span, .copilot-execution-grid span { display: block; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 850; }
 .copilot-context-item strong { display: block; overflow: hidden; margin-top: 5px; color: #eaf3ff; font-size: 0.84rem; text-overflow: ellipsis; white-space: nowrap; }
 
-.copilot-filter-bar { display: flex; align-items: center; gap: 7px; padding: 10px; border-radius: 14px; overflow-x: auto; }
+.copilot-filter-bar { display: flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; padding: 10px; border-radius: 14px; overflow-x: auto; }
 .copilot-filter-label { flex: 0 0 auto; padding: 0 6px; color: #7f99ba; font-size: 0.68rem; font-weight: 900; letter-spacing: 0.1em; text-transform: uppercase; }
 .copilot-filter { flex: 0 0 auto; border: 1px solid rgba(129, 170, 229, 0.18); border-radius: 999px; padding: 7px 11px; background: rgba(255, 255, 255, 0.035); color: #b5c9e3; cursor: pointer; font-size: 0.72rem; font-weight: 800; }
 .copilot-filter:hover, .copilot-filter:focus-visible { border-color: #609aff; color: white; outline: none; }
@@ -70,8 +72,8 @@
 
 .copilot-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; padding: 4px 2px; }
 .copilot-section-heading > span { color: #8098b7; font-size: 0.76rem; }
-.copilot-action-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 11px; }
-.copilot-action-card { min-width: 0; min-height: 190px; display: flex; flex-direction: column; align-items: stretch; border: 1px solid rgba(129, 170, 229, 0.2); border-radius: 16px; padding: 15px; background: linear-gradient(160deg, rgba(15, 39, 72, 0.96), rgba(9, 28, 53, 0.96)); color: #eaf3ff; text-align: left; cursor: pointer; transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease; }
+.copilot-action-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 11px; min-width: 0; }
+.copilot-action-card { min-width: 0; min-height: 190px; display: flex; flex-direction: column; align-items: stretch; overflow: hidden; border: 1px solid rgba(129, 170, 229, 0.2); border-radius: 16px; padding: 15px; background: linear-gradient(160deg, rgba(15, 39, 72, 0.96), rgba(9, 28, 53, 0.96)); color: #eaf3ff; text-align: left; cursor: pointer; transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease; }
 .copilot-action-card:hover, .copilot-action-card:focus-visible { border-color: #5d9bff; outline: none; transform: translateY(-2px); box-shadow: 0 14px 30px rgba(10, 31, 64, 0.45); }
 .copilot-action-card.selected { border-color: #68a4ff; box-shadow: inset 0 0 0 1px rgba(104, 164, 255, 0.22), 0 14px 30px rgba(10, 31, 64, 0.4); }
 .copilot-action-card.urgent { border-top-color: rgba(244, 173, 71, 0.75); }
@@ -85,6 +87,7 @@
 .copilot-positive { color: #59dc99; }
 .copilot-negative { color: #ff9da3; }
 .copilot-card-meta { margin-top: 7px; color: #8fb6ed; font-size: 0.72rem; font-weight: 800; flex-wrap: wrap; }
+.copilot-card-meta span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .copilot-action-card p { min-height: 54px; margin: 13px 0; color: #b6c9e3; font-size: 0.76rem; line-height: 1.48; }
 .copilot-card-footer { margin-top: auto; font-size: 0.64rem; }
 .copilot-card-factors { display: grid; gap: 3px; margin: 0 0 12px; color: #8da8ca; font-size: 0.65rem; line-height: 1.35; }
