@@ -1,23 +1,15 @@
 export const API_BASE_STORAGE_KEY = "astra_api_base_url";
-export const DEFAULT_API_BASE = "http://127.0.0.1:8000";
+// Empty means same-origin. Vite (and a future reverse proxy) owns /api routing.
+export const DEFAULT_API_BASE = "";
 export const API_TOKEN_STORAGE_KEY = "astra_remote_access_token";
 export const API_BASE_CHANGED_EVENT = "astra:api-base-changed";
 export const DEFAULT_FETCH_TIMEOUT_MS = 9000;
 export const DEFAULT_STALE_PAYLOAD_TTL_MS = 180000;
 
 const LAST_GOOD_RESPONSE_CACHE = new Map();
-const REMOTE_HOST_API_PORT = "8000";
 
 function defaultApiBaseFromWindow() {
-  try {
-    if (typeof window === "undefined" || !window.location) return DEFAULT_API_BASE;
-    const proto = String(window.location.protocol || "http:");
-    const host = String(window.location.hostname || "127.0.0.1");
-    if (!host || host === "localhost" || host === "127.0.0.1") return DEFAULT_API_BASE;
-    return `${proto}//${host}:${REMOTE_HOST_API_PORT}`;
-  } catch (_e) {
-    return DEFAULT_API_BASE;
-  }
+  return DEFAULT_API_BASE;
 }
 
 function normalizeApiBase(raw) {
@@ -29,7 +21,7 @@ function normalizeApiBase(raw) {
     const host = u.hostname === "localhost" ? "127.0.0.1" : u.hostname;
     const port = u.port ? `:${u.port}` : "";
     return `${u.protocol}//${host}${port}`.replace(/\/$/, "");
-  } catch (_e) {
+  } catch {
     return v.replace("://localhost:", "://127.0.0.1:").replace(/\/$/, "");
   }
 }
@@ -43,7 +35,7 @@ function isLoopbackBase(base) {
   try {
     const u = new URL(normalizeApiBase(base));
     return isLoopbackHostname(u.hostname);
-  } catch (_e) {
+  } catch {
     const b = String(base || "").toLowerCase();
     return b.includes("://localhost:") || b.includes("://127.0.0.1:") || b.includes("://[::1]:");
   }
@@ -53,13 +45,16 @@ function currentWindowHostIsRemote() {
   try {
     if (typeof window === "undefined" || !window.location) return false;
     return !isLoopbackHostname(window.location.hostname || "");
-  } catch (_e) {
+  } catch {
     return false;
   }
 }
 
 export function resolveApiBase() {
   const envBase = normalizeApiBase(import.meta.env.VITE_API_BASE_URL || "");
+  // A loopback override is safe only when the browser itself is local. On a
+  // phone/tablet it points back to that device, so use the same-origin proxy.
+  if (currentWindowHostIsRemote() && isLoopbackBase(envBase)) return DEFAULT_API_BASE;
   return envBase || defaultApiBaseFromWindow();
 }
 
@@ -72,7 +67,9 @@ export function getInitialApiBase() {
     } else if (stored && !currentWindowHostIsRemote()) {
       return stored;
     }
-  } catch (_e) {}
+  } catch {
+    // Storage can be unavailable in private browsing contexts.
+  }
   if (resolved) return resolved;
   return DEFAULT_API_BASE;
 }
@@ -80,14 +77,21 @@ export function getInitialApiBase() {
 export function persistApiBase(base) {
   try {
     const normalized = normalizeApiBase(base);
+    if (!normalized) {
+      window.localStorage.removeItem(API_BASE_STORAGE_KEY);
+      return;
+    }
     if (currentWindowHostIsRemote() && isLoopbackBase(normalized)) return;
     window.localStorage.setItem(API_BASE_STORAGE_KEY, normalized);
     window.dispatchEvent(new CustomEvent(API_BASE_CHANGED_EVENT, { detail: { base: normalized } }));
-  } catch (_e) {}
+  } catch {
+    // Persistence is optional; the same-origin path remains usable.
+  }
 }
 
 export function buildApiUrl(base, path) {
   const b = normalizeApiBase(base) || defaultApiBaseFromWindow();
+  if (!b) return String(path || "").startsWith("/") ? String(path || "") : `/${String(path || "")}`;
   return `${b}${path}`;
 }
 
@@ -101,9 +105,9 @@ function alternateHost(base) {
 
 export function getApiBaseCandidates(preferredBase = "") {
   const candidates = [];
-  const push = (v) => {
+  const push = (v, allowRelative = false) => {
     const n = normalizeApiBase(v);
-    if (!n) return;
+    if (!n && !allowRelative) return;
     if (!candidates.includes(n)) candidates.push(n);
   };
 
@@ -111,15 +115,17 @@ export function getApiBaseCandidates(preferredBase = "") {
     // On mobile/Tailscale, loopback means the phone itself, not the Mac mini.
     // Never try localhost/127.0.0.1 there; it causes slow failures and sticky
     // degraded state when stale localStorage values exist.
-    push(defaultApiBaseFromWindow());
+    push(defaultApiBaseFromWindow(), true);
     push(resolveApiBase());
     push(preferredBase);
-    return candidates.filter((v) => !isLoopbackBase(v));
+    return candidates.filter((v) => !v || !isLoopbackBase(v));
   }
+  // Same-origin is the primary path even on localhost. Explicit environment
+  // or localStorage overrides remain available for direct backend diagnostics.
+  push(defaultApiBaseFromWindow(), true);
   push(preferredBase);
   push(getInitialApiBase());
   push(resolveApiBase());
-  push(DEFAULT_API_BASE);
   push(alternateHost(preferredBase));
   push(alternateHost(getInitialApiBase()));
   push(alternateHost(resolveApiBase()));
@@ -176,7 +182,7 @@ export async function fetchJsonWithFallback(path, options = {}) {
       const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
       const timeoutId = controller
         ? setTimeout(() => {
-            try { controller.abort(); } catch (_e) {}
+            try { controller.abort(); } catch { /* already settled */ }
           }, perAttemptTimeoutMs)
         : null;
       let res;

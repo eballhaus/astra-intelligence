@@ -8,6 +8,8 @@ from fastapi.responses import JSONResponse
 import json, os
 
 app = FastAPI()
+_extra_cors_origins = [x.strip() for x in str(os.getenv("ASTRA_EXTRA_CORS_ORIGINS", "")).split(",") if x.strip()]
+_cors_origin_regex = str(os.getenv("ASTRA_CORS_ORIGIN_REGEX", "")).strip() or None
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -17,8 +19,10 @@ app.add_middleware(
         "http://localhost:5174",
         "http://127.0.0.1:8000",
         "http://localhost:8000"
-    ] + [x.strip() for x in str(os.getenv("ASTRA_EXTRA_CORS_ORIGINS", "")).split(",") if x.strip()],
-    allow_origin_regex=r"^https?://((localhost)|(127\.0\.0\.1)|(\d{1,3}(\.\d{1,3}){3})|([a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*\.ts\.net))(:\d+)?$",
+    ] + _extra_cors_origins,
+    # Same-origin Vite/reverse-proxy requests do not need CORS. Direct remote
+    # API access is opt-in through an explicit regex or origin list.
+    allow_origin_regex=_cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

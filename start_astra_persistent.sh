@@ -114,10 +114,8 @@ if [[ "${START_COMPONENT}" != "all" && "${START_COMPONENT}" != "backend" && "${S
   exit 1
 fi
 
-API_BASE_URL="${ASTRA_UI_API_BASE_URL:-http://127.0.0.1:${BACKEND_PORT}}"
-if [[ "${ASTRA_REMOTE_MODE:-0}" == "1" ]]; then
-  API_BASE_URL="${ASTRA_UI_API_BASE_URL:-}"
-fi
+VITE_PROXY_TARGET="${ASTRA_VITE_API_TARGET:-http://127.0.0.1:${BACKEND_PORT}}"
+VITE_ALLOWED_HOSTS="${ASTRA_VITE_ALLOWED_HOSTS:-${VITE_ALLOWED_HOSTS:-}}"
 
 if [[ "${START_COMPONENT}" == "all" && "${SKIP_CLEANUP}" != "1" ]]; then
   # Keep lifecycle consistent and avoid duplicate owners for a full start.
@@ -166,8 +164,11 @@ fi
 
 if [[ "${START_COMPONENT}" == "all" || "${START_COMPONENT}" == "frontend" ]]; then
   FRONTEND_CMD="cd '${ROOT_DIR}/astra_dashboard/ui' && "
-  if [[ -n "${API_BASE_URL}" ]]; then
-    FRONTEND_CMD+="VITE_API_BASE_URL='${API_BASE_URL}' "
+  FRONTEND_CMD+="ASTRA_VITE_API_TARGET='${VITE_PROXY_TARGET}' "
+  FRONTEND_CMD+="ASTRA_VITE_ALLOWED_HOSTS='${VITE_ALLOWED_HOSTS}' "
+  FRONTEND_CMD+="ASTRA_FRONTEND_HOST='${FRONTEND_HOST}' ASTRA_FRONTEND_PORT='${FRONTEND_PORT}' "
+  if [[ -n "${ASTRA_UI_API_BASE_URL:-}" ]]; then
+    FRONTEND_CMD+="VITE_API_BASE_URL='${ASTRA_UI_API_BASE_URL}' "
   fi
   if [[ -n "${ASTRA_REMOTE_ACCESS_TOKEN:-}" ]]; then
     FRONTEND_CMD+="VITE_REMOTE_ACCESS_TOKEN='${ASTRA_REMOTE_ACCESS_TOKEN}' "
@@ -200,6 +201,12 @@ if [[ "${START_COMPONENT}" == "all" || "${START_COMPONENT}" == "frontend" ]]; th
     fi
     exit 1
   fi
+  if wait_for_http_200 "http://127.0.0.1:${FRONTEND_PORT}/api/health" 24 0.5; then
+    log_info "frontend /api/health proxy responded with 200"
+  else
+    log_info "frontend /api/health proxy did not reach 200 after startup"
+    exit 1
+  fi
 fi
 
 log_info "started tmux sessions summary:"
@@ -209,5 +216,9 @@ fi
 if [[ "${START_COMPONENT}" == "all" || "${START_COMPONENT}" == "frontend" ]]; then
   log_info "  - ${FRONTEND_SESSION}"
 fi
-log_info "backend expected: http://127.0.0.1:${BACKEND_PORT}"
-log_info "frontend expected: http://127.0.0.1:${FRONTEND_PORT}"
+LAN_IP="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"
+TAILSCALE_IP="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
+log_info "backend expected (local proxy target): http://127.0.0.1:${BACKEND_PORT}"
+log_info "frontend local URL: http://127.0.0.1:${FRONTEND_PORT}"
+[[ -n "${LAN_IP}" ]] && log_info "frontend LAN URL: http://${LAN_IP}:${FRONTEND_PORT}"
+[[ -n "${TAILSCALE_IP}" ]] && log_info "frontend Tailscale URL: http://${TAILSCALE_IP}:${FRONTEND_PORT}"
