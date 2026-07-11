@@ -44,6 +44,33 @@ ASTRA_VITE_ALLOWED_HOSTS=mac-name.tailnet-name.ts.net ./scripts/astra_web_start.
 
 Keep Astra on the private Tailscale network. Do not add public router ports.
 
+## F+G crypto and operations checks
+
+Crypto readiness is infrastructure readiness, not proof that a trade exists.
+Run the bounded read-only audit from the repository root:
+
+```bash
+./scripts/astra_crypto_audit.sh
+```
+
+The expected safe result can be `CRYPTO_PAPER_READY_NO_ELIGIBLE_TRADE`. The
+audit does not call the capability probe route and never submits an order. Use
+`/api/crypto_paper_execution_readiness_v1` to distinguish paper endpoint
+verification, candidate eligibility, fills, open positions, and completed
+broker truth.
+
+For the compact governance/private-operations view, use:
+
+```text
+/api/astra_fgc_governance_private_operations_readiness_v1
+```
+
+This project remains private by default. The intended future production path is
+HTTPS, authentication, role-based access, a reverse proxy, a private API,
+secrets management, logging, monitoring, and backups. Do not expose the
+development service through public router ports or treat readiness diagnostics
+as permission to enable live trading.
+
 ## Configuration
 
 The default browser API base is relative `/api`. For a deliberate direct API

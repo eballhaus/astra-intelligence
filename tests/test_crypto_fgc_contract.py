@@ -40,6 +40,12 @@ class CryptoFGCContractTests(unittest.TestCase):
         self.assertIn("/api/crypto_paper_execution_readiness_v1", script.read_text(encoding="utf-8"))
         self.assertNotIn("/probe", script.read_text(encoding="utf-8"))
 
+    def test_private_operations_readiness_contract_exists(self):
+        self.assertIn("_astra_fgc_governance_private_operations_readiness_v1_payload", self.source)
+        self.assertIn("/api/astra_fgc_governance_private_operations_readiness_v1", self.source)
+        self.assertIn('"public_deployment_enabled": False', self.source)
+        self.assertIn('"rollback_enabled": True', self.source)
+
     def test_strict_pair_normalization_preserves_asset_class_boundary(self):
         valid = normalize_crypto_pair_strict("btc-usd", asset_class="crypto")
         self.assertEqual(valid["normalized_symbol"], "BTC/USD")

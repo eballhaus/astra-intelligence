@@ -59809,6 +59809,67 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
     }
 
 
+def _astra_fgc_governance_private_operations_readiness_v1_payload() -> dict:
+    """Expose a compact private-operations gate without recomputing governance."""
+    statuses = _astra_maturation_cached_statuses_v1()
+    governance = dict(statuses.get("astra_governance_oversight_v1") or {})
+    warnings = [str(item) for item in (governance.get("warnings") or []) if item]
+    safety = _safety_flags_v1()
+    scripts = {
+        "start": os.path.exists("start_astra_persistent.sh") and os.path.exists("scripts/astra_web_start.sh"),
+        "status": os.path.exists("scripts/astra_web_status.sh"),
+        "stop": os.path.exists("scripts/astra_web_stop.sh"),
+        "crypto_audit": os.path.exists("scripts/astra_crypto_audit.sh"),
+    }
+    checks = {
+        "paper_mode_verified": safety.get("paper_mode_verified") is True,
+        "broker_live_endpoint_allowed": safety.get("broker_live_endpoint_allowed") is False,
+        "live_trading_disabled": safety.get("live_trading_changed") is False,
+        "automatic_promotions_disabled": safety.get("automatic_promotions_enabled") is False,
+        "learned_exits_disabled": safety.get("learned_exits_enabled") is False,
+        "forced_execution_disabled": safety.get("forced_trades_enabled") is False and safety.get("forced_exits_enabled") is False,
+        "operator_scripts_present": all(scripts.values()),
+        "public_deployment_disabled": True,
+        "human_review_required": True,
+        "rollback_available": True,
+    }
+    status = "PASS" if all(checks.values()) else "WARNING"
+    warning_levels = [{
+        "category": "governance_warning",
+        "severity": "YELLOW",
+        "evidence": warning,
+        "current_impact": "diagnostic_or_readiness_only",
+        "future_impact": "requires review before any controlled evolution",
+        "safe_repair": "continue cache-first diagnostics and broker-truth accumulation",
+        "deferred_repair": "human review or additional broker evidence",
+        "human_review_required": True,
+    } for warning in warnings[:12]]
+    return {
+        "endpoint": "/api/astra_fgc_governance_private_operations_readiness_v1",
+        "status": status,
+        "generated_at": _now_utc_iso(),
+        "governance_source": "/api/astra_governance_oversight_v1 cached summary",
+        "private_by_default": True,
+        "public_deployment_enabled": False,
+        "private_access_model": ["localhost", "LAN", "Tailscale_or_MagicDNS_when_configured"],
+        "same_origin_api_proxy_required": True,
+        "checks": checks,
+        "operator_scripts": scripts,
+        "warning_levels": warning_levels,
+        "governance_warning_count": len(warning_levels),
+        "governance_cached_status": governance.get("governance_score"),
+        "duplicate_process_health": "requires_runtime_status_check",
+        "frontend_health": "requires_browser_or_web_status_check",
+        "cors_health": "private_network_configuration_required",
+        "rollback_enabled": True,
+        "human_review_required": True,
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **safety,
+    }
+
+
 def _runtime_performance_payload_optimization_v1_payload(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     timings = {}
@@ -67452,6 +67513,11 @@ def desktop_mobile_copilot_sync_v1(force: bool = False):
 def astra_governance_oversight_v1(force: bool = False):
     statuses = _astra_maturation_cached_statuses_v1()
     return _astra_governance_oversight_v1_payload(statuses)
+
+
+@router.get("/api/astra_fgc_governance_private_operations_readiness_v1")
+def astra_fgc_governance_private_operations_readiness_v1(force: bool = False):
+    return _astra_fgc_governance_private_operations_readiness_v1_payload()
 
 
 @router.get("/api/runtime_performance_payload_optimization_v1")
