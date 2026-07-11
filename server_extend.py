@@ -43164,6 +43164,13 @@ def _backend_intelligence_payload_v1(kind: str) -> dict:
         records = _backend_intelligence_catalog_v1(); expected = sum(len(row["expected_consumers"]) for row in records); delivered = sum(len(row["actual_consumers"]) for row in records)
         return {"endpoint": "/api/learned_logic_consumer_coverage_v1", "status": "PASS", "total_intelligence_sources": len(records), "expected_consumer_relationships": expected, "delivered_relationships": delivered, "material_use_relationships": 0, "display_only_relationships": delivered, "unused_sources": [], "blocked_relationships": [], "stale_relationships": [], "consumer_coverage_percentage": round(delivered / max(1, expected) * 100, 3), "material_influence_percentage": 0.0, "exact_missing_consumers": ["candidate_discovery", "liquidity"], "reason": "payload_exposure_is_not_counted_as_material_decision_influence", **_safety_flags_v1()}
     if kind == "influence": return {"endpoint": "/api/learned_logic_influence_trace_v1", "status": "PASS", "traces": [{"decision_id": r.get("recommendation_id"), "recommendation_id": r.get("recommendation_id"), "symbol": r.get("symbol"), "base_state": r.get("canonical_lifecycle_state"), "final_state": r.get("canonical_lifecycle_state"), "intelligence_consulted": r.get("contributing_systems"), "intelligence_accepted": ["cached_ranking", "horizon_context"], "intelligence_rejected": r.get("blockers") or [], "affected_field": "advisory_explanation", "qualitative_influence": "contextual_only", "evidence_class": "ADVISORY_ONLY", "advisory_status": True} for r in rows], **_safety_flags_v1()}
+    if kind == "quality": return {"endpoint": "/api/knowledge_quality_decay_v1", "status": "PASS", "records": _backend_intelligence_catalog_v1(), "suppressed_material_influence_count": 0, "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, **_safety_flags_v1()}
+    if kind == "semantic":
+        issues=[]
+        for r in rows:
+            if r.get("canonical_lifecycle_state") == "BUY_NOW" and (str(r.get("freshness")).upper() == "STALE" or r.get("blockers")): issues.append({"recommendation_id":r.get("recommendation_id"),"severity":"critical","type":"BUY_NOW_UNSAFE","fail_closed":True})
+        return {"endpoint":"/api/semantic_governance_audit_v1","status":"PASS" if not issues else "SEMANTIC_FAIL_CLOSED","critical_contradiction_count":len(issues),"issues":issues,"provider_calls_used":0,"broker_actions_used":0,"llm_calls_used":0,**_safety_flags_v1()}
+    if kind == "style": return {"endpoint":"/api/trade_style_intelligence_v1","status":"PASS" if rows else "INSUFFICIENT_EVIDENCE","candidates":[{"recommendation_id":r.get("recommendation_id"),"symbol":r.get("symbol"),"selected_style":"DAY_TRADE" if "day" in str(r.get("horizon")).lower() else "STANDARD_SWING" if "swing" in str(r.get("horizon")).lower() else "MONITOR_ONLY","confidence":r.get("confidence"),"evidence_quality":r.get("evidence_quality"),"blockers":r.get("blockers") or [],"advisory_only":True} for r in rows],**_safety_flags_v1()}
     return {"endpoint": f"/api/{kind}", "status": "INSUFFICIENT_EVIDENCE", **_safety_flags_v1()}
 
 
@@ -44155,6 +44162,12 @@ def learned_logic_catalog_v1(): return _backend_intelligence_payload_v1("catalog
 def learned_logic_consumer_coverage_v1(): return _backend_intelligence_payload_v1("coverage")
 @router.get("/api/learned_logic_influence_trace_v1")
 def learned_logic_influence_trace_v1(): return _backend_intelligence_payload_v1("influence")
+@router.get("/api/knowledge_quality_decay_v1")
+def knowledge_quality_decay_v1(): return _backend_intelligence_payload_v1("quality")
+@router.get("/api/semantic_governance_audit_v1")
+def semantic_governance_audit_v1(): return _backend_intelligence_payload_v1("semantic")
+@router.get("/api/trade_style_intelligence_v1")
+def trade_style_intelligence_v1(): return _backend_intelligence_payload_v1("style")
 
 
 @router.get("/api/dashboard_data_wiring_v1")
