@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import sqlite3
@@ -441,6 +442,32 @@ def _parse_available_qty_from_error(error: Any) -> float:
 def _norm_asset(asset_type: Any) -> str:
     raw = str(asset_type or "stock").strip().lower()
     return "crypto" if raw == "crypto" else "stock"
+
+
+def _paper_attribution_metadata(row: dict[str, Any] | None) -> dict[str, str]:
+    row = dict(row or {})
+    return {
+        "recommendation_id": str(row.get("recommendation_id") or row.get("source_recommendation_id") or "").strip(),
+        "decision_id": str(row.get("decision_id") or row.get("source_decision_id") or "").strip(),
+        "eligibility_evaluation_id": str(
+            row.get("eligibility_evaluation_id")
+            or row.get("source_eligibility_evaluation_id")
+            or ""
+        ).strip(),
+        "candidate_id": str(row.get("candidate_id") or row.get("source_candidate_id") or "").strip(),
+    }
+
+
+def _paper_attribution_client_order_id(row: dict[str, Any] | None) -> str:
+    """Build a stable broker-safe metadata ID without changing trade intent."""
+    metadata = _paper_attribution_metadata(row)
+    symbol = str((row or {}).get("symbol") or "").upper().strip()
+    seed = "|".join(
+        [metadata["recommendation_id"], metadata["decision_id"], metadata["eligibility_evaluation_id"], metadata["candidate_id"], symbol]
+    ).strip("|")
+    if not seed:
+        return ""
+    return f"astra-{hashlib.sha256(seed.encode('utf-8')).hexdigest()[:24]}"[:48]
 
 
 def _safe_json(value: Any) -> str:
@@ -890,6 +917,9 @@ class PaperAutopilotEngine:
                 "source_lifecycle_id": "TEXT",
                 "source_broker_order_id": "TEXT",
                 "source_client_order_id": "TEXT",
+                "source_recommendation_id": "TEXT",
+                "source_decision_id": "TEXT",
+                "source_eligibility_evaluation_id": "TEXT",
             }
             for col, ddl in needed.items():
                 if col in cols:
@@ -2533,6 +2563,8 @@ class PaperAutopilotEngine:
             return {"enabled": False, "paper_order_submitted": False, "reason": "alpaca_paper_broker_unavailable"}
         r = _normalize_paper_entry_bridge(row)
         meta = dict(gate_meta or {})
+        attribution = _paper_attribution_metadata(r)
+        attribution_client_order_id = _paper_attribution_client_order_id(r)
         asset_type = _norm_asset(r.get("asset_type") or "stock")
         crypto_activation = self._crypto_paper_activation_status() if asset_type == "crypto" else {}
         if asset_type == "crypto" and not crypto_activation.get("paper_active_bounded"):
@@ -2693,6 +2725,10 @@ class PaperAutopilotEngine:
             "side": "buy",
             "type": "market",
             "time_in_force": "day",
+            "recommendation_id": attribution["recommendation_id"],
+            "decision_id": attribution["decision_id"],
+            "eligibility_evaluation_id": attribution["eligibility_evaluation_id"],
+            "candidate_id": attribution["candidate_id"],
             "trade_horizon_style": str(r.get("trade_horizon_style") or r.get("best_horizon_style") or ""),
             "best_horizon_style": str(r.get("best_horizon_style") or r.get("trade_horizon_style") or ""),
             "paper_entry_horizon_style": str(r.get("paper_entry_horizon_style") or r.get("trade_horizon_style") or ""),
@@ -2736,6 +2772,8 @@ class PaperAutopilotEngine:
             "entry_price_reference": round(_to_float(entry_price), 6),
             "entry_commitment_score": round(_to_float((gate_meta or {}).get("commitment_score"), 0.0), 2),
         }
+        if attribution_client_order_id:
+            order["client_order_id"] = attribution_client_order_id
         if asset_type == "crypto":
             integrity_row = dict(r)
             integrity_row["notional"] = min(50.0, max(10.0, _to_float(os.getenv("ASTRA_ALPACA_CRYPTO_PAPER_NOTIONAL"), 25.0)))
@@ -2772,6 +2810,11 @@ class PaperAutopilotEngine:
             res.setdefault("portfolio_risk_score_used", (None if risk_score is None else round(float(risk_score), 4)))
             res.setdefault("portfolio_risk_label_used", risk_label_raw)
             res.setdefault("portfolio_risk_preflight_reason", preflight_reason)
+            res.setdefault("recommendation_id", attribution["recommendation_id"])
+            res.setdefault("decision_id", attribution["decision_id"])
+            res.setdefault("eligibility_evaluation_id", attribution["eligibility_evaluation_id"])
+            res.setdefault("candidate_id", attribution["candidate_id"])
+            res.setdefault("client_order_id", attribution_client_order_id)
             return res
         except Exception as exc:
             return {
@@ -2795,8 +2838,14 @@ class PaperAutopilotEngine:
     ) -> dict[str, Any]:
         r = _normalize_paper_entry_bridge(row)
         meta = dict(gate_meta or {})
+        attribution = _paper_attribution_metadata(r)
         return {
             "entry_reason": "paper_autopilot_entry",
+            "recommendation_id": attribution["recommendation_id"],
+            "decision_id": attribution["decision_id"],
+            "eligibility_evaluation_id": attribution["eligibility_evaluation_id"],
+            "candidate_id": attribution["candidate_id"],
+            "attribution_status": "captured_from_canonical_candidate" if any(attribution.values()) else "not_present_on_candidate",
             "entry_price": round(_to_float(entry_price, 0.0), 6),
             "entry_quality": str(r.get("buy_quality_tier") or ""),
             "entry_source_bucket": str(source_bucket or "paper_candidate"),
@@ -2972,6 +3021,18 @@ class PaperAutopilotEngine:
             }
         if broker_order:
             entry_row["alpaca_paper_order"] = broker_order
+        entry_row["recommendation_id"] = str(
+            entry_row.get("recommendation_id") or broker_order.get("recommendation_id") or ""
+        ).strip()
+        entry_row["decision_id"] = str(
+            entry_row.get("decision_id") or broker_order.get("decision_id") or ""
+        ).strip()
+        entry_row["eligibility_evaluation_id"] = str(
+            entry_row.get("eligibility_evaluation_id") or broker_order.get("eligibility_evaluation_id") or ""
+        ).strip()
+        entry_row["candidate_id"] = str(
+            entry_row.get("candidate_id") or broker_order.get("candidate_id") or ""
+        ).strip()
         entry_context = self._build_entry_context_v1(submit_row, entry_price, source_bucket, gate_meta=gate_meta)
         entry_context["position_id"] = pid
         entry_context["alpaca_paper_order"] = broker_order
@@ -3011,8 +3072,9 @@ class PaperAutopilotEngine:
                     entry_timestamp, exit_timestamp, hold_seconds,
                     canonical_horizon, canonical_horizon_source, canonical_horizon_confidence,
                     source_broker_order_id, source_client_order_id,
+                    source_recommendation_id, source_decision_id, source_eligibility_evaluation_id,
                     source_bucket, lifecycle_notes, row_json, created_at, updated_at
-                ) VALUES (?, ?, ?, 'OPEN', ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, 'OPEN', ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     pid,
@@ -3026,6 +3088,9 @@ class PaperAutopilotEngine:
                     canonical_horizon_confidence,
                     source_broker_order_id,
                     source_client_order_id,
+                    entry_context.get("recommendation_id") or entry_row.get("recommendation_id"),
+                    entry_context.get("decision_id") or entry_row.get("decision_id"),
+                    entry_context.get("eligibility_evaluation_id") or entry_row.get("eligibility_evaluation_id"),
                     source_bucket,
                     _safe_json(entry_context),
                     _safe_json(entry_row),

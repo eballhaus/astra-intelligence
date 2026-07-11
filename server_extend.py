@@ -46042,7 +46042,8 @@ def _paper_autopilot_horizon_metadata_index_v1() -> dict:
             rows = conn.execute(
                 """
                 SELECT symbol, canonical_horizon, canonical_horizon_source, canonical_horizon_confidence,
-                       source_broker_order_id, source_client_order_id, lifecycle_notes, row_json,
+                       source_broker_order_id, source_client_order_id, source_recommendation_id,
+                       source_decision_id, source_eligibility_evaluation_id, lifecycle_notes, row_json,
                        entry_timestamp, created_at, updated_at
                 FROM paper_positions
                 ORDER BY COALESCE(entry_timestamp, created_at, updated_at) DESC
@@ -46071,6 +46072,10 @@ def _paper_autopilot_horizon_metadata_index_v1() -> dict:
                 "horizon_source": str(merged.get("horizon_source") or merged.get("paper_entry_horizon_source") or d.get("canonical_horizon_source") or "paper_positions"),
                 "paper_entry_horizon_source": str(merged.get("paper_entry_horizon_source") or merged.get("horizon_source") or d.get("canonical_horizon_source") or "paper_positions"),
                 "paper_entry_horizon_inferred": bool(merged.get("paper_entry_horizon_inferred", False)),
+                "recommendation_id": str(merged.get("source_recommendation_id") or merged.get("recommendation_id") or ""),
+                "decision_id": str(merged.get("source_decision_id") or merged.get("decision_id") or ""),
+                "eligibility_evaluation_id": str(merged.get("source_eligibility_evaluation_id") or merged.get("eligibility_evaluation_id") or ""),
+                "candidate_id": str(merged.get("source_candidate_id") or merged.get("candidate_id") or ""),
                 "expected_hold_window": str(merged.get("expected_hold_window") or ""),
                 "expected_hold_minutes": _to_float(merged.get("expected_hold_minutes"), 0.0),
                 "expected_hold_days": _to_float(merged.get("expected_hold_days"), 0.0),
@@ -48019,6 +48024,10 @@ def _canonicalize_broker_truth_records_v1(alpaca: dict, *, persist: bool = True)
             canonical.update(horizon_meta)
         else:
             for key in (
+                "recommendation_id",
+                "decision_id",
+                "eligibility_evaluation_id",
+                "candidate_id",
                 "intended_trade_style",
                 "paper_entry_horizon_style",
                 "trade_horizon_style",
