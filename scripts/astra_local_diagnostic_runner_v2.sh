@@ -127,6 +127,8 @@ endpoints = [
     "/api/active_position_source_alignment_v1",
     "/api/broker_truth_growth_monitor_v1",
     "/api/runtime_performance_payload_optimization_v1",
+    "/api/astra_runtime_performance_audit_v1",
+    "/api/astra_full_system_proof_v1",
     "/api/copilot_turnover_action_center_v1",
     "/api/astra_governance_oversight_v1",
     "/api/astra_safe_auto_audit_horizon_runner_validation_v1",

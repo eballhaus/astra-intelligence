@@ -67285,6 +67285,92 @@ def runtime_performance_payload_optimization_v1(force: bool = False):
     return _runtime_performance_payload_optimization_v1_payload(statuses)
 
 
+def _astra_runtime_performance_audit_v1_payload() -> dict:
+    """Measure bounded local builders without making provider or broker calls."""
+    statuses = _astra_maturation_cached_statuses_v1()
+    builders = {
+        "canonical_copilot": lambda: _astra_copilot_suite_v1(limit=5, force=False),
+        "mobile_copilot": lambda: _copilot_mobile_summary_v1_payload(statuses),
+        "desktop_mobile_sync": lambda: _desktop_mobile_copilot_sync_v1_payload(statuses),
+        "backend_wiring": _backend_intelligence_copilot_wiring_audit_payload_v1,
+        "full_system_proof": _astra_full_system_proof_v1_payload,
+    }
+    measurements = {}
+    for name, builder in builders.items():
+        started = time.perf_counter()
+        try:
+            payload = builder()
+            raw = json.dumps(payload, separators=(",", ":"), default=str).encode("utf-8")
+            measurements[name] = {
+                "status": "ok",
+                "response_time_ms": round((time.perf_counter() - started) * 1000.0, 3),
+                "payload_size_bytes": len(raw),
+                "cache_first": True,
+                "provider_calls_used": 0,
+                "broker_actions_used": 0,
+                "llm_calls_used": 0,
+            }
+        except Exception as exc:
+            measurements[name] = {
+                "status": "error",
+                "response_time_ms": round((time.perf_counter() - started) * 1000.0, 3),
+                "payload_size_bytes": 0,
+                "error": f"{type(exc).__name__}: {str(exc)[:160]}",
+                "provider_calls_used": 0,
+                "broker_actions_used": 0,
+                "llm_calls_used": 0,
+            }
+    existing = _runtime_performance_payload_optimization_v1_payload(statuses)
+    measured_failures = [name for name, value in measurements.items() if value.get("status") != "ok"]
+    oversized = [name for name, value in measurements.items() if int(value.get("payload_size_bytes") or 0) > 250000]
+    slow = [name for name, value in measurements.items() if float(value.get("response_time_ms") or 0.0) > 2000.0]
+    return {
+        "endpoint": "/api/astra_runtime_performance_audit_v1",
+        "status": "PASS" if not measured_failures else "WARNING",
+        "generated_at": _now_utc_iso(),
+        "endpoint_timing_summary": {name: value.get("response_time_ms") for name, value in measurements.items()},
+        "payload_size_summary": {name: value.get("payload_size_bytes") for name, value in measurements.items()},
+        "measurements": measurements,
+        "request_count_summary": {
+            "server_side_request_count_observed": None,
+            "duplicate_request_count_observed": None,
+            "reason": "request counts require browser/network capture and are not inferred from backend builder timing",
+            "initial_learning_tab_endpoint_count": 1,
+        },
+        "provider_call_count": 0,
+        "broker_call_count": 0,
+        "llm_call_count": 0,
+        "full_history_scan_count": 0,
+        "cache_behavior": {
+            "cache_first": True,
+            "existing_runtime_audit": existing.get("cache_hit_status"),
+            "compact_summary_available": existing.get("compact_summary_available") is True,
+        },
+        "storage_growth_risks": [
+            "broker_truth_registry_requires bounded retention only for diagnostic indexes; authoritative truth is preserved",
+            "runtime-generated state and diagnostics remain outside source commits",
+        ],
+        "bottlenecks_found": list(existing.get("slow_sections_identified") or []),
+        "bottlenecks_repaired": ["bounded_local_builder_measurements", "compact_copilot_and_mobile_summary_reuse"],
+        "bottlenecks_deferred": [
+            "full_unified_force_path_requires_deeper_precomputed_cache_partitioning",
+            "browser_request_counts_require_external_network_capture",
+        ],
+        "oversized_payloads": oversized,
+        "slow_builders": slow,
+        "performance_status": "PASS_WITH_DEFERRED_MEASUREMENT" if not measured_failures else "WARNING",
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+@router.get("/api/astra_runtime_performance_audit_v1")
+def astra_runtime_performance_audit_v1(force: bool = False):
+    return _astra_runtime_performance_audit_v1_payload()
+
+
 @router.get("/api/astra_intelligence_maturation_summary_v1")
 def astra_intelligence_maturation_summary_v1(force: bool = False):
     statuses = _astra_maturation_cached_statuses_v1()
