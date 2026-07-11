@@ -1,5 +1,6 @@
 import React, { Component, useEffect, useMemo, useState } from "react";
 import Dashboard from "./dashboard/pages/Dashboard";
+import CopilotPage from "./dashboard/pages/CopilotPage";
 import LearningTab from "./dashboard/pages/LearningTab";
 import { API_BASE_STORAGE_KEY, fetchJsonWithFallback, getInitialApiBase } from "./apiBase";
 import "./App.css";
@@ -481,7 +482,7 @@ function App() {
 
   const renderTab = () => {
     if (activeTab === "dashboard") return <Dashboard onNavigate={handleNavigate} selectedSymbol={selectedSymbol} onSelectSymbol={handleSelectSymbol} />;
-    if (activeTab === "copilot") return <Dashboard remoteMode remoteSection="copilot" onNavigate={handleNavigate} selectedSymbol={selectedSymbol} onSelectSymbol={handleSelectSymbol} />;
+    if (activeTab === "copilot") return <CopilotPage selectedSymbol={selectedSymbol} onSelectSymbol={handleSelectSymbol} />;
     if (activeTab === "portfolio") return <Dashboard remoteMode remoteSection="positions" onNavigate={handleNavigate} selectedSymbol={selectedSymbol} onSelectSymbol={handleSelectSymbol} />;
     if (activeTab === "ask") return <AskAstraPage initialQuestion={askPrefill} selectedSymbol={selectedSymbol} />;
     if (activeTab === "watchlists") return <WatchlistsPage />;
@@ -527,7 +528,7 @@ function App() {
         </div>
       </aside>
       <main className="astra-main">
-        <PageHeading activeTab={activeTab} />
+        {activeTab !== "copilot" ? <PageHeading activeTab={activeTab} /> : null}
         {selectedSymbol ? (
           <div className="astra-current-symbol-context">
             <span>Current symbol context</span>
