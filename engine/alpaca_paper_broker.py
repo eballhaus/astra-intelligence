@@ -8,6 +8,8 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any
 
+from engine.candidate_execution_integrity_v1 import candidate_execution_integrity
+
 VERSION = "1.0.0"
 PAPER_BASE = "https://paper-api.alpaca.markets"
 
@@ -602,16 +604,33 @@ class AlpacaPaperBroker:
             "time_in_force": _safe_text(order.get("time_in_force"), "day").lower(),
         }
         asset_class = _safe_text(order.get("asset_class") or order.get("asset_type"), "us_equity").lower()
-        is_crypto = asset_class in {"crypto", "cryptocurrency"} or "/" in symbol
+        # A slash is not asset metadata.  Treat crypto only when the caller has
+        # explicitly declared it, then repeat the shared fail-closed validation
+        # at the final broker boundary.
+        is_crypto = asset_class in {"crypto", "cryptocurrency"}
         if is_crypto:
             capability = self.crypto_capability_status(False)
-            pair = symbol.replace("-", "/")
-            if "/" not in pair and pair.endswith("USD"):
-                pair = pair[:-3] + "/USD"
             if not bool(order.get("crypto_paper_activation_passed", False)):
                 return {"ok": False, "error": "crypto_paper_activation_proof_required"}
-            if not capability.get("crypto_trading_supported") or pair not in set(capability.get("tradable_pairs") or []):
-                return {"ok": False, "error": "crypto_pair_not_runtime_verified_tradable"}
+            integrity = candidate_execution_integrity(
+                order,
+                supported_pairs=set(capability.get("supported_pairs") or []),
+                tradable_pairs=set(capability.get("tradable_pairs") or []),
+                lane_state="LANE_PAPER_ACTIVE_BOUNDED" if capability.get("crypto_trading_supported") else "LANE_BLOCKED",
+                paper_mode_verified=bool(safety.get("paper_mode_verified")),
+                live_endpoint_detected=bool(safety.get("live_endpoint_detected")),
+                capacity_available=bool(order.get("crypto_capacity_available", True)),
+                duplicate_pending=bool(order.get("duplicate_pending_order", False)),
+                broker_reconciliation_ok=bool(order.get("broker_reconciliation_ok", False)),
+                kill_switch_enabled=bool(order.get("crypto_kill_switch_enabled", False)),
+            )
+            if not integrity.get("execution_eligible") or not bool(order.get("crypto_execution_integrity_passed", False)):
+                return {
+                    "ok": False,
+                    "error": str((integrity.get("failed_gates") or ["crypto_execution_integrity_proof_required"])[0]),
+                    "crypto_execution_integrity": integrity,
+                }
+            pair = str(integrity.get("normalized_symbol") or "")
             payload["symbol"] = pair
             payload["time_in_force"] = _safe_text(order.get("time_in_force"), "gtc").lower()
             if payload["time_in_force"] not in {"gtc", "ioc"}:

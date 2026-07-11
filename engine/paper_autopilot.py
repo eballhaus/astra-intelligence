@@ -11,6 +11,8 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+from engine.candidate_execution_integrity_v1 import candidate_execution_integrity
+
 try:
     from engine.position_tracker import PositionTracker
 except Exception:  # pragma: no cover - keep runtime-compatible fallback
@@ -1698,6 +1700,25 @@ class PaperAutopilotEngine:
             return False, "crypto_data_quality_below_floor", meta
         return True, "crypto_market_data_gates_passed", meta
 
+    def _crypto_execution_integrity_gate(self, row: dict[str, Any], *, capacity_available: bool = True, duplicate_pending: bool = False, reconciliation_ok: bool = False) -> tuple[bool, str, dict[str, Any]]:
+        """Use the same strict identity/gate truth as the diagnostics and broker."""
+        activation = self._crypto_paper_activation_status()
+        capability = dict(activation.get("capability") or {})
+        result = candidate_execution_integrity(
+            row,
+            supported_pairs=set(capability.get("supported_pairs") or []),
+            tradable_pairs=set(capability.get("tradable_pairs") or []),
+            lane_state="LANE_PAPER_ACTIVE_BOUNDED" if activation.get("paper_active_bounded") else "LANE_BLOCKED",
+            paper_mode_verified=bool(capability.get("paper_mode_verified")),
+            live_endpoint_detected=bool(capability.get("live_endpoint_detected")),
+            capacity_available=capacity_available,
+            duplicate_pending=duplicate_pending,
+            broker_reconciliation_ok=reconciliation_ok,
+            kill_switch_enabled=bool(activation.get("kill_switch_enabled")),
+        )
+        failed = list(result.get("failed_gates") or [])
+        return bool(result.get("execution_eligible")), (failed[0] if failed else "crypto_execution_integrity_passed"), result
+
     def _entry_commitment_gate_v1(self, row: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
         row = _normalize_paper_entry_bridge(row)
         eligibility = str(row.get("buy_eligibility") or "").strip().lower()
@@ -2356,10 +2377,17 @@ class PaperAutopilotEngine:
             crypto_activation = self._crypto_paper_activation_status()
             horizon = str(r.get("paper_entry_horizon_style") or r.get("trade_horizon_style") or "day_trade")
             crypto_data_ok, crypto_data_reason, crypto_data_meta = self._crypto_execution_data_gate(r)
+            integrity_ok, integrity_reason, integrity_meta = self._crypto_execution_integrity_gate(
+                r,
+                capacity_available=crypto_capacity > 0 and total_capacity > 0,
+                duplicate_pending=symbol in open_syms,
+                reconciliation_ok=broker_reconciliation_active,
+            )
             crypto_session_ok = bool(
                 crypto_activation.get("paper_active_bounded")
                 and horizon in {"day_trade", "swing_trade"}
                 and crypto_data_ok
+                and integrity_ok
             )
             session_diag = {
                 "market_session_mode": "crypto_24_7",
@@ -2371,15 +2399,18 @@ class PaperAutopilotEngine:
                 "execution_confirmation_required": not crypto_session_ok,
                 "open_confirmation_score": 100.0 if crypto_session_ok else 0.0,
                 "open_confirmation_label": "confirmed_execute" if crypto_session_ok else "crypto_activation_blocked",
-                "open_confirmation_reason": "runtime_capability_market_data_and_24_7_session_verified" if crypto_session_ok else crypto_data_reason if not crypto_data_ok else crypto_activation.get("exact_blocker"),
+                "open_confirmation_reason": "runtime_capability_market_data_and_24_7_session_verified" if crypto_session_ok else crypto_data_reason if not crypto_data_ok else integrity_reason if not integrity_ok else crypto_activation.get("exact_blocker"),
                 "execution_intent_status": "paper_ready" if crypto_session_ok else "blocked",
                 "defer_until_market_confirmation": False,
                 "requires_open_confirmation": not crypto_session_ok,
             }
             if not crypto_session_ok and allowed:
                 allowed = False
-                reason = "crypto_scalp_shadow_only" if horizon == "scalp" else crypto_data_reason if not crypto_data_ok else "crypto_paper_activation_not_ready"
+                reason = "crypto_scalp_shadow_only" if horizon == "scalp" else crypto_data_reason if not crypto_data_ok else integrity_reason if not integrity_ok else "crypto_paper_activation_not_ready"
             gate_meta.update(crypto_data_meta)
+            gate_meta["crypto_execution_integrity"] = integrity_meta
+            gate_meta["crypto_execution_integrity_ok"] = integrity_ok
+            gate_meta["crypto_execution_integrity_reason"] = integrity_reason
             gate_meta["crypto_market_data_gates_ok"] = crypto_data_ok
             gate_meta["crypto_market_data_gate_reason"] = crypto_data_reason
         trace = {
@@ -2706,11 +2737,32 @@ class PaperAutopilotEngine:
             "entry_commitment_score": round(_to_float((gate_meta or {}).get("commitment_score"), 0.0), 2),
         }
         if asset_type == "crypto":
+            integrity_row = dict(r)
+            integrity_row["notional"] = min(50.0, max(10.0, _to_float(os.getenv("ASTRA_ALPACA_CRYPTO_PAPER_NOTIONAL"), 25.0)))
+            integrity_ok, integrity_reason, integrity = self._crypto_execution_integrity_gate(
+                integrity_row,
+                capacity_available=True,
+                duplicate_pending=str(r.get("symbol") or "").upper().strip() in set(broker_snapshot.get("broker_open_symbols") or set()),
+                reconciliation_ok=reconciliation_checked,
+            )
+            if not integrity_ok:
+                return {
+                    "ok": False,
+                    "paper_order_submitted": False,
+                    "error": integrity_reason,
+                    "crypto_execution_integrity": integrity,
+                }
             order.update({
                 "asset_class": "crypto",
                 "crypto_paper_activation_passed": True,
+                "crypto_execution_integrity_passed": True,
+                "crypto_execution_integrity": integrity,
+                "crypto_capacity_available": True,
+                "duplicate_pending_order": False,
+                "broker_reconciliation_ok": reconciliation_checked,
+                "crypto_kill_switch_enabled": False,
                 "time_in_force": "gtc",
-                "notional": min(50.0, max(10.0, _to_float(os.getenv("ASTRA_ALPACA_CRYPTO_PAPER_NOTIONAL"), 25.0))),
+                "notional": integrity_row["notional"],
             })
         try:
             res = dict(broker.submit_paper_order(order) or {})

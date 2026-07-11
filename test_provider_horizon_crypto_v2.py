@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from api_keys import API_POOLS
 from engine.alpaca_paper_broker import AlpacaPaperBroker
+from engine.candidate_execution_integrity_v1 import candidate_execution_integrity, normalize_crypto_pair_strict
 from engine.execution_participation_audit_v1 import ExecutionParticipationAuditV1, _build_record
 from engine.paper_autopilot import PaperAutopilotEngine, _infer_horizon_style
 from engine.provider_data_knowledge_v2 import ProviderDataKnowledgeV2
@@ -122,6 +123,49 @@ class AlpacaCryptoSafetyV2Tests(unittest.TestCase):
         with patch.object(broker, "safety_status", return_value={"broker_execution_enabled": True}), patch.object(broker, "account", return_value={"ok": True}):
             result = broker.submit_paper_order({"symbol": "BTC/USD", "asset_class": "crypto", "side": "buy", "trade_horizon_style": "day_trade", "paper_ready": True, "paper_limits_ok": True, "portfolio_risk_ok": True})
         self.assertEqual(result.get("error"), "crypto_paper_activation_proof_required")
+
+
+class CandidateIntegrityV1Tests(unittest.TestCase):
+    def test_equity_ticker_cannot_be_normalized_as_crypto(self):
+        result = normalize_crypto_pair_strict("COST", asset_class="crypto", known_equity_symbols={"COST"})
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "REJECTED_SYMBOL_NORMALIZATION")
+
+    def test_equity_pair_contamination_is_rejected(self):
+        result = normalize_crypto_pair_strict("COST/USD", asset_class="crypto", known_equity_symbols={"COST"})
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "REJECTED_EQUITY_SYMBOL_CONTAMINATION")
+
+    def test_crypto_candidate_requires_every_execution_gate(self):
+        result = candidate_execution_integrity(
+            {"symbol": "BTC/USD", "asset_class": "crypto", "assigned_horizon": "day_trade", "confidence": 90},
+            supported_pairs={"BTC/USD"},
+            tradable_pairs={"BTC/USD"},
+            lane_state="LANE_PAPER_ACTIVE_BOUNDED",
+            paper_mode_verified=True,
+            capacity_available=True,
+            broker_reconciliation_ok=True,
+        )
+        self.assertFalse(result["execution_eligible"])
+        self.assertIn("timestamp_freshness", result["failed_gates"])
+        self.assertTrue(result["semantic_fail_closed"])
+
+    def test_crypto_candidate_is_eligible_only_with_complete_evidence(self):
+        result = candidate_execution_integrity(
+            {
+                "symbol": "BTC/USD", "asset_class": "crypto", "assigned_horizon": "day_trade",
+                "confidence": 90, "quote_age_seconds": 5, "spread_pct": 0.2,
+                "volume_24h": 1_000_000, "data_quality_score": 90, "notional": 25,
+            },
+            supported_pairs={"BTC/USD"},
+            tradable_pairs={"BTC/USD"},
+            lane_state="LANE_PAPER_ACTIVE_BOUNDED",
+            paper_mode_verified=True,
+            capacity_available=True,
+            broker_reconciliation_ok=True,
+        )
+        self.assertTrue(result["execution_eligible"])
+        self.assertEqual(result["candidate_state"], "BROKER_ELIGIBLE")
 
 
 if __name__ == "__main__":

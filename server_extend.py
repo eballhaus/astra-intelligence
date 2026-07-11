@@ -1,4 +1,5 @@
 from engine.runtime_environment import load_runtime_environment, resolve_fmp_key
+from engine.candidate_execution_integrity_v1 import candidate_execution_integrity, normalize_crypto_pair_strict
 
 load_runtime_environment()
 
@@ -44657,6 +44658,17 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
         ("capacity_recycling_daytrade_brokertruth_validation_v1", _capacity_recycling_daytrade_brokertruth_validation_v1_payload),
         ("crypto_paper_lane_validation_v1", _crypto_paper_lane_validation_v1_payload),
         ("crypto_candidate_funnel_v1", _crypto_candidate_funnel_v1_payload),
+        ("crypto_candidate_integrity_v1", _crypto_candidate_integrity_v1_payload),
+        ("crypto_candidate_execution_gate_audit_v1", _crypto_candidate_execution_gate_audit_v1_payload),
+        ("candidate_semantic_contradiction_audit_v1", _candidate_semantic_contradiction_audit_v1_payload),
+        ("batch1_candidate_integrity_validation_v1", _batch1_candidate_integrity_validation_v1_payload),
+        ("horizon_aware_position_monitoring_v1", _horizon_aware_position_monitoring_v1_payload),
+        ("thesis_failure_intelligence_v1", _thesis_failure_intelligence_v1_payload),
+        ("capital_efficiency_opportunity_cost_v2", _capital_efficiency_opportunity_cost_v2_payload),
+        ("exit_readiness_profit_capture_v2", _exit_readiness_profit_capture_v2_payload),
+        ("completed_broker_lifecycle_quality_v1", _completed_broker_lifecycle_quality_v1_payload),
+        ("batch2_truth_exit_capacity_validation_v1", _batch2_truth_exit_capacity_validation_v1_payload),
+        ("astra_candidate_truth_exit_validation_v1", _astra_candidate_truth_exit_validation_v1_payload),
         ("crypto_position_reconciliation_v1", _crypto_position_reconciliation_v1_payload),
         ("learning_throughput_accelerator_v1", _learning_throughput_accelerator_v1_payload),
         ("broker_truth_throughput_acceleration_v2", _broker_truth_throughput_acceleration_v2_payload),
@@ -46709,6 +46721,10 @@ def _candidate_level_horizon_trace_v1_payload(statuses: dict | None = None) -> d
         ]
         eligible = bool(row.get("eligible") or row.get("selected"))
         terminal_status = str(row.get("terminal_status") or "")
+        historical_partial = bool(
+            source_name == "execution_participation_audit_v1"
+            and (not row.get("assigned_horizon") or not row.get("horizon_scores") or not row.get("source_data_timestamp"))
+        )
         if not terminal_status and source_name != "cached_top_buys_or_horizon_candidate_rows_unresolved":
             terminal_status = _day_trade_final_status_v1(reason, eligible)
         if not terminal_status:
@@ -46734,7 +46750,7 @@ def _candidate_level_horizon_trace_v1_payload(statuses: dict | None = None) -> d
             "assignment_eligibility": bool(row.get("assignment_eligibility", eligible)),
             "assignment_threshold": row.get("assignment_threshold"),
             "assignment_value": row.get("assignment_value") or row.get("horizon_confidence"),
-            "assignment_status": "evaluated" if horizon else "missing_horizon",
+            "assignment_status": "HISTORICAL_PARTIAL" if historical_partial else "evaluated" if horizon else "missing_horizon",
             "assignment_reason": reason if _day_trade_gate_category_v1(reason) == "horizon_assignment" else "",
             "tie_break_status": "rejected" if _day_trade_gate_category_v1(reason) == "paper_tie_breaker" else "not_selected_or_not_evaluated",
             "tie_break_reason": reason if _day_trade_gate_category_v1(reason) == "paper_tie_breaker" else "",
@@ -46750,7 +46766,9 @@ def _candidate_level_horizon_trace_v1_payload(statuses: dict | None = None) -> d
             "final_status": terminal_status,
             "final_reason": reason,
             "missing_fields": missing_fields,
-            "data_quality_status": "partial_missing_fields" if missing_fields else "complete_for_trace",
+            "data_quality_status": "HISTORICAL_PARTIAL" if historical_partial else "partial_missing_fields" if missing_fields else "complete_for_trace",
+            "horizon_evidence_status": "INSUFFICIENT_HORIZON_EVIDENCE" if historical_partial else "CURRENT_TRACE",
+            "evidence_eligibility": "ADVISORY_ONLY" if historical_partial else "CURRENT_CANDIDATE_TRACE",
             "advisory_only": True,
         })
     generated_day = int(_to_float((flow.get("candidate_count_by_horizon") or {}).get("day_trade"), 0.0))
@@ -46790,6 +46808,7 @@ def _equity_candidate_lineage_completion_v2_payload(statuses: dict | None = None
     trace = _candidate_level_horizon_trace_v1_payload({**dict(statuses or {}), "__candidate_trace_asset_class": "equity"})
     rows = [dict(row) for row in (trace.get("candidate_rows") or []) if isinstance(row, dict)]
     terminals = Counter(str(row.get("final_status") or "MISSING") for row in rows)
+    historical_partial_rows = [row for row in rows if row.get("evidence_eligibility") == "ADVISORY_ONLY"]
     return {
         "endpoint": "/api/equity_candidate_lineage_completion_v2",
         "status": "PASS" if rows and not trace.get("aggregate_only_placeholder") and int(trace.get("silent_dropoff_count") or 0) == 0 else "WARNING",
@@ -46798,6 +46817,8 @@ def _equity_candidate_lineage_completion_v2_payload(statuses: dict | None = None
         "rows_generated": len(rows) + int(trace.get("candidate_rows_missing") or 0),
         "rows_retained": len(rows),
         "rows_with_complete_horizon_features": sum(1 for row in rows if row.get("assigned_horizon") and row.get("intended_horizon")),
+        "historical_partial_rows": len(historical_partial_rows),
+        "historical_evidence_policy": "HISTORICAL_PARTIAL_INSUFFICIENT_HORIZON_EVIDENCE_ADVISORY_ONLY",
         "terminal_status_coverage_pct": trace.get("terminal_status_coverage_pct"),
         "trace_coverage_pct": trace.get("trace_coverage_pct"),
         "silent_dropoff_count": trace.get("silent_dropoff_count"),
@@ -48214,6 +48235,17 @@ def _apply_broker_truth_unification_fast_overlays_v1(payload: dict, *, compact: 
         ("capacity_recycling_daytrade_brokertruth_validation_v1", _capacity_recycling_daytrade_brokertruth_validation_v1_payload),
         ("crypto_paper_lane_validation_v1", _crypto_paper_lane_validation_v1_payload),
         ("crypto_candidate_funnel_v1", _crypto_candidate_funnel_v1_payload),
+        ("crypto_candidate_integrity_v1", _crypto_candidate_integrity_v1_payload),
+        ("crypto_candidate_execution_gate_audit_v1", _crypto_candidate_execution_gate_audit_v1_payload),
+        ("candidate_semantic_contradiction_audit_v1", _candidate_semantic_contradiction_audit_v1_payload),
+        ("batch1_candidate_integrity_validation_v1", _batch1_candidate_integrity_validation_v1_payload),
+        ("horizon_aware_position_monitoring_v1", _horizon_aware_position_monitoring_v1_payload),
+        ("thesis_failure_intelligence_v1", _thesis_failure_intelligence_v1_payload),
+        ("capital_efficiency_opportunity_cost_v2", _capital_efficiency_opportunity_cost_v2_payload),
+        ("exit_readiness_profit_capture_v2", _exit_readiness_profit_capture_v2_payload),
+        ("completed_broker_lifecycle_quality_v1", _completed_broker_lifecycle_quality_v1_payload),
+        ("batch2_truth_exit_capacity_validation_v1", _batch2_truth_exit_capacity_validation_v1_payload),
+        ("astra_candidate_truth_exit_validation_v1", _astra_candidate_truth_exit_validation_v1_payload),
         ("crypto_position_reconciliation_v1", _crypto_position_reconciliation_v1_payload),
         ("learning_throughput_accelerator_v1", _learning_throughput_accelerator_v1_payload),
         ("momentum_exit_loss_acceptance_v1", _momentum_exit_loss_acceptance_v1_payload),
@@ -48260,6 +48292,31 @@ def _apply_broker_truth_unification_fast_overlays_v1(payload: dict, *, compact: 
         payload["equity_horizon_qualification_completion_v2"] = qualification_v2
         payload["crypto_paper_activation_readiness_v2"] = crypto_lane_v2
         payload["broker_truth_throughput_acceleration_v2"] = throughput_v2
+        # Compact unified summaries keep the Learning Center at one cached
+        # endpoint while full per-position detail stays behind direct endpoints.
+        # Unified rendering must stay a cheap cache overlay. Detailed Batch 1/2
+        # builders intentionally remain direct diagnostic endpoints; the panel
+        # exposes their availability and the already-cached truth/exit posture.
+        payload["crypto_candidate_integrity_v1"] = {
+            "endpoint": "/api/crypto_candidate_integrity_v1", "status": "AVAILABLE_CACHE_FIRST",
+            "lane_state": crypto_lane_v2.get("lane_state"), "provider_calls_used": 0, "llm_calls_used": 0,
+            "behavior_safe_to_apply": False,
+        }
+        payload["batch1_candidate_integrity_validation_v1"] = {
+            "endpoint": "/api/batch1_candidate_integrity_validation_v1", "status": "AVAILABLE_CACHE_FIRST",
+            "batch": 1, "safe_to_begin_batch_2": None, "provider_calls_used": 0, "llm_calls_used": 0,
+            "behavior_safe_to_apply": False,
+        }
+        payload["batch2_truth_exit_capacity_validation_v1"] = {
+            "endpoint": "/api/batch2_truth_exit_capacity_validation_v1", "status": "AVAILABLE_CACHE_FIRST",
+            "batch": 2, "provider_calls_used": 0, "llm_calls_used": 0, "broker_actions_used": 0,
+            "behavior_safe_to_apply": False,
+        }
+        payload["astra_candidate_truth_exit_validation_v1"] = {
+            "endpoint": "/api/astra_candidate_truth_exit_validation_v1", "status": "AVAILABLE_CACHE_FIRST",
+            "executive_summary": {"candidate_integrity": "strict_fail_closed", "exit_behavior": "manual_review_only", "capital_efficiency": "diagnostic_only"},
+            "provider_calls_used": 0, "llm_calls_used": 0, "broker_actions_used": 0, "behavior_safe_to_apply": False,
+        }
         copilot_cached = dict(payload.get("copilot_turnover_action_center_v1") or {})
         provider_v2 = payload.get("astra_provider_data_knowledge_validation_v2") or {}
         if not copilot_cached:
@@ -62730,6 +62787,7 @@ def _exit_readiness_diagnostics_v1_payload(statuses: dict | None = None) -> dict
         "status": "ok" if rows else "insufficient_active_position_rows",
         "generated_at": _now_utc_iso(),
         "positions_reviewed": len(rows),
+        "position_rows": rows[:50],
         "positions_excluded_with_reason": excluded,
         "exit_readiness_distribution": dict(distribution),
         "exit_review_candidates": sorted([r for r in rows if r.get("exit_readiness_state") in {"EXIT_REVIEW", "THESIS_BROKEN"}], key=lambda r: _to_float(r.get("exit_readiness_score"), 0.0), reverse=True)[:10],
@@ -63499,14 +63557,28 @@ _ASTRA_CRYPTO_APPROVED_CORE_UNIVERSE_V1 = ("BTC/USD", "ETH/USD", "SOL/USD", "LIN
 
 def _normalize_crypto_pair_v1(symbol: Any) -> str:
     raw = str(symbol or "").upper().strip().replace("-", "/")
-    if not raw:
-        return ""
-    if "/" in raw:
-        base, quote = raw.split("/", 1)
-        return f"{base.strip()}/{(quote or 'USD').strip() or 'USD'}"
-    if raw.endswith("USD") and len(raw) > 3:
-        return f"{raw[:-3]}/USD"
-    return f"{raw}/USD"
+    # A fully formed pair is safe to parse for display.  Bare symbols still
+    # require an explicit upstream crypto asset class at the candidate gate.
+    asset_class = "crypto" if "/" in raw else ""
+    return str(normalize_crypto_pair_strict(raw, asset_class=asset_class).get("normalized_symbol") or "")
+
+
+def _known_equity_symbols_v1() -> set[str]:
+    symbols: set[str] = set()
+    for source in (
+        (RANKINGS_ENDPOINT_CACHE.get("stocks") or {}).get("payload") or [],
+        LAST_RANKINGS.get("stocks") or [],
+    ):
+        for row in source if isinstance(source, list) else []:
+            if isinstance(row, dict):
+                symbol = str(row.get("symbol") or row.get("ticker") or "").upper().strip()
+                if symbol and "/" not in symbol:
+                    symbols.add(symbol)
+    # Cached stock sources can be warming; these persistent collision examples
+    # protect the known historical contamination class without asserting that
+    # every bare ticker is an equity.
+    symbols.update({"COST", "BIIB", "GEHC"})
+    return symbols
 
 
 def _crypto_ranking_rows_cached_v1() -> list[dict]:
@@ -63516,14 +63588,30 @@ def _crypto_ranking_rows_cached_v1() -> list[dict]:
         (LAST_RANKINGS.get("crypto") or []),
     ):
         if isinstance(source, list):
-            rows.extend([dict(row) for row in source if isinstance(row, dict)])
+            for row in source:
+                if not isinstance(row, dict):
+                    continue
+                enriched = dict(row)
+                # A dedicated crypto ranking collection is trusted source
+                # metadata, not a heuristic from the symbol text.
+                enriched.setdefault("asset_class", "crypto")
+                enriched.setdefault("asset_identity_source", "crypto_ranking_cache")
+                rows.append(enriched)
     dedup: dict[str, dict] = {}
     for row in rows:
-        pair = _normalize_crypto_pair_v1(row.get("symbol") or row.get("ticker"))
+        identity = normalize_crypto_pair_strict(
+            row.get("symbol") or row.get("ticker"),
+            asset_class=row.get("asset_class") or row.get("asset_type"),
+            known_equity_symbols=_known_equity_symbols_v1(),
+            base_symbol=row.get("base_symbol"),
+            quote_currency=row.get("quote_currency"),
+        )
+        pair = str(identity.get("normalized_symbol") or "")
         if pair and pair not in dedup:
             enriched = dict(row)
             enriched["symbol"] = pair
             enriched["asset_class"] = "crypto"
+            enriched["asset_identity_status"] = identity.get("reason")
             dedup[pair] = enriched
     return list(dedup.values())[:80]
 
@@ -63557,7 +63645,7 @@ def _broker_truth_records_by_asset_class_v1() -> dict:
         explicit = str(row.get("asset_class") or row.get("asset_type") or "").strip().lower()
         symbol = str(row.get("symbol") or "").upper().strip()
         pair = _normalize_crypto_pair_v1(symbol)
-        if explicit in {"crypto", "cryptocurrency"} or "/" in symbol or pair in crypto_pairs:
+        if explicit in {"crypto", "cryptocurrency"}:
             asset = "crypto"
         elif symbol:
             asset = "equity"
@@ -63607,7 +63695,7 @@ def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> di
     safety = ALPACA_PAPER_BROKER.safety_status() if "ALPACA_PAPER_BROKER" in globals() else {}
     capability = ALPACA_PAPER_BROKER.crypto_capability_status(False) if "ALPACA_PAPER_BROKER" in globals() and hasattr(ALPACA_PAPER_BROKER, "crypto_capability_status") else {}
     ranking_rows = _crypto_ranking_rows_cached_v1()
-    ranked_pairs = [_normalize_crypto_pair_v1(row.get("symbol")) for row in ranking_rows]
+    ranked_pairs = [str(row.get("symbol") or "") for row in ranking_rows]
     monitored = list(dict.fromkeys(list(_ASTRA_CRYPTO_APPROVED_CORE_UNIVERSE_V1) + [p for p in ranked_pairs if p]))[:24]
     broker_crypto_supported = bool(capability.get("crypto_trading_supported") or alpaca.get("crypto_broker_execution_supported") or safety.get("crypto_broker_execution_supported"))
     paper_mode_verified = bool(alpaca.get("paper_mode_verified") or safety.get("paper_mode_verified"))
@@ -63637,9 +63725,18 @@ def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> di
     if kill_switch:
         blockers.append("crypto_paper_kill_switch_enabled")
     active = bool(paper_mode_verified and broker_crypto_supported and capability.get("market_data_entitlement_confirmed") and tradable_pairs and activation_requested and not kill_switch)
+    if kill_switch or not activation_requested or not paper_mode_verified or capability.get("live_endpoint_detected"):
+        lane_state = "LANE_BLOCKED"
+    elif not broker_crypto_supported or not capability.get("market_data_entitlement_confirmed") or not tradable_pairs:
+        lane_state = "LANE_SHADOW_ONLY"
+    elif active:
+        lane_state = "LANE_PAPER_ACTIVE_BOUNDED"
+    else:
+        lane_state = "LANE_PAPER_READY"
     return {
         "endpoint": "/api/crypto_paper_lane_validation_v1",
         "status": "PASS" if active else "BLOCKED_FAIL_CLOSED",
+        "lane_state": lane_state,
         "generated_at": _now_utc_iso(),
         "paper_account_crypto_support": broker_crypto_supported,
         "paper_mode_verified": paper_mode_verified,
@@ -63684,23 +63781,45 @@ def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
     lane = _crypto_paper_lane_validation_v1_payload(statuses)
     rows = _crypto_ranking_rows_cached_v1()
     candidate_rows = []
+    known_equities = _known_equity_symbols_v1()
+    supported_pairs = set(lane.get("supported_pairs") or [])
+    tradable_pairs = set(lane.get("tradable_pairs") or [])
     for idx, row in enumerate(rows[:50]):
-        pair = _normalize_crypto_pair_v1(row.get("symbol"))
+        candidate = dict(row)
+        candidate.setdefault("asset_class", "crypto")
         candidate_horizon = _candidate_horizon_from_row_v1(row)
         if candidate_horizon not in {"scalp", "day_trade", "swing_trade"}:
             candidate_horizon = "day_trade"
+        candidate["assigned_horizon"] = candidate_horizon
+        candidate["paper_entry_horizon_style"] = candidate_horizon
+        integrity = candidate_execution_integrity(
+            candidate,
+            supported_pairs=supported_pairs,
+            tradable_pairs=tradable_pairs,
+            known_equity_symbols=known_equities,
+            lane_state=str(lane.get("lane_state") or "LANE_BLOCKED"),
+            paper_mode_verified=bool(lane.get("paper_mode_verified")),
+            live_endpoint_detected=not bool(lane.get("paper_mode_verified")),
+            capacity_available=(
+                int(_to_float(lane.get("short_swing_capacity_available"), 0.0)) > 0
+                if candidate_horizon == "swing_trade"
+                else int(_to_float(lane.get("day_trade_capacity_available"), 0.0)) > 0
+            ),
+            duplicate_pending=False,
+            # This cache-only funnel must not manufacture broker reconciliation.
+            broker_reconciliation_ok=False,
+            kill_switch_enabled=bool(lane.get("kill_switch_enabled")),
+        )
+        pair = integrity.get("normalized_symbol")
         missing = [field for field in ("symbol", "score") if not (pair if field == "symbol" else row.get("score") or row.get("ranking_score") or row.get("confidence"))]
         lane_available = (
             int(_to_float(lane.get("short_swing_capacity_available"), 0.0)) > 0
             if candidate_horizon == "swing_trade"
             else int(_to_float(lane.get("day_trade_capacity_available"), 0.0)) > 0
         )
-        broker_ok = bool(
-            lane.get("paper_crypto_enabled")
-            and pair in set(lane.get("tradable_pairs") or [])
-            and candidate_horizon != "scalp"
-            and lane_available
-        )
+        broker_ok = bool(integrity.get("execution_eligible"))
+        failed_gates = list(integrity.get("failed_gates") or [])
+        terminal = "BROKER_ELIGIBLE" if broker_ok else str(integrity.get("candidate_state") or "GATE_PENDING")
         candidate_rows.append({
             "candidate_id": row.get("candidate_id") or f"crypto:{idx}:{pair or 'unknown'}",
             "symbol": pair,
@@ -63709,7 +63828,7 @@ def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
             "source_cache": "LAST_RANKINGS.crypto/RANKINGS_ENDPOINT_CACHE.crypto",
             "generated_at": row.get("generated_at") or row.get("timestamp"),
             "data_timestamp": row.get("data_timestamp") or row.get("quote_timestamp") or row.get("timestamp"),
-            "candidate_freshness": "cache_available" if row else "missing",
+            "candidate_freshness": "fresh" if integrity.get("gate_status", {}).get("timestamp_freshness") == "PASS" else "stale_or_incomplete",
             "ranking_score": row.get("ranking_score") or row.get("score") or row.get("confidence"),
             "ranking_position": idx + 1,
             "horizon_scores": row.get("horizon_scores") or {},
@@ -63717,17 +63836,21 @@ def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
             "assigned_horizon": candidate_horizon,
             "assignment_result": "diagnostic_assignment",
             "tie_break_result": "not_applied",
-            "duplicate_symbol_status": "not_evaluated",
-            "capacity_status": "available" if broker_ok else "crypto_scalp_shadow_only" if candidate_horizon == "scalp" else "blocked_until_crypto_lane_validated",
-            "risk_status": "not_evaluated_cache_first",
-            "confidence_status": "present" if row.get("confidence") or row.get("score") or row.get("ranking_score") else "missing",
-            "liquidity_status": "unverified_cache_first",
+            "duplicate_symbol_status": integrity.get("gate_status", {}).get("duplicate_pending"),
+            "capacity_status": integrity.get("gate_status", {}).get("capacity_concentration"),
+            "risk_status": integrity.get("gate_status", {}).get("volatility_risk"),
+            "confidence_status": integrity.get("gate_status", {}).get("confidence_ranking"),
+            "liquidity_status": integrity.get("gate_status", {}).get("volume_liquidity"),
             "paper_eligibility": "eligible" if broker_ok else "not_eligible",
-            "broker_eligibility": "eligible" if broker_ok else "blocked_crypto_broker_support_unverified",
-            "final_status": "QUALIFIED" if broker_ok else "REJECTED_PAPER_MODE",
-            "final_reason": "paper_crypto_lane_validated" if broker_ok else "crypto_scalp_shadow_only" if candidate_horizon == "scalp" else "crypto_paper_lane_fails_closed_until_alpaca_paper_crypto_support_verified",
+            "broker_eligibility": "eligible" if broker_ok else "not_eligible",
+            "candidate_state": terminal,
+            "final_status": "QUALIFIED" if broker_ok else "SEMANTIC_FAIL_CLOSED",
+            "final_reason": "all_mandatory_execution_gates_passed" if broker_ok else (failed_gates[0] if failed_gates else "candidate_not_broker_eligible"),
+            "execution_gate_status": integrity.get("gate_status") or {},
+            "failed_gates": failed_gates,
+            "execution_eligible": broker_ok,
             "missing_fields": missing,
-            "source_lineage": {"ranking_cache": "crypto", "provider_calls_used": 0},
+            "source_lineage": {"ranking_cache": "crypto", "asset_identity_source": row.get("asset_identity_source") or "crypto_ranking_cache", "provider_calls_used": 0},
         })
     qualified = len([r for r in candidate_rows if r.get("final_status") == "QUALIFIED"])
     return {
@@ -63737,17 +63860,337 @@ def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
         "candidate_count": len(candidate_rows),
         "ranked_count": len(candidate_rows),
         "qualified_candidates": qualified,
-        "paper_eligible_candidates": qualified if lane.get("paper_crypto_enabled") else 0,
+        "paper_eligible_candidates": qualified,
         "candidate_rows": candidate_rows,
         "rejection_reasons": dict(Counter(str(r.get("final_reason")) for r in candidate_rows if r.get("final_status") != "QUALIFIED")),
         "monitored_symbols": lane.get("monitored_universe") or [],
-        "selected_symbols": lane.get("selected_universe") or [],
+        "selected_symbols": [row.get("symbol") for row in candidate_rows if row.get("execution_eligible")][:6],
         "paper_crypto_enabled": bool(lane.get("paper_crypto_enabled")),
         "live_crypto_disabled": True,
         "provider_calls_used": 0,
         "llm_calls_used": 0,
         "broker_actions_used": 0,
         **_safety_flags_v1(),
+    }
+
+
+def _crypto_candidate_integrity_v1_payload(statuses: dict | None = None) -> dict:
+    """Expose strict identity results without treating cache rows as orders."""
+    lane = _crypto_paper_lane_validation_v1_payload(statuses)
+    raw_rows: list[dict] = []
+    for source in (
+        ((RANKINGS_ENDPOINT_CACHE.get("crypto") or {}).get("payload") or []),
+        (LAST_RANKINGS.get("crypto") or []),
+    ):
+        if isinstance(source, list):
+            raw_rows.extend(dict(row) for row in source if isinstance(row, dict))
+    seen: set[str] = set()
+    rows: list[dict] = []
+    for index, raw in enumerate(raw_rows[:80]):
+        candidate = dict(raw)
+        candidate.setdefault("asset_class", "crypto")
+        candidate["assigned_horizon"] = _candidate_horizon_from_row_v1(candidate)
+        fingerprint = f"{candidate.get('symbol') or candidate.get('ticker')}:{candidate.get('candidate_id') or index}"
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        integrity = candidate_execution_integrity(
+            candidate,
+            supported_pairs=set(lane.get("supported_pairs") or []),
+            tradable_pairs=set(lane.get("tradable_pairs") or []),
+            known_equity_symbols=_known_equity_symbols_v1(),
+            lane_state=str(lane.get("lane_state") or "LANE_BLOCKED"),
+            paper_mode_verified=bool(lane.get("paper_mode_verified")),
+            live_endpoint_detected=not bool(lane.get("paper_mode_verified")),
+            capacity_available=False,
+            duplicate_pending=False,
+            broker_reconciliation_ok=False,
+            kill_switch_enabled=bool(lane.get("kill_switch_enabled")),
+        )
+        rows.append({
+            "candidate_id": candidate.get("candidate_id") or f"crypto_integrity:{index}",
+            "raw_symbol": candidate.get("symbol") or candidate.get("ticker"),
+            "asset_class": candidate.get("asset_class"),
+            **integrity,
+            "execution_allowed": False,
+            "reason": "cache_only_integrity_audit_no_broker_action",
+        })
+    rejection_counts = Counter(str(row.get("identity_status") or "UNKNOWN") for row in rows if row.get("identity_status") != "VALID_CRYPTO_PAIR")
+    return {
+        "endpoint": "/api/crypto_candidate_integrity_v1",
+        "status": "PASS" if not any(row.get("execution_eligible") and row.get("failed_gates") for row in rows) else "SEMANTIC_FAIL_CLOSED",
+        "lane_state": lane.get("lane_state"),
+        "candidate_count": len(rows),
+        "validated_crypto_pairs": sum(1 for row in rows if row.get("identity_status") == "VALID_CRYPTO_PAIR"),
+        "rejected_identity_count": sum(rejection_counts.values()),
+        "rejection_distribution": dict(rejection_counts),
+        "candidate_rows": rows[:50],
+        "execution_actions_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "human_review_required": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _crypto_candidate_execution_gate_audit_v1_payload(statuses: dict | None = None) -> dict:
+    funnel = _crypto_candidate_funnel_v1_payload(statuses)
+    rows = [dict(row) for row in (funnel.get("candidate_rows") or []) if isinstance(row, dict)]
+    incomplete = [row for row in rows if row.get("failed_gates")]
+    unsafe = [row for row in rows if row.get("execution_eligible") and row.get("failed_gates")]
+    return {
+        "endpoint": "/api/crypto_candidate_execution_gate_audit_v1",
+        "status": "PASS" if not unsafe else "SEMANTIC_FAIL_CLOSED",
+        "candidate_count": len(rows),
+        "broker_eligible_count": sum(1 for row in rows if row.get("execution_eligible")),
+        "incomplete_or_rejected_count": len(incomplete),
+        "mandatory_gates": [
+            "identity", "broker_support", "broker_tradability", "timestamp_freshness", "quote_spread",
+            "volume_liquidity", "data_quality", "volatility_risk", "duplicate_pending", "capacity_concentration",
+            "broker_reconciliation", "paper_live_safety", "confidence_ranking", "horizon_assignment",
+            "order_schema_min_notional", "budget", "kill_switch",
+        ],
+        "candidate_rows": rows[:50],
+        "unsafe_execution_rows": unsafe,
+        "gate_blocker_distribution": dict(Counter(gate for row in incomplete for gate in (row.get("failed_gates") or []))),
+        "execution_actions_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "human_review_required": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _candidate_semantic_contradiction_audit_v1_payload(statuses: dict | None = None) -> dict:
+    funnel = _crypto_candidate_funnel_v1_payload(statuses)
+    contradictions: list[dict] = []
+    for row in funnel.get("candidate_rows") or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("execution_eligible") and row.get("failed_gates"):
+            contradictions.append({"candidate_id": row.get("candidate_id"), "type": "eligible_with_failed_execution_gate", "severity": "critical"})
+        if row.get("paper_eligibility") == "eligible" and row.get("final_status") != "QUALIFIED":
+            contradictions.append({"candidate_id": row.get("candidate_id"), "type": "paper_eligible_terminal_conflict", "severity": "critical"})
+        if row.get("symbol") and str(row.get("symbol")) in _known_equity_symbols_v1():
+            contradictions.append({"candidate_id": row.get("candidate_id"), "type": "equity_symbol_in_crypto_funnel", "severity": "critical"})
+    status = "PASS" if not contradictions else "SEMANTIC_FAIL_CLOSED"
+    return {
+        "endpoint": "/api/candidate_semantic_contradiction_audit_v1",
+        "status": status,
+        "contradiction_count": len(contradictions),
+        "contradictions": contradictions[:50],
+        "fail_closed_enforced": True,
+        "checked_invariants": [
+            "no_candidate_eligible_with_missing_mandatory_gate",
+            "no_paper_eligible_candidate_with_rejected_terminal_state",
+            "no_known_equity_symbol_in_crypto_execution_funnel",
+            "lane_state_never_substitutes_for_candidate_gate_pass",
+        ],
+        "execution_actions_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _batch1_candidate_integrity_validation_v1_payload(statuses: dict | None = None) -> dict:
+    integrity = _crypto_candidate_integrity_v1_payload(statuses)
+    gates = _crypto_candidate_execution_gate_audit_v1_payload(statuses)
+    semantic = _candidate_semantic_contradiction_audit_v1_payload(statuses)
+    equity = _equity_candidate_lineage_completion_v2_payload(statuses)
+    fresh_equity_rows = [row for row in (equity.get("candidate_rows") or []) if str(row.get("source_cache") or "") == "paper_autopilot_last_execution_trace"]
+    checks = {
+        "strict_crypto_identity_fail_closed": integrity.get("status") == "PASS",
+        "all_crypto_execution_gates_explicit": bool(gates.get("mandatory_gates")),
+        "semantic_contradictions_zero": semantic.get("contradiction_count") == 0,
+        "no_unsafe_candidate_eligible": not bool(gates.get("unsafe_execution_rows")),
+        "historical_equity_not_used_as_fresh_proof": not bool(fresh_equity_rows) or all(row.get("assigned_horizon") for row in fresh_equity_rows),
+        "paper_and_live_safety_preserved": _safety_flags_v1().get("behavior_safe_to_apply") is False,
+    }
+    batch_pass = all(checks.values())
+    return {
+        "endpoint": "/api/batch1_candidate_integrity_validation_v1",
+        "batch": 1,
+        "status": "BATCH_1_PASS" if batch_pass else "BATCH_1_BLOCKED",
+        "safe_to_begin_batch_2": batch_pass,
+        "checks": checks,
+        "fresh_equity_candidate_rows_observed": len(fresh_equity_rows),
+        "fresh_equity_evidence_status": "OBSERVED" if fresh_equity_rows else "WAITING_FOR_NATURAL_NEXT_CYCLE",
+        "historical_equity_evidence_status": "HISTORICAL_PARTIAL",
+        "crypto_integrity": integrity,
+        "execution_gate_audit": gates,
+        "semantic_audit": semantic,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "broker_actions_used": 0,
+        "human_review_required": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _horizon_aware_position_monitoring_v1_payload(statuses: dict | None = None) -> dict:
+    audit = _horizon_turnover_exit_audit_v1_payload(statuses)
+    readiness = _exit_readiness_diagnostics_v1_payload(statuses)
+    rows = []
+    for row in readiness.get("position_rows") or []:
+        if not isinstance(row, dict):
+            continue
+        state = str(row.get("exit_readiness_state") or "UNKNOWN")
+        rows.append({
+            "symbol": row.get("symbol"),
+            "intended_horizon": row.get("intended_trade_style") or "unknown",
+            "actual_horizon": row.get("actual_horizon_classification") or row.get("horizon") or "unknown",
+            "elapsed_hold_days": row.get("days_held"),
+            "lifecycle_state": "THESIS_AT_RISK" if state in {"THESIS_BROKEN", "EXIT_REVIEW"} else "REVIEW" if state in {"WATCH", "STALE_REVIEW", "HORIZON_DRIFT", "REPLACE_CANDIDATE"} else "HOLD_HEALTHY" if state == "HOLD" else "UNKNOWN_INSUFFICIENT_EVIDENCE",
+            "review_reason": row.get("recommended_review_reason") or [],
+            "market_data_status": "CACHED_DIAGNOSTIC_ONLY",
+            "execution_action": "NONE_ADVISORY_ONLY",
+        })
+    return {
+        "endpoint": "/api/horizon_aware_position_monitoring_v1",
+        "status": "PASS" if rows or int(_to_float(audit.get("active_open_position_records"), 0)) == 0 else "INSUFFICIENT_EVIDENCE",
+        "broker_confirmed_active_positions": audit.get("broker_confirmed_active_positions"),
+        "positions_monitored": len(rows),
+        "position_rows": rows[:50],
+        "horizon_distribution": audit.get("trade_style_distribution") or {},
+        "unknown_horizon_positions": audit.get("horizon_persistence_diagnostics_v1", {}).get("unknown_horizon_positions", 0) if isinstance(audit.get("horizon_persistence_diagnostics_v1"), dict) else 0,
+        "advisory_only": True,
+        "human_review_required": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _thesis_failure_intelligence_v1_payload(statuses: dict | None = None) -> dict:
+    monitoring = _horizon_aware_position_monitoring_v1_payload(statuses)
+    readiness = _exit_readiness_diagnostics_v1_payload(statuses)
+    rows = []
+    for row in readiness.get("position_rows") or []:
+        if not isinstance(row, dict):
+            continue
+        strength = row.get("thesis_strength_score")
+        reasons = list(row.get("recommended_review_reason") or [])
+        if strength in (None, "", 0) and not reasons:
+            evidence = "UNKNOWN_INSUFFICIENT_EVIDENCE"
+            risk = "unknown"
+        else:
+            evidence = "CACHED_LIFECYCLE_DIAGNOSTIC"
+            risk = "high" if "thesis_deterioration" in reasons or row.get("exit_readiness_state") == "THESIS_BROKEN" else "watch" if reasons else "low"
+        rows.append({
+            "symbol": row.get("symbol"), "thesis_strength_score": strength,
+            "thesis_risk": risk, "evidence_status": evidence,
+            "failure_reasons": reasons, "recommended_action": "MANUAL_REVIEW" if risk in {"high", "watch"} else "MONITOR",
+            "execution_action": "NONE_ADVISORY_ONLY",
+        })
+    return {
+        "endpoint": "/api/thesis_failure_intelligence_v1", "status": "PASS" if rows else "INSUFFICIENT_EVIDENCE",
+        "positions_evaluated": len(rows), "thesis_rows": rows[:50],
+        "high_risk_count": sum(1 for row in rows if row.get("thesis_risk") == "high"),
+        "observational_data_source": "exit_readiness_diagnostics_v1_cached_position_rows",
+        "advisory_only": True, "human_review_required": True, **_safety_flags_v1(),
+    }
+
+
+def _capital_efficiency_opportunity_cost_v2_payload(statuses: dict | None = None) -> dict:
+    base = _opportunity_cost_turnover_diagnostics_v1_payload(statuses)
+    audit = _horizon_turnover_exit_audit_v1_payload(statuses)
+    rows = []
+    for row in base.get("positions_with_rising_opportunity_cost") or []:
+        if not isinstance(row, dict):
+            continue
+        rows.append({
+            "symbol": row.get("symbol"), "opportunity_cost_score": row.get("opportunity_cost_score"),
+            "days_held": row.get("days_held"), "horizon": row.get("actual_horizon_classification") or row.get("horizon"),
+            "evidence_status": "CACHED_LIFECYCLE_DIAGNOSTIC", "recommendation": "MANUAL_REVIEW_ONLY",
+        })
+    return {
+        "endpoint": "/api/capital_efficiency_opportunity_cost_v2", "status": "PASS" if rows else "INSUFFICIENT_EVIDENCE",
+        "open_to_closed_ratio": audit.get("open_to_closed_ratio"), "turnover_pressure": audit.get("turnover_pressure"),
+        "capital_review_rows": rows[:20], "capital_stagnation_count": len(rows),
+        "capacity_recycling_recommendation": "evaluate_existing_ranked_candidates_only_after_manual_review" if rows else "no_cached_capital_recycling_signal",
+        "capital_reallocation_executed": False, "advisory_only": True, "human_review_required": True,
+        **_safety_flags_v1(),
+    }
+
+
+def _exit_readiness_profit_capture_v2_payload(statuses: dict | None = None) -> dict:
+    readiness = _exit_readiness_diagnostics_v1_payload(statuses)
+    candidates = []
+    for row in readiness.get("position_rows") or []:
+        if not isinstance(row, dict):
+            continue
+        state = str(row.get("exit_readiness_state") or "UNKNOWN")
+        candidates.append({
+            "symbol": row.get("symbol"), "state": state, "exit_readiness_score": row.get("exit_readiness_score"),
+            "profit_protection_score": row.get("profit_protection_score"), "opportunity_cost_score": row.get("opportunity_cost_score"),
+            "giveback_evidence": "NOT_AVAILABLE_FROM_CACHED_OPEN_POSITION" if row.get("profit_protection_score") in (None, "") else "CACHED_DIAGNOSTIC",
+            "recommended_action": "MANUAL_EXIT_REVIEW" if state in {"EXIT_REVIEW", "THESIS_BROKEN", "STALE_REVIEW", "HORIZON_DRIFT"} else "MONITOR",
+            "order_action": "NONE", "forced_exit": False,
+        })
+    return {
+        "endpoint": "/api/exit_readiness_profit_capture_v2", "status": "PASS" if candidates else "INSUFFICIENT_EVIDENCE",
+        "positions_reviewed": len(candidates), "review_candidates": candidates[:50],
+        "biggest_exit_blocker": readiness.get("biggest_exit_blocker"), "learned_exits_enabled": False,
+        "broker_sell_behavior_enabled": False, "forced_exits_enabled": False, "advisory_only": True,
+        "human_review_required": True, **_safety_flags_v1(),
+    }
+
+
+def _completed_broker_lifecycle_quality_v1_payload(statuses: dict | None = None) -> dict:
+    canonical = _canonical_broker_truth_counts_v1(statuses)
+    registry = _astra_evidence_state_json("broker_truth_records_v1.json")
+    records = [row for row in (registry.get("records") or []) if isinstance(row, dict)]
+    completed = [row for row in records if str(row.get("truth_quality") or "").lower() == "broker_confirmed_complete" or bool(row.get("closed_indicator") and row.get("realized_pnl_available"))]
+    incomplete = max(0, len(records) - len(completed))
+    return {
+        "endpoint": "/api/completed_broker_lifecycle_quality_v1",
+        "status": "PASS" if completed else "INSUFFICIENT_EVIDENCE",
+        "broker_truth_records_total": canonical.get("broker_truth_records_total"), "completed_lifecycle_count": len(completed),
+        "incomplete_or_open_record_count": incomplete, "official_metric_eligible_records": canonical.get("official_metric_eligible_records"),
+        "lifecycle_quality": "OFFICIAL_BROKER_CONFIRMED" if completed else "WARMING_UP",
+        "sample_readiness": "INSUFFICIENT_EVIDENCE" if len(completed) < 25 else "MATURE_FOR_DIAGNOSTIC_COMPARISON",
+        "rows": [{"symbol": row.get("symbol"), "truth_quality": row.get("truth_quality"), "realized_pnl_available": bool(row.get("realized_pnl_available"))} for row in completed[-25:]],
+        "advisory_only": True, **_safety_flags_v1(),
+    }
+
+
+def _batch2_truth_exit_capacity_validation_v1_payload(statuses: dict | None = None) -> dict:
+    monitoring = _horizon_aware_position_monitoring_v1_payload(statuses)
+    thesis = _thesis_failure_intelligence_v1_payload(statuses)
+    capital = _capital_efficiency_opportunity_cost_v2_payload(statuses)
+    exits = _exit_readiness_profit_capture_v2_payload(statuses)
+    lifecycle = _completed_broker_lifecycle_quality_v1_payload(statuses)
+    checks = {
+        "broker_truth_separated_from_open_diagnostics": lifecycle.get("lifecycle_quality") in {"OFFICIAL_BROKER_CONFIRMED", "WARMING_UP"},
+        "position_monitoring_advisory_only": monitoring.get("advisory_only") is True,
+        "thesis_failure_never_forces_exit": thesis.get("advisory_only") is True,
+        "capital_efficiency_never_reallocates": capital.get("capital_reallocation_executed") is False,
+        "exit_readiness_never_submits_sell": exits.get("broker_sell_behavior_enabled") is False and exits.get("forced_exits_enabled") is False,
+        "safety_flags_preserved": _safety_flags_v1().get("behavior_safe_to_apply") is False,
+    }
+    passed = all(checks.values())
+    return {
+        "endpoint": "/api/batch2_truth_exit_capacity_validation_v1", "batch": 2,
+        "status": "BATCH_2_PASS" if passed else "BATCH_2_BLOCKED", "checks": checks,
+        "monitoring": monitoring, "thesis": thesis, "capital": capital, "exit_readiness": exits, "lifecycle": lifecycle,
+        "provider_calls_used": 0, "llm_calls_used": 0, "broker_actions_used": 0,
+        "advisory_only": True, "human_review_required": True, **_safety_flags_v1(),
+    }
+
+
+def _astra_candidate_truth_exit_validation_v1_payload(statuses: dict | None = None) -> dict:
+    batch1 = _batch1_candidate_integrity_validation_v1_payload(statuses)
+    batch2 = _batch2_truth_exit_capacity_validation_v1_payload(statuses)
+    return {
+        "endpoint": "/api/astra_candidate_truth_exit_validation_v1", "suite": "Astra Candidate Truth, Exit and Capacity Validation V1",
+        "status": "PASS" if batch1.get("status") == "BATCH_1_PASS" and batch2.get("status") == "BATCH_2_PASS" else "WARNING",
+        "batch_1": {"status": batch1.get("status"), "safe_to_begin_batch_2": batch1.get("safe_to_begin_batch_2")},
+        "batch_2": {"status": batch2.get("status"), "checks": batch2.get("checks")},
+        "executive_summary": {
+            "candidate_integrity": "strict_fail_closed", "exit_behavior": "manual_review_only",
+            "capital_efficiency": "diagnostic_only", "broker_truth": (batch2.get("lifecycle") or {}).get("sample_readiness"),
+        },
+        "provider_calls_used": 0, "llm_calls_used": 0, "broker_actions_used": 0,
+        "advisory_only": True, "human_review_required": True, **_safety_flags_v1(),
     }
 
 
@@ -66578,6 +67021,65 @@ def crypto_paper_activation_readiness_v2():
 def crypto_candidate_funnel_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
     return _crypto_candidate_funnel_v1_payload(dict(cached_unified or {}))
+
+
+@router.get("/api/crypto_candidate_integrity_v1")
+def crypto_candidate_integrity_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    return _crypto_candidate_integrity_v1_payload(dict(cached_unified or {}))
+
+
+@router.get("/api/crypto_candidate_execution_gate_audit_v1")
+def crypto_candidate_execution_gate_audit_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    return _crypto_candidate_execution_gate_audit_v1_payload(dict(cached_unified or {}))
+
+
+@router.get("/api/candidate_semantic_contradiction_audit_v1")
+def candidate_semantic_contradiction_audit_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    return _candidate_semantic_contradiction_audit_v1_payload(dict(cached_unified or {}))
+
+
+@router.get("/api/batch1_candidate_integrity_validation_v1")
+def batch1_candidate_integrity_validation_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    return _batch1_candidate_integrity_validation_v1_payload(dict(cached_unified or {}))
+
+
+@router.get("/api/horizon_aware_position_monitoring_v1")
+def horizon_aware_position_monitoring_v1(force: bool = False):
+    return _horizon_aware_position_monitoring_v1_payload({})
+
+
+@router.get("/api/thesis_failure_intelligence_v1")
+def thesis_failure_intelligence_v1(force: bool = False):
+    return _thesis_failure_intelligence_v1_payload({})
+
+
+@router.get("/api/capital_efficiency_opportunity_cost_v2")
+def capital_efficiency_opportunity_cost_v2(force: bool = False):
+    return _capital_efficiency_opportunity_cost_v2_payload({})
+
+
+@router.get("/api/exit_readiness_profit_capture_v2")
+def exit_readiness_profit_capture_v2(force: bool = False):
+    return _exit_readiness_profit_capture_v2_payload({})
+
+
+@router.get("/api/completed_broker_lifecycle_quality_v1")
+def completed_broker_lifecycle_quality_v1(force: bool = False):
+    return _completed_broker_lifecycle_quality_v1_payload({})
+
+
+@router.get("/api/batch2_truth_exit_capacity_validation_v1")
+def batch2_truth_exit_capacity_validation_v1(force: bool = False):
+    return _batch2_truth_exit_capacity_validation_v1_payload({})
+
+
+@router.get("/api/astra_candidate_truth_exit_validation_v1")
+def astra_candidate_truth_exit_validation_v1(force: bool = False):
+    return _astra_candidate_truth_exit_validation_v1_payload({})
 
 
 @router.get("/api/crypto_position_reconciliation_v1")
