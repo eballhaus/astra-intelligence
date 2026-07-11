@@ -43157,6 +43157,170 @@ def _backend_intelligence_catalog_v1() -> list[dict]:
     return [{"intelligence_id": f"catalog:{name}", "source_system": name, "source_record_id": name, "evidence_class": evidence, "asset_class": "separated", "symbol_scope": "portfolio_or_candidate", "regime_scope": "cached", "trade_style_scope": "advisory", "horizon_scope": "multi_horizon", "freshness_state": "CACHED", "sample_size": None, "confidence": None, "quality_state": "HISTORICAL_CONTEXT" if evidence == "REPLAY_COUNTERFACTUAL" else "SHADOW_ONLY" if evidence == "SHADOW_ONLY" else "CURRENT_MODERATE_QUALITY", "contradiction_state": "NONE", "duplication_state": "NONE", "expected_consumers": consumers, "actual_consumers": ["Copilot", "Cortex", "Governance"], "material_influence_state": "QUALITATIVE_ADVISORY", "advisory_only": evidence != "BROKER_CONFIRMED_EQUITY", "outcome_proven": False, "decay_state": "MONITORED", "suppression_state": "NONE", "reason": "existing_cached_system_reused"} for name, evidence in specs]
 
 
+_ADVISORY_ENTRY_STATES_V1 = {
+    "NOT_READY", "WATCH", "APPROACHING_BUY", "BUY_NOW_ADVISORY", "BLOCKED", "INSUFFICIENT_EVIDENCE",
+}
+_ADVISORY_EXIT_STATES_V1 = {
+    "HOLD", "WATCH", "LOSING_MOMENTUM", "PROTECT_PROFIT", "APPROACHING_SELL", "SELL_RECOMMENDED", "INSUFFICIENT_EVIDENCE",
+}
+_UNRESOLVED_VALUES_V1 = {"", "UNKNOWN", "UNAVAILABLE", "UNRESOLVED", "MISSING", "NONE", "N/A"}
+
+
+def _advisory_value_v1(row: dict, *keys: str, default=None):
+    """Return a present cached field without manufacturing a replacement value."""
+    for key in keys:
+        value = row.get(key)
+        if value is not None:
+            return value
+    return default
+
+
+def _is_unresolved_advisory_value_v1(value) -> bool:
+    return value is None or str(value).strip().upper() in _UNRESOLVED_VALUES_V1
+
+
+def _advisory_entry_rows_v1(rows: list[dict]) -> list[dict]:
+    entry_rows = []
+    supported_horizons = {"day_trade", "short_swing", "standard_swing", "extended_swing", "intraday"}
+    for source_row in rows:
+        row = source_row if isinstance(source_row, dict) else {}
+        freshness = str(row.get("freshness") or "").upper()
+        evidence_quality = str(row.get("evidence_quality") or "").upper()
+        blockers = list(row.get("blockers") or [])
+        preferred_horizon = _advisory_value_v1(row, "preferred_horizon", "horizon")
+        horizon_resolved = str(preferred_horizon or "").lower() in supported_horizons
+        risk = _advisory_value_v1(row, "risk_state", "risk_level", "main_risk")
+        liquidity = _advisory_value_v1(row, "liquidity_state", "liquidity")
+        risk_unresolved = _is_unresolved_advisory_value_v1(risk)
+        liquidity_unresolved = _is_unresolved_advisory_value_v1(liquidity)
+        requested_state = str(row.get("advisory_entry_state") or row.get("canonical_lifecycle_state") or "NOT_READY").upper()
+        if requested_state == "BUY_NOW":
+            requested_state = "BUY_NOW_ADVISORY"
+        if requested_state not in _ADVISORY_ENTRY_STATES_V1:
+            requested_state = "NOT_READY"
+
+        mandatory_blockers = list(blockers)
+        if not horizon_resolved:
+            mandatory_blockers.append("unresolved_horizon")
+        if risk_unresolved:
+            mandatory_blockers.append("unresolved_risk")
+        if liquidity_unresolved:
+            mandatory_blockers.append("unresolved_liquidity")
+        if freshness == "STALE" or evidence_quality in {"", "LOW_SAMPLE", "INSUFFICIENT_EVIDENCE"}:
+            advisory_state = "INSUFFICIENT_EVIDENCE"
+        elif mandatory_blockers:
+            advisory_state = "BLOCKED" if blockers else "INSUFFICIENT_EVIDENCE"
+        else:
+            advisory_state = requested_state
+
+        positive_factors = list(row.get("positive_factors") or [])
+        if not positive_factors and row.get("primary_driver"):
+            positive_factors = [row.get("primary_driver")]
+        weakening_factors = list(row.get("weakening_factors") or [])
+        if not weakening_factors:
+            weakening_factors = list(mandatory_blockers)
+        entry_rows.append({
+            "recommendation_id": row.get("recommendation_id"),
+            "symbol": row.get("symbol"),
+            "asset_class": row.get("asset_type"),
+            "advisory_entry_state": advisory_state,
+            "confidence": row.get("confidence"),
+            "evidence_quality": row.get("evidence_quality"),
+            "freshness": row.get("freshness"),
+            "trade_style": _advisory_value_v1(row, "trade_style", "horizon"),
+            "preferred_horizon": preferred_horizon if horizon_resolved else None,
+            "regime_compatibility": _advisory_value_v1(row, "regime_compatibility", "market_regime_context"),
+            "sector_breadth_context": _advisory_value_v1(row, "sector_breadth_context", "sector_context"),
+            "catalyst_fundamental_context": _advisory_value_v1(row, "catalyst_fundamental_context", "catalyst_context"),
+            "risk": risk,
+            "liquidity": liquidity,
+            "portfolio_exposure": _advisory_value_v1(row, "portfolio_exposure", "portfolio_fit"),
+            "capacity": _advisory_value_v1(row, "capacity", "capacity_status"),
+            "positive_factors": positive_factors,
+            "weakening_factors": weakening_factors,
+            "blockers": mandatory_blockers,
+            "reason": _advisory_value_v1(row, "why_astra_chose_it", "simple_why", default="cached advisory context unavailable"),
+            "what_would_change": row.get("what_would_change"),
+            "paper_autopilot_eligible": bool(row.get("paper_autopilot_eligible")),
+            "broker_eligible": bool(row.get("broker_eligible")),
+            "order_submitted": bool(row.get("order_submitted")),
+            "fill_confirmed": bool(row.get("fill_confirmed")),
+            "completed_lifecycle": bool(row.get("completed_lifecycle", False)),
+            "advisory_only": True,
+        })
+    return entry_rows
+
+
+def _advisory_exit_rows_v1(rows: list[dict]) -> list[dict]:
+    exit_rows = []
+    for source_row in rows:
+        row = source_row if isinstance(source_row, dict) else {}
+        freshness = str(row.get("freshness") or "").upper()
+        evidence_quality = str(row.get("evidence_quality") or "").upper()
+        position_open = row.get("position_state") == "POSITION_OPEN"
+        blockers = list(row.get("blockers") or [])
+        requested_state = str(row.get("advisory_exit_state") or row.get("canonical_lifecycle_state") or "HOLD").upper()
+        if requested_state not in _ADVISORY_EXIT_STATES_V1:
+            requested_state = "HOLD"
+        thesis_state = _advisory_value_v1(row, "thesis_state", "thesis_health")
+        momentum_state = _advisory_value_v1(row, "momentum_state", "momentum")
+        giveback_risk = _advisory_value_v1(row, "profit_giveback_risk", "giveback_risk")
+        opportunity_cost = _advisory_value_v1(row, "opportunity_cost_state", "opportunity_cost")
+        catalyst_state = _advisory_value_v1(row, "catalyst_state", "catalyst_context")
+        thesis_lost = str(thesis_state or "").upper() in {"BROKEN", "INVALIDATED", "FAILED"}
+        momentum_lost = str(momentum_state or "").upper() in {"LOSING_MOMENTUM", "DETERIORATING", "WEAKENING"}
+        protect_profit = str(giveback_risk or "").upper() in {"HIGH", "ELEVATED", "PROTECT_PROFIT"}
+        costly_hold = str(opportunity_cost or "").upper() in {"HIGH", "ELEVATED", "REDEPLOYMENT_CANDIDATE"}
+
+        if not position_open or freshness == "STALE" or evidence_quality in {"", "LOW_SAMPLE", "INSUFFICIENT_EVIDENCE"} or blockers:
+            advisory_state = "INSUFFICIENT_EVIDENCE"
+        elif thesis_lost:
+            advisory_state = "SELL_RECOMMENDED"
+        elif protect_profit:
+            advisory_state = "PROTECT_PROFIT"
+        elif momentum_lost:
+            advisory_state = "LOSING_MOMENTUM"
+        elif costly_hold:
+            advisory_state = "APPROACHING_SELL"
+        else:
+            advisory_state = requested_state
+
+        positive_factors = list(row.get("positive_factors") or [])
+        weakening_factors = list(row.get("weakening_factors") or [])
+        if thesis_lost:
+            weakening_factors.append("thesis_deterioration")
+        if momentum_lost:
+            weakening_factors.append("momentum_deterioration")
+        if protect_profit:
+            weakening_factors.append("profit_giveback_risk")
+        if costly_hold:
+            weakening_factors.append("opportunity_cost")
+        exit_rows.append({
+            "recommendation_id": row.get("recommendation_id"),
+            "symbol": row.get("symbol"),
+            "asset_class": row.get("asset_type"),
+            "advisory_exit_state": advisory_state,
+            "confidence": row.get("confidence"),
+            "evidence_quality": row.get("evidence_quality"),
+            "freshness": row.get("freshness"),
+            "current_horizon_state": _advisory_value_v1(row, "current_horizon_state", "horizon"),
+            "momentum_state": momentum_state,
+            "thesis_state": thesis_state,
+            "profit_giveback_risk": giveback_risk,
+            "opportunity_cost_state": opportunity_cost,
+            "catalyst_state": catalyst_state,
+            "market_sector_context": _advisory_value_v1(row, "market_sector_context", "market_regime_context"),
+            "positive_factors": positive_factors,
+            "weakening_factors": sorted(set(weakening_factors)),
+            "blockers": blockers if position_open else blockers + ["no_open_broker_confirmed_position"],
+            "reason": _advisory_value_v1(row, "exit_reason", "exit_context", default="existing exit diagnostics remain advisory"),
+            "what_would_change": row.get("what_would_change"),
+            "advisory_only": True,
+            "automatic_exit_enabled": False,
+        })
+    return exit_rows
+
+
 def _backend_intelligence_payload_v1(kind: str) -> dict:
     ctx = _backend_intelligence_context_v1(); rows = ctx["rows"]
     if kind == "catalog": return {"endpoint": "/api/learned_logic_catalog_v1", "status": "PASS", "records": _backend_intelligence_catalog_v1(), **_safety_flags_v1()}
@@ -43182,6 +43346,118 @@ def _backend_intelligence_payload_v1(kind: str) -> dict:
     if kind == "regime": return {"endpoint":"/api/market_regime_trade_archetype_v1","status":"PASS" if rows else "INSUFFICIENT_EVIDENCE","rows":[{"recommendation_id":r.get("recommendation_id"),"symbol":r.get("symbol"),"regime":r.get("market_regime_context") or "UNCERTAIN","archetype":r.get("primary_driver") or "research only","compatibility":"ADVISORY_CONTEXT","freshness":r.get("freshness"),"confidence":r.get("confidence"),"invalidation":r.get("what_would_change"),"advisory_only":True} for r in rows],**_safety_flags_v1()}
     if kind == "sector": return {"endpoint":"/api/sector_rotation_breadth_context_v1","status":"PASS" if rows else "INSUFFICIENT_EVIDENCE","rows":[{"recommendation_id":r.get("recommendation_id"),"symbol":r.get("symbol"),"sector":r.get("catalyst_context") or None,"industry":None,"sector_relative_strength":None,"breadth_state":"UNAVAILABLE","leadership":"UNAVAILABLE","rotation":"UNAVAILABLE","regime_alignment":r.get("market_regime_context") or "UNCERTAIN","freshness":r.get("freshness"),"evidence_quality":"INSUFFICIENT_EVIDENCE","supporting_factors":[],"weakening_factors":[],"blockers":["cached_sector_breadth_evidence_unavailable"],"reason":"sector_context_is_advisory_and_never_creates_buy_now","advisory_only":True} for r in rows],"provider_calls_used":0,"broker_actions_used":0,"llm_calls_used":0,**_safety_flags_v1()}
     if kind == "catalyst": return {"endpoint":"/api/catalyst_fundamental_context_v2","status":"PASS" if rows else "INSUFFICIENT_EVIDENCE","rows":[{"recommendation_id":r.get("recommendation_id"),"symbol":r.get("symbol"),"provider_source":"cached_candidate_context","source_timestamp":None,"cache_age_seconds":None,"freshness":r.get("freshness"),"catalyst":r.get("catalyst_context") or None,"catalyst_state":"UNAVAILABLE","fundamental_summary":"UNAVAILABLE","supporting_factors":[],"weakening_factors":[],"missing_information":["cached_profile_fundamentals"],"evidence_class":"PROVIDER_CONTEXT","evidence_quality":"INSUFFICIENT_EVIDENCE","blockers":["provider_cache_context_incomplete"],"reason":"fundamentals_are_contextual_only","advisory_only":True} for r in rows],"provider_calls_used":0,"broker_actions_used":0,"llm_calls_used":0,**_safety_flags_v1()}
+    if kind == "entry":
+        entry_rows = _advisory_entry_rows_v1(rows)
+        return {
+            "endpoint": "/api/advisory_entry_readiness_v1",
+            "status": "PASS" if entry_rows else "INSUFFICIENT_EVIDENCE",
+            "rows": entry_rows,
+            "provider_calls_used": 0,
+            "broker_actions_used": 0,
+            "llm_calls_used": 0,
+            **_safety_flags_v1(),
+        }
+    if kind == "exit":
+        exit_rows = _advisory_exit_rows_v1(rows)
+        return {
+            "endpoint": "/api/advisory_exit_practice_v1",
+            "status": "PASS" if exit_rows else "INSUFFICIENT_EVIDENCE",
+            "rows": exit_rows,
+            "provider_calls_used": 0,
+            "broker_actions_used": 0,
+            "llm_calls_used": 0,
+            **_safety_flags_v1(),
+        }
+    if kind == "phase2":
+        payloads = {
+            "trade_style": _backend_intelligence_payload_v1("style"),
+            "multi_horizon": _backend_intelligence_payload_v1("horizons"),
+            "symbol_behavior": _backend_intelligence_payload_v1("symbol"),
+            "market_regime": _backend_intelligence_payload_v1("regime"),
+            "sector_breadth": _backend_intelligence_payload_v1("sector"),
+            "catalyst_fundamental": _backend_intelligence_payload_v1("catalyst"),
+            "entry": _backend_intelligence_payload_v1("entry"),
+            "exit": _backend_intelligence_payload_v1("exit"),
+            "semantic": _backend_intelligence_payload_v1("semantic"),
+        }
+        entry_rows = payloads["entry"].get("rows") or []
+        exit_rows = payloads["exit"].get("rows") or []
+        horizon_rows = payloads["multi_horizon"].get("candidates") or []
+        symbol_rows = payloads["symbol_behavior"].get("profiles") or []
+        catalyst_rows = payloads["catalyst_fundamental"].get("rows") or []
+        valid_horizons = {"day_trade", "short_swing", "standard_swing", "extended_swing", "intraday"}
+        buy_rows = [row for row in entry_rows if row.get("advisory_entry_state") == "BUY_NOW_ADVISORY"]
+        sell_rows = [row for row in exit_rows if row.get("advisory_exit_state") == "SELL_RECOMMENDED"]
+        official_outcome_fields = {"official_outcome", "official_profit_factor", "paper_profit_factor", "realized_return"}
+        official_outcomes_emitted = any(
+            any(field in row for field in official_outcome_fields)
+            for row in entry_rows + exit_rows
+        )
+        checks = {
+            "trade_style_available": payloads["trade_style"].get("endpoint") == "/api/trade_style_intelligence_v1",
+            "multi_horizon_available": payloads["multi_horizon"].get("endpoint") == "/api/multi_horizon_candidate_evaluation_v1",
+            "symbol_behavior_available": payloads["symbol_behavior"].get("endpoint") == "/api/symbol_behavioral_memory_v2",
+            "market_regime_available": payloads["market_regime"].get("endpoint") == "/api/market_regime_trade_archetype_v1",
+            "sector_breadth_available": payloads["sector_breadth"].get("endpoint") == "/api/sector_rotation_breadth_context_v1",
+            "catalyst_fundamental_available": payloads["catalyst_fundamental"].get("endpoint") == "/api/catalyst_fundamental_context_v2",
+            "advisory_entry_available": payloads["entry"].get("endpoint") == "/api/advisory_entry_readiness_v1",
+            "advisory_exit_available": payloads["exit"].get("endpoint") == "/api/advisory_exit_practice_v1",
+            "missing_evidence_explicit": all(row.get("quality_label") == "INSUFFICIENT_EVIDENCE" for row in symbol_rows),
+            "no_fabricated_preferred_horizon": all(
+                row.get("preferred_horizon") is None or row.get("preferred_horizon") in valid_horizons
+                for row in horizon_rows
+            ),
+            "no_fabricated_symbol_behavior": all(row.get("evidence_count") == 0 for row in symbol_rows),
+            "provider_context_not_broker_truth": all(row.get("evidence_class") == "PROVIDER_CONTEXT" for row in catalyst_rows),
+            "equity_crypto_outcomes_separated": not official_outcomes_emitted,
+            "advisory_execution_distinct": all(
+                row.get("advisory_only")
+                and {"paper_autopilot_eligible", "broker_eligible", "order_submitted", "fill_confirmed", "completed_lifecycle"}.issubset(row)
+                for row in entry_rows
+            ) and all(row.get("advisory_only") and not row.get("automatic_exit_enabled") for row in exit_rows),
+            "buy_now_advisory_evidence_gated": all(
+                str(row.get("freshness") or "").upper() != "STALE"
+                and str(row.get("evidence_quality") or "").upper() not in {"", "LOW_SAMPLE", "INSUFFICIENT_EVIDENCE"}
+                and not row.get("blockers")
+                for row in buy_rows
+            ),
+            "sell_recommended_evidence_gated": all(
+                str(row.get("freshness") or "").upper() != "STALE"
+                and str(row.get("evidence_quality") or "").upper() not in {"", "LOW_SAMPLE", "INSUFFICIENT_EVIDENCE"}
+                and not row.get("blockers")
+                for row in sell_rows
+            ),
+            "zero_rendering_calls": all(
+                payload.get("provider_calls_used") == 0
+                and payload.get("broker_actions_used", 0) == 0
+                and payload.get("llm_calls_used") == 0
+                for payload in payloads.values()
+            ),
+            "behavior_unchanged": all(
+                payload.get("behavior_safe_to_apply") is False
+                and payload.get("ranking_behavior_changed") is False
+                and payload.get("entry_behavior_changed") is False
+                and payload.get("exit_behavior_changed") is False
+                and payload.get("broker_behavior_changed") is False
+                for payload in payloads.values()
+            ),
+        }
+        critical_count = payloads["semantic"].get("critical_contradiction_count", 0)
+        failed_checks = [name for name, passed in checks.items() if not passed]
+        return {
+            "endpoint": "/api/phase2_trade_intelligence_validation_v1",
+            "status": "PHASE_2_PASS" if critical_count == 0 and not failed_checks else "PHASE_2_BLOCKED",
+            "critical_contradiction_count": critical_count,
+            "checks": checks,
+            "failed_checks": failed_checks,
+            "entry_rows": len(entry_rows),
+            "exit_rows": len(exit_rows),
+            "official_outcomes_emitted": official_outcomes_emitted,
+            "provider_calls_used": 0,
+            "broker_actions_used": 0,
+            "llm_calls_used": 0,
+            **_safety_flags_v1(),
+        }
     return {"endpoint": f"/api/{kind}", "status": "INSUFFICIENT_EVIDENCE", **_safety_flags_v1()}
 
 
@@ -44189,6 +44465,15 @@ def market_regime_trade_archetype_v1(): return _backend_intelligence_payload_v1(
 def sector_rotation_breadth_context_v1(): return _backend_intelligence_payload_v1("sector")
 @router.get("/api/catalyst_fundamental_context_v2")
 def catalyst_fundamental_context_v2(): return _backend_intelligence_payload_v1("catalyst")
+@router.get("/api/advisory_entry_readiness_v1")
+def advisory_entry_readiness_v1():
+    return _backend_intelligence_payload_v1("entry")
+@router.get("/api/advisory_exit_practice_v1")
+def advisory_exit_practice_v1():
+    return _backend_intelligence_payload_v1("exit")
+@router.get("/api/phase2_trade_intelligence_validation_v1")
+def phase2_trade_intelligence_validation_v1():
+    return _backend_intelligence_payload_v1("phase2")
 
 
 @router.get("/api/dashboard_data_wiring_v1")
