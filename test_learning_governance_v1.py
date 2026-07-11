@@ -37,6 +37,15 @@ class LearningGovernanceV1Tests(unittest.TestCase):
         for row in symbols.get("profiles", []):
             self.assertEqual(row["quality_label"], "INSUFFICIENT_EVIDENCE")
 
+    def test_sector_and_fundamental_context_are_cache_only(self):
+        for kind in ("sector", "catalyst"):
+            payload = server_extend._backend_intelligence_payload_v1(kind)
+            self.assertEqual(payload["provider_calls_used"], 0)
+            self.assertEqual(payload["broker_actions_used"], 0)
+            self.assertEqual(payload["llm_calls_used"], 0)
+            for row in payload.get("rows", []):
+                self.assertTrue(row["advisory_only"])
+
 
 if __name__ == "__main__":
     unittest.main()

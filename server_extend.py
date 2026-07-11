@@ -43180,6 +43180,8 @@ def _backend_intelligence_payload_v1(kind: str) -> dict:
         return {"endpoint":"/api/multi_horizon_candidate_evaluation_v1","status":"PASS" if candidates else "INSUFFICIENT_EVIDENCE","candidates":candidates,**_safety_flags_v1()}
     if kind == "symbol": return {"endpoint":"/api/symbol_behavioral_memory_v2","status":"INSUFFICIENT_EVIDENCE" if not rows else "PASS","profiles":[{"symbol":r.get("symbol"),"quality_label":"INSUFFICIENT_EVIDENCE","evidence_class":"ADVISORY_ONLY","evidence_count":0,"strongest_observed_horizon":None,"weakest_observed_horizon":None,"recency":"cached","confidence":None,"reason":"no broker-confirmed symbol-behavior sample"} for r in rows],**_safety_flags_v1()}
     if kind == "regime": return {"endpoint":"/api/market_regime_trade_archetype_v1","status":"PASS" if rows else "INSUFFICIENT_EVIDENCE","rows":[{"recommendation_id":r.get("recommendation_id"),"symbol":r.get("symbol"),"regime":r.get("market_regime_context") or "UNCERTAIN","archetype":r.get("primary_driver") or "research only","compatibility":"ADVISORY_CONTEXT","freshness":r.get("freshness"),"confidence":r.get("confidence"),"invalidation":r.get("what_would_change"),"advisory_only":True} for r in rows],**_safety_flags_v1()}
+    if kind == "sector": return {"endpoint":"/api/sector_rotation_breadth_context_v1","status":"PASS" if rows else "INSUFFICIENT_EVIDENCE","rows":[{"recommendation_id":r.get("recommendation_id"),"symbol":r.get("symbol"),"sector":r.get("catalyst_context") or None,"industry":None,"sector_relative_strength":None,"breadth_state":"UNAVAILABLE","leadership":"UNAVAILABLE","rotation":"UNAVAILABLE","regime_alignment":r.get("market_regime_context") or "UNCERTAIN","freshness":r.get("freshness"),"evidence_quality":"INSUFFICIENT_EVIDENCE","supporting_factors":[],"weakening_factors":[],"blockers":["cached_sector_breadth_evidence_unavailable"],"reason":"sector_context_is_advisory_and_never_creates_buy_now","advisory_only":True} for r in rows],"provider_calls_used":0,"broker_actions_used":0,"llm_calls_used":0,**_safety_flags_v1()}
+    if kind == "catalyst": return {"endpoint":"/api/catalyst_fundamental_context_v2","status":"PASS" if rows else "INSUFFICIENT_EVIDENCE","rows":[{"recommendation_id":r.get("recommendation_id"),"symbol":r.get("symbol"),"provider_source":"cached_candidate_context","source_timestamp":None,"cache_age_seconds":None,"freshness":r.get("freshness"),"catalyst":r.get("catalyst_context") or None,"catalyst_state":"UNAVAILABLE","fundamental_summary":"UNAVAILABLE","supporting_factors":[],"weakening_factors":[],"missing_information":["cached_profile_fundamentals"],"evidence_class":"PROVIDER_CONTEXT","evidence_quality":"INSUFFICIENT_EVIDENCE","blockers":["provider_cache_context_incomplete"],"reason":"fundamentals_are_contextual_only","advisory_only":True} for r in rows],"provider_calls_used":0,"broker_actions_used":0,"llm_calls_used":0,**_safety_flags_v1()}
     return {"endpoint": f"/api/{kind}", "status": "INSUFFICIENT_EVIDENCE", **_safety_flags_v1()}
 
 
@@ -44183,6 +44185,10 @@ def multi_horizon_candidate_evaluation_v1(): return _backend_intelligence_payloa
 def symbol_behavioral_memory_v2(): return _backend_intelligence_payload_v1("symbol")
 @router.get("/api/market_regime_trade_archetype_v1")
 def market_regime_trade_archetype_v1(): return _backend_intelligence_payload_v1("regime")
+@router.get("/api/sector_rotation_breadth_context_v1")
+def sector_rotation_breadth_context_v1(): return _backend_intelligence_payload_v1("sector")
+@router.get("/api/catalyst_fundamental_context_v2")
+def catalyst_fundamental_context_v2(): return _backend_intelligence_payload_v1("catalyst")
 
 
 @router.get("/api/dashboard_data_wiring_v1")
