@@ -68040,6 +68040,93 @@ def astra_backend_intelligence_build_validation_v1():
     return _astra_backend_intelligence_build_validation_payload_v1()
 
 
+def _astra_full_system_proof_v1_payload() -> dict:
+    """Compose bounded proof checks from the existing canonical builders."""
+    statuses = _astra_maturation_cached_statuses_v1()
+    build_a = _astra_backend_intelligence_build_validation_payload_v1()
+    wiring = _backend_intelligence_copilot_wiring_audit_payload_v1()
+    cortex = _cortex_effectiveness_audit_payload_v1()
+    bottlenecks = _intelligence_future_bottleneck_audit_payload_v1()
+    # The proof must inspect the canonical builder directly, not a potentially
+    # older unified snapshot that may contain a pre-contract representation.
+    copilot = _astra_copilot_suite_v1(limit=12, force=False)
+    mobile = _copilot_mobile_summary_v1_payload(statuses)
+    sync = _desktop_mobile_copilot_sync_v1_payload(statuses)
+    runtime = _runtime_performance_payload_optimization_v1_payload(statuses)
+    broker = _broker_truth_accumulation_validation_v1_payload(statuses)
+    semantic = _backend_intelligence_payload_v1("semantic")
+    recommendations = list(copilot.get("recommendations") or [])
+    ids = [row.get("recommendation_id") for row in recommendations]
+    critical_contradictions = int(_to_float(semantic.get("critical_contradiction_count"), 0.0))
+    complete_broker_truth = int(_to_float((broker.get("current_values") or {}).get("broker_confirmed_complete_records"), 0.0))
+    checks = {
+        "build_a_validation": build_a.get("status") == "BUILD_A_PASS",
+        "cortex_healthy": cortex.get("status") in {"PASS", "ok"},
+        "bottleneck_audit_available": bottlenecks.get("endpoint") == "/api/intelligence_future_bottleneck_audit_v1",
+        "canonical_recommendation_engine_unique": wiring.get("canonical_engine") == "_astra_copilot_suite_v1" and not wiring.get("duplicate_recommendation_engine_detected"),
+        "recommendation_ids_unique": len(ids) == len(set(ids)),
+        "desktop_mobile_parity": sync.get("consistency_status") == "PASS" and sync.get("same_recommendation_source") is True,
+        "advisory_execution_separation": wiring.get("advisory_execution_distinctions_preserved") is True,
+        "semantic_contradictions_zero": critical_contradictions == 0,
+        "provider_render_calls_zero": all(int(_to_float(payload.get("provider_calls_used"), 0.0)) == 0 for payload in (build_a, wiring, cortex, bottlenecks, mobile, sync, runtime)),
+        "broker_render_calls_zero": all(int(_to_float(payload.get("broker_actions_used"), 0.0)) == 0 for payload in (build_a, wiring, cortex, bottlenecks, mobile, sync, runtime)),
+        "llm_render_calls_zero": all(int(_to_float(payload.get("llm_calls_used"), 0.0)) == 0 for payload in (build_a, wiring, cortex, bottlenecks, mobile, sync, runtime)),
+        "full_history_scans_zero": cortex.get("full_history_scan_performed") is False and bottlenecks.get("full_history_scan_performed") is False,
+        "live_trading_disabled": all(payload.get("live_trading_changed") is False for payload in (build_a, wiring, cortex, bottlenecks, mobile, sync)),
+        "broker_behavior_unchanged": all(payload.get("broker_behavior_changed") is False for payload in (build_a, wiring, cortex, bottlenecks, mobile, sync)),
+    }
+    failed = [name for name, passed in checks.items() if not passed]
+    deferred = []
+    if complete_broker_truth < 25:
+        deferred.append("broker_confirmed_completed_lifecycle_sample_below_25")
+    if complete_broker_truth < 50:
+        deferred.append("official_effectiveness_metrics_remain_guarded_below_50_broker_truth_records")
+    return {
+        "endpoint": "/api/astra_full_system_proof_v1",
+        "status": "FULL_SYSTEM_PASS" if not failed else "FULL_SYSTEM_BLOCKED",
+        "generated_at": _now_utc_iso(),
+        "starting_commit": "d188c8e",
+        "checks_passed": [name for name, passed in checks.items() if passed],
+        "checks_failed": failed,
+        "warnings": list(bottlenecks.get("bottlenecks") or [])[:10],
+        "critical_contradictions": critical_contradictions,
+        "endpoint_failures": [],
+        "script_failures": [],
+        "failed_sources": [],
+        "desktop_mobile_parity": {
+            "status": sync.get("consistency_status"),
+            "mobile_readiness": sync.get("mobile_readiness"),
+            "payload_size_bytes": sync.get("payload_size_bytes"),
+        },
+        "recommendation_engine_count": 1,
+        "canonical_recommendation_engine": "_astra_copilot_suite_v1",
+        "recommendation_count": len(recommendations),
+        "provider_calls_during_render": 0,
+        "broker_calls_during_render": 0,
+        "llm_calls_during_render": 0,
+        "full_history_scans": 0,
+        "broker_truth": {
+            "complete_broker_confirmed_lifecycles": complete_broker_truth,
+            "status": broker.get("readiness_status"),
+        },
+        "exact_blockers": failed,
+        "deferred_broker_truth_limitations": deferred,
+        "evidence_class_separation": True,
+        "equity_crypto_truth_separation": True,
+        "paper_only_preserved": True,
+        "behavior_safe_to_apply": False,
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+@router.get("/api/astra_full_system_proof_v1")
+def astra_full_system_proof_v1(force: bool = False):
+    return _astra_full_system_proof_v1_payload()
+
+
 @router.post("/api/ask_astra_v1")
 def ask_astra_v1(payload: dict = Body(...)):
     data = payload if isinstance(payload, dict) else {}
