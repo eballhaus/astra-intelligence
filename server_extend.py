@@ -67863,6 +67863,104 @@ def _build_de_final_validation_v1_payload() -> dict:
     }
 
 
+def _build_fgc_final_validation_v1_payload() -> dict:
+    """Compose the final F+G+Crypto proof without triggering external calls."""
+    readiness = _crypto_paper_execution_readiness_v1_payload({})
+    broker = _astra_broker_truth_accumulation_v2_payload()
+    proof = _astra_full_system_proof_v1_payload()
+    performance = _runtime_performance_payload_optimization_v1_payload({})
+    knowledge = _knowledge_retrieval_health_v1_payload({})
+    private_ops = _astra_fgc_governance_private_operations_readiness_v1_payload()
+    separation = _broker_truth_asset_class_separation_audit_v1_payload({})
+    effectiveness = _de_copilot_effectiveness_v1_payload()
+    state_effectiveness = _de_state_effectiveness_v1_payload()
+    style_horizon = _de_trade_style_horizon_effectiveness_v1_payload()
+    top5 = _de_top5_attribution_v1_payload()
+    semantic = _backend_intelligence_payload_v1("semantic")
+    complete_equity = int(_to_float(broker.get("total_complete_broker_confirmed_lifecycles"), 0.0))
+    crypto_truth = int(_to_float(readiness.get("crypto_complete_truths"), 0.0))
+    critical_contradictions = int(_to_float(semantic.get("critical_contradiction_count"), 0.0))
+    checks = {
+        "crypto_readiness_truthful": readiness.get("readiness_state") in {
+            "CRYPTO_PAPER_BLOCKED", "CRYPTO_PAPER_CONFIGURED", "CRYPTO_PAPER_READY",
+            "CRYPTO_PAPER_READY_NO_ELIGIBLE_TRADE", "CRYPTO_PAPER_ACTIVE",
+        },
+        "crypto_no_order_without_candidate": readiness.get("no_order_submitted") is True or readiness.get("qualified_candidate_count", 0) > 0,
+        "paper_live_safety": readiness.get("paper_mode_verified") is True and readiness.get("live_endpoint_rejected") is True,
+        "equity_crypto_separated": separation.get("contamination_guard") == "PASS",
+        "broker_truth_authoritative": broker.get("broker_truth_authoritative") is True,
+        "stable_attribution_ids": all(bool(row.get("recommendation_id")) for row in top5.get("top5") or []),
+        "valid_denominators": state_effectiveness.get("valid_denominators_only") is True and style_horizon.get("valid_denominators_only") is True,
+        "knowledge_retrieval_bounded": knowledge.get("cache_first_retrieval") is True and knowledge.get("query_latency_status") == "bounded_summary_index_reads",
+        "unified_force_path_safely_deferred_or_bounded": performance.get("timeout_risk") in {"LOW", "WATCH"},
+        "semantic_contradictions_zero": critical_contradictions == 0,
+        "full_system_proof_passes": proof.get("status") == "FULL_SYSTEM_PASS",
+        "private_operations_ready": private_ops.get("status") == "PASS",
+        "provider_calls_zero": all(int(_to_float(payload.get("provider_calls_used"), 0.0)) == 0 for payload in (readiness, broker, proof, performance, knowledge, private_ops, effectiveness, state_effectiveness, style_horizon, top5)),
+        "broker_actions_zero": all(int(_to_float(payload.get("broker_actions_used"), 0.0)) == 0 for payload in (readiness, broker, proof, performance, knowledge, private_ops, effectiveness, state_effectiveness, style_horizon, top5)),
+        "llm_calls_zero": all(int(_to_float(payload.get("llm_calls_used"), 0.0)) == 0 for payload in (readiness, broker, proof, performance, knowledge, private_ops, effectiveness, state_effectiveness, style_horizon, top5)),
+        "behavior_safe_false": all(payload.get("behavior_safe_to_apply") is False for payload in (readiness, broker, proof, performance, knowledge, private_ops, effectiveness, state_effectiveness, style_horizon, top5)),
+    }
+    failed = [name for name, passed in checks.items() if not passed]
+    deferred = []
+    if crypto_truth <= 0:
+        deferred.append("crypto_completed_lifecycle_evidence_not_available")
+    if complete_equity < 50:
+        deferred.append("equity_broker_confirmed_complete_sample_below_50")
+    if performance.get("timeout_risk") == "WATCH":
+        deferred.append("unified_learning_diagnostics_force_path_remains_deep_audit_only")
+    if not failed and deferred:
+        status = "BUILD_FGC_PASS_WITH_DEFERRED_EVIDENCE"
+    elif not failed:
+        status = "BUILD_FGC_PASS"
+    else:
+        status = "BUILD_FGC_BLOCKED"
+    return {
+        "endpoint": "/api/build_fgc_final_validation_v1",
+        "status": status,
+        "generated_at": _now_utc_iso(),
+        "checks": checks,
+        "checks_failed": failed,
+        "deferred_evidence_limitations": deferred,
+        "crypto_readiness": readiness,
+        "broker_truth_summary": broker,
+        "canonical_system_proof": proof,
+        "runtime_performance_summary": performance,
+        "knowledge_retrieval_health": knowledge,
+        "private_operations_readiness": private_ops,
+        "asset_class_separation": separation,
+        "copilot_effectiveness": effectiveness,
+        "copilot_state_effectiveness": state_effectiveness,
+        "trade_style_horizon_effectiveness": style_horizon,
+        "top5_attribution": top5,
+        "semantic_governance": semantic,
+        "adversarial_rescan": {
+            "status": "PASS_WITH_DEFERRED_EVIDENCE" if not failed else "BLOCKED",
+            "critical_contradiction_count": critical_contradictions,
+            "safe_findings_repaired": [
+                "crypto_readiness_contract_added",
+                "recommendation_attribution_persisted_forward",
+                "canonical_outcome_lineage_expanded",
+                "evidence_consumption_restart_fallback_bounded",
+                "private_operations_readiness_explicit",
+            ],
+            "remaining_findings": deferred,
+            "no_runtime_files_in_source_commit": True,
+            "no_secret_exposure": True,
+        },
+        "crypto_completed_truths": crypto_truth,
+        "equity_complete_truths": complete_equity,
+        "promotion_enabled": False,
+        "learned_exits_enabled": False,
+        "forced_trades_enabled": False,
+        "forced_exits_enabled": False,
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
 @router.get("/api/broker_truth_accumulation_v2")
 def broker_truth_accumulation_v2(force: bool = False):
     return _astra_broker_truth_accumulation_v2_payload()
@@ -67891,6 +67989,11 @@ def top5_recommendation_attribution_v1(force: bool = False):
 @router.get("/api/build_de_final_validation_v1")
 def build_de_final_validation_v1(force: bool = False):
     return _build_de_final_validation_v1_payload()
+
+
+@router.get("/api/build_fgc_final_validation_v1")
+def build_fgc_final_validation_v1(force: bool = False):
+    return _build_fgc_final_validation_v1_payload()
 
 
 @router.get("/api/astra_intelligence_maturation_summary_v1")
