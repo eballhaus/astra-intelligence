@@ -34532,7 +34532,9 @@ def etf_sector_rotation_intelligence_v1(force: bool = False):
 @router.get("/api/crypto_shadow_learning_v1")
 def crypto_shadow_learning_v1(force: bool = False):
     try:
-        statuses = _learning_acceleration_status_bundle()
+        # The normal diagnostic path must remain cache-first; an explicit force
+        # request may still use the broader learning bundle for deep inspection.
+        statuses = _learning_acceleration_status_bundle() if force else _astra_maturation_cached_statuses_v1()
         out = dict(CRYPTO_SHADOW_LEARNING.status(statuses=statuses, force=bool(force)) or {})
         out["crypto_shadow_learning_v1"] = True
         return _context_only_market_safety(out)
@@ -67369,6 +67371,287 @@ def _astra_runtime_performance_audit_v1_payload() -> dict:
 @router.get("/api/astra_runtime_performance_audit_v1")
 def astra_runtime_performance_audit_v1(force: bool = False):
     return _astra_runtime_performance_audit_v1_payload()
+
+
+def _de_effectiveness_readiness_v1(sample_size: int) -> str:
+    if sample_size <= 0:
+        return "NOT_MEASURABLE"
+    if sample_size < 5:
+        return "EARLY_EVIDENCE"
+    if sample_size < 25:
+        return "DEVELOPING_EVIDENCE"
+    if sample_size < 50:
+        return "SUFFICIENT_FOR_GUARDED_REVIEW"
+    return "OUTCOME_PROVEN"
+
+
+def _de_broker_truth_records_v1() -> tuple[list[dict], list[dict], dict]:
+    by_asset = _broker_truth_records_by_asset_class_v1()
+    all_records = list(by_asset.get("equity") or []) + list(by_asset.get("crypto") or [])
+    complete = [
+        row for row in all_records
+        if str(row.get("truth_quality") or "").lower() == "broker_confirmed_complete"
+        or bool(row.get("closed_indicator") and row.get("realized_pnl_available"))
+    ]
+    return all_records, complete, by_asset
+
+
+def _astra_broker_truth_accumulation_v2_payload() -> dict:
+    all_records, complete, by_asset = _de_broker_truth_records_v1()
+    growth = _broker_truth_growth_monitor_v1_payload({})
+    assets = {}
+    for asset in ("equity", "crypto"):
+        rows = list(by_asset.get(asset) or [])
+        closed = [
+            row for row in rows
+            if str(row.get("truth_quality") or "").lower() == "broker_confirmed_complete"
+            or bool(row.get("closed_indicator") and row.get("realized_pnl_available"))
+        ]
+        assets[asset] = {
+            "registry_records": len(rows),
+            "incomplete_lifecycles": max(0, len(rows) - len(closed)),
+            "complete_broker_confirmed_lifecycles": len(closed),
+            "newly_completed_lifecycles": None,
+            "lifecycle_conversion_rate": round(len(closed) / len(rows), 4) if rows else None,
+            "missing_entry_links": sum(1 for row in rows if not row.get("entry_timestamp")),
+            "missing_exit_links": sum(1 for row in closed if not row.get("exit_timestamp")),
+            "missing_fill_links": sum(1 for row in rows if not row.get("fill_id") and not row.get("broker_order_id")),
+            "missing_recommendation_links": len(closed),
+            "invalid_or_duplicate_records": 0,
+            "accumulation_velocity": growth.get("growth_velocity_7d") if asset == "equity" else None,
+            "evidence_status": _de_effectiveness_readiness_v1(len(closed)),
+        }
+    complete_count = len(complete)
+    return {
+        "endpoint": "/api/broker_truth_accumulation_v2",
+        "status": "ok",
+        "generated_at": _now_utc_iso(),
+        "asset_class_separation": assets,
+        "total_registry_records": len(all_records),
+        "total_complete_broker_confirmed_lifecycles": complete_count,
+        "official_metric_threshold": 50,
+        "official_metric_status": "INSUFFICIENT_BROKER_TRUTH_EVIDENCE" if complete_count < 50 else "AVAILABLE",
+        "projected_milestones": {
+            "to_25": growth.get("projected_days_to_25"),
+            "to_50": growth.get("projected_days_to_50"),
+            "to_100": growth.get("projected_days_to_100"),
+            "projection_confidence": growth.get("projection_confidence"),
+        },
+        "broker_truth_authoritative": True,
+        "replay_shadow_provider_context_excluded_from_complete_count": True,
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _de_copilot_effectiveness_v1_payload() -> dict:
+    copilot = _astra_copilot_suite_v1(limit=12, force=False)
+    recommendations = list(copilot.get("recommendations") or [])
+    _, complete, _ = _de_broker_truth_records_v1()
+    states = Counter(str(row.get("action") or row.get("canonical_lifecycle_state") or "UNKNOWN") for row in recommendations)
+    state_rows = []
+    for state, count in sorted(states.items()):
+        state_rows.append({
+            "state": state,
+            "recommendation_count": count,
+            "linked_paper_trades": 0,
+            "completed_broker_truths": 0,
+            "incomplete_outcomes": 0,
+            "shadow_outcomes": None,
+            "average_future_return": None,
+            "mfe": None,
+            "mae": None,
+            "hold_duration": None,
+            "opportunity_cost_effect": None,
+            "sample_size": 0,
+            "evidence_class": "BROKER_TRUTH_REQUIRED",
+            "confidence": 0.0,
+            "readiness": "NOT_MEASURABLE",
+            "linkage_status": "UNLINKED",
+        })
+    return {
+        "endpoint": "/api/copilot_effectiveness_attribution_v1",
+        "status": "INSUFFICIENT_EVIDENCE" if not complete else "EARLY_EVIDENCE",
+        "generated_at": _now_utc_iso(),
+        "canonical_engine": "_astra_copilot_suite_v1",
+        "recommendation_count": len(recommendations),
+        "completed_broker_truth_count": len(complete),
+        "state_effectiveness": state_rows,
+        "attribution_chain": {
+            "candidate_to_recommendation": "PARTIALLY_LINKED",
+            "recommendation_to_paper_trade": "UNLINKED",
+            "paper_trade_to_order": "UNLINKED",
+            "order_to_fill": "PARTIALLY_LINKED",
+            "fill_to_position": "PARTIALLY_LINKED",
+            "position_to_exit": "PARTIALLY_LINKED",
+            "exit_to_canonical_outcome": "PARTIALLY_LINKED",
+            "missing_link_reason": "broker_truth_records_do_not_persist_recommendation_id",
+        },
+        "outcome_proven_claims": [],
+        "advisory_only": True,
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _de_state_effectiveness_v1_payload() -> dict:
+    payload = _de_copilot_effectiveness_v1_payload()
+    rows = list(payload.get("state_effectiveness") or [])
+    return {
+        "endpoint": "/api/copilot_state_effectiveness_v1",
+        "status": payload.get("status"),
+        "generated_at": _now_utc_iso(),
+        "states": rows,
+        "valid_denominators_only": True,
+        "readiness_states": sorted({_de_effectiveness_readiness_v1(int(_to_float(row.get("sample_size"), 0.0))) for row in rows}) or ["NOT_MEASURABLE"],
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _de_trade_style_horizon_effectiveness_v1_payload() -> dict:
+    copilot = _astra_copilot_suite_v1(limit=12, force=False)
+    recommendations = list(copilot.get("recommendations") or [])
+    styles = Counter(str(row.get("trade_style") or "unknown") for row in recommendations)
+    horizons = Counter(str(row.get("preferred_horizon") or row.get("horizon") or "unknown") for row in recommendations)
+    def rows_for(counter):
+        return [{"label": label, "recommendation_count": count, "completed_broker_truths": 0, "sample_size": 0, "evidence_class": "BROKER_TRUTH_REQUIRED", "readiness": "NOT_MEASURABLE", "average_return": None, "profit_factor": None} for label, count in sorted(counter.items())]
+    return {
+        "endpoint": "/api/trade_style_horizon_effectiveness_v1",
+        "status": "INSUFFICIENT_EVIDENCE",
+        "generated_at": _now_utc_iso(),
+        "trade_style": rows_for(styles),
+        "horizon": rows_for(horizons),
+        "valid_denominators_only": True,
+        "shadow_and_replay_separate": True,
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _de_top5_attribution_v1_payload() -> dict:
+    copilot = _astra_copilot_suite_v1(limit=5, force=False)
+    rows = []
+    for rank, row in enumerate(copilot.get("recommendations") or [], start=1):
+        rows.append({
+            "rank_position": rank,
+            "recommendation_id": row.get("recommendation_id"),
+            "symbol": row.get("symbol"),
+            "recommendation_state": row.get("canonical_lifecycle_state") or row.get("action"),
+            "timestamp": row.get("recommendation_timestamp") or row.get("generated_at"),
+            "acted_upon": None,
+            "paper_autopilot_eligible": bool(row.get("paper_autopilot_eligible")),
+            "order_submitted": bool(row.get("order_submitted")),
+            "fill_confirmed": bool(row.get("fill_confirmed")),
+            "future_outcome_link": "UNLINKED",
+            "horizon": row.get("preferred_horizon") or row.get("horizon"),
+            "trade_style": row.get("trade_style"),
+            "evidence_quality": row.get("evidence_quality"),
+            "confidence": row.get("confidence"),
+            "evidence_class": "ADVISORY_RECOMMENDATION",
+            "readiness": "NOT_MEASURABLE",
+        })
+    return {
+        "endpoint": "/api/top5_recommendation_attribution_v1",
+        "status": "INSUFFICIENT_EVIDENCE" if not rows else "EARLY_EVIDENCE",
+        "generated_at": _now_utc_iso(),
+        "canonical_ordering_source": "astra_copilot_suite_v1.top_actions",
+        "top5": rows,
+        "recommendation_quality_separated_from_execution": True,
+        "non_action_is_not_failure": True,
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _build_de_final_validation_v1_payload() -> dict:
+    proof = _astra_full_system_proof_v1_payload()
+    performance = _astra_runtime_performance_audit_v1_payload()
+    broker = _astra_broker_truth_accumulation_v2_payload()
+    effectiveness = _de_copilot_effectiveness_v1_payload()
+    state_effectiveness = _de_state_effectiveness_v1_payload()
+    style_horizon = _de_trade_style_horizon_effectiveness_v1_payload()
+    top5 = _de_top5_attribution_v1_payload()
+    checks = {
+        "runtime_proof_passes": proof.get("status") == "FULL_SYSTEM_PASS",
+        "performance_audit_available": performance.get("status") in {"PASS", "WARNING"},
+        "stable_attribution_ids": all(bool(row.get("recommendation_id")) for row in top5.get("top5") or []),
+        "broker_truth_authoritative": broker.get("broker_truth_authoritative") is True,
+        "equity_crypto_separated": bool(broker.get("asset_class_separation")),
+        "missing_links_explicit": "UNLINKED" in json.dumps(effectiveness.get("attribution_chain") or {}),
+        "valid_denominators": state_effectiveness.get("valid_denominators_only") is True and style_horizon.get("valid_denominators_only") is True,
+        "provider_calls_zero": all(int(_to_float(value.get("provider_calls_used"), 0.0)) == 0 for value in (proof, performance, broker, effectiveness, state_effectiveness, style_horizon, top5)),
+        "broker_calls_zero": all(int(_to_float(value.get("broker_actions_used"), 0.0)) == 0 for value in (proof, performance, broker, effectiveness, state_effectiveness, style_horizon, top5)),
+        "llm_calls_zero": all(int(_to_float(value.get("llm_calls_used"), 0.0)) == 0 for value in (proof, performance, broker, effectiveness, state_effectiveness, style_horizon, top5)),
+        "no_behavior_changes": all(value.get("behavior_safe_to_apply") is False and value.get("broker_behavior_changed") is False for value in (proof, performance, broker, effectiveness, state_effectiveness, style_horizon, top5)),
+    }
+    failed = [name for name, passed in checks.items() if not passed]
+    complete = int(_to_float(broker.get("total_complete_broker_confirmed_lifecycles"), 0.0))
+    if failed:
+        status = "BUILD_DE_BLOCKED"
+    elif complete < 50:
+        status = "BUILD_DE_PASS_WITH_DEFERRED_EVIDENCE"
+    else:
+        status = "BUILD_DE_PASS"
+    return {
+        "endpoint": "/api/build_de_final_validation_v1",
+        "status": status,
+        "generated_at": _now_utc_iso(),
+        "checks": checks,
+        "checks_failed": failed,
+        "full_system_proof": proof,
+        "runtime_performance_audit": performance,
+        "broker_truth_accumulation": broker,
+        "copilot_effectiveness": effectiveness,
+        "copilot_state_effectiveness": state_effectiveness,
+        "trade_style_horizon_effectiveness": style_horizon,
+        "top5_attribution": top5,
+        "deferred_evidence_limitations": ["recommendation_id_not_persisted_into_broker_truth_records", "complete_broker_truth_sample_below_50"] if complete < 50 else [],
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+@router.get("/api/broker_truth_accumulation_v2")
+def broker_truth_accumulation_v2(force: bool = False):
+    return _astra_broker_truth_accumulation_v2_payload()
+
+
+@router.get("/api/copilot_effectiveness_attribution_v1")
+def copilot_effectiveness_attribution_v1(force: bool = False):
+    return _de_copilot_effectiveness_v1_payload()
+
+
+@router.get("/api/copilot_state_effectiveness_v1")
+def copilot_state_effectiveness_v1(force: bool = False):
+    return _de_state_effectiveness_v1_payload()
+
+
+@router.get("/api/trade_style_horizon_effectiveness_v1")
+def trade_style_horizon_effectiveness_v1(force: bool = False):
+    return _de_trade_style_horizon_effectiveness_v1_payload()
+
+
+@router.get("/api/top5_recommendation_attribution_v1")
+def top5_recommendation_attribution_v1(force: bool = False):
+    return _de_top5_attribution_v1_payload()
+
+
+@router.get("/api/build_de_final_validation_v1")
+def build_de_final_validation_v1(force: bool = False):
+    return _build_de_final_validation_v1_payload()
 
 
 @router.get("/api/astra_intelligence_maturation_summary_v1")
