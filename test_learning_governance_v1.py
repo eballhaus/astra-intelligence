@@ -29,6 +29,14 @@ class LearningGovernanceV1Tests(unittest.TestCase):
         finally:
             server_extend._backend_intelligence_context_v1 = original
 
+    def test_horizon_and_symbol_views_do_not_fabricate_evidence(self):
+        horizons = server_extend._backend_intelligence_payload_v1("horizons")
+        symbols = server_extend._backend_intelligence_payload_v1("symbol")
+        for row in horizons.get("candidates", []):
+            self.assertTrue(all(item["completeness"] == "INSUFFICIENT_EVIDENCE" for item in row["horizons"]))
+        for row in symbols.get("profiles", []):
+            self.assertEqual(row["quality_label"], "INSUFFICIENT_EVIDENCE")
+
 
 if __name__ == "__main__":
     unittest.main()

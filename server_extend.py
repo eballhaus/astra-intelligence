@@ -43171,6 +43171,15 @@ def _backend_intelligence_payload_v1(kind: str) -> dict:
             if r.get("canonical_lifecycle_state") == "BUY_NOW" and (str(r.get("freshness")).upper() == "STALE" or r.get("blockers")): issues.append({"recommendation_id":r.get("recommendation_id"),"severity":"critical","type":"BUY_NOW_UNSAFE","fail_closed":True})
         return {"endpoint":"/api/semantic_governance_audit_v1","status":"PASS" if not issues else "SEMANTIC_FAIL_CLOSED","critical_contradiction_count":len(issues),"issues":issues,"provider_calls_used":0,"broker_actions_used":0,"llm_calls_used":0,**_safety_flags_v1()}
     if kind == "style": return {"endpoint":"/api/trade_style_intelligence_v1","status":"PASS" if rows else "INSUFFICIENT_EVIDENCE","candidates":[{"recommendation_id":r.get("recommendation_id"),"symbol":r.get("symbol"),"selected_style":"DAY_TRADE" if "day" in str(r.get("horizon")).lower() else "STANDARD_SWING" if "swing" in str(r.get("horizon")).lower() else "MONITOR_ONLY","confidence":r.get("confidence"),"evidence_quality":r.get("evidence_quality"),"blockers":r.get("blockers") or [],"advisory_only":True} for r in rows],**_safety_flags_v1()}
+    if kind == "horizons":
+        candidates=[]
+        for r in rows:
+            horizon=str(r.get("horizon") or "").lower(); supported=horizon in {"day_trade","short_swing","standard_swing","extended_swing","intraday"}
+            alternatives=[{"horizon":name,"fit_score":None,"completeness":"INSUFFICIENT_EVIDENCE","expected_hold_range":"not_available","blockers":["cached_candidate_horizon_components_unavailable"]} for name in ("day_trade","short_swing","standard_swing","extended_swing")]
+            candidates.append({"recommendation_id":r.get("recommendation_id"),"symbol":r.get("symbol"),"preferred_horizon":horizon if supported else None,"preferred_horizon_status":"ADVISORY_ONLY" if supported else "UNRESOLVED_HORIZON","horizons":alternatives,"confidence":r.get("confidence"),"evidence_quality":r.get("evidence_quality"),"blockers":r.get("blockers") or [],"reason":"canonical_cached_horizon_context","advisory_only":True})
+        return {"endpoint":"/api/multi_horizon_candidate_evaluation_v1","status":"PASS" if candidates else "INSUFFICIENT_EVIDENCE","candidates":candidates,**_safety_flags_v1()}
+    if kind == "symbol": return {"endpoint":"/api/symbol_behavioral_memory_v2","status":"INSUFFICIENT_EVIDENCE" if not rows else "PASS","profiles":[{"symbol":r.get("symbol"),"quality_label":"INSUFFICIENT_EVIDENCE","evidence_class":"ADVISORY_ONLY","evidence_count":0,"strongest_observed_horizon":None,"weakest_observed_horizon":None,"recency":"cached","confidence":None,"reason":"no broker-confirmed symbol-behavior sample"} for r in rows],**_safety_flags_v1()}
+    if kind == "regime": return {"endpoint":"/api/market_regime_trade_archetype_v1","status":"PASS" if rows else "INSUFFICIENT_EVIDENCE","rows":[{"recommendation_id":r.get("recommendation_id"),"symbol":r.get("symbol"),"regime":r.get("market_regime_context") or "UNCERTAIN","archetype":r.get("primary_driver") or "research only","compatibility":"ADVISORY_CONTEXT","freshness":r.get("freshness"),"confidence":r.get("confidence"),"invalidation":r.get("what_would_change"),"advisory_only":True} for r in rows],**_safety_flags_v1()}
     return {"endpoint": f"/api/{kind}", "status": "INSUFFICIENT_EVIDENCE", **_safety_flags_v1()}
 
 
@@ -44168,6 +44177,12 @@ def knowledge_quality_decay_v1(): return _backend_intelligence_payload_v1("quali
 def semantic_governance_audit_v1(): return _backend_intelligence_payload_v1("semantic")
 @router.get("/api/trade_style_intelligence_v1")
 def trade_style_intelligence_v1(): return _backend_intelligence_payload_v1("style")
+@router.get("/api/multi_horizon_candidate_evaluation_v1")
+def multi_horizon_candidate_evaluation_v1(): return _backend_intelligence_payload_v1("horizons")
+@router.get("/api/symbol_behavioral_memory_v2")
+def symbol_behavioral_memory_v2(): return _backend_intelligence_payload_v1("symbol")
+@router.get("/api/market_regime_trade_archetype_v1")
+def market_regime_trade_archetype_v1(): return _backend_intelligence_payload_v1("regime")
 
 
 @router.get("/api/dashboard_data_wiring_v1")
