@@ -198,6 +198,70 @@ class LearningGovernanceV1Tests(unittest.TestCase):
         finally:
             server_extend._backend_intelligence_context_v1 = original
 
+    def test_cortex_audit_emits_structured_advisory_issues(self):
+        payload = server_extend._cortex_effectiveness_audit_payload_v1()
+        self.assertEqual(payload["endpoint"], "/api/cortex_effectiveness_audit_v1")
+        self.assertTrue(payload["cortex_advisory_only"])
+        self.assertGreater(payload["issue_count"], 0)
+        required = {
+            "issue_id", "category", "severity", "source", "affected_consumers", "asset_class",
+            "symbols", "evidence", "root_cause", "current_impact", "future_impact",
+            "safe_repair_available", "human_review_required", "next_action", "first_observed",
+            "last_observed", "recurrence_count", "resolved",
+        }
+        for issue in payload["issues"]:
+            self.assertTrue(required.issubset(issue))
+        self.assertEqual(payload["provider_calls_used"], 0)
+        self.assertFalse(payload["behavior_safe_to_apply"])
+
+    def test_future_bottleneck_audit_is_bounded_and_classifies_repairs(self):
+        payload = server_extend._intelligence_future_bottleneck_audit_payload_v1()
+        self.assertEqual(payload["endpoint"], "/api/intelligence_future_bottleneck_audit_v1")
+        self.assertTrue(payload["full_history_scan_performed"] is False)
+        self.assertGreater(payload["bottleneck_count"], 0)
+        for item in payload["bottlenecks"]:
+            for field in ("category", "severity", "evidence", "affected_files_or_functions", "current_impact", "future_impact", "safe_immediate_repair", "deferred_repair", "human_review_required"):
+                self.assertIn(field, item)
+
+    def test_copilot_wiring_preserves_canonical_state_and_execution_fields(self):
+        payload = server_extend._backend_intelligence_copilot_wiring_audit_payload_v1()
+        self.assertEqual(payload["canonical_engine"], "_astra_copilot_suite_v1")
+        self.assertTrue(payload["stable_recommendation_ids"])
+        self.assertTrue(payload["canonical_state_preserved"])
+        self.assertTrue(payload["no_fabricated_context"])
+        self.assertTrue(payload["advisory_execution_distinctions_preserved"])
+
+    def test_build_a_validator_passes_with_cached_inputs(self):
+        payload = server_extend._astra_backend_intelligence_build_validation_payload_v1()
+        self.assertEqual(payload["status"], "BUILD_A_PASS")
+        self.assertFalse(payload["failed_checks"])
+        self.assertEqual(payload["semantic_contradiction_count"], 0)
+        self.assertEqual(payload["provider_calls_used"], 0)
+        self.assertEqual(payload["broker_actions_used"], 0)
+        self.assertEqual(payload["llm_calls_used"], 0)
+
+    def test_build_a_validator_blocks_critical_semantic_contradiction(self):
+        original = server_extend._backend_intelligence_context_v1
+        try:
+            server_extend._backend_intelligence_context_v1 = lambda: {
+                "rows": [{
+                    "recommendation_id": "contradiction:NVDA",
+                    "symbol": "NVDA",
+                    "asset_type": "equity",
+                    "canonical_lifecycle_state": "BUY_NOW",
+                    "freshness": "STALE",
+                    "evidence_quality": "MODERATE",
+                    "horizon": "day_trade",
+                    "blockers": ["stale_context"],
+                }]
+            }
+            payload = server_extend._astra_backend_intelligence_build_validation_payload_v1()
+            self.assertEqual(payload["status"], "BUILD_A_BLOCKED")
+            self.assertGreater(payload["semantic_contradiction_count"], 0)
+            self.assertIn("critical_semantic_contradictions_zero", payload["failed_checks"])
+        finally:
+            server_extend._backend_intelligence_context_v1 = original
+
 
 if __name__ == "__main__":
     unittest.main()

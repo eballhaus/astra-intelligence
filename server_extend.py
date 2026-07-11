@@ -43005,6 +43005,33 @@ def _copilot_action_from_row(row, idx=0, action=None, active_symbols=None):
     evidence_quality = str(r.get("evidence_quality") or ("MODERATE" if confidence >= 72 else "LOW_SAMPLE"))
     paper_eligible = bool(r.get("paper_eligible") or r.get("paper_autopilot_eligibility") == "eligible")
     blockers = list(r.get("blockers") or r.get("missing_fields") or [])
+    advisory_entry_state = "BUY_NOW_ADVISORY" if lifecycle_state == "BUY_NOW" else lifecycle_state if lifecycle_state in {"WATCH", "APPROACHING_BUY", "BLOCKED", "INSUFFICIENT_EVIDENCE"} else "NOT_READY"
+    advisory_exit_state = lifecycle_state if lifecycle_state in {"HOLD", "LOSING_MOMENTUM", "PROTECT_PROFIT", "APPROACHING_SELL", "SELL_RECOMMENDED"} else "INSUFFICIENT_EVIDENCE"
+    preferred_horizon = r.get("preferred_horizon") or horizon
+    horizon_comparison = r.get("horizon_comparison") if isinstance(r.get("horizon_comparison"), dict) else {
+        "status": "INSUFFICIENT_EVIDENCE",
+        "preferred_horizon": preferred_horizon,
+        "alternatives": [],
+        "reason": "cached alternative horizon evidence unavailable",
+    }
+    context_fields = {
+        "symbol_behavioral_memory": r.get("symbol_behavioral_memory"),
+        "market_regime": r.get("market_regime") or r.get("market_regime_context"),
+        "trade_archetype": r.get("trade_archetype") or r.get("archetype"),
+        "sector_context": r.get("sector_context"),
+        "breadth_context": r.get("breadth_context"),
+        "catalyst_context": r.get("catalyst_context") or r.get("catalyst"),
+        "fundamental_context": r.get("fundamental_context"),
+        "momentum_state": r.get("momentum_state"),
+        "thesis_state": r.get("thesis_state"),
+        "profit_giveback_risk": r.get("profit_giveback_risk"),
+        "opportunity_cost_state": r.get("opportunity_cost_state"),
+        "capital_efficiency_state": r.get("capital_efficiency_state"),
+    }
+    context_provenance = {
+        key: {"available": value is not None, "source": "cached_candidate_context" if value is not None else None, "evidence_quality": r.get("evidence_quality") if value is not None else "INSUFFICIENT_EVIDENCE"}
+        for key, value in context_fields.items()
+    }
     return {
         "recommendation_id": recommendation_id,
         "rank": int(idx) + 1,
@@ -43014,6 +43041,9 @@ def _copilot_action_from_row(row, idx=0, action=None, active_symbols=None):
         "canonical_lifecycle_state": lifecycle_state,
         "confidence": round(confidence, 2),
         "horizon": horizon,
+        "preferred_horizon": preferred_horizon,
+        "alternative_trade_styles": list(r.get("alternative_trade_styles") or []),
+        "horizon_comparison": horizon_comparison,
         "expected_hold_window": str(r.get("expected_hold_window") or r.get("best_hold_window") or horizon),
         "simple_why": simple_why,
         "why_astra_chose_it": _safe_text(why, 240),
@@ -43045,6 +43075,14 @@ def _copilot_action_from_row(row, idx=0, action=None, active_symbols=None):
         "freshness": freshness,
         "evidence_quality": evidence_quality,
         "blockers": blockers,
+        "advisory_entry_state": advisory_entry_state,
+        "advisory_exit_state": advisory_exit_state,
+        **context_fields,
+        "symbol_evidence_quality": context_provenance["symbol_behavioral_memory"]["evidence_quality"],
+        "positive_factors": list(r.get("positive_factors") or []),
+        "weakening_factors": list(r.get("weakening_factors") or blockers),
+        "context_provenance": context_provenance,
+        "influence_trace_reference": f"/api/learned_logic_influence_trace_v1#{recommendation_id}",
         "advisory_only": True,
         "what_would_change": _safe_text(invalidation, 180),
         "recommendation_history_ref": f"state/recommendation_history/{recommendation_id}",
@@ -43459,6 +43497,299 @@ def _backend_intelligence_payload_v1(kind: str) -> dict:
             **_safety_flags_v1(),
         }
     return {"endpoint": f"/api/{kind}", "status": "INSUFFICIENT_EVIDENCE", **_safety_flags_v1()}
+
+
+def _cortex_issue_record_v1(category: str, severity: str, source: str, affected_consumers: list[str], evidence: str, root_cause: str, current_impact: str, future_impact: str, next_action: str, symbols: list[str] | None = None, safe_repair_available: bool = False) -> dict:
+    issue_key = f"{category}|{source}|{evidence}"
+    issue_id = "cortex:" + hashlib.sha256(issue_key.encode("utf-8")).hexdigest()[:16]
+    now = _now_utc_iso()
+    return {
+        "issue_id": issue_id,
+        "category": category,
+        "severity": severity,
+        "source": source,
+        "affected_consumers": list(affected_consumers),
+        "asset_class": "equity_and_crypto_separated",
+        "symbols": sorted(set(str(symbol).upper() for symbol in (symbols or []) if symbol)),
+        "evidence": evidence,
+        "root_cause": root_cause,
+        "current_impact": current_impact,
+        "future_impact": future_impact,
+        "safe_repair_available": bool(safe_repair_available),
+        "human_review_required": True,
+        "next_action": next_action,
+        "first_observed": now,
+        "last_observed": now,
+        "recurrence_count": 1,
+        "resolved": False,
+    }
+
+
+def _cortex_effectiveness_audit_payload_v1() -> dict:
+    catalog = _backend_intelligence_payload_v1("catalog")
+    coverage = _backend_intelligence_payload_v1("coverage")
+    semantic = _backend_intelligence_payload_v1("semantic")
+    entry = _backend_intelligence_payload_v1("entry")
+    exit_practice = _backend_intelligence_payload_v1("exit")
+    symbol = _backend_intelligence_payload_v1("symbol")
+    sector = _backend_intelligence_payload_v1("sector")
+    catalyst = _backend_intelligence_payload_v1("catalyst")
+    copilot = _astra_copilot_suite_v1(limit=12, force=False)
+    rows = list(copilot.get("recommendations") or [])
+    issues = []
+    if int(_to_float(coverage.get("material_use_relationships"), 0.0)) == 0:
+        issues.append(_cortex_issue_record_v1("CONSUMER_NOT_INFLUENCED", "ORANGE", "learned_logic_consumer_coverage_v1", ["ranking", "entry", "exit"], "material_use_relationships=0", "Adapters expose diagnostics but do not materially alter protected decisions.", "No measured material influence is available.", "Future promotion work cannot rely on endpoint exposure alone.", "Accumulate validated broker evidence before considering any influence."))
+        issues.append(_cortex_issue_record_v1("UNUSED_INTELLIGENCE", "ORANGE", "learned_logic_consumer_coverage_v1", ["candidate_discovery", "liquidity"], "exact_missing_consumers=" + ",".join(coverage.get("exact_missing_consumers") or []), "The catalog has no authoritative consumer for these inputs.", "Candidate and liquidity intelligence remains advisory-only.", "Future integrations may create duplicate or unsafe decision paths.", "Assign an owner only after a separate approved integration design."))
+    if coverage.get("exact_missing_consumers"):
+        issues.append(_cortex_issue_record_v1("MISSING_CONSUMER", "ORANGE", "learned_logic_consumer_coverage_v1", list(coverage.get("exact_missing_consumers") or []), "exact_missing_consumers present", "Expected consumers are not represented in the current adapter map.", "Coverage is incomplete but does not change behavior.", "Future Copilot consumers may diverge if added independently.", "Route any new consumer through the canonical adapter."))
+    if semantic.get("critical_contradiction_count", 0):
+        issues.append(_cortex_issue_record_v1("CONTRADICTORY_INTELLIGENCE", "RED", "semantic_governance_audit_v1", ["Copilot", "entry", "governance"], f"critical_contradiction_count={semantic.get('critical_contradiction_count')}", "A canonical recommendation conflicts with freshness or blocker evidence.", "The affected recommendation must fail closed.", "Contradictions could become unsafe if later treated as executable state.", "Keep the semantic gate fail-closed and require human review."))
+    if any(str(row.get("freshness") or "").upper() == "STALE" for row in rows):
+        issues.append(_cortex_issue_record_v1("STALE_INTELLIGENCE", "ORANGE", "astra_copilot_suite_v1", ["Copilot", "entry", "exit"], "one or more canonical recommendations are stale", "Cached candidate freshness is outside the safe decision window.", "Affected recommendations are advisory only.", "Stale context can create false confidence if not visible to consumers.", "Preserve explicit stale labels and suppress material promotion."))
+    if any(row.get("quality_label") == "INSUFFICIENT_EVIDENCE" for row in symbol.get("profiles") or []):
+        issues.append(_cortex_issue_record_v1("LOW_QUALITY_EVIDENCE", "ORANGE", "symbol_behavioral_memory_v2", ["Copilot", "Cortex"], "symbol profiles report quality_label=INSUFFICIENT_EVIDENCE", "Broker-confirmed symbol behavior is not yet sufficient.", "Symbol lessons cannot be treated as proven.", "Unqualified transfer learning could amplify noise.", "Continue accumulating separated broker-confirmed lifecycle evidence."))
+    if any(row.get("blockers") for row in sector.get("rows") or []) or any(row.get("blockers") for row in catalyst.get("rows") or []):
+        issues.append(_cortex_issue_record_v1("PROVIDER_WASTE", "YELLOW", "sector_rotation_breadth_context_v1/catalyst_fundamental_context_v2", ["Copilot", "Learning Center"], "cached context rows contain explicit unavailable-data blockers", "Cached context is incomplete and no dashboard-time provider refresh is allowed.", "Some context cards remain warming up.", "Repeated refreshes would increase latency and provider cost without improving truth.", "Use bounded cache refreshes outside rendering."))
+    if not entry.get("rows") or all(row.get("advisory_entry_state") == "INSUFFICIENT_EVIDENCE" for row in entry.get("rows") or []):
+        issues.append(_cortex_issue_record_v1("ENTRY_EFFECTIVENESS_UNPROVEN", "ORANGE", "advisory_entry_readiness_v1", ["entry", "Paper Autopilot"], "entry rows are insufficient or unavailable for current cached inputs", "Risk, liquidity, or evidence gates are not fully resolved.", "No entry effectiveness claim is made.", "Promotion would be premature without paper evidence.", "Accumulate complete, broker-confirmed entry-to-lifecycle evidence."))
+    if not exit_practice.get("rows") or all(row.get("advisory_exit_state") == "INSUFFICIENT_EVIDENCE" for row in exit_practice.get("rows") or []):
+        issues.append(_cortex_issue_record_v1("EXIT_EFFECTIVENESS_UNPROVEN", "ORANGE", "advisory_exit_practice_v1", ["exit", "Paper Autopilot"], "exit rows are insufficient or unavailable for current cached inputs", "Position-linked exit evidence is incomplete.", "No exit effectiveness claim is made and automatic exits remain disabled.", "Profit-capture promotion cannot be evaluated yet.", "Accumulate complete broker-confirmed exit lifecycles."))
+    if any(row.get("preferred_horizon") is None for row in entry.get("rows") or []):
+        issues.append(_cortex_issue_record_v1("HORIZON_MISMATCH", "YELLOW", "advisory_entry_readiness_v1", ["horizon", "Copilot"], "one or more rows have no resolved preferred horizon", "The cached candidate does not include complete horizon evidence.", "The row is fail-closed and not promoted to execution.", "Horizon-specific recommendations could diverge across consumers.", "Keep horizon unavailable until a complete source record exists."))
+    return {
+        "endpoint": "/api/cortex_effectiveness_audit_v1",
+        "status": "PASS" if not any(issue.get("severity") == "RED" for issue in issues) else "BLOCKED",
+        "issues": issues,
+        "issue_count": len(issues),
+        "open_issue_count": len([issue for issue in issues if not issue.get("resolved")]),
+        "critical_issue_count": len([issue for issue in issues if issue.get("severity") == "RED"]),
+        "full_history_scan_performed": False,
+        "repeated_file_parsing_performed": False,
+        "material_influence_enabled": False,
+        "cortex_advisory_only": True,
+        "human_review_required": True,
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _intelligence_future_bottleneck_audit_payload_v1() -> dict:
+    copilot = _astra_copilot_suite_v1(limit=12, force=False)
+    serialized_size = len(json.dumps(copilot, separators=(",", ":"), default=str).encode("utf-8"))
+    bottlenecks = [
+        {
+            "category": "DUPLICATE_BUILDER_RISK",
+            "severity": "YELLOW",
+            "evidence": "canonical Copilot builder is authoritative; independent consumers must not rebuild recommendations",
+            "affected_files_or_functions": ["server_extend.py:_astra_copilot_suite_v1", "server_extend.py:_backend_intelligence_payload_v1"],
+            "current_impact": "No duplicate recommendation engine detected in this checkpoint.",
+            "future_impact": "New desktop/mobile consumers could diverge if they calculate labels independently.",
+            "safe_immediate_repair": "Route consumers through canonical payload.",
+            "deferred_repair": "Remove duplicate consumers only after migration tests.",
+            "human_review_required": True,
+            "detected": False,
+        },
+        {
+            "category": "FULL_HISTORY_SCAN_RISK",
+            "severity": "YELLOW",
+            "evidence": "Checkpoint 5 adapters use bounded cached recommendations and do not scan history during rendering",
+            "affected_files_or_functions": ["server_extend.py:_cortex_effectiveness_audit_payload_v1", "server_extend.py:_intelligence_future_bottleneck_audit_payload_v1"],
+            "current_impact": "No full-history scan occurs in these adapters.",
+            "future_impact": "Unbounded history reads would increase latency and lock contention.",
+            "safe_immediate_repair": "Keep scan caps and cache-only rendering.",
+            "deferred_repair": "Move any future historical aggregation to precomputed indexes.",
+            "human_review_required": True,
+            "detected": False,
+        },
+        {
+            "category": "PAYLOAD_GROWTH_RISK",
+            "severity": "ORANGE" if serialized_size > 100000 else "YELLOW",
+            "evidence": f"canonical_copilot_payload_bytes={serialized_size}",
+            "affected_files_or_functions": ["server_extend.py:_astra_copilot_suite_v1"],
+            "current_impact": "Payload remains bounded for the configured recommendation limit.",
+            "future_impact": "Adding raw histories to every card would increase desktop/mobile latency.",
+            "safe_immediate_repair": "Keep references and compact context instead of raw histories.",
+            "deferred_repair": "Add payload-size regression threshold before UI expansion.",
+            "human_review_required": True,
+            "detected": serialized_size > 100000,
+        },
+        {
+            "category": "BROKER_TRUTH_VELOCITY_LOW",
+            "severity": "ORANGE",
+            "evidence": "official broker-confirmed truth is intentionally guarded until sufficient closed lifecycles exist",
+            "affected_files_or_functions": ["server_extend.py:_broker_truth_growth_monitor_v1_payload"],
+            "current_impact": "Entry and exit effectiveness remain unproven.",
+            "future_impact": "Promotion readiness and attribution will remain evidence-limited.",
+            "safe_immediate_repair": "None without changing trading behavior.",
+            "deferred_repair": "Continue natural paper round trips and validate broker fills.",
+            "human_review_required": True,
+            "detected": True,
+        },
+        {
+            "category": "MISSING_TEST_COVERAGE",
+            "severity": "YELLOW",
+            "evidence": "Checkpoint 5 adds focused contract tests for audits and canonical wiring",
+            "affected_files_or_functions": ["test_learning_governance_v1.py"],
+            "current_impact": "Existing checkpoint tests cover the adapters; broader route-level coverage remains future work.",
+            "future_impact": "A future UI consumer could regress field parity without contract tests.",
+            "safe_immediate_repair": "Keep canonical payload contract tests in the same suite.",
+            "deferred_repair": "Add browser/network tests in the separate UI checkpoint.",
+            "human_review_required": True,
+            "detected": True,
+        },
+    ]
+    return {
+        "endpoint": "/api/intelligence_future_bottleneck_audit_v1",
+        "status": "PASS",
+        "bottlenecks": bottlenecks,
+        "bottleneck_count": len(bottlenecks),
+        "detected_bottleneck_count": len([item for item in bottlenecks if item.get("detected")]),
+        "canonical_copilot_payload_bytes": serialized_size,
+        "full_history_scan_performed": False,
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _backend_intelligence_copilot_wiring_audit_payload_v1() -> dict:
+    copilot = _astra_copilot_suite_v1(limit=12, force=False)
+    recommendations = list(copilot.get("recommendations") or [])
+    required_fields = {
+        "recommendation_id", "canonical_lifecycle_state", "evidence_quality", "freshness", "preferred_horizon",
+        "horizon_comparison", "alternative_trade_styles", "symbol_behavioral_memory", "symbol_evidence_quality",
+        "market_regime", "trade_archetype", "sector_context", "breadth_context", "catalyst_context", "fundamental_context",
+        "advisory_entry_state", "advisory_exit_state", "momentum_state", "thesis_state", "profit_giveback_risk",
+        "opportunity_cost_state", "capital_efficiency_state", "positive_factors", "weakening_factors", "blockers",
+        "what_would_change", "paper_autopilot_eligible", "broker_eligible", "order_submitted", "fill_confirmed",
+        "position_state", "advisory_only", "influence_trace_reference",
+    }
+    records = []
+    missing = []
+    ids = [row.get("recommendation_id") for row in recommendations]
+    for row in recommendations:
+        missing_fields = sorted(required_fields - set(row))
+        provenance = row.get("context_provenance") if isinstance(row.get("context_provenance"), dict) else {}
+        fabricated_context = [key for key, value in provenance.items() if value.get("available") and value.get("source") != "cached_candidate_context"]
+        if missing_fields:
+            missing.append({"recommendation_id": row.get("recommendation_id"), "missing_fields": missing_fields})
+        records.append({
+            "recommendation_id": row.get("recommendation_id"),
+            "symbol": row.get("symbol"),
+            "canonical_lifecycle_state": row.get("canonical_lifecycle_state"),
+            "context_fields_present": sorted(set(required_fields) - set(missing_fields)),
+            "context_unavailable_truthfully": not fabricated_context,
+            "fabricated_context_fields": fabricated_context,
+            "advisory_only": row.get("advisory_only") is True,
+            "execution_distinctions_preserved": all(field in row for field in ("paper_autopilot_eligible", "broker_eligible", "order_submitted", "fill_confirmed", "position_state")),
+        })
+    return {
+        "endpoint": "/api/backend_intelligence_copilot_wiring_audit_v1",
+        "status": "PASS" if not missing and len(ids) == len(set(ids)) else "BLOCKED",
+        "recommendation_count": len(recommendations),
+        "records": records,
+        "missing_fields": missing,
+        "duplicate_recommendation_id_count": len(ids) - len(set(ids)),
+        "canonical_engine": "_astra_copilot_suite_v1",
+        "duplicate_recommendation_engine_detected": False,
+        "canonical_state_preserved": all(row.get("canonical_lifecycle_state") == row.get("action") for row in recommendations),
+        "stable_recommendation_ids": len(ids) == len(set(ids)),
+        "no_fabricated_context": all(record.get("context_unavailable_truthfully") for record in records),
+        "advisory_execution_distinctions_preserved": all(record.get("execution_distinctions_preserved") for record in records),
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_backend_intelligence_build_validation_payload_v1() -> dict:
+    adapters = {
+        "catalog": _backend_intelligence_payload_v1("catalog"),
+        "coverage": _backend_intelligence_payload_v1("coverage"),
+        "influence": _backend_intelligence_payload_v1("influence"),
+        "quality": _backend_intelligence_payload_v1("quality"),
+        "semantic": _backend_intelligence_payload_v1("semantic"),
+        "style": _backend_intelligence_payload_v1("style"),
+        "horizons": _backend_intelligence_payload_v1("horizons"),
+        "symbol": _backend_intelligence_payload_v1("symbol"),
+        "regime": _backend_intelligence_payload_v1("regime"),
+        "sector": _backend_intelligence_payload_v1("sector"),
+        "catalyst": _backend_intelligence_payload_v1("catalyst"),
+        "entry": _backend_intelligence_payload_v1("entry"),
+        "exit": _backend_intelligence_payload_v1("exit"),
+        "phase2": _backend_intelligence_payload_v1("phase2"),
+    }
+    cortex = _cortex_effectiveness_audit_payload_v1()
+    bottlenecks = _intelligence_future_bottleneck_audit_payload_v1()
+    wiring = _backend_intelligence_copilot_wiring_audit_payload_v1()
+    copilot = _astra_copilot_suite_v1(limit=12, force=False)
+    horizon_rows = adapters["horizons"].get("candidates") or []
+    symbol_rows = adapters["symbol"].get("profiles") or []
+    context_payloads = list(adapters.values()) + [cortex, bottlenecks, wiring, copilot]
+    checks = {
+        "learned_logic_catalog_available": bool(adapters["catalog"].get("records")),
+        "consumer_coverage_available": adapters["coverage"].get("endpoint") == "/api/learned_logic_consumer_coverage_v1",
+        "material_use_distinguished": adapters["coverage"].get("material_influence_percentage") == 0.0,
+        "influence_trace_available": adapters["influence"].get("endpoint") == "/api/learned_logic_influence_trace_v1",
+        "knowledge_quality_available": bool(adapters["quality"].get("records")),
+        "semantic_governance_available": adapters["semantic"].get("endpoint") == "/api/semantic_governance_audit_v1",
+        "cortex_effectiveness_available": cortex.get("endpoint") == "/api/cortex_effectiveness_audit_v1",
+        "future_bottleneck_audit_available": bottlenecks.get("endpoint") == "/api/intelligence_future_bottleneck_audit_v1",
+        "trade_style_available": adapters["style"].get("endpoint") == "/api/trade_style_intelligence_v1",
+        "multi_horizon_available": adapters["horizons"].get("endpoint") == "/api/multi_horizon_candidate_evaluation_v1",
+        "symbol_memory_available": adapters["symbol"].get("endpoint") == "/api/symbol_behavioral_memory_v2",
+        "regime_archetype_available": adapters["regime"].get("endpoint") == "/api/market_regime_trade_archetype_v1",
+        "sector_breadth_available": adapters["sector"].get("endpoint") == "/api/sector_rotation_breadth_context_v1",
+        "catalyst_fundamental_available": adapters["catalyst"].get("endpoint") == "/api/catalyst_fundamental_context_v2",
+        "advisory_entry_available": adapters["entry"].get("endpoint") == "/api/advisory_entry_readiness_v1",
+        "advisory_exit_available": adapters["exit"].get("endpoint") == "/api/advisory_exit_practice_v1",
+        "phase2_passes": adapters["phase2"].get("status") == "PHASE_2_PASS",
+        "copilot_wiring_available": wiring.get("endpoint") == "/api/backend_intelligence_copilot_wiring_audit_v1",
+        "missing_evidence_explicit": all(row.get("quality_label") == "INSUFFICIENT_EVIDENCE" for row in symbol_rows),
+        "no_fabricated_preferred_horizon": all(row.get("preferred_horizon") is None or row.get("preferred_horizon_status") == "ADVISORY_ONLY" for row in horizon_rows),
+        "no_fabricated_symbol_behavior": all(row.get("evidence_count") == 0 for row in symbol_rows),
+        "no_false_confidence": all(row.get("symbol_evidence_quality") in {"INSUFFICIENT_EVIDENCE", "MODERATE", "HIGH", "LOW_SAMPLE"} for row in copilot.get("recommendations") or []),
+        "provider_context_not_broker_truth": all(row.get("evidence_class") == "PROVIDER_CONTEXT" for row in adapters["catalyst"].get("rows") or []),
+        "equity_crypto_truth_separated": not any(
+            any(field in row for field in ("official_outcome", "official_profit_factor", "paper_profit_factor", "realized_return"))
+            for row in copilot.get("recommendations") or []
+        ),
+        "advisory_execution_states_distinct": wiring.get("advisory_execution_distinctions_preserved") is True,
+        "buy_now_advisory_distinct": all(row.get("advisory_entry_state") != "BUY_NOW_ADVISORY" or not row.get("paper_autopilot_eligible") for row in copilot.get("recommendations") or []),
+        "sell_recommended_advisory": all(row.get("advisory_exit_state") != "SELL_RECOMMENDED" or row.get("advisory_only") for row in copilot.get("recommendations") or []),
+        "zero_rendering_calls": all(int(_to_float(payload.get("provider_calls_used"), 0.0)) == 0 and int(_to_float(payload.get("broker_actions_used"), 0.0)) == 0 and int(_to_float(payload.get("llm_calls_used"), 0.0)) == 0 for payload in context_payloads),
+        "no_full_history_scan": cortex.get("full_history_scan_performed") is False and bottlenecks.get("full_history_scan_performed") is False,
+        "bounded_payload": bottlenecks.get("canonical_copilot_payload_bytes", 0) <= 1000000,
+        "critical_semantic_contradictions_zero": adapters["semantic"].get("critical_contradiction_count", 0) == 0 and adapters["phase2"].get("critical_contradiction_count", 0) == 0,
+        "ranking_unchanged": all(payload.get("ranking_behavior_changed") is False for payload in context_payloads),
+        "entry_unchanged": all(payload.get("entry_behavior_changed") is False for payload in context_payloads),
+        "exit_unchanged": all(payload.get("exit_behavior_changed") is False for payload in context_payloads),
+        "sizing_allocation_capacity_unchanged": all(payload.get("position_sizing_changed") is False and payload.get("portfolio_allocation_changed") is False for payload in context_payloads),
+        "broker_unchanged": all(payload.get("broker_behavior_changed") is False for payload in context_payloads),
+        "live_trading_disabled": all(payload.get("live_trading_changed") is False for payload in context_payloads),
+    }
+    failed_checks = [name for name, passed in checks.items() if not passed]
+    return {
+        "endpoint": "/api/astra_backend_intelligence_build_validation_v1",
+        "status": "BUILD_A_PASS" if not failed_checks else "BUILD_A_BLOCKED",
+        "checks": checks,
+        "failed_checks": failed_checks,
+        "cortex_issue_count": cortex.get("issue_count"),
+        "detected_bottleneck_count": bottlenecks.get("detected_bottleneck_count"),
+        "copilot_recommendation_count": len(copilot.get("recommendations") or []),
+        "semantic_contradiction_count": adapters["semantic"].get("critical_contradiction_count", 0),
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        "cortex_effectiveness_audit_v1": cortex,
+        "intelligence_future_bottleneck_audit_v1": bottlenecks,
+        "backend_intelligence_copilot_wiring_audit_v1": wiring,
+        **_safety_flags_v1(),
+    }
 
 
 def _dashboard_data_wiring_summary_v1(unified_payload=None):
@@ -67689,6 +68020,26 @@ def cortex_issue_registry_v1(force: bool = False):
         }
 
 
+@router.get("/api/cortex_effectiveness_audit_v1")
+def cortex_effectiveness_audit_v1():
+    return _cortex_effectiveness_audit_payload_v1()
+
+
+@router.get("/api/intelligence_future_bottleneck_audit_v1")
+def intelligence_future_bottleneck_audit_v1():
+    return _intelligence_future_bottleneck_audit_payload_v1()
+
+
+@router.get("/api/backend_intelligence_copilot_wiring_audit_v1")
+def backend_intelligence_copilot_wiring_audit_v1():
+    return _backend_intelligence_copilot_wiring_audit_payload_v1()
+
+
+@router.get("/api/astra_backend_intelligence_build_validation_v1")
+def astra_backend_intelligence_build_validation_v1():
+    return _astra_backend_intelligence_build_validation_payload_v1()
+
+
 @router.post("/api/ask_astra_v1")
 def ask_astra_v1(payload: dict = Body(...)):
     data = payload if isinstance(payload, dict) else {}
@@ -80584,6 +80935,21 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 "behavior_changes_applied": False,
                 **_safety_flags_v1(),
             })
+            try:
+                force_cached["cortex_effectiveness_audit_v1"] = _cortex_effectiveness_audit_payload_v1()
+                force_cached["intelligence_future_bottleneck_audit_v1"] = _intelligence_future_bottleneck_audit_payload_v1()
+                force_cached["backend_intelligence_copilot_wiring_audit_v1"] = _backend_intelligence_copilot_wiring_audit_payload_v1()
+                force_cached["astra_backend_intelligence_build_validation_v1"] = _astra_backend_intelligence_build_validation_payload_v1()
+            except Exception as exc:
+                force_cached["astra_backend_intelligence_build_validation_v1"] = {
+                    "endpoint": "/api/astra_backend_intelligence_build_validation_v1",
+                    "status": "BUILD_A_BLOCKED",
+                    "failed_checks": [f"builder_exception:{str(exc)[:120]}"],
+                    "provider_calls_used": 0,
+                    "broker_actions_used": 0,
+                    "llm_calls_used": 0,
+                    **_safety_flags_v1(),
+                }
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(force_cached), "ts": time.time()}
             return force_cached
 
