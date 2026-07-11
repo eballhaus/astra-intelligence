@@ -63927,11 +63927,11 @@ def _broker_truth_throughput_acceleration_v2_payload(statuses: dict | None = Non
             "incomplete_records": max(0, len(records) - len(complete)),
             "average_hold_seconds": round(sum(holds) / len(holds), 3) if holds else None,
             "median_hold_seconds": round(sorted(holds)[len(holds) // 2], 3) if holds else None,
-            "completion_rate_pct": round((len(complete) / max(1, buy_fills)) * 100.0, 3),
+            "completion_rate_pct": round((len(complete) / buy_fills) * 100.0, 3) if buy_fills else None,
             "truths_last_7_days": truths_7d,
             "truth_velocity_per_day_7d": round(truths_7d / 7.0, 4),
-            "candidate_to_open_conversion_pct": round((buy_fills / max(1, candidates)) * 100.0, 3),
-            "open_to_close_conversion_pct": round((len(complete) / max(1, buy_fills)) * 100.0, 3),
+            "candidate_to_open_conversion_pct": round((buy_fills / candidates) * 100.0, 3) if candidates else None,
+            "open_to_close_conversion_pct": round((len(complete) / buy_fills) * 100.0, 3) if buy_fills else None,
         }
 
     equity = summarize("equity", equity_funnel)
