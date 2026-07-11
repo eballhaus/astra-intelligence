@@ -34,6 +34,12 @@ class CryptoFGCContractTests(unittest.TestCase):
         self.assertIn('"diagnostic_sources_separated"', self.source)
         self.assertIn('"evidence_consumption_status"', self.source)
 
+    def test_bounded_crypto_audit_script_exists(self):
+        script = ROOT / "scripts" / "astra_crypto_audit.sh"
+        self.assertTrue(script.exists())
+        self.assertIn("/api/crypto_paper_execution_readiness_v1", script.read_text(encoding="utf-8"))
+        self.assertNotIn("/probe", script.read_text(encoding="utf-8"))
+
     def test_strict_pair_normalization_preserves_asset_class_boundary(self):
         valid = normalize_crypto_pair_strict("btc-usd", asset_class="crypto")
         self.assertEqual(valid["normalized_symbol"], "BTC/USD")
