@@ -48112,6 +48112,22 @@ def _canonical_outcome_audit_v1(truth: dict, broker_registry: dict, *, persist: 
     complete_records = int(_to_float(broker_registry.get("broker_confirmed_complete_records"), 0.0))
     partial_records = int(_to_float(broker_registry.get("broker_reconstructable_partial_records"), 0.0))
     linked_outcomes = complete_records
+    broker_rows = [row for row in (broker_registry.get("records") or []) if isinstance(row, dict)]
+    complete_rows = [row for row in broker_rows if str(row.get("truth_quality") or "") == "broker_confirmed_complete"]
+    attribution_fields = {
+        "recommendation_id": sum(1 for row in complete_rows if row.get("recommendation_id")),
+        "decision_id": sum(1 for row in complete_rows if row.get("decision_id")),
+        "eligibility_evaluation_id": sum(1 for row in complete_rows if row.get("eligibility_evaluation_id")),
+        "candidate_id": sum(1 for row in complete_rows if row.get("candidate_id")),
+    }
+    horizon_counts = Counter(
+        str(row.get("paper_entry_horizon_style") or row.get("trade_horizon_style") or "unknown").strip().lower()
+        for row in complete_rows
+    )
+    similarity_index = _lc_index("trade_memory_similarity_v1.jsonl") if "_lc_index" in globals() else {}
+    consumption_index = _lc_index("outcome_labels_v1.jsonl") if "_lc_index" in globals() else {}
+    attributed_complete = min(attribution_fields.values()) if attribution_fields else 0
+    attribution_coverage = round((attributed_complete / max(1, complete_records)) * 100.0, 3)
     audit = {
         "audit": "canonical_outcome_audit_v1",
         "status": "audit_only",
@@ -48126,6 +48142,16 @@ def _canonical_outcome_audit_v1(truth: dict, broker_registry: dict, *, persist: 
         "unlinked_lifecycle_outcomes": max(0, unique_source - linked_outcomes),
         "advisory_only_outcomes": max(0, unique_source - linked_outcomes),
         "replay_or_counterfactual_outcomes": 0,
+        "official_metrics_source": "broker_confirmed_complete_paper_round_trips_only",
+        "diagnostic_sources_separated": ["lifecycle", "shadow", "replay", "counterfactual", "broker_truth"],
+        "broker_truth_attribution_fields": attribution_fields,
+        "broker_truth_attribution_linked_outcomes": attributed_complete,
+        "broker_truth_attribution_coverage_pct": attribution_coverage,
+        "broker_truth_horizon_distribution": dict(horizon_counts),
+        "broker_truth_horizon_linkage_status": "AVAILABLE" if any(horizon_counts.values()) else "INSUFFICIENT_EVIDENCE",
+        "opportunity_cost_similarity_index_rows": int(_to_float(similarity_index.get("sample_rows"), 0.0)),
+        "outcome_evidence_index_rows": int(_to_float(consumption_index.get("sample_rows"), 0.0)),
+        "evidence_consumption_status": "BROKER_GATED_DIAGNOSTIC" if complete_records < 50 else "BROKER_VALIDATED_READY_FOR_REVIEW",
         "outcome_canonicalization_status": "BROKER_TRUTH_PARTIAL_FOUNDATION" if broker_records else "WAITING_FOR_BROKER_TRUTH",
         "destructive_merge_performed": False,
         "raw_lifecycle_records_preserved": True,
@@ -67138,6 +67164,52 @@ def astra_evidence_consumption_teacher_shadow_v1(force: bool = False):
     cached_payload = dict((cached_unified or {}).get("astra_evidence_consumption_teacher_shadow_v1") or {})
     if cached_payload and not force:
         return cached_payload
+    if not force and not cached_payload:
+        # Keep direct endpoint consumers responsive after a restart.  The full
+        # teacher/shadow builder remains available through unified diagnostics;
+        # this fallback reads only bounded summary indexes and never refreshes a
+        # provider, broker, or LLM source.
+        specs = [
+            ("trade_lifecycle_excursion_v2", "lifecycle"),
+            ("replay_counterfactual_learning_v2", "replay"),
+            ("exit_learning_expansion_suite_v1", "exit"),
+            ("opportunity_cost_learning_v1", "opportunity_cost"),
+            ("trade_memory_similarity_v1", "historical_similarity"),
+            ("market_context_learning_suite_v1", "market_context"),
+            ("trade_archetype_regime_intelligence_v1", "trade_style"),
+        ]
+        sources = []
+        total = 0
+        for name, category in specs:
+            index = _lc_index(f"{name}.jsonl")
+            count = _lc_count(index)
+            total += count
+            sources.append({
+                "source": name,
+                "category": category,
+                "record_count": count,
+                "health_score": _evidence_consumption_index_health_v1(index),
+                "consumption_status": "bounded_index_available" if count else "insufficient_evidence",
+            })
+        broker = _astra_evidence_state_json("broker_truth_records_v1.json")
+        broker_complete = int(_to_float(broker.get("broker_confirmed_complete_records"), 0.0))
+        return {
+            "endpoint": "/api/astra_evidence_consumption_teacher_shadow_v1",
+            "status": "CACHE_FALLBACK",
+            "generated_at": _now_utc_iso(),
+            "source_mode": "bounded_summary_indexes_after_restart",
+            "evidence_sources": sources,
+            "total_indexed_evidence": total,
+            "broker_confirmed_complete_records": broker_complete,
+            "evidence_consumption_ratio": round((total / max(1, total + broker_complete)) * 100.0, 3),
+            "broker_truth_gated": broker_complete < 50,
+            "full_unified_refresh_available": True,
+            "provider_calls_used": 0,
+            "dashboard_provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "dashboard_llm_calls_used": 0,
+            **_safety_flags_v1(),
+        }
     statuses = dict(cached_unified or {})
     return _astra_evidence_consumption_teacher_shadow_payload(statuses)
 

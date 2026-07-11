@@ -28,6 +28,12 @@ class CryptoFGCContractTests(unittest.TestCase):
         self.assertIn('"broker_read_calls_used": 0', self.source)
         self.assertIn('"automatic_promotions_enabled": False', self.source)
 
+    def test_canonical_outcome_audit_reports_lineage_and_evidence_separation(self):
+        self.assertIn('"broker_truth_attribution_coverage_pct"', self.source)
+        self.assertIn('"official_metrics_source": "broker_confirmed_complete_paper_round_trips_only"', self.source)
+        self.assertIn('"diagnostic_sources_separated"', self.source)
+        self.assertIn('"evidence_consumption_status"', self.source)
+
     def test_strict_pair_normalization_preserves_asset_class_boundary(self):
         valid = normalize_crypto_pair_strict("btc-usd", asset_class="crypto")
         self.assertEqual(valid["normalized_symbol"], "BTC/USD")
