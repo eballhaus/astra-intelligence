@@ -42979,12 +42979,18 @@ def _copilot_action_from_row(row, idx=0, action=None, active_symbols=None):
             selected_action = "STRONG_CANDIDATE"
         else:
             selected_action = "WATCH"
-    selected_action = {
-        "HOLD": "MANAGE_POSITION",
+    raw_action = str(selected_action).upper()
+    lifecycle_state = {
+        "MANAGE_POSITION": "HOLD",
+        "HOLD": "HOLD",
         "WATCH_CLOSELY": "WATCH",
-        "APPROACHING_SELL": "EXIT_CANDIDATE",
-        "SELL_RECOMMENDED": "EXIT_CANDIDATE",
-    }.get(str(selected_action).upper(), str(selected_action).upper())
+        "STRONG_CANDIDATE": "APPROACHING_BUY",
+        "EXIT_CANDIDATE": "APPROACHING_SELL",
+    }.get(raw_action, raw_action)
+    if symbol in active and raw_action not in {"SELL_RECOMMENDED", "APPROACHING_SELL", "LOSING_MOMENTUM", "PROTECT_PROFIT"}:
+        lifecycle_state = "HOLD"
+    if lifecycle_state not in {"WATCH", "APPROACHING_BUY", "BUY_NOW", "HOLD", "LOSING_MOMENTUM", "PROTECT_PROFIT", "APPROACHING_SELL", "SELL_RECOMMENDED", "BLOCKED", "DATA_STALE", "INSUFFICIENT_EVIDENCE", "MONITOR_ONLY"}:
+        lifecycle_state = "INSUFFICIENT_EVIDENCE"
     catalyst = str(r.get("catalyst") or r.get("theme") or r.get("sector") or "cached context is still developing")
     market_fit = str(r.get("market_fit") or r.get("market_regime") or r.get("regime") or "best when participation and follow-through remain supportive")
     risk = str(r.get("portfolio_risk_label") or r.get("risk_label") or "volatility and follow-through uncertainty")
@@ -42994,11 +43000,18 @@ def _copilot_action_from_row(row, idx=0, action=None, active_symbols=None):
         or r.get("what_would_invalidate")
         or "momentum, catalyst support, or market participation weakens"
     )
+    recommendation_id = "copilot:" + hashlib.sha256(f"{symbol}|{horizon}|{lifecycle_state}|{idx}".encode("utf-8")).hexdigest()[:16]
+    freshness = str(r.get("freshness_status") or r.get("candidate_freshness") or "CACHED")
+    evidence_quality = str(r.get("evidence_quality") or ("MODERATE" if confidence >= 72 else "LOW_SAMPLE"))
+    paper_eligible = bool(r.get("paper_eligible") or r.get("paper_autopilot_eligibility") == "eligible")
+    blockers = list(r.get("blockers") or r.get("missing_fields") or [])
     return {
+        "recommendation_id": recommendation_id,
         "rank": int(idx) + 1,
         "symbol": symbol,
         "asset_type": str(r.get("asset_type") or r.get("kind") or "stock"),
-        "action": selected_action,
+        "action": lifecycle_state,
+        "canonical_lifecycle_state": lifecycle_state,
         "confidence": round(confidence, 2),
         "horizon": horizon,
         "expected_hold_window": str(r.get("expected_hold_window") or r.get("best_hold_window") or horizon),
@@ -43009,7 +43022,7 @@ def _copilot_action_from_row(row, idx=0, action=None, active_symbols=None):
         "market_fit": _safe_text(market_fit, 180),
         "main_risk": _safe_text(risk, 160),
         "what_would_invalidate_it": _safe_text(invalidation, 180),
-        "simple_summary": _safe_text(f"{symbol}: {selected_action.replace('_', ' ').title()} with {confidence:.0f}% confidence on a {horizon} horizon.", 220),
+        "simple_summary": _safe_text(f"{symbol}: {lifecycle_state.replace('_', ' ').title()} with {confidence:.0f}% confidence on a {horizon} horizon.", 220),
         "risk_level": risk,
         "contributing_systems": [
             "cached_top_buys",
@@ -43024,6 +43037,18 @@ def _copilot_action_from_row(row, idx=0, action=None, active_symbols=None):
             "paper_execution_unchanged": True,
         },
         "paper_position_status": str(r.get("paper_position_status") or "not_checked_on_dashboard_hot_path"),
+        "paper_autopilot_eligible": paper_eligible,
+        "broker_eligible": bool(r.get("broker_eligibility", False)),
+        "order_submitted": bool(r.get("order_submitted", False)),
+        "fill_confirmed": bool(r.get("fill_confirmed", False)),
+        "position_state": "POSITION_OPEN" if symbol in active else "NO_OPEN_POSITION",
+        "freshness": freshness,
+        "evidence_quality": evidence_quality,
+        "blockers": blockers,
+        "advisory_only": True,
+        "what_would_change": _safe_text(invalidation, 180),
+        "recommendation_history_ref": f"state/recommendation_history/{recommendation_id}",
+        "decision_trace_ref": f"cached_top_buys:{symbol}",
         "shadow_support": str(r.get("shadow_support") or r.get("shadow_readiness") or "advisory_only"),
         "catalyst_context": str(r.get("catalyst") or r.get("theme") or r.get("sector") or "cached_context_warming_up"),
         "exit_context": str(r.get("exit_context") or "natural_exit_preserved"),
@@ -43075,11 +43100,15 @@ def _astra_copilot_suite_v1(limit=12, force=False):
         "actions_by_type": actions_by_type,
         "action_labels": {
             "BUY_NOW": "Buy Now",
-            "STRONG_CANDIDATE": "Strong Candidate",
+            "APPROACHING_BUY": "Approaching Buy",
             "WATCH": "Watch",
-            "MANAGE_POSITION": "Manage Position",
-            "EXIT_CANDIDATE": "Exit Candidate",
+            "HOLD": "Hold",
+            "LOSING_MOMENTUM": "Losing Momentum",
+            "PROTECT_PROFIT": "Protect Profit",
+            "APPROACHING_SELL": "Approaching Sell",
+            "SELL_RECOMMENDED": "Sell Recommended",
         },
+        "canonical_recommendation_contract_v1": True,
         "ordering_source": "astra_copilot_suite_v1.top_actions",
         "shared_ordering_enabled": True,
         "source_summary": {
@@ -44091,6 +44120,12 @@ def ask_astra_status_v1(force: bool = False):
 @router.get("/api/astra_copilot_suite_v1")
 def astra_copilot_suite_endpoint_v1(limit: int = 12, force: bool = False):
     return _astra_copilot_suite_v1(limit=limit, force=force)
+
+
+@router.get("/api/copilot_decision_command_v1")
+def copilot_decision_command_v1(limit: int = 5):
+    payload = _astra_copilot_suite_v1(limit=max(1, min(12, int(limit))), force=False)
+    return {**payload, "endpoint": "/api/copilot_decision_command_v1", "top_actions": (payload.get("top_actions") or [])[:5]}
 
 
 @router.get("/api/dashboard_data_wiring_v1")
