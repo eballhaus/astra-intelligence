@@ -13,14 +13,28 @@ _RATE_LIMITS = defaultdict(int)
 _LAST_CALL_TS = defaultdict(float)
 _WINDOW_CALL_TS = defaultdict(list)
 _COOLDOWN_UNTIL = defaultdict(float)
-_TEMP_STRATEGY_ENABLED = str(os.getenv("ASTRA_TEMP_PROVIDER_STRATEGY_V1", "1")).strip().lower() in {"1", "true", "yes", "on"}
-_FMP_SMART_BUDGET_ENABLED = str(os.getenv("ASTRA_FMP_SMART_BUDGET_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
-_TEMP_FMP_REST_DISABLED_EXPLICIT = "ASTRA_TEMP_FMP_REST_DISABLED" in os.environ
-_TEMP_FMP_REST_DISABLED = (
-    str(os.getenv("ASTRA_TEMP_FMP_REST_DISABLED", "0" if _FMP_SMART_BUDGET_ENABLED else "1")).strip().lower()
-    in {"1", "true", "yes", "on"}
-)
 _DEFAULT_CAP_PER_MIN = int(float(os.getenv("ASTRA_PROVIDER_DEFAULT_CAP_PER_MIN", "120")))
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = str(os.getenv(name, "1" if default else "0") or "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _temp_strategy_enabled() -> bool:
+    return _env_bool("ASTRA_TEMP_PROVIDER_STRATEGY_V1", True)
+
+
+def _fmp_smart_budget_enabled() -> bool:
+    return _env_bool("ASTRA_FMP_SMART_BUDGET_ENABLED", True)
+
+
+def _fmp_rest_disable_explicit() -> bool:
+    return "ASTRA_TEMP_FMP_REST_DISABLED" in os.environ
+
+
+def _fmp_rest_disabled() -> bool:
+    return _fmp_rest_disable_explicit() and _env_bool("ASTRA_TEMP_FMP_REST_DISABLED", False)
 
 
 def _normalize(provider: str) -> str:
@@ -35,7 +49,7 @@ def _cap_per_min(provider: str) -> int:
             return max(0, int(float(override)))
         except Exception:
             pass
-    if _TEMP_STRATEGY_ENABLED:
+    if _temp_strategy_enabled():
         temporary_caps = {
             "ALPACA": 240,
             "TWELVEDATA": 35,
@@ -45,7 +59,7 @@ def _cap_per_min(provider: str) -> int:
             "ALPHAVANTAGE": 8,
             "MORALIS": 20,
             "FRED": 4,
-            "FMP": 0 if _TEMP_FMP_REST_DISABLED else 4,
+            "FMP": 0 if _fmp_rest_disabled() else 4,
         }
         if p in temporary_caps:
             return int(temporary_caps[p])
@@ -67,9 +81,9 @@ def _provider_role(provider: str) -> str:
     if p == "POLYGON":
         return "backup_quote_feed"
     if p == "FMP":
-        if _TEMP_FMP_REST_DISABLED:
+        if _fmp_rest_disabled():
             return "rest_conserved_websocket_monitor_only"
-        if _FMP_SMART_BUDGET_ENABLED:
+        if _fmp_smart_budget_enabled():
             return "smart_budget_cache_first_bounded_rest"
         return "fmp_rest_standard_budgeted"
     if p == "FRED":
@@ -86,7 +100,7 @@ def get_call_permission(provider: str, cost: int = 1) -> bool:
     with _LOCK:
         if _COOLDOWN_UNTIL[p] > now:
             return False
-        if _TEMP_STRATEGY_ENABLED and _TEMP_FMP_REST_DISABLED and p == "FMP":
+        if _temp_strategy_enabled() and _fmp_rest_disabled() and p == "FMP":
             return False
         cap = _cap_per_min(p)
         if cap <= 0:
@@ -150,7 +164,7 @@ def get_provider_status_summary() -> list[dict]:
                     "provider_average_latency": 0.0,
                     "healthy": bool(success_rate >= 30.0 and cooldown_state != "cooldown"),
                     "cap_per_minute": int(_cap_per_min(p)),
-                    "temp_strategy_mode": bool(_TEMP_STRATEGY_ENABLED),
+                    "temp_strategy_mode": bool(_temp_strategy_enabled()),
                 }
             )
     return rows
@@ -162,8 +176,8 @@ def get_usage_summary() -> dict:
             "total_calls": int(sum(_CALLS.values())),
             "total_errors": int(sum(_ERRORS.values())),
             "total_rate_limits": int(sum(_RATE_LIMITS.values())),
-            "temporary_provider_strategy_v1": bool(_TEMP_STRATEGY_ENABLED),
-            "fmp_rest_temporarily_disabled": bool(_TEMP_STRATEGY_ENABLED and _TEMP_FMP_REST_DISABLED),
-            "fmp_rest_disable_explicit": bool(_TEMP_FMP_REST_DISABLED_EXPLICIT),
-            "fmp_smart_budget_enabled": bool(_FMP_SMART_BUDGET_ENABLED),
+            "temporary_provider_strategy_v1": bool(_temp_strategy_enabled()),
+            "fmp_rest_temporarily_disabled": bool(_temp_strategy_enabled() and _fmp_rest_disabled()),
+            "fmp_rest_disable_explicit": bool(_fmp_rest_disable_explicit()),
+            "fmp_smart_budget_enabled": bool(_fmp_smart_budget_enabled()),
         }

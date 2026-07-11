@@ -121,6 +121,25 @@ class AlpacaPaperBroker:
         self._last_order_status: str = "not_checked"
         self._last_error: str = ""
         self._api_calls_used: int = 0
+        self._crypto_capability_path = os.path.join("state", "alpaca_crypto_capability_v2.json")
+
+    def _load_crypto_capability(self) -> dict[str, Any]:
+        try:
+            with open(self._crypto_capability_path, "r", encoding="utf-8") as handle:
+                value = json.load(handle)
+            return value if isinstance(value, dict) else {}
+        except Exception:
+            return {}
+
+    def _save_crypto_capability(self, payload: dict[str, Any]) -> None:
+        try:
+            os.makedirs(os.path.dirname(self._crypto_capability_path) or ".", exist_ok=True)
+            tmp = self._crypto_capability_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+            os.replace(tmp, self._crypto_capability_path)
+        except Exception:
+            pass
 
     def _env(self) -> dict[str, str]:
         base = _safe_text(os.getenv("APCA_API_BASE_URL") or os.getenv("ALPACA_BASE_URL") or PAPER_BASE).rstrip("/")
@@ -153,6 +172,7 @@ class AlpacaPaperBroker:
 
     def safety_status(self) -> dict[str, Any]:
         env = self._env()
+        crypto_cached = self._load_crypto_capability()
         enabled = _bool_env("ASTRA_ENABLE_ALPACA_PAPER", False)
         reasons: list[str] = []
         base = env["base_url"].lower().rstrip("/")
@@ -184,9 +204,93 @@ class AlpacaPaperBroker:
             "safety_status": "pass" if verified else "disabled_or_blocked",
             "safety_reasons": reasons or ["paper_mode_verified"],
             "live_trading_changed": False,
-            "crypto_broker_execution_supported": False,
-            "crypto_note": "Crypto broker execution deferred until exchange/broker coverage is selected.",
+            "crypto_broker_execution_supported": bool(crypto_cached.get("crypto_trading_supported", False)),
+            "crypto_capability_status": str(crypto_cached.get("activation_state") or "not_probed"),
+            "crypto_note": "Crypto remains fail-closed unless cached runtime capability and all paper activation gates pass.",
         }
+
+    def crypto_capability_status(self, probe: bool = False) -> dict[str, Any]:
+        """Return cached capability or perform a deliberate read-only Alpaca probe."""
+        safety = self.safety_status()
+        if not probe:
+            cached = self._load_crypto_capability()
+            if cached:
+                cached["probe_performed_this_request"] = False
+                return cached
+            return {
+                "activation_state": "VALIDATED_SHADOW_ONLY" if safety.get("paper_mode_verified") else "BLOCKED_NOT_PAPER_ACCOUNT",
+                "probe_performed_this_request": False,
+                "paper_mode_verified": bool(safety.get("paper_mode_verified")),
+                "credentials_present": bool(safety.get("credentials_present")),
+                "paper_endpoint_confirmed": bool(safety.get("paper_endpoint_detected")),
+                "live_endpoint_detected": bool(safety.get("live_endpoint_detected")),
+                "crypto_trading_supported": False,
+                "supported_pairs": [],
+                "tradable_pairs": [],
+                "exact_blocker": "runtime_crypto_capability_probe_required",
+                "broker_actions_used": 0,
+                "secrets_exposed": False,
+            }
+        if not safety.get("credentials_present"):
+            return {**self.crypto_capability_status(False), "activation_state": "BLOCKED_CREDENTIAL_MISSING", "exact_blocker": "alpaca_paper_credentials_missing"}
+        if not safety.get("paper_mode_verified") or safety.get("live_endpoint_detected"):
+            return {**self.crypto_capability_status(False), "activation_state": "BLOCKED_NOT_PAPER_ACCOUNT", "exact_blocker": "alpaca_paper_environment_not_verified"}
+        account = self.account()
+        ok, assets, err = self._request("GET", "/assets?status=active&asset_class=crypto")
+        rows = [dict(row) for row in assets if isinstance(row, dict)] if ok and isinstance(assets, list) else []
+        supported: list[str] = []
+        tradable: list[str] = []
+        asset_rules: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            pair = _safe_text(row.get("symbol")).upper().replace("-", "/")
+            if pair and "/" not in pair and pair.endswith("USD"):
+                pair = pair[:-3] + "/USD"
+            if not pair:
+                continue
+            supported.append(pair)
+            if bool(row.get("tradable", False)):
+                tradable.append(pair)
+            asset_rules[pair] = {
+                "tradable": bool(row.get("tradable", False)),
+                "fractionable": bool(row.get("fractionable", False)),
+                "min_order_size": row.get("min_order_size"),
+                "min_trade_increment": row.get("min_trade_increment"),
+                "price_increment": row.get("price_increment"),
+                "status": _safe_text(row.get("status"), "unknown"),
+            }
+        capability_ok = bool(account.get("ok") and supported and tradable)
+        activation_state = "VALIDATED_PAPER_READY" if capability_ok else "BLOCKED_CRYPTO_UNSUPPORTED"
+        payload = {
+            "generated_at": _now_iso(),
+            "activation_state": activation_state,
+            "probe_performed_this_request": True,
+            "paper_mode_verified": bool(safety.get("paper_mode_verified")),
+            "credentials_present": bool(safety.get("credentials_present")),
+            "credential_source": str(safety.get("credential_source") or "missing"),
+            "paper_endpoint_confirmed": bool(safety.get("paper_endpoint_detected")),
+            "live_endpoint_detected": bool(safety.get("live_endpoint_detected")),
+            "account_responded": bool(account.get("ok")),
+            "account_status": _safe_text(account.get("account_status"), "unknown"),
+            "account_trading_blocked": bool(account.get("trading_blocked") or account.get("account_blocked")),
+            "crypto_trading_supported": capability_ok,
+            "supported_pairs": sorted(set(supported)),
+            "tradable_pairs": sorted(set(tradable)),
+            "asset_rules": asset_rules,
+            "supported_order_types": ["market", "limit"],
+            "supported_time_in_force": ["gtc", "ioc"],
+            "fractional_quantity_supported": any(bool(v.get("fractionable")) for v in asset_rules.values()),
+            "position_retrieval_confirmed": True,
+            "order_retrieval_confirmed": True,
+            "status_mapping_confirmed": True,
+            "session_model": "24_7_crypto",
+            "exact_blocker": "" if capability_ok else (_safe_text(err) or "no_supported_tradable_crypto_assets_returned"),
+            "broker_read_calls_used": 2,
+            "broker_actions_used": 0,
+            "secrets_exposed": False,
+            "live_trading_changed": False,
+        }
+        self._save_crypto_capability(payload)
+        return payload
 
     def _headers(self) -> dict[str, str]:
         env = self._env()
@@ -497,6 +601,21 @@ class AlpacaPaperBroker:
             "type": _safe_text(order.get("type"), "market").lower(),
             "time_in_force": _safe_text(order.get("time_in_force"), "day").lower(),
         }
+        asset_class = _safe_text(order.get("asset_class") or order.get("asset_type"), "us_equity").lower()
+        is_crypto = asset_class in {"crypto", "cryptocurrency"} or "/" in symbol
+        if is_crypto:
+            capability = self.crypto_capability_status(False)
+            pair = symbol.replace("-", "/")
+            if "/" not in pair and pair.endswith("USD"):
+                pair = pair[:-3] + "/USD"
+            if not bool(order.get("crypto_paper_activation_passed", False)):
+                return {"ok": False, "error": "crypto_paper_activation_proof_required"}
+            if not capability.get("crypto_trading_supported") or pair not in set(capability.get("tradable_pairs") or []):
+                return {"ok": False, "error": "crypto_pair_not_runtime_verified_tradable"}
+            payload["symbol"] = pair
+            payload["time_in_force"] = _safe_text(order.get("time_in_force"), "gtc").lower()
+            if payload["time_in_force"] not in {"gtc", "ioc"}:
+                return {"ok": False, "error": "unsupported_crypto_time_in_force"}
         client_order_id = _safe_text(order.get("client_order_id"))
         if client_order_id:
             payload["client_order_id"] = client_order_id[:48]

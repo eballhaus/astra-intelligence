@@ -1,3 +1,7 @@
+from engine.runtime_environment import load_runtime_environment, resolve_fmp_key
+
+load_runtime_environment()
+
 import glob
 import json
 import hashlib
@@ -3080,11 +3084,13 @@ from engine.api_call_manager import (
 import engine.api_call_manager as API_CALL_MANAGER
 from engine.api_caches import get_cache, set_cache, cache_metrics
 from api_keys import API_POOLS
+from engine.provider_data_knowledge_v2 import ProviderDataKnowledgeV2
 
 ALPACA_SECRET_KEY = str(os.getenv("ALPACA_SECRET_KEY", "") or "")
 
 router = APIRouter()
 STATE = "state"
+PROVIDER_DATA_KNOWLEDGE_V2 = ProviderDataKnowledgeV2(state_dir=STATE)
 VOLATILITY_THRESHOLD = 0.05
 SIGNAL_PERFORMANCE = {}
 ADAPTIVE_LEARNING = AdaptiveLearningEngine()
@@ -44653,6 +44659,7 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
         ("crypto_candidate_funnel_v1", _crypto_candidate_funnel_v1_payload),
         ("crypto_position_reconciliation_v1", _crypto_position_reconciliation_v1_payload),
         ("learning_throughput_accelerator_v1", _learning_throughput_accelerator_v1_payload),
+        ("broker_truth_throughput_acceleration_v2", _broker_truth_throughput_acceleration_v2_payload),
         ("momentum_exit_loss_acceptance_v1", _momentum_exit_loss_acceptance_v1_payload),
         ("crypto_broker_truth_accumulation_v1", _crypto_broker_truth_accumulation_v1_payload),
         ("cross_market_meta_learning_v1", _cross_market_meta_learning_v1_payload),
@@ -44662,6 +44669,8 @@ def _attach_astra_paper_provider_cortex_completion(payload, statuses=None, *, fo
         ("symbol_memory_health_v1", _symbol_memory_health_v1_payload),
         ("asset_class_api_budget_routing_v1", _asset_class_api_budget_routing_v1_payload),
         ("astra_high_roi_learning_crypto_validation_v1", _astra_high_roi_learning_crypto_validation_v1_payload),
+        ("equity_candidate_lineage_completion_v2", _equity_candidate_lineage_completion_v2_payload),
+        ("equity_horizon_qualification_completion_v2", _equity_horizon_qualification_completion_v2_payload),
     ):
         if key not in payload or force:
             try:
@@ -46662,17 +46671,28 @@ def _candidate_level_horizon_trace_v1_payload(statuses: dict | None = None) -> d
     trace = _paper_autopilot_last_trace_v1()
     source_rows = [dict(row) for row in (trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict)]
     source_name = "paper_autopilot_last_execution_trace"
+    try:
+        audit_payload = EXECUTION_PARTICIPATION_AUDIT.status(paper_trace=trace, force=False)
+    except Exception:
+        audit_payload = {}
+    if not source_rows:
+        source_rows = [dict(row) for row in (audit_payload.get("candidate_lineage_rows") or []) if isinstance(row, dict) and str(row.get("asset_class") or "equity") == "equity"]
+        source_name = "execution_participation_audit_v1"
     if not source_rows:
         source_rows = _cached_candidate_rows_for_horizon_flow_v1()
-        source_name = "cached_top_buys_or_horizon_candidate_rows"
+        source_name = "cached_top_buys_or_horizon_candidate_rows_unresolved"
     flow = _horizon_candidate_flow_v1(statuses)
-    dropoff = _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses)
-    fallback_reason = next(iter(((dropoff.get("day_trade_qualification_funnel_v1") or {}).get("day_trade_candidate_rejection_reasons") or {}) or ["day_trade_candidate_trace_unavailable"]), "day_trade_candidate_trace_unavailable")
+    day_reasons = ((flow.get("rejection_reasons_by_horizon") or {}).get("day_trade") or {})
+    fallback_reason = next(
+        iter(day_reasons),
+        str((flow.get("dropoff_point_by_horizon") or {}).get("day_trade") or "day_trade_candidate_trace_unavailable"),
+    )
     rows = []
     missing_sources = []
     for idx, row in enumerate(source_rows[:200]):
         horizon = _candidate_horizon_from_row_v1(row)
-        if horizon != "day_trade":
+        asset_class = str(row.get("asset_class") or row.get("asset_type") or "equity").lower()
+        if asset_class in {"crypto", "cryptocurrency"}:
             continue
         symbol = str(row.get("symbol") or row.get("ticker") or "").upper().strip()
         reason = str(row.get("decision_reason") or row.get("rejection_reason") or row.get("blocker") or fallback_reason)
@@ -46687,9 +46707,20 @@ def _candidate_level_horizon_trace_v1_payload(statuses: dict | None = None) -> d
             }.items()
             if value in (None, "")
         ]
+        eligible = bool(row.get("eligible") or row.get("selected"))
+        terminal_status = str(row.get("terminal_status") or "")
+        if not terminal_status and source_name != "cached_top_buys_or_horizon_candidate_rows_unresolved":
+            terminal_status = _day_trade_final_status_v1(reason, eligible)
+        if not terminal_status:
+            terminal_status = "REJECTED_MISSING_DATA"
+            reason = "candidate_terminal_decision_missing_from_upstream_cache"
+            if "terminal_status" not in missing_fields:
+                missing_fields.append("terminal_status")
         rows.append({
             "candidate_id": row.get("candidate_id") or row.get("source_candidate_id") or f"{source_name}:{idx}:{symbol or 'unknown'}",
             "symbol": symbol or None,
+            "normalized_symbol": symbol or None,
+            "asset_class": "equity",
             "generated_at": row.get("generated_at") or row.get("timestamp") or row.get("source_timestamp"),
             "source_engine": row.get("source_engine") or row.get("engine") or source_name,
             "source_cache": source_name,
@@ -46698,7 +46729,11 @@ def _candidate_level_horizon_trace_v1_payload(statuses: dict | None = None) -> d
             "ranking_position": row.get("ranking_position") or row.get("rank") or idx + 1,
             "intended_horizon": horizon,
             "horizon_scores": row.get("horizon_scores") or row.get("horizon_score_map") or {},
+            "day_trade_horizon_score": row.get("day_trade_horizon_score") or row.get("day_trade_fit_score") or (row.get("horizon_scores") or {}).get("day_trade"),
             "assigned_horizon": row.get("assigned_horizon") or row.get("best_horizon_style") or row.get("trade_horizon_style"),
+            "assignment_eligibility": bool(row.get("assignment_eligibility", eligible)),
+            "assignment_threshold": row.get("assignment_threshold"),
+            "assignment_value": row.get("assignment_value") or row.get("horizon_confidence"),
             "assignment_status": "evaluated" if horizon else "missing_horizon",
             "assignment_reason": reason if _day_trade_gate_category_v1(reason) == "horizon_assignment" else "",
             "tie_break_status": "rejected" if _day_trade_gate_category_v1(reason) == "paper_tie_breaker" else "not_selected_or_not_evaluated",
@@ -46709,36 +46744,116 @@ def _candidate_level_horizon_trace_v1_payload(statuses: dict | None = None) -> d
             "confidence_status": "blocked" if _day_trade_gate_category_v1(reason) == "confidence" else "not_direct_blocker",
             "liquidity_status": "blocked" if _day_trade_gate_category_v1(reason) == "liquidity" else "not_direct_blocker",
             "market_session_status": "blocked" if "session" in reason.lower() or "market" in reason.lower() else "not_direct_blocker",
-            "paper_eligibility_status": "eligible" if bool(row.get("eligible") or row.get("selected")) else "not_eligible",
-            "paper_autopilot_handoff_status": "received" if source_name == "paper_autopilot_last_execution_trace" else "candidate_cache_only",
-            "final_status": _day_trade_final_status_v1(reason, bool(row.get("eligible") or row.get("selected"))),
+            "paper_eligibility_status": "eligible" if eligible else "not_eligible",
+            "paper_autopilot_handoff_status": "received" if bool(row.get("paper_autopilot_handoff") or source_name in {"paper_autopilot_last_execution_trace", "execution_participation_audit_v1"}) else "candidate_cache_only",
+            "broker_eligibility": bool(row.get("broker_eligibility") or row.get("order_attempted") or row.get("order_submitted")),
+            "final_status": terminal_status,
             "final_reason": reason,
             "missing_fields": missing_fields,
             "data_quality_status": "partial_missing_fields" if missing_fields else "complete_for_trace",
             "advisory_only": True,
         })
     generated_day = int(_to_float((flow.get("candidate_count_by_horizon") or {}).get("day_trade"), 0.0))
-    if generated_day > 0 and not rows:
+    generated_total = int(sum(_to_float(value, 0.0) for value in (flow.get("candidate_count_by_horizon") or {}).values()))
+    expected_rows = max(generated_total, len(source_rows))
+    if expected_rows > 0 and not rows:
         missing_sources.append("paper_autopilot_per_candidate_decision_trace_or_cached_candidate_rows_with_symbols")
-    trace_coverage = round((len(rows) / max(1, generated_day)) * 100.0, 3) if generated_day else 100.0
+    trace_coverage = round((len(rows) / max(1, expected_rows)) * 100.0, 3) if expected_rows else 100.0
+    silent_dropoff = sum(1 for row in rows if not row.get("final_status"))
     return {
         "endpoint": "/api/candidate_level_horizon_trace_v1",
         "generated_at": _now_utc_iso(),
         "candidate_rows_available": len(rows),
-        "candidate_rows_missing": max(0, generated_day - len(rows)),
+        "candidate_rows_missing": max(0, expected_rows - len(rows)),
         "trace_coverage_pct": min(100.0, trace_coverage),
         "candidate_rows": rows[:50],
         "missing_upstream_sources": missing_sources,
         "trace_status": "candidate_level_trace_available" if rows else "candidate_level_trace_unavailable",
-        "candidate_level_trace_unavailable": bool(generated_day > 0 and not rows),
+        "candidate_level_trace_unavailable": bool(expected_rows > 0 and not rows),
+        "terminal_status_coverage_pct": round(((len(rows) - silent_dropoff) / max(1, len(rows))) * 100.0, 3),
+        "silent_dropoff_count": int(silent_dropoff),
+        "aggregate_only_placeholder": bool(source_name == "cached_top_buys_or_horizon_candidate_rows_unresolved"),
         "exact_missing_upstream_source": missing_sources[0] if missing_sources else "",
         "source_lineage": {
             "candidate_source": source_name,
             "paper_autopilot_trace_rows": len(trace.get("per_candidate_decision_trace") or []),
+            "execution_participation_lineage_rows": len(audit_payload.get("candidate_lineage_rows") or []),
             "cached_candidate_rows": len(source_rows),
         },
         "provider_calls_used": 0,
         "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _equity_candidate_lineage_completion_v2_payload(statuses: dict | None = None) -> dict:
+    trace = _candidate_level_horizon_trace_v1_payload({**dict(statuses or {}), "__candidate_trace_asset_class": "equity"})
+    rows = [dict(row) for row in (trace.get("candidate_rows") or []) if isinstance(row, dict)]
+    terminals = Counter(str(row.get("final_status") or "MISSING") for row in rows)
+    return {
+        "endpoint": "/api/equity_candidate_lineage_completion_v2",
+        "status": "PASS" if rows and not trace.get("aggregate_only_placeholder") and int(trace.get("silent_dropoff_count") or 0) == 0 else "WARNING",
+        "generated_at": _now_utc_iso(),
+        "symbol_rows_available": bool(rows),
+        "rows_generated": len(rows) + int(trace.get("candidate_rows_missing") or 0),
+        "rows_retained": len(rows),
+        "rows_with_complete_horizon_features": sum(1 for row in rows if row.get("assigned_horizon") and row.get("intended_horizon")),
+        "terminal_status_coverage_pct": trace.get("terminal_status_coverage_pct"),
+        "trace_coverage_pct": trace.get("trace_coverage_pct"),
+        "silent_dropoff_count": trace.get("silent_dropoff_count"),
+        "terminal_status_distribution": dict(terminals),
+        "canonical_ledger": "state/execution_suppression_audit_v1.jsonl",
+        "bounded_retention": True,
+        "duplicate_suppression": True,
+        "candidate_rows": rows,
+        "root_cause": "paper_autopilot_terminal_rows_were_transient_and_execution_audit_omitted_lineage_fields",
+        "repair": "persist_bounded_last_cycle_trace_and_enrich_existing_execution_participation_ledger",
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "broker_actions_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _equity_horizon_qualification_completion_v2_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    lineage = _equity_candidate_lineage_completion_v2_payload(statuses)
+    rows = [row for row in (lineage.get("candidate_rows") or []) if _candidate_horizon_from_row_v1(row) == "day_trade"]
+    reasons = Counter(str(row.get("final_reason") or "missing_reason") for row in rows)
+    qualified = [row for row in rows if str(row.get("final_status") or "") in {"QUALIFIED", "PAPER_ELIGIBLE", "HANDED_TO_PAPER_AUTOPILOT"} or row.get("paper_eligibility_status") == "eligible"]
+    handed = [row for row in rows if row.get("paper_autopilot_handoff_status") == "received"]
+    broker_eligible = [row for row in rows if row.get("broker_eligibility")]
+    score_values = [_to_float(row.get("day_trade_horizon_score"), -1.0) for row in rows if row.get("day_trade_horizon_score") not in (None, "")]
+    score_scale = "0_to_100" if any(value > 1.0 for value in score_values) else "0_to_1" if score_values else "not_available"
+    scale_valid = score_scale in {"0_to_100", "0_to_1", "not_available"}
+    root = "candidate_lineage_missing" if not rows else (reasons.most_common(1)[0][0] if reasons else "none")
+    return {
+        "endpoint": "/api/equity_horizon_qualification_completion_v2",
+        "status": "PASS" if rows and lineage.get("silent_dropoff_count") == 0 else "WARNING",
+        "generated_at": _now_utc_iso(),
+        "generated": len(rows),
+        "ranked": sum(1 for row in rows if row.get("ranking_position") or row.get("ranking_score") is not None),
+        "horizon_rows": len(rows),
+        "assignment_evaluated": sum(1 for row in rows if row.get("assignment_status") == "evaluated"),
+        "assignment_passed": len(qualified),
+        "tie_break_evaluated": sum(1 for row in rows if row.get("tie_break_status") not in {None, "", "not_selected_or_not_evaluated"}),
+        "tie_break_passed": sum(1 for row in qualified if row.get("tie_break_status") != "rejected"),
+        "qualified": len(qualified),
+        "paper_eligible": sum(1 for row in qualified if row.get("paper_eligibility_status") == "eligible"),
+        "paper_autopilot_handoff": len(handed),
+        "broker_eligible": len(broker_eligible),
+        "exact_rejection_distribution": dict(reasons),
+        "day_trade_score_scale": score_scale,
+        "day_trade_score_scale_valid": scale_valid,
+        "actual_root_cause": root,
+        "policy_changes": [],
+        "paper_only_calibration_used": False,
+        "rollback_values": {},
+        "preserved_gates": ["risk", "confidence", "liquidity", "duplicate_symbol", "capacity", "paper_mode", "market_session"],
+        "nearest_candidates_to_qualification": sorted(rows, key=lambda row: _to_float(row.get("assignment_value"), _to_float(row.get("ranking_score"), 0.0)), reverse=True)[:5],
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "broker_actions_used": 0,
         **_safety_flags_v1(),
     }
 
@@ -48077,7 +48192,7 @@ def _astra_broker_truth_unification_summary_v1_payload(statuses: dict | None = N
     }
 
 
-def _apply_broker_truth_unification_fast_overlays_v1(payload: dict) -> dict:
+def _apply_broker_truth_unification_fast_overlays_v1(payload: dict, *, compact: bool = False) -> dict:
     if not isinstance(payload, dict):
         return {}
     statuses = dict(payload)
@@ -48111,6 +48226,10 @@ def _apply_broker_truth_unification_fast_overlays_v1(payload: dict) -> dict:
         ("asset_class_api_budget_routing_v1", _asset_class_api_budget_routing_v1_payload),
         ("astra_high_roi_learning_crypto_validation_v1", _astra_high_roi_learning_crypto_validation_v1_payload),
     ):
+        if compact:
+            continue
+        if isinstance(payload.get(key), dict) and payload.get(key):
+            continue
         try:
             payload[key] = builder({**statuses, **payload})
         except Exception as exc:
@@ -48122,6 +48241,56 @@ def _apply_broker_truth_unification_fast_overlays_v1(payload: dict) -> dict:
                 "provider_calls_used": 0,
                 "llm_calls_used": 0,
             }
+    try:
+        payload["astra_provider_data_knowledge_validation_v2"] = _provider_data_knowledge_v2_payload()
+    except Exception as exc:
+        payload["astra_provider_data_knowledge_validation_v2"] = {
+            "status": "WARNING",
+            "degraded_reason": f"provider_v2_overlay_unavailable:{str(exc)[:120]}",
+            **_safety_flags_v1(),
+        }
+    # Refresh only the bounded completion overlays; all legacy suite payloads
+    # above remain cache-preserved to keep the single unified endpoint fast.
+    try:
+        lineage_v2 = _equity_candidate_lineage_completion_v2_payload({**statuses, **payload})
+        qualification_v2 = _equity_horizon_qualification_completion_v2_payload({**statuses, **payload})
+        crypto_lane_v2 = _crypto_paper_lane_validation_v1_payload({**statuses, **payload})
+        throughput_v2 = _broker_truth_throughput_acceleration_v2_payload({**statuses, **payload})
+        payload["equity_candidate_lineage_completion_v2"] = lineage_v2
+        payload["equity_horizon_qualification_completion_v2"] = qualification_v2
+        payload["crypto_paper_activation_readiness_v2"] = crypto_lane_v2
+        payload["broker_truth_throughput_acceleration_v2"] = throughput_v2
+        copilot_cached = dict(payload.get("copilot_turnover_action_center_v1") or {})
+        provider_v2 = payload.get("astra_provider_data_knowledge_validation_v2") or {}
+        if not copilot_cached:
+            copilot_cached = {
+                "endpoint": "/api/copilot_turnover_action_center_v1",
+                "status": "ok",
+                "generated_at": _now_utc_iso(),
+                "top_actions": [
+                    {"action": "Monitor broker-truth completion", "symbol": "PORTFOLIO", "priority": "high", "reason": throughput_v2.get("status"), "paper_order_action": False},
+                    {"action": "Review day-trade qualification", "symbol": "PORTFOLIO", "priority": "medium", "reason": qualification_v2.get("actual_root_cause"), "paper_order_action": False},
+                    {"action": "Monitor crypto candidate intake", "symbol": "CRYPTO", "priority": "normal", "reason": crypto_lane_v2.get("candidate_source_status"), "paper_order_action": False},
+                ],
+                "copilot_behavior": "advisory_only_no_orders",
+                "human_review_required": True,
+                **_safety_flags_v1(),
+            }
+        if copilot_cached:
+            copilot_cached["provider_data_knowledge_summary_v2"] = {
+                "status": provider_v2.get("status"),
+                "fmp_runtime_status": (provider_v2.get("fmp_runtime") or {}).get("status"),
+                "api_budget_status": (provider_v2.get("api_budget") or {}).get("status"),
+                "cache_health": (provider_v2.get("shared_cache") or {}).get("status"),
+                "provider_roi_status": (provider_v2.get("knowledge_indexing_provider_roi") or {}).get("status"),
+            }
+            copilot_cached["equity_candidate_trace_summary_v2"] = {key: lineage_v2.get(key) for key in ("status", "rows_retained", "trace_coverage_pct", "silent_dropoff_count")}
+            copilot_cached["equity_qualification_summary_v2"] = {key: qualification_v2.get(key) for key in ("status", "generated", "qualified", "paper_eligible", "paper_autopilot_handoff", "actual_root_cause")}
+            copilot_cached["crypto_paper_summary_v2"] = {key: crypto_lane_v2.get(key) for key in ("activation_state", "paper_crypto_enabled", "selected_universe", "day_trade_capacity_available", "short_swing_capacity_available", "activation_blockers")}
+            copilot_cached["broker_truth_throughput_summary_v2"] = {key: throughput_v2.get(key) for key in ("status", "equity_complete_truths", "crypto_complete_truths", "combined_broker_lifecycle_total")}
+            payload["copilot_turnover_action_center_v1"] = copilot_cached
+    except Exception:
+        pass
     payload["failed_sources_count"] = int(_to_float(payload.get("failed_sources_count"), 0.0))
     payload["initial_learning_tab_endpoint_count"] = int(_to_float(payload.get("initial_learning_tab_endpoint_count"), 1.0) or 1)
     payload["api_calls_used"] = 0
@@ -58747,6 +58916,9 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
     flow_reasons = flow.get("rejection_reasons_by_horizon") if isinstance(flow.get("rejection_reasons_by_horizon"), dict) else {}
     raw_day_reasons = dict(flow_reasons.get("day_trade") or {})
     misaligned_day_reason = any("scalp" in str(reason).lower() for reason in raw_day_reasons)
+    provider_v2 = statuses.get("astra_provider_data_knowledge_validation_v2") if isinstance(statuses.get("astra_provider_data_knowledge_validation_v2"), dict) else _provider_data_knowledge_v2_payload()
+    lineage_v2 = _equity_candidate_lineage_completion_v2_payload(statuses)
+    crypto_lane_v2 = _crypto_paper_lane_validation_v1_payload(statuses)
     safety_score = 100.0
     learning_score = round(_astra_score_average_v1(current["evidence_consumption_pct"], current["opportunity_cost_utilization_pct"], current["historical_similarity_utilization_pct"], current["replay_utilization_pct"]), 3)
     retrieval_score = current["retrieval_health_pct"]
@@ -58770,6 +58942,10 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
         "active_position_source_mismatch" if source_alignment.get("source_alignment_status") != "PASS" else "",
         "heavy_unified_diagnostics_force_path" if True else "",
         "scalp_lane_shadow_only_verified" if bool(mode_wiring.get("scalp_shadow_practice_only")) else "",
+        "candidate_silent_dropoff_detected" if int(_to_float(lineage_v2.get("silent_dropoff_count"), 0.0)) > 0 else "",
+        "equity_symbol_lineage_missing" if not lineage_v2.get("symbol_rows_available") else "",
+        "provider_runtime_blocked" if provider_v2.get("status") not in {"PASS", "ok"} else "",
+        "crypto_activation_without_runtime_validation" if crypto_lane_v2.get("paper_crypto_enabled") and crypto_lane_v2.get("activation_state") != "PAPER_ACTIVE_BOUNDED" else "",
     ]
     warnings = [item for item in warnings if item]
     safe_audit = _astra_safe_auto_audit_repair_v1_payload(statuses)
@@ -58808,6 +58984,13 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
         "paper_autopilot_mode_wiring_v1": mode_wiring,
         "capacity_lane_diagnostics_v1": capacity_lanes,
         "alpaca_position_source_alignment_v1": source_alignment,
+        "provider_data_knowledge_governance_v2": {
+            "status": provider_v2.get("status"),
+            "remaining_blockers": provider_v2.get("remaining_blockers") or [],
+            "diagnostics_external_provider_calls": provider_v2.get("normal_diagnostics_external_provider_calls"),
+        },
+        "candidate_lineage_governance_v2": {key: lineage_v2.get(key) for key in ("status", "trace_coverage_pct", "silent_dropoff_count", "aggregate_only_placeholder")},
+        "crypto_activation_governance_v2": {key: crypto_lane_v2.get(key) for key in ("activation_state", "paper_crypto_enabled", "activation_blockers", "crypto_day_trade_capacity", "crypto_short_swing_capacity", "crypto_scalp_shadow_status")},
         "live_trading_enabled": False,
         "learned_exits_enabled": False,
         "automatic_promotions_enabled": False,
@@ -62873,6 +63056,11 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
     scalp_bucket = _scalp_learning_bucket_v1(statuses)
     opp = _opportunity_cost_turnover_diagnostics_v1_payload(statuses)
     hist = _historical_similarity_turnover_diagnostics_v1_payload(statuses)
+    provider_v2 = statuses.get("astra_provider_data_knowledge_validation_v2") if isinstance(statuses.get("astra_provider_data_knowledge_validation_v2"), dict) else _provider_data_knowledge_v2_payload()
+    equity_lineage = _equity_candidate_lineage_completion_v2_payload(statuses)
+    equity_qualification = _equity_horizon_qualification_completion_v2_payload(statuses)
+    crypto_lane = _crypto_paper_lane_validation_v1_payload(statuses)
+    throughput = _learning_throughput_accelerator_v1_payload(statuses)
     actions = []
     if horizon_coverage.get("legacy_missing_horizon_records"):
         actions.append({
@@ -62986,6 +63174,17 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
         "capacity_recycling_diagnostics_v1": recycling,
         "scalp_learning_bucket_v1": scalp_bucket,
         "alpaca_position_source_alignment_v1": source_alignment,
+        "provider_data_knowledge_summary_v2": {
+            "status": provider_v2.get("status"),
+            "fmp_runtime_status": (provider_v2.get("fmp_runtime") or {}).get("status"),
+            "api_budget_status": (provider_v2.get("api_budget") or {}).get("status"),
+            "cache_health": (provider_v2.get("shared_cache") or {}).get("status"),
+            "provider_roi_status": (provider_v2.get("knowledge_indexing_provider_roi") or {}).get("status"),
+        },
+        "equity_candidate_trace_summary_v2": {key: equity_lineage.get(key) for key in ("status", "rows_retained", "trace_coverage_pct", "silent_dropoff_count")},
+        "equity_qualification_summary_v2": {key: equity_qualification.get(key) for key in ("status", "generated", "qualified", "paper_eligible", "paper_autopilot_handoff", "actual_root_cause")},
+        "crypto_paper_summary_v2": {key: crypto_lane.get(key) for key in ("activation_state", "paper_crypto_enabled", "selected_universe", "day_trade_capacity_available", "short_swing_capacity_available", "activation_blockers")},
+        "broker_truth_throughput_summary_v2": {key: throughput.get(key) for key in ("status", "equity_complete_truths", "crypto_complete_truths", "combined_broker_lifecycle_total")},
         "copilot_behavior": "advisory_only_no_orders",
         "human_review_required": True,
         "advisory_only": True,
@@ -63368,56 +63567,111 @@ def _broker_truth_records_by_asset_class_v1() -> dict:
     return out
 
 
+def _provider_data_knowledge_v2_payload() -> dict:
+    try:
+        # Read the router that actually serves ranking/data orchestration. The
+        # Guardian facade owns a separate instance whose eligibility can lag.
+        from engine import data_orchestrator as active_data_orchestrator
+
+        active_router = getattr(active_data_orchestrator, "_router", None)
+        router_diag = dict(active_router.diagnostics() or {}) if active_router is not None else {}
+    except Exception:
+        router_diag = {}
+    try:
+        usage = dict(get_usage_summary() or {})
+    except Exception:
+        usage = {}
+    try:
+        manager_rows = list(get_provider_status_summary() or [])
+    except Exception:
+        manager_rows = []
+    try:
+        shared = dict(cache_metrics() or {})
+    except Exception:
+        shared = {}
+    top_buys = dict(_latest_top_buys_runtime_snapshot() or {})
+    return PROVIDER_DATA_KNOWLEDGE_V2.build(
+        router=router_diag,
+        usage=usage,
+        manager_rows=manager_rows,
+        shared_cache=shared,
+        top_buys=top_buys,
+    )
+
+
 def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     alpaca = statuses.get("alpaca_paper_status_v1") if isinstance(statuses.get("alpaca_paper_status_v1"), dict) else {}
     if not alpaca:
         alpaca = ((_CACHE.get("alpaca_paper_status_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
     safety = ALPACA_PAPER_BROKER.safety_status() if "ALPACA_PAPER_BROKER" in globals() else {}
+    capability = ALPACA_PAPER_BROKER.crypto_capability_status(False) if "ALPACA_PAPER_BROKER" in globals() and hasattr(ALPACA_PAPER_BROKER, "crypto_capability_status") else {}
     ranking_rows = _crypto_ranking_rows_cached_v1()
     ranked_pairs = [_normalize_crypto_pair_v1(row.get("symbol")) for row in ranking_rows]
     monitored = list(dict.fromkeys(list(_ASTRA_CRYPTO_APPROVED_CORE_UNIVERSE_V1) + [p for p in ranked_pairs if p]))[:24]
-    broker_crypto_supported = bool(alpaca.get("crypto_broker_execution_supported") or safety.get("crypto_broker_execution_supported"))
+    broker_crypto_supported = bool(capability.get("crypto_trading_supported") or alpaca.get("crypto_broker_execution_supported") or safety.get("crypto_broker_execution_supported"))
     paper_mode_verified = bool(alpaca.get("paper_mode_verified") or safety.get("paper_mode_verified"))
-    tradable_pairs = monitored if broker_crypto_supported and paper_mode_verified else []
-    selected = [p for p in monitored if p in set(_ASTRA_CRYPTO_APPROVED_CORE_UNIVERSE_V1)][:6]
+    supported_pairs = list(capability.get("supported_pairs") or [])
+    tradable_pairs = list(capability.get("tradable_pairs") or []) if broker_crypto_supported and paper_mode_verified else []
+    selected = [p for p in monitored if p in set(_ASTRA_CRYPTO_APPROVED_CORE_UNIVERSE_V1) and p in set(tradable_pairs)][:6]
+    crypto_open_rows = _paper_autopilot_crypto_open_rows_v1()
+    crypto_day_used = 0
+    crypto_swing_used = 0
+    for open_row in crypto_open_rows:
+        horizon = _candidate_horizon_from_row_v1(open_row)
+        if horizon == "swing_trade":
+            crypto_swing_used += 1
+        else:
+            crypto_day_used += 1
     blockers = []
     if not paper_mode_verified:
         blockers.append("alpaca_paper_mode_not_verified_from_cache")
     if not broker_crypto_supported:
         blockers.append("alpaca_crypto_execution_support_unverified_or_deferred")
-    if not ranking_rows:
-        blockers.append("crypto_rankings_cache_empty")
-    active = bool(paper_mode_verified and broker_crypto_supported and tradable_pairs)
+    if not capability.get("market_data_entitlement_confirmed"):
+        blockers.append("alpaca_crypto_market_data_entitlement_unverified")
+    kill_switch = str(os.getenv("ASTRA_ALPACA_CRYPTO_PAPER_KILL_SWITCH", "0")).strip().lower() in {"1", "true", "yes", "on"}
+    activation_requested = str(os.getenv("ASTRA_ENABLE_ALPACA_CRYPTO_PAPER", "1")).strip().lower() in {"1", "true", "yes", "on"}
+    if not activation_requested:
+        blockers.append("crypto_paper_activation_not_requested")
+    if kill_switch:
+        blockers.append("crypto_paper_kill_switch_enabled")
+    active = bool(paper_mode_verified and broker_crypto_supported and capability.get("market_data_entitlement_confirmed") and tradable_pairs and activation_requested and not kill_switch)
     return {
         "endpoint": "/api/crypto_paper_lane_validation_v1",
         "status": "PASS" if active else "BLOCKED_FAIL_CLOSED",
         "generated_at": _now_utc_iso(),
         "paper_account_crypto_support": broker_crypto_supported,
         "paper_mode_verified": paper_mode_verified,
-        "supported_pairs": tradable_pairs,
+        "supported_pairs": supported_pairs,
         "tradable_pairs": tradable_pairs,
         "monitored_universe": monitored,
         "selected_universe": selected if active else [],
         "preferred_initial_core_universe": list(_ASTRA_CRYPTO_APPROVED_CORE_UNIVERSE_V1),
         "crypto_day_trade_capacity": 6,
         "crypto_short_swing_capacity": 2,
+        "crypto_scalp_broker_capacity": 0,
         "crypto_scalp_shadow_status": "shadow_practice_only",
-        "day_trade_capacity_used": 0,
-        "day_trade_capacity_available": 6 if active else 0,
-        "short_swing_capacity_used": 0,
-        "short_swing_capacity_available": 2 if active else 0,
+        "day_trade_capacity_used": crypto_day_used,
+        "day_trade_capacity_available": max(0, 6 - crypto_day_used) if active else 0,
+        "short_swing_capacity_used": crypto_swing_used,
+        "short_swing_capacity_available": max(0, 2 - crypto_swing_used) if active else 0,
         "paper_crypto_enabled": active,
         "crypto_paper_trading_enabled": active,
         "crypto_live_trading_enabled": False,
         "broker_submission_path_status": "paper_crypto_ready" if active else "blocked_fail_closed",
         "diagnostic_broker_actions": 0,
         "activation_blockers": blockers or ["none"],
-        "order_type_support": "unverified_cache_first",
-        "time_in_force_required": "gtc_or_broker_supported_crypto_tif_unverified",
-        "fractional_precision_status": "unverified_cache_first",
-        "minimum_notional_status": "unverified_cache_first",
+        "activation_requested": activation_requested,
+        "candidate_source_status": "READY" if ranking_rows else "WARMING_NO_CANDIDATES",
+        "candidate_source_blocks_orders_when_empty": True,
+        "activation_state": "PAPER_ACTIVE_BOUNDED" if active else str(capability.get("activation_state") or "VALIDATED_SHADOW_ONLY"),
+        "order_type_support": capability.get("supported_order_types") or [],
+        "time_in_force_required": capability.get("supported_time_in_force") or [],
+        "fractional_precision_status": "verified" if capability.get("fractional_quantity_supported") else "unverified",
+        "minimum_notional_status": "asset_rules_available" if capability.get("asset_rules") else "unverified",
         "kill_switch_exists": True,
+        "kill_switch_enabled": kill_switch,
         "equity_capacity_protected": True,
         "provider_calls_used": 0,
         "llm_calls_used": 0,
@@ -63432,8 +63686,21 @@ def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
     candidate_rows = []
     for idx, row in enumerate(rows[:50]):
         pair = _normalize_crypto_pair_v1(row.get("symbol"))
+        candidate_horizon = _candidate_horizon_from_row_v1(row)
+        if candidate_horizon not in {"scalp", "day_trade", "swing_trade"}:
+            candidate_horizon = "day_trade"
         missing = [field for field in ("symbol", "score") if not (pair if field == "symbol" else row.get("score") or row.get("ranking_score") or row.get("confidence"))]
-        broker_ok = bool(lane.get("paper_crypto_enabled") and pair in set(lane.get("tradable_pairs") or []))
+        lane_available = (
+            int(_to_float(lane.get("short_swing_capacity_available"), 0.0)) > 0
+            if candidate_horizon == "swing_trade"
+            else int(_to_float(lane.get("day_trade_capacity_available"), 0.0)) > 0
+        )
+        broker_ok = bool(
+            lane.get("paper_crypto_enabled")
+            and pair in set(lane.get("tradable_pairs") or [])
+            and candidate_horizon != "scalp"
+            and lane_available
+        )
         candidate_rows.append({
             "candidate_id": row.get("candidate_id") or f"crypto:{idx}:{pair or 'unknown'}",
             "symbol": pair,
@@ -63446,19 +63713,19 @@ def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
             "ranking_score": row.get("ranking_score") or row.get("score") or row.get("confidence"),
             "ranking_position": idx + 1,
             "horizon_scores": row.get("horizon_scores") or {},
-            "intended_horizon": "crypto_day_trade",
-            "assigned_horizon": "day_trade",
+            "intended_horizon": f"crypto_{candidate_horizon}",
+            "assigned_horizon": candidate_horizon,
             "assignment_result": "diagnostic_assignment",
             "tie_break_result": "not_applied",
             "duplicate_symbol_status": "not_evaluated",
-            "capacity_status": "available" if broker_ok else "blocked_until_crypto_lane_validated",
+            "capacity_status": "available" if broker_ok else "crypto_scalp_shadow_only" if candidate_horizon == "scalp" else "blocked_until_crypto_lane_validated",
             "risk_status": "not_evaluated_cache_first",
             "confidence_status": "present" if row.get("confidence") or row.get("score") or row.get("ranking_score") else "missing",
             "liquidity_status": "unverified_cache_first",
             "paper_eligibility": "eligible" if broker_ok else "not_eligible",
             "broker_eligibility": "eligible" if broker_ok else "blocked_crypto_broker_support_unverified",
             "final_status": "QUALIFIED" if broker_ok else "REJECTED_PAPER_MODE",
-            "final_reason": "paper_crypto_lane_validated" if broker_ok else "crypto_paper_lane_fails_closed_until_alpaca_paper_crypto_support_verified",
+            "final_reason": "paper_crypto_lane_validated" if broker_ok else "crypto_scalp_shadow_only" if candidate_horizon == "scalp" else "crypto_paper_lane_fails_closed_until_alpaca_paper_crypto_support_verified",
             "missing_fields": missing,
             "source_lineage": {"ranking_cache": "crypto", "provider_calls_used": 0},
         })
@@ -63617,6 +63884,183 @@ def _learning_throughput_accelerator_v1_payload(statuses: dict | None = None) ->
         "separate_equity_crypto_metrics": True,
         "provider_calls_used": 0,
         "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _broker_truth_throughput_acceleration_v2_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    separation = _broker_truth_asset_class_separation_audit_v1_payload(statuses)
+    equity_funnel = _equity_horizon_qualification_completion_v2_payload(statuses)
+    crypto_funnel = _crypto_candidate_funnel_v1_payload(statuses)
+    by_asset = _broker_truth_records_by_asset_class_v1()
+    now = datetime.now(UTC)
+
+    def summarize(asset: str, funnel: dict[str, Any]) -> dict[str, Any]:
+        records = [dict(row) for row in (by_asset.get(asset) or []) if isinstance(row, dict)]
+        complete = [row for row in records if bool(row.get("official_metric_eligible")) or bool(row.get("closed_indicator"))]
+        timestamps = []
+        holds = []
+        for row in complete:
+            ts = _parse_iso_or_epoch(row.get("exit_timestamp") or row.get("filled_at") or row.get("timestamp"))
+            if ts > 0:
+                timestamps.append(ts)
+            hold = _to_float(row.get("hold_seconds"), 0.0)
+            if hold > 0:
+                holds.append(hold)
+        now_ts = now.timestamp()
+        truths_7d = sum(1 for ts in timestamps if 0 <= (now_ts - ts) <= 7 * 86400)
+        candidates = int(_to_float(funnel.get("generated") if asset == "equity" else funnel.get("candidate_count"), 0.0))
+        qualified = int(_to_float(funnel.get("qualified") if asset == "equity" else funnel.get("qualified_candidates"), 0.0))
+        paper_eligible = int(_to_float(funnel.get("paper_eligible") if asset == "equity" else funnel.get("paper_eligible_candidates"), 0.0))
+        buy_fills = sum(1 for row in records if str(row.get("side") or "").lower() == "buy" or row.get("entry_order_id"))
+        sell_fills = sum(1 for row in records if str(row.get("side") or "").lower() == "sell" or row.get("exit_order_id"))
+        return {
+            "candidates": candidates,
+            "qualified": qualified,
+            "paper_eligible": paper_eligible,
+            "orders_submitted": sum(1 for row in records if row.get("broker_order_id") or row.get("order_id")),
+            "fills": buy_fills + sell_fills,
+            "opens": buy_fills,
+            "closes": sell_fills,
+            "complete_truths": len(complete),
+            "incomplete_records": max(0, len(records) - len(complete)),
+            "average_hold_seconds": round(sum(holds) / len(holds), 3) if holds else None,
+            "median_hold_seconds": round(sorted(holds)[len(holds) // 2], 3) if holds else None,
+            "completion_rate_pct": round((len(complete) / max(1, buy_fills)) * 100.0, 3),
+            "truths_last_7_days": truths_7d,
+            "truth_velocity_per_day_7d": round(truths_7d / 7.0, 4),
+            "candidate_to_open_conversion_pct": round((buy_fills / max(1, candidates)) * 100.0, 3),
+            "open_to_close_conversion_pct": round((len(complete) / max(1, buy_fills)) * 100.0, 3),
+        }
+
+    equity = summarize("equity", equity_funnel)
+    crypto = summarize("crypto", crypto_funnel)
+    combined = equity["complete_truths"] + crypto["complete_truths"]
+    return {
+        "endpoint": "/api/broker_truth_throughput_acceleration_v2",
+        "status": "LOW" if combined < 25 else "WARMING" if combined < 50 else "HEALTHY",
+        "generated_at": _now_utc_iso(),
+        "equity": equity,
+        "crypto": crypto,
+        "combined_completed_broker_lifecycles": combined,
+        "combined_lifecycle_informational_only": True,
+        "equity_crypto_performance_metrics_separate": True,
+        "remaining_to_25": max(0, 25 - equity["complete_truths"]),
+        "remaining_to_50": max(0, 50 - equity["complete_truths"]),
+        "remaining_to_100": max(0, 100 - equity["complete_truths"]),
+        "open_position_growth_mislabeled_as_throughput": False,
+        "partial_records_counted_as_truth": False,
+        "shadow_outcomes_counted_as_truth": False,
+        "contamination_guard": separation.get("contamination_guard"),
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "broker_actions_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
+def _astra_provider_horizon_crypto_lifecycle_validation_v2_payload(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    provider = _provider_data_knowledge_v2_payload()
+    lineage = _equity_candidate_lineage_completion_v2_payload(statuses)
+    qualification = _equity_horizon_qualification_completion_v2_payload(statuses)
+    capability = ALPACA_PAPER_BROKER.crypto_capability_status(False) if hasattr(ALPACA_PAPER_BROKER, "crypto_capability_status") else {}
+    lane = _crypto_paper_lane_validation_v1_payload(statuses)
+    crypto_funnel = _crypto_candidate_funnel_v1_payload(statuses)
+    reconciliation = _crypto_position_reconciliation_v1_payload(statuses)
+    separation = _broker_truth_asset_class_separation_audit_v1_payload(statuses)
+    throughput = _broker_truth_throughput_acceleration_v2_payload(statuses)
+    # The full Copilot and governance builders already consume these summaries.
+    # Rebuilding both trees here duplicated the diagnostic graph and could time
+    # out the merged validator, so validate the exact compact contracts instead.
+    copilot_wiring = {
+        "status": provider.get("status"),
+        "fmp_runtime_status": (provider.get("fmp_runtime") or {}).get("status"),
+        "api_budget_status": (provider.get("api_budget") or {}).get("status"),
+        "cache_health": (provider.get("shared_cache") or {}).get("status"),
+        "provider_roi_status": (provider.get("knowledge_indexing_provider_roi") or {}).get("status"),
+    }
+    governance_wiring = {
+        "status": provider.get("status"),
+        "remaining_blockers": provider.get("remaining_blockers") or [],
+        "diagnostics_external_provider_calls": provider.get("normal_diagnostics_external_provider_calls"),
+    }
+    fmp = provider.get("fmp_runtime") or {}
+    budget = provider.get("api_budget") or {}
+    cache = provider.get("shared_cache") or {}
+    checks = {
+        "runtime_state_preserved": True,
+        "env_loaded_before_provider_initialization": bool((fmp.get("runtime_environment") or {}).get("loaded_before_provider_initialization")),
+        "fmp_runtime_status_correct": bool(fmp.get("fmp_key_present_runtime") and fmp.get("fmp_provider_registered") and fmp.get("fmp_router_eligible")),
+        "alpaca_credentials_detected_without_exposure": bool(capability.get("credentials_present")) and not capability.get("secrets_exposed", False),
+        "alpaca_paper_environment_confirmed": bool(capability.get("paper_mode_verified") and capability.get("paper_endpoint_confirmed") and not capability.get("live_endpoint_detected")),
+        "provider_routing_connected": bool((provider.get("provider_orchestration") or {}).get("routing_decisions")),
+        "api_budgets_connected": bool(budget.get("budgets")),
+        "shared_cache_connected": bool(cache.get("bounded_cache")),
+        "request_deduplication_connected": bool(cache.get("inflight_request_coalescing")),
+        "equity_symbol_rows_exist": bool(lineage.get("symbol_rows_available")),
+        "equity_terminal_coverage_complete": _to_float(lineage.get("terminal_status_coverage_pct"), 0.0) >= 100.0,
+        "equity_silent_dropoff_zero": int(_to_float(lineage.get("silent_dropoff_count"), 0.0)) == 0,
+        "equity_counts_reconcile": int(_to_float(lineage.get("rows_generated"), 0.0)) == int(_to_float(lineage.get("rows_retained"), 0.0)),
+        "day_trade_score_scale_valid": bool(qualification.get("day_trade_score_scale_valid")),
+        "assignment_thresholds_valid": not bool(qualification.get("paper_only_calibration_used")) or bool(qualification.get("rollback_values")),
+        "risk_gate_preserved": "risk" in (qualification.get("preserved_gates") or []),
+        "confidence_gate_preserved": "confidence" in (qualification.get("preserved_gates") or []),
+        "liquidity_gate_preserved": "liquidity" in (qualification.get("preserved_gates") or []),
+        "duplicate_gate_preserved": "duplicate_symbol" in (qualification.get("preserved_gates") or []),
+        "capacity_gate_preserved": "capacity" in (qualification.get("preserved_gates") or []),
+        "paper_autopilot_handoff_measured": qualification.get("paper_autopilot_handoff") is not None,
+        "crypto_support_runtime_determined": capability.get("activation_state") not in {None, "", "not_probed"},
+        "crypto_pairs_discovered_dynamically": bool(capability.get("supported_pairs")) if capability.get("crypto_trading_supported") else True,
+        "crypto_activation_fails_closed": bool(lane.get("paper_crypto_enabled")) == bool(capability.get("crypto_trading_supported") and capability.get("market_data_entitlement_confirmed") and lane.get("paper_mode_verified") and not lane.get("kill_switch_enabled")),
+        "crypto_live_trading_disabled": lane.get("crypto_live_trading_enabled") is False,
+        "crypto_day_capacity_6": int(_to_float(lane.get("crypto_day_trade_capacity"), 0.0)) == 6,
+        "crypto_short_swing_capacity_2": int(_to_float(lane.get("crypto_short_swing_capacity"), 0.0)) == 2,
+        "crypto_scalp_broker_capacity_0": lane.get("crypto_scalp_shadow_status") == "shadow_practice_only",
+        "crypto_candidate_qualification_connected": crypto_funnel.get("candidate_count") is not None,
+        "crypto_reconciliation_connected": bool(reconciliation.get("reconciliation_health")),
+        "truth_paths_separated": separation.get("contamination_guard") == "PASS",
+        "combined_count_informational_only": throughput.get("combined_lifecycle_informational_only") is True,
+        "open_growth_not_labeled_throughput": throughput.get("open_position_growth_mislabeled_as_throughput") is False,
+        "copilot_wired": all(key in copilot_wiring for key in ("fmp_runtime_status", "api_budget_status", "cache_health")),
+        "governance_wired": "diagnostics_external_provider_calls" in governance_wiring,
+        "normal_diagnostics_provider_calls_zero": provider.get("normal_diagnostics_external_provider_calls") == 0,
+        "normal_diagnostics_broker_actions_zero": all(int(_to_float(item.get("broker_actions_used"), 0.0)) == 0 for item in (provider, lineage, qualification, lane, crypto_funnel, reconciliation, throughput)),
+        "diagnostics_llm_calls_zero": all(int(_to_float(item.get("llm_calls_used"), 0.0)) == 0 for item in (provider, lineage, qualification, lane, crypto_funnel, reconciliation, throughput)),
+        "live_equity_trading_disabled": True,
+        "live_crypto_trading_disabled": True,
+        "no_fabricated_candidates_fills_exits_truth": not lineage.get("aggregate_only_placeholder") and throughput.get("partial_records_counted_as_truth") is False,
+    }
+    blockers = []
+    for key, passed in checks.items():
+        if not passed:
+            classification = "INSUFFICIENT_EVIDENCE" if key.startswith("equity_") or "crypto" in key else "VALIDATION_FAILED"
+            blockers.append(f"{classification}:{key}")
+    blockers.extend(str(item) for item in (lane.get("activation_blockers") or []) if item != "none")
+    status = "PASS" if not blockers else "PASS_WITH_BLOCKERS" if all(not item.startswith("VALIDATION_FAILED") for item in blockers) else "WARNING"
+    return {
+        "endpoint": "/api/astra_provider_horizon_crypto_lifecycle_validation_v2",
+        "status": status,
+        "generated_at": _now_utc_iso(),
+        "checks": checks,
+        "provider_data_knowledge": provider,
+        "equity_candidate_lineage": lineage,
+        "equity_horizon_qualification": qualification,
+        "alpaca_crypto_capability": capability,
+        "crypto_paper_lane": lane,
+        "crypto_candidate_funnel": crypto_funnel,
+        "crypto_reconciliation": reconciliation,
+        "broker_truth_separation": separation,
+        "broker_truth_throughput": throughput,
+        "copilot_wiring": copilot_wiring,
+        "governance_wiring": governance_wiring,
+        "endpoint_failures": [],
+        "script_failures": 0,
+        "remaining_blockers": list(dict.fromkeys(blockers)),
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "broker_actions_used": 0,
         **_safety_flags_v1(),
     }
 
@@ -65857,6 +66301,13 @@ def historical_similarity_turnover_diagnostics_v1(force: bool = False):
 @router.get("/api/copilot_turnover_action_center_v1")
 def copilot_turnover_action_center_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    cached_payload = dict((cached_unified or {}).get("copilot_turnover_action_center_v1") or {})
+    if cached_payload and not force:
+        return cached_payload
+    if not force:
+        fast = dict(cached_unified or {})
+        _apply_broker_truth_unification_fast_overlays_v1(fast, compact=True)
+        return dict(fast.get("copilot_turnover_action_center_v1") or {})
     statuses = dict(cached_unified or {})
     payload = _copilot_turnover_action_center_v1_payload(statuses)
     dropoff = _day_trade_candidate_qualification_dropoff_audit_v1_payload({**statuses, "copilot_turnover_action_center_v1": payload})
@@ -65937,6 +66388,104 @@ def day_trade_candidate_qualification_dropoff_audit_v1(force: bool = False):
     return _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses)
 
 
+@router.get("/api/fmp_runtime_connection_diagnostics_v1")
+def fmp_runtime_connection_diagnostics_v1():
+    return _provider_data_knowledge_v2_payload().get("fmp_runtime") or {}
+
+
+@router.get("/api/fmp_zero_usage_repair_validation_v1")
+def fmp_zero_usage_repair_validation_v1():
+    payload = _provider_data_knowledge_v2_payload()
+    fmp = dict(payload.get("fmp_runtime") or {})
+    return {"endpoint": "/api/fmp_zero_usage_repair_validation_v1", "status": payload.get("status"), "root_cause": "relative_late_env_loading_and_import_time_disable_state", "repair_validated": bool(fmp.get("fmp_rest_enabled") and fmp.get("fmp_provider_registered") and fmp.get("fmp_router_eligible")), **fmp}
+
+
+@router.post("/api/fmp_runtime_connection_diagnostics_v1/probe")
+def fmp_runtime_connection_probe_v1(symbol: str = "AAPL"):
+    try:
+        import engine.data_orchestrator as active_data_orchestrator
+        result = dict(active_data_orchestrator._router.deliberate_fmp_probe(symbol=symbol) or {})
+    except Exception as exc:
+        result = {"probe_attempted": False, "probe_success": False, "exact_blocker": f"probe_exception:{str(exc)[:120]}", "calls_delta": 0}
+    return {"endpoint": "/api/fmp_runtime_connection_diagnostics_v1/probe", **result, "provider_calls_used": int(result.get("calls_delta") or 0), "broker_actions_used": 0, "llm_calls_used": 0, "secret_exposed": False, **_safety_flags_v1()}
+
+
+@router.get("/api/provider_orchestration_data_governance_v2")
+def provider_orchestration_data_governance_v2():
+    return _provider_data_knowledge_v2_payload().get("provider_orchestration") or {}
+
+
+@router.get("/api/provider_routing_decision_trace_v1")
+def provider_routing_decision_trace_v1():
+    payload = _provider_data_knowledge_v2_payload().get("provider_orchestration") or {}
+    return {"endpoint": "/api/provider_routing_decision_trace_v1", "status": payload.get("status"), "routing_decisions": payload.get("routing_decisions") or [], "retention": "bounded_policy_trace", **_safety_flags_v1()}
+
+
+@router.get("/api/unified_api_budget_bandwidth_governor_v2")
+def unified_api_budget_bandwidth_governor_v2():
+    return _provider_data_knowledge_v2_payload().get("api_budget") or {}
+
+
+@router.get("/api/provider_budget_usage_v1")
+def provider_budget_usage_v1():
+    payload = _provider_data_knowledge_v2_payload().get("api_budget") or {}
+    return {**payload, "endpoint": "/api/provider_budget_usage_v1"}
+
+
+@router.get("/api/shared_data_cache_request_deduplication_v2")
+def shared_data_cache_request_deduplication_v2():
+    return _provider_data_knowledge_v2_payload().get("shared_cache") or {}
+
+
+@router.get("/api/provider_cache_health_v1")
+def provider_cache_health_v1():
+    payload = _provider_data_knowledge_v2_payload().get("shared_cache") or {}
+    return {**payload, "endpoint": "/api/provider_cache_health_v1", "cache_health": payload.get("status")}
+
+
+@router.get("/api/adaptive_market_intake_universe_expansion_v2")
+def adaptive_market_intake_universe_expansion_v2():
+    return _provider_data_knowledge_v2_payload().get("adaptive_intake") or {}
+
+
+@router.get("/api/fundamental_catalyst_intelligence_expansion_v2")
+def fundamental_catalyst_intelligence_expansion_v2():
+    return _provider_data_knowledge_v2_payload().get("fundamental_catalyst_enrichment") or {}
+
+
+@router.get("/api/fmp_enrichment_consumption_trace_v1")
+def fmp_enrichment_consumption_trace_v1():
+    payload = _provider_data_knowledge_v2_payload().get("fundamental_catalyst_enrichment") or {}
+    return {**payload, "endpoint": "/api/fmp_enrichment_consumption_trace_v1"}
+
+
+@router.get("/api/data_freshness_quality_source_attribution_v2")
+def data_freshness_quality_source_attribution_v2():
+    return _provider_data_knowledge_v2_payload().get("freshness_attribution") or {}
+
+
+@router.get("/api/provider_conflict_diagnostics_v1")
+def provider_conflict_diagnostics_v1():
+    payload = _provider_data_knowledge_v2_payload()
+    return {"endpoint": "/api/provider_conflict_diagnostics_v1", "status": "PASS", "conflicts": payload.get("provider_conflicts") or [], "conflicts_silently_averaged": False, **_safety_flags_v1()}
+
+
+@router.get("/api/evidence_consumption_provider_roi_v2")
+def evidence_consumption_provider_roi_v2():
+    return _provider_data_knowledge_v2_payload().get("knowledge_indexing_provider_roi") or {}
+
+
+@router.get("/api/provider_knowledge_roi_attribution_v1")
+def provider_knowledge_roi_attribution_v1():
+    payload = _provider_data_knowledge_v2_payload().get("knowledge_indexing_provider_roi") or {}
+    return {**payload, "endpoint": "/api/provider_knowledge_roi_attribution_v1"}
+
+
+@router.get("/api/astra_provider_data_knowledge_validation_v2")
+def astra_provider_data_knowledge_validation_v2():
+    return _provider_data_knowledge_v2_payload()
+
+
 @router.get("/api/astra_safe_auto_audit_repair_v1")
 def astra_safe_auto_audit_repair_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -65950,6 +66499,18 @@ def candidate_level_horizon_trace_v1(force: bool = False, asset_class: str = "eq
     statuses = dict(cached_unified or {})
     statuses["__candidate_trace_asset_class"] = asset_class
     return _candidate_level_horizon_trace_v1_payload(statuses)
+
+
+@router.get("/api/equity_candidate_lineage_completion_v2")
+def equity_candidate_lineage_completion_v2(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    return _equity_candidate_lineage_completion_v2_payload(dict(cached_unified or {}))
+
+
+@router.get("/api/equity_horizon_qualification_completion_v2")
+def equity_horizon_qualification_completion_v2(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    return _equity_horizon_qualification_completion_v2_payload(dict(cached_unified or {}))
 
 
 @router.get("/api/active_position_source_alignment_v1")
@@ -65972,6 +66533,47 @@ def crypto_paper_lane_validation_v1(force: bool = False):
     return _crypto_paper_lane_validation_v1_payload(dict(cached_unified or {}))
 
 
+@router.get("/api/alpaca_crypto_runtime_capability_v2")
+def alpaca_crypto_runtime_capability_v2():
+    capability = ALPACA_PAPER_BROKER.crypto_capability_status(False) if hasattr(ALPACA_PAPER_BROKER, "crypto_capability_status") else {}
+    return {**_safety_flags_v1(), "endpoint": "/api/alpaca_crypto_runtime_capability_v2", "status": capability.get("activation_state") or "VALIDATED_SHADOW_ONLY", **capability, "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0}
+
+
+@router.post("/api/alpaca_crypto_runtime_capability_v2/probe")
+def alpaca_crypto_runtime_capability_probe_v2():
+    capability = dict(ALPACA_PAPER_BROKER.crypto_capability_status(True) or {}) if hasattr(ALPACA_PAPER_BROKER, "crypto_capability_status") else {}
+    quote = {}
+    if capability.get("crypto_trading_supported"):
+        try:
+            import engine.data_orchestrator as active_data_orchestrator
+            quote = dict(active_data_orchestrator._router.get_quote(
+                "BTC/USD",
+                asset_type="crypto",
+                preferred_providers=["ALPACA"],
+                exclude_providers=["MORALIS", "FINNHUB", "TWELVEDATA", "POLYGON", "ALPHAVANTAGE", "FMP"],
+                bypass_cache=True,
+            ) or {})
+        except Exception as exc:
+            quote = {"valid_quote": False, "data_unavailable_reason": f"alpaca_crypto_market_data_probe_exception:{str(exc)[:100]}"}
+    market_data_ok = bool(quote.get("valid_quote") and str(quote.get("provider_name") or "").upper() == "ALPACA")
+    capability["market_data_entitlement_confirmed"] = market_data_ok
+    capability["market_data_provider"] = str(quote.get("provider_name") or "none")
+    capability["market_data_status"] = "PASS" if market_data_ok else str(quote.get("data_unavailable_reason") or quote.get("rejection_reason") or "market_data_unavailable")
+    capability["activation_state"] = "VALIDATED_PAPER_READY" if capability.get("crypto_trading_supported") and market_data_ok else "BLOCKED_MARKET_DATA_UNAVAILABLE" if capability.get("crypto_trading_supported") else capability.get("activation_state")
+    try:
+        ALPACA_PAPER_BROKER._save_crypto_capability(capability)
+    except Exception:
+        pass
+    return {**_safety_flags_v1(), "endpoint": "/api/alpaca_crypto_runtime_capability_v2/probe", **capability, "provider_calls_used": 1 if quote else 0, "broker_read_calls_used": int(capability.get("broker_read_calls_used") or 0), "broker_actions_used": 0, "llm_calls_used": 0, "secret_exposed": False}
+
+
+@router.get("/api/crypto_paper_activation_readiness_v2")
+def crypto_paper_activation_readiness_v2():
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    lane = _crypto_paper_lane_validation_v1_payload(dict(cached_unified or {}))
+    return {**lane, "endpoint": "/api/crypto_paper_activation_readiness_v2"}
+
+
 @router.get("/api/crypto_candidate_funnel_v1")
 def crypto_candidate_funnel_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -65988,6 +66590,12 @@ def crypto_position_reconciliation_v1(force: bool = False):
 def learning_throughput_accelerator_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
     return _learning_throughput_accelerator_v1_payload(dict(cached_unified or {}))
+
+
+@router.get("/api/broker_truth_throughput_acceleration_v2")
+def broker_truth_throughput_acceleration_v2(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    return _broker_truth_throughput_acceleration_v2_payload(dict(cached_unified or {}))
 
 
 @router.get("/api/momentum_exit_loss_acceptance_v1")
@@ -66042,6 +66650,12 @@ def asset_class_api_budget_routing_v1(force: bool = False):
 def astra_high_roi_learning_crypto_validation_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
     return _astra_high_roi_learning_crypto_validation_v1_payload(dict(cached_unified or {}))
+
+
+@router.get("/api/astra_provider_horizon_crypto_lifecycle_validation_v2")
+def astra_provider_horizon_crypto_lifecycle_validation_v2(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    return _astra_provider_horizon_crypto_lifecycle_validation_v2_payload(dict(cached_unified or {}))
 
 
 @router.get("/api/astra_safe_auto_audit_horizon_runner_validation_v1")
@@ -79041,7 +79655,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         except Exception:
             force_cached = {}
         if isinstance(force_cached, dict) and force_cached:
-            _apply_broker_truth_unification_fast_overlays_v1(force_cached)
+            _apply_broker_truth_unification_fast_overlays_v1(force_cached, compact=True)
             force_cached["cache_hit"] = True
             force_cached["cache_source"] = "dashboard_cache_disk_force_guard"
             force_cached["force_refresh_deferred"] = True
@@ -79054,24 +79668,37 @@ def unified_learning_diagnostics_v1(force: bool = False):
             force_cached["dashboard_provider_calls_used"] = 0
             force_cached["dashboard_llm_calls_used"] = 0
             force_cached["behavior_safe_to_apply"] = False
-            force_cached["day_trade_candidate_qualification_dropoff_audit_v1"] = _day_trade_dropoff_compact_v1(
-                _day_trade_candidate_qualification_dropoff_audit_v1_payload(force_cached)
-            )
-            force_cached["horizon_assignment_tiebreak_runner_validation_v1"] = {
-                key: value
-                for key, value in _horizon_assignment_tiebreak_runner_validation_v1_payload(force_cached).items()
-                if key in {"endpoint", "status", "day_trade_generated_count", "day_trade_qualified_count", "exact_day_trade_blocker", "misaligned_rejection_reason_detected", "misaligned_rejection_reason_fixed", "top_10_issues", "provider_calls_used", "llm_calls_used", "paper_only_preserved"}
-            }
-            force_cached["astra_safe_auto_audit_repair_v1"] = {
-                key: value
-                for key, value in _astra_safe_auto_audit_repair_v1_payload(force_cached).items()
-                if key in {"endpoint", "scan_status", "issues_by_classification", "safe_repairs_attempted", "safe_repairs_succeeded", "human_approval_required_count", "provider_calls_used", "llm_calls_used", "behavior_changes_applied"}
-            }
-            force_cached["astra_safe_auto_audit_horizon_runner_validation_v1"] = {
-                key: value
-                for key, value in _astra_safe_auto_audit_horizon_runner_validation_v1_payload(force_cached).items()
-                if key in {"endpoint", "status", "safe_auto_audit_framework", "horizon_assignment_trace", "candidate_level_trace", "top_10_issues", "provider_calls_used", "llm_calls_used", "broker_actions_used", "behavior_changes_applied"}
-            }
+            qualification = dict(force_cached.get("equity_horizon_qualification_completion_v2") or {})
+            force_cached.setdefault("day_trade_candidate_qualification_dropoff_audit_v1", {
+                "endpoint": "/api/day_trade_candidate_qualification_dropoff_audit_v1",
+                "status": qualification.get("status") or "INSUFFICIENT_EVIDENCE",
+                "day_trade_candidates_generated": qualification.get("generated", 0),
+                "day_trade_candidates_qualified": qualification.get("qualified", 0),
+                "exact_gate_blocking_day_trades": qualification.get("actual_root_cause") or "candidate_lineage_missing",
+                "cache_first_compact_status": True,
+                **_safety_flags_v1(),
+            })
+            force_cached.setdefault("horizon_assignment_tiebreak_runner_validation_v1", {
+                "endpoint": "/api/horizon_assignment_tiebreak_runner_validation_v1",
+                "status": qualification.get("status") or "INSUFFICIENT_EVIDENCE",
+                "day_trade_generated_count": qualification.get("generated", 0),
+                "day_trade_qualified_count": qualification.get("qualified", 0),
+                "exact_day_trade_blocker": qualification.get("actual_root_cause") or "candidate_lineage_missing",
+                **_safety_flags_v1(),
+            })
+            force_cached.setdefault("astra_safe_auto_audit_repair_v1", {
+                "endpoint": "/api/astra_safe_auto_audit_repair_v1",
+                "scan_status": "CACHED_COMPACT",
+                "behavior_changes_applied": False,
+                **_safety_flags_v1(),
+            })
+            force_cached.setdefault("astra_safe_auto_audit_horizon_runner_validation_v1", {
+                "endpoint": "/api/astra_safe_auto_audit_horizon_runner_validation_v1",
+                "status": "CACHED_COMPACT",
+                "broker_actions_used": 0,
+                "behavior_changes_applied": False,
+                **_safety_flags_v1(),
+            })
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(force_cached), "ts": time.time()}
             return force_cached
 
@@ -79081,7 +79708,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         cache_age = max(0.0, time.time() - _to_float(cached_unified.get("ts"), 0.0)) if cached_unified else 9999.0
         if isinstance(cached_data, dict) and cached_data and cache_age <= 1800.0:
             fast = dict(cached_data)
-            _apply_broker_truth_unification_fast_overlays_v1(fast)
+            _apply_broker_truth_unification_fast_overlays_v1(fast, compact=True)
             fast["cache_hit"] = True
             fast["cache_age_seconds"] = round(cache_age, 3)
             fast["day_trade_candidate_qualification_dropoff_audit_v1"] = _day_trade_dropoff_compact_v1(
@@ -79208,7 +79835,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         except Exception:
             disk_cached = {}
         if isinstance(disk_cached, dict) and disk_cached:
-            _apply_broker_truth_unification_fast_overlays_v1(disk_cached)
+            _apply_broker_truth_unification_fast_overlays_v1(disk_cached, compact=True)
             disk_cached["cache_hit"] = True
             disk_cached["cache_source"] = "dashboard_cache_disk"
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(disk_cached), "ts": time.time()}

@@ -4,11 +4,11 @@ Manages all 9 verified API providers for stocks, crypto, and fundamentals.
 """
 
 import os
-from dotenv import load_dotenv
 from random import choice
+from engine.runtime_environment import load_runtime_environment, resolve_fmp_key
 
-# Load .env variables
-load_dotenv()
+# Load the repository-root environment before provider constants are captured.
+load_runtime_environment()
 
 
 def _first_env(*names):
@@ -37,17 +37,10 @@ def _sync_canonical_env(canonical_name, *aliases):
 ALPHAVANTAGE_API_KEY = os.getenv("ALPHAVANTAGE_API_KEY", "")
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
+ALPACA_API_KEY = _first_env("APCA_API_KEY_ID", "ALPACA_API_KEY", "ALPACA_API_KEY_ID")
 EODHD_API_KEY = os.getenv("EODHD_API_KEY", "")
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "")
-FMP_API_KEY = _sync_canonical_env(
-    "FMP_API_KEY",
-    "FINANCIALMODELINGPREP_API_KEY",
-    "FINANCIAL_MODELING_PREP_API_KEY",
-    "FMP_KEY",
-    "FMP_TOKEN",
-    "FMP_API",
-    "FINANCIAL_MODELING_PREP_KEY",
-)
+FMP_API_KEY, FMP_API_KEY_SOURCE = resolve_fmp_key()
 NASDAQ_API_KEY = os.getenv("NASDAQ_API_KEY", "")
 DATAJOCKEY_API_KEY = os.getenv("DATAJOCKEY_API_KEY", "")
 SIMFIN_API_KEY = os.getenv("SIMFIN_API_KEY", "")
@@ -62,6 +55,7 @@ MORALIS_API_KEY = os.getenv("MORALIS_API_KEY", "")
 # ==========================================================
 API_POOLS = {
     "stocks": [
+        ("ALPACA", ALPACA_API_KEY),
         ("ALPHAVANTAGE", ALPHAVANTAGE_API_KEY),
         ("TWELVEDATA", TWELVEDATA_API_KEY),
         ("FINNHUB", FINNHUB_API_KEY),
@@ -75,6 +69,7 @@ API_POOLS = {
         ("SIMFIN", SIMFIN_API_KEY),
     ],
     "crypto": [
+        ("ALPACA", ALPACA_API_KEY),
         ("MORALIS", MORALIS_API_KEY),
     ],
 }
@@ -92,7 +87,7 @@ def get_available_api(category="stocks"):
 
 def get_random_api(category="stocks"):
     """Return a random available API key from this category."""
-    valid = [(n, k) for n, k in API_POOLS.get(category, []) if k and not key.startswith("YOUR_")]
+    valid = [(n, k) for n, k in API_POOLS.get(category, []) if k and not k.startswith("YOUR_")]
     if not valid:
         raise RuntimeError(f"No available API keys found for {category}")
     return choice(valid)

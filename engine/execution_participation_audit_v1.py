@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import os
 import time
@@ -109,17 +110,91 @@ def _build_record(trace: dict[str, Any], context: dict[str, Any]) -> dict[str, A
     attempted = bool(trace.get("order_attempted", False))
     submitted = bool(trace.get("order_submitted", False))
     final_decision = "submitted" if submitted else ("attempted_rejected" if attempted else ("selected_not_attempted" if selected else "suppressed"))
+    symbol = _text(trace.get("symbol")).upper()
+    asset_class = "crypto" if _text(trace.get("asset_type") or trace.get("asset_class")).lower() == "crypto" else "equity"
+    horizon = _text(
+        trace.get("paper_entry_horizon_style")
+        or trace.get("assigned_horizon")
+        or trace.get("trade_horizon_style"),
+        "unknown",
+    ).lower()
+    terminal_status = "HANDED_TO_PAPER_AUTOPILOT" if submitted else "QUALIFIED" if selected else "REJECTED_OTHER_EXPLAINED"
+    reason_l = reason.lower()
+    terminal_map = (
+        (("duplicate",), "REJECTED_DUPLICATE_SYMBOL"),
+        (("capacity", "max_concurrent", "max_new"), "REJECTED_CAPACITY"),
+        (("risk", "correlation", "concentration", "survivability"), "REJECTED_RISK"),
+        (("confidence", "commitment", "quality", "entry"), "REJECTED_CONFIDENCE"),
+        (("liquidity", "spread", "volume"), "REJECTED_LIQUIDITY"),
+        (("horizon",), "REJECTED_HORIZON_ASSIGNMENT"),
+        (("tie_break", "tiebreak"), "REJECTED_TIE_BREAK"),
+        (("session", "market_closed", "timing", "open_confirmation"), "REJECTED_MARKET_SESSION"),
+        (("missing",), "REJECTED_MISSING_DATA"),
+        (("stale",), "REJECTED_STALE_DATA"),
+        (("paper_mode", "paper_autopilot_disabled", "broker_disabled"), "REJECTED_PAPER_MODE"),
+        (("provider",), "REJECTED_PROVIDER"),
+    )
+    if not submitted and not selected:
+        for needles, mapped in terminal_map:
+            if any(needle in reason_l for needle in needles):
+                terminal_status = mapped
+                break
+    generated_at = _text(trace.get("generated_at") or trace.get("timestamp") or context.get("cycle_timestamp"), _now_iso())
+    identity = "|".join((generated_at[:16], symbol, asset_class, horizon, reason))
+    candidate_id = _text(trace.get("candidate_id") or trace.get("source_candidate_id"))
+    if not candidate_id:
+        candidate_id = "paper_candidate:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
+    missing_fields = [
+        name for name, value in (
+            ("symbol", symbol),
+            ("assigned_horizon", horizon if horizon != "unknown" else ""),
+            ("confidence", trace.get("confidence")),
+            ("source_timestamp", generated_at),
+        )
+        if value in (None, "")
+    ]
     return {
         "enabled": True,
         "version": VERSION,
-        "symbol": _text(trace.get("symbol")).upper(),
+        "candidate_id": candidate_id,
+        "symbol": symbol,
+        "normalized_symbol": symbol,
+        "asset_class": asset_class,
+        "asset_type": "crypto" if asset_class == "crypto" else "stock",
         "timestamp": _now_iso(),
+        "generated_at": generated_at,
+        "source_data_timestamp": _text(trace.get("source_timestamp") or trace.get("quote_timestamp") or generated_at),
+        "freshness_state": _text(trace.get("freshness_status") or trace.get("quote_quality"), "unknown"),
+        "provider_source": _text(trace.get("provider_source") or trace.get("provider_used") or trace.get("price_source"), "cached_internal"),
         "candidate_source": _text(trace.get("paper_autopilot_candidate_source") or context.get("paper_autopilot_candidate_source"), "top_buys"),
         "promoted_status": "promoted" if bool(trace.get("promoted_candidates_available") or trace.get("selected_from_broad_universe")) else "unknown",
         "market_regime": _text(trace.get("market_regime") or trace.get("regime_alignment_label") or context.get("market_session_mode"), "unknown"),
         "session_type": _text(trace.get("market_calendar_session_type") or trace.get("market_session_mode") or context.get("market_session_mode"), "unknown"),
         "allocation_lane": _text(trace.get("allocation_lane"), "unknown"),
         "confidence": round(_to_float(trace.get("confidence"), 0.0), 4),
+        "ranking_position": _to_int(trace.get("ranking_position") or trace.get("risk_adjusted_opportunity_rank"), 0),
+        "ranking_score": round(_to_float(trace.get("ranking_score") or trace.get("paper_allocation_priority") or trace.get("entry_score"), 0.0), 4),
+        "setup_archetype": _text(trace.get("trade_archetype") or trace.get("setup_type"), "unknown"),
+        "assigned_horizon": horizon,
+        "intended_horizon": horizon,
+        "horizon_scores": dict(trace.get("horizon_scores") or {}),
+        "day_trade_horizon_score": round(_to_float(trace.get("day_trade_fit_score") or (trace.get("horizon_scores") or {}).get("day_trade"), 0.0), 4),
+        "assignment_eligibility": bool(trace.get("eligible", False)),
+        "assignment_threshold": trace.get("assignment_threshold"),
+        "assignment_value": trace.get("assignment_value") or trace.get("horizon_confidence"),
+        "tie_break_inputs": dict(trace.get("tie_break_inputs") or {}),
+        "tie_break_winner": _text(trace.get("tie_break_winner") or trace.get("horizon_execution_reason"), "not_applied"),
+        "tie_break_reason": _text(trace.get("tie_break_reason") or trace.get("horizon_execution_reason"), "not_applied"),
+        "capacity_result": "blocked" if terminal_status == "REJECTED_CAPACITY" else "passed_or_not_terminal",
+        "session_result": "blocked" if terminal_status == "REJECTED_MARKET_SESSION" else "passed_or_not_terminal",
+        "paper_autopilot_eligibility": bool(trace.get("eligible", False)),
+        "paper_autopilot_handoff": bool(selected or attempted or submitted),
+        "broker_eligibility": bool(attempted or submitted),
+        "terminal_status": terminal_status,
+        "terminal_reason": reason,
+        "missing_fields": missing_fields,
+        "upstream_trace_id": _text(trace.get("upstream_trace_id") or candidate_id),
+        "downstream_trace_id": _text(trace.get("downstream_trace_id") or trace.get("client_order_id")),
         "expectancy": round(_to_float(trace.get("expected_value_score") or trace.get("risk_adjusted_profit_score"), 0.0), 4),
         "survivability": round(_to_float(trace.get("survivability_score"), 0.0), 4),
         "diversification_score": round(_to_float(trace.get("portfolio_fit_score"), 0.0), 4),
@@ -169,6 +244,7 @@ class ExecutionParticipationAuditV1:
     def record_candidate_traces(self, traces: list[dict[str, Any]], context: dict[str, Any] | None = None) -> dict[str, Any]:
         context = dict(context or {})
         records = [_build_record(dict(t or {}), context) for t in (traces or []) if isinstance(t, dict)]
+        records = list({str(record.get("candidate_id")): record for record in records}.values())
         if not records:
             return {"ok": True, "records_written": 0}
         try:
@@ -252,6 +328,12 @@ class ExecutionParticipationAuditV1:
             "candidates_seen": _to_int(paper_trace.get("candidates_seen"), reviewed),
             "reviewed_total": int(reviewed),
             "unique_candidates_reviewed": int(unique_candidates),
+            "candidate_lineage_rows": recent[-200:],
+            "terminal_status_coverage_pct": round(
+                (sum(1 for row in recent if _text(row.get("terminal_status"))) / max(1, reviewed)) * 100.0,
+                3,
+            ),
+            "silent_dropoff_count": sum(1 for row in recent if not _text(row.get("terminal_status"))),
             "eligible_unique": int(eligible_unique),
             "submitted_unique": int(submitted_unique),
             "candidates_promoted": _to_int((paper_trace.get("broad_universe_intake_promotion") or {}).get("promoted_to_top_buys_count"), promoted),

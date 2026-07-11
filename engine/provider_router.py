@@ -27,7 +27,13 @@ from engine.api_call_manager import (
     record_rate_limit,
 )
 
-ALPACA_SECRET_KEY = str(os.getenv("ALPACA_SECRET_KEY", "") or "")
+
+def _alpaca_secret_key() -> str:
+    for name in ("APCA_API_SECRET_KEY", "ALPACA_SECRET_KEY", "ALPACA_API_SECRET"):
+        value = str(os.getenv(name, "") or "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _now_iso() -> str:
@@ -262,6 +268,17 @@ class ProviderRouter:
         }
         self._lock = threading.Lock()
         self._quote_cache: dict[tuple[str, str], dict[str, Any]] = {}
+        self._request_inflight: dict[str, threading.Event] = {}
+        self._request_results: dict[str, tuple[float, tuple[dict[str, Any], int | None, str, float]]] = {}
+        self._request_metrics = {
+            "requests_submitted": 0,
+            "provider_calls_executed": 0,
+            "requests_coalesced": 0,
+            "cache_hits": 0,
+            "cache_misses": 0,
+            "failed_requests": 0,
+            "provider_calls_avoided": 0,
+        }
         self._provider_stats: dict[str, dict[str, Any]] = {}
         self._last_cycle_attempt_order: list[str] = []
         self._temp_strategy_enabled = str(os.getenv("ASTRA_TEMP_PROVIDER_STRATEGY_V1", "1")).strip().lower() in {"1", "true", "yes", "on"}
@@ -546,10 +563,16 @@ class ProviderRouter:
         with self._lock:
             cached = dict(self._quote_cache.get(key) or {})
         if not cached:
+            with self._lock:
+                self._request_metrics["cache_misses"] += 1
             return None
         age = time.time() - _to_float(cached.get("_cached_at"), 0.0)
         if age > max_age:
+            with self._lock:
+                self._request_metrics["cache_misses"] += 1
             return None
+        with self._lock:
+            self._request_metrics["cache_hits"] += 1
         cached["cache_hit"] = True
         cached["quote_age_seconds"] = round(age, 3)
         if str(cached.get("quote_quality") or "").lower() in {"", "live"}:
@@ -566,13 +589,42 @@ class ProviderRouter:
     def _request(self, provider: str, url: str, *, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> tuple[dict[str, Any], int | None, str, float]:
         t0 = time.perf_counter()
         provider_name = str(provider or "").upper()
+        safe_params = tuple(sorted((str(k), "<credential>" if str(k).lower() in {"apikey", "token", "api_key"} else str(v)) for k, v in (params or {}).items()))
+        request_key = json.dumps([provider_name, str(url).split("?", 1)[0], safe_params], separators=(",", ":"))
+        with self._lock:
+            self._request_metrics["requests_submitted"] += 1
+            cached_result = self._request_results.get(request_key)
+            if cached_result and (time.time() - float(cached_result[0])) <= 2.0:
+                self._request_metrics["requests_coalesced"] += 1
+                self._request_metrics["provider_calls_avoided"] += 1
+                return cached_result[1]
+            event = self._request_inflight.get(request_key)
+            owner = event is None
+            if owner:
+                event = threading.Event()
+                self._request_inflight[request_key] = event
+        if not owner:
+            event.wait(timeout=6.0)
+            with self._lock:
+                result = self._request_results.get(request_key)
+                if result:
+                    self._request_metrics["requests_coalesced"] += 1
+                    self._request_metrics["provider_calls_avoided"] += 1
+                    return result[1]
         if not get_call_permission(provider_name, cost=1):
             latency = (time.perf_counter() - t0) * 1000.0
-            return {}, 429, "budget_guard_block", latency
+            result = ({}, 429, "budget_guard_block", latency)
+            with self._lock:
+                self._request_results[request_key] = (time.time(), result)
+                self._request_inflight.pop(request_key, None)
+                event.set()
+            return result
         try:
             resp = requests.get(url, params=params, headers=headers, timeout=4.5)
             latency = (time.perf_counter() - t0) * 1000.0
             record_call(provider_name, cost=1)
+            with self._lock:
+                self._request_metrics["provider_calls_executed"] += 1
             status = int(resp.status_code)
             if status >= 400:
                 if status == 429:
@@ -580,13 +632,33 @@ class ProviderRouter:
                 else:
                     record_error(provider_name)
                 text = f"http_{status}"
-                return {}, status, text, latency
+                result = ({}, status, text, latency)
+                with self._lock:
+                    self._request_metrics["failed_requests"] += 1
+                    self._request_results[request_key] = (time.time(), result)
+                return result
             data = resp.json() if resp.content else {}
-            return data if isinstance(data, dict) else {"_list": data}, status, "", latency
+            result = (data if isinstance(data, dict) else {"_list": data}, status, "", latency)
+            with self._lock:
+                self._request_results[request_key] = (time.time(), result)
+            return result
         except Exception as e:  # noqa: BLE001
             latency = (time.perf_counter() - t0) * 1000.0
             record_error(provider_name)
-            return {}, None, str(e)[:200], latency
+            result = ({}, None, str(e)[:200], latency)
+            with self._lock:
+                self._request_metrics["failed_requests"] += 1
+                self._request_results[request_key] = (time.time(), result)
+            return result
+        finally:
+            with self._lock:
+                self._request_results = {
+                    key: value for key, value in self._request_results.items()
+                    if (time.time() - float(value[0])) <= 10.0
+                }
+                inflight = self._request_inflight.pop(request_key, None)
+                if inflight is not None:
+                    inflight.set()
 
     def _fetch_quote_from_provider(self, provider: str, symbol: str, asset_type: str) -> dict[str, Any]:
         p = str(provider or "").upper()
@@ -869,15 +941,23 @@ class ProviderRouter:
             }
 
         if p == "ALPACA":
-            secret = str(ALPACA_SECRET_KEY or "")
+            secret = _alpaca_secret_key()
             if not secret:
                 return {"ok": False, "error": "missing_alpaca_secret", "status": None}
-            url = f"https://data.alpaca.markets/v2/stocks/{symbol}/quotes/latest"
             headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
-            data, status, err, latency = self._request(p, url, headers=headers)
+            if asset_type == "crypto":
+                pair = str(symbol or "").upper().replace("-", "/")
+                if "/" not in pair:
+                    pair = f"{pair}/USD"
+                url = "https://data.alpaca.markets/v1beta3/crypto/us/latest/quotes"
+                data, status, err, latency = self._request(p, url, params={"symbols": pair}, headers=headers)
+            else:
+                pair = str(symbol or "").upper()
+                url = f"https://data.alpaca.markets/v2/stocks/{pair}/quotes/latest"
+                data, status, err, latency = self._request(p, url, headers=headers)
             if err:
                 return {"ok": False, "error": err, "status": status, "latency_ms": latency}
-            quote = dict(data.get("quote") or {})
+            quote = dict((data.get("quotes") or {}).get(pair) or {}) if asset_type == "crypto" else dict(data.get("quote") or {})
             ask = _to_float(quote.get("ap"), 0.0)
             bid = _to_float(quote.get("bp"), 0.0)
             price = ((ask + bid) / 2.0) if ask > 0 and bid > 0 else max(ask, bid)
@@ -895,7 +975,7 @@ class ProviderRouter:
                 "status": status,
                 "error": "",
                 "latency_ms": latency,
-                "field_path": "quote.ap/quote.bp",
+                "field_path": "quotes.<pair>.ap/bp" if asset_type == "crypto" else "quote.ap/quote.bp",
             }
 
         # MORALIS and unsupported providers return conservative failure.
@@ -1119,9 +1199,78 @@ class ProviderRouter:
             ),
         }
 
+    def deliberate_fmp_probe(self, symbol: str = "AAPL") -> dict[str, Any]:
+        """Perform one explicit, bounded FMP quote probe with no retries."""
+        p = "FMP"
+        sym = _safe_symbol(symbol) or "AAPL"
+        key = self._key_for(p, "stock")
+        before = int((self.diagnostics().get("calls_used_per_provider") or {}).get("FMP", 0))
+        if not key:
+            return {"probe_attempted": False, "probe_success": False, "exact_blocker": "missing_fmp_credential", "calls_delta": 0}
+        if self._temp_fmp_rest_disabled_explicit and self._temp_fmp_rest_disabled:
+            return {"probe_attempted": False, "probe_success": False, "exact_blocker": "explicit_fmp_emergency_disable", "calls_delta": 0}
+        data, status, error, latency = self._request(
+            p,
+            "https://financialmodelingprep.com/stable/quote",
+            params={"symbol": sym, "apikey": key},
+        )
+        rows = data.get("_list") if isinstance(data, dict) and isinstance(data.get("_list"), list) else data
+        row = dict(rows[0] or {}) if isinstance(rows, list) and rows else dict(rows or {}) if isinstance(rows, dict) else {}
+        success = bool(_to_float(row.get("price"), 0.0) > 0.0 and not error)
+        self._mark_result(p, success, latency, rate_limited=int(status or 0) == 429)
+        if error:
+            self._set_last_error(p, error)
+        response_bytes = len(json.dumps(row, separators=(",", ":")).encode("utf-8")) if row else 0
+        _fmp_efficiency_record({
+            "endpoint_family": "quote_profile",
+            "endpoint_path_template": "/stable/quote?symbol={symbol}",
+            "symbol_count": 1,
+            "status_code": int(status or 0),
+            "ok": success,
+            "cache_hit": False,
+            "bytes_estimated": response_bytes,
+            "bytes_actual_if_available": response_bytes,
+            "useful_fields_count": len([value for value in row.values() if value not in (None, "")]),
+            "useful_score": 1.0 if success else 0.0,
+            "call_reason": "deliberate_validation_probe",
+            "caller_context": "provider_router_deliberate_fmp_probe",
+            "ttl_seconds": int(self.CACHE_TTL_SECONDS),
+            "blocked_reason": str(error or "")[:120],
+            "api_calls_delta": 1,
+            "bandwidth_delta": response_bytes,
+            "provider_governor_allowed": True,
+        })
+        after = int((self.diagnostics().get("calls_used_per_provider") or {}).get("FMP", 0))
+        manifest = _fmp_efficiency_manifest_load()
+        manifest.update({
+            "last_probe_attempt_at": _now_iso(),
+            "last_probe_success_at": _now_iso() if success else str(manifest.get("last_probe_success_at") or ""),
+            "last_probe_status_code": int(status or 0),
+            "last_probe_response_bytes": int(response_bytes),
+            "last_probe_latency_ms": round(latency, 3),
+            "last_probe_exact_error": str(error or "")[:120],
+        })
+        _fmp_efficiency_manifest_write(manifest)
+        return {
+            "probe_attempted": True,
+            "probe_success": success,
+            "symbol": sym,
+            "status_code": int(status or 0),
+            "latency_ms": round(latency, 3),
+            "response_bytes": int(response_bytes),
+            "calls_before": before,
+            "calls_after": after,
+            "calls_delta": max(0, after - before),
+            "exact_blocker": str(error or "")[:120],
+            "retry_count": 0,
+            "broker_actions_used": 0,
+            "secret_exposed": False,
+        }
+
     def diagnostics(self) -> dict[str, Any]:
         with self._lock:
             stats = {k: dict(v or {}) for k, v in self._provider_stats.items()}
+            request_metrics = dict(self._request_metrics)
         calls_used_per_provider = {k: int(v.get("calls", 0) or 0) for k, v in stats.items()}
         success_rate = {}
         error_rate = {}
@@ -1173,4 +1322,8 @@ class ProviderRouter:
             "fmp_websocket_monitor_only": bool(self._temp_strategy_enabled and self._temp_fmp_ws_monitor_only),
             "temp_discovery_cache_max_age_seconds": float(self._temp_discovery_cache_age),
             "provider_backfill_max_probes": int(self._max_backfill_provider_probes),
+            "shared_request_cache_metrics": request_metrics,
+            "inflight_request_count": int(len(self._request_inflight)),
+            "request_deduplication_connected": True,
+            "secret_free_request_keys": True,
         }

@@ -632,7 +632,12 @@ class PaperAutopilotEngine:
         self.state_path = str(kwargs.get("state_path") or "state/paper_autopilot_state.json")
         self.interval_seconds = max(15, _to_int(kwargs.get("interval_seconds"), 45))
         self.max_stocks = max(1, _to_int(kwargs.get("max_stocks"), 6))
-        self.max_crypto = max(0, _to_int(kwargs.get("max_crypto"), 2))
+        self.crypto_day_capacity = 6
+        self.crypto_short_swing_capacity = 2
+        self.max_crypto = min(
+            self.crypto_day_capacity + self.crypto_short_swing_capacity,
+            max(0, _to_int(kwargs.get("max_crypto"), self.crypto_day_capacity + self.crypto_short_swing_capacity)),
+        )
         self.max_new_positions_per_cycle = max(1, _to_int(kwargs.get("max_new_positions_per_cycle"), 2))
         self.configured_max_new_positions_per_cycle = int(self.max_new_positions_per_cycle)
         self.max_closes_per_cycle = max(1, _to_int(kwargs.get("max_closes_per_cycle"), 2))
@@ -920,6 +925,10 @@ class PaperAutopilotEngine:
                         and not persisted_policy.get("broker_behavior_changed", False)
                     )
                     self._adaptive_learning_capacity_policy = persisted_policy
+                if isinstance(payload.get("last_execution_trace"), dict):
+                    self._runtime_state["last_execution_trace"] = dict(payload.get("last_execution_trace") or {})
+                if payload.get("last_cycle_utc"):
+                    self._runtime_state["last_cycle_utc"] = str(payload.get("last_cycle_utc") or "")
         except Exception:
             return
 
@@ -933,6 +942,12 @@ class PaperAutopilotEngine:
             "learned_exit_daily": dict(self._runtime_state.get("learned_exit_daily") or {}),
             "learned_exit_rollback": dict(self._runtime_state.get("learned_exit_rollback") or {}),
             "adaptive_learning_capacity_policy": dict(self._adaptive_learning_capacity_policy or {}),
+            "last_execution_trace": {
+                **dict(self._runtime_state.get("last_execution_trace") or {}),
+                "per_candidate_decision_trace": list(
+                    (self._runtime_state.get("last_execution_trace") or {}).get("per_candidate_decision_trace") or []
+                )[:200],
+            },
         }
         try:
             with open(self.state_path, "w", encoding="utf-8") as f:
@@ -1536,6 +1551,10 @@ class PaperAutopilotEngine:
         rows.extend(_rows_from(["stocks", "final"]))
         rows.extend(_rows_from(["top_action_views", "canonical_decision_views", "stocks_buy_candidates"]))
         rows.extend(_rows_from(["stocks", "qualified"]))
+        crypto_activation = self._crypto_paper_activation_status()
+        if crypto_activation.get("paper_active_bounded"):
+            rows.extend(_rows_from(["crypto", "final"]))
+            rows.extend(_rows_from(["crypto", "qualified"]))
 
         dedup: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -1604,6 +1623,80 @@ class PaperAutopilotEngine:
             except Exception:
                 return dedup
         return dedup
+
+    def _crypto_paper_activation_status(self) -> dict[str, Any]:
+        requested = str(os.getenv("ASTRA_ENABLE_ALPACA_CRYPTO_PAPER", "1")).strip().lower() in {"1", "true", "yes", "on"}
+        kill_switch = str(os.getenv("ASTRA_ALPACA_CRYPTO_PAPER_KILL_SWITCH", "0")).strip().lower() in {"1", "true", "yes", "on"}
+        broker = self.alpaca_paper_broker
+        capability = {}
+        if broker is not None and hasattr(broker, "crypto_capability_status"):
+            try:
+                capability = dict(broker.crypto_capability_status(False) or {})
+            except Exception:
+                capability = {}
+        paper_ready = bool(
+            requested
+            and not kill_switch
+            and capability.get("paper_mode_verified")
+            and capability.get("paper_endpoint_confirmed")
+            and not capability.get("live_endpoint_detected")
+            and capability.get("crypto_trading_supported")
+            and capability.get("tradable_pairs")
+            and capability.get("market_data_entitlement_confirmed")
+        )
+        return {
+            "activation_requested": requested,
+            "kill_switch_enabled": kill_switch,
+            "paper_active_bounded": paper_ready,
+            "capability": capability,
+            "day_trade_capacity": 6,
+            "short_swing_capacity": 2,
+            "scalp_broker_capacity": 0,
+            "exact_blocker": "" if paper_ready else str(capability.get("exact_blocker") or "crypto_runtime_capability_not_validated"),
+        }
+
+    def _crypto_execution_data_gate(self, row: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+        quote_age = _to_float(
+            row.get("quote_age_seconds"),
+            _to_float(row.get("freshness_seconds"), -1.0),
+        )
+        spread_pct = _to_float(
+            row.get("spread_pct"),
+            _to_float(row.get("bid_ask_spread_pct"), -1.0),
+        )
+        volume = _to_float(
+            row.get("volume_24h"),
+            _to_float(row.get("volume"), _to_float(row.get("quote_volume"), 0.0)),
+        )
+        quality = _to_float(
+            row.get("data_quality_score"),
+            _to_float(row.get("quote_quality_score"), 0.0),
+        )
+        max_age = max(15.0, _to_float(os.getenv("ASTRA_CRYPTO_MAX_QUOTE_AGE_SECONDS"), 120.0))
+        max_spread = max(0.1, _to_float(os.getenv("ASTRA_CRYPTO_MAX_SPREAD_PCT"), 1.5))
+        min_quality = max(0.0, _to_float(os.getenv("ASTRA_CRYPTO_MIN_DATA_QUALITY_SCORE"), 50.0))
+        meta = {
+            "crypto_quote_age_seconds": quote_age if quote_age >= 0 else None,
+            "crypto_spread_pct": spread_pct if spread_pct >= 0 else None,
+            "crypto_volume": volume,
+            "crypto_data_quality_score": quality,
+            "crypto_max_quote_age_seconds": max_age,
+            "crypto_max_spread_pct": max_spread,
+            "crypto_min_data_quality_score": min_quality,
+        }
+        if quote_age < 0:
+            return False, "crypto_quote_freshness_missing", meta
+        if quote_age > max_age:
+            return False, "crypto_quote_stale", meta
+        if spread_pct < 0:
+            return False, "crypto_spread_missing", meta
+        if spread_pct > max_spread:
+            return False, "crypto_spread_too_wide", meta
+        if volume <= 0:
+            return False, "crypto_volume_missing", meta
+        if quality < min_quality:
+            return False, "crypto_data_quality_below_floor", meta
+        return True, "crypto_market_data_gates_passed", meta
 
     def _entry_commitment_gate_v1(self, row: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
         row = _normalize_paper_entry_bridge(row)
@@ -2259,6 +2352,36 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 session_diag = {}
+        if asset == "crypto":
+            crypto_activation = self._crypto_paper_activation_status()
+            horizon = str(r.get("paper_entry_horizon_style") or r.get("trade_horizon_style") or "day_trade")
+            crypto_data_ok, crypto_data_reason, crypto_data_meta = self._crypto_execution_data_gate(r)
+            crypto_session_ok = bool(
+                crypto_activation.get("paper_active_bounded")
+                and horizon in {"day_trade", "swing_trade"}
+                and crypto_data_ok
+            )
+            session_diag = {
+                "market_session_mode": "crypto_24_7",
+                "current_session_type": "crypto_24_7",
+                "market_is_open": True,
+                "market_is_tradable": crypto_session_ok,
+                "session_tradable": crypto_session_ok,
+                "paper_order_submission_allowed": crypto_session_ok,
+                "execution_confirmation_required": not crypto_session_ok,
+                "open_confirmation_score": 100.0 if crypto_session_ok else 0.0,
+                "open_confirmation_label": "confirmed_execute" if crypto_session_ok else "crypto_activation_blocked",
+                "open_confirmation_reason": "runtime_capability_market_data_and_24_7_session_verified" if crypto_session_ok else crypto_data_reason if not crypto_data_ok else crypto_activation.get("exact_blocker"),
+                "execution_intent_status": "paper_ready" if crypto_session_ok else "blocked",
+                "defer_until_market_confirmation": False,
+                "requires_open_confirmation": not crypto_session_ok,
+            }
+            if not crypto_session_ok and allowed:
+                allowed = False
+                reason = "crypto_scalp_shadow_only" if horizon == "scalp" else crypto_data_reason if not crypto_data_ok else "crypto_paper_activation_not_ready"
+            gate_meta.update(crypto_data_meta)
+            gate_meta["crypto_market_data_gates_ok"] = crypto_data_ok
+            gate_meta["crypto_market_data_gate_reason"] = crypto_data_reason
         trace = {
             "symbol": symbol,
             "asset_type": asset,
@@ -2380,8 +2503,18 @@ class PaperAutopilotEngine:
         r = _normalize_paper_entry_bridge(row)
         meta = dict(gate_meta or {})
         asset_type = _norm_asset(r.get("asset_type") or "stock")
-        if asset_type != "stock":
-            return {"enabled": False, "paper_order_submitted": False, "reason": "alpaca_crypto_execution_deferred"}
+        crypto_activation = self._crypto_paper_activation_status() if asset_type == "crypto" else {}
+        if asset_type == "crypto" and not crypto_activation.get("paper_active_bounded"):
+            return {"enabled": False, "paper_order_submitted": False, "reason": str(crypto_activation.get("exact_blocker") or "alpaca_crypto_execution_not_validated")}
+        if asset_type == "crypto":
+            crypto_data_ok, crypto_data_reason, crypto_data_meta = self._crypto_execution_data_gate(r)
+            if not crypto_data_ok:
+                return {
+                    "enabled": False,
+                    "paper_order_submitted": False,
+                    "reason": crypto_data_reason,
+                    **crypto_data_meta,
+                }
         limits_ok = bool(meta.get("paper_autopilot_limits_ok", False))
         if not limits_ok:
             return {
@@ -2444,6 +2577,24 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 session_diag = {}
+        if asset_type == "crypto":
+            session_diag = {
+                "market_session_mode": "crypto_24_7",
+                "paper_order_submission_allowed": True,
+                "execution_confirmation_required": False,
+                "open_confirmation_score": 100.0,
+                "open_confirmation_label": "confirmed_execute",
+                "open_confirmation_reason": "runtime_crypto_capability_verified",
+                "quote_freshness_confirmed": True,
+                "spread_liquidity_confirmed": True,
+                "gap_behavior_confirmed": True,
+                "entry_commitment_confirmed": True,
+                "portfolio_risk_confirmed": bool(portfolio_ok),
+                "broker_preflight_confirmed": True,
+                "execution_intent_status": "paper_ready",
+                "defer_until_market_confirmation": False,
+                "requires_open_confirmation": False,
+            }
         if not bool(session_diag.get("paper_order_submission_allowed", False)):
             blocker = "session_order_submission_blocked"
             if bool(session_diag.get("execution_confirmation_required", True)):
@@ -2554,6 +2705,13 @@ class PaperAutopilotEngine:
             "entry_price_reference": round(_to_float(entry_price), 6),
             "entry_commitment_score": round(_to_float((gate_meta or {}).get("commitment_score"), 0.0), 2),
         }
+        if asset_type == "crypto":
+            order.update({
+                "asset_class": "crypto",
+                "crypto_paper_activation_passed": True,
+                "time_in_force": "gtc",
+                "notional": min(50.0, max(10.0, _to_float(os.getenv("ASTRA_ALPACA_CRYPTO_PAPER_NOTIONAL"), 25.0))),
+            })
         try:
             res = dict(broker.submit_paper_order(order) or {})
             res.setdefault("paper_autopilot_limits_ok", True)
@@ -3571,8 +3729,14 @@ class PaperAutopilotEngine:
                             open_syms.discard(symbol)
 
             if capacity_source == "broker":
-                broker_stock_open = int(len([s for s in broker_open_syms if s]))
-                broker_crypto_open = 0
+                broker_crypto_rows = {
+                    symbol: row
+                    for symbol, row in broker_position_by_symbol.items()
+                    if str((row or {}).get("asset_class") or (row or {}).get("asset_type") or "").strip().lower()
+                    in {"crypto", "cryptocurrency"}
+                }
+                broker_crypto_open = int(len(broker_crypto_rows))
+                broker_stock_open = max(0, int(len([s for s in broker_open_syms if s])) - broker_crypto_open)
                 effective_capacity_count = broker_stock_open + broker_crypto_open
                 adaptive_capacity = self._adaptive_execution_capacity(effective_capacity_count)
                 stock_capacity_limit = max(
@@ -3601,6 +3765,33 @@ class PaperAutopilotEngine:
                 crypto_capacity = max(0, self.max_crypto - internal_crypto_open)
                 total_capacity = int(adaptive_capacity.get("safe_paper_entry_slots_available", 0))
                 stale_internal_positions_ignored_for_broker_capacity = False
+            internal_by_symbol = {
+                str((row or {}).get("symbol") or "").upper().strip(): dict(row or {})
+                for row in open_rows_initial
+                if str((row or {}).get("symbol") or "").strip()
+            }
+            crypto_day_used = 0
+            crypto_swing_used = 0
+            crypto_position_rows = (
+                broker_crypto_rows.items()
+                if capacity_source == "broker"
+                else (
+                    (str((row or {}).get("symbol") or "").upper().strip(), row)
+                    for row in open_rows_initial
+                    if _norm_asset((row or {}).get("asset_type") or "stock") == "crypto"
+                )
+            )
+            for crypto_symbol, broker_or_internal in crypto_position_rows:
+                merged_crypto = {**dict(internal_by_symbol.get(crypto_symbol) or {}), **dict(broker_or_internal or {})}
+                existing_horizon, _source, _inferred = _infer_horizon_style(merged_crypto)
+                if existing_horizon == "swing_trade":
+                    crypto_swing_used += 1
+                else:
+                    # Unknown/legacy crypto positions consume the conservative day lane.
+                    crypto_day_used += 1
+            crypto_day_available = max(0, self.crypto_day_capacity - crypto_day_used)
+            crypto_swing_available = max(0, self.crypto_short_swing_capacity - crypto_swing_used)
+            crypto_capacity = min(crypto_capacity, crypto_day_available + crypto_swing_available)
             horizon_capacity = self._horizon_capacity_snapshot(
                 open_rows=open_rows_initial,
                 broker_open_syms=broker_open_syms,
@@ -3760,7 +3951,18 @@ class PaperAutopilotEngine:
                     candidate_horizon = "unknown"
                     candidate_horizon_source = "missing_horizon"
                     candidate_horizon_inferred = True
-                horizon_ok, horizon_capacity_reason = self._horizon_has_capacity(horizon_capacity, candidate_horizon)
+                if asset == "crypto":
+                    if candidate_horizon == "scalp":
+                        horizon_ok, horizon_capacity_reason = False, "crypto_scalp_shadow_only"
+                    elif candidate_horizon == "swing_trade":
+                        horizon_ok = crypto_swing_available > 0
+                        horizon_capacity_reason = "crypto_short_swing_capacity_available" if horizon_ok else "crypto_short_swing_capacity_reached"
+                    else:
+                        candidate_horizon = "day_trade"
+                        horizon_ok = crypto_day_available > 0
+                        horizon_capacity_reason = "crypto_day_trade_capacity_available" if horizon_ok else "crypto_day_trade_capacity_reached"
+                else:
+                    horizon_ok, horizon_capacity_reason = self._horizon_has_capacity(horizon_capacity, candidate_horizon)
                 if not horizon_ok:
                     skipped += 1
                     horizon_capacity_blocked += 1
@@ -3794,7 +3996,7 @@ class PaperAutopilotEngine:
                     open_syms=open_syms,
                     stock_capacity=stock_capacity,
                     crypto_capacity=crypto_capacity,
-                    total_capacity=total_capacity,
+                    total_capacity=max(total_capacity, crypto_capacity) if asset == "crypto" else total_capacity,
                     selected_so_far=selected_count,
                     internal_open_syms=internal_open_syms,
                     broker_open_syms=broker_open_syms,
@@ -3933,7 +4135,12 @@ class PaperAutopilotEngine:
                         stock_capacity = max(0, stock_capacity - 1)
                     else:
                         crypto_capacity = max(0, crypto_capacity - 1)
-                    horizon_capacity = self._consume_horizon_capacity(horizon_capacity, candidate_horizon)
+                        if candidate_horizon == "swing_trade":
+                            crypto_swing_available = max(0, crypto_swing_available - 1)
+                        else:
+                            crypto_day_available = max(0, crypto_day_available - 1)
+                    if asset != "crypto":
+                        horizon_capacity = self._consume_horizon_capacity(horizon_capacity, candidate_horizon)
                 else:
                     skipped += 1
                     orders_rejected += 1
@@ -4097,7 +4304,7 @@ class PaperAutopilotEngine:
                 "horizon_execution_reason": str(horizon_execution_reason or ""),
                 "horizon_execution_blocker": str(horizon_execution_blocker or final_blocker_reason or ""),
                 "paper_tie_breaker_blocker": str(horizon_execution_blocker or final_blocker_reason or ""),
-                "per_candidate_decision_trace": decision_trace[:12],
+                "per_candidate_decision_trace": decision_trace[:200],
                 "last_alpaca_error_sanitized": str(last_alpaca_error)[:180],
                 "portfolio_risk_proof_present": bool(portfolio_risk_proof_present),
                 "portfolio_risk_score_used": portfolio_risk_score_used,

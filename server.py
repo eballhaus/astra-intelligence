@@ -1,3 +1,7 @@
+from engine.runtime_environment import load_runtime_environment
+
+load_runtime_environment()
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse

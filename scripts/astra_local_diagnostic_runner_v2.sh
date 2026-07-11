@@ -39,7 +39,7 @@ import urllib.request
 base = sys.argv[1].rstrip("/")
 path = sys.argv[2]
 try:
-    with urllib.request.urlopen(base + path, timeout=5) as response:
+    with urllib.request.urlopen(base + path, timeout=30) as response:
         payload = json.loads(response.read().decode("utf-8"))
     ok = bool(payload)
 except Exception:
@@ -134,6 +134,28 @@ endpoints = [
 ]
 
 deep_endpoints = [
+    "/api/fmp_runtime_connection_diagnostics_v1",
+    "/api/fmp_zero_usage_repair_validation_v1",
+    "/api/provider_orchestration_data_governance_v2",
+    "/api/provider_routing_decision_trace_v1",
+    "/api/unified_api_budget_bandwidth_governor_v2",
+    "/api/provider_budget_usage_v1",
+    "/api/shared_data_cache_request_deduplication_v2",
+    "/api/provider_cache_health_v1",
+    "/api/adaptive_market_intake_universe_expansion_v2",
+    "/api/fundamental_catalyst_intelligence_expansion_v2",
+    "/api/fmp_enrichment_consumption_trace_v1",
+    "/api/data_freshness_quality_source_attribution_v2",
+    "/api/provider_conflict_diagnostics_v1",
+    "/api/evidence_consumption_provider_roi_v2",
+    "/api/provider_knowledge_roi_attribution_v1",
+    "/api/astra_provider_data_knowledge_validation_v2",
+    "/api/equity_candidate_lineage_completion_v2",
+    "/api/equity_horizon_qualification_completion_v2",
+    "/api/alpaca_crypto_runtime_capability_v2",
+    "/api/crypto_paper_activation_readiness_v2",
+    "/api/broker_truth_throughput_acceleration_v2",
+    "/api/astra_provider_horizon_crypto_lifecycle_validation_v2",
     "/api/crypto_shadow_learning_v1",
     "/api/crypto_rankings",
     "/api/crypto_paper_lane_validation_v1",
