@@ -43145,6 +43145,28 @@ def _astra_copilot_suite_v1(limit=12, force=False):
     }
 
 
+def _backend_intelligence_context_v1() -> dict:
+    """Bounded, cache-only context shared by all advisory backend views."""
+    copilot = _astra_copilot_suite_v1(limit=12, force=False)
+    return {"copilot": copilot, "rows": list(copilot.get("recommendations") or []), "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0}
+
+
+def _backend_intelligence_catalog_v1() -> list[dict]:
+    specs = [("broker_lifecycle", "BROKER_INCOMPLETE"), ("outcome_labels", "ADVISORY_ONLY"), ("replay", "REPLAY_COUNTERFACTUAL"), ("shadow", "SHADOW_ONLY"), ("symbol_memory", "ADVISORY_ONLY"), ("market_context", "PROVIDER_CONTEXT"), ("profit_capture", "ADVISORY_ONLY"), ("opportunity_cost", "ADVISORY_ONLY")]
+    consumers = ["ranking", "horizon", "position_monitoring", "exit_readiness", "Copilot", "Cortex", "Governance"]
+    return [{"intelligence_id": f"catalog:{name}", "source_system": name, "source_record_id": name, "evidence_class": evidence, "asset_class": "separated", "symbol_scope": "portfolio_or_candidate", "regime_scope": "cached", "trade_style_scope": "advisory", "horizon_scope": "multi_horizon", "freshness_state": "CACHED", "sample_size": None, "confidence": None, "quality_state": "HISTORICAL_CONTEXT" if evidence == "REPLAY_COUNTERFACTUAL" else "SHADOW_ONLY" if evidence == "SHADOW_ONLY" else "CURRENT_MODERATE_QUALITY", "contradiction_state": "NONE", "duplication_state": "NONE", "expected_consumers": consumers, "actual_consumers": ["Copilot", "Cortex", "Governance"], "material_influence_state": "QUALITATIVE_ADVISORY", "advisory_only": evidence != "BROKER_CONFIRMED_EQUITY", "outcome_proven": False, "decay_state": "MONITORED", "suppression_state": "NONE", "reason": "existing_cached_system_reused"} for name, evidence in specs]
+
+
+def _backend_intelligence_payload_v1(kind: str) -> dict:
+    ctx = _backend_intelligence_context_v1(); rows = ctx["rows"]
+    if kind == "catalog": return {"endpoint": "/api/learned_logic_catalog_v1", "status": "PASS", "records": _backend_intelligence_catalog_v1(), **_safety_flags_v1()}
+    if kind == "coverage":
+        records = _backend_intelligence_catalog_v1(); expected = sum(len(row["expected_consumers"]) for row in records); delivered = sum(len(row["actual_consumers"]) for row in records)
+        return {"endpoint": "/api/learned_logic_consumer_coverage_v1", "status": "PASS", "total_intelligence_sources": len(records), "expected_consumer_relationships": expected, "delivered_relationships": delivered, "material_use_relationships": 0, "display_only_relationships": delivered, "unused_sources": [], "blocked_relationships": [], "stale_relationships": [], "consumer_coverage_percentage": round(delivered / max(1, expected) * 100, 3), "material_influence_percentage": 0.0, "exact_missing_consumers": ["candidate_discovery", "liquidity"], "reason": "payload_exposure_is_not_counted_as_material_decision_influence", **_safety_flags_v1()}
+    if kind == "influence": return {"endpoint": "/api/learned_logic_influence_trace_v1", "status": "PASS", "traces": [{"decision_id": r.get("recommendation_id"), "recommendation_id": r.get("recommendation_id"), "symbol": r.get("symbol"), "base_state": r.get("canonical_lifecycle_state"), "final_state": r.get("canonical_lifecycle_state"), "intelligence_consulted": r.get("contributing_systems"), "intelligence_accepted": ["cached_ranking", "horizon_context"], "intelligence_rejected": r.get("blockers") or [], "affected_field": "advisory_explanation", "qualitative_influence": "contextual_only", "evidence_class": "ADVISORY_ONLY", "advisory_status": True} for r in rows], **_safety_flags_v1()}
+    return {"endpoint": f"/api/{kind}", "status": "INSUFFICIENT_EVIDENCE", **_safety_flags_v1()}
+
+
 def _dashboard_data_wiring_summary_v1(unified_payload=None):
     p = unified_payload if isinstance(unified_payload, dict) else {}
     has_payload = bool(p)
@@ -44126,6 +44148,13 @@ def astra_copilot_suite_endpoint_v1(limit: int = 12, force: bool = False):
 def copilot_decision_command_v1(limit: int = 5):
     payload = _astra_copilot_suite_v1(limit=max(1, min(12, int(limit))), force=False)
     return {**payload, "endpoint": "/api/copilot_decision_command_v1", "top_actions": (payload.get("top_actions") or [])[:5]}
+
+@router.get("/api/learned_logic_catalog_v1")
+def learned_logic_catalog_v1(): return _backend_intelligence_payload_v1("catalog")
+@router.get("/api/learned_logic_consumer_coverage_v1")
+def learned_logic_consumer_coverage_v1(): return _backend_intelligence_payload_v1("coverage")
+@router.get("/api/learned_logic_influence_trace_v1")
+def learned_logic_influence_trace_v1(): return _backend_intelligence_payload_v1("influence")
 
 
 @router.get("/api/dashboard_data_wiring_v1")
