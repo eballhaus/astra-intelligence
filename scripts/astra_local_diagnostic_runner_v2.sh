@@ -161,6 +161,7 @@ deep_endpoints = [
     "/api/equity_candidate_lineage_completion_v2",
     "/api/equity_horizon_qualification_completion_v2",
     "/api/alpaca_crypto_runtime_capability_v2",
+    "/api/crypto_paper_execution_readiness_v1",
     "/api/crypto_paper_activation_readiness_v2",
     "/api/broker_truth_throughput_acceleration_v2",
     "/api/astra_provider_horizon_crypto_lifecycle_validation_v2",

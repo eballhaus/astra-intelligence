@@ -64493,6 +64493,98 @@ def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> di
     }
 
 
+def _crypto_paper_execution_readiness_v1_payload(statuses: dict | None = None) -> dict:
+    """Return the canonical, cache-only crypto paper execution readiness proof.
+
+    This composes the existing lane, funnel, reconciliation, and truth builders.
+    It deliberately does not probe Alpaca or submit an order; execution remains
+    behind the existing paper-autopilot gates and human review.
+    """
+    statuses = dict(statuses or {})
+    lane = _crypto_paper_lane_validation_v1_payload(statuses)
+    funnel = _crypto_candidate_funnel_v1_payload(statuses)
+    reconciliation = _crypto_position_reconciliation_v1_payload(statuses)
+    truth = _crypto_broker_truth_accumulation_v1_payload(statuses)
+    separation = _broker_truth_asset_class_separation_audit_v1_payload(statuses)
+    capability = {}
+    if "ALPACA_PAPER_BROKER" in globals() and hasattr(ALPACA_PAPER_BROKER, "crypto_capability_status"):
+        capability = dict(ALPACA_PAPER_BROKER.crypto_capability_status(False) or {})
+
+    candidate_rows = [row for row in (funnel.get("candidate_rows") or []) if isinstance(row, dict)]
+    qualified_count = int(_to_float(funnel.get("qualified_candidates"), 0.0))
+    paper_mode_verified = bool(lane.get("paper_mode_verified"))
+    live_endpoint_detected = bool(capability.get("live_endpoint_detected"))
+    paper_endpoint_verified = bool(
+        capability.get("paper_endpoint_confirmed")
+        and paper_mode_verified
+        and not live_endpoint_detected
+    )
+    normalization_rejections = [
+        row for row in candidate_rows
+        if str(row.get("symbol") or "").strip() == "" or row.get("candidate_state") == "REJECTED_IDENTITY"
+    ]
+    active_positions = int(_to_float(reconciliation.get("paper_autopilot_crypto_open_rows"), 0.0))
+    blockers = []
+    if not paper_mode_verified:
+        blockers.append("paper_mode_not_verified")
+    if live_endpoint_detected:
+        blockers.append("live_endpoint_detected")
+    if not bool(capability.get("crypto_trading_supported")):
+        blockers.append("crypto_broker_execution_not_supported")
+    if not bool(capability.get("market_data_entitlement_confirmed")):
+        blockers.append("crypto_market_data_entitlement_not_confirmed")
+    if not list(lane.get("tradable_pairs") or []):
+        blockers.append("no_tradable_crypto_pairs")
+    if bool(lane.get("kill_switch_enabled")):
+        blockers.append("crypto_paper_kill_switch_enabled")
+    if not bool(lane.get("activation_requested")):
+        blockers.append("crypto_paper_activation_not_requested")
+
+    infrastructure_ready = not blockers
+    if not infrastructure_ready:
+        readiness_state = "CRYPTO_PAPER_BLOCKED"
+    elif active_positions > 0:
+        readiness_state = "CRYPTO_PAPER_ACTIVE"
+    elif qualified_count > 0:
+        readiness_state = "CRYPTO_PAPER_READY"
+    else:
+        readiness_state = "CRYPTO_PAPER_READY_NO_ELIGIBLE_TRADE"
+
+    return {
+        "endpoint": "/api/crypto_paper_execution_readiness_v1",
+        "status": "PASS" if infrastructure_ready else "BLOCKED_FAIL_CLOSED",
+        "readiness_state": readiness_state,
+        "generated_at": _now_utc_iso(),
+        "source_mode": "cache_only_composed_existing_crypto_systems",
+        "paper_endpoint_verified": paper_endpoint_verified,
+        "paper_mode_verified": paper_mode_verified,
+        "live_endpoint_rejected": not live_endpoint_detected,
+        "live_endpoint_detected": live_endpoint_detected,
+        "crypto_asset_identity_normalization": "strict_explicit_asset_class_and_supported_quote",
+        "normalization_checked_candidates": len(candidate_rows),
+        "normalization_rejected_candidates": len(normalization_rejections),
+        "supported_pairs_count": len(lane.get("supported_pairs") or []),
+        "tradable_pairs_count": len(lane.get("tradable_pairs") or []),
+        "candidate_count": int(_to_float(funnel.get("candidate_count"), 0.0)),
+        "qualified_candidate_count": qualified_count,
+        "paper_eligible_candidate_count": int(_to_float(funnel.get("paper_eligible_candidates"), 0.0)),
+        "paper_autopilot_crypto_open_rows": active_positions,
+        "crypto_truth_records_total": int(_to_float(truth.get("crypto_truth_records_total"), 0.0)),
+        "crypto_complete_truths": int(_to_float(truth.get("crypto_complete_truths"), 0.0)),
+        "equity_crypto_truth_separation": separation.get("contamination_guard") == "PASS",
+        "activation_blockers": blockers or ["none"],
+        "no_order_submitted": True,
+        "diagnostic_broker_actions": 0,
+        "broker_read_calls_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "human_review_required": True,
+        "learned_exits_enabled": False,
+        "automatic_promotions_enabled": False,
+        **_safety_flags_v1(),
+    }
+
+
 def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
     lane = _crypto_paper_lane_validation_v1_payload(statuses)
     rows = _crypto_ranking_rows_cached_v1()
@@ -68057,6 +68149,12 @@ def horizon_assignment_tiebreak_runner_validation_v1(force: bool = False):
 def crypto_paper_lane_validation_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
     return _crypto_paper_lane_validation_v1_payload(dict(cached_unified or {}))
+
+
+@router.get("/api/crypto_paper_execution_readiness_v1")
+def crypto_paper_execution_readiness_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    return _crypto_paper_execution_readiness_v1_payload(dict(cached_unified or {}))
 
 
 @router.get("/api/alpaca_crypto_runtime_capability_v2")
