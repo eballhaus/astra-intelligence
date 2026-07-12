@@ -2454,6 +2454,7 @@ try:
     from engine.astra_tier1_tier2_profitability_activation_v1 import AstraTier1Tier2ProfitabilityActivationV1
     from engine.astra_integration_completion_consumption_v1 import AstraIntegrationCompletionConsumptionV1
     from engine.astra_paper_provider_cortex_completion_v1 import AstraPaperProviderCortexCompletionV1
+    from engine.astra_build_h_ownership_v1 import AstraBuildHOwnershipMapV1
 except Exception:
     class _IntelligenceQualityUnavailable:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -2522,6 +2523,7 @@ except Exception:
     AstraTier1Tier2ProfitabilityActivationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraIntegrationCompletionConsumptionV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraPaperProviderCortexCompletionV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    AstraBuildHOwnershipMapV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
@@ -3223,6 +3225,7 @@ ASTRA_ADAPTIVE_OCCUPANCY_EVOLUTION_SUITE = AstraAdaptiveOccupancyEvolutionSuiteV
 ASTRA_AUTONOMOUS_OPTIMIZATION_GOVERNANCE_CORE = AstraAutonomousOptimizationGovernanceCoreV1(state_dir=STATE)
 ASTRA_AUTONOMOUS_IMPROVEMENT_PERFORMANCE_ATTRIBUTION_COMPLETION = AstraAutonomousImprovementPerformanceAttributionCompletionV1(state_dir=STATE)
 ASTRA_STORAGE_CACHE_ATTRIBUTION_LEARNING_EFFICIENCY = AstraStorageCacheAttributionLearningEfficiencyV1(state_dir=STATE)
+ASTRA_BUILD_H_OWNERSHIP_MAP = AstraBuildHOwnershipMapV1(state_dir=STATE)
 CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH = CortexLifecycleEvidenceMasterTruthV1(state_dir=STATE)
 ASTRA_PROFITABILITY_ACTIVATION_INTELLIGENCE_UTILIZATION = AstraProfitabilityActivationIntelligenceUtilizationV1(state_dir=STATE)
 ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION = AstraTier1Tier2ProfitabilityActivationV1(state_dir=STATE)
@@ -45643,6 +45646,32 @@ def astra_autonomous_improvement_performance_attribution_completion_v1(force: bo
     return ASTRA_AUTONOMOUS_IMPROVEMENT_PERFORMANCE_ATTRIBUTION_COMPLETION.status(statuses=statuses, force=bool(force))
 
 
+@router.get("/api/astra_build_h_ownership_map_v1")
+def astra_build_h_ownership_map_v1(force: bool = False):
+    try:
+        out = dict(ASTRA_BUILD_H_OWNERSHIP_MAP.status(statuses=_learning_acceleration_status_bundle(), force=bool(force)) or {})
+        out["astra_build_h_ownership_map_v1"] = True
+        out["provider_calls_used"] = 0
+        out["broker_calls_used"] = 0
+        out["llm_calls_used"] = 0
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "endpoint": "/api/astra_build_h_ownership_map_v1",
+            "status": "OWNERSHIP_MAP_BLOCKED",
+            "degraded_reason": f"ownership_map_unavailable:{str(exc)[:140]}",
+            "stores_inventoried": 0,
+            "canonical_owners_assigned": 0,
+            "unknown_owners": [],
+            "provider_calls_used": 0,
+            "broker_calls_used": 0,
+            "llm_calls_used": 0,
+            "behavior_safe_to_apply": False,
+            "paper_only_preserved": True,
+        }
+
+
 @router.get("/api/astra_storage_cache_attribution_learning_efficiency_v1")
 def astra_storage_cache_attribution_learning_efficiency_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -72085,6 +72114,10 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["autonomous_intelligence_validation_governance_v1"] = AUTONOMOUS_INTELLIGENCE_VALIDATION_GOVERNANCE.status(statuses=statuses, force=False)
     except Exception:
         statuses["autonomous_intelligence_validation_governance_v1"] = {}
+    try:
+        statuses["astra_build_h_ownership_map_v1"] = ASTRA_BUILD_H_OWNERSHIP_MAP.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["astra_build_h_ownership_map_v1"] = {}
     return statuses
 
 
@@ -81702,6 +81735,17 @@ def unified_learning_diagnostics_v1(force: bool = False):
             force_cached["force_refresh_deferred_reason"] = "bounded_validation_path_preserves_dashboard_responsiveness_and_zero_provider_calls"
             force_cached["failed_sources_count"] = int(_to_float(force_cached.get("failed_sources_count"), 0.0))
             force_cached["initial_learning_tab_endpoint_count"] = int(_to_float(force_cached.get("initial_learning_tab_endpoint_count"), 1.0) or 1)
+            try:
+                force_cached["astra_build_h_ownership_map_v1"] = ASTRA_BUILD_H_OWNERSHIP_MAP.status(statuses={}, force=False)
+            except Exception:
+                force_cached["astra_build_h_ownership_map_v1"] = {
+                    "endpoint": "/api/astra_build_h_ownership_map_v1",
+                    "status": "OWNERSHIP_MAP_BLOCKED",
+                    "behavior_safe_to_apply": False,
+                    "provider_calls_used": 0,
+                    "broker_calls_used": 0,
+                    "llm_calls_used": 0,
+                }
             force_cached["api_calls_used"] = 0
             force_cached["provider_calls_used"] = 0
             force_cached["llm_calls_used"] = 0
@@ -82238,6 +82282,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         out = UNIFIED_LEARNING_DIAGNOSTICS.build(sources, force=bool(force))
         if isinstance(out, dict):
             out["astra_copilot_suite_v1"] = dict(statuses.get("astra_copilot_suite_v1") or {})
+            out["astra_build_h_ownership_map_v1"] = dict(statuses.get("astra_build_h_ownership_map_v1") or {})
             out["ask_astra_local_ai_status_v1"] = dict(statuses.get("ask_astra_local_ai_status_v1") or {})
             out["astra_recovery_center_v1"] = dict(statuses.get("astra_recovery_center_v1") or {})
             out["astra_trading_intelligence_foundation_v1"] = dict(statuses.get("astra_trading_intelligence_foundation_v1") or {})
