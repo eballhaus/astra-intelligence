@@ -2555,6 +2555,16 @@ except Exception:
     TeachingEffectivenessV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     BuildJFinalValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
+    from engine.astra_build_k_safe_repair_governance_v1 import (
+        AstraAutonomousSafeRepairV1,
+        AstraGovernanceOversightV2,
+        BuildKFinalValidationV1,
+    )
+except Exception:
+    AstraAutonomousSafeRepairV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    AstraGovernanceOversightV2 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    BuildKFinalValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
     class AstraProviderOrchestrationDataGovernanceV1:  # type: ignore[override]
@@ -3267,6 +3277,9 @@ ASTRA_SHADOW_LIFECYCLE_COMPRESSION_RETENTION = ShadowLifecycleCompressionRetenti
 ASTRA_ACTIVE_LEARNING_EVIDENCE_GAP = ActiveLearningEvidenceGapV1(state_dir=STATE)
 ASTRA_TEACHING_EFFECTIVENESS = TeachingEffectivenessV1(state_dir=STATE)
 ASTRA_BUILD_J_FINAL_VALIDATION = BuildJFinalValidationV1(state_dir=STATE)
+ASTRA_AUTONOMOUS_SAFE_REPAIR = AstraAutonomousSafeRepairV1(state_dir=STATE)
+ASTRA_GOVERNANCE_OVERSIGHT_V2 = AstraGovernanceOversightV2(state_dir=STATE)
+ASTRA_BUILD_K_FINAL_VALIDATION = BuildKFinalValidationV1(state_dir=STATE)
 CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH = CortexLifecycleEvidenceMasterTruthV1(state_dir=STATE)
 ASTRA_PROFITABILITY_ACTIVATION_INTELLIGENCE_UTILIZATION = AstraProfitabilityActivationIntelligenceUtilizationV1(state_dir=STATE)
 ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION = AstraTier1Tier2ProfitabilityActivationV1(state_dir=STATE)
@@ -46038,6 +46051,61 @@ def build_j_final_validation_v1(force: bool = False):
         return {"endpoint": "/api/build_j_final_validation_v1", "status": "BUILD_J_BLOCKED", "checks_failed": [f"build_j_validator_unavailable:{str(exc)[:140]}"], "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "runtime_files_excluded": True, "behavior_safe_to_apply": False, "paper_only_preserved": True}
 
 
+def _astra_build_k_direct_statuses_v1() -> dict:
+    """Build K reads cached health/governance data and never triggers a broker refresh."""
+    base = _astra_build_h_cached_statuses_v1()
+    base["unified_learning_diagnostics_v1"] = dict(base)
+    if not base.get("astra_governance_oversight_v1"):
+        base["astra_governance_oversight_v1"] = {
+            "status": "cached_v1_summary_unavailable",
+            "stale_cache_summary": {"stale_decision_critical_cache_count": 0},
+            "cache_first_fallback": True,
+        }
+    if not base.get("alpaca_paper_broker"):
+        base["alpaca_paper_broker"] = _cached_alpaca_paper_status_payload(base) or _alpaca_paper_status_fast_fallback_v1("build_k_cache_first_status")
+    if not base.get("astra_recovery_center_v1"):
+        base["astra_recovery_center_v1"] = ASTRA_RECOVERY_CENTER.status(force=False)
+    if not base.get("astra_knowledge_warehouse_v1"):
+        base["astra_knowledge_warehouse_v1"] = ASTRA_KNOWLEDGE_WAREHOUSE.status(statuses=base, force=False)
+    return base
+
+
+@router.get("/api/astra_autonomous_safe_repair_v1")
+def astra_autonomous_safe_repair_v1(force: bool = False):
+    try:
+        base = _astra_build_k_direct_statuses_v1()
+        out = dict(ASTRA_AUTONOMOUS_SAFE_REPAIR.status(statuses=base, force=True) or {})
+        out.update({"provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False})
+        return out
+    except Exception as exc:
+        return {"endpoint": "/api/astra_autonomous_safe_repair_v1", "status": "insufficient_evidence", "degraded_reason": f"safe_repair_unavailable:{str(exc)[:140]}", "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False, "paper_only_preserved": True}
+
+
+@router.get("/api/astra_governance_oversight_v2")
+def astra_governance_oversight_v2(force: bool = False):
+    try:
+        base = _astra_build_k_direct_statuses_v1()
+        base["astra_autonomous_safe_repair_v1"] = ASTRA_AUTONOMOUS_SAFE_REPAIR.status(statuses=base, force=True)
+        out = dict(ASTRA_GOVERNANCE_OVERSIGHT_V2.status(statuses=base, force=True) or {})
+        out.update({"provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False})
+        return out
+    except Exception as exc:
+        return {"endpoint": "/api/astra_governance_oversight_v2", "status": "insufficient_evidence", "degraded_reason": f"governance_oversight_v2_unavailable:{str(exc)[:140]}", "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False, "paper_only_preserved": True}
+
+
+@router.get("/api/build_k_final_validation_v1")
+def build_k_final_validation_v1(force: bool = False):
+    try:
+        base = _astra_build_k_direct_statuses_v1()
+        base["astra_autonomous_safe_repair_v1"] = ASTRA_AUTONOMOUS_SAFE_REPAIR.status(statuses=base, force=True)
+        base["astra_governance_oversight_v2"] = ASTRA_GOVERNANCE_OVERSIGHT_V2.status(statuses=base, force=True)
+        out = dict(ASTRA_BUILD_K_FINAL_VALIDATION.status(statuses=base, force=True) or {})
+        out.update({"provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "runtime_files_excluded": True, "behavior_safe_to_apply": False})
+        return out
+    except Exception as exc:
+        return {"endpoint": "/api/build_k_final_validation_v1", "status": "BUILD_K_BLOCKED", "checks_failed": [f"build_k_validator_unavailable:{str(exc)[:140]}"], "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "runtime_files_excluded": True, "behavior_safe_to_apply": False, "paper_only_preserved": True}
+
+
 @router.get("/api/astra_storage_cache_attribution_learning_efficiency_v1")
 def astra_storage_cache_attribution_learning_efficiency_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -72690,6 +72758,18 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["build_j_final_validation_v1"] = ASTRA_BUILD_J_FINAL_VALIDATION.status(statuses=statuses, force=False)
     except Exception:
         statuses["build_j_final_validation_v1"] = {}
+    try:
+        statuses["astra_autonomous_safe_repair_v1"] = ASTRA_AUTONOMOUS_SAFE_REPAIR.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["astra_autonomous_safe_repair_v1"] = {}
+    try:
+        statuses["astra_governance_oversight_v2"] = ASTRA_GOVERNANCE_OVERSIGHT_V2.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["astra_governance_oversight_v2"] = {}
+    try:
+        statuses["build_k_final_validation_v1"] = ASTRA_BUILD_K_FINAL_VALIDATION.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["build_k_final_validation_v1"] = {}
     return statuses
 
 
