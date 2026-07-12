@@ -2455,6 +2455,7 @@ try:
     from engine.astra_integration_completion_consumption_v1 import AstraIntegrationCompletionConsumptionV1
     from engine.astra_paper_provider_cortex_completion_v1 import AstraPaperProviderCortexCompletionV1
     from engine.astra_build_h_ownership_v1 import AstraBuildHOwnershipMapV1
+    from engine.astra_knowledge_warehouse_v1 import AstraKnowledgeWarehouseV1
 except Exception:
     class _IntelligenceQualityUnavailable:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -2524,6 +2525,7 @@ except Exception:
     AstraIntegrationCompletionConsumptionV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraPaperProviderCortexCompletionV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraBuildHOwnershipMapV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    AstraKnowledgeWarehouseV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
@@ -3226,6 +3228,7 @@ ASTRA_AUTONOMOUS_OPTIMIZATION_GOVERNANCE_CORE = AstraAutonomousOptimizationGover
 ASTRA_AUTONOMOUS_IMPROVEMENT_PERFORMANCE_ATTRIBUTION_COMPLETION = AstraAutonomousImprovementPerformanceAttributionCompletionV1(state_dir=STATE)
 ASTRA_STORAGE_CACHE_ATTRIBUTION_LEARNING_EFFICIENCY = AstraStorageCacheAttributionLearningEfficiencyV1(state_dir=STATE)
 ASTRA_BUILD_H_OWNERSHIP_MAP = AstraBuildHOwnershipMapV1(state_dir=STATE)
+ASTRA_KNOWLEDGE_WAREHOUSE = AstraKnowledgeWarehouseV1(state_dir=STATE)
 CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH = CortexLifecycleEvidenceMasterTruthV1(state_dir=STATE)
 ASTRA_PROFITABILITY_ACTIVATION_INTELLIGENCE_UTILIZATION = AstraProfitabilityActivationIntelligenceUtilizationV1(state_dir=STATE)
 ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION = AstraTier1Tier2ProfitabilityActivationV1(state_dir=STATE)
@@ -45672,6 +45675,55 @@ def astra_build_h_ownership_map_v1(force: bool = False):
         }
 
 
+@router.get("/api/astra_knowledge_warehouse_v1")
+def astra_knowledge_warehouse_v1(
+    force: bool = False,
+    symbol: str | None = None,
+    asset_class: str | None = None,
+    horizon: str | None = None,
+    evidence_class: str | None = None,
+    detail_level: str = "summary",
+    max_results: int = 25,
+    max_files: int = 8,
+    page: int = 1,
+):
+    try:
+        filters = {
+            key: value for key, value in {
+                "symbol": symbol,
+                "asset_class": asset_class,
+                "horizon": horizon,
+                "evidence_class": evidence_class,
+            }.items() if value not in (None, "")
+        }
+        if any(value not in (None, "") for value in filters.values()) or str(detail_level).lower() == "raw":
+            return ASTRA_KNOWLEDGE_WAREHOUSE.query({
+                **filters,
+                "detail_level": detail_level,
+                "max_results": max_results,
+                "max_files": max_files,
+                "page": page,
+            })
+        out = dict(ASTRA_KNOWLEDGE_WAREHOUSE.status(statuses=_learning_acceleration_status_bundle(), force=bool(force)) or {})
+        out["astra_knowledge_warehouse_v1"] = True
+        out["provider_calls_used"] = 0
+        out["broker_calls_used"] = 0
+        out["llm_calls_used"] = 0
+        return out
+    except Exception as exc:
+        return {
+            "endpoint": "/api/astra_knowledge_warehouse_v1",
+            "status": "insufficient_evidence",
+            "degraded_reason": f"warehouse_unavailable:{str(exc)[:140]}",
+            "full_history_scan_used": False,
+            "provider_calls_used": 0,
+            "broker_calls_used": 0,
+            "llm_calls_used": 0,
+            "behavior_safe_to_apply": False,
+            "paper_only_preserved": True,
+        }
+
+
 @router.get("/api/astra_storage_cache_attribution_learning_efficiency_v1")
 def astra_storage_cache_attribution_learning_efficiency_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -72118,6 +72170,10 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["astra_build_h_ownership_map_v1"] = ASTRA_BUILD_H_OWNERSHIP_MAP.status(statuses=statuses, force=False)
     except Exception:
         statuses["astra_build_h_ownership_map_v1"] = {}
+    try:
+        statuses["astra_knowledge_warehouse_v1"] = ASTRA_KNOWLEDGE_WAREHOUSE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["astra_knowledge_warehouse_v1"] = {}
     return statuses
 
 
@@ -81746,6 +81802,17 @@ def unified_learning_diagnostics_v1(force: bool = False):
                     "broker_calls_used": 0,
                     "llm_calls_used": 0,
                 }
+            try:
+                force_cached["astra_knowledge_warehouse_v1"] = ASTRA_KNOWLEDGE_WAREHOUSE.status(statuses={}, force=False)
+            except Exception:
+                force_cached["astra_knowledge_warehouse_v1"] = {
+                    "endpoint": "/api/astra_knowledge_warehouse_v1",
+                    "status": "insufficient_evidence",
+                    "behavior_safe_to_apply": False,
+                    "provider_calls_used": 0,
+                    "broker_calls_used": 0,
+                    "llm_calls_used": 0,
+                }
             force_cached["api_calls_used"] = 0
             force_cached["provider_calls_used"] = 0
             force_cached["llm_calls_used"] = 0
@@ -82283,6 +82350,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         if isinstance(out, dict):
             out["astra_copilot_suite_v1"] = dict(statuses.get("astra_copilot_suite_v1") or {})
             out["astra_build_h_ownership_map_v1"] = dict(statuses.get("astra_build_h_ownership_map_v1") or {})
+            out["astra_knowledge_warehouse_v1"] = dict(statuses.get("astra_knowledge_warehouse_v1") or {})
             out["ask_astra_local_ai_status_v1"] = dict(statuses.get("ask_astra_local_ai_status_v1") or {})
             out["astra_recovery_center_v1"] = dict(statuses.get("astra_recovery_center_v1") or {})
             out["astra_trading_intelligence_foundation_v1"] = dict(statuses.get("astra_trading_intelligence_foundation_v1") or {})

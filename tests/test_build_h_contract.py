@@ -3,6 +3,7 @@ import tempfile
 import unittest
 
 from engine.astra_build_h_ownership_v1 import AstraBuildHOwnershipMapV1
+from engine.astra_knowledge_warehouse_v1 import AstraKnowledgeWarehouseV1
 
 
 class BuildHOwnershipContractTests(unittest.TestCase):
@@ -23,6 +24,20 @@ class BuildHOwnershipContractTests(unittest.TestCase):
         broker = next(row for row in result["stores"] if row["store"] == "broker_truth_records_v1")
         self.assertEqual(broker["authority"], "AUTHORITATIVE")
         self.assertEqual(broker["owner"], "closed_trade_truth_registry_v1")
+
+    def test_warehouse_rejects_unknown_dimensions_without_scanning(self):
+        with tempfile.TemporaryDirectory() as state_dir:
+            result = AstraKnowledgeWarehouseV1(state_dir=state_dir, ttl_seconds=0).query({"not_supported": "x"})
+            self.assertEqual(result["status"], "invalid_query")
+            self.assertFalse(result["full_history_scan_used"])
+            self.assertEqual(result["files_opened"], 0)
+
+    def test_warehouse_query_contract_is_bounded(self):
+        with tempfile.TemporaryDirectory() as state_dir:
+            result = AstraKnowledgeWarehouseV1(state_dir=state_dir, ttl_seconds=0).status(force=True)
+            self.assertTrue(result["manifest_first"])
+            self.assertFalse(result["full_history_fallback"])
+            self.assertLessEqual(result["bounded_read_policy"]["max_results"], 100)
 
 
 if __name__ == "__main__":
