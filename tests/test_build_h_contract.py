@@ -6,6 +6,7 @@ from engine.astra_build_h_ownership_v1 import AstraBuildHOwnershipMapV1
 from engine.astra_knowledge_warehouse_v1 import AstraKnowledgeWarehouseV1
 from engine.astra_intelligence_effectiveness_learning_velocity_v1 import AstraIntelligenceEffectivenessLearningVelocityV1
 from engine.astra_shadow_experiment_governance_v1 import AstraShadowExperimentGovernanceV1, experiment_contract
+from engine.astra_build_h_final_validation_v1 import AstraBuildHFinalValidationV1
 
 
 class BuildHOwnershipContractTests(unittest.TestCase):
@@ -66,6 +67,19 @@ class BuildHOwnershipContractTests(unittest.TestCase):
         result = module.status(statuses={}, force=True)
         self.assertEqual(result["current_stage"], 0)
         self.assertFalse(result["automatic_promotions_enabled"])
+
+    def test_final_validator_degrades_honestly_when_samples_are_missing(self):
+        module = AstraBuildHFinalValidationV1(state_dir=tempfile.mkdtemp(), ttl_seconds=0)
+        safe = {"behavior_safe_to_apply": False, "paper_only_preserved": True, "provider_calls_used": 0, "llm_calls_used": 0}
+        result = module.status(statuses={
+            "astra_build_h_ownership_map_v1": {"status": "OWNERSHIP_MAP_PASS", "canonical_owners_assigned": 1, **safe},
+            "astra_knowledge_warehouse_v1": {"canonical_layer": True, "source_lineage_supported": True, "bounded_read_policy": {"max_results": 10}, "full_history_fallback": False, "manifest_first": True, **safe},
+            "astra_intelligence_effectiveness_learning_velocity_v1": {"passive_presence_excluded": True, "consumer_coverage": {}, "evidence_consumption_ratio": 0.0, **safe},
+            "astra_shadow_experiment_governance_v1": {"experiment_contract_schema": [], "exact_paper_baseline_required": True, "automatic_promotions_enabled": False, "equity_crypto_separation": True, "replay_is_not_paper_truth": True, **safe},
+        }, force=True)
+        self.assertEqual(result["status"], "BUILD_H_PASS_WITH_DEFERRED_EVIDENCE")
+        self.assertTrue(result["deferred_evidence"])
+        self.assertTrue(result["runtime_files_excluded"])
 
 
 if __name__ == "__main__":

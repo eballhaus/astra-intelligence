@@ -2458,6 +2458,7 @@ try:
     from engine.astra_knowledge_warehouse_v1 import AstraKnowledgeWarehouseV1
     from engine.astra_intelligence_effectiveness_learning_velocity_v1 import AstraIntelligenceEffectivenessLearningVelocityV1
     from engine.astra_shadow_experiment_governance_v1 import AstraShadowExperimentGovernanceV1
+    from engine.astra_build_h_final_validation_v1 import AstraBuildHFinalValidationV1
 except Exception:
     class _IntelligenceQualityUnavailable:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -2530,6 +2531,7 @@ except Exception:
     AstraKnowledgeWarehouseV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraIntelligenceEffectivenessLearningVelocityV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraShadowExperimentGovernanceV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    AstraBuildHFinalValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
@@ -3235,6 +3237,7 @@ ASTRA_BUILD_H_OWNERSHIP_MAP = AstraBuildHOwnershipMapV1(state_dir=STATE)
 ASTRA_KNOWLEDGE_WAREHOUSE = AstraKnowledgeWarehouseV1(state_dir=STATE)
 ASTRA_INTELLIGENCE_EFFECTIVENESS = AstraIntelligenceEffectivenessLearningVelocityV1(state_dir=STATE)
 ASTRA_SHADOW_EXPERIMENT_GOVERNANCE = AstraShadowExperimentGovernanceV1(state_dir=STATE)
+ASTRA_BUILD_H_FINAL_VALIDATION = AstraBuildHFinalValidationV1(state_dir=STATE)
 CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH = CortexLifecycleEvidenceMasterTruthV1(state_dir=STATE)
 ASTRA_PROFITABILITY_ACTIVATION_INTELLIGENCE_UTILIZATION = AstraProfitabilityActivationIntelligenceUtilizationV1(state_dir=STATE)
 ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION = AstraTier1Tier2ProfitabilityActivationV1(state_dir=STATE)
@@ -45784,6 +45787,31 @@ def astra_shadow_experiment_governance_v1(force: bool = False):
         }
 
 
+@router.get("/api/build_h_final_validation_v1")
+def build_h_final_validation_v1(force: bool = False):
+    try:
+        out = dict(ASTRA_BUILD_H_FINAL_VALIDATION.status(statuses=_learning_acceleration_status_bundle(), force=bool(force)) or {})
+        out["build_h_final_validation_v1"] = True
+        out["provider_calls_used"] = 0
+        out["broker_calls_used"] = 0
+        out["llm_calls_used"] = 0
+        out["runtime_files_excluded"] = True
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "endpoint": "/api/build_h_final_validation_v1",
+            "status": "BUILD_H_BLOCKED",
+            "checks_failed": [f"final_validator_unavailable:{str(exc)[:140]}"],
+            "provider_calls_used": 0,
+            "broker_calls_used": 0,
+            "llm_calls_used": 0,
+            "runtime_files_excluded": True,
+            "behavior_safe_to_apply": False,
+            "paper_only_preserved": True,
+        }
+
+
 @router.get("/api/astra_storage_cache_attribution_learning_efficiency_v1")
 def astra_storage_cache_attribution_learning_efficiency_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -72242,6 +72270,10 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["astra_shadow_experiment_governance_v1"] = ASTRA_SHADOW_EXPERIMENT_GOVERNANCE.status(statuses=statuses, force=False)
     except Exception:
         statuses["astra_shadow_experiment_governance_v1"] = {}
+    try:
+        statuses["astra_build_h_final_validation_v1"] = ASTRA_BUILD_H_FINAL_VALIDATION.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["astra_build_h_final_validation_v1"] = {}
     return statuses
 
 
@@ -81906,6 +81938,19 @@ def unified_learning_diagnostics_v1(force: bool = False):
                     "broker_calls_used": 0,
                     "llm_calls_used": 0,
                 }
+            try:
+                force_cached["astra_build_h_final_validation_v1"] = ASTRA_BUILD_H_FINAL_VALIDATION.status(statuses={}, force=False)
+            except Exception:
+                force_cached["astra_build_h_final_validation_v1"] = {
+                    "endpoint": "/api/build_h_final_validation_v1",
+                    "status": "BUILD_H_BLOCKED",
+                    "checks_failed": ["final_validator_unavailable"],
+                    "runtime_files_excluded": True,
+                    "behavior_safe_to_apply": False,
+                    "provider_calls_used": 0,
+                    "broker_calls_used": 0,
+                    "llm_calls_used": 0,
+                }
             force_cached["api_calls_used"] = 0
             force_cached["provider_calls_used"] = 0
             force_cached["llm_calls_used"] = 0
@@ -82446,6 +82491,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_knowledge_warehouse_v1"] = dict(statuses.get("astra_knowledge_warehouse_v1") or {})
             out["astra_intelligence_effectiveness_learning_velocity_v1"] = dict(statuses.get("astra_intelligence_effectiveness_learning_velocity_v1") or {})
             out["astra_shadow_experiment_governance_v1"] = dict(statuses.get("astra_shadow_experiment_governance_v1") or {})
+            out["astra_build_h_final_validation_v1"] = dict(statuses.get("astra_build_h_final_validation_v1") or {})
             out["ask_astra_local_ai_status_v1"] = dict(statuses.get("ask_astra_local_ai_status_v1") or {})
             out["astra_recovery_center_v1"] = dict(statuses.get("astra_recovery_center_v1") or {})
             out["astra_trading_intelligence_foundation_v1"] = dict(statuses.get("astra_trading_intelligence_foundation_v1") or {})
