@@ -66,7 +66,11 @@ class PaperLearningEvidenceLadderV1(CachedDiagnosticModule):
         statuses = statuses or {}
         reconstruction = _nested(statuses, "historical_reconstruction")
         classes = _evidence_class_counts(reconstruction)
-        broker_count = classes.get("BROKER_CONFIRMED_COMPLETE", 0)
+        reconstruction_details = _mapping(reconstruction.get("reconstruction"))
+        broker_count = int(_number(
+            reconstruction_details.get("authoritative_broker_confirmed_complete_count"),
+            _number(reconstruction.get("authoritative_broker_confirmed_complete_count"), classes.get("BROKER_CONFIRMED_COMPLETE", 0)),
+        ))
         high_count = classes.get("HIGH_CONFIDENCE_RECONSTRUCTED", 0)
         medium_count = classes.get("MEDIUM_CONFIDENCE_RECONSTRUCTED", 0)
         partial_count = classes.get("PARTIAL_LIFECYCLE", 0) + classes.get("BROKER_CONFIRMED_PARTIAL", 0)
@@ -103,6 +107,11 @@ class PaperLearningEvidenceLadderV1(CachedDiagnosticModule):
             "tiers": tiers,
             "official_performance_tier": 6,
             "broker_truth_count": broker_count,
+            "authoritative_broker_confirmed_complete_count": broker_count,
+            "newly_reconstructed_complete_count": int(_number(reconstruction_details.get("newly_reconstructed_complete_count"), 0)),
+            "reconstructed_partial_count": int(_number(reconstruction_details.get("reconstructed_partial_count"), partial_count)),
+            "authoritative_truth_source": reconstruction_details.get("authoritative_truth_source") or "state/broker_truth_records_v1.json",
+            "reconstruction_scope": reconstruction_details.get("reconstruction_scope") or "bounded_local_lifecycle_sources_only",
             "reconstructed_context_count": high_count + medium_count,
             "partial_context_count": partial_count,
             "sample_maturity_by_lane": maturity_by_lane,
@@ -151,17 +160,33 @@ class DayLaneDiversityGovernorV1(CachedDiagnosticModule):
         candidates = _records(statuses.get("pladeu_candidate_rows"))[:300]
         open_positions = _records(statuses.get("pladeu_open_positions"))[:100]
         allocation = _mapping(statuses.get("pladeu_day_lane_allocation"))
+        source_meta = _mapping(statuses.get("pladeu_candidate_source_metadata"))
         day_candidates = [row for row in candidates if str(row.get("lane_id", "")).upper() == "DAY"]
         cohort_counts = Counter(str(row.get("strategy_cohort") or "UNCLASSIFIED") for row in day_candidates)
         sector_counts = Counter(str(row.get("sector") or "UNCLASSIFIED") for row in day_candidates)
         open_day = lane_counts(open_positions, legacy=True).get("DAY", 0)
         existing_selected = [row for row in day_candidates if bool(row.get("selected") or row.get("paper_ready"))]
+        freshness = str(source_meta.get("candidate_freshness_status") or "MISSING")
+        current_day = len(day_candidates) if freshness == "CURRENT" else 0
+        current_eligible = int(allocation.get("eligible_candidate_supply", len(eligible))) if freshness == "CURRENT" else 0
+        current_selected = int(allocation.get("selected_candidates", len(existing_selected))) if freshness == "CURRENT" else 0
         return {
             "suite": "Day Lane Diversity Governor V1",
             "status": "ok" if day_candidates else "warming_up",
             "candidate_supply": int(allocation.get("candidate_supply", len(day_candidates))),
             "eligible_candidate_supply": int(allocation.get("eligible_candidate_supply", len(day_candidates))),
             "existing_selection_count": int(allocation.get("selected_candidates", len(existing_selected))),
+            "classified_day_candidates": len(day_candidates),
+            "historical_classified_day_candidates": len(day_candidates) if freshness != "CURRENT" else 0,
+            "current_day_candidates": current_day,
+            "eligible_day_candidates": current_eligible,
+            "selected_day_candidates": current_selected,
+            "rejected_day_candidates": max(0, current_day - current_eligible),
+            "candidate_source": source_meta.get("candidate_source") or "bounded_top_buys_runtime_snapshot",
+            "candidate_cache_generated_at": source_meta.get("candidate_cache_generated_at"),
+            "candidate_cache_age_seconds": source_meta.get("candidate_cache_age_seconds"),
+            "candidate_freshness_status": freshness,
+            "market_session_status": source_meta.get("market_session_status") or "closed",
             "rejection_reasons": _mapping(allocation.get("rejection_reasons")),
             "open_day_positions": open_day,
             "cohort_distribution": dict(cohort_counts),

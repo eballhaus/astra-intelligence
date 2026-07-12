@@ -337,6 +337,19 @@ class AstraHistoricalLifecycleReconstructionV1(CachedDiagnosticModule):
     def _build(self, statuses: Mapping[str, Any] | None = None) -> Dict[str, Any]:
         statuses = statuses or {}
         result = reconstruct_lifecycles(self._source_rows(statuses))
+        authoritative = statuses.get("authoritative_broker_truth")
+        if not isinstance(authoritative, Mapping):
+            authoritative = {}
+        authoritative_count = int(authoritative.get("broker_confirmed_complete_records") or 0)
+        # Reconstruction is deliberately scoped to bounded local lifecycle rows;
+        # it must never masquerade as the platform-wide broker-truth registry.
+        result["authoritative_broker_confirmed_complete_count"] = authoritative_count
+        result["newly_reconstructed_complete_count"] = int(result.get("complete_reconstructed_lifecycles") or 0)
+        result["reconstructed_partial_count"] = int(result.get("partial_lifecycle_count") or 0) + int(result.get("evidence_class_counts", {}).get("BROKER_CONFIRMED_PARTIAL", 0) or 0)
+        result["authoritative_truth_source"] = str(
+            authoritative.get("truth_registry_path") or "state/broker_truth_records_v1.json"
+        )
+        result["reconstruction_scope"] = "bounded_local_lifecycle_sources_only"
         previous = _read_json(self.reconstruction_state_path)
         watermark = max(
             [entry.get("reconstructed_at", "") for entry in result["reconstructed_records"]] or [""],
@@ -364,11 +377,18 @@ class AstraHistoricalLifecycleReconstructionV1(CachedDiagnosticModule):
             "suite": "Astra Historical Lifecycle Reconstruction V1",
             "status": "ok" if result["reconstructed_records"] else "insufficient_evidence",
             "reconstruction": result,
+            "authoritative_broker_confirmed_complete_count": authoritative_count,
+            "newly_reconstructed_complete_count": result["newly_reconstructed_complete_count"],
+            "reconstructed_partial_count": result["reconstructed_partial_count"],
+            "authoritative_truth_source": result["authoritative_truth_source"],
+            "reconstruction_scope": result["reconstruction_scope"],
             "incremental_manifest": manifest,
             "persistence_status": persistence_status,
             "evidence_separation": {
                 "broker_truth_only_for_official_performance": True,
                 "reconstructed_records_never_promoted_to_broker_truth": True,
+                "authoritative_truth_source": result["authoritative_truth_source"],
+                "reconstruction_scope": result["reconstruction_scope"],
             },
             **safety_fields(),
         }

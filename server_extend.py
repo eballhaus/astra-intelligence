@@ -46304,6 +46304,8 @@ def _pladeu_direct_statuses_v1(force: bool = False) -> dict:
             base = {}
     if not base.get("alpaca_paper_broker"):
         base["alpaca_paper_broker"] = _cached_alpaca_paper_status_payload(base) or _alpaca_paper_status_fast_fallback_v1("pladeu_cache_first")
+    base["authoritative_broker_truth"] = _canonical_broker_truth_counts_v1(base)
+    base["pladeu_candidate_source_metadata"] = _pladeu_candidate_source_metadata_v1()
     try:
         raw_candidates = _cached_candidate_rows_for_horizon_flow_v1()[:300]
         base["pladeu_candidate_rows"] = PAPER_OPPORTUNITY_ALLOCATION_ENGINE.decorate_candidates(raw_candidates)
@@ -46321,6 +46323,7 @@ def _pladeu_direct_statuses_v1(force: bool = False) -> dict:
     base["evidence_ladder"] = PAPER_LEARNING_EVIDENCE_LADDER.status(statuses=base, force=bool(force))
     base["lifecycle_satellite"] = TRADE_LIFECYCLE_PROFIT_CAPTURE_SATELLITE.status(statuses=base, force=bool(force))
     base["day_lane_governor"] = DAY_LANE_DIVERSITY_GOVERNOR.status(statuses=base, force=bool(force))
+    base["day_lane_pilot_readiness_v1"] = _day_lane_pilot_readiness_payload_v1(base)
     base["pladeu_phase1_lane_validation_v1"] = PLADEU_PHASE1_LANE_VALIDATION.status(statuses=base, force=bool(force))
     base["pladeu_phase2_reconstruction_validation_v1"] = PLADEU_PHASE2_RECONSTRUCTION_VALIDATION.status(statuses=base, force=bool(force))
     base["pladeu_phase3_learning_validation_v1"] = PLADEU_PHASE3_LEARNING_VALIDATION.status(statuses=base, force=bool(force))
@@ -46337,6 +46340,8 @@ def _attach_pladeu_statuses_v1(statuses: dict, force: bool = False) -> dict:
     except Exception:
         statuses["pladeu_candidate_rows"] = []
     statuses["pladeu_open_positions"] = _pladeu_open_positions_from_cached_status_v1(statuses)
+    statuses["authoritative_broker_truth"] = _canonical_broker_truth_counts_v1(statuses)
+    statuses["pladeu_candidate_source_metadata"] = _pladeu_candidate_source_metadata_v1()
     try:
         statuses["pladeu_day_lane_allocation"] = PAPER_OPPORTUNITY_ALLOCATION_ENGINE.day_lane_governance(
             rows=statuses["pladeu_candidate_rows"], open_positions=statuses["pladeu_open_positions"]
@@ -46350,6 +46355,7 @@ def _attach_pladeu_statuses_v1(statuses: dict, force: bool = False) -> dict:
         ("trade_lifecycle_profit_capture_satellite_v1", "lifecycle_satellite", TRADE_LIFECYCLE_PROFIT_CAPTURE_SATELLITE),
         ("day_lane_diversity_governor_v1", "day_lane_governor", DAY_LANE_DIVERSITY_GOVERNOR),
     )
+    statuses["day_lane_pilot_readiness_v1"] = _day_lane_pilot_readiness_payload_v1(statuses)
     for public_key, internal_key, builder in builders:
         try:
             value = builder.status(statuses=statuses, force=bool(force))
@@ -46393,6 +46399,7 @@ def _pladeu_endpoint_payload_v1(key: str, force: bool = False) -> dict:
         "evidence_ladder": "/api/paper_learning_evidence_ladder_v1",
         "lifecycle_satellite": "/api/trade_lifecycle_profit_capture_satellite_v1",
         "day_lane_governor": "/api/day_lane_diversity_governor_v1",
+        "day_lane_pilot_readiness_v1": "/api/day_lane_pilot_readiness_v1",
         "pladeu_master_validation": "/api/pladeu_master_validation_v1",
     }
     payload.update(
@@ -46441,6 +46448,14 @@ def day_trading_paper_learning_lane_v1(force: bool = False):
 @router.get("/api/day_lane_diversity_governor_v1")
 def day_lane_diversity_governor_v1(force: bool = False):
     return _pladeu_endpoint_payload_v1("day_lane_governor", force=force)
+
+
+@router.get("/api/day_lane_pilot_readiness_v1")
+def day_lane_pilot_readiness_v1(force: bool = False):
+    base = _pladeu_direct_statuses_v1(force=bool(force))
+    payload = dict(base.get("day_lane_pilot_readiness_v1") or _day_lane_pilot_readiness_payload_v1(base))
+    payload["generated_at"] = _now_utc_iso()
+    return payload
 
 
 @router.get("/api/historical_lifecycle_reconstruction_v1")
@@ -47093,6 +47108,133 @@ def _cached_candidate_rows_for_horizon_flow_v1() -> list[dict]:
         if sym and sym not in dedup:
             dedup[sym] = row
     return list(dedup.values())[:200]
+
+
+def _pladeu_candidate_source_metadata_v1() -> dict:
+    """Describe the bounded candidate cache without refreshing providers."""
+    now = time.time()
+    payload = dict(_latest_top_buys_runtime_snapshot() or {})
+    cache_age = None
+    cache_key = "runtime_snapshot"
+    with _TOP_BUYS_RUNTIME_SNAPSHOT_LOCK:
+        snapshot_ts = float(_TOP_BUYS_RUNTIME_SNAPSHOT_V1.get("ts") or 0.0)
+    if snapshot_ts > 0:
+        cache_age = max(0.0, now - snapshot_ts)
+    if cache_age is None:
+        cache = _CACHE.get("top_buys", {}) if isinstance(_CACHE.get("top_buys"), dict) else {}
+        slot = cache.get("mode::balanced") if isinstance(cache.get("mode::balanced"), dict) else {}
+        if slot.get("ts"):
+            snapshot_ts = float(slot.get("ts") or 0.0)
+            cache_age = max(0.0, now - snapshot_ts)
+            cache_key = "top_buys:mode::balanced"
+    max_age = float(TOP_BUYS_TTL_SECONDS or 300.0)
+    freshness = "CURRENT" if cache_age is not None and cache_age <= max_age else "STALE"
+    if not payload:
+        freshness = "MISSING"
+    market_session = str(_market_session_type_et(datetime.now(UTC)) or "closed").lower()
+    generated_at = datetime.fromtimestamp(snapshot_ts, UTC).isoformat().replace("+00:00", "Z") if snapshot_ts > 0 else None
+    return {
+        "candidate_source": "bounded_top_buys_runtime_snapshot",
+        "candidate_cache_key": cache_key,
+        "candidate_cache_generated_at": generated_at,
+        "candidate_cache_age_seconds": round(cache_age, 3) if cache_age is not None else None,
+        "candidate_cache_max_age_seconds": max_age,
+        "candidate_freshness_status": freshness,
+        "market_session_status": market_session,
+        "candidate_source_available": bool(payload),
+        "candidate_source_rows": len(_cached_candidate_rows_for_horizon_flow_v1()),
+    }
+
+
+def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
+    statuses = dict(statuses or {})
+    rows = [dict(row) for row in (statuses.get("pladeu_candidate_rows") or []) if isinstance(row, dict)][:300]
+    if not rows:
+        rows = PAPER_OPPORTUNITY_ALLOCATION_ENGINE.decorate_candidates(_cached_candidate_rows_for_horizon_flow_v1())
+    source_meta = dict(statuses.get("pladeu_candidate_source_metadata") or _pladeu_candidate_source_metadata_v1())
+    day_rows = [row for row in rows if str(row.get("lane_id") or "").upper() == "DAY"]
+    swing_rows = [row for row in rows if str(row.get("lane_id") or "").upper() == "SWING"]
+    crypto_rows = [row for row in rows if str(row.get("lane_id") or "").upper() == "CRYPTO"]
+    open_positions = [dict(row) for row in (statuses.get("pladeu_open_positions") or []) if isinstance(row, dict)]
+    open_symbols = {str(row.get("symbol") or row.get("ticker") or "").upper() for row in open_positions}
+    day_symbols = {str(row.get("symbol") or row.get("ticker") or "").upper() for row in day_rows if str(row.get("symbol") or row.get("ticker") or "").strip()}
+    swing_symbols = {str(row.get("symbol") or row.get("ticker") or "").upper() for row in swing_rows if str(row.get("symbol") or row.get("ticker") or "").strip()}
+    crypto_symbols = {str(row.get("symbol") or row.get("ticker") or "").upper() for row in crypto_rows if str(row.get("symbol") or row.get("ticker") or "").strip()}
+    allocation = dict(statuses.get("pladeu_day_lane_allocation") or {})
+    eligible_rows = [row for row in day_rows if str(row.get("symbol") or row.get("ticker") or "").upper() not in open_symbols and bool(row.get("exploration_allowed", True))]
+    selected_rows = [row for row in eligible_rows if bool(row.get("selected") or row.get("paper_ready"))]
+    required_fields = ("symbol", "lane_id", "trade_style", "intended_horizon", "asset_class", "candidate_id", "recommendation_id")
+    complete = sum(1 for row in eligible_rows if all(row.get(field) not in (None, "") for field in required_fields))
+    metadata_incomplete = max(0, len(eligible_rows) - complete)
+    session = str(source_meta.get("market_session_status") or "closed").lower()
+    freshness = str(source_meta.get("candidate_freshness_status") or "MISSING")
+    current_rows = day_rows if freshness == "CURRENT" else []
+    blockers: list[str] = []
+    if freshness in {"MISSING", "STALE"}:
+        blockers.append("candidate_source_stale" if freshness == "STALE" else "candidate_pipeline_unwired")
+    if freshness == "CURRENT" and metadata_incomplete:
+        blockers.append("current_eligible_candidates_missing_required_metadata")
+    if day_symbols & swing_symbols:
+        blockers.append("day_swing_exact_symbol_overlap")
+    if day_symbols & crypto_symbols:
+        blockers.append("day_crypto_exact_symbol_overlap")
+    if allocation.get("same_session_close_posture") in (None, ""):
+        blockers.append("same_session_exit_contract_unresolved")
+    if not allocation.get("capital_book_id"):
+        blockers.append("capital_book_isolation_unproven")
+    if not allocation.get("cross_lane_exact_symbol_check", False):
+        blockers.append("cross_lane_duplicate_check_unavailable")
+    handoff = bool((statuses.get("paper_autopilot_handoff_proof") or {}).get("proven"))
+    if not handoff:
+        blockers.append("paper_autopilot_handoff_dry_run_not_proven")
+    session_open = session in {"regular", "regular_hours", "pre", "pre_market", "post", "after_hours", "open"}
+    if not session_open and not current_rows:
+        status = "NOT_READY"
+        warnings = ["NO_CURRENT_MARKET_SESSION"]
+    elif blockers:
+        status = "NOT_READY"
+        warnings = []
+    else:
+        status = "TECHNICALLY_READY_FOR_HUMAN_APPROVAL" if current_rows or not session_open else "TECHNICALLY_READY_FOR_HUMAN_CONFIGURATION"
+        warnings = []
+    return {
+        "endpoint": "/api/day_lane_pilot_readiness_v1",
+        "status": status,
+        "current_market_session": session,
+        "classified_day_candidates": len(day_rows),
+        "historical_classified_day_candidates": len(day_rows) if freshness != "CURRENT" else 0,
+        "current_day_candidates": len(current_rows),
+        "eligible_day_candidates": len([row for row in current_rows if row in eligible_rows]),
+        "selected_day_candidates": len([row for row in current_rows if row in selected_rows]),
+        "metadata_complete_count": complete if freshness == "CURRENT" else 0,
+        "metadata_incomplete_count": metadata_incomplete if freshness == "CURRENT" else 0,
+        "day_swing_exact_overlap": sorted(day_symbols & swing_symbols),
+        "day_crypto_exact_overlap": sorted(day_symbols & crypto_symbols),
+        "correlation_checks_available": bool(allocation.get("breakdown", {}).get("correlation_cluster") is not None),
+        "sector_caps_available": bool(allocation.get("diversity_ceilings", {}).get("one_sector")),
+        "strategy_caps_available": bool(allocation.get("diversity_ceilings", {}).get("one_strategy_cohort")),
+        "duplicate_thesis_checks_available": bool(allocation.get("cross_lane_exact_symbol_check")),
+        "paper_autopilot_handoff_proven": handoff,
+        "same_session_exit_contract_status": allocation.get("same_session_close_posture") or "unresolved",
+        "capital_book_isolation_status": "PASS" if allocation.get("capital_book_id") else "BLOCKED",
+        "pilot_enabled": False,
+        "human_approval_required": True,
+        "exact_blockers": sorted(set(blockers)),
+        "warnings": warnings,
+        "deferred_evidence": ["no_current_qualifying_candidates"] if not current_rows and session_open and freshness == "CURRENT" else [],
+        **source_meta,
+        "candidate_flow_source": "bounded_top_buys_runtime_snapshot",
+        "broker_actions_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "behavior_safe_to_apply": False,
+        "paper_mode_verified": True,
+        "broker_live_endpoint_allowed": False,
+        "automatic_promotion_enabled": False,
+        "learned_exit_execution_enabled": False,
+        "broker_behavior_changed": False,
+        "live_trading_changed": False,
+    }
 
 
 def _candidate_horizon_from_row_v1(row: dict) -> str:
