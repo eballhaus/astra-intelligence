@@ -4,6 +4,7 @@ import unittest
 
 from engine.astra_build_h_ownership_v1 import AstraBuildHOwnershipMapV1
 from engine.astra_knowledge_warehouse_v1 import AstraKnowledgeWarehouseV1
+from engine.astra_intelligence_effectiveness_learning_velocity_v1 import AstraIntelligenceEffectivenessLearningVelocityV1
 
 
 class BuildHOwnershipContractTests(unittest.TestCase):
@@ -45,6 +46,15 @@ class BuildHOwnershipContractTests(unittest.TestCase):
             self.assertIn(result["rotation_status"], {"not_started_non_destructive", "existing_partition_metadata_reused; new partition migration deferred"})
             self.assertFalse(result["incremental_index_status"]["full_rebuild_on_render"])
             self.assertIn("status", result["growth_projection"])
+
+    def test_effectiveness_does_not_count_passive_presence(self):
+        module = AstraIntelligenceEffectivenessLearningVelocityV1(state_dir=tempfile.mkdtemp(), ttl_seconds=0)
+        result = module.status(statuses={"shadow_vs_paper_performance_attribution_v1": {"evidence_count": 4}}, force=True)
+        self.assertTrue(result["passive_presence_excluded"])
+        shadow = next(row for row in result["evidence_chain"] if row["evidence_class"] == "shadow")
+        self.assertEqual(shadow["consumed"], 0)
+        self.assertEqual(shadow["consumption_status"], "available_not_proven")
+        self.assertFalse(result["promotion_enabled"])
 
 
 if __name__ == "__main__":
