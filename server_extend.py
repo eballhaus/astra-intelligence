@@ -2565,6 +2565,20 @@ except Exception:
     AstraGovernanceOversightV2 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     BuildKFinalValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
+    from engine.astra_build_l_research_maturation_v1 import (
+        BuildLFinalValidationV1,
+        CryptoIntelligenceSeparateEvidenceV2,
+        HistoricalReplayMultiHorizonValidationV1,
+        HorizonCapacityTurnoverResearchV1,
+        MomentumExitReadinessLossAcceptanceV1,
+    )
+except Exception:
+    MomentumExitReadinessLossAcceptanceV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    HorizonCapacityTurnoverResearchV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    HistoricalReplayMultiHorizonValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    CryptoIntelligenceSeparateEvidenceV2 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    BuildLFinalValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
     class AstraProviderOrchestrationDataGovernanceV1:  # type: ignore[override]
@@ -3280,6 +3294,11 @@ ASTRA_BUILD_J_FINAL_VALIDATION = BuildJFinalValidationV1(state_dir=STATE)
 ASTRA_AUTONOMOUS_SAFE_REPAIR = AstraAutonomousSafeRepairV1(state_dir=STATE)
 ASTRA_GOVERNANCE_OVERSIGHT_V2 = AstraGovernanceOversightV2(state_dir=STATE)
 ASTRA_BUILD_K_FINAL_VALIDATION = BuildKFinalValidationV1(state_dir=STATE)
+ASTRA_MOMENTUM_EXIT_READINESS_LOSS_ACCEPTANCE = MomentumExitReadinessLossAcceptanceV1(state_dir=STATE)
+ASTRA_HORIZON_CAPACITY_TURNOVER_RESEARCH = HorizonCapacityTurnoverResearchV1(state_dir=STATE)
+ASTRA_HISTORICAL_REPLAY_MULTI_HORIZON_VALIDATION = HistoricalReplayMultiHorizonValidationV1(state_dir=STATE)
+ASTRA_CRYPTO_INTELLIGENCE_SEPARATE_EVIDENCE = CryptoIntelligenceSeparateEvidenceV2(state_dir=STATE)
+ASTRA_BUILD_L_FINAL_VALIDATION = BuildLFinalValidationV1(state_dir=STATE)
 CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH = CortexLifecycleEvidenceMasterTruthV1(state_dir=STATE)
 ASTRA_PROFITABILITY_ACTIVATION_INTELLIGENCE_UTILIZATION = AstraProfitabilityActivationIntelligenceUtilizationV1(state_dir=STATE)
 ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION = AstraTier1Tier2ProfitabilityActivationV1(state_dir=STATE)
@@ -46106,6 +46125,77 @@ def build_k_final_validation_v1(force: bool = False):
         return {"endpoint": "/api/build_k_final_validation_v1", "status": "BUILD_K_BLOCKED", "checks_failed": [f"build_k_validator_unavailable:{str(exc)[:140]}"], "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "runtime_files_excluded": True, "behavior_safe_to_apply": False, "paper_only_preserved": True}
 
 
+def _astra_build_l_direct_statuses_v1() -> dict:
+    """Build L research reads cached evidence and performs no execution refresh."""
+    base = _astra_build_h_cached_statuses_v1()
+    if not base.get("alpaca_paper_broker"):
+        base["alpaca_paper_broker"] = _cached_alpaca_paper_status_payload(base) or _alpaca_paper_status_fast_fallback_v1("build_l_cache_first_status")
+    if not base.get("replay_counterfactual_learning_v2"):
+        base["replay_counterfactual_learning_v2"] = REPLAY_COUNTERFACTUAL_LEARNING_V2.status(force=False)
+    if not base.get("crypto_shadow_learning_v1"):
+        base["crypto_shadow_learning_v1"] = CRYPTO_SHADOW_LEARNING.status(statuses=base, force=False)
+    return base
+
+
+@router.get("/api/momentum_exit_readiness_loss_acceptance_v1")
+def momentum_exit_readiness_loss_acceptance_v1(force: bool = False):
+    try:
+        base = _astra_build_l_direct_statuses_v1()
+        out = dict(ASTRA_MOMENTUM_EXIT_READINESS_LOSS_ACCEPTANCE.status(statuses=base, force=True) or {})
+        out.update({"provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False})
+        return out
+    except Exception as exc:
+        return {"endpoint": "/api/momentum_exit_readiness_loss_acceptance_v1", "status": "insufficient_evidence", "degraded_reason": f"momentum_exit_research_unavailable:{str(exc)[:140]}", "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False, "paper_only_preserved": True}
+
+
+@router.get("/api/horizon_capacity_turnover_research_v1")
+def horizon_capacity_turnover_research_v1(force: bool = False):
+    try:
+        base = _astra_build_l_direct_statuses_v1()
+        out = dict(ASTRA_HORIZON_CAPACITY_TURNOVER_RESEARCH.status(statuses=base, force=True) or {})
+        out.update({"provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False})
+        return out
+    except Exception as exc:
+        return {"endpoint": "/api/horizon_capacity_turnover_research_v1", "status": "insufficient_evidence", "degraded_reason": f"horizon_turnover_research_unavailable:{str(exc)[:140]}", "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False, "paper_only_preserved": True}
+
+
+@router.get("/api/historical_replay_multi_horizon_validation_v1")
+def historical_replay_multi_horizon_validation_v1(force: bool = False):
+    try:
+        base = _astra_build_l_direct_statuses_v1()
+        out = dict(ASTRA_HISTORICAL_REPLAY_MULTI_HORIZON_VALIDATION.status(statuses=base, force=True) or {})
+        out.update({"provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False})
+        return out
+    except Exception as exc:
+        return {"endpoint": "/api/historical_replay_multi_horizon_validation_v1", "status": "insufficient_evidence", "degraded_reason": f"replay_multi_horizon_unavailable:{str(exc)[:140]}", "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False, "paper_only_preserved": True}
+
+
+@router.get("/api/crypto_intelligence_separate_evidence_v2")
+def crypto_intelligence_separate_evidence_v2(force: bool = False):
+    try:
+        base = _astra_build_l_direct_statuses_v1()
+        out = dict(ASTRA_CRYPTO_INTELLIGENCE_SEPARATE_EVIDENCE.status(statuses=base, force=True) or {})
+        out.update({"provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False})
+        return out
+    except Exception as exc:
+        return {"endpoint": "/api/crypto_intelligence_separate_evidence_v2", "status": "insufficient_evidence", "degraded_reason": f"crypto_separate_evidence_unavailable:{str(exc)[:140]}", "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False, "paper_only_preserved": True}
+
+
+@router.get("/api/build_l_final_validation_v1")
+def build_l_final_validation_v1(force: bool = False):
+    try:
+        base = _astra_build_l_direct_statuses_v1()
+        base["momentum_exit_readiness_loss_acceptance_v1"] = ASTRA_MOMENTUM_EXIT_READINESS_LOSS_ACCEPTANCE.status(statuses=base, force=True)
+        base["horizon_capacity_turnover_research_v1"] = ASTRA_HORIZON_CAPACITY_TURNOVER_RESEARCH.status(statuses=base, force=True)
+        base["historical_replay_multi_horizon_validation_v1"] = ASTRA_HISTORICAL_REPLAY_MULTI_HORIZON_VALIDATION.status(statuses=base, force=True)
+        base["crypto_intelligence_separate_evidence_v2"] = ASTRA_CRYPTO_INTELLIGENCE_SEPARATE_EVIDENCE.status(statuses=base, force=True)
+        out = dict(ASTRA_BUILD_L_FINAL_VALIDATION.status(statuses=base, force=True) or {})
+        out.update({"provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "runtime_files_excluded": True, "behavior_safe_to_apply": False})
+        return out
+    except Exception as exc:
+        return {"endpoint": "/api/build_l_final_validation_v1", "status": "BUILD_L_BLOCKED", "checks_failed": [f"build_l_validator_unavailable:{str(exc)[:140]}"], "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "runtime_files_excluded": True, "behavior_safe_to_apply": False, "paper_only_preserved": True}
+
+
 @router.get("/api/astra_storage_cache_attribution_learning_efficiency_v1")
 def astra_storage_cache_attribution_learning_efficiency_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -72770,6 +72860,26 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["build_k_final_validation_v1"] = ASTRA_BUILD_K_FINAL_VALIDATION.status(statuses=statuses, force=False)
     except Exception:
         statuses["build_k_final_validation_v1"] = {}
+    try:
+        statuses["momentum_exit_readiness_loss_acceptance_v1"] = ASTRA_MOMENTUM_EXIT_READINESS_LOSS_ACCEPTANCE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["momentum_exit_readiness_loss_acceptance_v1"] = {}
+    try:
+        statuses["horizon_capacity_turnover_research_v1"] = ASTRA_HORIZON_CAPACITY_TURNOVER_RESEARCH.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["horizon_capacity_turnover_research_v1"] = {}
+    try:
+        statuses["historical_replay_multi_horizon_validation_v1"] = ASTRA_HISTORICAL_REPLAY_MULTI_HORIZON_VALIDATION.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["historical_replay_multi_horizon_validation_v1"] = {}
+    try:
+        statuses["crypto_intelligence_separate_evidence_v2"] = ASTRA_CRYPTO_INTELLIGENCE_SEPARATE_EVIDENCE.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["crypto_intelligence_separate_evidence_v2"] = {}
+    try:
+        statuses["build_l_final_validation_v1"] = ASTRA_BUILD_L_FINAL_VALIDATION.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["build_l_final_validation_v1"] = {}
     return statuses
 
 
