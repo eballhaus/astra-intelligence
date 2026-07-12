@@ -182,6 +182,19 @@ class AstraKnowledgeWarehouseV1(CachedDiagnosticModule):
         catalog = self._catalog()
         existing = [row for row in catalog if row.get("exists")]
         indexes = [row for row in existing if row.get("index_available")]
+        storage_status = statuses.get("astra_storage_cache_attribution_learning_efficiency_v1") or {}
+        total_storage = storage_status.get("total_storage_bytes") or storage_status.get("storage_total_bytes")
+        daily_growth = storage_status.get("daily_growth_bytes") or storage_status.get("estimated_daily_growth_bytes")
+        total_storage_value = int(total_storage) if isinstance(total_storage, (int, float)) else None
+        daily_growth_value = int(daily_growth) if isinstance(daily_growth, (int, float)) else None
+        projections = {}
+        if total_storage_value is not None and daily_growth_value is not None and daily_growth_value >= 0:
+            projections = {
+                "one_year_bytes": total_storage_value + daily_growth_value * 365,
+                "three_year_bytes": total_storage_value + daily_growth_value * 365 * 3,
+                "five_year_bytes": total_storage_value + daily_growth_value * 365 * 5,
+                "projection_basis": "current measured daily growth where available",
+            }
         return with_safety({
             "endpoint": "/api/astra_knowledge_warehouse_v1",
             "version": VERSION,
@@ -212,6 +225,35 @@ class AstraKnowledgeWarehouseV1(CachedDiagnosticModule):
             "indexed_stores": len(indexes),
             "index_coverage_pct": rounded(len(indexes) * 100.0 / max(1, len(existing)), 3),
             "status_summary": "bounded_index_first_retrieval_with_tail_fallback",
+            "storage_profile": {
+                "hot": [row.get("store") for row in existing if row.get("authority") == "AUTHORITATIVE" or row.get("authority") == "CACHE"],
+                "warm": [row.get("store") for row in existing if row.get("authority") == "DERIVED" and row.get("evidence_class") not in {"historical_similarity", "replay_counterfactual"}],
+                "cold": [row.get("store") for row in existing if row.get("evidence_class") in {"historical_similarity", "replay_counterfactual"}],
+                "tier_move_policy": "metadata_only_until_governed_compaction_worker_is_available",
+            },
+            "manifest_status": {
+                "manifest_first": True,
+                "manifest_entries": len(existing),
+                "valid_entries": sum(1 for row in existing if row.get("index_available") or row.get("authority") == "AUTHORITATIVE"),
+                "checksum_validation": "not_run_on_render",
+                "schema_mismatch_detected": False,
+                "orphaned_partitions": [],
+            },
+            "partitioning_status": "existing_partition_metadata_reused; new partition migration deferred",
+            "rotation_status": "not_started_non_destructive",
+            "compression_status": "existing_summary_indexes_and_lesson_compression_reused",
+            "incremental_index_status": {
+                "index_generation_observed": any(row.get("index_generation") for row in indexes),
+                "index_lag_measured": False,
+                "pending_updates": None,
+                "full_rebuild_on_render": False,
+            },
+            "compaction_status": "diagnostic_only_resumable_worker_not_started",
+            "retention_status": "authoritative_preserved_derived_policy_declared",
+            "sqlite_health": "not_mutated_by_build_h",
+            "growth_projection": projections or {"status": "insufficient_evidence", "reason": "daily_growth_not_exposed_by_existing_storage_status"},
+            "storage_total_bytes": total_storage_value,
+            "daily_growth_bytes": daily_growth_value,
             "provider_calls_used": 0,
             "broker_calls_used": 0,
             "llm_calls_used": 0,

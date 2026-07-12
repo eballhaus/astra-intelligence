@@ -39,6 +39,13 @@ class BuildHOwnershipContractTests(unittest.TestCase):
             self.assertFalse(result["full_history_fallback"])
             self.assertLessEqual(result["bounded_read_policy"]["max_results"], 100)
 
+    def test_storage_profile_is_non_destructive_and_explicit(self):
+        with tempfile.TemporaryDirectory() as state_dir:
+            result = AstraKnowledgeWarehouseV1(state_dir=state_dir, ttl_seconds=0).status(force=True)
+            self.assertIn(result["rotation_status"], {"not_started_non_destructive", "existing_partition_metadata_reused; new partition migration deferred"})
+            self.assertFalse(result["incremental_index_status"]["full_rebuild_on_render"])
+            self.assertIn("status", result["growth_projection"])
+
 
 if __name__ == "__main__":
     unittest.main()
