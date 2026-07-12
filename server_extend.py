@@ -2533,6 +2533,16 @@ except Exception:
     AstraShadowExperimentGovernanceV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     AstraBuildHFinalValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
+    from engine.astra_build_i_decision_intelligence_v1 import (
+        AskAstraReliabilityGroundingV1,
+        BuildIFinalValidationV1,
+        CopilotEffectivenessRankingAttributionV2,
+    )
+except Exception:
+    AskAstraReliabilityGroundingV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    CopilotEffectivenessRankingAttributionV2 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    BuildIFinalValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
     class AstraProviderOrchestrationDataGovernanceV1:  # type: ignore[override]
@@ -3238,6 +3248,9 @@ ASTRA_KNOWLEDGE_WAREHOUSE = AstraKnowledgeWarehouseV1(state_dir=STATE)
 ASTRA_INTELLIGENCE_EFFECTIVENESS = AstraIntelligenceEffectivenessLearningVelocityV1(state_dir=STATE)
 ASTRA_SHADOW_EXPERIMENT_GOVERNANCE = AstraShadowExperimentGovernanceV1(state_dir=STATE)
 ASTRA_BUILD_H_FINAL_VALIDATION = AstraBuildHFinalValidationV1(state_dir=STATE)
+ASTRA_ASK_ASTRA_RELIABILITY_GROUNDING = AskAstraReliabilityGroundingV1(state_dir=STATE)
+ASTRA_COPILOT_EFFECTIVENESS_RANKING_ATTRIBUTION = CopilotEffectivenessRankingAttributionV2(state_dir=STATE)
+ASTRA_BUILD_I_FINAL_VALIDATION = BuildIFinalValidationV1(state_dir=STATE)
 CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH = CortexLifecycleEvidenceMasterTruthV1(state_dir=STATE)
 ASTRA_PROFITABILITY_ACTIVATION_INTELLIGENCE_UTILIZATION = AstraProfitabilityActivationIntelligenceUtilizationV1(state_dir=STATE)
 ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION = AstraTier1Tier2ProfitabilityActivationV1(state_dir=STATE)
@@ -45836,6 +45849,95 @@ def build_h_final_validation_v1(force: bool = False):
         }
 
 
+def _astra_build_i_cached_statuses_v1() -> dict:
+    """Build a bounded Build I view from the unified cache and canonical helpers."""
+    base = _astra_build_h_cached_statuses_v1()
+    base["astra_copilot_suite_v1"] = _astra_copilot_suite_v1(limit=12, force=False)
+    base["broker_truth_accumulation_v2"] = _astra_broker_truth_accumulation_v2_payload()
+    base["astra_knowledge_warehouse_v1"] = ASTRA_KNOWLEDGE_WAREHOUSE.status(statuses=base, force=True)
+    base["astra_shadow_experiment_governance_v1"] = ASTRA_SHADOW_EXPERIMENT_GOVERNANCE.status(statuses=base, force=True)
+    try:
+        all_records, _complete_records, _registry = _de_broker_truth_records_v1()
+        base["build_i_broker_records"] = list(all_records)[:200] if isinstance(all_records, list) else []
+    except Exception:
+        base["build_i_broker_records"] = []
+    return base
+
+
+@router.get("/api/ask_astra_reliability_grounding_v1")
+def ask_astra_reliability_grounding_v1(force: bool = False):
+    try:
+        base = _astra_build_i_cached_statuses_v1()
+        out = dict(ASTRA_ASK_ASTRA_RELIABILITY_GROUNDING.status(statuses=base, force=True) or {})
+        out["provider_calls_used"] = 0
+        out["broker_actions_used"] = 0
+        out["llm_calls_used"] = 0
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "endpoint": "/api/ask_astra_reliability_grounding_v1",
+            "status": "insufficient_evidence",
+            "degraded_reason": f"ask_astra_grounding_unavailable:{str(exc)[:140]}",
+            "provider_calls_used": 0,
+            "broker_actions_used": 0,
+            "llm_calls_used": 0,
+            "behavior_safe_to_apply": False,
+            "paper_only_preserved": True,
+        }
+
+
+@router.get("/api/copilot_effectiveness_ranking_attribution_v2")
+def copilot_effectiveness_ranking_attribution_v2(force: bool = False):
+    try:
+        base = _astra_build_i_cached_statuses_v1()
+        base["ask_astra_reliability_grounding_v1"] = ASTRA_ASK_ASTRA_RELIABILITY_GROUNDING.status(statuses=base, force=True)
+        out = dict(ASTRA_COPILOT_EFFECTIVENESS_RANKING_ATTRIBUTION.status(statuses=base, force=True) or {})
+        out["provider_calls_used"] = 0
+        out["broker_actions_used"] = 0
+        out["llm_calls_used"] = 0
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "endpoint": "/api/copilot_effectiveness_ranking_attribution_v2",
+            "status": "insufficient_evidence",
+            "degraded_reason": f"copilot_effectiveness_v2_unavailable:{str(exc)[:140]}",
+            "provider_calls_used": 0,
+            "broker_actions_used": 0,
+            "llm_calls_used": 0,
+            "behavior_safe_to_apply": False,
+            "paper_only_preserved": True,
+        }
+
+
+@router.get("/api/build_i_final_validation_v1")
+def build_i_final_validation_v1(force: bool = False):
+    try:
+        base = _astra_build_i_cached_statuses_v1()
+        base["ask_astra_reliability_grounding_v1"] = ASTRA_ASK_ASTRA_RELIABILITY_GROUNDING.status(statuses=base, force=True)
+        base["copilot_effectiveness_ranking_attribution_v2"] = ASTRA_COPILOT_EFFECTIVENESS_RANKING_ATTRIBUTION.status(statuses=base, force=True)
+        out = dict(ASTRA_BUILD_I_FINAL_VALIDATION.status(statuses=base, force=True) or {})
+        out["provider_calls_used"] = 0
+        out["broker_actions_used"] = 0
+        out["llm_calls_used"] = 0
+        out["runtime_files_excluded"] = True
+        out["behavior_safe_to_apply"] = False
+        return out
+    except Exception as exc:
+        return {
+            "endpoint": "/api/build_i_final_validation_v1",
+            "status": "BUILD_I_BLOCKED",
+            "checks_failed": [f"build_i_validator_unavailable:{str(exc)[:140]}"],
+            "provider_calls_used": 0,
+            "broker_actions_used": 0,
+            "llm_calls_used": 0,
+            "runtime_files_excluded": True,
+            "behavior_safe_to_apply": False,
+            "paper_only_preserved": True,
+        }
+
+
 @router.get("/api/astra_storage_cache_attribution_learning_efficiency_v1")
 def astra_storage_cache_attribution_learning_efficiency_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -69037,6 +69139,131 @@ def astra_full_system_proof_v1(force: bool = False):
     return _astra_full_system_proof_v1_payload()
 
 
+def _ask_astra_fast_grounded_response_v1(
+    question: str,
+    *,
+    selected_symbol: str,
+    copilot: dict,
+    cached_unified: dict,
+    local_status: dict,
+    request_context: dict,
+) -> dict:
+    """Answer fast-mode questions from canonical cached facts before deep assembly."""
+    statuses = {
+        "astra_copilot_suite_v1": copilot,
+        "broker_truth_accumulation_v2": dict(cached_unified.get("broker_truth_accumulation_v2") or _astra_broker_truth_accumulation_v2_payload()),
+        "astra_shadow_experiment_governance_v1": dict(cached_unified.get("astra_shadow_experiment_governance_v1") or {}),
+        "replay_counterfactual_learning_v2": dict(cached_unified.get("replay_counterfactual_learning_v2") or {}),
+        "crypto_shadow_learning_v1": dict(cached_unified.get("crypto_shadow_learning_v1") or {}),
+        "market_breadth_index_intelligence_v1": dict(cached_unified.get("market_breadth_index_intelligence_v1") or {}),
+        "market_transition_detection_v1": dict(cached_unified.get("market_transition_detection_v1") or {}),
+        "etf_sector_rotation_intelligence_v1": dict(cached_unified.get("etf_sector_rotation_intelligence_v1") or {}),
+        "cross_sector_capital_flow_memory_v1": dict(cached_unified.get("cross_sector_capital_flow_memory_v1") or {}),
+        "unified_learning_diagnostics_v1": cached_unified,
+    }
+    grounding = ASTRA_ASK_ASTRA_RELIABILITY_GROUNDING.route(
+        question,
+        statuses,
+        selected_symbol=selected_symbol,
+        prior_context=request_context.get("conversation_context") if isinstance(request_context.get("conversation_context"), dict) else {},
+    )
+    facts = dict(grounding.get("deterministic_facts") or {})
+    actions = list(copilot.get("top_actions") or copilot.get("recommendations") or [])[:5]
+    matching = next((row for row in actions if str(row.get("symbol") or "").upper() == str(facts.get("symbol") or "").upper()), actions[0] if actions else {})
+    intent = str(grounding.get("intent") or "unsupported")
+    if intent == "copilot_recommendation" and matching:
+        reason = matching.get("simple_why") or matching.get("why_astra_chose_it") or matching.get("reason") or "the current cached evidence remains advisory-only"
+        direct = f"{matching.get('symbol') or facts.get('symbol') or 'This opportunity'} is {str(matching.get('canonical_lifecycle_state') or matching.get('action') or 'being monitored').replace('_', ' ').title()} with {matching.get('confidence', 'n/a')}% confidence."
+        watch = f"Why: {reason}. Horizon: {matching.get('preferred_horizon') or matching.get('horizon') or 'not available'}."
+    elif intent in {"broker_truth", "paper_performance"}:
+        direct = f"Astra has {facts.get('broker_complete_lifecycles', 0)} complete broker-confirmed paper lifecycles."
+        watch = f"Official metric status: {facts.get('broker_metric_status') or 'warming up'}; shadow and replay remain separately labelled."
+    elif intent == "shadow_experiment":
+        direct = f"Shadow experiment readiness is {str(facts.get('shadow_readiness') or 'research only').replace('_', ' ').title()}."
+        watch = "Shadow evidence is advisory-only and cannot alter Paper behavior without validation and human approval."
+    elif intent == "replay":
+        direct = f"Replay evidence status is {facts.get('replay_status') or 'warming up'}."
+        watch = "Replay compares bounded counterfactuals and is not broker-confirmed Paper truth."
+    elif intent == "crypto":
+        crypto = statuses.get("crypto_shadow_learning_v1") or {}
+        direct = f"Crypto readiness is {crypto.get('crypto_profit_factor_status') or 'insufficient evidence'} with crypto kept separate from equity Paper trading."
+        watch = "No crypto paper or live orders are enabled."
+    elif intent in {"market_regime", "sector_context"}:
+        market = statuses.get("market_breadth_index_intelligence_v1") or statuses.get("market_transition_detection_v1") or {}
+        direct = f"Current cached market context is {market.get('current_index_regime') or market.get('current_market_phase') or 'warming up'}."
+        watch = "Market context is advisory evidence and does not change ranking or execution logic."
+    elif intent == "system_health":
+        direct = "Astra is serving cached diagnostic intelligence with paper-only safety controls enabled."
+        watch = f"Unified diagnostics status: {cached_unified.get('status') or 'available'}; failed sources: {cached_unified.get('failed_sources_count', 'not available')}."
+    else:
+        first = actions[0] if actions else {}
+        direct = f"Astra's strongest current cached item is {first.get('action') or 'monitor'} for {first.get('symbol') or 'the current opportunity set'}."
+        watch = "Ask a question about a symbol, broker truth, Paper performance, shadow, replay, crypto, market context, or system health for a sourced answer."
+    answer = "\n".join([
+        f"Direct answer: {direct}",
+        f"Why it matters: {watch}",
+        "What Astra is watching:",
+        f"- Canonical sources: {', '.join(grounding.get('canonical_sources') or ['cached Astra diagnostics'])}.",
+        f"- Evidence state: {grounding.get('answer_state') or 'PARTIALLY_ANSWERED'}.",
+        "What to do next: Review the cited evidence under existing confirmation and safety gates.",
+        "Safety note: This is advisory-only. Astra did not change rankings, entries, exits, sizing, allocation, thresholds, or broker behavior.",
+    ])
+    source_context = {
+        "question": question,
+        "selected_symbol": selected_symbol or facts.get("symbol"),
+        "answer_grounding": grounding,
+        "copilot_actions": actions,
+        "source_generation": cached_unified.get("generated_at"),
+    }
+    return {
+        "ok": True,
+        "answer": _safe_text(answer, 4000),
+        "short_answer": _safe_text(direct, 360),
+        "plain_english_explanation": _safe_text(answer, 1200),
+        "key_supporting_astra_signals": [watch, f"Answer state: {grounding.get('answer_state')}"][:8],
+        "safety_note": "Advisory-only. No live trading, broker behavior, ranking, entry, exit, sizing, allocation, or threshold changes.",
+        "model_used": "cached_intelligence",
+        "response_mode": "cached_intelligence",
+        "ask_astra_mode": "fast",
+        "local_ai_status": {**local_status, "response_mode": "cached_intelligence"},
+        "generation_ms": 0.0,
+        "fallback_used": False,
+        "fallback_reason": "",
+        "context_tokens_estimate": max(1, int(len(json.dumps(source_context, ensure_ascii=True)) / 4)),
+        "context_compression": {"compressed_context": source_context, "context_compression_score": 100.0},
+        "local_generation_error": "",
+        "source_context": source_context,
+        "source_context_compacted": True,
+        "source_context_full_payload_returned": False,
+        "answer_grounding": grounding,
+        "source_disclosure": {
+            "canonical_sources": grounding.get("canonical_sources") or [],
+            "answer_state": grounding.get("answer_state"),
+            "source_lineage": grounding.get("source_lineage"),
+            "fallback_permitted": grounding.get("fallback_permitted"),
+            "missing_fields": grounding.get("missing_fields") or [],
+            "deterministic_facts": facts,
+        },
+        "confidence": matching.get("confidence", 45) if isinstance(matching, dict) else 45,
+        "generated_at": _now_utc_iso(),
+        "api_calls_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "dashboard_render_llm_calls": 0,
+        "behavior_safe_to_apply": False,
+        "paper_only_preserved": True,
+        "alpaca_paper_only_preserved": True,
+        "live_trading_changed": False,
+        "broker_behavior_changed": False,
+        "ranking_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "exit_behavior_changed": False,
+        "position_sizing_changed": False,
+        "portfolio_allocation_changed": False,
+        "thresholds_changed": False,
+    }
+
+
 @router.post("/api/ask_astra_v1")
 def ask_astra_v1(payload: dict = Body(...)):
     data = payload if isinstance(payload, dict) else {}
@@ -69054,6 +69281,15 @@ def ask_astra_v1(payload: dict = Body(...)):
     copilot = dict((cached_unified or {}).get("astra_copilot_suite_v1") or {})
     if not copilot:
         copilot = _astra_copilot_suite_v1(limit=5, force=False)
+    if response_mode == "fast":
+        return _ask_astra_fast_grounded_response_v1(
+            question,
+            selected_symbol=selected_symbol,
+            copilot=copilot,
+            cached_unified=cached_unified,
+            local_status=local_status,
+            request_context=data,
+        )
     ask_context_seed = {"astra_copilot_suite_v1": copilot, "ask_astra_local_ai_status_v1": local_status}
     try:
         recovery_center = ASTRA_RECOVERY_CENTER.status(force=False)
@@ -69222,6 +69458,18 @@ def ask_astra_v1(payload: dict = Body(...)):
     )
     ask_context_seed["astra_autonomous_intelligence_v1"] = dict(
         occupancy_evolution.get("astra_autonomous_intelligence_v1") or {}
+    )
+    ask_context_seed["broker_truth_accumulation_v2"] = dict(
+        (cached_unified or {}).get("broker_truth_accumulation_v2") or _astra_broker_truth_accumulation_v2_payload()
+    )
+    ask_context_seed["astra_shadow_experiment_governance_v1"] = dict(
+        (cached_unified or {}).get("astra_shadow_experiment_governance_v1") or {}
+    )
+    ask_grounding = ASTRA_ASK_ASTRA_RELIABILITY_GROUNDING.route(
+        question,
+        ask_context_seed,
+        selected_symbol=selected_symbol,
+        prior_context=data.get("conversation_context") if isinstance(data.get("conversation_context"), dict) else {},
     )
     executive = _astra_executive_summary_v1(ask_context_seed, copilot)
     ceo = _astra_ceo_summary_v1(executive, ask_context_seed)
@@ -69654,6 +69902,15 @@ def ask_astra_v1(payload: dict = Body(...)):
             "behavior_verification_score": trading_brain_completion.get("behavior_verification_score"),
         },
         "key_supporting_astra_signals": key_signals,
+        "answer_grounding": ask_grounding,
+        "source_disclosure": {
+            "canonical_sources": ask_grounding.get("canonical_sources") or [],
+            "answer_state": ask_grounding.get("answer_state"),
+            "source_lineage": ask_grounding.get("source_lineage"),
+            "fallback_permitted": ask_grounding.get("fallback_permitted"),
+            "missing_fields": ask_grounding.get("missing_fields") or [],
+            "deterministic_facts": ask_grounding.get("deterministic_facts") or {},
+        },
         "supported_question_types": [
             "explain_status",
             "why_astra_chose_this",
@@ -70616,7 +70873,14 @@ def ask_astra_v1(payload: dict = Body(...)):
         "context_tokens_estimate": int(compression.get("context_tokens_estimate") or max(1, int(len(json.dumps(compressed_context, ensure_ascii=True)) / 4))),
         "context_compression": compression,
         "local_generation_error": local_generation_error,
-        "source_context": context,
+        # The complete assembly context can contain large cached diagnostics.
+        # Return the already-grounded compressed view so a user answer remains
+        # inspectable without turning one Ask Astra request into a dashboard dump.
+        "source_context": compressed_context,
+        "source_context_compacted": True,
+        "source_context_full_payload_returned": False,
+        "answer_grounding": ask_grounding,
+        "source_disclosure": context.get("source_disclosure") or {},
         "confidence": 72 if context.get("copilot_top_actions") else 45,
         "generated_at": _now_utc_iso(),
         "api_calls_used": 0,
@@ -72298,6 +72562,18 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["astra_build_h_final_validation_v1"] = ASTRA_BUILD_H_FINAL_VALIDATION.status(statuses=statuses, force=False)
     except Exception:
         statuses["astra_build_h_final_validation_v1"] = {}
+    try:
+        statuses["ask_astra_reliability_grounding_v1"] = ASTRA_ASK_ASTRA_RELIABILITY_GROUNDING.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["ask_astra_reliability_grounding_v1"] = {}
+    try:
+        statuses["copilot_effectiveness_ranking_attribution_v2"] = ASTRA_COPILOT_EFFECTIVENESS_RANKING_ATTRIBUTION.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["copilot_effectiveness_ranking_attribution_v2"] = {}
+    try:
+        statuses["build_i_final_validation_v1"] = ASTRA_BUILD_I_FINAL_VALIDATION.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["build_i_final_validation_v1"] = {}
     return statuses
 
 
