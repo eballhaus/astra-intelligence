@@ -60,6 +60,30 @@ def _normalize_record(data: dict[str, Any]) -> dict[str, Any]:
         "lifecycle_stage": _to_str(data.get("lifecycle_stage"), "signal"),
         "updated_at": _to_str(data.get("updated_at"), _now_iso()),
     }
+    # Lifecycle rows are append-only evidence.  Preserve the canonical lane
+    # contract from the paper-entry bridge without using it to drive exits.
+    for key, default in (
+        ("lane_id", ""),
+        ("trade_style", ""),
+        ("intended_horizon", ""),
+        ("asset_class", ""),
+        ("strategy_cohort", ""),
+        ("recommendation_id", ""),
+        ("candidate_id", ""),
+        ("decision_timestamp", ""),
+        ("eligibility_timestamp", ""),
+        ("selection_timestamp", ""),
+        ("expected_max_hold", ""),
+        ("same_session_exit_required", False),
+        ("overnight_allowed", False),
+        ("capital_book_id", ""),
+        ("source_ranking_version", ""),
+        ("source_policy_version", ""),
+    ):
+        if isinstance(default, bool):
+            record[key] = bool(data.get(key, default))
+        else:
+            record[key] = _to_str(data.get(key), default)
     if not record["lifecycle_id"]:
         record["lifecycle_id"] = build_lifecycle_id(record)
     if record["current_price"] <= 0.0 and record["entry_price"] > 0.0:

@@ -15,6 +15,14 @@ from typing import Any
 from engine.candidate_execution_integrity_v1 import candidate_execution_integrity
 
 try:
+    from engine.astra_trade_lane_registry_v1 import CONTRACT_FIELDS, apply_trade_lane_contract
+except Exception:  # pragma: no cover - metadata-only compatibility fallback
+    CONTRACT_FIELDS = ()
+
+    def apply_trade_lane_contract(row: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
+        return dict(row or {})
+
+try:
     from engine.position_tracker import PositionTracker
 except Exception:  # pragma: no cover - keep runtime-compatible fallback
     PositionTracker = None  # type: ignore[assignment]
@@ -651,6 +659,10 @@ def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
             r["buy_eligibility"] = "qualified_buy"
         elif "paper" in readiness or "watch" in readiness or "soft" in readiness:
             r["buy_eligibility"] = "paper_test_eligible"
+    # Preserve a canonical lane identity before the existing order path.  This
+    # only records context; the existing ranking and paper safety gates remain
+    # the sole owners of eligibility and submission.
+    r = apply_trade_lane_contract(r, legacy=False)
     r["paper_entry_eligibility_bridge_v1"] = True
     return r
 
@@ -2772,6 +2784,7 @@ class PaperAutopilotEngine:
             "entry_price_reference": round(_to_float(entry_price), 6),
             "entry_commitment_score": round(_to_float((gate_meta or {}).get("commitment_score"), 0.0), 2),
         }
+        order.update({field: r.get(field) for field in CONTRACT_FIELDS if field in r})
         if attribution_client_order_id:
             order["client_order_id"] = attribution_client_order_id
         if asset_type == "crypto":
@@ -2879,6 +2892,7 @@ class PaperAutopilotEngine:
             "expected_hold_minutes": round(_to_float(r.get("expected_hold_minutes"), 0.0), 3),
             "expected_hold_days": round(_to_float(r.get("expected_hold_days"), 0.0), 4),
             "horizon_persistence_bundle_v1": bool(r.get("horizon_persistence_bundle_v1", False)),
+            **{field: r.get(field) for field in CONTRACT_FIELDS if field in r},
             "trade_archetype": str(r.get("trade_archetype") or "unknown"),
             "opportunity_quality_score": round(_to_float(r.get("opportunity_quality_score"), 0.0), 2),
             "opportunity_quality_label": str(r.get("opportunity_quality_label") or ""),
@@ -3149,6 +3163,7 @@ class PaperAutopilotEngine:
                         "expected_hold_minutes": _to_float(row.get("expected_hold_minutes"), 0.0),
                         "expected_hold_days": _to_float(row.get("expected_hold_days"), 0.0),
                         "horizon_persistence_bundle_v1": bool(row.get("horizon_persistence_bundle_v1", False)),
+                        **{field: row.get(field) for field in CONTRACT_FIELDS if field in row},
                         "trade_archetype": str(row.get("setup_type") or "unknown"),
                         "catalyst_context": str(row.get("regime_context") or row.get("market_regime") or ""),
                         "source_endpoint": "paper_autopilot",

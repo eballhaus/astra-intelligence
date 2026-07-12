@@ -535,6 +535,10 @@ export default function LearningTab({ compact = false }) {
   const paperStatus = data.paperStatus || {};
   const horizonCoverageSummary = unifiedLearningDiagnostics?.horizon_coverage_summary || {};
   const multiHorizonAdaptiveLifecycle = unifiedLearningDiagnostics?.multi_horizon_intelligence_adaptive_lifecycle_suite_v1 || {};
+  const pladeuLaneRegistry = unifiedLearningDiagnostics?.astra_trade_lane_registry_v1 || {};
+  const pladeuEvidenceLadder = unifiedLearningDiagnostics?.paper_learning_evidence_ladder_v1 || {};
+  const pladeuDayGovernor = unifiedLearningDiagnostics?.day_lane_diversity_governor_v1 || {};
+  const pladeuMasterValidation = unifiedLearningDiagnostics?.pladeu_master_validation_v1 || {};
   const workerStatus = {
     ...(paperStatus?.worker || {}),
     ...(data.workerStatus || {}),
@@ -8159,6 +8163,23 @@ export default function LearningTab({ compact = false }) {
           </div>
         </div>
       </div>
+
+      <details style={{ ...panelStyle }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Paper Lifecycle Acceleration & Evidence Utilization</summary>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 8, fontSize: 12, marginTop: 12 }}>
+          <div>Master status: {String(pladeuMasterValidation?.status || "warming_up").replaceAll("_", " ")}</div>
+          <div>DAY candidate supply: {safeNumber(pladeuDayGovernor?.candidate_supply).toFixed(0)}</div>
+          <div>Existing DAY selections: {safeNumber(pladeuDayGovernor?.existing_selection_count).toFixed(0)}</div>
+          <div>Broker-truth round trips: {safeNumber(pladeuEvidenceLadder?.broker_truth_count).toFixed(0)}</div>
+          <div>Reconstructed context: {safeNumber(pladeuEvidenceLadder?.reconstructed_context_count).toFixed(0)}</div>
+          <div>Promotion posture: {String(pladeuEvidenceLadder?.promotion_readiness || "advisory_only").replaceAll("_", " ")}</div>
+          <div>Trade lane / allocation distinct: {pladeuLaneRegistry?.allocation_lane_distinct_from_trade_lane ? "yes" : "warming up"}</div>
+          <div>Behavior safe to apply: {pladeuMasterValidation?.behavior_safe_to_apply ? "yes" : "no"}</div>
+          <div style={{ gridColumn: "1 / -1", color: "#b8c7e6" }}>
+            Lane and reconstruction diagnostics preserve the existing paper ranking, entry, exit, and capacity controls. Reconstructed history is context only and never overrides broker truth.
+          </div>
+        </div>
+      </details>
 
       <div style={{ ...panelStyle, padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
         <div style={{ fontSize: 12, color: "#9fb1cc" }}>

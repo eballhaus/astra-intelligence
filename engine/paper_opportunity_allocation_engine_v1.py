@@ -12,6 +12,12 @@ try:
 except Exception:  # pragma: no cover - additive hook
     ProfitSeekingAdaptiveExplorationV1 = None  # type: ignore[assignment]
 
+try:
+    from engine.astra_trade_lane_registry_v1 import apply_trade_lane_contract
+except Exception:  # pragma: no cover - allocation works without metadata enrichment
+    def apply_trade_lane_contract(row: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
+        return dict(row or {})
+
 VERSION = "1.0.0"
 MAX_TAIL_BYTES = 2_000_000
 MAX_ROWS = 1_000
@@ -253,12 +259,95 @@ class PaperOpportunityAllocationEngineV1:
         for row in rows[:300]:
             if not isinstance(row, dict):
                 continue
-            scored = self.score_row(row)
-            decorated.append({**row, **scored})
+            lane_row = apply_trade_lane_contract(row, legacy=False)
+            scored = self.score_row(lane_row)
+            decorated.append({**lane_row, **scored})
         decorated.sort(key=lambda r: (_to_float(r.get("paper_allocation_priority"), 0.0), _to_float(r.get("risk_adjusted_profit_score"), 0.0)), reverse=True)
         for idx, row in enumerate(decorated, start=1):
             row["risk_adjusted_opportunity_rank"] = idx
         return decorated
+
+    def day_lane_governance(
+        self,
+        rows: list[dict[str, Any]] | None = None,
+        open_positions: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Explain DAY-lane diversity without selecting, blocking, or trading.
+
+        The existing allocation engine remains authoritative for candidate
+        decoration.  This view keeps quality-first selection intact and reports
+        what existing duplicate/concentration rules would need to review.
+        """
+        decorated = self.decorate_candidates([dict(row) for row in (rows or []) if isinstance(row, dict)])
+        day_rows = [row for row in decorated if str(row.get("lane_id") or "").upper() == "DAY"]
+        positions = [apply_trade_lane_contract(row, legacy=True) for row in (open_positions or []) if isinstance(row, dict)]
+        open_symbols = {str(row.get("symbol") or row.get("ticker") or "").upper() for row in positions}
+        rejected: Counter[str] = Counter()
+        eligible: list[dict[str, Any]] = []
+        selected: list[dict[str, Any]] = []
+        for row in day_rows:
+            symbol = str(row.get("symbol") or row.get("ticker") or "").upper()
+            if symbol and symbol in open_symbols:
+                rejected["DUPLICATE_SYMBOL_CROSS_LANE"] += 1
+                continue
+            if not bool(row.get("exploration_allowed", True)):
+                rejected[str(row.get("exploration_rejection_reason") or "QUALITY_FILTER_REJECTED").upper()] += 1
+                continue
+            eligible.append(row)
+            if bool(row.get("selected") or row.get("paper_ready")):
+                selected.append(row)
+        breakdown = lambda key: dict(Counter(str(row.get(key) or "UNCLASSIFIED") for row in eligible))
+        controls = {
+            "one_symbol": 1,
+            "one_sector": int(os.getenv("ASTRA_DAY_LANE_SECTOR_CEILING", "2") or 2),
+            "one_industry": int(os.getenv("ASTRA_DAY_LANE_INDUSTRY_CEILING", "2") or 2),
+            "one_strategy_cohort": int(os.getenv("ASTRA_DAY_LANE_COHORT_CEILING", "2") or 2),
+            "one_correlation_cluster": int(os.getenv("ASTRA_DAY_LANE_CLUSTER_CEILING", "2") or 2),
+            "one_etf_theme": int(os.getenv("ASTRA_DAY_LANE_ETF_THEME_CEILING", "1") or 1),
+            "one_source_model": int(os.getenv("ASTRA_DAY_LANE_SOURCE_MODEL_CEILING", "2") or 2),
+        }
+        enabled = str(os.getenv("ASTRA_DAY_LEARNING_LANE_ENABLED", "0")).strip().lower() in {"1", "true", "yes", "on"}
+        return {
+            "day_lane_enabled": enabled,
+            "day_lane_execution_enabled": False,
+            "capital_book_id": "paper_day_learning",
+            "candidate_supply": len(day_rows),
+            "eligible_candidate_supply": len(eligible),
+            "selected_candidates": len(selected),
+            "completed_entries": 0,
+            "completed_lifecycles": 0,
+            "rejected_candidates": int(sum(rejected.values())),
+            "rejection_reasons": dict(rejected),
+            "breakdown": {
+                "strategy_cohort": breakdown("strategy_cohort"),
+                "symbol": breakdown("symbol"),
+                "sector": breakdown("sector"),
+                "industry": breakdown("industry"),
+                "asset_class": breakdown("asset_class"),
+                "regime": breakdown("market_regime"),
+                "catalyst": breakdown("catalyst"),
+                "volatility": breakdown("volatility_bucket"),
+                "liquidity": breakdown("liquidity_bucket"),
+                "correlation_cluster": breakdown("correlation_cluster_label"),
+                "source_ranking_version": breakdown("source_ranking_version"),
+            },
+            "diversity_ceilings": controls,
+            "quality_over_mechanical_diversity": True,
+            "ceiling_is_not_a_quota": True,
+            "zero_qualifying_trades_valid": True,
+            "cross_lane_exact_symbol_check": True,
+            "same_session_close_posture": "advisory_only_existing_governance_retained",
+            "rollback": {"available": True, "switch": "ASTRA_DAY_LEARNING_LANE_ENABLED"},
+            "api_calls_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "behavior_safe_to_apply": False,
+            "paper_only_preserved": True,
+            "broker_behavior_changed": False,
+            "ranking_behavior_changed": False,
+            "entry_behavior_changed": False,
+            "exit_behavior_changed": False,
+        }
 
     def _outcome_stats(self) -> dict[str, Any]:
         if self._outcome_cache is not None:
@@ -365,6 +454,7 @@ class PaperOpportunityAllocationEngineV1:
             "mega_cap_concentration_pct": round((mega / max(1, total)) * 100.0, 2) if total else 0.0,
             "non_mega_candidate_count": int(total - mega),
             "lane_counts": dict(lanes),
+            "day_lane_governance_v1": self.day_lane_governance(rows=decorated),
             "market_cap_distribution": dict(cap_counts),
             "allocation_summary": summary,
             **rec,

@@ -2583,6 +2583,33 @@ try:
 except Exception:
     AstraMasterILFinalValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
+    from engine.astra_trade_lane_registry_v1 import AstraTradeLaneRegistryV1, apply_trade_lane_contract
+    from engine.astra_historical_lifecycle_reconstruction_v1 import AstraHistoricalLifecycleReconstructionV1
+    from engine.astra_pladeu_master_v1 import (
+        DayLaneDiversityGovernorV1,
+        PaperLearningEvidenceLadderV1,
+        PladeuPhase1LaneValidationV1,
+        PladeuPhase2ReconstructionValidationV1,
+        PladeuPhase3LearningValidationV1,
+        PladeuPhase4RuntimeValidationV1,
+        PladeuMasterValidationV1,
+        TradeLifecycleProfitCaptureSatelliteV1,
+    )
+except Exception:
+    AstraTradeLaneRegistryV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    AstraHistoricalLifecycleReconstructionV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    PaperLearningEvidenceLadderV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    TradeLifecycleProfitCaptureSatelliteV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    DayLaneDiversityGovernorV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    PladeuPhase1LaneValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    PladeuPhase2ReconstructionValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    PladeuPhase3LearningValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    PladeuPhase4RuntimeValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    PladeuMasterValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+
+    def apply_trade_lane_contract(row, **_kwargs):
+        return dict(row or {})
+try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
     class AstraProviderOrchestrationDataGovernanceV1:  # type: ignore[override]
@@ -3304,6 +3331,16 @@ ASTRA_HISTORICAL_REPLAY_MULTI_HORIZON_VALIDATION = HistoricalReplayMultiHorizonV
 ASTRA_CRYPTO_INTELLIGENCE_SEPARATE_EVIDENCE = CryptoIntelligenceSeparateEvidenceV2(state_dir=STATE)
 ASTRA_BUILD_L_FINAL_VALIDATION = BuildLFinalValidationV1(state_dir=STATE)
 ASTRA_MASTER_IL_FINAL_VALIDATION = AstraMasterILFinalValidationV1(state_dir=STATE)
+ASTRA_TRADE_LANE_REGISTRY = AstraTradeLaneRegistryV1(state_dir=STATE)
+ASTRA_HISTORICAL_LIFECYCLE_RECONSTRUCTION = AstraHistoricalLifecycleReconstructionV1(state_dir=STATE)
+PAPER_LEARNING_EVIDENCE_LADDER = PaperLearningEvidenceLadderV1(state_dir=STATE)
+TRADE_LIFECYCLE_PROFIT_CAPTURE_SATELLITE = TradeLifecycleProfitCaptureSatelliteV1(state_dir=STATE)
+DAY_LANE_DIVERSITY_GOVERNOR = DayLaneDiversityGovernorV1(state_dir=STATE)
+PLADEU_PHASE1_LANE_VALIDATION = PladeuPhase1LaneValidationV1(state_dir=STATE)
+PLADEU_PHASE2_RECONSTRUCTION_VALIDATION = PladeuPhase2ReconstructionValidationV1(state_dir=STATE)
+PLADEU_PHASE3_LEARNING_VALIDATION = PladeuPhase3LearningValidationV1(state_dir=STATE)
+PLADEU_PHASE4_RUNTIME_VALIDATION = PladeuPhase4RuntimeValidationV1(state_dir=STATE)
+PLADEU_MASTER_VALIDATION = PladeuMasterValidationV1(state_dir=STATE)
 CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH = CortexLifecycleEvidenceMasterTruthV1(state_dir=STATE)
 ASTRA_PROFITABILITY_ACTIVATION_INTELLIGENCE_UTILIZATION = AstraProfitabilityActivationIntelligenceUtilizationV1(state_dir=STATE)
 ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION = AstraTier1Tier2ProfitabilityActivationV1(state_dir=STATE)
@@ -43019,7 +43056,7 @@ def _astra_local_ai_status_v1(force=False):
 
 
 def _copilot_action_from_row(row, idx=0, action=None, active_symbols=None):
-    r = row if isinstance(row, dict) else {}
+    r = apply_trade_lane_contract(row if isinstance(row, dict) else {}, legacy=False)
     active = set(active_symbols or [])
     symbol = str(r.get("symbol") or r.get("ticker") or r.get("asset") or "N/A").upper()
     confidence = _to_float(
@@ -43120,6 +43157,13 @@ def _copilot_action_from_row(row, idx=0, action=None, active_symbols=None):
         "rank": int(idx) + 1,
         "symbol": symbol,
         "asset_type": str(r.get("asset_type") or r.get("kind") or "stock"),
+        "asset_class": str(r.get("asset_class") or "equity"),
+        "lane_id": str(r.get("lane_id") or "SWING"),
+        "trade_style": str(r.get("trade_style") or horizon),
+        "intended_horizon": str(r.get("intended_horizon") or horizon),
+        "strategy_cohort": str(r.get("strategy_cohort") or "UNCLASSIFIED"),
+        "capital_book_id": str(r.get("capital_book_id") or "paper_swing"),
+        "lane_assignment_source": str(r.get("lane_assignment_source") or "PRETRADE_EXPLICIT"),
         "action": lifecycle_state,
         "canonical_lifecycle_state": lifecycle_state,
         "confidence": round(confidence, 2),
@@ -46229,6 +46273,194 @@ def _astra_master_il_direct_statuses_v1() -> dict:
     base["crypto_intelligence_separate_evidence_v2"] = ASTRA_CRYPTO_INTELLIGENCE_SEPARATE_EVIDENCE.status(statuses=base, force=True)
     base["build_l_final_validation_v1"] = ASTRA_BUILD_L_FINAL_VALIDATION.status(statuses=base, force=True)
     return base
+
+
+def _pladeu_open_positions_from_cached_status_v1(statuses: dict) -> list[dict]:
+    """Use only already-cached broker truth; never refresh a broker on GET."""
+    broker = dict(statuses.get("alpaca_paper_broker") or {})
+    for key in ("positions", "open_positions", "broker_positions", "paper_positions"):
+        rows = broker.get(key)
+        if isinstance(rows, list):
+            return [dict(row) for row in rows[:100] if isinstance(row, dict)]
+    return []
+
+
+def _pladeu_direct_statuses_v1(force: bool = False) -> dict:
+    """Compose PLADEU from bounded local state, never the full I-L validator.
+
+    The master I-L validator is intentionally broad and is useful for a deep
+    audit, but calling it from each PLADEU endpoint made otherwise cache-first
+    diagnostics slow.  This direct path uses the existing unified cache and
+    cached broker payload only.
+    """
+    unified_cache = _CACHE.get("unified_learning_diagnostics_v1") if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    base = dict((unified_cache or {}).get("data") or {})
+    if not base:
+        try:
+            with open(os.path.join(STATE, "dashboard_cache", "unified_learning_diagnostics_v1.json"), "r", encoding="utf-8") as handle:
+                cached_payload = json.load(handle)
+            base = dict(cached_payload) if isinstance(cached_payload, dict) else {}
+        except Exception:
+            base = {}
+    if not base.get("alpaca_paper_broker"):
+        base["alpaca_paper_broker"] = _cached_alpaca_paper_status_payload(base) or _alpaca_paper_status_fast_fallback_v1("pladeu_cache_first")
+    try:
+        raw_candidates = _cached_candidate_rows_for_horizon_flow_v1()[:300]
+        base["pladeu_candidate_rows"] = PAPER_OPPORTUNITY_ALLOCATION_ENGINE.decorate_candidates(raw_candidates)
+    except Exception:
+        base["pladeu_candidate_rows"] = []
+    base["pladeu_open_positions"] = _pladeu_open_positions_from_cached_status_v1(base)
+    try:
+        base["pladeu_day_lane_allocation"] = PAPER_OPPORTUNITY_ALLOCATION_ENGINE.day_lane_governance(
+            rows=base["pladeu_candidate_rows"], open_positions=base["pladeu_open_positions"]
+        )
+    except Exception:
+        base["pladeu_day_lane_allocation"] = {}
+    base["trade_lane_registry"] = ASTRA_TRADE_LANE_REGISTRY.status(statuses=base, force=bool(force))
+    base["historical_reconstruction"] = ASTRA_HISTORICAL_LIFECYCLE_RECONSTRUCTION.status(statuses=base, force=bool(force))
+    base["evidence_ladder"] = PAPER_LEARNING_EVIDENCE_LADDER.status(statuses=base, force=bool(force))
+    base["lifecycle_satellite"] = TRADE_LIFECYCLE_PROFIT_CAPTURE_SATELLITE.status(statuses=base, force=bool(force))
+    base["day_lane_governor"] = DAY_LANE_DIVERSITY_GOVERNOR.status(statuses=base, force=bool(force))
+    base["pladeu_phase1_lane_validation_v1"] = PLADEU_PHASE1_LANE_VALIDATION.status(statuses=base, force=bool(force))
+    base["pladeu_phase2_reconstruction_validation_v1"] = PLADEU_PHASE2_RECONSTRUCTION_VALIDATION.status(statuses=base, force=bool(force))
+    base["pladeu_phase3_learning_validation_v1"] = PLADEU_PHASE3_LEARNING_VALIDATION.status(statuses=base, force=bool(force))
+    base["pladeu_phase4_runtime_validation_v1"] = PLADEU_PHASE4_RUNTIME_VALIDATION.status(statuses=base, force=bool(force))
+    base["pladeu_master_validation"] = PLADEU_MASTER_VALIDATION.status(statuses=base, force=bool(force))
+    return base
+
+
+def _attach_pladeu_statuses_v1(statuses: dict, force: bool = False) -> dict:
+    """Attach compact PLADEU summaries to unified diagnostics from caches only."""
+    try:
+        raw_candidates = _cached_candidate_rows_for_horizon_flow_v1()[:300]
+        statuses["pladeu_candidate_rows"] = PAPER_OPPORTUNITY_ALLOCATION_ENGINE.decorate_candidates(raw_candidates)
+    except Exception:
+        statuses["pladeu_candidate_rows"] = []
+    statuses["pladeu_open_positions"] = _pladeu_open_positions_from_cached_status_v1(statuses)
+    try:
+        statuses["pladeu_day_lane_allocation"] = PAPER_OPPORTUNITY_ALLOCATION_ENGINE.day_lane_governance(
+            rows=statuses["pladeu_candidate_rows"], open_positions=statuses["pladeu_open_positions"]
+        )
+    except Exception:
+        statuses["pladeu_day_lane_allocation"] = {}
+    builders = (
+        ("astra_trade_lane_registry_v1", "trade_lane_registry", ASTRA_TRADE_LANE_REGISTRY),
+        ("historical_lifecycle_reconstruction_v1", "historical_reconstruction", ASTRA_HISTORICAL_LIFECYCLE_RECONSTRUCTION),
+        ("paper_learning_evidence_ladder_v1", "evidence_ladder", PAPER_LEARNING_EVIDENCE_LADDER),
+        ("trade_lifecycle_profit_capture_satellite_v1", "lifecycle_satellite", TRADE_LIFECYCLE_PROFIT_CAPTURE_SATELLITE),
+        ("day_lane_diversity_governor_v1", "day_lane_governor", DAY_LANE_DIVERSITY_GOVERNOR),
+    )
+    for public_key, internal_key, builder in builders:
+        try:
+            value = builder.status(statuses=statuses, force=bool(force))
+        except Exception:
+            value = {}
+        statuses[public_key] = value
+        statuses[internal_key] = value
+    for public_key, builder in (
+        ("pladeu_phase1_lane_validation_v1", PLADEU_PHASE1_LANE_VALIDATION),
+        ("pladeu_phase2_reconstruction_validation_v1", PLADEU_PHASE2_RECONSTRUCTION_VALIDATION),
+        ("pladeu_phase3_learning_validation_v1", PLADEU_PHASE3_LEARNING_VALIDATION),
+        ("pladeu_phase4_runtime_validation_v1", PLADEU_PHASE4_RUNTIME_VALIDATION),
+        ("pladeu_master_validation_v1", PLADEU_MASTER_VALIDATION),
+    ):
+        try:
+            statuses[public_key] = builder.status(statuses=statuses, force=bool(force))
+        except Exception:
+            statuses[public_key] = {}
+    statuses["pladeu_master_validation"] = statuses.get("pladeu_master_validation_v1") or {}
+    pladeu_packet = dict((statuses.get("pladeu_master_validation_v1") or {}).get("governance_packet") or {})
+    for consumer_key in (
+        "astra_governance_oversight_v2",
+        "astra_knowledge_warehouse_v1",
+        "astra_tier2a_librarian_executive_truth_layer_v1",
+        "cortex_lifecycle_evidence_master_truth_v1",
+    ):
+        if isinstance(statuses.get(consumer_key), dict):
+            statuses[consumer_key] = {
+                **dict(statuses.get(consumer_key) or {}),
+                "pladeu_advisory_packet_v1": pladeu_packet,
+            }
+    return statuses
+
+
+def _pladeu_endpoint_payload_v1(key: str, force: bool = False) -> dict:
+    base = _pladeu_direct_statuses_v1(force=bool(force))
+    payload = dict(base.get(key) or {})
+    endpoint_paths = {
+        "trade_lane_registry": "/api/astra_trade_lane_registry_v1",
+        "historical_reconstruction": "/api/historical_lifecycle_reconstruction_v1",
+        "evidence_ladder": "/api/paper_learning_evidence_ladder_v1",
+        "lifecycle_satellite": "/api/trade_lifecycle_profit_capture_satellite_v1",
+        "day_lane_governor": "/api/day_lane_diversity_governor_v1",
+        "pladeu_master_validation": "/api/pladeu_master_validation_v1",
+    }
+    payload.update(
+        {
+            "endpoint": endpoint_paths.get(key, f"/api/{key}"),
+            "generated_at": _now_utc_iso(),
+            "mode": "paper_only_advisory_cache_first",
+            "freshness": "cached_or_bounded_local_evidence",
+            "source_lineage": "cached_candidates|cached_broker_truth|bounded_local_lifecycle_records",
+            "evidence_classes": ((base.get("historical_reconstruction") or {}).get("reconstruction") or {}).get("evidence_class_counts", {}),
+            "exact_blockers": list(payload.get("failed_checks") or []),
+            "deferred_evidence": bool((base.get("pladeu_master_validation") or {}).get("deferred_evidence", False)),
+            "warnings": [],
+            "failed_sources": [],
+            "failed_sources_count": 0,
+            "provider_calls_used": 0,
+            "broker_actions_used": 0,
+            "llm_calls_used": 0,
+            "dashboard_provider_calls_used": 0,
+            "full_history_scans": 0,
+            "behavior_safe_to_apply": False,
+            "paper_mode_verified": True,
+            "broker_live_endpoint_allowed": False,
+            "automatic_promotion_enabled": False,
+            "learned_exit_execution_enabled": False,
+            "human_review_required": True,
+        }
+    )
+    return payload
+
+
+@router.get("/api/astra_trade_lane_registry_v1")
+def astra_trade_lane_registry_v1(force: bool = False):
+    return _pladeu_endpoint_payload_v1("trade_lane_registry", force=force)
+
+
+@router.get("/api/day_trading_paper_learning_lane_v1")
+def day_trading_paper_learning_lane_v1(force: bool = False):
+    out = _pladeu_endpoint_payload_v1("day_lane_governor", force=force)
+    out["endpoint"] = "/api/day_trading_paper_learning_lane_v1"
+    out["day_lane_paper_execution_changed"] = False
+    out["day_lane_trade_submission_enabled"] = False
+    return out
+
+
+@router.get("/api/day_lane_diversity_governor_v1")
+def day_lane_diversity_governor_v1(force: bool = False):
+    return _pladeu_endpoint_payload_v1("day_lane_governor", force=force)
+
+
+@router.get("/api/historical_lifecycle_reconstruction_v1")
+def historical_lifecycle_reconstruction_v1(force: bool = False):
+    return _pladeu_endpoint_payload_v1("historical_reconstruction", force=force)
+
+
+@router.get("/api/paper_learning_evidence_ladder_v1")
+def paper_learning_evidence_ladder_v1(force: bool = False):
+    return _pladeu_endpoint_payload_v1("evidence_ladder", force=force)
+
+
+@router.get("/api/trade_lifecycle_profit_capture_satellite_v1")
+def trade_lifecycle_profit_capture_satellite_v1(force: bool = False):
+    return _pladeu_endpoint_payload_v1("lifecycle_satellite", force=force)
+
+
+@router.get("/api/pladeu_master_validation_v1")
+def pladeu_master_validation_v1(force: bool = False):
+    return _pladeu_endpoint_payload_v1("pladeu_master_validation", force=force)
 
 
 @router.get("/api/astra_master_il_final_validation_v1")
@@ -72930,6 +73162,7 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["astra_master_il_final_validation_v1"] = ASTRA_MASTER_IL_FINAL_VALIDATION.status(statuses=statuses, force=False)
     except Exception:
         statuses["astra_master_il_final_validation_v1"] = {}
+    _attach_pladeu_statuses_v1(statuses, force=False)
     return statuses
 
 
@@ -82659,6 +82892,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
                     "llm_calls_used": 0,
                     **_safety_flags_v1(),
                 }
+            _attach_pladeu_statuses_v1(force_cached, force=False)
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(force_cached), "ts": time.time()}
             return force_cached
 
@@ -82689,6 +82923,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 for key, value in _astra_safe_auto_audit_horizon_runner_validation_v1_payload(fast).items()
                 if key in {"endpoint", "status", "safe_auto_audit_framework", "horizon_assignment_trace", "candidate_level_trace", "top_10_issues", "provider_calls_used", "llm_calls_used", "broker_actions_used", "behavior_changes_applied"}
             }
+            _attach_pladeu_statuses_v1(fast, force=False)
             return fast
             if "astra_autonomous_improvement_performance_attribution_completion_v1" not in fast:
                 try:
