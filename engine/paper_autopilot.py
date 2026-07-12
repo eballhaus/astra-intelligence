@@ -1671,6 +1671,12 @@ class PaperAutopilotEngine:
     def _crypto_paper_activation_status(self) -> dict[str, Any]:
         requested = str(os.getenv("ASTRA_ENABLE_ALPACA_CRYPTO_PAPER", "1")).strip().lower() in {"1", "true", "yes", "on"}
         kill_switch = str(os.getenv("ASTRA_ALPACA_CRYPTO_PAPER_KILL_SWITCH", "0")).strip().lower() in {"1", "true", "yes", "on"}
+        capital_raw = str(os.getenv("ASTRA_CRYPTO_PAPER_CAPITAL_LIMIT", "")).strip()
+        try:
+            capital_limit = float(capital_raw) if capital_raw else None
+        except (TypeError, ValueError):
+            capital_limit = None
+        capital_configured = bool(capital_limit and capital_limit > 0)
         broker = self.alpaca_paper_broker
         capability = {}
         if broker is not None and hasattr(broker, "crypto_capability_status"):
@@ -1687,16 +1693,20 @@ class PaperAutopilotEngine:
             and capability.get("crypto_trading_supported")
             and capability.get("tradable_pairs")
             and capability.get("market_data_entitlement_confirmed")
+            and capital_configured
         )
         return {
             "activation_requested": requested,
             "kill_switch_enabled": kill_switch,
             "paper_active_bounded": paper_ready,
+            "capital_book_id": "paper_crypto_separate",
+            "capital_configured": capital_configured,
+            "capital_limit": capital_limit,
             "capability": capability,
             "day_trade_capacity": 6,
             "short_swing_capacity": 2,
             "scalp_broker_capacity": 0,
-            "exact_blocker": "" if paper_ready else str(capability.get("exact_blocker") or "crypto_runtime_capability_not_validated"),
+            "exact_blocker": "" if paper_ready else "CRYPTO_CAPITAL_CONFIGURATION_REQUIRED" if not capital_configured else str(capability.get("exact_blocker") or "crypto_runtime_capability_not_validated"),
         }
 
     def _crypto_execution_data_gate(self, row: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:

@@ -2584,6 +2584,7 @@ except Exception:
     AstraMasterILFinalValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
     from engine.astra_trade_lane_registry_v1 import AstraTradeLaneRegistryV1, apply_trade_lane_contract
+    from engine.astra_multilane_operational_completion_v1 import build_multilane_operational_status
     from engine.astra_historical_lifecycle_reconstruction_v1 import AstraHistoricalLifecycleReconstructionV1
     from engine.astra_pladeu_master_v1 import (
         DayLaneDiversityGovernorV1,
@@ -2597,6 +2598,7 @@ try:
     )
 except Exception:
     AstraTradeLaneRegistryV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    build_multilane_operational_status = None  # type: ignore[assignment]
     AstraHistoricalLifecycleReconstructionV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     PaperLearningEvidenceLadderV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     TradeLifecycleProfitCaptureSatelliteV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
@@ -46339,6 +46341,7 @@ def _pladeu_direct_statuses_v1(force: bool = False) -> dict:
     base["lifecycle_satellite"] = TRADE_LIFECYCLE_PROFIT_CAPTURE_SATELLITE.status(statuses=base, force=bool(force))
     base["day_lane_governor"] = DAY_LANE_DIVERSITY_GOVERNOR.status(statuses=base, force=bool(force))
     base["day_lane_pilot_readiness_v1"] = _day_lane_pilot_readiness_payload_v1(base)
+    base["multilane_paper_operational_status_v1"] = _multilane_paper_operational_status_v1_payload(base)
     base["pladeu_phase1_lane_validation_v1"] = PLADEU_PHASE1_LANE_VALIDATION.status(statuses=base, force=bool(force))
     base["pladeu_phase2_reconstruction_validation_v1"] = PLADEU_PHASE2_RECONSTRUCTION_VALIDATION.status(statuses=base, force=bool(force))
     base["pladeu_phase3_learning_validation_v1"] = PLADEU_PHASE3_LEARNING_VALIDATION.status(statuses=base, force=bool(force))
@@ -46372,6 +46375,7 @@ def _attach_pladeu_statuses_v1(statuses: dict, force: bool = False) -> dict:
         ("day_lane_diversity_governor_v1", "day_lane_governor", DAY_LANE_DIVERSITY_GOVERNOR),
     )
     statuses["day_lane_pilot_readiness_v1"] = _day_lane_pilot_readiness_payload_v1(statuses)
+    statuses["multilane_paper_operational_status_v1"] = _multilane_paper_operational_status_v1_payload(statuses)
     for public_key, internal_key, builder in builders:
         try:
             value = builder.status(statuses=statuses, force=bool(force))
@@ -46416,6 +46420,7 @@ def _pladeu_endpoint_payload_v1(key: str, force: bool = False) -> dict:
         "lifecycle_satellite": "/api/trade_lifecycle_profit_capture_satellite_v1",
         "day_lane_governor": "/api/day_lane_diversity_governor_v1",
         "day_lane_pilot_readiness_v1": "/api/day_lane_pilot_readiness_v1",
+        "multilane_paper_operational_status_v1": "/api/multilane_paper_operational_status_v1",
         "pladeu_master_validation": "/api/pladeu_master_validation_v1",
     }
     payload.update(
@@ -46472,6 +46477,13 @@ def day_lane_pilot_readiness_v1(force: bool = False):
     payload = dict(base.get("day_lane_pilot_readiness_v1") or _day_lane_pilot_readiness_payload_v1(base))
     payload["generated_at"] = _now_utc_iso()
     return payload
+
+
+@router.get("/api/multilane_paper_operational_status_v1")
+def multilane_paper_operational_status_v1(force: bool = False):
+    """Read-only, cache-first operational truth for the existing paper lanes."""
+    base = _pladeu_direct_statuses_v1(force=bool(force))
+    return dict(base.get("multilane_paper_operational_status_v1") or _multilane_paper_operational_status_v1_payload(base))
 
 
 @router.get("/api/day_lane_pilot_control_status_v1")
@@ -47256,7 +47268,15 @@ def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
     crypto_symbols = {str(row.get("symbol") or row.get("ticker") or "").upper() for row in crypto_rows if str(row.get("symbol") or row.get("ticker") or "").strip()}
     allocation = dict(statuses.get("pladeu_day_lane_allocation") or {})
     eligible_rows = [row for row in day_rows if str(row.get("symbol") or row.get("ticker") or "").upper() not in open_symbols and bool(row.get("exploration_allowed", True))]
+    # Allocation-row selection is diagnostic only.  The autopilot's execution
+    # trace is the sole owner of an actual paper selection.
     selected_rows = [row for row in eligible_rows if bool(row.get("selected") or row.get("paper_ready"))]
+    autopilot_trace = _paper_autopilot_last_trace_v1()
+    actual_selected_symbols = {
+        str(item.get("symbol") or "").upper()
+        for item in (autopilot_trace.get("per_candidate_decision_trace") or [])
+        if isinstance(item, dict) and bool(item.get("selected"))
+    }
     required_fields = ("symbol", "lane_id", "trade_style", "intended_horizon", "asset_class", "candidate_id", "recommendation_id")
     complete = sum(1 for row in eligible_rows if all(row.get(field) not in (None, "") for field in required_fields))
     metadata_incomplete = max(0, len(eligible_rows) - complete)
@@ -47343,7 +47363,15 @@ def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
         "historical_classified_day_candidates": len(day_rows) if freshness != "CURRENT" else 0,
         "current_day_candidates": len(current_rows),
         "eligible_day_candidates": len([row for row in current_rows if row in eligible_rows]),
+        "diagnostic_selected_day_candidates": len([row for row in current_rows if row in selected_rows]),
+        "actual_selected_day_candidates": len(
+            [row for row in current_rows if str(row.get("symbol") or row.get("ticker") or "").upper() in actual_selected_symbols]
+        ),
+        # Backward-compatible alias retained as diagnostic-only, never use as
+        # proof of paper-autopilot selection.
         "selected_day_candidates": len([row for row in current_rows if row in selected_rows]),
+        "actual_selection_owner": "PaperAutopilot.per_candidate_decision_trace.selected",
+        "diagnostic_selection_is_not_actual_selection": True,
         "open_day_positions": sum(1 for row in open_positions if str(row.get("lane_id") or "").upper() == "DAY"),
         "candidate_stage_trace": stage_trace,
         "metadata_complete_count": complete if freshness == "CURRENT" else 0,
@@ -47377,6 +47405,49 @@ def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
         "broker_behavior_changed": False,
         "live_trading_changed": False,
     }
+
+
+def _multilane_paper_operational_status_v1_payload(statuses: dict | None = None) -> dict:
+    """Consolidate existing lane owners without broker/provider activity."""
+    statuses = dict(statuses or {})
+    if not callable(build_multilane_operational_status):
+        return {
+            "endpoint": "/api/multilane_paper_operational_status_v1",
+            "status": "ASTRA_MULTILANE_OPERATIONAL_BLOCKED",
+            "top_blockers": ["multilane_operational_builder_unavailable"],
+            "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
+            **_safety_flags_v1(),
+        }
+    candidates = [dict(row) for row in (statuses.get("pladeu_candidate_rows") or []) if isinstance(row, dict)]
+    # Crypto rankings are stored separately from the equity top-buys cache.
+    # Include those cached rows only in this status view; no promotion occurs.
+    try:
+        candidates.extend(_crypto_ranking_rows_cached_v1())
+    except Exception:
+        pass
+    seen: set[tuple[str, str]] = set()
+    unique_candidates = []
+    for row in candidates:
+        identity = (
+            str(row.get("symbol") or row.get("ticker") or "").upper(),
+            str(row.get("asset_class") or row.get("asset_type") or "equity").lower(),
+        )
+        if not identity[0] or identity in seen:
+            continue
+        seen.add(identity)
+        unique_candidates.append(row)
+    registry = _astra_evidence_state_json("broker_truth_records_v1.json")
+    records = [dict(row) for row in (registry.get("records") or []) if isinstance(row, dict)]
+    crypto_lane = _crypto_paper_lane_validation_v1_payload(statuses)
+    return build_multilane_operational_status(
+        candidates=unique_candidates[:300],
+        open_positions=[dict(row) for row in (statuses.get("pladeu_open_positions") or []) if isinstance(row, dict)],
+        broker_truth_records=records[:500],
+        autopilot_trace=_paper_autopilot_last_trace_v1(),
+        source_metadata=statuses.get("pladeu_candidate_source_metadata") or _pladeu_candidate_source_metadata_v1(),
+        day_config=statuses.get("day_lane_pilot_config") or _day_lane_pilot_config_v1(),
+        crypto_lane=crypto_lane,
+    )
 
 
 def _candidate_horizon_from_row_v1(row: dict) -> str:
@@ -65564,21 +65635,15 @@ def _broker_truth_records_by_asset_class_v1() -> dict:
     records = registry.get("records") if isinstance(registry, dict) else []
     if not isinstance(records, list):
         records = []
-    crypto_pairs = {_normalize_crypto_pair_v1(x) for x in _ASTRA_CRYPTO_APPROVED_CORE_UNIVERSE_V1}
-    out = {"equity": [], "crypto": [], "unknown": []}
+    out = {"equity": [], "etf": [], "crypto": [], "unknown": []}
     for row in records:
         if not isinstance(row, dict):
             continue
-        explicit = str(row.get("asset_class") or row.get("asset_type") or "").strip().lower()
-        symbol = str(row.get("symbol") or "").upper().strip()
-        pair = _normalize_crypto_pair_v1(symbol)
-        if explicit in {"crypto", "cryptocurrency"}:
-            asset = "crypto"
-        elif symbol:
-            asset = "equity"
-        else:
-            asset = "unknown"
-        out.setdefault(asset, []).append(dict(row))
+        contract = apply_trade_lane_contract(row, legacy=True)
+        asset = str(contract.get("asset_class") or "unknown").lower()
+        if asset == "equity" and str(contract.get("instrument_type") or "").upper() == "ETF":
+            asset = "etf"
+        out.setdefault(asset if asset in out else "unknown", []).append(contract)
     return out
 
 
@@ -65647,12 +65712,22 @@ def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> di
         blockers.append("alpaca_crypto_market_data_entitlement_unverified")
     kill_switch = str(os.getenv("ASTRA_ALPACA_CRYPTO_PAPER_KILL_SWITCH", "0")).strip().lower() in {"1", "true", "yes", "on"}
     activation_requested = str(os.getenv("ASTRA_ENABLE_ALPACA_CRYPTO_PAPER", "1")).strip().lower() in {"1", "true", "yes", "on"}
+    capital_raw = str(os.getenv("ASTRA_CRYPTO_PAPER_CAPITAL_LIMIT", "")).strip()
+    try:
+        capital_limit = float(capital_raw) if capital_raw else None
+    except (TypeError, ValueError):
+        capital_limit = None
+    capital_configured = bool(capital_limit and capital_limit > 0)
     if not activation_requested:
         blockers.append("crypto_paper_activation_not_requested")
     if kill_switch:
         blockers.append("crypto_paper_kill_switch_enabled")
-    active = bool(paper_mode_verified and broker_crypto_supported and capability.get("market_data_entitlement_confirmed") and tradable_pairs and activation_requested and not kill_switch)
+    if not capital_configured:
+        blockers.append("CRYPTO_CAPITAL_CONFIGURATION_REQUIRED")
+    active = bool(paper_mode_verified and broker_crypto_supported and capability.get("market_data_entitlement_confirmed") and tradable_pairs and activation_requested and not kill_switch and capital_configured)
     if kill_switch or not activation_requested or not paper_mode_verified or capability.get("live_endpoint_detected"):
+        lane_state = "LANE_BLOCKED"
+    elif not capital_configured:
         lane_state = "LANE_BLOCKED"
     elif not broker_crypto_supported or not capability.get("market_data_entitlement_confirmed") or not tradable_pairs:
         lane_state = "LANE_SHADOW_ONLY"
@@ -65681,6 +65756,9 @@ def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> di
         "short_swing_capacity_used": crypto_swing_used,
         "short_swing_capacity_available": max(0, 2 - crypto_swing_used) if active else 0,
         "paper_crypto_enabled": active,
+        "capital_book_id": "paper_crypto_separate",
+        "capital_configured": capital_configured,
+        "capital_limit": capital_limit,
         "crypto_paper_trading_enabled": active,
         "crypto_live_trading_enabled": False,
         "broker_submission_path_status": "paper_crypto_ready" if active else "blocked_fail_closed",
@@ -66239,20 +66317,32 @@ def _crypto_position_reconciliation_v1_payload(statuses: dict | None = None) -> 
 def _broker_truth_asset_class_separation_audit_v1_payload(statuses: dict | None = None) -> dict:
     by_asset = _broker_truth_records_by_asset_class_v1()
     equity_records = by_asset.get("equity") or []
+    etf_records = by_asset.get("etf") or []
     crypto_records = by_asset.get("crypto") or []
     unknown_records = by_asset.get("unknown") or []
-    equity_complete = len([r for r in equity_records if bool(r.get("official_metric_eligible")) or bool(r.get("closed_indicator"))])
-    crypto_complete = len([r for r in crypto_records if bool(r.get("official_metric_eligible")) or bool(r.get("closed_indicator"))])
+    def _strict_complete(row: dict) -> bool:
+        return (
+            str(row.get("truth_quality") or row.get("evidence_class") or "").lower() == "broker_confirmed_complete"
+            and bool(row.get("entry_fill_id") or row.get("entry_order_fill_id"))
+            and bool(row.get("exit_fill_id") or row.get("exit_order_fill_id"))
+        )
+    equity_complete = len([r for r in equity_records if _strict_complete(r)])
+    etf_complete = len([r for r in etf_records if _strict_complete(r)])
+    crypto_complete = len([r for r in crypto_records if _strict_complete(r)])
     return {
         "endpoint": "/api/broker_truth_asset_class_separation_audit_v1",
         "status": "PASS",
         "generated_at": _now_utc_iso(),
         "equity_broker_truth_count": len(equity_records),
+        "etf_broker_truth_count": len(etf_records),
         "crypto_broker_truth_count": len(crypto_records),
         "unknown_asset_class_truth_count": len(unknown_records),
         "equity_official_eligible_count": equity_complete,
+        "etf_official_eligible_count": etf_complete,
         "crypto_official_eligible_count": crypto_complete,
-        "combined_lifecycle_count": equity_complete + crypto_complete,
+        "combined_lifecycle_count": equity_complete + etf_complete + crypto_complete,
+        "raw_records_are_not_completed_truth": True,
+        "strict_completion_requires_entry_and_exit_fill_ids": True,
         "crypto_truth_unlocks_equity_metrics": False,
         "equity_truth_unlocks_crypto_promotion": False,
         "official_equity_metrics_guarded_independently": True,
@@ -66274,6 +66364,9 @@ def _crypto_broker_truth_accumulation_v1_payload(statuses: dict | None = None) -
         "generated_at": _now_utc_iso(),
         "crypto_complete_truths": separation.get("crypto_official_eligible_count"),
         "crypto_truth_records_total": separation.get("crypto_broker_truth_count"),
+        "crypto_raw_records_total": separation.get("crypto_broker_truth_count"),
+        "crypto_raw_records_are_not_broker_truth": True,
+        "crypto_completed_broker_truth_requires_entry_and_exit_fill_ids": True,
         "crypto_remaining_to_25": max(0, 25 - int(_to_float(separation.get("crypto_official_eligible_count"), 0.0))),
         "crypto_remaining_to_50": max(0, 50 - int(_to_float(separation.get("crypto_official_eligible_count"), 0.0))),
         "crypto_truth_threshold_independent": True,

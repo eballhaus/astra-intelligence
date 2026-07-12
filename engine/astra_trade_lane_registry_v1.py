@@ -23,11 +23,20 @@ LANE_DAY = "DAY"
 LANE_CRYPTO = "CRYPTO"
 VALID_LANES = {LANE_SWING, LANE_DAY, LANE_CRYPTO}
 
+# Instrument classification is deliberately independent from the execution
+# lane.  These are the bounded, locally known ETF symbols in Astra's existing
+# broad-universe seed; explicit upstream metadata always takes precedence.
+KNOWN_ETF_SYMBOLS = {
+    "SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLE", "XLV", "XLY", "XLI",
+    "XLP", "XLU", "XLB", "XLC", "SMH", "SOXX", "ARKK",
+}
+
 CONTRACT_FIELDS = (
     "lane_id",
     "trade_style",
     "intended_horizon",
     "asset_class",
+    "instrument_type",
     "strategy_cohort",
     "recommendation_id",
     "candidate_id",
@@ -56,13 +65,22 @@ def _first(row: Mapping[str, Any], *keys: str) -> Any:
 
 
 def _normalized_asset_class(row: Mapping[str, Any]) -> str:
-    raw = _text(_first(row, "asset_class", "asset_type", "instrument_type", "market"))
+    raw = _text(_first(row, "asset_class", "asset_type", "market"))
     raw = raw.lower().replace("-", "_").replace(" ", "_")
     if raw in {"crypto", "cryptocurrency", "digital_asset", "digitalasset"}:
         return "crypto"
-    if raw in {"etf", "fund"}:
-        return "etf"
     return "equity"
+
+
+def _instrument_type(row: Mapping[str, Any], asset_class: str) -> str:
+    """Return a cohort label without turning ETFs into a fourth trade lane."""
+    explicit = _text(_first(row, "instrument_type", "security_type", "product_type", "asset_type", "asset_class")).upper()
+    if asset_class == "crypto":
+        return "CRYPTO"
+    if explicit in {"ETF", "FUND", "EXCHANGE_TRADED_FUND"}:
+        return "ETF"
+    symbol = _text(_first(row, "symbol", "ticker")).upper()
+    return "ETF" if symbol in KNOWN_ETF_SYMBOLS else "EQUITY"
 
 
 def _normalized_style(row: Mapping[str, Any]) -> str:
@@ -88,12 +106,12 @@ def _normalized_style(row: Mapping[str, Any]) -> str:
     return "swing_trade"
 
 
-def _cohort(row: Mapping[str, Any], asset_class: str, style: str) -> str:
+def _cohort(row: Mapping[str, Any], asset_class: str, style: str, instrument_type: str = "EQUITY") -> str:
     if style == "scalp":
         return "SCALP"
     if asset_class == "crypto":
         return "CRYPTO_SEPARATE"
-    if asset_class == "etf":
+    if instrument_type == "ETF":
         return "ETF_INTRADAY" if style == "day_trade" else "ETF_SWING"
     descriptor = " ".join(
         _text(_first(row, key)).lower()
@@ -125,6 +143,7 @@ def apply_trade_lane_contract(
     result: Dict[str, Any] = deepcopy(dict(row))
     timestamp = now or datetime.now(timezone.utc).isoformat()
     asset_class = _normalized_asset_class(result)
+    instrument_type = _instrument_type(result, asset_class)
     style = _normalized_style(result)
     explicit_lane = _text(result.get("lane_id")).upper()
 
@@ -162,7 +181,8 @@ def apply_trade_lane_contract(
             "trade_style": style,
             "intended_horizon": intended_horizon,
             "asset_class": asset_class,
-            "strategy_cohort": _text(result.get("strategy_cohort")) or _cohort(result, asset_class, style),
+            "instrument_type": instrument_type,
+            "strategy_cohort": _text(result.get("strategy_cohort")) or _cohort(result, asset_class, style, instrument_type),
             "recommendation_id": _text(_first(result, "recommendation_id", "canonical_recommendation_id")),
             "candidate_id": _text(_first(result, "candidate_id", "decision_id", "opportunity_id")),
             "decision_timestamp": _timestamp(
