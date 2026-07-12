@@ -63,7 +63,7 @@
 .copilot-context-item span, .copilot-metric span, .copilot-execution-grid span { display: block; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 850; }
 .copilot-context-item strong { display: block; overflow: hidden; margin-top: 5px; color: #eaf3ff; font-size: 0.84rem; text-overflow: ellipsis; white-space: nowrap; }
 
-.copilot-filter-bar { display: flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; padding: 10px; border-radius: 14px; overflow-x: auto; }
+.copilot-filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; min-width: 0; max-width: 100%; padding: 10px; border-radius: 14px; overflow-x: clip; }
 .copilot-filter-label { flex: 0 0 auto; padding: 0 6px; color: #7f99ba; font-size: 0.68rem; font-weight: 900; letter-spacing: 0.1em; text-transform: uppercase; }
 .copilot-filter { flex: 0 0 auto; border: 1px solid rgba(129, 170, 229, 0.18); border-radius: 999px; padding: 7px 11px; background: rgba(255, 255, 255, 0.035); color: #b5c9e3; cursor: pointer; font-size: 0.72rem; font-weight: 800; }
 .copilot-filter:hover, .copilot-filter:focus-visible { border-color: #609aff; color: white; outline: none; }

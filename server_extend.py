@@ -2579,6 +2579,10 @@ except Exception:
     CryptoIntelligenceSeparateEvidenceV2 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     BuildLFinalValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
+    from engine.astra_master_il_final_validation_v1 import AstraMasterILFinalValidationV1
+except Exception:
+    AstraMasterILFinalValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
     class AstraProviderOrchestrationDataGovernanceV1:  # type: ignore[override]
@@ -3299,6 +3303,7 @@ ASTRA_HORIZON_CAPACITY_TURNOVER_RESEARCH = HorizonCapacityTurnoverResearchV1(sta
 ASTRA_HISTORICAL_REPLAY_MULTI_HORIZON_VALIDATION = HistoricalReplayMultiHorizonValidationV1(state_dir=STATE)
 ASTRA_CRYPTO_INTELLIGENCE_SEPARATE_EVIDENCE = CryptoIntelligenceSeparateEvidenceV2(state_dir=STATE)
 ASTRA_BUILD_L_FINAL_VALIDATION = BuildLFinalValidationV1(state_dir=STATE)
+ASTRA_MASTER_IL_FINAL_VALIDATION = AstraMasterILFinalValidationV1(state_dir=STATE)
 CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH = CortexLifecycleEvidenceMasterTruthV1(state_dir=STATE)
 ASTRA_PROFITABILITY_ACTIVATION_INTELLIGENCE_UTILIZATION = AstraProfitabilityActivationIntelligenceUtilizationV1(state_dir=STATE)
 ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION = AstraTier1Tier2ProfitabilityActivationV1(state_dir=STATE)
@@ -46196,6 +46201,47 @@ def build_l_final_validation_v1(force: bool = False):
         return {"endpoint": "/api/build_l_final_validation_v1", "status": "BUILD_L_BLOCKED", "checks_failed": [f"build_l_validator_unavailable:{str(exc)[:140]}"], "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "runtime_files_excluded": True, "behavior_safe_to_apply": False, "paper_only_preserved": True}
 
 
+def _astra_master_il_direct_statuses_v1() -> dict:
+    """Compose only the I-L facade dependencies for independent validation."""
+    base = _astra_build_i_cached_statuses_v1()
+    base["ask_astra_reliability_grounding_v1"] = ASTRA_ASK_ASTRA_RELIABILITY_GROUNDING.status(statuses=base, force=True)
+    base["copilot_effectiveness_ranking_attribution_v2"] = ASTRA_COPILOT_EFFECTIVENESS_RANKING_ATTRIBUTION.status(statuses=base, force=True)
+    base["build_i_final_validation_v1"] = ASTRA_BUILD_I_FINAL_VALIDATION.status(statuses=base, force=True)
+    for key, value in _astra_build_j_direct_statuses_v1().items():
+        if key not in base or not base.get(key):
+            base[key] = value
+    base["shadow_lifecycle_compression_retention_v1"] = ASTRA_SHADOW_LIFECYCLE_COMPRESSION_RETENTION.status(statuses=base, force=True)
+    base["active_learning_evidence_gap_v1"] = ASTRA_ACTIVE_LEARNING_EVIDENCE_GAP.status(statuses=base, force=True)
+    base["teaching_effectiveness_v1"] = ASTRA_TEACHING_EFFECTIVENESS.status(statuses=base, force=True)
+    base["build_j_final_validation_v1"] = ASTRA_BUILD_J_FINAL_VALIDATION.status(statuses=base, force=True)
+    for key, value in _astra_build_k_direct_statuses_v1().items():
+        if key not in base or not base.get(key):
+            base[key] = value
+    base["astra_autonomous_safe_repair_v1"] = ASTRA_AUTONOMOUS_SAFE_REPAIR.status(statuses=base, force=True)
+    base["astra_governance_oversight_v2"] = ASTRA_GOVERNANCE_OVERSIGHT_V2.status(statuses=base, force=True)
+    base["build_k_final_validation_v1"] = ASTRA_BUILD_K_FINAL_VALIDATION.status(statuses=base, force=True)
+    for key, value in _astra_build_l_direct_statuses_v1().items():
+        if key not in base or not base.get(key):
+            base[key] = value
+    base["momentum_exit_readiness_loss_acceptance_v1"] = ASTRA_MOMENTUM_EXIT_READINESS_LOSS_ACCEPTANCE.status(statuses=base, force=True)
+    base["horizon_capacity_turnover_research_v1"] = ASTRA_HORIZON_CAPACITY_TURNOVER_RESEARCH.status(statuses=base, force=True)
+    base["historical_replay_multi_horizon_validation_v1"] = ASTRA_HISTORICAL_REPLAY_MULTI_HORIZON_VALIDATION.status(statuses=base, force=True)
+    base["crypto_intelligence_separate_evidence_v2"] = ASTRA_CRYPTO_INTELLIGENCE_SEPARATE_EVIDENCE.status(statuses=base, force=True)
+    base["build_l_final_validation_v1"] = ASTRA_BUILD_L_FINAL_VALIDATION.status(statuses=base, force=True)
+    return base
+
+
+@router.get("/api/astra_master_il_final_validation_v1")
+def astra_master_il_final_validation_v1(force: bool = False):
+    try:
+        base = _astra_master_il_direct_statuses_v1()
+        out = dict(ASTRA_MASTER_IL_FINAL_VALIDATION.status(statuses=base, force=True) or {})
+        out.update({"provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "runtime_files_excluded": True, "behavior_safe_to_apply": False})
+        return out
+    except Exception as exc:
+        return {"endpoint": "/api/astra_master_il_final_validation_v1", "status": "ASTRA_MASTER_IL_BLOCKED", "checks_failed": [f"master_validator_unavailable:{str(exc)[:140]}"], "orphaned_new_components": 1, "duplicate_authoritative_owners": 0, "unwired_required_consumers": 1, "silent_fallbacks": 1, "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "runtime_files_excluded": True, "behavior_safe_to_apply": False, "paper_only_preserved": True}
+
+
 @router.get("/api/astra_storage_cache_attribution_learning_efficiency_v1")
 def astra_storage_cache_attribution_learning_efficiency_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -72880,6 +72926,10 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["build_l_final_validation_v1"] = ASTRA_BUILD_L_FINAL_VALIDATION.status(statuses=statuses, force=False)
     except Exception:
         statuses["build_l_final_validation_v1"] = {}
+    try:
+        statuses["astra_master_il_final_validation_v1"] = ASTRA_MASTER_IL_FINAL_VALIDATION.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["astra_master_il_final_validation_v1"] = {}
     return statuses
 
 
