@@ -42,9 +42,13 @@ class AstraBuildHFinalValidationV1(CachedDiagnosticModule):
             "replay_not_paper_truth": shadow.get("replay_is_not_paper_truth") is True,
         }
         failed = [key for key, value in checks.items() if not value]
+        broker_truth_summary = _dict(statuses, "astra_broker_truth_unification_summary_v1")
+        broker_truth_audit = _dict(statuses, "broker_truth_counter_unification_audit_v1")
+        broker_truth_canonical = _dict(statuses, "canonical_outcome_audit_v1")
         broker_truth = max(
-            to_int(_dict(statuses, "shadow_vs_paper_performance_attribution_v1").get("canonical_closed_trade_count"), 0),
-            to_int(_dict(statuses, "shadow_vs_paper_performance_attribution_v1").get("paper_trade_count"), 0),
+            to_int(broker_truth_summary.get("broker_confirmed_complete_records"), 0),
+            to_int(broker_truth_audit.get("broker_confirmed_complete_records"), 0),
+            to_int(broker_truth_canonical.get("broker_confirmed_complete_records"), 0),
         )
         shadow_sample = to_int(shadow.get("shadow_lifecycles"), 0)
         deferred = []
@@ -52,6 +56,8 @@ class AstraBuildHFinalValidationV1(CachedDiagnosticModule):
             deferred.append("broker_truth_sample_below_50_for_full_effectiveness_confirmation")
         if shadow_sample < 20:
             deferred.append("shadow_completed_lifecycle_sample_below_20_for_repeatability")
+        if shadow.get("current_readiness") not in {None, "GUARDED_REVIEW_READY", "PAPER_VALIDATION_READY", "HUMAN_APPROVAL_REQUIRED"}:
+            deferred.append("shadow_readiness_not_review_ready")
         if effectiveness.get("evidence_consumption_ratio") is None:
             deferred.append("explicit_consumption_ratio_not_proven_for_all_evidence_classes")
         status = "BUILD_H_BLOCKED" if failed else "BUILD_H_PASS_WITH_DEFERRED_EVIDENCE" if deferred else "BUILD_H_PASS"

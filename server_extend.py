@@ -45661,7 +45661,7 @@ def astra_autonomous_improvement_performance_attribution_completion_v1(force: bo
 @router.get("/api/astra_build_h_ownership_map_v1")
 def astra_build_h_ownership_map_v1(force: bool = False):
     try:
-        out = dict(ASTRA_BUILD_H_OWNERSHIP_MAP.status(statuses=_learning_acceleration_status_bundle(), force=bool(force)) or {})
+        out = dict(ASTRA_BUILD_H_OWNERSHIP_MAP.status(statuses=_astra_build_h_cached_statuses_v1(), force=True) or {})
         out["astra_build_h_ownership_map_v1"] = True
         out["provider_calls_used"] = 0
         out["broker_calls_used"] = 0
@@ -45682,6 +45682,20 @@ def astra_build_h_ownership_map_v1(force: bool = False):
             "behavior_safe_to_apply": False,
             "paper_only_preserved": True,
         }
+
+
+def _astra_build_h_cached_statuses_v1() -> dict:
+    """Read the existing unified cache only; never rebuild the legacy bundle."""
+    cached = _CACHE.get("unified_learning_diagnostics_v1") if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    data = cached.get("data") if isinstance(cached, dict) else {}
+    if isinstance(data, dict) and data:
+        return dict(data)
+    try:
+        with open(os.path.join(STATE, "dashboard_cache", "unified_learning_diagnostics_v1.json"), "r", encoding="utf-8") as handle:
+            disk = json.load(handle)
+        return dict(disk) if isinstance(disk, dict) else {}
+    except Exception:
+        return {}
 
 
 @router.get("/api/astra_knowledge_warehouse_v1")
@@ -45713,7 +45727,7 @@ def astra_knowledge_warehouse_v1(
                 "max_files": max_files,
                 "page": page,
             })
-        out = dict(ASTRA_KNOWLEDGE_WAREHOUSE.status(statuses=_learning_acceleration_status_bundle(), force=bool(force)) or {})
+        out = dict(ASTRA_KNOWLEDGE_WAREHOUSE.status(statuses=_astra_build_h_cached_statuses_v1(), force=True) or {})
         out["astra_knowledge_warehouse_v1"] = True
         out["provider_calls_used"] = 0
         out["broker_calls_used"] = 0
@@ -45736,7 +45750,10 @@ def astra_knowledge_warehouse_v1(
 @router.get("/api/astra_intelligence_effectiveness_learning_velocity_v1")
 def astra_intelligence_effectiveness_learning_velocity_v1(force: bool = False):
     try:
-        out = dict(ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=_learning_acceleration_status_bundle(), force=bool(force)) or {})
+        base = _astra_build_h_cached_statuses_v1()
+        base["astra_build_h_ownership_map_v1"] = ASTRA_BUILD_H_OWNERSHIP_MAP.status(statuses=base, force=True)
+        base["astra_knowledge_warehouse_v1"] = ASTRA_KNOWLEDGE_WAREHOUSE.status(statuses=base, force=True)
+        out = dict(ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=base, force=True) or {})
         out["astra_intelligence_effectiveness_learning_velocity_v1"] = True
         out["provider_calls_used"] = 0
         out["broker_calls_used"] = 0
@@ -45762,7 +45779,9 @@ def astra_intelligence_effectiveness_learning_velocity_v1(force: bool = False):
 @router.get("/api/astra_shadow_experiment_governance_v1")
 def astra_shadow_experiment_governance_v1(force: bool = False):
     try:
-        out = dict(ASTRA_SHADOW_EXPERIMENT_GOVERNANCE.status(statuses=_learning_acceleration_status_bundle(), force=bool(force)) or {})
+        base = _astra_build_h_cached_statuses_v1()
+        base["astra_intelligence_effectiveness_learning_velocity_v1"] = ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=base, force=True)
+        out = dict(ASTRA_SHADOW_EXPERIMENT_GOVERNANCE.status(statuses=base, force=True) or {})
         out["astra_shadow_experiment_governance_v1"] = True
         out["automatic_promotions_enabled"] = False
         out["human_approval_required"] = True
@@ -45790,7 +45809,12 @@ def astra_shadow_experiment_governance_v1(force: bool = False):
 @router.get("/api/build_h_final_validation_v1")
 def build_h_final_validation_v1(force: bool = False):
     try:
-        out = dict(ASTRA_BUILD_H_FINAL_VALIDATION.status(statuses=_learning_acceleration_status_bundle(), force=bool(force)) or {})
+        base = _astra_build_h_cached_statuses_v1()
+        base["astra_build_h_ownership_map_v1"] = ASTRA_BUILD_H_OWNERSHIP_MAP.status(statuses=base, force=True)
+        base["astra_knowledge_warehouse_v1"] = ASTRA_KNOWLEDGE_WAREHOUSE.status(statuses=base, force=True)
+        base["astra_intelligence_effectiveness_learning_velocity_v1"] = ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=base, force=True)
+        base["astra_shadow_experiment_governance_v1"] = ASTRA_SHADOW_EXPERIMENT_GOVERNANCE.status(statuses=base, force=True)
+        out = dict(ASTRA_BUILD_H_FINAL_VALIDATION.status(statuses=base, force=True) or {})
         out["build_h_final_validation_v1"] = True
         out["provider_calls_used"] = 0
         out["broker_calls_used"] = 0
