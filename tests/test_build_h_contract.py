@@ -5,6 +5,7 @@ import unittest
 from engine.astra_build_h_ownership_v1 import AstraBuildHOwnershipMapV1
 from engine.astra_knowledge_warehouse_v1 import AstraKnowledgeWarehouseV1
 from engine.astra_intelligence_effectiveness_learning_velocity_v1 import AstraIntelligenceEffectivenessLearningVelocityV1
+from engine.astra_shadow_experiment_governance_v1 import AstraShadowExperimentGovernanceV1, experiment_contract
 
 
 class BuildHOwnershipContractTests(unittest.TestCase):
@@ -55,6 +56,16 @@ class BuildHOwnershipContractTests(unittest.TestCase):
         self.assertEqual(shadow["consumed"], 0)
         self.assertEqual(shadow["consumption_status"], "available_not_proven")
         self.assertFalse(result["promotion_enabled"])
+
+    def test_shadow_contract_requires_human_approval(self):
+        contract = experiment_contract(experiment_id="exp_test", hypothesis="bounded test")
+        self.assertEqual(contract["current_state"], "RESEARCH_ONLY")
+        self.assertTrue(contract["human_approval_required"])
+        self.assertFalse(contract["automatic_promotion"])
+        module = AstraShadowExperimentGovernanceV1(state_dir=tempfile.mkdtemp(), ttl_seconds=0)
+        result = module.status(statuses={}, force=True)
+        self.assertEqual(result["current_stage"], 0)
+        self.assertFalse(result["automatic_promotions_enabled"])
 
 
 if __name__ == "__main__":
