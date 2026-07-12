@@ -17325,6 +17325,16 @@ def _paper_position_holding_minutes(pos, now_utc):
     return 0.0
 
 
+def _day_lane_owned_positions_v1(rows):
+    """Return only explicit DAY positions eligible for same-session management."""
+    return [
+        pos for pos in (rows or [])
+        if isinstance(pos, dict)
+        and str(pos.get("lane_id") or "").upper() == "DAY"
+        and pos.get("same_session_exit_required") is True
+    ]
+
+
 def _apply_day_trading_lifecycle_rules_v1():
     now_utc = datetime.now(UTC)
     now_et = now_utc.astimezone(_ET_TZ)
@@ -17376,11 +17386,15 @@ def _apply_day_trading_lifecycle_rules_v1():
         out["day_trade_lifecycle_status"] = "weekend_idle"
         return out
     try:
-        open_positions = list(POSITION_TRACKER.get_open_positions() or [])
+        all_open_positions = list(POSITION_TRACKER.get_open_positions() or [])
     except Exception as e:
         out["last_error"] = str(e)[:180]
         out["day_trade_lifecycle_status"] = "error"
         return out
+    # The DAY worker may only manage positions explicitly owned by the DAY
+    # lane. Legacy or SWING/CRYPTO rows are observed but never force-closed.
+    open_positions = _day_lane_owned_positions_v1(all_open_positions)
+    out["non_day_positions_ignored"] = max(0, len(all_open_positions) - len(open_positions))
     max_holding = 0.0
     forced_symbols = []
     forced_count = 0
@@ -46306,6 +46320,7 @@ def _pladeu_direct_statuses_v1(force: bool = False) -> dict:
         base["alpaca_paper_broker"] = _cached_alpaca_paper_status_payload(base) or _alpaca_paper_status_fast_fallback_v1("pladeu_cache_first")
     base["authoritative_broker_truth"] = _canonical_broker_truth_counts_v1(base)
     base["pladeu_candidate_source_metadata"] = _pladeu_candidate_source_metadata_v1()
+    base["day_lane_pilot_config"] = _day_lane_pilot_config_v1()
     try:
         raw_candidates = _cached_candidate_rows_for_horizon_flow_v1()[:300]
         base["pladeu_candidate_rows"] = PAPER_OPPORTUNITY_ALLOCATION_ENGINE.decorate_candidates(raw_candidates)
@@ -46342,6 +46357,7 @@ def _attach_pladeu_statuses_v1(statuses: dict, force: bool = False) -> dict:
     statuses["pladeu_open_positions"] = _pladeu_open_positions_from_cached_status_v1(statuses)
     statuses["authoritative_broker_truth"] = _canonical_broker_truth_counts_v1(statuses)
     statuses["pladeu_candidate_source_metadata"] = _pladeu_candidate_source_metadata_v1()
+    statuses["day_lane_pilot_config"] = _day_lane_pilot_config_v1()
     try:
         statuses["pladeu_day_lane_allocation"] = PAPER_OPPORTUNITY_ALLOCATION_ENGINE.day_lane_governance(
             rows=statuses["pladeu_candidate_rows"], open_positions=statuses["pladeu_open_positions"]
@@ -46456,6 +46472,43 @@ def day_lane_pilot_readiness_v1(force: bool = False):
     payload = dict(base.get("day_lane_pilot_readiness_v1") or _day_lane_pilot_readiness_payload_v1(base))
     payload["generated_at"] = _now_utc_iso()
     return payload
+
+
+@router.get("/api/day_lane_pilot_control_status_v1")
+def day_lane_pilot_control_status_v1(force: bool = False):
+    """Expose the explicit human-controlled pilot switch; GET never activates it."""
+    base = _pladeu_direct_statuses_v1(force=bool(force))
+    config = dict(base.get("day_lane_pilot_config") or _day_lane_pilot_config_v1())
+    readiness = dict(base.get("day_lane_pilot_readiness_v1") or {})
+    return {
+        "endpoint": "/api/day_lane_pilot_control_status_v1",
+        "pilot_enabled": bool(config.get("day_lane_pilot_enabled")),
+        "pilot_mode": config.get("day_lane_pilot_mode"),
+        "human_approval_required": True,
+        "capital_configured": bool(config.get("capital_configured")),
+        "max_open_positions": config.get("day_lane_max_open_positions"),
+        "max_trades_per_session": config.get("day_lane_max_completed_trades_per_session"),
+        "current_open_positions": readiness.get("open_day_positions", 0),
+        "completed_trades_this_session": 0,
+        "current_candidates": readiness.get("current_day_candidates", 0),
+        "eligible_candidates": readiness.get("eligible_day_candidates", 0),
+        "selected_candidates": readiness.get("selected_day_candidates", 0),
+        "paper_order_ready_candidates": sum(1 for row in readiness.get("candidate_stage_trace", []) if row.get("paper_autopilot_result") == "READY_FOR_PAPER_ORDER"),
+        "exact_blockers": list(readiness.get("exact_blockers") or []),
+        "same_session_exit_contract_status": readiness.get("same_session_exit_contract_status"),
+        "disable_switch_status": "active" if config.get("day_lane_disable_switch") else "armed",
+        "rollback_status": "armed" if config.get("day_lane_rollback_ready") else "unavailable",
+        "activation_requires_explicit_human_configuration": True,
+        "activation_mutation_endpoint": None,
+        "broker_actions_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "paper_mode_verified": True,
+        "broker_live_endpoint_allowed": False,
+        "behavior_safe_to_apply": False,
+        "automatic_promotion_enabled": False,
+        "learned_exit_execution_enabled": False,
+    }
 
 
 @router.get("/api/historical_lifecycle_reconstruction_v1")
@@ -47146,8 +47199,49 @@ def _pladeu_candidate_source_metadata_v1() -> dict:
     }
 
 
+def _day_lane_pilot_config_v1() -> dict:
+    """Return explicit human-controlled DAY pilot configuration, never mutate it."""
+    truthy = {"1", "true", "yes", "on"}
+    enabled = str(os.getenv("ASTRA_DAY_LANE_PILOT_ENABLED", "0")).strip().lower() in truthy
+    disable_switch = str(os.getenv("ASTRA_DAY_LANE_PILOT_DISABLE_SWITCH", "0")).strip().lower() in truthy
+    capital_raw = str(os.getenv("ASTRA_DAY_LANE_CAPITAL_LIMIT", "")).strip()
+    capital_configured = bool(capital_raw)
+    try:
+        capital_limit = float(capital_raw) if capital_raw else None
+    except (TypeError, ValueError):
+        capital_limit = None
+        capital_configured = False
+    return {
+        "day_lane_pilot_enabled": bool(enabled and not disable_switch),
+        "day_lane_pilot_mode": "paper_controlled" if enabled else "disabled",
+        "day_lane_capital_book_id": "paper_day_learning",
+        "day_lane_capital_limit": capital_limit,
+        "capital_configured": bool(capital_configured and capital_limit is not None and capital_limit > 0),
+        "day_lane_max_open_positions": 1,
+        "day_lane_max_completed_trades_per_session": 2,
+        "day_lane_entry_cutoff_et": str(os.getenv("ASTRA_DAY_LANE_ENTRY_CUTOFF_ET", NO_NEW_ENTRIES_AFTER_ET)).strip() or NO_NEW_ENTRIES_AFTER_ET,
+        "day_lane_force_flat_time_et": str(os.getenv("ASTRA_DAY_LANE_FORCE_FLAT_TIME_ET", FORCE_CLOSE_TIME_ET)).strip() or FORCE_CLOSE_TIME_ET,
+        "day_lane_max_hold_minutes": int(MAX_DAY_TRADE_HOLD_MINUTES),
+        "day_lane_regular_hours_only": True,
+        "day_lane_same_session_exit_required": True,
+        "day_lane_overnight_allowed": False,
+        "day_lane_exact_symbol_cross_lane_block": True,
+        "day_lane_sector_cap": int(_to_float(os.getenv("ASTRA_DAY_LANE_SECTOR_CEILING", 2), 2)),
+        "day_lane_strategy_cohort_cap": int(_to_float(os.getenv("ASTRA_DAY_LANE_COHORT_CEILING", 2), 2)),
+        "day_lane_correlation_cluster_cap": int(_to_float(os.getenv("ASTRA_DAY_LANE_CLUSTER_CEILING", 2), 2)),
+        "day_lane_min_liquidity": os.getenv("ASTRA_DAY_LANE_MIN_LIQUIDITY", "configured_existing_gate"),
+        "day_lane_max_spread": os.getenv("ASTRA_DAY_LANE_MAX_SPREAD", "configured_existing_gate"),
+        "day_lane_min_candidate_quality": os.getenv("ASTRA_DAY_LANE_MIN_CANDIDATE_QUALITY", "existing_rank_and_safety_gates"),
+        "day_lane_disable_switch": bool(disable_switch),
+        "day_lane_rollback_ready": True,
+        "human_approval_required": True,
+        "automatic_expansion_enabled": False,
+    }
+
+
 def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
+    pilot_config = dict(statuses.get("day_lane_pilot_config") or _day_lane_pilot_config_v1())
     rows = [dict(row) for row in (statuses.get("pladeu_candidate_rows") or []) if isinstance(row, dict)][:300]
     if not rows:
         rows = PAPER_OPPORTUNITY_ALLOCATION_ENGINE.decorate_candidates(_cached_candidate_rows_for_horizon_flow_v1())
@@ -47169,6 +47263,40 @@ def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
     session = str(source_meta.get("market_session_status") or "closed").lower()
     freshness = str(source_meta.get("candidate_freshness_status") or "MISSING")
     current_rows = day_rows if freshness == "CURRENT" else []
+    session_open = session in {"regular", "regular_hours", "pre", "pre_market", "post", "after_hours", "open"}
+    handoff = bool((statuses.get("paper_autopilot_handoff_proof") or {}).get("proven"))
+    stage_trace = []
+    for row in current_rows[:25]:
+        symbol = str(row.get("symbol") or row.get("ticker") or "").upper()
+        row_trace = {
+            "candidate_id": str(row.get("candidate_id") or ""),
+            "symbol": symbol,
+            "lane": str(row.get("lane_id") or "DAY"),
+            "strategy_cohort": str(row.get("strategy_cohort") or ""),
+            "current_status": "eligible" if row in eligible_rows else "rejected",
+            "eligibility_result": "PASS" if row in eligible_rows else "BLOCKED",
+            "allocation_result": "PASS" if row in eligible_rows else "BLOCKED",
+            "diversity_result": "PASS" if allocation.get("cross_lane_exact_symbol_check") else "BLOCKED",
+            "duplicate_result": "BLOCKED" if symbol in open_symbols else "PASS",
+            "capital_result": "PASS" if allocation.get("capital_book_id") else "BLOCKED_CAPITAL_UNCONFIGURED",
+            "session_result": "PASS" if session_open else "BLOCKED_MARKET_CLOSED",
+            "selection_result": "SELECTED" if row in selected_rows else "NOT_SELECTED",
+            "paper_autopilot_result": "NOT_REACHED",
+            "exact_blocker": "",
+        }
+        if symbol in open_symbols:
+            row_trace["exact_blocker"] = "duplicate_active_position"
+        elif not session_open:
+            row_trace["exact_blocker"] = "session_order_submission_blocked"
+        elif not pilot_config.get("capital_configured"):
+            row_trace["exact_blocker"] = "CAPITAL_CONFIGURATION_REQUIRED"
+        elif not pilot_config.get("day_lane_pilot_enabled"):
+            row_trace["exact_blocker"] = "day_lane_pilot_disabled_pending_human_activation"
+        elif not handoff:
+            row_trace["exact_blocker"] = "paper_autopilot_handoff_dry_run_not_proven"
+        else:
+            row_trace["paper_autopilot_result"] = "READY_FOR_PAPER_ORDER"
+        stage_trace.append(row_trace)
     blockers: list[str] = []
     if freshness in {"MISSING", "STALE"}:
         blockers.append("candidate_source_stale" if freshness == "STALE" else "candidate_pipeline_unwired")
@@ -47184,18 +47312,28 @@ def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
         blockers.append("capital_book_isolation_unproven")
     if not allocation.get("cross_lane_exact_symbol_check", False):
         blockers.append("cross_lane_duplicate_check_unavailable")
-    handoff = bool((statuses.get("paper_autopilot_handoff_proof") or {}).get("proven"))
     if not handoff:
         blockers.append("paper_autopilot_handoff_dry_run_not_proven")
-    session_open = session in {"regular", "regular_hours", "pre", "pre_market", "post", "after_hours", "open"}
-    if not session_open and not current_rows:
-        status = "NOT_READY"
+    if pilot_config.get("day_lane_disable_switch"):
+        blockers.append("PILOT_DISABLE_SWITCH_ACTIVE")
+    if not pilot_config.get("capital_configured"):
+        blockers.append("CAPITAL_CONFIGURATION_REQUIRED")
+    if pilot_config.get("day_lane_pilot_enabled") and not pilot_config.get("day_lane_disable_switch"):
+        blockers.append("explicit_pilot_activation_detected_review_required") if not pilot_config.get("human_approval_required") else None
+    if pilot_config.get("day_lane_disable_switch"):
+        status = "PILOT_PAUSED"
+        warnings = []
+    elif not pilot_config.get("capital_configured"):
+        status = "CONFIGURATION_REQUIRED"
+        warnings = ["CAPITAL_CONFIGURATION_REQUIRED"]
+    elif not session_open and not current_rows:
+        status = "MARKET_CLOSED"
         warnings = ["NO_CURRENT_MARKET_SESSION"]
     elif blockers:
-        status = "NOT_READY"
+        status = "AUTOPILOT_HANDOFF_BLOCKED" if not handoff else "NOT_READY"
         warnings = []
     else:
-        status = "TECHNICALLY_READY_FOR_HUMAN_APPROVAL" if current_rows or not session_open else "TECHNICALLY_READY_FOR_HUMAN_CONFIGURATION"
+        status = "PILOT_ACTIVE" if pilot_config.get("day_lane_pilot_enabled") else "READY_FOR_HUMAN_APPROVAL"
         warnings = []
     return {
         "endpoint": "/api/day_lane_pilot_readiness_v1",
@@ -47206,6 +47344,8 @@ def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
         "current_day_candidates": len(current_rows),
         "eligible_day_candidates": len([row for row in current_rows if row in eligible_rows]),
         "selected_day_candidates": len([row for row in current_rows if row in selected_rows]),
+        "open_day_positions": sum(1 for row in open_positions if str(row.get("lane_id") or "").upper() == "DAY"),
+        "candidate_stage_trace": stage_trace,
         "metadata_complete_count": complete if freshness == "CURRENT" else 0,
         "metadata_incomplete_count": metadata_incomplete if freshness == "CURRENT" else 0,
         "day_swing_exact_overlap": sorted(day_symbols & swing_symbols),
@@ -47217,7 +47357,9 @@ def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
         "paper_autopilot_handoff_proven": handoff,
         "same_session_exit_contract_status": allocation.get("same_session_close_posture") or "unresolved",
         "capital_book_isolation_status": "PASS" if allocation.get("capital_book_id") else "BLOCKED",
-        "pilot_enabled": False,
+        "pilot_enabled": bool(pilot_config.get("day_lane_pilot_enabled")),
+        "pilot_mode": pilot_config.get("day_lane_pilot_mode"),
+        "pilot_config": pilot_config,
         "human_approval_required": True,
         "exact_blockers": sorted(set(blockers)),
         "warnings": warnings,
