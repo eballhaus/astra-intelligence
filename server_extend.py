@@ -2543,6 +2543,18 @@ except Exception:
     CopilotEffectivenessRankingAttributionV2 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     BuildIFinalValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
+    from engine.astra_build_j_active_learning_v1 import (
+        ActiveLearningEvidenceGapV1,
+        BuildJFinalValidationV1,
+        ShadowLifecycleCompressionRetentionV1,
+        TeachingEffectivenessV1,
+    )
+except Exception:
+    ShadowLifecycleCompressionRetentionV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    ActiveLearningEvidenceGapV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    TeachingEffectivenessV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+    BuildJFinalValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+try:
     from engine.astra_provider_orchestration_data_governance_v1 import AstraProviderOrchestrationDataGovernanceV1
 except Exception:
     class AstraProviderOrchestrationDataGovernanceV1:  # type: ignore[override]
@@ -3251,6 +3263,10 @@ ASTRA_BUILD_H_FINAL_VALIDATION = AstraBuildHFinalValidationV1(state_dir=STATE)
 ASTRA_ASK_ASTRA_RELIABILITY_GROUNDING = AskAstraReliabilityGroundingV1(state_dir=STATE)
 ASTRA_COPILOT_EFFECTIVENESS_RANKING_ATTRIBUTION = CopilotEffectivenessRankingAttributionV2(state_dir=STATE)
 ASTRA_BUILD_I_FINAL_VALIDATION = BuildIFinalValidationV1(state_dir=STATE)
+ASTRA_SHADOW_LIFECYCLE_COMPRESSION_RETENTION = ShadowLifecycleCompressionRetentionV1(state_dir=STATE)
+ASTRA_ACTIVE_LEARNING_EVIDENCE_GAP = ActiveLearningEvidenceGapV1(state_dir=STATE)
+ASTRA_TEACHING_EFFECTIVENESS = TeachingEffectivenessV1(state_dir=STATE)
+ASTRA_BUILD_J_FINAL_VALIDATION = BuildJFinalValidationV1(state_dir=STATE)
 CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH = CortexLifecycleEvidenceMasterTruthV1(state_dir=STATE)
 ASTRA_PROFITABILITY_ACTIVATION_INTELLIGENCE_UTILIZATION = AstraProfitabilityActivationIntelligenceUtilizationV1(state_dir=STATE)
 ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION = AstraTier1Tier2ProfitabilityActivationV1(state_dir=STATE)
@@ -45938,6 +45954,90 @@ def build_i_final_validation_v1(force: bool = False):
         }
 
 
+def _astra_build_j_cached_statuses_v1() -> dict:
+    """Assemble Build J from canonical cached and bounded diagnostic sources."""
+    base = _astra_build_i_cached_statuses_v1()
+    base["replay_counterfactual_learning_v2"] = REPLAY_COUNTERFACTUAL_LEARNING_V2.status(force=False)
+    base["realistic_shadow_evidence_learning_lab_v1"] = REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB.status(statuses=base, force=False)
+    base["astra_intelligence_effectiveness_learning_velocity_v1"] = ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=base, force=True)
+    base["astra_tier2a_librarian_executive_truth_layer_v1"] = ASTRA_TIER2A_LIBRARIAN_EXECUTIVE_TRUTH_LAYER.status(statuses=base, force=False)
+    base["crypto_shadow_learning_v1"] = CRYPTO_SHADOW_LEARNING.status(statuses=base, force=False)
+    return base
+
+
+def _astra_build_j_direct_statuses_v1() -> dict:
+    """Use the unified cache for direct Build J reads; avoid legacy deep rebuilds."""
+    base = _astra_build_h_cached_statuses_v1()
+    base.setdefault("broker_truth_accumulation_v2", {})
+    if not base["broker_truth_accumulation_v2"]:
+        base["broker_truth_accumulation_v2"] = _astra_broker_truth_accumulation_v2_payload()
+    if not base.get("astra_knowledge_warehouse_v1"):
+        base["astra_knowledge_warehouse_v1"] = ASTRA_KNOWLEDGE_WAREHOUSE.status(statuses=base, force=False)
+    if not base.get("astra_shadow_experiment_governance_v1"):
+        base["astra_shadow_experiment_governance_v1"] = ASTRA_SHADOW_EXPERIMENT_GOVERNANCE.status(statuses=base, force=False)
+    if not base.get("replay_counterfactual_learning_v2"):
+        base["replay_counterfactual_learning_v2"] = REPLAY_COUNTERFACTUAL_LEARNING_V2.status(force=False)
+    if not base.get("realistic_shadow_evidence_learning_lab_v1"):
+        base["realistic_shadow_evidence_learning_lab_v1"] = REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB.status(statuses=base, force=False)
+    if not base.get("astra_intelligence_effectiveness_learning_velocity_v1"):
+        base["astra_intelligence_effectiveness_learning_velocity_v1"] = ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=base, force=False)
+    if not base.get("astra_tier2a_librarian_executive_truth_layer_v1"):
+        base["astra_tier2a_librarian_executive_truth_layer_v1"] = ASTRA_TIER2A_LIBRARIAN_EXECUTIVE_TRUTH_LAYER.status(statuses=base, force=False)
+    if not base.get("crypto_shadow_learning_v1"):
+        base["crypto_shadow_learning_v1"] = CRYPTO_SHADOW_LEARNING.status(statuses=base, force=False)
+    return base
+
+
+@router.get("/api/shadow_lifecycle_compression_retention_v1")
+def shadow_lifecycle_compression_retention_v1(force: bool = False):
+    try:
+        base = _astra_build_j_direct_statuses_v1()
+        out = dict(ASTRA_SHADOW_LIFECYCLE_COMPRESSION_RETENTION.status(statuses=base, force=True) or {})
+        out.update({"provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False})
+        return out
+    except Exception as exc:
+        return {"endpoint": "/api/shadow_lifecycle_compression_retention_v1", "status": "insufficient_evidence", "degraded_reason": f"shadow_lifecycle_retention_unavailable:{str(exc)[:140]}", "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False, "paper_only_preserved": True}
+
+
+@router.get("/api/active_learning_evidence_gap_v1")
+def active_learning_evidence_gap_v1(force: bool = False):
+    try:
+        base = _astra_build_j_direct_statuses_v1()
+        base["shadow_lifecycle_compression_retention_v1"] = ASTRA_SHADOW_LIFECYCLE_COMPRESSION_RETENTION.status(statuses=base, force=True)
+        out = dict(ASTRA_ACTIVE_LEARNING_EVIDENCE_GAP.status(statuses=base, force=True) or {})
+        out.update({"provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False})
+        return out
+    except Exception as exc:
+        return {"endpoint": "/api/active_learning_evidence_gap_v1", "status": "insufficient_evidence", "degraded_reason": f"active_learning_gap_unavailable:{str(exc)[:140]}", "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False, "paper_only_preserved": True}
+
+
+@router.get("/api/teaching_effectiveness_v1")
+def teaching_effectiveness_v1(force: bool = False):
+    try:
+        base = _astra_build_j_direct_statuses_v1()
+        base["shadow_lifecycle_compression_retention_v1"] = ASTRA_SHADOW_LIFECYCLE_COMPRESSION_RETENTION.status(statuses=base, force=True)
+        base["active_learning_evidence_gap_v1"] = ASTRA_ACTIVE_LEARNING_EVIDENCE_GAP.status(statuses=base, force=True)
+        out = dict(ASTRA_TEACHING_EFFECTIVENESS.status(statuses=base, force=True) or {})
+        out.update({"provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False})
+        return out
+    except Exception as exc:
+        return {"endpoint": "/api/teaching_effectiveness_v1", "status": "insufficient_evidence", "degraded_reason": f"teaching_effectiveness_unavailable:{str(exc)[:140]}", "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False, "paper_only_preserved": True}
+
+
+@router.get("/api/build_j_final_validation_v1")
+def build_j_final_validation_v1(force: bool = False):
+    try:
+        base = _astra_build_j_direct_statuses_v1()
+        base["shadow_lifecycle_compression_retention_v1"] = ASTRA_SHADOW_LIFECYCLE_COMPRESSION_RETENTION.status(statuses=base, force=True)
+        base["active_learning_evidence_gap_v1"] = ASTRA_ACTIVE_LEARNING_EVIDENCE_GAP.status(statuses=base, force=True)
+        base["teaching_effectiveness_v1"] = ASTRA_TEACHING_EFFECTIVENESS.status(statuses=base, force=True)
+        out = dict(ASTRA_BUILD_J_FINAL_VALIDATION.status(statuses=base, force=True) or {})
+        out.update({"provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "runtime_files_excluded": True, "behavior_safe_to_apply": False})
+        return out
+    except Exception as exc:
+        return {"endpoint": "/api/build_j_final_validation_v1", "status": "BUILD_J_BLOCKED", "checks_failed": [f"build_j_validator_unavailable:{str(exc)[:140]}"], "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "runtime_files_excluded": True, "behavior_safe_to_apply": False, "paper_only_preserved": True}
+
+
 @router.get("/api/astra_storage_cache_attribution_learning_efficiency_v1")
 def astra_storage_cache_attribution_learning_efficiency_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
@@ -72574,6 +72674,22 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["build_i_final_validation_v1"] = ASTRA_BUILD_I_FINAL_VALIDATION.status(statuses=statuses, force=False)
     except Exception:
         statuses["build_i_final_validation_v1"] = {}
+    try:
+        statuses["shadow_lifecycle_compression_retention_v1"] = ASTRA_SHADOW_LIFECYCLE_COMPRESSION_RETENTION.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["shadow_lifecycle_compression_retention_v1"] = {}
+    try:
+        statuses["active_learning_evidence_gap_v1"] = ASTRA_ACTIVE_LEARNING_EVIDENCE_GAP.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["active_learning_evidence_gap_v1"] = {}
+    try:
+        statuses["teaching_effectiveness_v1"] = ASTRA_TEACHING_EFFECTIVENESS.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["teaching_effectiveness_v1"] = {}
+    try:
+        statuses["build_j_final_validation_v1"] = ASTRA_BUILD_J_FINAL_VALIDATION.status(statuses=statuses, force=False)
+    except Exception:
+        statuses["build_j_final_validation_v1"] = {}
     return statuses
 
 
