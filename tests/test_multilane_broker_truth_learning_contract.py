@@ -7,7 +7,9 @@ class MultilaneBrokerTruthLearningContractTests(unittest.TestCase):
     def test_only_complete_fill_linkage_counts_as_broker_truth_and_etf_is_a_cohort(self):
         complete = {
             "symbol": "SPY", "truth_quality": "BROKER_CONFIRMED_COMPLETE", "entry_fill_id": "buy-1",
-            "exit_fill_id": "sell-1", "paper_entry_horizon_style": "swing_trade",
+            "exit_fill_id": "sell-1", "entry_order_id": "buy-order-1", "exit_order_id": "sell-order-1",
+            "lifecycle_id": "life-1", "asset_class": "equity", "instrument_type": "ETF",
+            "paper_entry_horizon_style": "swing_trade",
         }
         incomplete = {"symbol": "BTC/USD", "asset_class": "crypto", "truth_quality": "BROKER_CONFIRMED_COMPLETE"}
         payload = build_multilane_operational_status(
