@@ -18,6 +18,17 @@ except Exception:  # pragma: no cover - allocation works without metadata enrich
     def apply_trade_lane_contract(row: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
         return dict(row or {})
 
+try:
+    from engine.astra_multilane_activation_v2 import canonical_lane_activation_contract
+except Exception:  # pragma: no cover - fail closed if the shared owner is unavailable
+    def canonical_lane_activation_contract(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "lane_enabled": False,
+            "execution_enabled": False,
+            "activation_contract_consistent": False,
+            "exact_blockers": ["ACTIVATION_CONTRACT_UNAVAILABLE"],
+        }
+
 VERSION = "1.0.0"
 MAX_TAIL_BYTES = 2_000_000
 MAX_ROWS = 1_000
@@ -306,10 +317,14 @@ class PaperOpportunityAllocationEngineV1:
             "one_etf_theme": int(os.getenv("ASTRA_DAY_LANE_ETF_THEME_CEILING", "1") or 1),
             "one_source_model": int(os.getenv("ASTRA_DAY_LANE_SOURCE_MODEL_CEILING", "2") or 2),
         }
-        enabled = str(os.getenv("ASTRA_DAY_LEARNING_LANE_ENABLED", "0")).strip().lower() in {"1", "true", "yes", "on"}
+        # The multi-lane contract is the sole DAY activation authority.  This
+        # allocator only reports the contract; PaperAutopilot still owns every
+        # real eligibility, session, and broker submission gate.
+        activation = canonical_lane_activation_contract("DAY", os.environ)
         return {
-            "day_lane_enabled": enabled,
-            "day_lane_execution_enabled": False,
+            "day_lane_enabled": bool(activation.get("lane_enabled")),
+            "day_lane_execution_enabled": bool(activation.get("execution_enabled")),
+            "day_lane_activation_contract": activation,
             "capital_book_id": "paper_day_learning",
             "candidate_supply": len(day_rows),
             "eligible_candidate_supply": len(eligible),
@@ -337,7 +352,7 @@ class PaperOpportunityAllocationEngineV1:
             "zero_qualifying_trades_valid": True,
             "cross_lane_exact_symbol_check": True,
             "same_session_close_posture": "advisory_only_existing_governance_retained",
-            "rollback": {"available": True, "switch": "ASTRA_DAY_LEARNING_LANE_ENABLED"},
+            "rollback": {"available": True, "switch": "ASTRA_DAY_LANE_PILOT_ENABLED"},
             "api_calls_used": 0,
             "provider_calls_used": 0,
             "llm_calls_used": 0,

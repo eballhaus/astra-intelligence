@@ -30,10 +30,18 @@ except Exception:  # pragma: no cover - metadata-only compatibility fallback
         return dict(row or {})
 
 try:
-    from engine.astra_multilane_activation_v2 import lane_capital_status, lane_owner_contract, strict_broker_truth
+    from engine.astra_multilane_activation_v2 import (
+        canonical_lane_activation_contract,
+        lane_capital_status,
+        lane_owner_contract,
+        strict_broker_truth,
+    )
 except Exception:  # pragma: no cover - fail closed when the bounded contract is unavailable
     def lane_capital_status(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         return {"capital_configured": False, "capital_configuration_status": "CAPITAL_CONFIGURATION_REQUIRED"}
+
+    def canonical_lane_activation_contract(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"lane_enabled": False, "execution_enabled": False, "exact_blockers": ["ACTIVATION_CONTRACT_UNAVAILABLE"]}
 
     def lane_owner_contract(_row: dict[str, Any]) -> dict[str, Any]:
         return {"owner_status": "LANE_CONTRACT_REQUIRED", "automatic_management_allowed": False}
@@ -56,6 +64,11 @@ except Exception:  # pragma: no cover - tracker is additive and optional
     close_lifecycle_record = None  # type: ignore[assignment]
     create_lifecycle_record = None  # type: ignore[assignment]
     update_lifecycle_progress = None  # type: ignore[assignment]
+
+try:
+    from engine.lane_execution_trace_ledger_v1 import LaneExecutionTraceLedgerV1
+except Exception:  # pragma: no cover - execution must remain available if diagnostics fail
+    LaneExecutionTraceLedgerV1 = None  # type: ignore[assignment]
 
 try:
     from engine.trade_lifecycle_excursion_v1 import TradeLifecycleExcursionV1
@@ -745,6 +758,10 @@ class PaperAutopilotEngine:
     def __init__(self, db_path: str = "state/ai_trading_memory.db", *args, **kwargs):
         self.db_path = str(db_path or "state/ai_trading_memory.db")
         self.state_path = str(kwargs.get("state_path") or "state/paper_autopilot_state.json")
+        self.execution_trace_ledger = (
+            LaneExecutionTraceLedgerV1(os.path.dirname(self.state_path) or "state")
+            if LaneExecutionTraceLedgerV1 is not None else None
+        )
         self.interval_seconds = max(15, _to_int(kwargs.get("interval_seconds"), 45))
         self.max_stocks = max(1, _to_int(kwargs.get("max_stocks"), 6))
         self.crypto_day_capacity = 6
@@ -2728,6 +2745,10 @@ class PaperAutopilotEngine:
         r = _normalize_paper_entry_bridge(row)
         symbol = str(r.get("symbol") or "").upper().strip()
         asset = _norm_asset(r.get("asset_type") or "stock")
+        activation = canonical_lane_activation_contract(
+            str(r.get("lane_id") or ""),
+            broker_safety=self._alpaca_safety_snapshot(),
+        )
         allowed = False
         reason = "not_evaluated"
         gate_meta: dict[str, Any] = {"commitment_score": 0.0}
@@ -2744,7 +2765,9 @@ class PaperAutopilotEngine:
             elif in_broker:
                 duplicate_source = "broker"
         max_new_limit = int(max_new_positions_per_cycle) if max_new_positions_per_cycle is not None else int(self.max_new_positions_per_cycle)
-        if not symbol:
+        if not bool(activation.get("execution_enabled")):
+            reason = str((activation.get("exact_blockers") or ["LANE_EXECUTION_DISABLED"])[0])
+        elif not symbol:
             reason = "missing_symbol"
         elif symbol in open_syms:
             reason = "duplicate_active_position"
@@ -2836,6 +2859,8 @@ class PaperAutopilotEngine:
             "operational_probe_only": bool(r.get("operational_probe_only", False)),
             "operational_source_rejection": str(r.get("operational_source_rejection") or ""),
             "lane_id": str(r.get("lane_id") or ""),
+            "lane_activation_contract": activation,
+            "lane_execution_enabled": bool(activation.get("execution_enabled")),
             "asset_class": str(r.get("asset_class") or ""),
             "instrument_type": str(r.get("instrument_type") or ""),
             "trade_style": str(r.get("trade_style") or ""),
@@ -2965,6 +2990,17 @@ class PaperAutopilotEngine:
             return {"enabled": False, "paper_order_submitted": False, "reason": "alpaca_paper_broker_unavailable"}
         r = _normalize_paper_entry_bridge(row)
         meta = dict(gate_meta or {})
+        activation = canonical_lane_activation_contract(
+            str(r.get("lane_id") or ""),
+            broker_safety=self._alpaca_safety_snapshot(),
+        )
+        if not bool(activation.get("execution_enabled")):
+            return {
+                "ok": False,
+                "paper_order_submitted": False,
+                "error": str((activation.get("exact_blockers") or ["LANE_EXECUTION_DISABLED"])[0]),
+                "lane_activation_contract": activation,
+            }
         attribution = _paper_attribution_metadata(r)
         attribution_client_order_id = _paper_attribution_client_order_id(r)
         asset_type = _norm_asset(r.get("asset_type") or "stock")
@@ -4971,6 +5007,16 @@ class PaperAutopilotEngine:
                     )
                 except Exception:
                     pass
+            if self.execution_trace_ledger is not None:
+                try:
+                    trace["lane_execution_ledger"] = self.execution_trace_ledger.record(
+                        decision_trace,
+                        cycle_id=str(out.get("cycle_timestamp") or _now_iso()),
+                    )
+                except Exception:
+                    # Trace persistence is observational; it must never alter
+                    # the existing paper execution outcome.
+                    trace["lane_execution_ledger"] = {"appended": 0, "suppressed": 0, "status": "ledger_write_failed"}
             self._runtime_state["last_cycle_utc"] = out["cycle_timestamp"]
             self._runtime_state["last_cycle_summary"] = dict(out)
             self._runtime_state["last_execution_trace"] = dict(trace)

@@ -199,7 +199,10 @@ class DayLaneDiversityGovernorV1(CachedDiagnosticModule):
             "governor_action": "advisory_only",
             "no_candidate_displacement": True,
             "day_lane_enabled": bool(allocation.get("day_lane_enabled", False)),
-            "day_lane_execution_enabled": False,
+            # Allocation reports the shared activation envelope.  PLADEU must
+            # never overwrite it with a second, permanently-disabled flag.
+            "day_lane_execution_enabled": bool(allocation.get("day_lane_execution_enabled", False)),
+            "day_lane_activation_contract": _mapping(allocation.get("day_lane_activation_contract")),
             "same_session_close_posture": str(allocation.get("same_session_close_posture") or "advisory_only_existing_governance_retained"),
             "rollback": _mapping(allocation.get("rollback")),
             **safety_fields(),
@@ -218,12 +221,15 @@ class PladeuPhase1LaneValidationV1(CachedDiagnosticModule):
             failed.append("allocation_and_trade_lane_not_separated")
         if not governor.get("ceiling_is_not_a_quota", governor.get("trade_ceiling_is_quota") is False):
             failed.append("day_trade_ceiling_quota_status_missing")
-        if governor.get("day_lane_execution_enabled"):
-            failed.append("unauthorized_day_lane_execution")
+        activation = _mapping(governor.get("day_lane_activation_contract"))
+        if activation and not activation.get("activation_contract_consistent", False):
+            failed.append("day_lane_activation_contract_conflict")
+        if governor.get("day_lane_execution_enabled") and not activation.get("execution_enabled", False):
+            failed.append("day_lane_execution_owner_disagreement")
         return {
             "phase": "phase_1_lane_contract",
             "status": "PASS" if not failed else "BLOCKED",
-            "checks_passed": 3 - len(failed),
+            "checks_passed": max(0, 4 - len(failed)),
             "checks_failed": failed,
             "warnings": [],
             "exact_blockers": failed,

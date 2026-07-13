@@ -20,6 +20,7 @@ TRUTH_CLASS = "BROKER_CONFIRMED_COMPLETE"
 DAY_CEILING = 15_000.0
 CRYPTO_CEILING = 10_000.0
 OPERATIONAL_CANDIDATE_MAX_AGE_DEFAULT = 300.0
+ACTIVATION_CONTRACT_VERSION = "v3"
 
 
 def _text(value: Any) -> str:
@@ -110,6 +111,179 @@ def lane_capital_status(lane_id: str, env: Mapping[str, str] | None = None) -> d
         "capital_reserved": 0.0,
         "capital_available": max(0.0, (configured or 0.0)),
         "cross_lane_buying_power_pooling_allowed": False,
+    }
+
+
+def canonical_lane_activation_contract(
+    lane_id: str,
+    env: Mapping[str, str] | None = None,
+    *,
+    broker_safety: Mapping[str, Any] | None = None,
+    session_allowed: bool | None = None,
+    candidate_source_ready: bool = True,
+    candidate_freshness_ready: bool = True,
+    entry_worker_ready: bool = True,
+    exit_worker_ready: bool = True,
+    position_owner_ready: bool = True,
+    truth_pipeline_ready: bool = True,
+    learning_delivery_ready: bool = True,
+) -> dict[str, Any]:
+    """Return the single fail-closed activation contract for a paper lane.
+
+    This is deliberately a pure configuration/safety function.  Candidate,
+    session, and broker owners provide their current facts as inputs; this
+    helper never calls a provider, broker, worker, or ranking path.  The DAY
+    pilot variable is authoritative.  The retired learning-lane variable is
+    accepted only when it agrees, so legacy deployment files cannot silently
+    create a second execution authority.
+    """
+    lane = _text(lane_id).upper()
+    values = env or os.environ
+    safety = dict(broker_safety or {})
+    blockers: list[str] = []
+    capital = lane_capital_status(lane, values)
+
+    paper_mode_verified = bool(safety.get("paper_mode_verified", True))
+    broker_execution_enabled = bool(safety.get("broker_execution_enabled", True))
+    paper_endpoint_verified = bool(
+        safety.get("paper_endpoint_verified", safety.get("paper_endpoint_confirmed", paper_mode_verified))
+    )
+    # Broker adapters historically exposed either an explicit rejection flag
+    # or the inverse ``broker_live_endpoint_allowed`` flag.  Treat both as the
+    # same safety fact; a missing optional alias must not disable a valid paper
+    # lane while the authoritative broker status already rejects live access.
+    live_endpoint_rejected = bool(
+        safety.get("live_endpoint_rejected") is True
+        or not bool(safety.get("live_endpoint_detected", False))
+        and not bool(safety.get("broker_live_endpoint_allowed", False))
+    )
+
+    kill_key = ""
+    legacy_status = "NOT_APPLICABLE"
+    if lane == LANE_DAY:
+        activation_key = "ASTRA_DAY_LANE_PILOT_ENABLED"
+        kill_key = "ASTRA_DAY_LANE_PILOT_DISABLE_SWITCH"
+        requested = _truthy(values.get(activation_key, "0"))
+        legacy_key = "ASTRA_DAY_LEARNING_LANE_ENABLED"
+        legacy_present = legacy_key in values and _text(values.get(legacy_key)) != ""
+        legacy_value = _truthy(values.get(legacy_key, "0"))
+        if legacy_present and legacy_value != requested:
+            legacy_status = "LEGACY_DAY_SWITCH_CONFLICT"
+            blockers.append("LEGACY_DAY_SWITCH_CONFLICT")
+        elif legacy_present:
+            legacy_status = "LEGACY_COMPATIBLE_DEPRECATED"
+        else:
+            legacy_status = "LEGACY_UNSET_COMPATIBLE"
+    elif lane == LANE_CRYPTO:
+        activation_key = "ASTRA_ENABLE_ALPACA_CRYPTO_PAPER"
+        kill_key = "ASTRA_ALPACA_CRYPTO_PAPER_KILL_SWITCH"
+        requested = _truthy(values.get(activation_key, "0"))
+    elif lane == LANE_SWING:
+        activation_key = "ASTRA_SWING_LANE_ENABLED"
+        requested = not (activation_key in values and not _truthy(values.get(activation_key)))
+    else:
+        return {
+            "lane_id": lane,
+            "lane_enabled": False,
+            "execution_enabled": False,
+            "exact_blockers": ["UNKNOWN_LANE"],
+            "source_version": ACTIVATION_CONTRACT_VERSION,
+            "generated_at": utc_now_iso(),
+        }
+
+    kill_switch = _truthy(values.get(kill_key, "0")) if kill_key else False
+    if not requested:
+        blockers.append("LANE_NOT_ENABLED")
+    if kill_switch:
+        blockers.append("KILL_SWITCH_ACTIVE")
+    if not paper_mode_verified:
+        blockers.append("PAPER_MODE_NOT_VERIFIED")
+    if not paper_endpoint_verified:
+        blockers.append("PAPER_ENDPOINT_NOT_VERIFIED")
+    if not live_endpoint_rejected:
+        blockers.append("LIVE_ENDPOINT_NOT_REJECTED")
+    if not broker_execution_enabled:
+        blockers.append("BROKER_EXECUTION_NOT_ENABLED")
+    if not bool(capital.get("capital_configured", lane == LANE_SWING)):
+        blockers.append(str(capital.get("capital_configuration_status") or "CAPITAL_CONFIGURATION_REQUIRED"))
+    if not candidate_source_ready:
+        blockers.append("CANDIDATE_SOURCE_NOT_READY")
+    if not candidate_freshness_ready:
+        blockers.append("CANDIDATE_FRESHNESS_NOT_READY")
+    if not entry_worker_ready:
+        blockers.append("ENTRY_WORKER_NOT_READY")
+    if not exit_worker_ready:
+        blockers.append("EXIT_WORKER_NOT_READY")
+    if not position_owner_ready:
+        blockers.append("POSITION_OWNER_NOT_READY")
+    if not truth_pipeline_ready:
+        blockers.append("TRUTH_PIPELINE_NOT_READY")
+    if not learning_delivery_ready:
+        blockers.append("LEARNING_DELIVERY_NOT_READY")
+
+    lane_enabled = bool(requested and not kill_switch and legacy_status != "LEGACY_DAY_SWITCH_CONFLICT")
+    # A session block is an exact per-candidate condition, not a configuration
+    # disablement.  Preserve it separately so a closed weekend cannot make the
+    # execution owner look structurally disabled.
+    execution_enabled = bool(lane_enabled and not blockers)
+    return {
+        "lane_id": lane,
+        "lane_enabled": lane_enabled,
+        "execution_enabled": execution_enabled,
+        "activation_requested": bool(requested),
+        "activation_environment_key": activation_key,
+        "legacy_switch_status": legacy_status,
+        "legacy_switch_deprecation_warning": legacy_status == "LEGACY_COMPATIBLE_DEPRECATED",
+        "paper_mode_verified": paper_mode_verified,
+        "broker_execution_enabled": broker_execution_enabled,
+        "paper_endpoint_verified": paper_endpoint_verified,
+        "live_endpoint_rejected": live_endpoint_rejected,
+        "capital_configured": bool(capital.get("capital_configured", lane == LANE_SWING)),
+        "capital_book_id": capital.get("capital_book_id") or "paper_swing",
+        "candidate_source_ready": bool(candidate_source_ready),
+        "candidate_freshness_ready": bool(candidate_freshness_ready),
+        "session_allowed": session_allowed,
+        "broker_capability_ready": bool(paper_mode_verified and paper_endpoint_verified and live_endpoint_rejected and broker_execution_enabled),
+        "entry_worker_ready": bool(entry_worker_ready),
+        "exit_worker_ready": bool(exit_worker_ready),
+        "position_owner_ready": bool(position_owner_ready),
+        "truth_pipeline_ready": bool(truth_pipeline_ready),
+        "learning_delivery_ready": bool(learning_delivery_ready),
+        "kill_switch_state": "ACTIVE" if kill_switch else "CLEAR",
+        "kill_switch_environment_key": kill_key,
+        "exact_blockers": list(dict.fromkeys(blockers)),
+        "activation_contract_consistent": legacy_status != "LEGACY_DAY_SWITCH_CONFLICT",
+        "source_version": ACTIVATION_CONTRACT_VERSION,
+        "generated_at": utc_now_iso(),
+        "paper_only_preserved": True,
+        "broker_live_endpoint_allowed": False,
+        "behavior_safe_to_apply": False,
+        "live_trading_changed": False,
+        "ranking_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "exit_behavior_changed": False,
+        "position_sizing_changed": False,
+        "portfolio_allocation_changed": False,
+        "thresholds_changed": False,
+    }
+
+
+def canonical_multilane_activation_contract(
+    env: Mapping[str, str] | None = None,
+    *,
+    broker_safety: Mapping[str, Any] | None = None,
+    lane_inputs: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Build the shared SWING/DAY/CRYPTO envelope without side effects."""
+    inputs = dict(lane_inputs or {})
+    return {
+        lane: canonical_lane_activation_contract(
+            lane,
+            env,
+            broker_safety=broker_safety,
+            **dict(inputs.get(lane) or {}),
+        )
+        for lane in (LANE_SWING, LANE_DAY, LANE_CRYPTO)
     }
 
 

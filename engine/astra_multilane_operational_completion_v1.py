@@ -15,6 +15,7 @@ from typing import Any, Iterable, Mapping
 from engine.astra_trade_lane_registry_v1 import LANE_CRYPTO, LANE_DAY, LANE_SWING, apply_trade_lane_contract, safety_fields
 from engine.astra_multilane_activation_v2 import (
     adaptive_throughput,
+    canonical_multilane_activation_contract,
     lane_capital_status,
     lane_handoff_proof,
     operational_freshness,
@@ -125,6 +126,7 @@ def build_multilane_operational_status(
     source_metadata: Mapping[str, Any] | None = None,
     day_config: Mapping[str, Any] | None = None,
     crypto_lane: Mapping[str, Any] | None = None,
+    activation_contracts: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a cache-first status payload from existing authoritative owners."""
     trace_rows = list((autopilot_trace or {}).get("per_candidate_decision_trace") or [])
@@ -132,6 +134,7 @@ def build_multilane_operational_status(
     source_metadata = dict(source_metadata or {})
     day_config = dict(day_config or {})
     crypto_lane = dict(crypto_lane or {})
+    activation_contracts = dict(activation_contracts or canonical_multilane_activation_contract())
     freshness_meta = operational_freshness(source_metadata.get("candidate_snapshot_age_seconds", source_metadata.get("candidate_cache_age_seconds")))
     freshness = _text(source_metadata.get("candidate_freshness_status") or freshness_meta["candidate_snapshot_freshness"]).upper() or "MISSING"
     current = [_stage_row(row, trace_by_symbol.get(_text(row.get("symbol") or row.get("ticker")).upper(), {}), current=_is_current(row, freshness), pilot_enabled=bool(day_config.get("day_lane_pilot_enabled")), capital_configured=bool(day_config.get("capital_configured"))) for row in candidates if isinstance(row, Mapping)]
@@ -149,7 +152,9 @@ def build_multilane_operational_status(
             "configured_limit": None, "capital_in_use": 0.0, "capital_reserved": 0.0, "capital_available": None,
             "capital_configuration_status": "NOT_APPLICABLE",
         }
-        enabled = bool(crypto_lane.get("paper_crypto_enabled")) if lane == LANE_CRYPTO else bool(day_config.get("day_lane_pilot_enabled")) if lane == LANE_DAY else True
+        activation = dict(activation_contracts.get(lane) or {})
+        enabled = bool(activation.get("lane_enabled"))
+        execution_enabled = bool(activation.get("execution_enabled"))
         handoff = lane_handoff_proof(
             lane,
             trace_rows,
@@ -182,7 +187,8 @@ def build_multilane_operational_status(
         else:
             status = "REJECTED_BY_EXISTING_GATE" if lane_trace_rows else "BLOCKED" if blockers else "NO_CURRENT_SIGNAL"
         lane_payloads[lane.lower()] = {
-            "lane_id": lane, "lane_enabled": enabled, "operational_status": status,
+            "lane_id": lane, "lane_enabled": enabled, "execution_enabled": execution_enabled,
+            "activation_contract": activation, "operational_status": status,
             "capital_configured": bool(capital.get("capital_configured")),
             "capital_book_id": capital.get("capital_book_id"),
             "approved_capital_ceiling": capital.get("approved_ceiling"),

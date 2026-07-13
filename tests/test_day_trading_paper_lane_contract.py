@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from engine.paper_opportunity_allocation_engine_v1 import PaperOpportunityAllocationEngineV1
 
@@ -6,7 +7,8 @@ from engine.paper_opportunity_allocation_engine_v1 import PaperOpportunityAlloca
 class DayTradingPaperLaneContractTests(unittest.TestCase):
     def test_day_lane_is_advisory_and_zero_trades_are_valid(self):
         engine = PaperOpportunityAllocationEngineV1(state_dir="/tmp/astra-day-lane-contract")
-        result = engine.day_lane_governance(rows=[], open_positions=[])
+        with patch.dict("os.environ", {"ASTRA_DAY_LANE_PILOT_ENABLED": "0"}, clear=False):
+            result = engine.day_lane_governance(rows=[], open_positions=[])
         self.assertFalse(result["day_lane_execution_enabled"])
         self.assertTrue(result["zero_qualifying_trades_valid"])
         self.assertTrue(result["ceiling_is_not_a_quota"])
