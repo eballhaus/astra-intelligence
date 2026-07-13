@@ -163,7 +163,13 @@ def build_multilane_operational_status(
         )
         lane_trace_rows = [row for row in trace_rows if _text(row.get("lane_id")).upper() == lane]
         throughput = adaptive_throughput(lane, truths)
-        if lane == LANE_CRYPTO and not capital.get("capital_configured") and not crypto_lane.get("mode"):
+        # A caller may supply the legacy shadow-only crypto mode without an
+        # explicit canonical snapshot (notably deterministic tests and older
+        # read-only consumers).  Preserve that truthful state rather than
+        # letting ambient process configuration reinterpret it as paper-active.
+        if lane == LANE_CRYPTO and crypto_lane.get("mode") and crypto_lane.get("paper_crypto_enabled") is False:
+            status = "SHADOW_ONLY"
+        elif lane == LANE_CRYPTO and not capital.get("capital_configured") and not crypto_lane.get("mode"):
             status = "CAPITAL_CONFIGURATION_REQUIRED"
         elif lane == LANE_CRYPTO and not enabled:
             status = (

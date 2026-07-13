@@ -10,6 +10,7 @@ from engine.astra_multilane_activation_v2 import (
     operational_freshness,
     strict_truth_counts,
 )
+from engine.learning_return_integrity_v1 import audit_learning_return_rows
 
 load_runtime_environment()
 
@@ -118,7 +119,7 @@ except Exception:
 from engine.exit_intelligence import ExitIntelligenceEngine
 from engine.intraday_engine import IntradaySignalEngine
 from engine.position_tracker import PositionTracker
-from engine.paper_autopilot import PaperAutopilotEngine
+from engine.paper_autopilot import PaperAutopilotEngine, normalize_operational_candidate
 try:
     from engine.execution_analyzer import ExecutionAnalyzer
 except Exception:
@@ -3692,6 +3693,7 @@ _DAY_TRADING_LIFECYCLE_STATE = {
     "holding_minutes": 0.0,
     "overnight_hold_blocked": False,
     "day_trade_lifecycle_status": "disabled",
+    "same_session_exit_state": "NOT_EVALUATED",
     "forced_close_count_last_cycle": 0,
     "last_forced_symbols": [],
     "last_update_utc": "",
@@ -17255,6 +17257,9 @@ PAPER_AUTOPILOT = PaperAutopilotEngine(
     profit_seeking_exploration_suite=PROFIT_SEEKING_ADAPTIVE_EXPLORATION,
     trade_lifecycle_excursion_suite=TRADE_LIFECYCLE_EXCURSION,
     execution_participation_audit_suite=EXECUTION_PARTICIPATION_AUDIT,
+    # Resolve at worker-cycle time: the bounded cache adapter is declared
+    # later in this module and must not trigger a provider refresh.
+    get_crypto_candidate_rows_fn=lambda: _crypto_operational_candidate_rows_v3(),
 )
 _PAPER_AUTOPILOT_STARTED = False
 _PAPER_INPROC_HEARTBEAT_STATE = {"last_cycle_utc": "", "cycle_count": 0}
@@ -17377,6 +17382,7 @@ def _apply_day_trading_lifecycle_rules_v1():
         "holding_minutes": 0.0,
         "overnight_hold_blocked": False,
         "day_trade_lifecycle_status": "disabled",
+        "same_session_exit_state": "DISABLED",
         "forced_close_count_last_cycle": 0,
         "last_forced_symbols": [],
         "last_update_utc": _now_utc_iso(),
@@ -17385,15 +17391,10 @@ def _apply_day_trading_lifecycle_rules_v1():
     if not DAY_TRADING_LIFECYCLE_MODE_ENABLED:
         return out
     out["day_trade_lifecycle_status"] = "active"
-    if PAPER_THROUGHPUT_PRESERVE_NATURAL_EXITS:
-        out["day_trade_lifecycle_status"] = "natural_exit_preservation_active"
-        out["same_day_exit_required"] = False
-        out["forced_end_of_day_exit"] = False
-        out["forced_end_of_day_exit_reason"] = ""
-        out["overnight_hold_blocked"] = False
-        out["session_exit_reason"] = "natural_exit_logic_only"
-        out["natural_exit_preservation_active"] = True
-        return out
+    # Natural exits remain the global default.  Explicit DAY-owned positions
+    # are the narrow exception: their ownership contract already requires a
+    # same-session broker exit, which PaperAutopilot alone may submit.
+    out["natural_exit_preservation_active"] = bool(PAPER_THROUGHPUT_PRESERVE_NATURAL_EXITS)
     if weekday >= 5:
         out["day_trade_lifecycle_status"] = "weekend_idle"
         return out
@@ -17407,6 +17408,11 @@ def _apply_day_trading_lifecycle_rules_v1():
     # lane. Legacy or SWING/CRYPTO rows are observed but never force-closed.
     open_positions = _day_lane_owned_positions_v1(all_open_positions)
     out["non_day_positions_ignored"] = max(0, len(all_open_positions) - len(open_positions))
+    if not open_positions:
+        out["same_session_exit_state"] = "NOT_APPLICABLE_NO_DAY_POSITION"
+        out["session_exit_reason"] = "no_day_owned_position"
+        return out
+    out["same_session_exit_state"] = "CLOSING_WINDOW" if force_close_window else "MONITORING"
     max_holding = 0.0
     forced_symbols = []
     forced_count = 0
@@ -17431,6 +17437,7 @@ def _apply_day_trading_lifecycle_rules_v1():
             close_reason = "end_of_day_close"
             out["forced_end_of_day_exit"] = True
             out["overnight_hold_blocked"] = True
+            out["same_session_exit_state"] = "CLOSING_WINDOW"
         elif holding_minutes >= float(hold_limit):
             should_close = True
             close_reason = "session_hold_limit_exceeded"
@@ -17449,6 +17456,7 @@ def _apply_day_trading_lifecycle_rules_v1():
             forced_symbols.append(sym)
         out["day_exit_submission_owner"] = "PaperAutopilot.authorized_lane_exit_pending"
         out["broker_fill_required_before_local_close"] = True
+        out["same_session_exit_state"] = "ARMED"
     out["holding_minutes"] = round(max_holding, 2)
     out["forced_close_count_last_cycle"] = int(forced_count)
     out["last_forced_symbols"] = list(dict.fromkeys(forced_symbols))[:16]
@@ -17562,6 +17570,7 @@ def _paper_autopilot_sync_worker_artifacts():
         "session_learning_weight": float(_to_float(_DAY_TRADING_LIFECYCLE_STATE.get("session_learning_weight"), _session_learning_weight(_DAY_TRADING_LIFECYCLE_STATE.get("session_type")))),
         "session_hold_limit_minutes": int(_to_float(_DAY_TRADING_LIFECYCLE_STATE.get("session_hold_limit_minutes"), _session_hold_limit_minutes(_DAY_TRADING_LIFECYCLE_STATE.get("session_type")))),
         "session_exit_reason": str(_DAY_TRADING_LIFECYCLE_STATE.get("session_exit_reason") or ""),
+        "same_session_exit_state": str(_DAY_TRADING_LIFECYCLE_STATE.get("same_session_exit_state") or "NOT_EVALUATED"),
         "worker_mode": "inprocess_autopilot",
     }
     _safe_write_json(PAPER_WORKER_HEARTBEAT_PATH, hb_payload)
@@ -46341,6 +46350,7 @@ def _pladeu_direct_statuses_v1(force: bool = False) -> dict:
     base["day_lane_governor"] = DAY_LANE_DIVERSITY_GOVERNOR.status(statuses=base, force=bool(force))
     base["day_lane_pilot_readiness_v1"] = _day_lane_pilot_readiness_payload_v1(base)
     base["multilane_paper_operational_status_v1"] = _multilane_paper_operational_status_v1_payload(base)
+    base["learning_return_integrity_v1"] = _learning_return_integrity_v1_payload()
     base["pladeu_phase1_lane_validation_v1"] = PLADEU_PHASE1_LANE_VALIDATION.status(statuses=base, force=bool(force))
     base["pladeu_phase2_reconstruction_validation_v1"] = PLADEU_PHASE2_RECONSTRUCTION_VALIDATION.status(statuses=base, force=bool(force))
     base["pladeu_phase3_learning_validation_v1"] = PLADEU_PHASE3_LEARNING_VALIDATION.status(statuses=base, force=bool(force))
@@ -46376,6 +46386,7 @@ def _attach_pladeu_statuses_v1(statuses: dict, force: bool = False) -> dict:
     statuses["day_lane_pilot_readiness_v1"] = _day_lane_pilot_readiness_payload_v1(statuses)
     statuses["multilane_paper_operational_status_v1"] = _multilane_paper_operational_status_v1_payload(statuses)
     statuses["lane_execution_daily_report_v1"] = _lane_execution_daily_report_v1_payload(statuses)
+    statuses["learning_return_integrity_v1"] = _learning_return_integrity_v1_payload()
     for public_key, internal_key, builder in builders:
         try:
             value = builder.status(statuses=statuses, force=bool(force))
@@ -46499,6 +46510,26 @@ def multilane_paper_operational_status_v1(force: bool = False):
     return dict(base.get("multilane_paper_operational_status_v1") or _multilane_paper_operational_status_v1_payload(base))
 
 
+@router.get("/api/astra_multilane_operational_completion_v1")
+def astra_multilane_operational_completion_v1(force: bool = False):
+    """Return an explicit compatibility response instead of a silent legacy gap."""
+    base = _pladeu_direct_statuses_v1(force=bool(force))
+    canonical = dict(base.get("multilane_paper_operational_status_v1") or _multilane_paper_operational_status_v1_payload(base))
+    return {
+        "endpoint": "/api/astra_multilane_operational_completion_v1",
+        "status": "DEPRECATED_CANONICAL_REPLACEMENT_AVAILABLE",
+        "deprecated": True,
+        "canonical_endpoint": "/api/multilane_paper_operational_status_v1",
+        "canonical_status": canonical.get("status"),
+        "lanes": canonical.get("lanes") or {},
+        "generated_at": _now_utc_iso(),
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
 def _lane_execution_daily_report_v1_payload(statuses: dict | None = None) -> dict:
     """Read the worker-maintained compact ledger; never refresh a broker."""
     statuses = dict(statuses or {})
@@ -46507,12 +46538,56 @@ def _lane_execution_daily_report_v1_payload(statuses: dict | None = None) -> dic
     except Exception:
         ledger = {"lanes": {}, "total_trace_rows": 0, "bounded_summary_read": True}
     operational = dict(statuses.get("multilane_paper_operational_status_v1") or _multilane_paper_operational_status_v1_payload(statuses))
+    # The dashboard-facing Alpaca status is intentionally cache-first.  The
+    # worker's prior cycle already contains its broker reconciliation result,
+    # so surface both observations without triggering another broker request.
+    worker_runtime = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
+    worker_trace = dict(worker_runtime.get("last_execution_trace") or {})
+    worker_broker_count = int(_to_float(worker_trace.get("broker_open_positions_count"), -1.0))
+    cached_alpaca = dict(statuses.get("alpaca_paper_status_v1") or {})
+    cached_broker_count = int(_to_float(cached_alpaca.get("open_positions_count"), -1.0))
+    if worker_broker_count < 0:
+        broker_snapshot_alignment = "WORKER_SNAPSHOT_PENDING"
+    elif cached_broker_count < 0:
+        broker_snapshot_alignment = "CACHE_SNAPSHOT_UNAVAILABLE_WORKER_RECONCILED"
+    elif worker_broker_count == cached_broker_count:
+        broker_snapshot_alignment = "MATCH"
+    else:
+        broker_snapshot_alignment = "CACHE_DEFERRED_WORKER_SNAPSHOT_AUTHORITATIVE_FOR_CYCLE"
     lanes = dict(ledger.get("lanes") or {})
     activation = {
         str(name).upper(): dict((operational.get("lanes") or {}).get(str(name).lower(), {}).get("activation_contract") or {})
         for name in ("SWING", "DAY", "CRYPTO")
     }
     conflicts = [lane for lane, contract in activation.items() if not contract.get("activation_contract_consistent", False)]
+    findings = []
+    now = _now_utc_iso()
+    total_rows = int(_to_float(ledger.get("total_trace_rows"), 0.0))
+    if total_rows <= 0:
+        findings.append({
+            "severity": "high", "system": "execution_trace_ledger", "lane": "ALL",
+            "exact_finding": "worker_cycle_trace_rows_missing", "affected_ids": [],
+            "first_detected": now, "last_detected": now, "owner": "PaperAutopilot",
+            "recommended_repair": "record_each_worker_candidate_stage_before_early_capacity_exit",
+            "repository_scope": True, "human_review_required": True,
+        })
+    for lane, contract in activation.items():
+        if not contract.get("activation_contract_consistent", False):
+            findings.append({
+                "severity": "high", "system": "canonical_lane_activation", "lane": lane,
+                "exact_finding": "activation_contract_contradiction", "affected_ids": [],
+                "first_detected": now, "last_detected": now, "owner": "AstraMultiLaneActivationV2",
+                "recommended_repair": "repair_conflicting_lane_consumer", "repository_scope": True,
+                "human_review_required": True,
+            })
+        if not str(contract.get("session_state") or ""):
+            findings.append({
+                "severity": "high", "system": "session_contract", "lane": lane,
+                "exact_finding": "ambiguous_session_state", "affected_ids": [],
+                "first_detected": now, "last_detected": now, "owner": "AstraMultiLaneActivationV2",
+                "recommended_repair": "provide_explicit_session_snapshot", "repository_scope": True,
+                "human_review_required": True,
+            })
     return {
         "endpoint": "/api/lane_execution_daily_report_v1",
         "suite": "Astra Multi-Lane Execution Integrity Daily Report V1",
@@ -46521,11 +46596,19 @@ def _lane_execution_daily_report_v1_payload(statuses: dict | None = None) -> dic
         "activation_contracts": activation,
         "activation_contract_consistent": not conflicts,
         "activation_contract_conflicts": conflicts,
-        "execution_trace_rows": int(_to_float(ledger.get("total_trace_rows"), 0.0)),
+        "execution_trace_rows": total_rows,
         "duplicate_trace_rows_suppressed": int(_to_float(ledger.get("duplicate_trace_rows_suppressed"), 0.0)),
         "broker_reconciliation_status": "CACHE_ONLY_NO_REFRESH_ON_GET",
+        "worker_last_cycle_utc": str(worker_runtime.get("last_cycle_utc") or ""),
+        "worker_broker_open_positions_count": worker_broker_count if worker_broker_count >= 0 else None,
+        "worker_capacity_source": str(worker_trace.get("capacity_source") or ""),
+        "cached_alpaca_open_positions_count": cached_broker_count if cached_broker_count >= 0 else None,
+        "broker_snapshot_alignment": broker_snapshot_alignment,
         "truth_pipeline_health": "PENDING_PAIRED_BROKER_FILLS",
         "consumer_delivery_health": "PENDING_STRICT_TRUTH",
+        "governance_findings": findings,
+        "governance_critical_findings": sum(1 for item in findings if item.get("severity") == "critical"),
+        "governance_high_findings": sum(1 for item in findings if item.get("severity") == "high"),
         "remaining_weaknesses": ["actual_paired_fill_evidence_pending"] + (["activation_contract_conflict"] if conflicts else []),
         "bounded_summary_read": bool(ledger.get("bounded_summary_read", True)),
         "provider_calls_used": 0,
@@ -46540,6 +46623,23 @@ def _lane_execution_daily_report_v1_payload(statuses: dict | None = None) -> dic
 def lane_execution_daily_report_v1(force: bool = False):
     base = _pladeu_direct_statuses_v1(force=bool(force))
     return _lane_execution_daily_report_v1_payload(base)
+
+
+def _learning_return_integrity_v1_payload() -> dict:
+    """Audit only the bounded broker-truth registry; never rewrite evidence."""
+    registry = _astra_evidence_state_json("broker_truth_records_v1.json")
+    rows = [dict(row) for row in (registry.get("records") or []) if isinstance(row, dict)][:500]
+    return {
+        "endpoint": "/api/learning_return_integrity_v1",
+        "generated_at": _now_utc_iso(),
+        **audit_learning_return_rows(rows),
+        **_safety_flags_v1(),
+    }
+
+
+@router.get("/api/learning_return_integrity_v1")
+def learning_return_integrity_v1(force: bool = False):
+    return _learning_return_integrity_v1_payload()
 
 
 @router.get("/api/astra_multilane_activation_adaptive_truth_v2")
@@ -47418,9 +47518,9 @@ def _day_lane_pilot_config_v1() -> dict:
 def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     pilot_config = dict(statuses.get("day_lane_pilot_config") or _day_lane_pilot_config_v1())
-    rows = [dict(row) for row in (statuses.get("pladeu_candidate_rows") or []) if isinstance(row, dict)][:300]
+    rows = [normalize_operational_candidate(dict(row)) for row in (statuses.get("pladeu_candidate_rows") or []) if isinstance(row, dict)][:300]
     if not rows:
-        rows = PAPER_OPPORTUNITY_ALLOCATION_ENGINE.decorate_candidates(_cached_candidate_rows_for_horizon_flow_v1())
+        rows = [normalize_operational_candidate(row) for row in PAPER_OPPORTUNITY_ALLOCATION_ENGINE.decorate_candidates(_cached_candidate_rows_for_horizon_flow_v1())]
     source_meta = dict(statuses.get("pladeu_candidate_source_metadata") or _pladeu_candidate_source_metadata_v1())
     day_rows = [row for row in rows if str(row.get("lane_id") or "").upper() == "DAY"]
     swing_rows = [row for row in rows if str(row.get("lane_id") or "").upper() == "SWING"]
@@ -47441,7 +47541,12 @@ def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
         for item in (autopilot_trace.get("per_candidate_decision_trace") or [])
         if isinstance(item, dict) and bool(item.get("selected"))
     }
-    required_fields = ("symbol", "lane_id", "trade_style", "intended_horizon", "asset_class", "candidate_id", "recommendation_id")
+    required_fields = (
+        "symbol", "canonical_symbol", "lane_id", "asset_class", "candidate_id",
+        "recommendation_id", "strategy_cohort", "candidate_source", "source_record_id",
+        "ranking_version", "generated_at", "expires_at", "capital_book_id", "entry_owner", "exit_owner",
+        "candidate_fingerprint",
+    )
     complete = sum(1 for row in eligible_rows if all(row.get(field) not in (None, "") for field in required_fields))
     metadata_incomplete = max(0, len(eligible_rows) - complete)
     session = str(source_meta.get("market_session_status") or "closed").lower()
@@ -47499,6 +47604,13 @@ def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
     if day_symbols & crypto_symbols:
         blockers.append("day_crypto_exact_symbol_overlap")
     exit_contract = _day_lane_exit_contract_v2()
+    open_day_positions = sum(1 for row in open_positions if str(row.get("lane_id") or "").upper() == "DAY")
+    lifecycle_state = dict(_DAY_TRADING_LIFECYCLE_STATE or {})
+    same_session_exit_state = (
+        "NOT_APPLICABLE_NO_DAY_POSITION"
+        if open_day_positions == 0
+        else str(lifecycle_state.get("same_session_exit_state") or "NOT_EVALUATED")
+    )
     if exit_contract.get("status") != "AUTHORIZED_AND_PROVEN":
         blockers.append("same_session_exit_contract_not_proven")
     if not pilot_config.get("capital_configured"):
@@ -47543,7 +47655,7 @@ def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
         "selected_day_candidates": len([row for row in current_rows if row in selected_rows]),
         "actual_selection_owner": "PaperAutopilot.per_candidate_decision_trace.selected",
         "diagnostic_selection_is_not_actual_selection": True,
-        "open_day_positions": sum(1 for row in open_positions if str(row.get("lane_id") or "").upper() == "DAY"),
+        "open_day_positions": open_day_positions,
         "candidate_stage_trace": stage_trace,
         "metadata_complete_count": complete if freshness == "CURRENT" else 0,
         "metadata_incomplete_count": metadata_incomplete if freshness == "CURRENT" else 0,
@@ -47557,6 +47669,8 @@ def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
         "paper_autopilot_handoff_proof": handoff_proof,
         "same_session_exit_contract_status": exit_contract.get("status"),
         "same_session_exit_contract": exit_contract,
+        "same_session_exit_state": same_session_exit_state,
+        "same_session_exit_reason": str(lifecycle_state.get("session_exit_reason") or "no_day_owned_position" if open_day_positions == 0 else lifecycle_state.get("session_exit_reason") or ""),
         "capital_book_isolation_status": "PASS" if pilot_config.get("capital_configured") else "BLOCKED",
         "pilot_enabled": bool(pilot_config.get("day_lane_pilot_enabled")),
         "pilot_mode": pilot_config.get("day_lane_pilot_mode"),
@@ -47623,17 +47737,31 @@ def _multilane_paper_operational_status_v1_payload(statuses: dict | None = None)
         safety = {"paper_mode_verified": False, "broker_execution_enabled": False}
     source = statuses.get("pladeu_candidate_source_metadata") or _pladeu_candidate_source_metadata_v1()
     source_ready = str((source or {}).get("candidate_freshness_status") or "").upper() == "CURRENT"
+    equity_session = str((source or {}).get("market_session_status") or "closed")
+    equity_session_allowed = day_regular_session_allowed(equity_session)
     activation_contracts = canonical_multilane_activation_contract(
         broker_safety=safety,
         lane_inputs={
-            "SWING": {"candidate_source_ready": source_ready, "candidate_freshness_ready": source_ready},
-            "DAY": {"candidate_source_ready": source_ready, "candidate_freshness_ready": source_ready},
+            "SWING": {
+                "candidate_source_ready": source_ready, "candidate_freshness_ready": source_ready,
+                "session_state": equity_session, "session_allowed": equity_session_allowed,
+                "session_source": "cached_equity_market_session",
+            },
+            "DAY": {
+                "candidate_source_ready": source_ready, "candidate_freshness_ready": source_ready,
+                "session_state": equity_session, "session_allowed": equity_session_allowed,
+                "session_source": "cached_equity_market_session",
+            },
             "CRYPTO": {
                 "candidate_source_ready": bool(crypto_lane.get("operational_candidate_source_available")),
-                "candidate_freshness_ready": bool(crypto_lane.get("operational_ranked_candidate_count", 0)),
+                "candidate_freshness_ready": bool(crypto_lane.get("candidate_freshness_ready")),
+                "session_state": "CRYPTO_24_7_ALLOWED", "session_allowed": True,
+                "session_source": "crypto_24_7_market_model",
             },
         },
     )
+    if isinstance(crypto_lane.get("activation_contract"), dict):
+        activation_contracts["CRYPTO"] = dict(crypto_lane["activation_contract"])
     return build_multilane_operational_status(
         candidates=unique_candidates[:300],
         open_positions=[dict(row) for row in (statuses.get("pladeu_open_positions") or []) if isinstance(row, dict)],
@@ -66087,7 +66215,22 @@ def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> di
         blockers.append("crypto_paper_kill_switch_enabled")
     if not capital_configured:
         blockers.append(str(capital.get("capital_configuration_status") or "CRYPTO_CAPITAL_CONFIGURATION_REQUIRED"))
-    active = bool(paper_mode_verified and broker_crypto_supported and capability.get("market_data_entitlement_confirmed") and tradable_pairs and activation_requested and not kill_switch and capital_configured)
+    # This endpoint owns crypto capability facts, but not a second activation
+    # decision.  Every runtime reader consumes the shared contract below.
+    crypto_rows = _crypto_operational_candidate_rows_v3()
+    activation = canonical_lane_activation_contract(
+        "CRYPTO",
+        broker_safety={**dict(safety or {}), **dict(capability or {})},
+        session_state="CRYPTO_24_7_ALLOWED",
+        session_allowed=True,
+        session_source="crypto_24_7_market_model",
+        session_snapshot_id=str((capability or {}).get("snapshot_id") or "crypto_24_7"),
+        candidate_source_ready=bool(crypto_rows),
+        candidate_freshness_ready=bool(ranking_rows),
+        entry_worker_ready=True,
+        exit_worker_ready=True,
+    )
+    active = bool(activation.get("execution_enabled"))
     if kill_switch or not activation_requested or not paper_mode_verified or capability.get("live_endpoint_detected"):
         lane_state = "LANE_BLOCKED"
     elif not capital_configured:
@@ -66127,6 +66270,10 @@ def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> di
         "short_swing_capacity_used": crypto_swing_used,
         "short_swing_capacity_available": max(0, 2 - crypto_swing_used) if active else 0,
         "paper_crypto_enabled": active,
+        "activation_contract": activation,
+        "candidate_freshness_ready": bool(activation.get("candidate_freshness_ready")),
+        "session_state": activation.get("session_state"),
+        "session_allowed": activation.get("session_allowed"),
         "capital_book_id": "paper_crypto_separate",
         "capital_configured": capital_configured,
         "capital_limit": capital_limit,
@@ -70012,6 +70159,11 @@ def crypto_lane_paper_readiness_v1(force: bool = False):
         "status": status,
         "broker_capability_available": bool(lane.get("broker_capability_available")),
         "lane_configuration_enabled": bool(lane.get("lane_configuration_enabled")),
+        "activation_contract": dict(lane.get("activation_contract") or {}),
+        "execution_enabled": bool((lane.get("activation_contract") or {}).get("execution_enabled")),
+        "candidate_freshness_ready": bool((lane.get("activation_contract") or {}).get("candidate_freshness_ready")),
+        "session_state": str((lane.get("activation_contract") or {}).get("session_state") or "CRYPTO_24_7_ALLOWED"),
+        "exact_blockers": list((lane.get("activation_contract") or {}).get("exact_blockers") or []),
         "operational_candidate_source_available": bool(lane.get("operational_candidate_source_available") or _crypto_operational_candidate_rows_v3()),
         "paper_order_boundary_available": bool(lane.get("paper_order_boundary_available")),
         "paper_mode_verified": bool(lane.get("paper_mode_verified")),

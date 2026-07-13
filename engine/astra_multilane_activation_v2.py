@@ -81,6 +81,61 @@ def operational_freshness(age_seconds: Any, env: Mapping[str, str] | None = None
     }
 
 
+def canonical_session_snapshot(
+    lane_id: str,
+    *,
+    session_state: Any = None,
+    session_allowed: bool | None = None,
+    session_source: Any = None,
+    session_snapshot_id: Any = None,
+    session_generated_at: Any = None,
+    session_age_seconds: Any = None,
+) -> dict[str, Any]:
+    """Normalize a lane session fact without authorizing an order.
+
+    ``None`` is useful inside a Python call graph, but it is not a useful
+    operational value.  This small contract turns absent equity-session data
+    into an explicit candidate-dependent state and makes crypto's 24/7 model
+    equally explicit.  The execution boundary still performs its existing
+    final session/quote gate.
+    """
+    lane = _text(lane_id).upper()
+    raw = _text(session_state).upper()
+    aliases = {
+        "REGULAR": "REGULAR_SESSION_ALLOWED",
+        "REGULAR_HOURS": "REGULAR_SESSION_ALLOWED",
+        "PRE_MARKET": "PREMARKET_BLOCKED",
+        "PREMARKET": "PREMARKET_BLOCKED",
+        "PREMARKET_LEARNING": "PREMARKET_BLOCKED",
+        "AFTER_HOURS": "AFTER_HOURS_BLOCKED",
+        "AFTER_HOURS_LEARNING": "AFTER_HOURS_BLOCKED",
+        "OVERNIGHT_LEARNING": "MARKET_CLOSED",
+        "CLOSED": "MARKET_CLOSED",
+        "WEEKEND": "MARKET_CLOSED",
+        "CRYPTO_24_7": "CRYPTO_24_7_ALLOWED",
+    }
+    state = aliases.get(raw, raw)
+    if lane == LANE_CRYPTO and not state:
+        state = "CRYPTO_24_7_ALLOWED"
+    elif not state:
+        state = "CANDIDATE_DEPENDENT"
+    if session_allowed is None:
+        allowed = state in {"REGULAR_SESSION_ALLOWED", "CRYPTO_24_7_ALLOWED"}
+    else:
+        allowed = bool(session_allowed)
+    if state in {"PREMARKET_BLOCKED", "AFTER_HOURS_BLOCKED", "MARKET_CLOSED", "STALE_SESSION_FAIL_CLOSED", "SESSION_SOURCE_UNAVAILABLE"}:
+        allowed = False
+    return {
+        "session_state": state,
+        "session_allowed": bool(allowed),
+        "session_source": _text(session_source) or "existing_market_session_owner",
+        "session_snapshot_id": _text(session_snapshot_id) or "session_snapshot_unavailable",
+        "session_generated_at": _text(session_generated_at),
+        "session_age_seconds": _number(session_age_seconds),
+        "session_blocker": "" if allowed else state,
+    }
+
+
 def lane_capital_status(lane_id: str, env: Mapping[str, str] | None = None) -> dict[str, Any]:
     """Validate approved lane capital; a book ID can never substitute for it."""
     lane = _text(lane_id).upper()
@@ -120,6 +175,11 @@ def canonical_lane_activation_contract(
     *,
     broker_safety: Mapping[str, Any] | None = None,
     session_allowed: bool | None = None,
+    session_state: Any = None,
+    session_source: Any = None,
+    session_snapshot_id: Any = None,
+    session_generated_at: Any = None,
+    session_age_seconds: Any = None,
     candidate_source_ready: bool = True,
     candidate_freshness_ready: bool = True,
     entry_worker_ready: bool = True,
@@ -142,6 +202,15 @@ def canonical_lane_activation_contract(
     safety = dict(broker_safety or {})
     blockers: list[str] = []
     capital = lane_capital_status(lane, values)
+    session = canonical_session_snapshot(
+        lane,
+        session_state=session_state,
+        session_allowed=session_allowed,
+        session_source=session_source,
+        session_snapshot_id=session_snapshot_id,
+        session_generated_at=session_generated_at,
+        session_age_seconds=session_age_seconds,
+    )
 
     paper_mode_verified = bool(safety.get("paper_mode_verified", True))
     broker_execution_enabled = bool(safety.get("broker_execution_enabled", True))
@@ -242,7 +311,7 @@ def canonical_lane_activation_contract(
         "capital_book_id": capital.get("capital_book_id") or "paper_swing",
         "candidate_source_ready": bool(candidate_source_ready),
         "candidate_freshness_ready": bool(candidate_freshness_ready),
-        "session_allowed": session_allowed,
+        **session,
         "broker_capability_ready": bool(paper_mode_verified and paper_endpoint_verified and live_endpoint_rejected and broker_execution_enabled),
         "entry_worker_ready": bool(entry_worker_ready),
         "exit_worker_ready": bool(exit_worker_ready),

@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -750,14 +750,84 @@ def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
     # clock fallback, so a GET cannot create a new candidate identity.
     identity_seed.update({key: r.get(key) for key in ("lane_id", "strategy_cohort", "intended_horizon")})
     r.update({key: value for key, value in _stable_candidate_identity(identity_seed).items() if value})
+    # Operational lineage is established before eligibility.  These values
+    # describe the already-produced candidate snapshot; they never change its
+    # ranking, score, or ability to submit an order.
+    r["canonical_symbol"] = str(r.get("canonical_symbol") or r.get("symbol") or r.get("ticker") or "").upper().strip()
+    r["source_record_id"] = str(
+        r.get("source_record_id") or r.get("source_candidate_id") or r.get("candidate_id") or ""
+    ).strip()
+    r["ranking_version"] = str(r.get("ranking_version") or r.get("source_snapshot_id") or "").strip()
+    r["generated_at"] = str(r.get("generated_at") or r.get("candidate_generated_at") or "").strip()
+    expires_at = str(r.get("expires_at") or r.get("candidate_expires_at") or "").strip()
+    if not expires_at and r["generated_at"]:
+        try:
+            generated = datetime.fromisoformat(r["generated_at"].replace("Z", "+00:00"))
+            expires_at = (generated.astimezone(UTC) + timedelta(seconds=300)).isoformat().replace("+00:00", "Z")
+        except Exception:
+            expires_at = ""
+    r["expires_at"] = expires_at
+    r["entry_owner"] = str(r.get("entry_owner") or "PaperAutopilot").strip()
+    r["exit_owner"] = str(r.get("exit_owner") or r.get("exit_policy_owner") or r.get("lane_id") or "").strip()
+    r["candidate_fingerprint"] = str(r.get("candidate_fingerprint") or r.get("candidate_id") or "").strip()
     r["paper_entry_eligibility_bridge_v1"] = True
     return r
+
+
+def _execution_trace_event(row: dict[str, Any], **values: Any) -> dict[str, Any]:
+    """Keep blocked candidate traces on the same canonical lineage path.
+
+    The worker used to create abbreviated early-rejection rows.  Those rows
+    were useful to an in-memory UI but could not be attributed or persisted by
+    the bounded lane ledger because their lane and stable identifiers were
+    absent.  This is observational-only metadata enrichment.
+    """
+    normalized = _normalize_paper_entry_bridge(row)
+    trace = {
+        "symbol": str(normalized.get("symbol") or "").upper().strip(),
+        "canonical_symbol": str(normalized.get("canonical_symbol") or "").upper().strip(),
+        "asset_type": _norm_asset(normalized.get("asset_type") or normalized.get("asset_class") or "stock"),
+        "asset_class": str(normalized.get("asset_class") or ""),
+        "lane_id": str(normalized.get("lane_id") or "").upper(),
+        "candidate_id": str(normalized.get("candidate_id") or ""),
+        "recommendation_id": str(normalized.get("recommendation_id") or ""),
+        "selection_id": str(normalized.get("selection_id") or ""),
+        "candidate_source": str(normalized.get("candidate_source") or ""),
+        "candidate_generated_at": str(normalized.get("candidate_generated_at") or normalized.get("generated_at") or ""),
+        "candidate_snapshot_freshness": str(normalized.get("candidate_snapshot_freshness") or "MISSING"),
+        "source_snapshot_id": str(normalized.get("source_snapshot_id") or ""),
+        "source_record_id": str(normalized.get("source_record_id") or ""),
+        "ranking_version": str(normalized.get("ranking_version") or ""),
+        "generated_at": str(normalized.get("generated_at") or normalized.get("candidate_generated_at") or ""),
+        "expires_at": str(normalized.get("expires_at") or ""),
+        "candidate_fingerprint": str(normalized.get("candidate_fingerprint") or normalized.get("candidate_id") or ""),
+        "position_owner": str(normalized.get("position_owner") or ""),
+        "exit_policy_owner": str(normalized.get("exit_policy_owner") or ""),
+        "entry_owner": str(normalized.get("entry_owner") or "PaperAutopilot"),
+        "exit_owner": str(normalized.get("exit_owner") or normalized.get("exit_policy_owner") or normalized.get("lane_id") or ""),
+        "capital_book_id": str(normalized.get("capital_book_id") or ""),
+        "session_state": str(
+            normalized.get("session_state")
+            or ("CRYPTO_24_7_ALLOWED" if _norm_asset(normalized.get("asset_type") or normalized.get("asset_class")) == "crypto" else "CANDIDATE_DEPENDENT")
+        ),
+        "market_session_mode": str(normalized.get("market_session_mode") or ""),
+        "same_session_exit_required": bool(normalized.get("same_session_exit_required")),
+        "overnight_allowed": bool(normalized.get("overnight_allowed")),
+    }
+    trace.update(values)
+    return trace
+
+
+def normalize_operational_candidate(row: dict[str, Any]) -> dict[str, Any]:
+    """Public, side-effect-free canonical candidate enrichment for readers."""
+    return _normalize_paper_entry_bridge(row)
 
 
 class PaperAutopilotEngine:
     def __init__(self, db_path: str = "state/ai_trading_memory.db", *args, **kwargs):
         self.db_path = str(db_path or "state/ai_trading_memory.db")
         self.state_path = str(kwargs.get("state_path") or "state/paper_autopilot_state.json")
+        self.get_crypto_candidate_rows_fn = kwargs.get("get_crypto_candidate_rows_fn")
         self.execution_trace_ledger = (
             LaneExecutionTraceLedgerV1(os.path.dirname(self.state_path) or "state")
             if LaneExecutionTraceLedgerV1 is not None else None
@@ -1972,10 +2042,20 @@ class PaperAutopilotEngine:
         rows.extend(_rows_from(["stocks", "final"]))
         rows.extend(_rows_from(["top_action_views", "canonical_decision_views", "stocks_buy_candidates"]))
         rows.extend(_rows_from(["stocks", "qualified"]))
-        crypto_activation = self._crypto_paper_activation_status()
-        if crypto_activation.get("paper_active_bounded"):
-            rows.extend(_rows_from(["crypto", "final"]))
-            rows.extend(_rows_from(["crypto", "qualified"]))
+        # The crypto adapter is an operational observation source.  It is
+        # deliberately collected even while crypto execution is fail-closed,
+        # so the worker records stale/unsupported/disabled candidate stages
+        # instead of presenting an empty lane.  Submission remains guarded by
+        # the canonical crypto activation contract below.
+        rows.extend(_rows_from(["crypto", "final"]))
+        rows.extend(_rows_from(["crypto", "qualified"]))
+        if callable(self.get_crypto_candidate_rows_fn):
+            try:
+                rows.extend(
+                    [dict(row) for row in (self.get_crypto_candidate_rows_fn() or []) if isinstance(row, dict)]
+                )
+            except Exception:
+                pass
 
         dedup: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -2745,9 +2825,18 @@ class PaperAutopilotEngine:
         r = _normalize_paper_entry_bridge(row)
         symbol = str(r.get("symbol") or "").upper().strip()
         asset = _norm_asset(r.get("asset_type") or "stock")
+        crypto_source_ready = not bool(r.get("operational_probe_only")) if asset == "crypto" else True
+        crypto_freshness_ready = bool(
+            crypto_source_ready and (r.get("candidate_generated_at") or r.get("generated_at"))
+        ) if asset == "crypto" else True
         activation = canonical_lane_activation_contract(
             str(r.get("lane_id") or ""),
             broker_safety=self._alpaca_safety_snapshot(),
+            session_state="CRYPTO_24_7_ALLOWED" if asset == "crypto" else None,
+            session_allowed=True if asset == "crypto" else None,
+            session_source="crypto_24_7_market_model" if asset == "crypto" else None,
+            candidate_source_ready=crypto_source_ready,
+            candidate_freshness_ready=crypto_freshness_ready,
         )
         allowed = False
         reason = "not_evaluated"
@@ -2849,13 +2938,20 @@ class PaperAutopilotEngine:
             gate_meta["crypto_market_data_gate_reason"] = crypto_data_reason
         trace = {
             "symbol": symbol,
+            "canonical_symbol": str(r.get("canonical_symbol") or symbol).upper(),
             "asset_type": asset,
             "candidate_id": str(r.get("candidate_id") or ""),
             "recommendation_id": str(r.get("recommendation_id") or ""),
             "selection_id": str(r.get("selection_id") or ""),
             "candidate_source": str(r.get("candidate_source") or ""),
             "candidate_generated_at": str(r.get("candidate_generated_at") or r.get("decision_timestamp") or ""),
+            "candidate_snapshot_freshness": str(r.get("candidate_snapshot_freshness") or "MISSING"),
             "source_snapshot_id": str(r.get("source_snapshot_id") or ""),
+            "source_record_id": str(r.get("source_record_id") or ""),
+            "ranking_version": str(r.get("ranking_version") or ""),
+            "generated_at": str(r.get("generated_at") or r.get("candidate_generated_at") or ""),
+            "expires_at": str(r.get("expires_at") or ""),
+            "candidate_fingerprint": str(r.get("candidate_fingerprint") or r.get("candidate_id") or ""),
             "operational_probe_only": bool(r.get("operational_probe_only", False)),
             "operational_source_rejection": str(r.get("operational_source_rejection") or ""),
             "lane_id": str(r.get("lane_id") or ""),
@@ -2869,6 +2965,8 @@ class PaperAutopilotEngine:
             "capital_book_id": str(r.get("capital_book_id") or ""),
             "position_owner": str(r.get("position_owner") or ""),
             "exit_policy_owner": str(r.get("exit_policy_owner") or ""),
+            "entry_owner": str(r.get("entry_owner") or "PaperAutopilot"),
+            "exit_owner": str(r.get("exit_owner") or r.get("exit_policy_owner") or r.get("lane_id") or ""),
             "action": str(r.get("action") or r.get("prediction") or ""),
             "readiness": str(r.get("readiness_label") or r.get("paper_ready_status") or r.get("buy_eligibility") or ""),
             "assigned_horizon": str(r.get("paper_entry_horizon_style") or r.get("trade_horizon_style") or r.get("best_horizon_style") or ""),
@@ -2938,6 +3036,7 @@ class PaperAutopilotEngine:
             "duplicate_source": duplicate_source,
             "broker_reconciliation_active": bool(broker_reconciliation_active),
             "market_session_mode": str(session_diag.get("market_session_mode") or ""),
+            "session_state": str(activation.get("session_state") or "CANDIDATE_DEPENDENT"),
             "market_is_open": bool(session_diag.get("market_is_open", False)),
             "market_is_tradable": bool(session_diag.get("market_is_tradable", False)),
             "paper_order_submission_allowed": bool(session_diag.get("paper_order_submission_allowed", False)),
@@ -4454,7 +4553,10 @@ class PaperAutopilotEngine:
             stock_capacity_reason = "stock_capacity_available"
             horizon_capacity_blocked = 0
             high_confidence_horizon_capacity_blocked = 0
-            candidates = self._collect_candidate_rows()
+            # Normalize every worker-cycle observation before any early gate
+            # can reject it.  The ranking and eligibility values are retained;
+            # this only gives every candidate a stable operational lineage.
+            candidates = [_normalize_paper_entry_bridge(row) for row in self._collect_candidate_rows() if isinstance(row, dict)]
             candidate_source = "candidate_source_empty"
             if candidates:
                 source_counts: dict[str, int] = {}
@@ -4551,10 +4653,20 @@ class PaperAutopilotEngine:
             for row in candidates:
                 if selected_count >= self.max_new_positions_per_cycle:
                     final_blocker_reason = final_blocker_reason or "max_new_positions_per_cycle_reached"
-                    break
+                    skipped += 1
+                    decision_trace.append(_execution_trace_event(
+                        row, eligible=False, selected=False,
+                        decision_reason="max_new_positions_per_cycle_reached",
+                    ))
+                    continue
                 if total_capacity <= 0:
                     final_blocker_reason = final_blocker_reason or "max_concurrent_positions_reached"
-                    break
+                    skipped += 1
+                    decision_trace.append(_execution_trace_event(
+                        row, eligible=False, selected=False,
+                        decision_reason="max_concurrent_positions_reached",
+                    ))
+                    continue
                 symbol = str(row.get("symbol") or "").upper().strip()
                 asset = _norm_asset(row.get("asset_type") or "stock")
                 if not symbol or symbol in open_syms:
@@ -4570,26 +4682,20 @@ class PaperAutopilotEngine:
                             duplicate_source = "internal"
                         elif in_broker:
                             duplicate_source = "broker"
-                    decision_trace.append({
-                        "symbol": symbol,
-                        "asset_type": asset,
-                        "eligible": False,
-                        "selected": False,
-                        "decision_reason": reason,
-                        "duplicate_source": duplicate_source,
-                        "broker_reconciliation_active": broker_reconciliation_active,
-                    })
+                    decision_trace.append(_execution_trace_event(
+                        row, symbol=symbol, asset_type=asset, eligible=False,
+                        selected=False, decision_reason=reason,
+                        duplicate_source=duplicate_source,
+                        broker_reconciliation_active=broker_reconciliation_active,
+                    ))
                     final_blocker_reason = reason
                     continue
                 if self._cooldown_active(symbol):
                     skipped += 1
-                    decision_trace.append({
-                        "symbol": symbol,
-                        "asset_type": asset,
-                        "eligible": False,
-                        "selected": False,
-                        "decision_reason": "cooldown_active",
-                    })
+                    decision_trace.append(_execution_trace_event(
+                        row, symbol=symbol, asset_type=asset, eligible=False,
+                        selected=False, decision_reason="cooldown_active",
+                    ))
                     final_blocker_reason = "cooldown_active"
                     continue
                 candidate_horizon, candidate_horizon_source, candidate_horizon_inferred = _infer_horizon_style(row)
@@ -4615,26 +4721,31 @@ class PaperAutopilotEngine:
                     confidence_for_block = _to_float(row.get("confidence"), _to_float(row.get("predicted_win_probability"), 0.0))
                     if confidence_for_block >= 80.0:
                         high_confidence_horizon_capacity_blocked += 1
-                    decision_trace.append({
-                        "symbol": symbol,
-                        "asset_type": asset,
-                        "eligible": False,
-                        "selected": False,
-                        "decision_reason": horizon_capacity_reason,
-                        "trade_horizon_style": candidate_horizon,
-                        "paper_entry_horizon_source": candidate_horizon_source,
-                        "paper_entry_horizon_inferred": bool(candidate_horizon_inferred),
-                        "horizon_capacity": dict(horizon_capacity),
-                        "horizon_capacity_enabled": bool(self.horizon_capacity_enabled),
-                    })
+                    decision_trace.append(_execution_trace_event(
+                        row, symbol=symbol, asset_type=asset, eligible=False,
+                        selected=False, decision_reason=horizon_capacity_reason,
+                        trade_horizon_style=candidate_horizon,
+                        paper_entry_horizon_source=candidate_horizon_source,
+                        paper_entry_horizon_inferred=bool(candidate_horizon_inferred),
+                        horizon_capacity=dict(horizon_capacity),
+                        horizon_capacity_enabled=bool(self.horizon_capacity_enabled),
+                    ))
                     final_blocker_reason = horizon_capacity_reason
                     continue
                 if asset == "stock" and stock_capacity <= 0:
                     final_blocker_reason = "stock_capacity_reached"
                     stock_capacity_reason = "stock_capacity_reached"
+                    decision_trace.append(_execution_trace_event(
+                        row, eligible=False, selected=False,
+                        decision_reason="stock_capacity_reached",
+                    ))
                     continue
                 if asset == "crypto" and crypto_capacity <= 0:
                     final_blocker_reason = "crypto_capacity_reached"
+                    decision_trace.append(_execution_trace_event(
+                        row, eligible=False, selected=False,
+                        decision_reason="crypto_capacity_reached",
+                    ))
                     continue
 
                 row_trace, allowed, reason, gate_meta = self._candidate_trace_row(

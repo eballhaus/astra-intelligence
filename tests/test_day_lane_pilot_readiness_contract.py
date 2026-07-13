@@ -33,6 +33,7 @@ class DayLanePilotReadinessContractTests(unittest.TestCase):
         self.assertEqual(payload["current_day_candidates"], 0)
         self.assertFalse(payload["pilot_enabled"])
         self.assertIn("candidate_source_stale", payload["exact_blockers"])
+        self.assertEqual(payload["same_session_exit_state"], "NOT_APPLICABLE_NO_DAY_POSITION")
         self.assertEqual(payload["broker_actions_used"], 0)
         self.assertFalse(payload["behavior_safe_to_apply"])
 

@@ -106,11 +106,12 @@ class LaneExecutionTraceLedgerV1:
             record = {
                 "trace_id": trace_id, "timestamp_utc": _now(), "cycle_id": _text(cycle_id),
                 "lane_id": lane, "candidate_id": candidate_id, "recommendation_id": recommendation_id,
-                "symbol": symbol, "asset_class": _text(source.get("asset_class") or source.get("asset_type")),
+                "symbol": symbol, "canonical_symbol": _text(source.get("canonical_symbol") or symbol).upper(),
+                "asset_class": _text(source.get("asset_class") or source.get("asset_type")),
                 "candidate_source": _text(source.get("candidate_source")), "candidate_seen": True,
                 "freshness_result": _text(source.get("candidate_snapshot_freshness") or source.get("freshness_result")),
                 "eligibility_result": "PASS" if source.get("eligible") else "BLOCKED",
-                "session_result": "PASS" if source.get("paper_order_submission_allowed") else _text(source.get("market_session_mode") or "BLOCKED"),
+                "session_result": "PASS" if source.get("paper_order_submission_allowed") else _text(source.get("session_state") or source.get("market_session_mode") or "BLOCKED"),
                 "capital_result": "PASS" if source.get("lane_activation_contract", {}).get("capital_configured", True) else "BLOCKED",
                 "risk_result": "PASS" if source.get("eligible") else "NOT_REACHED",
                 "duplicate_exposure_result": "BLOCKED" if source.get("duplicate_active_position") else "PASS",
@@ -124,6 +125,14 @@ class LaneExecutionTraceLedgerV1:
                 "exit_fill_id": _text(source.get("exit_fill_id")), "truth_id": _text(source.get("truth_id")),
                 "truth_status": _text(source.get("truth_status")), "learning_delivery_status": _text(source.get("learning_delivery_status")),
                 "exact_blocker": blocker, "source_fingerprint": source_fingerprint,
+                "source_record_id": _text(source.get("source_record_id")),
+                "ranking_version": _text(source.get("ranking_version")),
+                "generated_at": _text(source.get("generated_at") or source.get("candidate_generated_at")),
+                "expires_at": _text(source.get("expires_at")),
+                "market_session": _text(source.get("market_session_mode") or source.get("session_state")),
+                "capital_book_id": _text(source.get("capital_book_id")),
+                "entry_owner": _text(source.get("entry_owner")),
+                "exit_owner": _text(source.get("exit_owner") or source.get("exit_policy_owner")),
             }
             records.append(record)
             known.add(trace_id)
@@ -138,6 +147,13 @@ class LaneExecutionTraceLedgerV1:
             lane_summary["submission_attempted"] += int(record["submission_attempted"])
             lane_summary["submitted"] += int(record["submission_result"].lower() in {"submitted", "accepted"})
             lane_summary["rejected_by_broker"] += int(record["submission_result"].lower() == "rejected")
+            lane_summary["filled_entries"] += int(bool(record["entry_fill_id"]))
+            lane_summary["open_lane_positions"] += int(bool(record["position_id"]))
+            lane_summary["exit_orders"] += int(bool(record["exit_order_id"]))
+            lane_summary["filled_exits"] += int(bool(record["exit_fill_id"]))
+            lane_summary["completed_lifecycles"] += int(bool(record["entry_fill_id"] and record["exit_fill_id"]))
+            lane_summary["strict_broker_truths"] += int(record["truth_status"].upper() == "BROKER_CONFIRMED_COMPLETE")
+            lane_summary["learning_deliveries"] += int(record["learning_delivery_status"].upper() in {"DELIVERED", "ACKNOWLEDGED"})
             lane_summary["duplicate_attempts"] += int(record["duplicate_exposure_result"] == "BLOCKED")
             lane_summary["metadata_failures"] += int(not candidate_id or not recommendation_id)
             if blocker:
