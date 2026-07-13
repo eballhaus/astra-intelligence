@@ -47,6 +47,8 @@ CONTRACT_FIELDS = (
     "same_session_exit_required",
     "overnight_allowed",
     "capital_book_id",
+    "position_owner",
+    "exit_policy_owner",
     "source_ranking_version",
     "source_policy_version",
 )
@@ -199,6 +201,10 @@ def apply_trade_lane_contract(
             "same_session_exit_required": same_session_exit_required,
             "overnight_allowed": overnight_allowed,
             "capital_book_id": capital_book,
+            # Future paper entries carry explicit owners.  Legacy rows remain
+            # intentionally unowned so no lane worker can manage them.
+            "position_owner": "" if legacy else lane,
+            "exit_policy_owner": "" if legacy else lane,
             "source_ranking_version": _text(
                 _first(result, "source_ranking_version", "ranking_version", "rankings_version")
             )

@@ -1,5 +1,13 @@
 from engine.runtime_environment import load_runtime_environment, resolve_fmp_key
 from engine.candidate_execution_integrity_v1 import candidate_execution_integrity, normalize_crypto_pair_strict
+from engine.astra_multilane_activation_v2 import (
+    adaptive_throughput,
+    day_regular_session_allowed,
+    lane_capital_status,
+    lane_handoff_proof,
+    operational_freshness,
+    strict_truth_counts,
+)
 
 load_runtime_environment()
 
@@ -17431,32 +17439,21 @@ def _apply_day_trading_lifecycle_rules_v1():
             out["overnight_hold_blocked"] = True
         if not should_close:
             continue
-        identifier = pos.get("position_id") or pos.get("id") or pos.get("symbol")
-        if not identifier:
-            continue
-        exit_price = _paper_trade_close_price_from_position(pos)
-        if exit_price <= 0:
-            continue
-        try:
-            res = POSITION_TRACKER.close_position(
-                identifier=identifier,
-                exit_price=exit_price,
-                exit_reason_manual=close_reason,
-            )
-            if isinstance(res, dict) and bool(res.get("ok")):
-                forced_count += 1
-                sym = str(pos.get("symbol") or "").upper()
-                if sym:
-                    forced_symbols.append(sym)
-        except Exception as e:
-            out["last_error"] = str(e)[:180]
+        # The paper-autopilot is the sole DAY exit submitter.  This observer
+        # intentionally never closes an internal row because strict truth
+        # requires the matching broker exit fill first.
+        sym = str(pos.get("symbol") or "").upper()
+        if sym:
+            forced_symbols.append(sym)
+        out["day_exit_submission_owner"] = "PaperAutopilot.authorized_lane_exit_pending"
+        out["broker_fill_required_before_local_close"] = True
     out["holding_minutes"] = round(max_holding, 2)
     out["forced_close_count_last_cycle"] = int(forced_count)
     out["last_forced_symbols"] = list(dict.fromkeys(forced_symbols))[:16]
     if force_close_window:
         out["forced_end_of_day_exit_reason"] = "force_close_time_reached"
-    elif forced_count > 0:
-        out["forced_end_of_day_exit_reason"] = "hold_or_overnight_prevented"
+    elif forced_symbols:
+        out["forced_end_of_day_exit_reason"] = "lane_exit_requested_broker_fill_pending"
     else:
         out["forced_end_of_day_exit_reason"] = ""
     out["session_exit_reason"] = str(out["forced_end_of_day_exit_reason"] or "")
@@ -46486,6 +46483,13 @@ def multilane_paper_operational_status_v1(force: bool = False):
     return dict(base.get("multilane_paper_operational_status_v1") or _multilane_paper_operational_status_v1_payload(base))
 
 
+@router.get("/api/astra_multilane_activation_adaptive_truth_v2")
+def astra_multilane_activation_adaptive_truth_v2(force: bool = False):
+    """Read-only V2 activation proof; GET never starts, trades, or reconfigures."""
+    base = _pladeu_direct_statuses_v1(force=bool(force))
+    return _multilane_activation_adaptive_truth_v2_payload(base)
+
+
 @router.get("/api/day_lane_pilot_control_status_v1")
 def day_lane_pilot_control_status_v1(force: bool = False):
     """Expose the explicit human-controlled pilot switch; GET never activates it."""
@@ -47192,8 +47196,11 @@ def _pladeu_candidate_source_metadata_v1() -> dict:
             snapshot_ts = float(slot.get("ts") or 0.0)
             cache_age = max(0.0, now - snapshot_ts)
             cache_key = "top_buys:mode::balanced"
-    max_age = float(TOP_BUYS_TTL_SECONDS or 300.0)
-    freshness = "CURRENT" if cache_age is not None and cache_age <= max_age else "STALE"
+    # The five-second top-buys cache controls refresh reuse only.  Operational
+    # eligibility has its own bounded age and final quote checks stay stricter.
+    operational = operational_freshness(cache_age)
+    max_age = float(operational["candidate_snapshot_max_age_seconds"])
+    freshness = str(operational["candidate_snapshot_freshness"])
     if not payload:
         freshness = "MISSING"
     market_session = str(_market_session_type_et(datetime.now(UTC)) or "closed").lower()
@@ -47205,9 +47212,39 @@ def _pladeu_candidate_source_metadata_v1() -> dict:
         "candidate_cache_age_seconds": round(cache_age, 3) if cache_age is not None else None,
         "candidate_cache_max_age_seconds": max_age,
         "candidate_freshness_status": freshness,
+        **operational,
+        "final_quote_freshness_separate": True,
         "market_session_status": market_session,
         "candidate_source_available": bool(payload),
         "candidate_source_rows": len(_cached_candidate_rows_for_horizon_flow_v1()),
+    }
+
+
+def _day_lane_exit_contract_v2() -> dict:
+    """Read-only proof for the dedicated DAY paper exit owner."""
+    worker = {}
+    fixture = {}
+    try:
+        if hasattr(PAPER_AUTOPILOT, "authorized_lane_exit_status"):
+            worker = dict(PAPER_AUTOPILOT.authorized_lane_exit_status("DAY") or {})
+        if hasattr(PAPER_AUTOPILOT, "authorized_lane_exit_dry_run"):
+            fixture = dict(PAPER_AUTOPILOT.authorized_lane_exit_dry_run("DAY") or {})
+    except Exception as exc:
+        worker = {"status": "WORKER_UNAVAILABLE", "reason": f"day_exit_contract_exception:{str(exc)[:100]}"}
+    # A deterministic fixture proves code wiring, not a runtime lane handoff.
+    # Keep activation fail-closed until a lane-owned filled entry or explicit
+    # live dry-run trace proves the worker is armed in the running process.
+    status = "AUTHORIZED_AND_PROVEN" if str(worker.get("status") or "") == "AUTHORIZED_AND_PROVEN" else str(worker.get("status") or "UNRESOLVED")
+    return {
+        "status": status,
+        "authorization_scope": "explicit_DAY_owned_paper_positions_only",
+        "proof_kind": fixture.get("proof_kind") or "none",
+        "deterministic_fixture_proven": bool(fixture.get("proven")),
+        "live_market_evidence_deferred": bool(fixture.get("live_market_evidence_deferred", True)),
+        "worker_status": worker,
+        "broker_actions_used": 0,
+        "submit_order": False,
+        "learned_exits_enabled": False,
     }
 
 
@@ -47216,19 +47253,18 @@ def _day_lane_pilot_config_v1() -> dict:
     truthy = {"1", "true", "yes", "on"}
     enabled = str(os.getenv("ASTRA_DAY_LANE_PILOT_ENABLED", "0")).strip().lower() in truthy
     disable_switch = str(os.getenv("ASTRA_DAY_LANE_PILOT_DISABLE_SWITCH", "0")).strip().lower() in truthy
-    capital_raw = str(os.getenv("ASTRA_DAY_LANE_CAPITAL_LIMIT", "")).strip()
-    capital_configured = bool(capital_raw)
-    try:
-        capital_limit = float(capital_raw) if capital_raw else None
-    except (TypeError, ValueError):
-        capital_limit = None
-        capital_configured = False
+    capital = lane_capital_status("DAY")
     return {
         "day_lane_pilot_enabled": bool(enabled and not disable_switch),
         "day_lane_pilot_mode": "paper_controlled" if enabled else "disabled",
         "day_lane_capital_book_id": "paper_day_learning",
-        "day_lane_capital_limit": capital_limit,
-        "capital_configured": bool(capital_configured and capital_limit is not None and capital_limit > 0),
+        "day_lane_capital_limit": capital.get("configured_limit"),
+        "capital_configured": bool(capital.get("capital_configured")),
+        "capital_configuration_status": capital.get("capital_configuration_status"),
+        "approved_capital_ceiling": capital.get("approved_ceiling"),
+        "capital_in_use": capital.get("capital_in_use"),
+        "capital_reserved": capital.get("capital_reserved"),
+        "capital_available": capital.get("capital_available"),
         "day_lane_max_open_positions": 1,
         "day_lane_max_completed_trades_per_session": 2,
         "day_lane_entry_cutoff_et": str(os.getenv("ASTRA_DAY_LANE_ENTRY_CUTOFF_ET", NO_NEW_ENTRIES_AFTER_ET)).strip() or NO_NEW_ENTRIES_AFTER_ET,
@@ -47283,8 +47319,16 @@ def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
     session = str(source_meta.get("market_session_status") or "closed").lower()
     freshness = str(source_meta.get("candidate_freshness_status") or "MISSING")
     current_rows = day_rows if freshness == "CURRENT" else []
-    session_open = session in {"regular", "regular_hours", "pre", "pre_market", "post", "after_hours", "open"}
-    handoff = bool((statuses.get("paper_autopilot_handoff_proof") or {}).get("proven"))
+    # DAY is explicitly regular-hours-only.  Pre/post-market candidates may be
+    # observed but never receive an order-capable readiness result.
+    session_open = day_regular_session_allowed(session)
+    handoff_proof = lane_handoff_proof(
+        "DAY",
+        [row for row in (autopilot_trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict)],
+        lane_capital_status("DAY"),
+        session=session,
+    )
+    handoff = bool(handoff_proof.get("proven"))
     stage_trace = []
     for row in current_rows[:25]:
         symbol = str(row.get("symbol") or row.get("ticker") or "").upper()
@@ -47298,7 +47342,7 @@ def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
             "allocation_result": "PASS" if row in eligible_rows else "BLOCKED",
             "diversity_result": "PASS" if allocation.get("cross_lane_exact_symbol_check") else "BLOCKED",
             "duplicate_result": "BLOCKED" if symbol in open_symbols else "PASS",
-            "capital_result": "PASS" if allocation.get("capital_book_id") else "BLOCKED_CAPITAL_UNCONFIGURED",
+            "capital_result": "PASS" if pilot_config.get("capital_configured") else str(pilot_config.get("capital_configuration_status") or "CAPITAL_CONFIGURATION_REQUIRED"),
             "session_result": "PASS" if session_open else "BLOCKED_MARKET_CLOSED",
             "selection_result": "SELECTED" if row in selected_rows else "NOT_SELECTED",
             "paper_autopilot_result": "NOT_REACHED",
@@ -47326,18 +47370,17 @@ def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
         blockers.append("day_swing_exact_symbol_overlap")
     if day_symbols & crypto_symbols:
         blockers.append("day_crypto_exact_symbol_overlap")
-    if allocation.get("same_session_close_posture") in (None, ""):
-        blockers.append("same_session_exit_contract_unresolved")
-    if not allocation.get("capital_book_id"):
-        blockers.append("capital_book_isolation_unproven")
+    exit_contract = _day_lane_exit_contract_v2()
+    if exit_contract.get("status") != "AUTHORIZED_AND_PROVEN":
+        blockers.append("same_session_exit_contract_not_proven")
+    if not pilot_config.get("capital_configured"):
+        blockers.append(str(pilot_config.get("capital_configuration_status") or "CAPITAL_CONFIGURATION_REQUIRED"))
     if not allocation.get("cross_lane_exact_symbol_check", False):
         blockers.append("cross_lane_duplicate_check_unavailable")
     if not handoff:
         blockers.append("paper_autopilot_handoff_dry_run_not_proven")
     if pilot_config.get("day_lane_disable_switch"):
         blockers.append("PILOT_DISABLE_SWITCH_ACTIVE")
-    if not pilot_config.get("capital_configured"):
-        blockers.append("CAPITAL_CONFIGURATION_REQUIRED")
     if pilot_config.get("day_lane_pilot_enabled") and not pilot_config.get("day_lane_disable_switch"):
         blockers.append("explicit_pilot_activation_detected_review_required") if not pilot_config.get("human_approval_required") else None
     if pilot_config.get("day_lane_disable_switch"):
@@ -47383,8 +47426,10 @@ def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
         "strategy_caps_available": bool(allocation.get("diversity_ceilings", {}).get("one_strategy_cohort")),
         "duplicate_thesis_checks_available": bool(allocation.get("cross_lane_exact_symbol_check")),
         "paper_autopilot_handoff_proven": handoff,
-        "same_session_exit_contract_status": allocation.get("same_session_close_posture") or "unresolved",
-        "capital_book_isolation_status": "PASS" if allocation.get("capital_book_id") else "BLOCKED",
+        "paper_autopilot_handoff_proof": handoff_proof,
+        "same_session_exit_contract_status": exit_contract.get("status"),
+        "same_session_exit_contract": exit_contract,
+        "capital_book_isolation_status": "PASS" if pilot_config.get("capital_configured") else "BLOCKED",
         "pilot_enabled": bool(pilot_config.get("day_lane_pilot_enabled")),
         "pilot_mode": pilot_config.get("day_lane_pilot_mode"),
         "pilot_config": pilot_config,
@@ -47448,6 +47493,88 @@ def _multilane_paper_operational_status_v1_payload(statuses: dict | None = None)
         day_config=statuses.get("day_lane_pilot_config") or _day_lane_pilot_config_v1(),
         crypto_lane=crypto_lane,
     )
+
+
+def _multilane_activation_adaptive_truth_v2_payload(statuses: dict | None = None) -> dict:
+    """Compact, cache-first V2 operational proof with no broker side effects."""
+    statuses = dict(statuses or {})
+    multiline = _multilane_paper_operational_status_v1_payload(statuses)
+    records = [dict(row) for row in (_astra_evidence_state_json("broker_truth_records_v1.json").get("records") or []) if isinstance(row, dict)]
+    truth = strict_truth_counts(records)
+    trace = _paper_autopilot_last_trace_v1()
+    source = dict(statuses.get("pladeu_candidate_source_metadata") or _pladeu_candidate_source_metadata_v1())
+    day_capital = lane_capital_status("DAY")
+    crypto_capital = lane_capital_status("CRYPTO")
+    day_handoff = lane_handoff_proof("DAY", trace.get("per_candidate_decision_trace") or [], day_capital, session=source.get("market_session_status"))
+    crypto_handoff = lane_handoff_proof("CRYPTO", trace.get("per_candidate_decision_trace") or [], crypto_capital, session=source.get("market_session_status"))
+    day_exit = _day_lane_exit_contract_v2()
+    crypto_exit = {}
+    try:
+        crypto_exit = dict(PAPER_AUTOPILOT.authorized_lane_exit_status("CRYPTO") or {})
+        crypto_exit["deterministic_fixture"] = dict(PAPER_AUTOPILOT.authorized_lane_exit_dry_run("CRYPTO") or {})
+    except Exception as exc:
+        crypto_exit = {"status": "WORKER_UNAVAILABLE", "reason": f"crypto_exit_worker_exception:{str(exc)[:100]}"}
+    simulations = {}
+    for lane, capital, session in (
+        ("SWING", {"capital_configured": True, "capital_book_id": "paper_swing"}, "regular_hours"),
+        ("DAY", day_capital, "regular_hours"),
+        ("CRYPTO", crypto_capital, "crypto_24_7"),
+    ):
+        symbol = "BTC/USD" if lane == "CRYPTO" else "SPY" if lane == "DAY" else "AAPL"
+        row = {
+            "lane_id": lane, "symbol": symbol, "candidate_id": f"fixture-{lane.lower()}",
+            "recommendation_id": f"fixture-rec-{lane.lower()}", "selection_id": f"fixture-select-{lane.lower()}",
+            "selected": True, "order_ready": True, "submit_order": False, "broker_actions_used": 0,
+            "capital_book_id": capital.get("capital_book_id"), "same_session_exit_required": lane == "DAY",
+            "overnight_allowed": lane != "DAY", "equity_market_session_gate_applied": False,
+        }
+        simulations[lane.lower()] = {
+            "deterministic_simulation_proof": lane_handoff_proof(lane, [row], capital, session=session),
+            "fixture_truth_excluded_from_official_counts": True,
+            "live_runtime_dry_run_proof": day_handoff if lane == "DAY" else crypto_handoff if lane == "CRYPTO" else lane_handoff_proof(lane, trace.get("per_candidate_decision_trace") or [], capital, session=session),
+        }
+    day_enabled = bool(_day_lane_pilot_config_v1().get("day_lane_pilot_enabled"))
+    crypto_enabled = bool((_crypto_paper_lane_validation_v1_payload(statuses) or {}).get("paper_crypto_enabled"))
+    required_consumers = ["canonical_outcome", "symbol_behavior", "active_learning", "librarian", "warehouse", "cortex", "governance", "learning_center"]
+    learning = {
+        "strict_truths_available": truth.get("total_broker_confirmed_complete", 0),
+        "required_consumers": required_consumers,
+        "consumer_acknowledgements": 0,
+        "status": "PENDING_STRICT_TRUTH" if not truth.get("total_broker_confirmed_complete") else "ACKNOWLEDGEMENT_RECONCILIATION_REQUIRED",
+        "payload_references_not_accepted_as_acknowledgement": True,
+    }
+    blockers = []
+    if not day_capital.get("capital_configured"):
+        blockers.append(str(day_capital.get("capital_configuration_status")))
+    if not crypto_capital.get("capital_configured"):
+        blockers.append(str(crypto_capital.get("capital_configuration_status")))
+    if not day_handoff.get("proven"):
+        blockers.append("DAY_HANDOFF_DEFERRED_NO_CURRENT_AUTHORITATIVE_TRACE")
+    if not day_enabled:
+        blockers.append("DAY_PILOT_NOT_ENABLED_PENDING_LIVE_DRY_RUN")
+    if not crypto_enabled:
+        blockers.append("CRYPTO_LANE_NOT_ENABLED_PENDING_FINAL_GATE")
+    status = "ASTRA_MULTILANE_PAPER_ACTIVATION_PASS" if not blockers else "ASTRA_MULTILANE_PAPER_ACTIVATION_BLOCKED"
+    return {
+        "endpoint": "/api/astra_multilane_activation_adaptive_truth_v2",
+        "suite": "ASTRA_MULTILANE_ACTIVATION_ADAPTIVE_TRUTH_V2",
+        "status": status,
+        "lanes": multiline.get("lanes"),
+        "day_configuration": {**day_capital, "pilot_enabled": day_enabled},
+        "crypto_configuration": {**crypto_capital, "lane_enabled": crypto_enabled, "enablement_key": "ASTRA_ENABLE_ALPACA_CRYPTO_PAPER"},
+        "candidate_freshness": operational_freshness(source.get("candidate_snapshot_age_seconds", source.get("candidate_cache_age_seconds"))),
+        "handoff_proof": {"day": day_handoff, "crypto": crypto_handoff},
+        "exit_authorization": {"day": day_exit, "crypto": crypto_exit},
+        "adaptive_throughput": {"day": adaptive_throughput("DAY", records), "crypto": adaptive_throughput("CRYPTO", records)},
+        "strict_broker_truth": truth,
+        "learning_delivery": learning,
+        "simulations": simulations,
+        "deferred_live_market_evidence": ["DAY current regular-session authoritative candidate and paper round trip"] if not day_handoff.get("proven") else [],
+        "top_blockers": list(dict.fromkeys(blockers)),
+        "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "full_history_scan_count": 0,
+        "live_trading_enabled": False, "automatic_promotions_enabled": False, "learned_exits_enabled": False,
+        **_safety_flags_v1(),
+    }
 
 
 def _candidate_horizon_from_row_v1(row: dict) -> str:
@@ -65711,19 +65838,18 @@ def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> di
     if not capability.get("market_data_entitlement_confirmed"):
         blockers.append("alpaca_crypto_market_data_entitlement_unverified")
     kill_switch = str(os.getenv("ASTRA_ALPACA_CRYPTO_PAPER_KILL_SWITCH", "0")).strip().lower() in {"1", "true", "yes", "on"}
-    activation_requested = str(os.getenv("ASTRA_ENABLE_ALPACA_CRYPTO_PAPER", "1")).strip().lower() in {"1", "true", "yes", "on"}
-    capital_raw = str(os.getenv("ASTRA_CRYPTO_PAPER_CAPITAL_LIMIT", "")).strip()
-    try:
-        capital_limit = float(capital_raw) if capital_raw else None
-    except (TypeError, ValueError):
-        capital_limit = None
-    capital_configured = bool(capital_limit and capital_limit > 0)
+    # Existing canonical enablement key; default is fail-closed until the
+    # approved local paper configuration explicitly opts in.
+    activation_requested = str(os.getenv("ASTRA_ENABLE_ALPACA_CRYPTO_PAPER", "0")).strip().lower() in {"1", "true", "yes", "on"}
+    capital = lane_capital_status("CRYPTO")
+    capital_limit = capital.get("configured_limit")
+    capital_configured = bool(capital.get("capital_configured"))
     if not activation_requested:
         blockers.append("crypto_paper_activation_not_requested")
     if kill_switch:
         blockers.append("crypto_paper_kill_switch_enabled")
     if not capital_configured:
-        blockers.append("CRYPTO_CAPITAL_CONFIGURATION_REQUIRED")
+        blockers.append(str(capital.get("capital_configuration_status") or "CRYPTO_CAPITAL_CONFIGURATION_REQUIRED"))
     active = bool(paper_mode_verified and broker_crypto_supported and capability.get("market_data_entitlement_confirmed") and tradable_pairs and activation_requested and not kill_switch and capital_configured)
     if kill_switch or not activation_requested or not paper_mode_verified or capability.get("live_endpoint_detected"):
         lane_state = "LANE_BLOCKED"
@@ -65759,6 +65885,8 @@ def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> di
         "capital_book_id": "paper_crypto_separate",
         "capital_configured": capital_configured,
         "capital_limit": capital_limit,
+        "approved_capital_ceiling": capital.get("approved_ceiling"),
+        "capital_configuration_status": capital.get("capital_configuration_status"),
         "crypto_paper_trading_enabled": active,
         "crypto_live_trading_enabled": False,
         "broker_submission_path_status": "paper_crypto_ready" if active else "blocked_fail_closed",

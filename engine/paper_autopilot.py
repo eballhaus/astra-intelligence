@@ -11,8 +11,15 @@ import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from engine.candidate_execution_integrity_v1 import candidate_execution_integrity
+from engine.runtime_environment import load_runtime_environment
+
+# The standalone paper worker imports this module directly.  Load the same
+# non-secret repository environment used by server startup before evaluating
+# any lane limit or kill-switch configuration.
+load_runtime_environment()
 
 try:
     from engine.astra_trade_lane_registry_v1 import CONTRACT_FIELDS, apply_trade_lane_contract
@@ -21,6 +28,18 @@ except Exception:  # pragma: no cover - metadata-only compatibility fallback
 
     def apply_trade_lane_contract(row: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
         return dict(row or {})
+
+try:
+    from engine.astra_multilane_activation_v2 import lane_capital_status, lane_owner_contract, strict_broker_truth
+except Exception:  # pragma: no cover - fail closed when the bounded contract is unavailable
+    def lane_capital_status(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"capital_configured": False, "capital_configuration_status": "CAPITAL_CONFIGURATION_REQUIRED"}
+
+    def lane_owner_contract(_row: dict[str, Any]) -> dict[str, Any]:
+        return {"owner_status": "LANE_CONTRACT_REQUIRED", "automatic_management_allowed": False}
+
+    def strict_broker_truth(_row: dict[str, Any]) -> bool:
+        return False
 
 try:
     from engine.position_tracker import PositionTracker
@@ -843,6 +862,7 @@ class PaperAutopilotEngine:
             "learned_exit_pending_sells": {},
             "learned_exit_daily": {},
             "learned_exit_rollback": {},
+            "authorized_lane_exit_pending": {},
         }
 
         self._position_tracker = None
@@ -932,6 +952,14 @@ class PaperAutopilotEngine:
                 "source_recommendation_id": "TEXT",
                 "source_decision_id": "TEXT",
                 "source_eligibility_evaluation_id": "TEXT",
+                "lane_id": "TEXT",
+                "capital_book_id": "TEXT",
+                "position_owner": "TEXT",
+                "exit_policy_owner": "TEXT",
+                "entry_order_id": "TEXT",
+                "entry_fill_id": "TEXT",
+                "exit_order_id": "TEXT",
+                "exit_fill_id": "TEXT",
             }
             for col, ddl in needed.items():
                 if col in cols:
@@ -960,6 +988,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["learned_exit_daily"] = dict(payload.get("learned_exit_daily") or {})
                 if isinstance(payload.get("learned_exit_rollback"), dict):
                     self._runtime_state["learned_exit_rollback"] = dict(payload.get("learned_exit_rollback") or {})
+                if isinstance(payload.get("authorized_lane_exit_pending"), dict):
+                    self._runtime_state["authorized_lane_exit_pending"] = dict(payload.get("authorized_lane_exit_pending") or {})
                 if isinstance(payload.get("adaptive_learning_capacity_policy"), dict):
                     persisted_policy = dict(payload.get("adaptive_learning_capacity_policy") or {})
                     persisted_policy["policy_valid"] = bool(
@@ -985,6 +1015,7 @@ class PaperAutopilotEngine:
             "learned_exit_pending_sells": dict(self._runtime_state.get("learned_exit_pending_sells") or {}),
             "learned_exit_daily": dict(self._runtime_state.get("learned_exit_daily") or {}),
             "learned_exit_rollback": dict(self._runtime_state.get("learned_exit_rollback") or {}),
+            "authorized_lane_exit_pending": dict(self._runtime_state.get("authorized_lane_exit_pending") or {}),
             "adaptive_learning_capacity_policy": dict(self._adaptive_learning_capacity_policy or {}),
             "last_execution_trace": {
                 **dict(self._runtime_state.get("last_execution_trace") or {}),
@@ -1182,6 +1213,280 @@ class PaperAutopilotEngine:
             if pid and str(row.get("position_id") or "").strip() == pid:
                 return True, f"local_pending_sell:{key}"
         return False, ""
+
+    def _authorized_lane_exit_pending_map(self) -> dict[str, Any]:
+        return dict(self._runtime_state.get("authorized_lane_exit_pending") or {})
+
+    def _authorized_lane_exit_contract(self, open_row: dict[str, Any]) -> dict[str, Any]:
+        """Authorize only explicit DAY/CRYPTO owners with a real entry fill."""
+        lane = str(open_row.get("lane_id") or "").upper().strip()
+        if lane not in {"DAY", "CRYPTO"}:
+            return {"authorized": False, "status": "NOT_APPLICABLE", "reason": "lane_not_authorized_for_v2_exit"}
+        owner = lane_owner_contract(open_row)
+        capital = lane_capital_status(lane)
+        entry_order_id = str(open_row.get("entry_order_id") or open_row.get("source_broker_order_id") or "").strip()
+        entry_fill_id = str(open_row.get("entry_fill_id") or "").strip()
+        if not bool(capital.get("capital_configured")):
+            return {"authorized": False, "status": "UNRESOLVED", "reason": str(capital.get("capital_configuration_status") or "CAPITAL_CONFIGURATION_REQUIRED")}
+        if not bool(owner.get("automatic_management_allowed")):
+            return {"authorized": False, "status": "UNRESOLVED", "reason": "LANE_CONTRACT_REQUIRED"}
+        if not entry_order_id or not entry_fill_id:
+            return {"authorized": False, "status": "UNRESOLVED", "reason": "ENTRY_FILL_LINEAGE_REQUIRED"}
+        if lane == "DAY" and not (open_row.get("same_session_exit_required") is True and open_row.get("overnight_allowed") is False):
+            return {"authorized": False, "status": "UNRESOLVED", "reason": "DAY_SAME_SESSION_CONTRACT_REQUIRED"}
+        safety = self._alpaca_safety_snapshot()
+        if not bool(safety.get("paper_mode_verified")) or bool(safety.get("broker_live_endpoint_allowed")):
+            return {"authorized": False, "status": "UNRESOLVED", "reason": "PAPER_ONLY_BROKER_BOUNDARY_REQUIRED"}
+        if self.alpaca_paper_broker is None or not hasattr(self.alpaca_paper_broker, "submit_paper_order"):
+            return {"authorized": False, "status": "WORKER_UNAVAILABLE", "reason": "ALPACA_PAPER_BROKER_UNAVAILABLE"}
+        return {
+            "authorized": True,
+            "status": "AUTHORIZED_AND_PROVEN",
+            "lane_id": lane,
+            "entry_order_id": entry_order_id,
+            "entry_fill_id": entry_fill_id,
+            "position_owner": owner.get("position_owner"),
+            "exit_policy_owner": owner.get("exit_policy_owner"),
+            "paper_mode_verified": True,
+            "broker_live_endpoint_allowed": False,
+        }
+
+    def authorized_lane_exit_status(self, lane_id: str = "DAY") -> dict[str, Any]:
+        """Read-only worker readiness proof; it never queries or calls a broker."""
+        lane = str(lane_id or "").upper().strip()
+        capital = lane_capital_status(lane)
+        broker_ready = bool(self.alpaca_paper_broker is not None and hasattr(self.alpaca_paper_broker, "submit_paper_order"))
+        if lane not in {"DAY", "CRYPTO"}:
+            status, reason = "UNRESOLVED", "unsupported_lane"
+        elif not bool(capital.get("capital_configured")):
+            status, reason = "UNRESOLVED", str(capital.get("capital_configuration_status") or "CAPITAL_CONFIGURATION_REQUIRED")
+        elif not broker_ready:
+            status, reason = "WORKER_UNAVAILABLE", "ALPACA_PAPER_BROKER_UNAVAILABLE"
+        else:
+            status, reason = "AUTHORIZED_NOT_YET_PROVEN", "awaiting_lane_owned_filled_entry_or_dry_run_trace"
+        return {
+            "lane_id": lane, "status": status, "reason": reason,
+            "worker_available": broker_ready, "submit_order": False, "broker_actions_used": 0,
+            "capital_configuration_status": capital.get("capital_configuration_status"),
+            "learned_exits_enabled": False,
+        }
+
+    def authorized_lane_exit_dry_run(self, lane_id: str = "DAY") -> dict[str, Any]:
+        """Deterministically prove owner/fill gating without a broker request."""
+        lane = str(lane_id or "").upper().strip()
+        fixture = apply_trade_lane_contract(
+            {
+                "symbol": "V2FIXTURE/USD" if lane == "CRYPTO" else "V2FIXTURE",
+                "asset_class": "crypto" if lane == "CRYPTO" else "equity",
+                "paper_entry_horizon_style": "day_trade" if lane == "DAY" else "crypto",
+                "entry_order_id": "fixture-entry-order",
+                "entry_fill_id": "fixture-entry-order:2026-01-01T00:00:00Z",
+            },
+            legacy=False,
+        )
+        fixture["position_owner"] = lane
+        fixture["exit_policy_owner"] = lane
+        fixture["entry_order_id"] = "fixture-entry-order"
+        fixture["entry_fill_id"] = "fixture-entry-order:2026-01-01T00:00:00Z"
+        contract = self._authorized_lane_exit_contract(fixture)
+        return {
+            "lane_id": lane,
+            "proven": bool(contract.get("authorized")),
+            "proof_kind": "deterministic_fixture_no_broker_action",
+            "live_market_evidence_deferred": True,
+            "broker_actions_used": 0,
+            "submit_order": False,
+            "contract": contract,
+        }
+
+    def _submit_authorized_lane_exit(self, open_row: dict[str, Any], broker_position: dict[str, Any], exit_reason: str) -> dict[str, Any]:
+        """Submit an approved lane-owned paper exit and wait for its broker fill."""
+        contract = self._authorized_lane_exit_contract(open_row)
+        if not contract.get("authorized"):
+            return {"ok": False, "submitted": False, "reason": contract.get("reason"), "contract": contract}
+        symbol = str(open_row.get("symbol") or "").upper().strip()
+        position_id = str(open_row.get("position_id") or "").strip()
+        pending, pending_reason = self._position_pending_sell(symbol, position_id)
+        if pending:
+            return {"ok": False, "submitted": False, "reason": pending_reason, "contract": contract}
+        available = _to_float(broker_position.get("qty_available"), _to_float(broker_position.get("qty"), _to_float(open_row.get("quantity"), 0.0)))
+        normalized = _normalize_paper_sell_qty(_to_float(open_row.get("quantity"), available), available, 6)
+        qty = _to_float(normalized.get("normalized_sell_qty"), 0.0)
+        if qty <= 0 or not bool(normalized.get("sell_safe_to_submit")):
+            return {"ok": False, "submitted": False, "reason": "DUST_OR_UNAVAILABLE_QUANTITY", "contract": contract, **normalized}
+        lane = str(contract.get("lane_id") or "")
+        client_order_id = f"astra-{lane.lower()}-exit-{position_id[:18] or symbol[:16]}"[:48]
+        order = {
+            "symbol": symbol, "side": "sell", "type": "market",
+            "time_in_force": "gtc" if lane == "CRYPTO" else "day", "qty": qty,
+            "client_order_id": client_order_id, "paper_only": True,
+            "lane_id": lane, "capital_book_id": open_row.get("capital_book_id"),
+            "position_owner": open_row.get("position_owner"), "exit_policy_owner": open_row.get("exit_policy_owner"),
+            "entry_order_id": contract.get("entry_order_id"), "entry_fill_id": contract.get("entry_fill_id"),
+            "existing_exit_reason": str(exit_reason or ""), "learned_exit_execution": False,
+        }
+        try:
+            result = dict(self.alpaca_paper_broker.submit_paper_order(order) or {})
+        except Exception as exc:
+            return {"ok": False, "submitted": False, "reason": f"lane_exit_submit_exception:{str(exc)[:120]}", "contract": contract}
+        if not bool(result.get("ok")):
+            return {"ok": False, "submitted": False, "reason": str(result.get("error") or "lane_exit_submit_failed")[:160], "contract": contract, **normalized}
+        broker_order = dict(result.get("order") or {})
+        pending_id = str(broker_order.get("id") or client_order_id)
+        pending_map = self._authorized_lane_exit_pending_map()
+        pending_map[pending_id] = {
+            "position_id": position_id, "symbol": symbol, "lane_id": lane,
+            "exit_reason": str(exit_reason or ""), "order_id": str(broker_order.get("id") or ""),
+            "client_order_id": str(broker_order.get("client_order_id") or client_order_id),
+            "submitted_at": _now_iso(), "contract": contract, **normalized,
+        }
+        self._runtime_state["authorized_lane_exit_pending"] = pending_map
+        return {"ok": True, "submitted": True, "pending_order_id": pending_id, "contract": contract, **normalized}
+
+    def _refresh_authorized_lane_exit_pending(self) -> dict[str, Any]:
+        """Close local lifecycle rows only after a broker-filled lane exit."""
+        pending = self._authorized_lane_exit_pending_map()
+        broker = self.alpaca_paper_broker
+        if not pending or broker is None or not hasattr(broker, "order"):
+            return {"checked": 0, "filled": 0, "pending": len(pending), "reason": "no_pending_or_lookup_unavailable"}
+        remaining: dict[str, Any] = {}
+        filled = checked = 0
+        for key, item in pending.items():
+            order_id = str(item.get("order_id") or "").strip()
+            if not order_id:
+                remaining[key] = item
+                continue
+            checked += 1
+            try:
+                lookup = dict(broker.order(order_id) or {})
+            except Exception:
+                remaining[key] = item
+                continue
+            order = dict(lookup.get("order") or {})
+            if not bool(lookup.get("ok")) or str(order.get("status") or "").lower() != "filled":
+                remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": order.get("status")}
+                continue
+            rows = [r for r in self._fetch_open_positions() if str(r.get("position_id") or "") == str(item.get("position_id") or "")]
+            if not rows:
+                continue
+            exit_order_id = str(order.get("id") or order_id)
+            filled_at = str(order.get("filled_at") or "").strip()
+            exit_fill_id = str(order.get("fill_id") or order.get("execution_id") or (f"{exit_order_id}:{filled_at}" if filled_at else "")).strip()
+            if not exit_fill_id:
+                remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": "filled_missing_fill_lineage"}
+                continue
+            latest = {"symbol": item.get("symbol"), "price": _to_float(order.get("filled_avg_price"), 0.0), "timestamp": _now_iso(), "source": "alpaca_paper_order_fill"}
+            closed = self._close_position(rows[0], latest, str(item.get("exit_reason") or "lane_exit"), broker_fill={"exit_order_id": exit_order_id, "exit_fill_id": exit_fill_id, "filled_at": filled_at})
+            filled += 1 if closed.get("ok") else 0
+        self._runtime_state["authorized_lane_exit_pending"] = remaining
+        return {"checked": checked, "filled": filled, "pending": len(remaining)}
+
+    def _lane_forced_exit_reason(self, open_row: dict[str, Any]) -> str:
+        """DAY force-flat is scoped to explicit DAY owners and never CRYPTO."""
+        if str(open_row.get("lane_id") or "").upper().strip() != "DAY":
+            return ""
+        if not bool(open_row.get("same_session_exit_required")) or bool(open_row.get("overnight_allowed")):
+            return ""
+        try:
+            now_et = datetime.now(ZoneInfo("America/New_York"))
+            entry = datetime.fromisoformat(str(open_row.get("entry_timestamp") or "").replace("Z", "+00:00")).astimezone(ZoneInfo("America/New_York"))
+        except Exception:
+            return "day_lane_entry_timestamp_unavailable"
+        if entry.date() < now_et.date():
+            return "day_lane_overnight_breach"
+        if now_et.weekday() >= 5:
+            return "day_lane_weekend_breach"
+        raw = str(os.getenv("ASTRA_DAY_LANE_FORCE_FLAT_TIME_ET", "15:55"))
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        cutoff = int(digits[:4] or "1555")
+        if (now_et.hour * 100 + now_et.minute) >= cutoff:
+            return "day_lane_force_flat"
+        return ""
+
+    def _persist_strict_lane_truth(
+        self,
+        open_row: dict[str, Any],
+        broker_fill: dict[str, Any],
+        *,
+        exit_price: float,
+        return_percent: float,
+        hold_seconds: float,
+        exit_reason: str,
+    ) -> dict[str, Any]:
+        """Append one deduplicated paired-fill truth to the canonical registry.
+
+        This runs only from the worker after Alpaca reports the exit order as
+        filled.  It never reconstructs prices or creates a record on GET.
+        """
+        lane = str(open_row.get("lane_id") or "").upper().strip()
+        entry_order_id = str(open_row.get("entry_order_id") or open_row.get("source_broker_order_id") or "").strip()
+        entry_fill_id = str(open_row.get("entry_fill_id") or "").strip()
+        exit_order_id = str(broker_fill.get("exit_order_id") or "").strip()
+        exit_fill_id = str(broker_fill.get("exit_fill_id") or "").strip()
+        lifecycle_id = str(open_row.get("position_id") or "").strip()
+        record = {
+            "evidence_class": "BROKER_CONFIRMED_COMPLETE",
+            "truth_quality": "BROKER_CONFIRMED_COMPLETE",
+            "broker_source": "alpaca_paper_actual_paired_fills",
+            "source": "paper_autopilot_authorized_lane_exit",
+            "stable_key": f"strict:{entry_fill_id}:{exit_fill_id}",
+            "symbol": str(open_row.get("symbol") or "").upper().strip(),
+            "lane_id": lane,
+            "asset_class": "crypto" if str(open_row.get("asset_type") or "").lower() == "crypto" else "equity",
+            "instrument_type": str(_safe_json_load(open_row.get("row_json")).get("instrument_type") or "EQUITY").upper(),
+            "strategy_cohort": str(_safe_json_load(open_row.get("row_json")).get("strategy_cohort") or ""),
+            "candidate_id": str(open_row.get("source_candidate_id") or _safe_json_load(open_row.get("row_json")).get("candidate_id") or ""),
+            "recommendation_id": str(open_row.get("source_recommendation_id") or _safe_json_load(open_row.get("row_json")).get("recommendation_id") or ""),
+            "selection_id": str(open_row.get("source_decision_id") or _safe_json_load(open_row.get("row_json")).get("selection_id") or ""),
+            "lifecycle_id": lifecycle_id,
+            "entry_order_id": entry_order_id, "entry_fill_id": entry_fill_id,
+            "exit_order_id": exit_order_id, "exit_fill_id": exit_fill_id,
+            "entry_time": str(open_row.get("entry_timestamp") or ""),
+            "exit_time": str(broker_fill.get("filled_at") or _now_iso()),
+            "entry_price": _to_float(open_row.get("entry_price"), 0.0),
+            "exit_price": float(exit_price), "quantity": _to_float(open_row.get("quantity"), 0.0),
+            "realized_return": round(float(return_percent), 6), "hold_duration": round(float(hold_seconds), 3),
+            "return_per_hour": round(float(return_percent) / max(hold_seconds / 3600.0, 1e-9), 6),
+            "exit_reason": str(exit_reason or ""), "paper_mode_verified": True,
+            "official_metric_eligible": False, "created_at": _now_iso(), "updated_at": _now_iso(),
+        }
+        if not strict_broker_truth(record):
+            return {"persisted": False, "reason": "strict_truth_required_fields_missing"}
+        path = os.path.join(os.path.dirname(self.db_path) or "state", "broker_truth_records_v1.json")
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                registry = json.load(handle)
+            registry = registry if isinstance(registry, dict) else {}
+        except Exception:
+            registry = {}
+        records = [dict(row) for row in (registry.get("records") or []) if isinstance(row, dict)]
+        if any(str(row.get("stable_key") or "") == record["stable_key"] for row in records):
+            return {"persisted": False, "deduplicated": True, "stable_key": record["stable_key"]}
+        records.append(record)
+        strict_count = sum(1 for row in records if strict_broker_truth(row))
+        registry.update({
+            "records": records,
+            "broker_truth_records_total": len(records),
+            "strict_broker_confirmed_complete_records": strict_count,
+            # Legacy counters are intentionally not overwritten; their five
+            # incomplete diagnostics remain outside strict official truth.
+            "generated_at": _now_iso(), "paper_only_preserved": True,
+            "behavior_safe_to_apply": False, "broker_behavior_changed": False,
+            "live_trading_changed": False, "provider_calls_used": 0, "llm_calls_used": 0,
+        })
+        temp = f"{path}.tmp-{os.getpid()}"
+        try:
+            with open(temp, "w", encoding="utf-8") as handle:
+                json.dump(registry, handle, indent=2, sort_keys=True)
+            os.replace(temp, path)
+        except Exception as exc:
+            try:
+                if os.path.exists(temp):
+                    os.unlink(temp)
+            except Exception:
+                pass
+            return {"persisted": False, "reason": f"registry_write_failed:{str(exc)[:100]}"}
+        return {"persisted": True, "stable_key": record["stable_key"], "strict_count": strict_count}
 
     def _broker_pending_sell_exists(self, symbol: str) -> tuple[bool, str]:
         broker = self.alpaca_paper_broker
@@ -1669,14 +1974,11 @@ class PaperAutopilotEngine:
         return dedup
 
     def _crypto_paper_activation_status(self) -> dict[str, Any]:
-        requested = str(os.getenv("ASTRA_ENABLE_ALPACA_CRYPTO_PAPER", "1")).strip().lower() in {"1", "true", "yes", "on"}
+        requested = str(os.getenv("ASTRA_ENABLE_ALPACA_CRYPTO_PAPER", "0")).strip().lower() in {"1", "true", "yes", "on"}
         kill_switch = str(os.getenv("ASTRA_ALPACA_CRYPTO_PAPER_KILL_SWITCH", "0")).strip().lower() in {"1", "true", "yes", "on"}
-        capital_raw = str(os.getenv("ASTRA_CRYPTO_PAPER_CAPITAL_LIMIT", "")).strip()
-        try:
-            capital_limit = float(capital_raw) if capital_raw else None
-        except (TypeError, ValueError):
-            capital_limit = None
-        capital_configured = bool(capital_limit and capital_limit > 0)
+        capital = lane_capital_status("CRYPTO")
+        capital_limit = capital.get("configured_limit")
+        capital_configured = bool(capital.get("capital_configured"))
         broker = self.alpaca_paper_broker
         capability = {}
         if broker is not None and hasattr(broker, "crypto_capability_status"):
@@ -1702,11 +2004,13 @@ class PaperAutopilotEngine:
             "capital_book_id": "paper_crypto_separate",
             "capital_configured": capital_configured,
             "capital_limit": capital_limit,
+            "approved_capital_ceiling": capital.get("approved_ceiling"),
+            "capital_configuration_status": capital.get("capital_configuration_status"),
             "capability": capability,
             "day_trade_capacity": 6,
             "short_swing_capacity": 2,
             "scalp_broker_capacity": 0,
-            "exact_blocker": "" if paper_ready else "CRYPTO_CAPITAL_CONFIGURATION_REQUIRED" if not capital_configured else str(capability.get("exact_blocker") or "crypto_runtime_capability_not_validated"),
+            "exact_blocker": "" if paper_ready else str(capital.get("capital_configuration_status") or "CRYPTO_CAPITAL_CONFIGURATION_REQUIRED") if not capital_configured else str(capability.get("exact_blocker") or "crypto_runtime_capability_not_validated"),
         }
 
     def _crypto_execution_data_gate(self, row: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
@@ -3074,6 +3378,24 @@ class PaperAutopilotEngine:
             or entry_row.get("client_order_id")
             or ""
         ).strip()
+        # Alpaca may expose executions through the order's filled timestamp
+        # rather than a separate execution object.  The derived identifier is
+        # retained only when the broker reports a filled order; pending orders
+        # never gain a fill ID.
+        entry_filled_at = str(broker_order_payload.get("filled_at") or "").strip()
+        entry_fill_id = str(
+            broker_order_payload.get("fill_id")
+            or broker_order_payload.get("execution_id")
+            or (f"{source_broker_order_id}:{entry_filled_at}" if source_broker_order_id and entry_filled_at else "")
+        ).strip()
+        entry_context.update({
+            "lane_id": entry_row.get("lane_id"),
+            "capital_book_id": entry_row.get("capital_book_id"),
+            "position_owner": entry_row.get("position_owner"),
+            "exit_policy_owner": entry_row.get("exit_policy_owner"),
+            "entry_order_id": source_broker_order_id,
+            "entry_fill_id": entry_fill_id,
+        })
         canonical_horizon = str(
             entry_context.get("paper_entry_horizon_style")
             or entry_context.get("trade_horizon_style")
@@ -3120,6 +3442,23 @@ class PaperAutopilotEngine:
                     _safe_json(entry_row),
                     now_iso,
                     now_iso,
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE paper_positions
+                SET lane_id=?, capital_book_id=?, position_owner=?, exit_policy_owner=?,
+                    entry_order_id=?, entry_fill_id=?
+                WHERE position_id=?
+                """,
+                (
+                    str(entry_row.get("lane_id") or ""),
+                    str(entry_row.get("capital_book_id") or ""),
+                    str(entry_row.get("position_owner") or ""),
+                    str(entry_row.get("exit_policy_owner") or ""),
+                    source_broker_order_id,
+                    entry_fill_id,
+                    pid,
                 ),
             )
             conn.commit()
@@ -3206,12 +3545,29 @@ class PaperAutopilotEngine:
             "latest_quote_preflight_used": bool(submit_row.get("latest_quote_preflight_used", False)),
         }
 
-    def _close_position(self, open_row: dict[str, Any], latest_row: dict[str, Any], exit_reason: str) -> dict[str, Any]:
+    def _close_position(
+        self,
+        open_row: dict[str, Any],
+        latest_row: dict[str, Any],
+        exit_reason: str,
+        *,
+        broker_fill: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         pid = str(open_row.get("position_id") or "").strip()
         symbol = str(open_row.get("symbol") or "").upper().strip()
         asset_type = _norm_asset(open_row.get("asset_type") or "stock")
         if not pid or not symbol:
             return {"ok": False, "error": "position_row_invalid"}
+
+        lane = str(open_row.get("lane_id") or "").upper().strip()
+        # A DAY/CRYPTO lifecycle is not closed locally before the authorized
+        # paper exit has a real broker fill.  SWING retains its existing path.
+        if lane in {"DAY", "CRYPTO"}:
+            contract = self._authorized_lane_exit_contract(open_row)
+            if not contract.get("authorized"):
+                return {"ok": False, "error": str(contract.get("reason") or "lane_exit_not_authorized"), "contract": contract}
+            if not isinstance(broker_fill, dict) or not str(broker_fill.get("exit_order_id") or "").strip() or not str(broker_fill.get("exit_fill_id") or "").strip():
+                return {"ok": False, "error": "broker_exit_fill_required_before_lane_lifecycle_close", "contract": contract}
 
         entry_price = _to_float(open_row.get("entry_price"), 0.0)
         now_iso = _now_iso()
@@ -3269,6 +3625,11 @@ class PaperAutopilotEngine:
                     pid,
                 ),
             )
+            if lane in {"DAY", "CRYPTO"} and isinstance(broker_fill, dict):
+                conn.execute(
+                    "UPDATE paper_positions SET exit_order_id=?, exit_fill_id=? WHERE position_id=?",
+                    (str(broker_fill.get("exit_order_id") or ""), str(broker_fill.get("exit_fill_id") or ""), pid),
+                )
             conn.commit()
 
         if self._position_tracker is not None:
@@ -3290,6 +3651,11 @@ class PaperAutopilotEngine:
                         "max_favorable_excursion_pct": _to_float(notes.get("max_favorable_excursion"), max(ret, 0.0)),
                         "max_adverse_excursion_pct": _to_float(notes.get("max_adverse_excursion"), min(ret, 0.0)),
                         "exit_reason": str(exit_reason or ""),
+                        "exit_order_id": str((broker_fill or {}).get("exit_order_id") or ""),
+                        "exit_fill_id": str((broker_fill or {}).get("exit_fill_id") or ""),
+                        "entry_order_id": str(open_row.get("entry_order_id") or open_row.get("source_broker_order_id") or ""),
+                        "entry_fill_id": str(open_row.get("entry_fill_id") or ""),
+                        "lane_id": lane,
                         "outcome_label": "winner" if ret > 0 else ("loser" if ret < 0 else "flat"),
                         "source_endpoint": "paper_autopilot",
                     },
@@ -3391,6 +3757,17 @@ class PaperAutopilotEngine:
         close_map[symbol] = time.time()
         self._runtime_state["last_close_by_symbol"] = close_map
 
+        strict_truth_result = {}
+        if lane in {"DAY", "CRYPTO"} and isinstance(broker_fill, dict):
+            strict_truth_result = self._persist_strict_lane_truth(
+                open_row,
+                broker_fill,
+                exit_price=exit_price,
+                return_percent=ret,
+                hold_seconds=hold_seconds,
+                exit_reason=exit_reason,
+            )
+
         return {
             "ok": True,
             "position_id": pid,
@@ -3398,6 +3775,9 @@ class PaperAutopilotEngine:
             "return_percent": round(ret, 4),
             "exit_reason": exit_reason,
             "hold_seconds": round(hold_seconds, 2),
+            "lane_id": lane,
+            "strict_exit_fill_linked": bool(lane in {"DAY", "CRYPTO"} and broker_fill),
+            "strict_broker_truth_persistence": strict_truth_result,
         }
 
     def _evaluate_exit(self, open_row: dict[str, Any], latest_row: dict[str, Any]) -> tuple[bool, str]:
@@ -3771,6 +4151,7 @@ class PaperAutopilotEngine:
             decision_trace: list[dict[str, Any]] = []
             safety = self._alpaca_safety_snapshot()
             learned_exit_refresh = self._refresh_learned_exit_pending_sells()
+            authorized_lane_exit_refresh = self._refresh_authorized_lane_exit_pending()
             open_rows_initial = self._fetch_open_positions()
             internal_open_syms = {str(r.get("symbol") or "").upper().strip() for r in open_rows_initial}
             broker_snapshot = self._broker_open_symbols_snapshot()
@@ -3860,10 +4241,21 @@ class PaperAutopilotEngine:
                         continue
 
                 should_close, reason = self._evaluate_exit(row, latest)
+                forced_lane_reason = self._lane_forced_exit_reason(row)
+                if forced_lane_reason:
+                    should_close, reason = True, forced_lane_reason
                 if should_close and hold_seconds >= float(min_hold):
-                    result = self._close_position(row, latest, reason)
+                    lane = str(row.get("lane_id") or "").upper().strip()
+                    if lane in {"DAY", "CRYPTO"}:
+                        result = self._submit_authorized_lane_exit(
+                            row,
+                            dict(broker_position_by_symbol.get(symbol) or {}),
+                            reason,
+                        )
+                    else:
+                        result = self._close_position(row, latest, reason)
                     if result.get("ok"):
-                        closed += 1
+                        closed += 1 if lane not in {"DAY", "CRYPTO"} else 0
                         state = self._learned_exit_daily_state()
                         state["baseline_exits"] = _to_int(state.get("baseline_exits"), 0) + 1
                         self._update_learned_exit_daily_state(state)
@@ -4345,6 +4737,7 @@ class PaperAutopilotEngine:
                 "selected_candidates": int(selected_count),
                 "final_blocker_reason": str(final_blocker_reason)[:180],
                 "last_alpaca_error_sanitized": str(last_alpaca_error)[:180],
+                "authorized_lane_exit_refresh": authorized_lane_exit_refresh,
                 "horizon_assignment_used": bool(horizon_assignment_used and selected_count > 0),
                 "horizon_assignment_confidence": round(horizon_assignment_confidence, 2),
                 "horizon_execution_candidate": dict(horizon_execution_candidate),
