@@ -635,6 +635,56 @@ def _expected_hold_minutes(horizon: str) -> float:
     return 0.0
 
 
+def _stable_candidate_identity(row: dict[str, Any]) -> dict[str, str]:
+    """Create deterministic pre-trade lineage from the existing snapshot.
+
+    This is intentionally metadata-only: the upstream candidate still owns its
+    score and eligibility.  The seed uses source snapshot context rather than a
+    request timestamp, so repeated diagnostics cannot regenerate identity.
+    """
+    r = dict(row or {})
+    symbol = str(r.get("symbol") or r.get("ticker") or "").upper().strip()
+    source = str(
+        r.get("candidate_source")
+        or r.get("paper_autopilot_candidate_source")
+        or r.get("top_buys_candidate_source")
+        or "top_buys_runtime_snapshot"
+    ).strip()
+    generated_at = str(
+        r.get("candidate_generated_at")
+        or r.get("source_snapshot_generated_at")
+        or r.get("generated_at")
+        or r.get("timestamp")
+        or r.get("recommendation_timestamp")
+        or r.get("last_updated_utc")
+        or ""
+    ).strip()
+    snapshot_id = str(r.get("source_snapshot_id") or r.get("ranking_run_id") or generated_at or "snapshot_unknown").strip()
+    lane = str(r.get("lane_id") or "").upper().strip()
+    cohort = str(r.get("strategy_cohort") or "").strip()
+    horizon = str(r.get("intended_horizon") or r.get("paper_entry_horizon_style") or "").strip()
+    rank = str(r.get("rank_position") or r.get("rank") or "").strip()
+    recommendation_seed = "|".join((source, snapshot_id, symbol, rank, cohort, horizon))
+    recommendation_id = str(r.get("recommendation_id") or r.get("canonical_recommendation_id") or "").strip()
+    if not recommendation_id and symbol:
+        recommendation_id = "rec-" + hashlib.sha256(recommendation_seed.encode("utf-8")).hexdigest()[:20]
+    candidate_seed = "|".join((lane, recommendation_id, symbol, snapshot_id, cohort, horizon))
+    candidate_id = str(r.get("candidate_id") or r.get("source_candidate_id") or r.get("decision_id") or "").strip()
+    if not candidate_id and symbol:
+        candidate_id = "cand-" + hashlib.sha256(candidate_seed.encode("utf-8")).hexdigest()[:20]
+    selection_id = str(r.get("selection_id") or "").strip()
+    if not selection_id and candidate_id:
+        selection_id = "sel-" + hashlib.sha256((candidate_id + "|paper_autopilot").encode("utf-8")).hexdigest()[:20]
+    return {
+        "candidate_id": candidate_id,
+        "recommendation_id": recommendation_id,
+        "candidate_source": source,
+        "candidate_generated_at": generated_at,
+        "source_snapshot_id": snapshot_id,
+        "selection_id": selection_id,
+    }
+
+
 def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
     r = dict(row or {})
     score, source = _entry_bridge_quality(r)
@@ -681,7 +731,12 @@ def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
     # Preserve a canonical lane identity before the existing order path.  This
     # only records context; the existing ranking and paper safety gates remain
     # the sole owners of eligibility and submission.
+    identity_seed = dict(r)
     r = apply_trade_lane_contract(r, legacy=False)
+    # Use the pre-contract snapshot timestamp, not the contract's diagnostic
+    # clock fallback, so a GET cannot create a new candidate identity.
+    identity_seed.update({key: r.get(key) for key in ("lane_id", "strategy_cohort", "intended_horizon")})
+    r.update({key: value for key, value in _stable_candidate_identity(identity_seed).items() if value})
     r["paper_entry_eligibility_bridge_v1"] = True
     return r
 
@@ -2772,6 +2827,23 @@ class PaperAutopilotEngine:
         trace = {
             "symbol": symbol,
             "asset_type": asset,
+            "candidate_id": str(r.get("candidate_id") or ""),
+            "recommendation_id": str(r.get("recommendation_id") or ""),
+            "selection_id": str(r.get("selection_id") or ""),
+            "candidate_source": str(r.get("candidate_source") or ""),
+            "candidate_generated_at": str(r.get("candidate_generated_at") or r.get("decision_timestamp") or ""),
+            "source_snapshot_id": str(r.get("source_snapshot_id") or ""),
+            "operational_probe_only": bool(r.get("operational_probe_only", False)),
+            "operational_source_rejection": str(r.get("operational_source_rejection") or ""),
+            "lane_id": str(r.get("lane_id") or ""),
+            "asset_class": str(r.get("asset_class") or ""),
+            "instrument_type": str(r.get("instrument_type") or ""),
+            "trade_style": str(r.get("trade_style") or ""),
+            "strategy_cohort": str(r.get("strategy_cohort") or ""),
+            "intended_horizon": str(r.get("intended_horizon") or ""),
+            "capital_book_id": str(r.get("capital_book_id") or ""),
+            "position_owner": str(r.get("position_owner") or ""),
+            "exit_policy_owner": str(r.get("exit_policy_owner") or ""),
             "action": str(r.get("action") or r.get("prediction") or ""),
             "readiness": str(r.get("readiness_label") or r.get("paper_ready_status") or r.get("buy_eligibility") or ""),
             "assigned_horizon": str(r.get("paper_entry_horizon_style") or r.get("trade_horizon_style") or r.get("best_horizon_style") or ""),
@@ -2873,6 +2945,10 @@ class PaperAutopilotEngine:
             "broad_universe_rejection_reason": str(r.get("broad_universe_rejection_reason") or ""),
             "selected": False,
             "order_attempted": False,
+            "order_ready": False,
+            "submit_order": False,
+            "broker_actions_used": 0,
+            "generated_at": _now_iso(),
         }
         return trace, bool(allowed), str(reason), dict(gate_meta or {})
 
@@ -4902,6 +4978,86 @@ class PaperAutopilotEngine:
             self._save_state_file()
             return out
 
+    def operational_dry_run(self, candidate_rows: list[dict[str, Any]], max_candidates: int = 30) -> dict[str, Any]:
+        """Evaluate the final PaperAutopilot boundary without broker activity.
+
+        This compact path is the runtime owner for multi-lane handoff proof. It
+        intentionally skips the broad diagnostic fan-out in `execution_trace`,
+        uses the caller's cached candidate snapshot, and returns a trace for
+        every evaluated candidate including rejections and market-session
+        blocks. The real worker remains the only order-submission owner.
+        """
+        candidates = [_normalize_paper_entry_bridge(row) for row in candidate_rows if isinstance(row, dict)]
+        limit = max(1, min(30, int(max_candidates or 30)))
+        capacities = self._current_execution_capacities()
+        open_syms = set(capacities.get("open_symbols") or set())
+        stock_capacity = int(capacities.get("stock_capacity", 0))
+        crypto_capacity = int(capacities.get("crypto_capacity", 0))
+        total_capacity = int(capacities.get("total_capacity", 0))
+        selected = 0
+        eligible = 0
+        rows: list[dict[str, Any]] = []
+        blockers: dict[str, int] = {}
+        for row in candidates[:limit]:
+            trace, allowed, reason, _meta = self._candidate_trace_row(
+                row,
+                open_syms=open_syms,
+                stock_capacity=stock_capacity,
+                crypto_capacity=crypto_capacity,
+                total_capacity=total_capacity,
+                selected_so_far=selected,
+                internal_open_syms=open_syms,
+                broker_open_syms=set(),
+                broker_reconciliation_active=False,
+            )
+            trace["dry_run_only"] = True
+            trace["submit_order"] = False
+            trace["broker_actions_used"] = 0
+            trace["broker_reconciliation_deferred_to_execution"] = True
+            if allowed:
+                eligible += 1
+                if selected < self.max_new_positions_per_cycle and total_capacity > 0:
+                    selected += 1
+                    trace["selected"] = True
+                    trace["selection_reason"] = "existing_paper_autopilot_gates_passed"
+                else:
+                    trace["selected"] = False
+                    trace["selection_reason"] = "paper_autopilot_capacity_or_cycle_limit"
+            else:
+                trace["selected"] = False
+                trace["selection_reason"] = str(reason)
+            trace["order_ready"] = bool(
+                trace.get("selected")
+                and trace.get("paper_order_submission_allowed")
+                and not trace.get("requires_open_confirmation")
+            )
+            trace["order_readiness_reason"] = (
+                "ready_for_existing_paper_order_boundary"
+                if trace["order_ready"]
+                else "BLOCKED_MARKET_SESSION"
+                if trace.get("selected") and not trace.get("paper_order_submission_allowed")
+                else str(trace.get("open_confirmation_reason") or reason or "not_selected")
+            )
+            if not trace["order_ready"]:
+                blockers[trace["order_readiness_reason"]] = blockers.get(trace["order_readiness_reason"], 0) + 1
+            rows.append(trace)
+        return {
+            "trace_owner": "PaperAutopilot.operational_dry_run",
+            "dry_run_only": True,
+            "submit_order": False,
+            "broker_actions_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            "full_history_scan_count": 0,
+            "candidates_seen": len(rows),
+            "eligible_candidates": eligible,
+            "selected_candidates": selected,
+            "order_ready_candidates": sum(1 for row in rows if row.get("order_ready")),
+            "final_blocker_reason": max(blockers, key=blockers.get) if blockers else "order_ready" if rows else "NO_CURRENT_SIGNAL",
+            "per_candidate_decision_trace": rows,
+            "generated_at": _now_iso(),
+        }
+
     def execution_trace(self, max_candidates: int = 12) -> dict[str, Any]:
         status = self.status()
         last_trace = dict(self._runtime_state.get("last_execution_trace") or {})
@@ -5092,6 +5248,18 @@ class PaperAutopilotEngine:
                         trace["selected"] = False
                 else:
                     trace["selected"] = False
+            trace["order_ready"] = bool(
+                trace.get("selected")
+                and trace.get("paper_order_submission_allowed")
+                and not trace.get("requires_open_confirmation")
+            )
+            trace["order_readiness_reason"] = (
+                "ready_for_existing_paper_order_boundary"
+                if trace["order_ready"]
+                else str(trace.get("open_confirmation_reason") or trace.get("decision_reason") or "not_selected")
+            )
+            trace["submit_order"] = False
+            trace["broker_actions_used"] = 0
             decision_rows.append(trace)
         final_blocker = str(last_trace.get("final_blocker_reason") or "")
         if not final_blocker:

@@ -44,31 +44,48 @@ def _is_complete_broker_truth(row: Mapping[str, Any]) -> bool:
 def _is_current(candidate: Mapping[str, Any], freshness: str) -> bool:
     if freshness != "CURRENT":
         return False
+    if bool(candidate.get("operational_probe_only")):
+        return False
     evidence = _text(candidate.get("evidence_class") or candidate.get("truth_quality")).upper()
     return evidence not in {"MEDIUM_CONFIDENCE_RECONSTRUCTED", "AMBIGUOUS_REJECTED", "SHADOW", "REPLAY"}
 
 
 def _stage_row(candidate: Mapping[str, Any], trace: Mapping[str, Any], *, current: bool, pilot_enabled: bool, capital_configured: bool) -> dict[str, Any]:
     row = apply_trade_lane_contract(candidate, legacy=False)
+    # The execution trace is the authoritative handoff after candidate
+    # decoration.  Carry its stable lineage back into this bounded status view
+    # when the source snapshot predates the identity repair.
+    for key in (
+        "candidate_id", "recommendation_id", "selection_id", "candidate_source",
+        "candidate_generated_at", "source_snapshot_id", "position_owner", "exit_policy_owner",
+    ):
+        if not row.get(key) and trace.get(key):
+            row[key] = trace.get(key)
     symbol = _text(row.get("symbol") or row.get("ticker")).upper()
     selected = bool(trace.get("selected"))
     # A PaperAutopilot selection occurs only after its own eligibility gates;
     # traces from older cycles do not always repeat an explicit allowed flag.
-    allowed = bool(trace.get("allowed")) or selected or _text(trace.get("reason")).lower() in {"paper_eligible", "selected"}
+    allowed = bool(trace.get("allowed") or trace.get("eligible")) or selected or _text(trace.get("reason")).lower() in {"paper_eligible", "selected"}
     session = dict(trace.get("session_confirmation") or trace.get("session_diag") or {})
     order_ready = bool(trace.get("order_ready")) or bool(
         selected and session.get("paper_order_submission_allowed")
     )
-    blocker = _text(trace.get("reason") or trace.get("exact_blocker") or trace.get("final_blocker_reason"))
+    blocker = _text(
+        trace.get("order_readiness_reason")
+        or trace.get("decision_reason")
+        or trace.get("reason")
+        or trace.get("exact_blocker")
+        or trace.get("final_blocker_reason")
+    )
     if not current:
         blocker = "BLOCKED_STALE_CANDIDATE"
     elif not capital_configured and row.get("lane_id") in {LANE_DAY, LANE_CRYPTO}:
         blocker = "BLOCKED_CAPITAL"
     elif not pilot_enabled and row.get("lane_id") == LANE_DAY:
         blocker = "BLOCKED_PILOT_DISABLED"
-    elif not blocker and not allowed:
+    elif not trace and not blocker and not allowed:
         blocker = "BLOCKED_PIPELINE_UNWIRED"
-    stage = "ORDER_READY" if order_ready else "SELECTED" if selected else "ELIGIBLE" if allowed else "CLASSIFIED"
+    stage = "ORDER_READY" if order_ready else "SELECTED" if selected else "ELIGIBLE" if allowed else "REJECTED_BY_EXISTING_GATE" if trace else "CLASSIFIED"
     if blocker:
         stage = blocker
     return {
@@ -76,8 +93,10 @@ def _stage_row(candidate: Mapping[str, Any], trace: Mapping[str, Any], *, curren
         "instrument_type": row.get("instrument_type"), "trade_style": row.get("trade_style"),
         "strategy_cohort": row.get("strategy_cohort"), "intended_horizon": row.get("intended_horizon"),
         "candidate_id": _text(row.get("candidate_id")), "recommendation_id": _text(row.get("recommendation_id")),
+        "selection_id": _text(row.get("selection_id") or trace.get("selection_id")),
         "symbol": symbol, "candidate_source": _text(row.get("candidate_source") or row.get("source")),
-        "candidate_generated_at": _text(row.get("decision_timestamp")),
+        "candidate_generated_at": _text(row.get("candidate_generated_at") or trace.get("candidate_generated_at") or row.get("decision_timestamp")),
+        "source_snapshot_id": _text(row.get("source_snapshot_id") or trace.get("source_snapshot_id")),
         "eligibility_state": "ELIGIBLE" if allowed else "NOT_ELIGIBLE",
         "eligibility_reason": _text(trace.get("reason")),
         "allocation_state": _text(row.get("allocation_state")) or "DIAGNOSTIC_ONLY",
@@ -137,21 +156,31 @@ def build_multilane_operational_status(
             capital,
             session=source_metadata.get("market_session_status"),
         )
+        lane_trace_rows = [row for row in trace_rows if _text(row.get("lane_id")).upper() == lane]
         throughput = adaptive_throughput(lane, truths)
         if lane == LANE_CRYPTO and not capital.get("capital_configured") and not crypto_lane.get("mode"):
             status = "CAPITAL_CONFIGURATION_REQUIRED"
         elif lane == LANE_CRYPTO and not enabled:
-            status = "SHADOW_ONLY" if _text(crypto_lane.get("lane_state")).upper() == "LANE_SHADOW_ONLY" or crypto_lane.get("mode") else "BROKER_CAPABILITY_UNAVAILABLE"
+            status = (
+                "SHADOW_ONLY"
+                if crypto_lane.get("mode") or _text(crypto_lane.get("lane_state")).upper() == "LANE_SHADOW_ONLY"
+                else
+                "LANE_DISABLED"
+                if crypto_lane.get("paper_account_crypto_support") or crypto_lane.get("broker_capability_available")
+                else "BROKER_CAPABILITY_BLOCKED"
+            )
         elif lane == LANE_DAY and not capital.get("capital_configured"):
             status = str(capital.get("capital_configuration_status") or "CAPITAL_CONFIGURATION_REQUIRED")
         elif lane == LANE_DAY and not enabled:
             status = "PILOT_DISABLED"
+        elif handoff.get("market_session_trace_proven"):
+            status = "MARKET_CLOSED"
         elif freshness != "CURRENT":
             status = "STALE_CANDIDATES" if freshness == "STALE" else "NO_CURRENT_SIGNAL"
         elif any(row.get("order_readiness_state") == "ORDER_READY" for row in rows):
             status = "ACTIVE" if enabled and handoff.get("proven") else "READY_FOR_ACTIVATION"
         else:
-            status = "BLOCKED" if blockers else "NO_CURRENT_SIGNAL"
+            status = "REJECTED_BY_EXISTING_GATE" if lane_trace_rows else "BLOCKED" if blockers else "NO_CURRENT_SIGNAL"
         lane_payloads[lane.lower()] = {
             "lane_id": lane, "lane_enabled": enabled, "operational_status": status,
             "capital_configured": bool(capital.get("capital_configured")),
@@ -182,7 +211,8 @@ def build_multilane_operational_status(
             "candidate_snapshot_age_seconds": freshness_meta.get("candidate_snapshot_age_seconds"),
             "candidate_snapshot_max_age_seconds": freshness_meta.get("candidate_snapshot_max_age_seconds"),
             "candidate_snapshot_freshness": freshness,
-            "autopilot_handoff_status": "DRY_RUN_PROVEN" if handoff.get("proven") else "HANDOFF_NOT_PROVEN",
+            "authoritative_trace_count": len(lane_trace_rows),
+            "autopilot_handoff_status": "MARKET_SESSION_TRACE_PROVEN" if handoff.get("market_session_trace_proven") else "DRY_RUN_PROVEN" if handoff.get("proven") else "TRACE_EXISTS_REJECTED" if lane_trace_rows else "HANDOFF_NOT_PROVEN",
             "autopilot_handoff_proof": handoff,
             "position_owner_status": "PASS" if all(row.get("position_owner") == lane for row in lane_positions) else "LANE_CONTRACT_REQUIRED",
             "exit_owner_status": "PASS" if all(row.get("exit_policy_owner") == lane for row in lane_positions) else "LANE_CONTRACT_REQUIRED",
@@ -192,10 +222,18 @@ def build_multilane_operational_status(
     etf_rows = [row for row in current if row.get("instrument_type") == "ETF"]
     etf_positions = [row for row in positions if row.get("instrument_type") == "ETF"]
     etf_truths = [row for row in truths if row.get("instrument_type") == "ETF"]
+    all_lanes_enabled = all(bool(lane_payloads[key].get("lane_enabled")) for key in lane_payloads)
+    operational_status = (
+        "ASTRA_MULTILANE_OPERATIONAL_ENABLED"
+        if all_lanes_enabled and all(lane_payloads[key]["operational_status"] != "PIPELINE_UNWIRED" for key in lane_payloads)
+        else "ASTRA_MULTILANE_OPERATIONAL_PASS_WITH_HUMAN_CONFIGURATION_REQUIRED"
+        if all(lane_payloads[key]["operational_status"] not in {"BROKER_CAPABILITY_UNAVAILABLE", "BROKER_CAPABILITY_BLOCKED", "PIPELINE_UNWIRED"} for key in lane_payloads)
+        else "ASTRA_MULTILANE_OPERATIONAL_BLOCKED"
+    )
     return {
         "endpoint": "/api/multilane_paper_operational_status_v1",
         "suite": "Astra Multi-Lane Paper Trading Operational Completion V1",
-        "status": "ASTRA_MULTILANE_OPERATIONAL_PASS_WITH_HUMAN_CONFIGURATION_REQUIRED" if all(lane_payloads[key]["operational_status"] not in {"BROKER_CAPABILITY_UNAVAILABLE", "PIPELINE_UNWIRED"} for key in lane_payloads) else "ASTRA_MULTILANE_OPERATIONAL_BLOCKED",
+        "status": operational_status,
         "authoritative_owners": {
             "candidate_generation": "existing ranking/top-buys cache", "lane_classification": "AstraTradeLaneRegistryV1",
             "allocation": "PaperOpportunityAllocationEngineV1", "selection": "PaperAutopilot",

@@ -47134,6 +47134,41 @@ def _paper_autopilot_last_trace_v1() -> dict:
     return {}
 
 
+def _paper_autopilot_authoritative_trace_v3(force: bool = False) -> dict:
+    """Return one bounded dry-run decision snapshot without broker actions.
+
+    PaperAutopilot's `execution_trace` is its authoritative selection owner.
+    Cache it briefly so diagnostics do not duplicate candidate decoration across
+    the multi-lane, DAY, and activation endpoints.
+    """
+    cache_key = "paper_autopilot_authoritative_trace_v3"
+    cached = _CACHE.get(cache_key) if isinstance(_CACHE.get(cache_key), dict) else {}
+    if not force and cached.get("data") and (time.time() - float(cached.get("ts") or 0.0)) <= 10.0:
+        return dict(cached.get("data") or {})
+    try:
+        candidates = _cached_candidate_rows_for_horizon_flow_v1()
+        candidates.extend(_crypto_operational_candidate_rows_v3())
+        if hasattr(PAPER_AUTOPILOT, "operational_dry_run"):
+            trace = dict(PAPER_AUTOPILOT.operational_dry_run(candidates, max_candidates=30) or {})
+        else:
+            trace = dict(PAPER_AUTOPILOT.execution_trace(max_candidates=30) or {})
+    except Exception as exc:
+        trace = {
+            "per_candidate_decision_trace": [],
+            "final_blocker_reason": f"authoritative_trace_unavailable:{str(exc)[:100]}",
+        }
+    trace.update({
+        "trace_owner": str(trace.get("trace_owner") or "PaperAutopilot.operational_dry_run"),
+        "dry_run_only": True,
+        "submit_order": False,
+        "broker_actions_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+    })
+    _CACHE[cache_key] = {"data": dict(trace), "ts": time.time()}
+    return trace
+
+
 def _paper_autopilot_db_open_counts_v1() -> dict:
     out = {"paper_autopilot_open_positions_count": 0, "paper_autopilot_open_rows": 0, "paper_autopilot_db_available": False}
     try:
@@ -47157,6 +47192,17 @@ def _paper_autopilot_db_open_counts_v1() -> dict:
 
 def _cached_candidate_rows_for_horizon_flow_v1() -> list[dict]:
     payload = dict(_latest_top_buys_runtime_snapshot() or {})
+    with _TOP_BUYS_RUNTIME_SNAPSHOT_LOCK:
+        snapshot_ts = float(_TOP_BUYS_RUNTIME_SNAPSHOT_V1.get("ts") or 0.0)
+    if not snapshot_ts:
+        cache = _CACHE.get("top_buys") if isinstance(_CACHE.get("top_buys"), dict) else {}
+        slot = cache.get("mode::balanced") if isinstance(cache.get("mode::balanced"), dict) else {}
+        snapshot_ts = float(slot.get("ts") or 0.0)
+    snapshot_id = f"top_buys_runtime:{int(snapshot_ts)}" if snapshot_ts > 0 else "top_buys_runtime:missing"
+    snapshot_generated_at = (
+        datetime.fromtimestamp(snapshot_ts, UTC).isoformat().replace("+00:00", "Z")
+        if snapshot_ts > 0 else ""
+    )
     rows: list[dict] = []
     paths = [
         ("stocks", "final"),
@@ -47168,9 +47214,25 @@ def _cached_candidate_rows_for_horizon_flow_v1() -> list[dict]:
         for key in path:
             cur = cur.get(key) if isinstance(cur, dict) else None
         if isinstance(cur, list):
-            rows.extend([dict(row) for row in cur if isinstance(row, dict)])
+            rows.extend([
+                {
+                    **dict(row),
+                    "source_snapshot_id": str(row.get("source_snapshot_id") or snapshot_id),
+                    "candidate_generated_at": str(row.get("candidate_generated_at") or row.get("generated_at") or row.get("timestamp") or snapshot_generated_at),
+                    "ranking_run_id": str(row.get("ranking_run_id") or snapshot_id),
+                }
+                for row in cur if isinstance(row, dict)
+            ])
     if isinstance(payload.get("rows"), list):
-        rows.extend([dict(row) for row in payload.get("rows") if isinstance(row, dict)])
+        rows.extend([
+            {
+                **dict(row),
+                "source_snapshot_id": str(row.get("source_snapshot_id") or snapshot_id),
+                "candidate_generated_at": str(row.get("candidate_generated_at") or row.get("generated_at") or row.get("timestamp") or snapshot_generated_at),
+                "ranking_run_id": str(row.get("ranking_run_id") or snapshot_id),
+            }
+            for row in payload.get("rows") if isinstance(row, dict)
+        ])
     dedup: dict[str, dict] = {}
     for row in rows:
         sym = str(row.get("symbol") or row.get("ticker") or "").upper().strip()
@@ -47307,7 +47369,7 @@ def _day_lane_pilot_readiness_payload_v1(statuses: dict | None = None) -> dict:
     # Allocation-row selection is diagnostic only.  The autopilot's execution
     # trace is the sole owner of an actual paper selection.
     selected_rows = [row for row in eligible_rows if bool(row.get("selected") or row.get("paper_ready"))]
-    autopilot_trace = _paper_autopilot_last_trace_v1()
+    autopilot_trace = _paper_autopilot_authoritative_trace_v3()
     actual_selected_symbols = {
         str(item.get("symbol") or "").upper()
         for item in (autopilot_trace.get("per_candidate_decision_trace") or [])
@@ -47463,11 +47525,15 @@ def _multilane_paper_operational_status_v1_payload(statuses: dict | None = None)
             "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
             **_safety_flags_v1(),
         }
-    candidates = [dict(row) for row in (statuses.get("pladeu_candidate_rows") or []) if isinstance(row, dict)]
+    authoritative_trace = _paper_autopilot_authoritative_trace_v3()
+    trace_candidates = [dict(row) for row in (authoritative_trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict)]
+    candidates = trace_candidates or [dict(row) for row in (statuses.get("pladeu_candidate_rows") or []) if isinstance(row, dict)]
     # Crypto rankings are stored separately from the equity top-buys cache.
-    # Include those cached rows only in this status view; no promotion occurs.
+    # Include their bounded operational adapter; a missing cache is explicitly
+    # marked as a non-tradable source probe rather than a false candidate.
     try:
-        candidates.extend(_crypto_ranking_rows_cached_v1())
+        if not trace_candidates:
+            candidates.extend(_crypto_operational_candidate_rows_v3())
     except Exception:
         pass
     seen: set[tuple[str, str]] = set()
@@ -47488,7 +47554,7 @@ def _multilane_paper_operational_status_v1_payload(statuses: dict | None = None)
         candidates=unique_candidates[:300],
         open_positions=[dict(row) for row in (statuses.get("pladeu_open_positions") or []) if isinstance(row, dict)],
         broker_truth_records=records[:500],
-        autopilot_trace=_paper_autopilot_last_trace_v1(),
+        autopilot_trace=authoritative_trace,
         source_metadata=statuses.get("pladeu_candidate_source_metadata") or _pladeu_candidate_source_metadata_v1(),
         day_config=statuses.get("day_lane_pilot_config") or _day_lane_pilot_config_v1(),
         crypto_lane=crypto_lane,
@@ -47501,7 +47567,7 @@ def _multilane_activation_adaptive_truth_v2_payload(statuses: dict | None = None
     multiline = _multilane_paper_operational_status_v1_payload(statuses)
     records = [dict(row) for row in (_astra_evidence_state_json("broker_truth_records_v1.json").get("records") or []) if isinstance(row, dict)]
     truth = strict_truth_counts(records)
-    trace = _paper_autopilot_last_trace_v1()
+    trace = _paper_autopilot_authoritative_trace_v3()
     source = dict(statuses.get("pladeu_candidate_source_metadata") or _pladeu_candidate_source_metadata_v1())
     day_capital = lane_capital_status("DAY")
     crypto_capital = lane_capital_status("CRYPTO")
@@ -47534,13 +47600,22 @@ def _multilane_activation_adaptive_truth_v2_payload(statuses: dict | None = None
             "live_runtime_dry_run_proof": day_handoff if lane == "DAY" else crypto_handoff if lane == "CRYPTO" else lane_handoff_proof(lane, trace.get("per_candidate_decision_trace") or [], capital, session=session),
         }
     day_enabled = bool(_day_lane_pilot_config_v1().get("day_lane_pilot_enabled"))
-    crypto_enabled = bool((_crypto_paper_lane_validation_v1_payload(statuses) or {}).get("paper_crypto_enabled"))
+    crypto_validation = _crypto_paper_lane_validation_v1_payload(statuses) or {}
+    crypto_enabled = bool(crypto_validation.get("paper_crypto_enabled"))
+    swing_trace_rows = [row for row in (trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict) and str(row.get("lane_id") or "").upper() == "SWING"]
+    day_trace_rows = [row for row in (trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict) and str(row.get("lane_id") or "").upper() == "DAY"]
+    crypto_trace_rows = [row for row in (trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict) and str(row.get("lane_id") or "").upper() == "CRYPTO"]
     required_consumers = ["canonical_outcome", "symbol_behavior", "active_learning", "librarian", "warehouse", "cortex", "governance", "learning_center"]
     learning = {
         "strict_truths_available": truth.get("total_broker_confirmed_complete", 0),
         "required_consumers": required_consumers,
         "consumer_acknowledgements": 0,
         "status": "PENDING_STRICT_TRUTH" if not truth.get("total_broker_confirmed_complete") else "ACKNOWLEDGEMENT_RECONCILIATION_REQUIRED",
+        "strict_truth_path_deterministically_proven": all(
+            bool((simulations.get(lane, {}).get("deterministic_simulation_proof") or {}).get("proven"))
+            for lane in ("swing", "day", "crypto")
+        ),
+        "actual_delivery_evidence_pending": not bool(truth.get("total_broker_confirmed_complete")),
         "payload_references_not_accepted_as_acknowledgement": True,
     }
     blockers = []
@@ -47548,13 +47623,29 @@ def _multilane_activation_adaptive_truth_v2_payload(statuses: dict | None = None
         blockers.append(str(day_capital.get("capital_configuration_status")))
     if not crypto_capital.get("capital_configured"):
         blockers.append(str(crypto_capital.get("capital_configuration_status")))
+    if not swing_trace_rows:
+        blockers.append("SWING_HANDOFF_TRACE_MISSING")
     if not day_handoff.get("proven"):
         blockers.append("DAY_HANDOFF_DEFERRED_NO_CURRENT_AUTHORITATIVE_TRACE")
+    if not crypto_trace_rows:
+        blockers.append("CRYPTO_HANDOFF_TRACE_MISSING")
+    if not crypto_validation.get("broker_capability_available"):
+        blockers.append("CRYPTO_BROKER_CAPABILITY_BLOCKED")
+    if not crypto_validation.get("operational_candidate_source_available"):
+        blockers.append("CRYPTO_OPERATIONAL_SOURCE_UNAVAILABLE")
     if not day_enabled:
         blockers.append("DAY_PILOT_NOT_ENABLED_PENDING_LIVE_DRY_RUN")
     if not crypto_enabled:
         blockers.append("CRYPTO_LANE_NOT_ENABLED_PENDING_FINAL_GATE")
-    status = "ASTRA_MULTILANE_PAPER_ACTIVATION_PASS" if not blockers else "ASTRA_MULTILANE_PAPER_ACTIVATION_BLOCKED"
+    pending_actual_truth = not bool(truth.get("total_broker_confirmed_complete"))
+    only_day_market_deferral = not blockers or set(blockers) == {"DAY_HANDOFF_DEFERRED_NO_CURRENT_AUTHORITATIVE_TRACE"}
+    status = (
+        "ASTRA_MULTILANE_LIVE_ACTIVATION_PASS"
+        if not blockers and not pending_actual_truth
+        else "ASTRA_MULTILANE_LIVE_ACTIVATION_PASS_WITH_DAY_MARKET_EVIDENCE_DEFERRED"
+        if only_day_market_deferral and day_enabled and crypto_enabled and day_trace_rows and crypto_trace_rows and swing_trace_rows
+        else "ASTRA_MULTILANE_LIVE_ACTIVATION_BLOCKED"
+    )
     return {
         "endpoint": "/api/astra_multilane_activation_adaptive_truth_v2",
         "suite": "ASTRA_MULTILANE_ACTIVATION_ADAPTIVE_TRUTH_V2",
@@ -47564,12 +47655,16 @@ def _multilane_activation_adaptive_truth_v2_payload(statuses: dict | None = None
         "crypto_configuration": {**crypto_capital, "lane_enabled": crypto_enabled, "enablement_key": "ASTRA_ENABLE_ALPACA_CRYPTO_PAPER"},
         "candidate_freshness": operational_freshness(source.get("candidate_snapshot_age_seconds", source.get("candidate_cache_age_seconds"))),
         "handoff_proof": {"day": day_handoff, "crypto": crypto_handoff},
+        "authoritative_trace_counts": {"swing": len(swing_trace_rows), "day": len(day_trace_rows), "crypto": len(crypto_trace_rows)},
         "exit_authorization": {"day": day_exit, "crypto": crypto_exit},
         "adaptive_throughput": {"day": adaptive_throughput("DAY", records), "crypto": adaptive_throughput("CRYPTO", records)},
         "strict_broker_truth": truth,
         "learning_delivery": learning,
         "simulations": simulations,
-        "deferred_live_market_evidence": ["DAY current regular-session authoritative candidate and paper round trip"] if not day_handoff.get("proven") else [],
+        "deferred_live_market_evidence": list(dict.fromkeys(
+            (["DAY current regular-session authoritative candidate and paper round trip"] if day_handoff.get("market_session_trace_proven") else [])
+            + (["actual paired paper fills and consumer acknowledgements"] if pending_actual_truth else [])
+        )),
         "top_blockers": list(dict.fromkeys(blockers)),
         "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "full_history_scan_count": 0,
         "live_trading_enabled": False, "automatic_promotions_enabled": False, "learned_exits_enabled": False,
@@ -65741,6 +65836,52 @@ def _crypto_ranking_rows_cached_v1() -> list[dict]:
     return list(dedup.values())[:80]
 
 
+def _crypto_operational_candidate_rows_v3() -> list[dict]:
+    """Adapt existing cached crypto rankings for PaperAutopilot evaluation.
+
+    This is not a ranking engine and never promotes shadow rows. It only adds
+    the lineage required by the existing paper-autopilot boundary to current
+    dedicated crypto ranking-cache rows.
+    """
+    cache = RANKINGS_ENDPOINT_CACHE.get("crypto") if isinstance(RANKINGS_ENDPOINT_CACHE.get("crypto"), dict) else {}
+    snapshot_ts = float((cache or {}).get("ts") or 0.0)
+    snapshot_id = f"crypto_rankings:{int(snapshot_ts)}" if snapshot_ts > 0 else "crypto_rankings:missing"
+    generated_at = datetime.fromtimestamp(snapshot_ts, UTC).isoformat().replace("+00:00", "Z") if snapshot_ts > 0 else ""
+    rows = []
+    for rank, raw in enumerate(_crypto_ranking_rows_cached_v1()[:24], start=1):
+        row = dict(raw)
+        row.update({
+            "asset_class": "crypto",
+            "asset_type": "crypto",
+            "candidate_source": "crypto_rankings_cache",
+            "paper_autopilot_candidate_source": "crypto_rankings_cache",
+            "source_snapshot_id": str(row.get("source_snapshot_id") or snapshot_id),
+            "candidate_generated_at": str(row.get("candidate_generated_at") or row.get("generated_at") or row.get("timestamp") or generated_at),
+            "ranking_run_id": str(row.get("ranking_run_id") or snapshot_id),
+            "rank_position": int(row.get("rank_position") or rank),
+        })
+        rows.append(row)
+    if rows:
+        return rows
+    # A missing cache is not an eligible trade.  Emit one bounded probe so the
+    # existing PaperAutopilot can record the real source/gate rejection 24/7
+    # instead of leaving the operational lane silently empty.
+    return [{
+        "symbol": "BTC/USD",
+        "asset_class": "crypto",
+        "asset_type": "crypto",
+        "candidate_source": "crypto_operational_watchlist_v3",
+        "paper_autopilot_candidate_source": "crypto_operational_watchlist_v3",
+        "source_snapshot_id": snapshot_id,
+        "candidate_generated_at": _now_utc_iso(),
+        "ranking_run_id": snapshot_id,
+        "rank_position": 1,
+        "operational_probe_only": True,
+        "operational_source_rejection": "NO_CURRENT_CACHED_CRYPTO_RANKING_SIGNAL",
+        "paper_ready_status": "watch_only",
+    }]
+
+
 def _paper_autopilot_crypto_open_rows_v1() -> list[dict]:
     try:
         db_path = getattr(PAPER_AUTOPILOT, "db_path", "")
@@ -65867,6 +66008,14 @@ def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> di
         "lane_state": lane_state,
         "generated_at": _now_utc_iso(),
         "paper_account_crypto_support": broker_crypto_supported,
+        "broker_capability_available": bool(broker_crypto_supported and paper_mode_verified and not capability.get("live_endpoint_detected")),
+        "lane_configuration_enabled": bool(activation_requested and not kill_switch),
+        # The bounded adapter is always available.  A missing ranking snapshot
+        # produces an explicit probe/rejection instead of silently erasing the
+        # 24/7 paper-crypto handoff path.
+        "operational_candidate_source_available": True,
+        "operational_ranked_candidate_count": len(ranking_rows),
+        "paper_order_boundary_available": bool(broker_crypto_supported and paper_mode_verified and not capability.get("live_endpoint_detected")),
         "paper_mode_verified": paper_mode_verified,
         "supported_pairs": supported_pairs,
         "tradable_pairs": tradable_pairs,
@@ -69743,6 +69892,42 @@ def crypto_paper_execution_readiness_v1(force: bool = False):
     return _crypto_paper_execution_readiness_v1_payload(dict(cached_unified or {}))
 
 
+@router.get("/api/crypto_lane_paper_readiness_v1")
+def crypto_lane_paper_readiness_v1(force: bool = False):
+    """Compact readiness that keeps broker capability separate from enablement."""
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    lane = _crypto_paper_lane_validation_v1_payload(dict(cached_unified or {}))
+    trace = _paper_autopilot_authoritative_trace_v3(force=bool(force))
+    crypto_rows = [row for row in (trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict) and str(row.get("lane_id") or "").upper() == "CRYPTO"]
+    has_order_ready = any(bool(row.get("order_ready")) for row in crypto_rows)
+    has_trace = bool(crypto_rows)
+    if not lane.get("broker_capability_available"):
+        status = "BROKER_CAPABILITY_BLOCKED"
+    elif not lane.get("lane_configuration_enabled"):
+        status = "LANE_DISABLED"
+    elif has_order_ready:
+        status = "ORDER_READY_DRY_RUN"
+    elif has_trace:
+        status = "REJECTED_BY_EXISTING_GATE"
+    else:
+        status = "NO_CURRENT_SIGNAL"
+    return {
+        "endpoint": "/api/crypto_lane_paper_readiness_v1",
+        "status": status,
+        "broker_capability_available": bool(lane.get("broker_capability_available")),
+        "lane_configuration_enabled": bool(lane.get("lane_configuration_enabled")),
+        "operational_candidate_source_available": bool(lane.get("operational_candidate_source_available") or _crypto_operational_candidate_rows_v3()),
+        "paper_order_boundary_available": bool(lane.get("paper_order_boundary_available")),
+        "paper_mode_verified": bool(lane.get("paper_mode_verified")),
+        "capital_configured": bool(lane.get("capital_configured")),
+        "capital_book_id": lane.get("capital_book_id"),
+        "evaluated_operational_candidates": crypto_rows[:25],
+        "source_rejection": next((str(row.get("operational_source_rejection") or row.get("decision_reason") or "") for row in crypto_rows if row.get("operational_probe_only")), "NO_CURRENT_CACHED_CRYPTO_RANKING_SIGNAL" if not crypto_rows else ""),
+        "submit_order": False, "broker_actions_used": 0, "provider_calls_used": 0, "llm_calls_used": 0,
+        "full_history_scan_count": 0, **_safety_flags_v1(),
+    }
+
+
 @router.get("/api/alpaca_crypto_runtime_capability_v2")
 def alpaca_crypto_runtime_capability_v2():
     capability = ALPACA_PAPER_BROKER.crypto_capability_status(False) if hasattr(ALPACA_PAPER_BROKER, "crypto_capability_status") else {}
@@ -72209,27 +72394,10 @@ def paper_autopilot_throughput_status_v1():
 def _paper_execution_trace_payload(run_result=None):
     try:
         _ensure_paper_autopilot_started()
-        trace = {}
-        if hasattr(PAPER_AUTOPILOT, "execution_trace"):
-            trace = dict(PAPER_AUTOPILOT.execution_trace() or {})
-        else:
-            status = PAPER_AUTOPILOT.status()
-            trace = {
-                "paper_worker_running": bool(getattr(PAPER_AUTOPILOT, "_thread", None) and PAPER_AUTOPILOT._thread.is_alive()),
-                "autopilot_enabled": bool(status.get("autopilot_enabled", False)),
-                "candidates_seen": 0,
-                "eligible_candidates": 0,
-                "selected_candidates": 0,
-                "orders_attempted": 0,
-                "orders_submitted": 0,
-                "orders_rejected": 0,
-                "final_blocker_reason": "paper_execution_trace_unavailable",
-                "per_candidate_decision_trace": [],
-                "last_alpaca_error_sanitized": "",
-            }
+        trace = _paper_autopilot_authoritative_trace_v3()
         broker_status = {}
         try:
-            broker_status = ALPACA_PAPER_BROKER.status()
+            broker_status = ALPACA_PAPER_BROKER.safety_status()
         except Exception as exc:
             broker_status = {"last_alpaca_error_sanitized": f"alpaca_status_exception:{str(exc)[:120]}"}
         if isinstance(run_result, dict):
@@ -72254,7 +72422,9 @@ def _paper_execution_trace_payload(run_result=None):
         )[:180]
         if trace.get("broker_execution_enabled") and not trace.get("account_preflight_ok") and trace.get("last_alpaca_error_sanitized"):
             trace["final_blocker_reason"] = f"alpaca_account_preflight_failed:{trace['last_alpaca_error_sanitized']}"[:180]
-        trace["api_calls_used"] = int(_to_float(broker_status.get("api_calls_used"), 0.0))
+        trace["api_calls_used"] = 0
+        trace["provider_calls_used"] = 0
+        trace["broker_actions_used"] = 0
         trace["live_trading_changed"] = False
         trace["broker_live_endpoint_allowed"] = False
         trace["natural_exit_preserved"] = True

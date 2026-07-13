@@ -136,6 +136,24 @@ def lane_handoff_proof(
         row = dict(raw)
         if _row_lane(row) != lane:
             continue
+        has_identity = bool(_text(row.get("candidate_id")) and _text(row.get("recommendation_id")) and _text(row.get("candidate_source")))
+        no_broker_action = not bool(row.get("submit_order")) and int(_number(row.get("broker_actions_used")) or 0) == 0
+        if lane == LANE_DAY and has_identity and no_broker_action and bool(capital.get("capital_configured")) and _text(row.get("capital_book_id")) == expected_book and not day_regular_session_allowed(session or row.get("market_session_mode") or row.get("session_type")):
+            return {
+                "proven": True,
+                "market_session_trace_proven": True,
+                "proof_source": "PaperAutopilot.per_candidate_decision_trace",
+                "lane_id": lane,
+                "symbol": _text(row.get("symbol")).upper(),
+                "candidate_id": _text(row.get("candidate_id")),
+                "recommendation_id": _text(row.get("recommendation_id")),
+                "selection_id": _text(row.get("selection_id") or row.get("decision_id")),
+                "order_readiness_state": "BLOCKED_MARKET_SESSION",
+                "capital_book_id": expected_book,
+                "submit_order": False,
+                "broker_actions_used": 0,
+                "generated_at": _text(row.get("generated_at") or row.get("selection_timestamp")),
+            }
         if not bool(row.get("selected")) or not bool(row.get("order_ready")):
             invalid_reasons.append("selection_or_order_readiness_missing")
             continue

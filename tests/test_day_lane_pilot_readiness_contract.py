@@ -1,11 +1,14 @@
+import os
 import unittest
+from unittest.mock import patch
 
 from server_extend import _day_lane_pilot_readiness_payload_v1
 
 
 class DayLanePilotReadinessContractTests(unittest.TestCase):
     def test_stale_candidates_are_not_current_and_pilot_is_disabled(self):
-        payload = _day_lane_pilot_readiness_payload_v1({
+        with patch.dict(os.environ, {"ASTRA_DAY_LANE_PILOT_ENABLED": "0"}, clear=False):
+            payload = _day_lane_pilot_readiness_payload_v1({
             "pladeu_candidate_rows": [{
                 "symbol": "NVDA", "lane_id": "DAY", "trade_style": "day_trade",
                 "intended_horizon": "intraday", "asset_class": "stock",
@@ -25,7 +28,7 @@ class DayLanePilotReadinessContractTests(unittest.TestCase):
                 "market_session_status": "closed",
                 "candidate_cache_age_seconds": 999,
             },
-        })
+            })
         self.assertEqual(payload["classified_day_candidates"], 1)
         self.assertEqual(payload["current_day_candidates"], 0)
         self.assertFalse(payload["pilot_enabled"])
@@ -34,7 +37,8 @@ class DayLanePilotReadinessContractTests(unittest.TestCase):
         self.assertFalse(payload["behavior_safe_to_apply"])
 
     def test_exact_cross_lane_overlap_is_a_blocker(self):
-        payload = _day_lane_pilot_readiness_payload_v1({
+        with patch.dict(os.environ, {"ASTRA_DAY_LANE_PILOT_ENABLED": "0"}, clear=False):
+            payload = _day_lane_pilot_readiness_payload_v1({
             "pladeu_candidate_rows": [
                 {"symbol": "NVDA", "lane_id": "DAY", "trade_style": "day_trade", "intended_horizon": "intraday", "asset_class": "stock", "candidate_id": "d", "recommendation_id": "rd"},
                 {"symbol": "NVDA", "lane_id": "SWING", "trade_style": "swing", "intended_horizon": "swing", "asset_class": "stock", "candidate_id": "s", "recommendation_id": "rs"},
@@ -50,7 +54,7 @@ class DayLanePilotReadinessContractTests(unittest.TestCase):
             "pladeu_candidate_source_metadata": {
                 "candidate_freshness_status": "CURRENT", "market_session_status": "regular",
             },
-        })
+            })
         self.assertIn("day_swing_exact_symbol_overlap", payload["exact_blockers"])
         self.assertFalse(payload["pilot_enabled"])
 
