@@ -1,10 +1,13 @@
+import os
+import pathlib
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from engine.astra_multilane_activation_v2 import canonical_lane_activation_contract
 from engine.lane_execution_trace_ledger_v1 import LaneExecutionTraceLedgerV1
 from engine.learning_return_integrity_v1 import audit_learning_return_rows
-from engine.paper_autopilot import _execution_trace_event, normalize_operational_candidate
+from engine.paper_autopilot import PaperAutopilotEngine, _execution_trace_event, normalize_operational_candidate
 
 
 class MultiLaneRuntimeWiringContractTests(unittest.TestCase):
@@ -46,6 +49,36 @@ class MultiLaneRuntimeWiringContractTests(unittest.TestCase):
         self.assertGreaterEqual(report["double_scale_suspect_count"], 1)
         self.assertTrue(report["official_metrics_guarded"])
         self.assertEqual(report["status"], "PASS_WITH_QUARANTINED_LEGACY_ROWS")
+
+    def test_fresh_supported_crypto_fixture_reaches_order_ready_without_submission(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "ASTRA_ENABLE_ALPACA_CRYPTO_PAPER": "1",
+            "ASTRA_CRYPTO_PAPER_CAPITAL_LIMIT": "100",
+        }, clear=False):
+            engine = PaperAutopilotEngine(
+                db_path=str(pathlib.Path(directory) / "paper.db"),
+                state_path=str(pathlib.Path(directory) / "state.json"),
+            )
+            engine._alpaca_safety_snapshot = lambda: {
+                "paper_mode_verified": True, "paper_endpoint_verified": True,
+                "broker_execution_enabled": True, "broker_live_endpoint_allowed": False,
+            }
+            engine._is_candidate_paper_eligible = lambda row: (True, "eligible", {"commitment_score": 1})
+            engine._crypto_paper_activation_status = lambda: {"paper_active_bounded": True, "exact_blocker": ""}
+            engine._crypto_execution_data_gate = lambda row: (True, "ok", {})
+            engine._crypto_execution_integrity_gate = lambda row, **kwargs: (True, "ok", {})
+            dry_run = engine.operational_dry_run([{
+                "symbol": "BTC/USD", "asset_class": "crypto", "asset_type": "crypto",
+                "paper_entry_horizon_style": "day_trade", "candidate_source": "fixture",
+                "source_snapshot_id": "fixture", "candidate_generated_at": "2026-07-13T01:00:00Z",
+                "price": 100, "confidence": 90,
+            }])
+        trace = dry_run["per_candidate_decision_trace"][0]
+        self.assertEqual(trace["lane_id"], "CRYPTO")
+        self.assertTrue(trace["order_ready"])
+        self.assertEqual(trace["session_state"], "CRYPTO_24_7_ALLOWED")
+        self.assertFalse(dry_run["submit_order"])
+        self.assertEqual(dry_run["broker_actions_used"], 0)
 
 
 if __name__ == "__main__":
