@@ -46717,11 +46717,31 @@ def _position_intelligence_utilization_payload_v1(statuses: dict | None = None, 
         ("exit_readiness", "exit_readiness_diagnostics_v1", "DIAGNOSTIC_ONLY"),
         ("governance", "astra_governance_oversight_v1", "ACTIVE_AND_CONSUMED"),
     ]
+    linked_source_names = {
+        "trade_style_assignment": "horizon_lifecycle",
+        "intended_horizon": "horizon_lifecycle",
+        "horizon_lifecycle": "horizon_lifecycle",
+        "historical_similarity": "lifecycle",
+        "replay_evidence": "replay",
+        "profit_giveback": "symbol_behavior",
+    }
+    return_per_day_coverage = sum(1 for row in roi_rows if row.get("return_per_calendar_day") is not None)
+
+    def _producer_coverage(source: str) -> int:
+        if source == "return_per_day":
+            return return_per_day_coverage
+        if source == "position_age":
+            return sum(1 for row in roi_rows if row.get("holding_days") is not None)
+        if source == "governance":
+            return len(rows)
+        linked_name = linked_source_names.get(source, source.replace("_evidence", ""))
+        return sum(1 for item in retrieval.get("positions") or [] if linked_name in (item.get("linked_sources") or []))
+
     producer_audit = [
         {
             "source": name, "canonical_store": store, "classification": state,
             "freshness": "fresh_broker_snapshot" if name == "broker_truth" else "bounded_cached_evidence",
-            "symbol_coverage": sum(1 for item in retrieval.get("positions") or [] if name.replace("_evidence", "") in (item.get("linked_sources") or [])),
+            "symbol_coverage": _producer_coverage(name),
             "position_linkage_key": "symbol", "current_consumer": "portfolio_capacity_release_review_v1" if state.startswith("ACTIVE") else None,
             "expected_consumer": "position_monitoring_and_advisory_review", "active_influence_field": name if state.startswith("ACTIVE") else None,
             "acknowledgement": "position_intelligence_utilization_v1", "outcome_attribution_path": "advisory_decision_record", "reason": "bounded_symbol_join" if state.startswith("ACTIVE") else "no_current_symbol_level_link_or_required_field",
