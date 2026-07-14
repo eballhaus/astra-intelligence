@@ -1010,6 +1010,11 @@ class PaperAutopilotEngine:
             "learned_exit_rollback": {},
             "authorized_lane_exit_pending": {},
             "evidence_reserve_entry_timestamps": {"DAY": [], "CRYPTO": []},
+            "lane_reserve_commitments": {"DAY": {}, "CRYPTO": {}},
+            "lane_reserve_commitment_stats": {
+                "requested": 0, "released": 0, "expired": 0,
+                "converted_to_pending_order": 0, "converted_to_open_position": 0,
+            },
         }
 
         self._position_tracker = None
@@ -1142,6 +1147,15 @@ class PaperAutopilotEngine:
                         lane: list(payload.get("evidence_reserve_entry_timestamps", {}).get(lane) or [])[-32:]
                         for lane in ("DAY", "CRYPTO")
                     }
+                if isinstance(payload.get("lane_reserve_commitments"), dict):
+                    self._runtime_state["lane_reserve_commitments"] = {
+                        lane: dict(payload.get("lane_reserve_commitments", {}).get(lane) or {})
+                        for lane in ("DAY", "CRYPTO")
+                    }
+                if isinstance(payload.get("lane_reserve_commitment_stats"), dict):
+                    self._runtime_state["lane_reserve_commitment_stats"].update(
+                        dict(payload.get("lane_reserve_commitment_stats") or {})
+                    )
                 if isinstance(payload.get("adaptive_learning_capacity_policy"), dict):
                     persisted_policy = dict(payload.get("adaptive_learning_capacity_policy") or {})
                     persisted_policy["policy_valid"] = bool(
@@ -1172,6 +1186,11 @@ class PaperAutopilotEngine:
                 lane: list((self._runtime_state.get("evidence_reserve_entry_timestamps") or {}).get(lane) or [])[-32:]
                 for lane in ("DAY", "CRYPTO")
             },
+            "lane_reserve_commitments": {
+                lane: dict((self._runtime_state.get("lane_reserve_commitments") or {}).get(lane) or {})
+                for lane in ("DAY", "CRYPTO")
+            },
+            "lane_reserve_commitment_stats": dict(self._runtime_state.get("lane_reserve_commitment_stats") or {}),
             "adaptive_learning_capacity_policy": dict(self._adaptive_learning_capacity_policy or {}),
             "last_execution_trace": {
                 **dict(self._runtime_state.get("last_execution_trace") or {}),
@@ -2375,6 +2394,8 @@ class PaperAutopilotEngine:
             "broker_positions_fetch_ok": False,
             "broker_open_positions_count": 0,
             "broker_open_symbols": set(),
+            "broker_pending_orders": [],
+            "broker_orders_fetch_ok": False,
             "broker_positions_error_sanitized": "",
         }
         if not safety.get("broker_execution_enabled"):
@@ -2405,6 +2426,21 @@ class PaperAutopilotEngine:
                 out["broker_positions_error_sanitized"] = str(payload.get("error") or "broker_positions_fetch_failed")[:180]
         except Exception as exc:
             out["broker_positions_error_sanitized"] = f"broker_positions_exception:{str(exc)[:120]}"
+        if broker is not None and hasattr(broker, "orders"):
+            try:
+                orders_payload = dict(broker.orders() or {})
+                if bool(orders_payload.get("ok")):
+                    out["broker_pending_orders"] = [
+                        dict(row) for row in list(orders_payload.get("orders") or [])
+                        if isinstance(row, dict)
+                        and str(row.get("status") or row.get("order_status") or "").lower()
+                        in {"new", "accepted", "pending_new", "accepted_for_bidding", "partially_filled", "pending_replace"}
+                    ]
+                    out["broker_orders_fetch_ok"] = True
+            except Exception:
+                # Positions remain the broker truth source. Missing order data
+                # only prevents an in-flight order from claiming extra capacity.
+                pass
         return out
 
     def _sanitize_broker_error(self, result: dict[str, Any] | None) -> str:
@@ -2616,6 +2652,19 @@ class PaperAutopilotEngine:
         else:
             # A stale/unavailable broker snapshot must not authorize capacity.
             positions = []
+        internal_by_symbol = {
+            str(row.get("symbol") or "").upper().strip(): dict(row)
+            for row in open_rows
+            if str(row.get("symbol") or "").strip()
+        }
+        pending_orders: list[dict[str, Any]] = []
+        for broker_order in list(broker_payload.get("broker_pending_orders") or []):
+            if not isinstance(broker_order, dict):
+                continue
+            symbol = str(broker_order.get("symbol") or "").upper().strip()
+            internal = dict(internal_by_symbol.get(symbol) or {})
+            pending_orders.append({**internal, **broker_order})
+        commitment_rows = self._active_lane_reserve_commitments()
         snapshot = build_capacity_snapshot(
             broker_snapshot=broker_payload,
             account_snapshot=account,
@@ -2623,7 +2672,14 @@ class PaperAutopilotEngine:
             global_position_limit=self.max_open_positions_total,
             global_risk_allowed=True,
             lane_entry_counts=self._evidence_reserve_entry_counts(),
+            pending_orders=pending_orders,
+            active_commitments=commitment_rows,
         )
+        snapshot["current_commitment_snapshot"] = self._lane_reserve_commitment_snapshot()
+        snapshot["pending_order_snapshot"] = {
+            "broker_pending_orders": len(pending_orders),
+            "broker_orders_fetch_ok": bool(broker_payload.get("broker_orders_fetch_ok")),
+        }
         self._runtime_state["last_evidence_capacity_snapshot"] = dict(snapshot)
         return snapshot
 
@@ -2657,6 +2713,123 @@ class PaperAutopilotEngine:
         self._evidence_reserve_entry_counts()
         usage = self._runtime_state.setdefault("evidence_reserve_entry_timestamps", {"DAY": [], "CRYPTO": []})
         usage.setdefault(lane, []).append(_now_iso())
+
+    def _lane_reserve_commitment_ttl_seconds(self) -> int:
+        return max(15, min(300, _to_int(os.getenv("ASTRA_LANE_RESERVE_COMMITMENT_TTL_SECONDS"), 90)))
+
+    def _active_lane_reserve_commitments(self) -> list[dict[str, Any]]:
+        """Return live in-flight commitments and expire abandoned worker holds."""
+        now = datetime.now(UTC)
+        active: list[dict[str, Any]] = []
+        commitments = self._runtime_state.setdefault("lane_reserve_commitments", {"DAY": {}, "CRYPTO": {}})
+        stats = self._runtime_state.setdefault("lane_reserve_commitment_stats", {})
+        for lane in ("DAY", "CRYPTO"):
+            lane_rows = commitments.setdefault(lane, {})
+            for commitment_id, record in list(lane_rows.items()):
+                row = dict(record or {})
+                state = str(row.get("commitment_state") or "").upper()
+                expires_at = str(row.get("expires_at") or "")
+                try:
+                    expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                    if expiry.tzinfo is None:
+                        expiry = expiry.replace(tzinfo=UTC)
+                    expired = expiry.astimezone(UTC) <= now
+                except (TypeError, ValueError):
+                    expired = True
+                if state in {"REQUESTED", "HELD", "CONVERTED_TO_PENDING_ORDER"} and expired:
+                    row.update({"commitment_state": "EXPIRED", "state": "EXPIRED", "released_at": _now_iso(), "release_reason": "commitment_ttl_expired"})
+                    lane_rows[commitment_id] = row
+                    stats["expired"] = _to_int(stats.get("expired"), 0) + 1
+                    continue
+                if state in {"REQUESTED", "HELD", "CONVERTED_TO_PENDING_ORDER"}:
+                    active.append(row)
+        return active
+
+    def _lane_reserve_commitment_snapshot(self) -> dict[str, Any]:
+        active = self._active_lane_reserve_commitments()
+        by_lane = {lane: [row for row in active if str(row.get("lane_id") or "").upper() == lane] for lane in ("DAY", "CRYPTO")}
+        return {
+            "commitment_state_owner": "PaperAutopilot",
+            "active_commitments": len(active),
+            "by_lane": {lane.lower(): len(rows) for lane, rows in by_lane.items()},
+            "records": [dict(row) for row in active][:8],
+            "stats": dict(self._runtime_state.get("lane_reserve_commitment_stats") or {}),
+        }
+
+    def _request_lane_reserve_commitment(
+        self,
+        row: dict[str, Any],
+        capacity_snapshot: dict[str, Any],
+        *,
+        cycle_id: str,
+    ) -> dict[str, Any]:
+        """Hold a DAY/CRYPTO reserve only at final selection, never at review."""
+        lane = str(row.get("lane_id") or "").upper()
+        if lane not in {"DAY", "CRYPTO"}:
+            return {"required": False, "commitment_state": "NOT_REQUIRED", "allowed": True}
+        decision = candidate_capacity_decision(
+            capacity_snapshot,
+            lane_id=lane,
+            symbol=str(row.get("symbol") or ""),
+            open_symbols=set(),
+        )
+        if not decision.get("allowed"):
+            return {"required": True, "commitment_state": "REJECTED", "allowed": False, "reason": decision.get("capacity_decision"), "capacity_decision": decision}
+        candidate_id = str(row.get("candidate_id") or row.get("recommendation_id") or row.get("symbol") or "unknown")
+        commitment_id = hashlib.sha256(f"{cycle_id}|{lane}|{candidate_id}".encode("utf-8")).hexdigest()[:24]
+        commitments = self._runtime_state.setdefault("lane_reserve_commitments", {"DAY": {}, "CRYPTO": {}})
+        lane_rows = commitments.setdefault(lane, {})
+        existing = dict(lane_rows.get(commitment_id) or {})
+        if existing and str(existing.get("commitment_state") or "").upper() in {"REQUESTED", "HELD", "CONVERTED_TO_PENDING_ORDER"}:
+            return {"required": True, "commitment_state": str(existing.get("commitment_state")), "allowed": True, "commitment_id": commitment_id, "record": existing, "idempotent": True}
+        active_count = len([item for item in self._active_lane_reserve_commitments() if str(item.get("lane_id") or "").upper() == lane])
+        lane_view = dict((capacity_snapshot.get("lanes") or {}).get(lane.lower()) or {})
+        remaining = _to_int(lane_view.get("positions_remaining"), 0) - active_count
+        if remaining <= 0:
+            return {"required": True, "commitment_state": "REJECTED", "allowed": False, "reason": "LANE_RESERVE_EXHAUSTED", "capacity_decision": decision}
+        now = datetime.now(UTC)
+        record = {
+            "commitment_id": commitment_id,
+            "lane_id": lane,
+            "symbol": str(row.get("symbol") or "").upper(),
+            "candidate_id": str(row.get("candidate_id") or ""),
+            "recommendation_id": str(row.get("recommendation_id") or ""),
+            "cycle_id": cycle_id,
+            "commitment_state": "HELD",
+            "state": "HELD",
+            "reason": "final_selected_candidate",
+            "source_fingerprint": str(row.get("candidate_fingerprint") or candidate_id),
+            "created_at": _now_iso(),
+            "requested_at": _now_iso(),
+            "expires_at": (now + timedelta(seconds=self._lane_reserve_commitment_ttl_seconds())).isoformat().replace("+00:00", "Z"),
+            "capacity_snapshot_id": capacity_snapshot.get("snapshot_id"),
+        }
+        lane_rows[commitment_id] = record
+        stats = self._runtime_state.setdefault("lane_reserve_commitment_stats", {})
+        stats["requested"] = _to_int(stats.get("requested"), 0) + 1
+        return {"required": True, "commitment_state": "HELD", "allowed": True, "commitment_id": commitment_id, "record": record, "idempotent": False}
+
+    def _release_lane_reserve_commitment(self, lane: str, commitment_id: str, reason: str) -> None:
+        lane_rows = (self._runtime_state.setdefault("lane_reserve_commitments", {"DAY": {}, "CRYPTO": {}}).get(str(lane).upper()) or {})
+        if not commitment_id or commitment_id not in lane_rows:
+            return
+        record = dict(lane_rows.get(commitment_id) or {})
+        record.update({"commitment_state": "RELEASED", "state": "RELEASED", "released_at": _now_iso(), "release_reason": str(reason)[:160]})
+        lane_rows[commitment_id] = record
+        stats = self._runtime_state.setdefault("lane_reserve_commitment_stats", {})
+        stats["released"] = _to_int(stats.get("released"), 0) + 1
+
+    def _convert_lane_reserve_commitment(self, lane: str, commitment_id: str, state: str, broker_order_id: str = "") -> None:
+        lane_rows = (self._runtime_state.setdefault("lane_reserve_commitments", {"DAY": {}, "CRYPTO": {}}).get(str(lane).upper()) or {})
+        if not commitment_id or commitment_id not in lane_rows:
+            return
+        record = dict(lane_rows.get(commitment_id) or {})
+        record.update({"commitment_state": state, "state": state, "converted_at": _now_iso(), "broker_order_id": str(broker_order_id or "")})
+        lane_rows[commitment_id] = record
+        stats = self._runtime_state.setdefault("lane_reserve_commitment_stats", {})
+        stats["converted_to_pending_order" if state == "CONVERTED_TO_PENDING_ORDER" else "converted_to_open_position"] = _to_int(
+            stats.get("converted_to_pending_order" if state == "CONVERTED_TO_PENDING_ORDER" else "converted_to_open_position"), 0
+        ) + 1
 
     def _position_horizon_by_symbol(self, rows: list[dict[str, Any]]) -> dict[str, str]:
         out: dict[str, str] = {}
@@ -3114,8 +3287,18 @@ class PaperAutopilotEngine:
             "capacity_snapshot_id": str((capacity_decision or {}).get("snapshot_id") or ""),
             "global_capacity_status": str((capacity_decision or {}).get("global_capacity_status") or ""),
             "lane_reserve_status": str((capacity_decision or {}).get("lane_reserve_status") or ""),
+            "lane_reserve_enabled": bool((capacity_decision or {}).get("reserve_enabled", False)),
+            "lane_reserve_available": bool((capacity_decision or {}).get("reserve_available", False)),
+            "lane_capital_used": (capacity_decision or {}).get("capital_used"),
             "lane_capital_remaining": (capacity_decision or {}).get("capital_remaining"),
+            "lane_capital_limit": (capacity_decision or {}).get("configured_capital_limit"),
+            "lane_positions_used": (capacity_decision or {}).get("positions_used"),
             "lane_positions_remaining": (capacity_decision or {}).get("positions_remaining"),
+            "lane_position_limit": (capacity_decision or {}).get("configured_position_limit"),
+            "lane_open_position_count": (capacity_decision or {}).get("open_position_count", 0),
+            "lane_pending_order_count": (capacity_decision or {}).get("pending_order_count", 0),
+            "lane_active_commitment_count": (capacity_decision or {}).get("active_commitment_count", 0),
+            "active_commitment_id": "",
             "capacity_blocker": str(((capacity_decision or {}).get("exact_blockers") or [""])[0] or ""),
             "confidence": round(_to_float(r.get("confidence"), _to_float(r.get("predicted_win_probability"), 0.0)), 2),
             "horizon_confidence": round(_to_float(r.get("confidence"), _to_float(r.get("predicted_win_probability"), 0.0)), 2),
@@ -3833,6 +4016,9 @@ class PaperAutopilotEngine:
             "symbol": symbol,
             "entry_price": entry_price,
             "asset_type": asset_type,
+            "broker_order_id": source_broker_order_id,
+            "entry_fill_id": entry_fill_id,
+            "broker_order_status": str(broker_order_payload.get("status") or ""),
             "paper_autopilot_limits_ok": bool(broker_order.get("paper_autopilot_limits_ok", True)) if isinstance(broker_order, dict) else True,
             "paper_autopilot_limits_reason": str(broker_order.get("paper_autopilot_limits_reason") or "") if isinstance(broker_order, dict) else "",
             "portfolio_risk_proof_present": bool(broker_order.get("portfolio_risk_proof_present", True)) if isinstance(broker_order, dict) else True,
@@ -4436,6 +4622,7 @@ class PaperAutopilotEngine:
             return out
 
         with self._cycle_lock:
+            cycle_id = _now_iso()
             opened = 0
             closed = 0
             skipped = 0
@@ -4661,7 +4848,6 @@ class PaperAutopilotEngine:
                 open_rows_initial,
                 safety,
             )
-            reserve_selected_by_lane = {"DAY": 0, "CRYPTO": 0}
             # Normalize every worker-cycle observation before any early gate
             # can reject it.  The ranking and eligibility values are retained;
             # this only gives every candidate a stable operational lineage.
@@ -4761,11 +4947,37 @@ class PaperAutopilotEngine:
                 )
             for row in candidates:
                 if selected_count >= self.max_new_positions_per_cycle:
+                    early_symbol = str(row.get("symbol") or "").upper().strip()
+                    early_asset = _norm_asset(row.get("asset_type") or "stock")
+                    early_lane = str(row.get("lane_id") or ("CRYPTO" if early_asset == "crypto" else "SWING")).upper()
+                    early_capacity = candidate_capacity_decision(
+                        evidence_capacity_snapshot,
+                        lane_id=early_lane,
+                        symbol=early_symbol,
+                        open_symbols=open_syms,
+                    )
                     final_blocker_reason = final_blocker_reason or "max_new_positions_per_cycle_reached"
                     skipped += 1
                     decision_trace.append(_execution_trace_event(
                         row, eligible=False, selected=False,
                         decision_reason="max_new_positions_per_cycle_reached",
+                        capacity_decision=early_capacity.get("capacity_decision"),
+                        capacity_source=early_capacity.get("capacity_source"),
+                        capacity_snapshot_id=early_capacity.get("snapshot_id"),
+                        global_capacity_status=early_capacity.get("global_capacity_status"),
+                        lane_reserve_status=early_capacity.get("lane_reserve_status"),
+                        lane_reserve_enabled=early_capacity.get("reserve_enabled"),
+                        lane_reserve_available=early_capacity.get("reserve_available"),
+                        lane_capital_limit=early_capacity.get("configured_capital_limit"),
+                        lane_capital_used=early_capacity.get("capital_used"),
+                        lane_capital_remaining=early_capacity.get("capital_remaining"),
+                        lane_position_limit=early_capacity.get("configured_position_limit"),
+                        lane_positions_used=early_capacity.get("positions_used"),
+                        lane_positions_remaining=early_capacity.get("positions_remaining"),
+                        lane_open_position_count=early_capacity.get("open_position_count", 0),
+                        lane_pending_order_count=early_capacity.get("pending_order_count", 0),
+                        lane_active_commitment_count=early_capacity.get("active_commitment_count", 0),
+                        capacity_blocker="max_new_positions_per_cycle_reached",
                     ))
                     continue
                 symbol = str(row.get("symbol") or "").upper().strip()
@@ -4777,13 +4989,6 @@ class PaperAutopilotEngine:
                     symbol=symbol,
                     open_symbols=open_syms,
                 )
-                if reserve_selected_by_lane.get(candidate_lane, 0) > 0 and candidate_lane in reserve_selected_by_lane:
-                    capacity_decision = {
-                        **capacity_decision,
-                        "allowed": False,
-                        "capacity_decision": "LANE_RESERVE_EXHAUSTED",
-                        "exact_blockers": ["LANE_POSITION_LIMIT_REACHED"],
-                    }
                 capacity_blocked_by_legacy_global = bool(
                     (total_capacity <= 0 and not capacity_decision.get("allowed"))
                     or (asset == "stock" and stock_capacity <= 0 and not capacity_decision.get("allowed"))
@@ -4979,9 +5184,25 @@ class PaperAutopilotEngine:
                         continue
 
                 eligible_count += 1
+                commitment = self._request_lane_reserve_commitment(
+                    row,
+                    evidence_capacity_snapshot,
+                    cycle_id=cycle_id,
+                )
+                row_trace["commitment_id"] = str(commitment.get("commitment_id") or "")
+                row_trace["active_commitment_id"] = row_trace["commitment_id"]
+                row_trace["commitment_state"] = str(commitment.get("commitment_state") or "NOT_REQUIRED")
+                row_trace["commitment_reason"] = str(commitment.get("reason") or "")
+                if not commitment.get("allowed"):
+                    skipped += 1
+                    row_trace["selected"] = False
+                    row_trace["order_attempted"] = False
+                    row_trace["decision_reason"] = "NOT_FINAL_SELECTED_CANDIDATE"
+                    row_trace["capacity_blocker"] = str(commitment.get("reason") or "LANE_RESERVE_EXHAUSTED")
+                    decision_trace.append(row_trace)
+                    final_blocker_reason = row_trace["capacity_blocker"]
+                    continue
                 selected_count += 1
-                if candidate_lane in reserve_selected_by_lane:
-                    reserve_selected_by_lane[candidate_lane] += 1
                 row_trace["selected"] = True
                 row_trace["order_attempted"] = False
                 row_trace["horizon_assignment_confidence"] = round(
@@ -5069,9 +5290,25 @@ class PaperAutopilotEngine:
                             crypto_day_available = max(0, crypto_day_available - 1)
                     if candidate_lane in {"DAY", "CRYPTO"} and capacity_decision.get("capacity_decision") == "AVAILABLE_FROM_LANE_RESERVE":
                         self._record_evidence_reserve_entry(candidate_lane)
+                    if commitment.get("commitment_id"):
+                        committed_state = "CONVERTED_TO_OPEN_POSITION" if opened_row.get("entry_fill_id") else "CONVERTED_TO_PENDING_ORDER"
+                        self._convert_lane_reserve_commitment(
+                            candidate_lane,
+                            str(commitment.get("commitment_id")),
+                            committed_state,
+                            str(opened_row.get("broker_order_id") or ""),
+                        )
+                        row_trace["commitment_state"] = committed_state
                     if asset != "crypto":
                         horizon_capacity = self._consume_horizon_capacity(horizon_capacity, candidate_horizon)
                 else:
+                    if commitment.get("commitment_id"):
+                        self._release_lane_reserve_commitment(
+                            candidate_lane,
+                            str(commitment.get("commitment_id")),
+                            str(opened_row.get("broker_error") or opened_row.get("error") or "submission_rejected"),
+                        )
+                        row_trace["commitment_state"] = "RELEASED"
                     skipped += 1
                     orders_rejected += 1
                     row_trace["order_submitted"] = False
@@ -5372,9 +5609,21 @@ class PaperAutopilotEngine:
                     and capacity_decision.get("capacity_decision") in {"AVAILABLE", "AVAILABLE_FROM_LANE_RESERVE"}
                 )
                 if selected < self.max_new_positions_per_cycle and (total_capacity > 0 or reserve_allowed):
-                    selected += 1
-                    trace["selected"] = True
-                    trace["selection_reason"] = "existing_paper_autopilot_gates_passed"
+                    commitment = self._request_lane_reserve_commitment(
+                        row,
+                        canonical_capacity,
+                        cycle_id=f"dry_run:{_now_iso()}",
+                    ) if canonical_capacity else {"required": False, "allowed": True, "commitment_state": "NOT_REQUIRED"}
+                    trace["commitment_id"] = str(commitment.get("commitment_id") or "")
+                    trace["commitment_state"] = str(commitment.get("commitment_state") or "NOT_REQUIRED")
+                    if commitment.get("allowed"):
+                        selected += 1
+                        trace["selected"] = True
+                        trace["selection_reason"] = "existing_paper_autopilot_gates_passed"
+                    else:
+                        trace["selected"] = False
+                        trace["selection_reason"] = "NOT_FINAL_SELECTED_CANDIDATE"
+                        trace["commitment_reason"] = str(commitment.get("reason") or "LANE_RESERVE_EXHAUSTED")
                 else:
                     trace["selected"] = False
                     trace["selection_reason"] = "paper_autopilot_capacity_or_cycle_limit"
@@ -5395,6 +5644,15 @@ class PaperAutopilotEngine:
             )
             if not trace["order_ready"]:
                 blockers[trace["order_readiness_reason"]] = blockers.get(trace["order_readiness_reason"], 0) + 1
+            if trace.get("commitment_id"):
+                # Dry-run verifies the real reservation boundary but never
+                # leaves occupancy behind or reaches a broker order path.
+                self._release_lane_reserve_commitment(
+                    lane,
+                    str(trace.get("commitment_id")),
+                    "dry_run_complete_no_broker_submission",
+                )
+                trace["commitment_final_state"] = "RELEASED"
             rows.append(trace)
         return {
             "trace_owner": "PaperAutopilot.operational_dry_run",

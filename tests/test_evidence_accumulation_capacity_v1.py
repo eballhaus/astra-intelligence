@@ -2,6 +2,8 @@ import unittest
 import tempfile
 import json
 import pathlib
+import os
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from engine.astra_evidence_accumulation_capacity_v1 import (
@@ -90,10 +92,10 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
         self.assertFalse(result["allowed"])
         self.assertEqual(result["capacity_decision"], "BROKER_STATE_STALE")
 
-    def test_reserve_entry_limit_is_a_capacity_blocker(self):
-        # The fixture's environment allows two DAY reserve entries; both are
-        # consumed here to prove the canonical counter is not metadata only.
-        exhausted = build_capacity_snapshot(
+    def test_historical_entry_counts_are_advisory_not_reserve_occupancy(self):
+        # Historical DAY attempts are learning telemetry. They cannot consume
+        # a live reserve slot once no broker position/order/commitment exists.
+        available = build_capacity_snapshot(
             broker_snapshot={
                 "broker_reconciliation_active": True,
                 "broker_positions_fetch_ok": True,
@@ -107,10 +109,40 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
             global_position_limit=10,
             lane_entry_counts={"DAY": 2},
         )
-        exhausted_result = candidate_capacity_decision(exhausted, lane_id="DAY", symbol="NEW", open_symbols=[])
-        self.assertFalse(exhausted_result["allowed"])
-        self.assertEqual(exhausted_result["capacity_decision"], "LANE_RESERVE_EXHAUSTED")
-        self.assertIn("LANE_ENTRY_LIMIT_REACHED", exhausted_result["exact_blockers"])
+        available_result = candidate_capacity_decision(available, lane_id="DAY", symbol="NEW", open_symbols=[])
+        self.assertTrue(available_result["allowed"])
+        self.assertTrue(available["historical_entry_counts_advisory_only"])
+        self.assertEqual(available["lanes"]["day"]["historical_entries_used"], 2)
+
+    def test_pending_order_and_active_commitment_consume_reserve(self):
+        pending = build_capacity_snapshot(
+            broker_snapshot={"broker_reconciliation_active": True, "broker_positions_fetch_ok": True, "broker_state_age_seconds": 0},
+            account_snapshot={"buying_power": 50000},
+            pending_orders=[{"symbol": "DAYP", "lane_id": "DAY", "status": "accepted", "notional": 100}],
+            env=BASE_ENV,
+            global_position_limit=10,
+        )
+        decision = candidate_capacity_decision(pending, lane_id="DAY", symbol="DAY2", open_symbols=[])
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(pending["lanes"]["day"]["pending_order_count"], 1)
+
+    def test_valid_commitment_consumes_and_expired_commitment_releases(self):
+        active = build_capacity_snapshot(
+            broker_snapshot={"broker_reconciliation_active": True, "broker_positions_fetch_ok": True, "broker_state_age_seconds": 0},
+            account_snapshot={"buying_power": 50000},
+            active_commitments=[{"lane_id": "DAY", "symbol": "DAYH", "state": "HELD", "expires_at": (datetime.now(UTC) + timedelta(seconds=60)).isoformat()}],
+            env=BASE_ENV,
+            global_position_limit=10,
+        )
+        self.assertFalse(candidate_capacity_decision(active, lane_id="DAY", symbol="DAY2", open_symbols=[])["allowed"])
+        expired = build_capacity_snapshot(
+            broker_snapshot={"broker_reconciliation_active": True, "broker_positions_fetch_ok": True, "broker_state_age_seconds": 0},
+            account_snapshot={"buying_power": 50000},
+            active_commitments=[{"lane_id": "DAY", "symbol": "DAYH", "state": "HELD", "expires_at": (datetime.now(UTC) - timedelta(seconds=1)).isoformat()}],
+            env=BASE_ENV,
+            global_position_limit=10,
+        )
+        self.assertTrue(candidate_capacity_decision(expired, lane_id="DAY", symbol="DAY2", open_symbols=[])["allowed"])
 
     def test_duplicate_exposure_is_explicit(self):
         result = candidate_capacity_decision(
@@ -144,7 +176,17 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
                 "live_endpoint_rejected": True,
             }
             engine._is_candidate_paper_eligible = lambda row: (True, "eligible", {"commitment_score": 90})
-            engine.market_session_timing_suite = None
+            class _OpenSession:
+                def confirmation_for_candidate(self, *_args, **_kwargs):
+                    return {
+                        "market_session_mode": "regular_market",
+                        "market_is_open": True,
+                        "market_is_tradable": True,
+                        "paper_order_submission_allowed": True,
+                        "execution_confirmation_required": False,
+                        "requires_open_confirmation": False,
+                    }
+            engine.market_session_timing_suite = _OpenSession()
             positions = [{"symbol": f"S{i}", "lane_id": "SWING", "market_value": 100} for i in range(10)]
             capacity = snapshot(positions=positions)
             decision = candidate_capacity_decision(capacity, lane_id="DAY", symbol="DAYTEST", open_symbols=[])
@@ -158,7 +200,7 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
             self.assertEqual(trace["capacity_decision"], "AVAILABLE_FROM_LANE_RESERVE")
 
     def test_operational_dry_run_reaches_order_ready_from_day_reserve(self):
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(BASE_ENV, clear=False):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, BASE_ENV, clear=False):
             engine = PaperAutopilotEngine(
                 db_path=str(pathlib.Path(tmp) / "paper.db"),
                 state_path=str(pathlib.Path(tmp) / "state.json"),
@@ -167,26 +209,46 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
                 "open_symbols": set(), "stock_capacity": 0,
                 "crypto_capacity": 0, "total_capacity": 0,
             }
-            def reserve_trace(_row, **kwargs):
-                decision = kwargs["capacity_decision"]
-                self.assertTrue(decision["allowed"])
-                return ({
-                    "symbol": "DAYFIXTURE",
-                    "capacity_decision": decision["capacity_decision"],
-                    "paper_order_submission_allowed": True,
-                    "requires_open_confirmation": False,
-                }, True, "", {})
-
-            with patch.object(engine, "_candidate_trace_row", side_effect=reserve_trace):
-                result = engine.operational_dry_run(
-                    [{"symbol": "DAYFIXTURE", "asset_type": "stock", "lane_id": "DAY"}],
-                    capacity_snapshot=snapshot(
-                        positions=[{"symbol": f"S{i}", "lane_id": "SWING", "market_value": 100} for i in range(10)]
-                    ),
-                )
+            engine._alpaca_safety_snapshot = lambda: {
+                "paper_mode_verified": True, "paper_endpoint_verified": True,
+                "broker_execution_enabled": True, "live_endpoint_rejected": True,
+            }
+            engine._is_candidate_paper_eligible = lambda row: (True, "eligible", {"commitment_score": 90})
+            class _OpenSession:
+                def confirmation_for_candidate(self, *_args, **_kwargs):
+                    return {
+                        "market_session_mode": "regular_market",
+                        "market_is_open": True,
+                        "market_is_tradable": True,
+                        "paper_order_submission_allowed": True,
+                        "execution_confirmation_required": False,
+                        "requires_open_confirmation": False,
+                    }
+            engine.market_session_timing_suite = _OpenSession()
+            result = engine.operational_dry_run(
+                [{"symbol": "DAYFIXTURE", "asset_type": "stock", "lane_id": "DAY", "paper_entry_horizon_style": "day_trade", "confidence": 90}],
+                capacity_snapshot=snapshot(
+                    positions=[{"symbol": f"S{i}", "lane_id": "SWING", "market_value": 100} for i in range(10)]
+                ),
+            )
             self.assertEqual(result["selected_candidates"], 1)
             self.assertEqual(result["order_ready_candidates"], 1)
             self.assertEqual(result["per_candidate_decision_trace"][0]["capacity_decision"], "AVAILABLE_FROM_LANE_RESERVE")
+            self.assertTrue(result["per_candidate_decision_trace"][0]["lane_reserve_enabled"])
+            self.assertTrue(result["per_candidate_decision_trace"][0]["lane_reserve_available"])
+            self.assertEqual(result["per_candidate_decision_trace"][0]["commitment_final_state"], "RELEASED")
+            self.assertEqual(engine._lane_reserve_commitment_snapshot()["active_commitments"], 0)
+
+    def test_lane_ledger_detects_false_reserve_exhaustion(self):
+        with tempfile.TemporaryDirectory() as state_dir:
+            ledger = LaneExecutionTraceLedgerV1(state_dir=state_dir)
+            ledger.record([{
+                "lane_id": "DAY", "candidate_id": "c1", "recommendation_id": "r1", "symbol": "DAY",
+                "capacity_decision": "LANE_RESERVE_EXHAUSTED", "lane_reserve_enabled": True,
+                "lane_capital_remaining": 100, "lane_positions_remaining": 1,
+                "lane_open_position_count": 0, "lane_pending_order_count": 0, "lane_active_commitment_count": 0,
+            }], cycle_id="fixture")
+            self.assertEqual(ledger.summary()["lanes"]["DAY"]["false_reserve_exhaustion_contradictions"], 1)
 
     def test_operational_dry_run_reaches_order_ready_from_crypto_reserve(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(BASE_ENV, clear=False):

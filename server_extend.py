@@ -46330,13 +46330,40 @@ def _paper_autopilot_persisted_trace_v1() -> tuple[dict, str]:
 
 def _evidence_accumulation_capacity_payload_v1(statuses: dict | None = None) -> dict:
     """Read the existing cached broker snapshot and build one capacity view."""
+    def _stable_reserve_schema(snapshot: dict) -> dict:
+        """Migrate cached pre-commitment snapshots without refreshing a broker."""
+        out = dict(snapshot or {})
+        lanes = dict(out.get("lanes") or {})
+        for lane in ("day", "crypto"):
+            view = dict(lanes.get(lane) or {})
+            view.setdefault("open_position_count", int(_to_float(view.get("positions_used"), 0.0)))
+            view.setdefault("pending_order_count", 0)
+            view.setdefault("active_commitment_count", 0)
+            view.setdefault("current_reserve_occupancy_count", int(_to_float(view.get("positions_used"), 0.0)))
+            view.setdefault("reserve_state", view.get("capacity_decision") or "FAIL_CLOSED")
+            view.setdefault("historical_entries_used", view.get("entries_used", 0))
+            view.setdefault("historical_entries_remaining", view.get("entries_remaining"))
+            view.setdefault("historical_entry_counts_advisory_only", True)
+            lanes[lane] = view
+            out[f"{lane}_open_positions"] = view["open_position_count"]
+            out[f"{lane}_pending_orders"] = view["pending_order_count"]
+            out[f"{lane}_active_commitments"] = view["active_commitment_count"]
+            out[f"{lane}_positions_used"] = view.get("positions_used")
+            out[f"{lane}_positions_remaining"] = view.get("positions_remaining")
+            out[f"{lane}_reserve_available"] = bool(view.get("reserve_available", False))
+            out[f"{lane}_reserve_state"] = view["reserve_state"]
+        out["lanes"] = lanes
+        out.setdefault("current_commitment_snapshot", {"commitment_state_owner": "PaperAutopilot", "active_commitments": 0, "by_lane": {"day": 0, "crypto": 0}, "records": [], "stats": {}})
+        out.setdefault("pending_order_snapshot", {"broker_pending_orders": 0, "broker_orders_fetch_ok": False})
+        return out
+
     current = dict(statuses or {})
     alpaca = _cached_alpaca_paper_status_payload(current)
     positions = _pladeu_open_positions_from_cached_status_v1({"alpaca_paper_broker": alpaca})
     worker_trace, worker_state_source = _paper_autopilot_persisted_trace_v1()
     worker_capacity = dict(worker_trace.get("evidence_accumulation_capacity_v1") or {})
     if worker_capacity.get("broker_reconciliation_status") == "FRESH":
-        snapshot = dict(worker_capacity)
+        snapshot = _stable_reserve_schema(dict(worker_capacity))
         snapshot["position_source"] = worker_state_source
         snapshot["broker_observed_open_positions_count"] = int(_to_float(worker_trace.get("broker_open_positions_count"), _to_float(snapshot.get("total_open_positions"), 0.0)))
         snapshot["cache_only_no_broker_refresh_on_get"] = True
@@ -46379,7 +46406,7 @@ def _evidence_accumulation_capacity_payload_v1(statuses: dict | None = None) -> 
     snapshot["broker_observed_open_positions_count"] = worker_count if worker_count >= 0 else None
     snapshot["cache_only_no_broker_refresh_on_get"] = True
     snapshot["source_timestamp"] = alpaca.get("generated_at") or alpaca.get("timestamp")
-    return {**snapshot, **_safety_flags_v1()}
+    return {**_stable_reserve_schema(snapshot), **_safety_flags_v1()}
 
 
 def _portfolio_capacity_release_review_payload_v1(statuses: dict | None = None) -> dict:
@@ -46413,6 +46440,14 @@ def _portfolio_capacity_release_review_payload_v1(statuses: dict | None = None) 
         state: [row.get("symbol") for row in review.get("review_rows", []) if row.get("state") == state]
         for state in ("KEEP", "WATCH", "PROTECT_PROFIT", "EXIT_REVIEW", "CONTROLLED_LOSS_ACCEPTABLE", "THESIS_BROKEN", "REPLACE_CANDIDATE", "DATA_INSUFFICIENT")
     }
+    # Stable executive aliases keep consumers from parsing nested diagnostic
+    # structures while preserving the existing detailed review payload.
+    review["generated_at"] = _now_utc_iso()
+    review["snapshot_id"] = snapshot.get("snapshot_id")
+    review["total_positions_reviewed"] = review.get("total_positions")
+    review["classification_counts"] = dict(review.get("positions_by_state") or {})
+    review["positions"] = list(review.get("review_rows") or [])
+    review["automatic_exits_enabled"] = False
     return {**review, **_safety_flags_v1()}
 
 
@@ -46675,6 +46710,21 @@ def _lane_execution_daily_report_v1_payload(statuses: dict | None = None) -> dic
     findings = []
     now = _now_utc_iso()
     total_rows = int(_to_float(ledger.get("total_trace_rows"), 0.0))
+    current_commitments = dict(capacity_snapshot.get("current_commitment_snapshot") or {})
+    current_pending_orders = dict(capacity_snapshot.get("pending_order_snapshot") or {})
+    day_capacity = dict((capacity_snapshot.get("lanes") or {}).get("day") or {})
+    false_reserve_contradictions = sum(
+        int(_to_float((dict(lanes.get(lane) or {})).get("false_reserve_exhaustion_contradictions"), 0.0))
+        for lane in ("DAY", "CRYPTO")
+    )
+    if false_reserve_contradictions > 0:
+        findings.append({
+            "severity": "critical", "system": "evidence_accumulation_capacity_v1", "lane": "DAY",
+            "exact_finding": "FALSE_LANE_RESERVE_EXHAUSTION", "affected_ids": [],
+            "first_detected": now, "last_detected": now, "owner": "PaperAutopilot",
+            "recommended_repair": "inspect pending order and commitment reconciliation before accepting a reserve block",
+            "repository_scope": True, "human_review_required": True,
+        })
     if total_rows <= 0:
         findings.append({
             "severity": "high", "system": "execution_trace_ledger", "lane": "ALL",
@@ -46710,6 +46760,18 @@ def _lane_execution_daily_report_v1_payload(statuses: dict | None = None) -> dic
         "global_capacity_status": capacity_snapshot.get("global_capacity_status"),
         "day_reserve_status": dict((capacity_snapshot.get("lanes") or {}).get("day") or {}),
         "crypto_reserve_status": dict((capacity_snapshot.get("lanes") or {}).get("crypto") or {}),
+        "current_commitments": current_commitments,
+        "current_pending_orders": current_pending_orders,
+        "false_lane_reserve_exhaustion_contradictions": false_reserve_contradictions,
+        "current_reserve_state": day_capacity.get("reserve_state"),
+        "current_positions_used": day_capacity.get("positions_used"),
+        "current_positions_remaining": day_capacity.get("positions_remaining"),
+        "current_pending_orders_count": day_capacity.get("pending_order_count"),
+        "current_active_commitments_count": day_capacity.get("active_commitment_count"),
+        "false_reserve_exhaustion_count": false_reserve_contradictions,
+        "reserve_commitments_created": int(_to_float((dict(lanes.get("DAY") or {})).get("reserve_commitments_requested"), 0.0)),
+        "reserve_commitments_released": int(_to_float((dict(lanes.get("DAY") or {})).get("reserve_commitments_released"), 0.0)),
+        "reserve_commitments_converted_to_orders": int(_to_float((dict(lanes.get("DAY") or {})).get("reserve_commitments_pending"), 0.0)),
         "portfolio_capacity_release_review_v1": dict(statuses.get("portfolio_capacity_release_review_v1") or {}),
         "activation_contracts": activation,
         "activation_contract_consistent": not conflicts,
@@ -61533,10 +61595,18 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
         "stale_broker_state_blocks_capacity_authorization" if evidence_capacity.get("global_capacity_status") in {"BROKER_STATE_STALE", "BROKER_POSITION_DETAILS_UNAVAILABLE"} else "",
     ]
     warnings = [item for item in warnings if item]
+    lane_report = _lane_execution_daily_report_v1_payload(statuses)
+    if int(_to_float(lane_report.get("false_lane_reserve_exhaustion_contradictions"), 0.0)) > 0:
+        warnings.append("FALSE_LANE_RESERVE_EXHAUSTION")
     safe_audit = _astra_safe_auto_audit_repair_v1_payload(statuses)
     return {
         "endpoint": "/api/astra_governance_oversight_v1",
+        "status": "CRITICAL" if "FALSE_LANE_RESERVE_EXHAUSTION" in warnings else "PASS",
         "generated_at": _now_utc_iso(),
+        "critical_findings_count": int("FALSE_LANE_RESERVE_EXHAUSTION" in warnings),
+        "high_findings_count": 0,
+        "medium_findings_count": max(0, len(warnings) - int("FALSE_LANE_RESERVE_EXHAUSTION" in warnings)),
+        "failed_sources_count": int(_to_float((statuses or {}).get("failed_sources_count"), 0.0)),
         "governance_score": governance_score,
         "safety_score": safety_score,
         "learning_score": learning_score,
@@ -61569,6 +61639,12 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
         "paper_autopilot_mode_wiring_v1": mode_wiring,
         "capacity_lane_diagnostics_v1": capacity_lanes,
         "evidence_accumulation_capacity_v1": evidence_capacity,
+        "lane_execution_reserve_integrity_v1": {
+            "false_lane_reserve_exhaustion_contradictions": lane_report.get("false_lane_reserve_exhaustion_contradictions", 0),
+            "current_commitments": lane_report.get("current_commitments") or {},
+            "current_pending_orders": lane_report.get("current_pending_orders") or {},
+            "status": "CRITICAL" if "FALSE_LANE_RESERVE_EXHAUSTION" in warnings else "PASS",
+        },
         "portfolio_capacity_release_review_v1": {
             "positions_by_state": portfolio_release.get("positions_by_state"),
             "human_review_required": portfolio_release.get("human_review_required"),

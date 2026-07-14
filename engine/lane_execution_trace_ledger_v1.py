@@ -62,6 +62,8 @@ class LaneExecutionTraceLedgerV1:
             "blocked_by_lane_reserve": 0, "blocked_by_buying_power": 0,
             "blocked_by_global_risk": 0, "blocked_by_duplicate_exposure": 0,
             "reserve_order_ready_count": 0, "reserve_submission_attempt_count": 0,
+            "reserve_commitments_requested": 0, "reserve_commitments_released": 0,
+            "reserve_commitments_pending": 0, "false_reserve_exhaustion_contradictions": 0,
         }
 
     def _read_summary(self) -> dict[str, Any]:
@@ -147,9 +149,22 @@ class LaneExecutionTraceLedgerV1:
                 "capacity_snapshot_id": _text(source.get("capacity_snapshot_id") or source.get("canonical_capacity_snapshot", {}).get("snapshot_id") if isinstance(source.get("canonical_capacity_snapshot"), Mapping) else ""),
                 "global_capacity_status": _text(source.get("global_capacity_status")),
                 "lane_reserve_status": _text(source.get("lane_reserve_status")),
+                "lane_reserve_enabled": bool(source.get("lane_reserve_enabled", False)),
+                "lane_reserve_available": bool(source.get("lane_reserve_available", False)),
+                "lane_capital_used": source.get("lane_capital_used"),
                 "lane_capital_remaining": source.get("lane_capital_remaining"),
+                "lane_capital_limit": source.get("lane_capital_limit"),
+                "lane_positions_used": source.get("lane_positions_used"),
                 "lane_positions_remaining": source.get("lane_positions_remaining"),
+                "lane_position_limit": source.get("lane_position_limit"),
+                "lane_open_position_count": source.get("lane_open_position_count"),
+                "lane_pending_order_count": source.get("lane_pending_order_count"),
+                "lane_active_commitment_count": source.get("lane_active_commitment_count"),
                 "capacity_blocker": _text(source.get("capacity_blocker")),
+                "commitment_id": _text(source.get("commitment_id")),
+                "active_commitment_id": _text(source.get("commitment_id")),
+                "commitment_state": _text(source.get("commitment_state")),
+                "commitment_final_state": _text(source.get("commitment_final_state")),
                 "entry_owner": _text(source.get("entry_owner")),
                 "exit_owner": _text(source.get("exit_owner") or source.get("exit_policy_owner")),
             }
@@ -183,6 +198,18 @@ class LaneExecutionTraceLedgerV1:
             lane_summary["blocked_by_duplicate_exposure"] += int(capacity_decision == "DUPLICATE_EXPOSURE_BLOCKED")
             lane_summary["reserve_order_ready_count"] += int(record["order_readiness_result"] == "ORDER_READY" and capacity_decision == "AVAILABLE_FROM_LANE_RESERVE")
             lane_summary["reserve_submission_attempt_count"] += int(record["submission_attempted"] and capacity_decision == "AVAILABLE_FROM_LANE_RESERVE")
+            lane_summary["reserve_commitments_requested"] += int(record["commitment_state"] in {"HELD", "CONVERTED_TO_PENDING_ORDER", "CONVERTED_TO_OPEN_POSITION"})
+            lane_summary["reserve_commitments_released"] += int(record["commitment_state"] == "RELEASED" or record["commitment_final_state"] == "RELEASED")
+            lane_summary["reserve_commitments_pending"] += int(record["commitment_state"] == "CONVERTED_TO_PENDING_ORDER")
+            lane_summary["false_reserve_exhaustion_contradictions"] += int(
+                capacity_decision == "LANE_RESERVE_EXHAUSTED"
+                and bool(record["lane_reserve_enabled"])
+                and (record["lane_capital_remaining"] or 0) > 0
+                and (record["lane_positions_remaining"] or 0) > 0
+                and (record["lane_open_position_count"] or 0) == 0
+                and (record["lane_pending_order_count"] or 0) == 0
+                and (record["lane_active_commitment_count"] or 0) == 0
+            )
             lane_summary["metadata_failures"] += int(not candidate_id or not recommendation_id)
             if blocker:
                 blockers = lane_summary.setdefault("top_blockers", {})
