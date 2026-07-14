@@ -5367,7 +5367,11 @@ class PaperAutopilotEngine:
             trace["broker_reconciliation_deferred_to_execution"] = True
             if allowed:
                 eligible += 1
-                if selected < self.max_new_positions_per_cycle and total_capacity > 0:
+                reserve_allowed = bool(
+                    capacity_decision
+                    and capacity_decision.get("capacity_decision") in {"AVAILABLE", "AVAILABLE_FROM_LANE_RESERVE"}
+                )
+                if selected < self.max_new_positions_per_cycle and (total_capacity > 0 or reserve_allowed):
                     selected += 1
                     trace["selected"] = True
                     trace["selection_reason"] = "existing_paper_autopilot_gates_passed"
