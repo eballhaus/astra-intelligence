@@ -10,7 +10,7 @@ from engine.astra_evidence_accumulation_capacity_v1 import (
     build_capacity_snapshot,
     candidate_capacity_decision,
 )
-from engine.astra_portfolio_capacity_release_review_v1 import build_portfolio_release_review
+from engine.astra_portfolio_capacity_release_review_v1 import build_portfolio_release_review, classify_position
 from engine.lane_execution_trace_ledger_v1 import LaneExecutionTraceLedgerV1
 from engine.paper_autopilot import PaperAutopilotEngine
 
@@ -162,6 +162,37 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
         self.assertTrue(result["no_exit_orders_submitted"])
         self.assertEqual(result["positions_by_state"]["THESIS_BROKEN"], 1)
         self.assertEqual(result["positions_by_state"]["DATA_INSUFFICIENT"], 1)
+
+    def test_loss_without_linked_forward_evidence_stays_watch_not_controlled_loss(self):
+        result = classify_position({
+            "symbol": "LOSS", "avg_entry_price": 10, "current_price": 8,
+            "unrealized_plpc": -0.2,
+        })
+        self.assertEqual(result["primary_state"], "WATCH")
+        self.assertNotIn("CONTROLLED_LOSS_ACCEPTABLE", result["secondary_labels"])
+        self.assertIn("LOSS_REQUIRES_LINKED_FORWARD_EVIDENCE", result["reason_codes"])
+        self.assertTrue(result["automatic_action_authorized"] is False)
+
+    def test_linked_loss_evidence_can_only_request_human_exit_review(self):
+        result = classify_position({
+            "symbol": "REVIEW", "avg_entry_price": 10, "current_price": 8,
+            "unrealized_plpc": -0.2, "horizon_expired": True,
+            "controlled_loss_supported": True,
+            "forward_value_status": "unfavorable",
+        })
+        self.assertEqual(result["primary_state"], "EXIT_REVIEW")
+        self.assertIn("CONTROLLED_LOSS_ACCEPTABLE", result["secondary_labels"])
+        self.assertTrue(result["human_review_required"])
+        self.assertFalse(result["automatic_action_authorized"])
+
+    def test_missing_lifecycle_evidence_is_not_a_blanket_behavioral_classification(self):
+        result = build_portfolio_release_review([
+            {"symbol": "A", "avg_entry_price": 10, "current_price": 9, "missing_evidence": ["mfe_mae"]},
+            {"symbol": "B", "avg_entry_price": 10, "current_price": 11, "missing_evidence": ["mfe_mae"]},
+        ])
+        audit = result["differentiation_audit"]
+        self.assertEqual(audit["evidence_gap_counts"]["MISSING_LIFECYCLE_DATA"], 2)
+        self.assertFalse(audit["blanket_fallback_detected"])
 
     def test_paper_autopilot_gate_consumes_reserve_decision(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(BASE_ENV, {"ASTRA_DAY_LANE_PILOT_ENABLED": "1"}, clear=False):

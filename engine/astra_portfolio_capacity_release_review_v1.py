@@ -53,17 +53,28 @@ def _age_days(row: Mapping[str, Any]) -> float | None:
         return None
 
 
-def classify_position(row: Mapping[str, Any]) -> dict[str, Any]:
+def classify_position(row: Mapping[str, Any], context: Mapping[str, Any] | None = None) -> dict[str, Any]:
     source = dict(row or {})
+    # Context is a bounded retrieval overlay.  Fresh broker values remain the
+    # position source of truth while lineage and learning fields are consumed
+    # only when a concrete symbol-level link was found.
+    for key, value in dict(context or {}).items():
+        if key not in source or source.get(key) in (None, "", [], {}):
+            source[key] = value
     symbol = _text(source.get("symbol") or source.get("ticker")).upper()
     entry = _number(source.get("avg_entry_price") or source.get("entry_price"))
     current = _number(source.get("current_price") or source.get("market_price"))
     age = _age_days(source)
     missing = [key for key, value in (("symbol", symbol), ("entry_price", entry), ("current_price", current)) if value in (None, "") or value == ""]
+    reported_return = _number(source.get("unrealized_return_pct"))
+    if reported_return is None:
+        reported_return = _number(source.get("unrealized_plpc"))
+    if reported_return is None and entry not in (None, 0.0) and current is not None:
+        reported_return = (current - entry) / entry
     metrics = {
         "position_age_days": round(age, 4) if age is not None else None,
-        "unrealized_return_pct": _number(source.get("unrealized_return_pct") or source.get("unrealized_plpc")),
-        "unrealized_pnl": _number(source.get("unrealized_pnl") or source.get("unrealized_pl")),
+        "unrealized_return_pct": reported_return,
+        "unrealized_pnl": _number(source.get("unrealized_pnl")) if source.get("unrealized_pnl") is not None else _number(source.get("unrealized_pl")),
         "return_per_day": _number(source.get("return_per_day")),
         "profit_giveback_pct": _number(source.get("profit_giveback_pct")),
         "opportunity_cost_score": _number(source.get("opportunity_cost_score")),
@@ -101,9 +112,19 @@ def classify_position(row: Mapping[str, Any]) -> dict[str, Any]:
             state, confidence = "PROTECT_PROFIT", "medium"
             reasons.append("PROFIT_GIVEBACK")
         elif (ret or 0.0) < 0:
-            state, confidence = "CONTROLLED_LOSS_ACCEPTABLE", "low"
-            reasons.append("LOSS_STABILIZING" if source.get("loss_stabilization_state") else "INSUFFICIENT_DATA")
-            contradictions.append("RECOVERY_MOMENTUM_PRESENT" if source.get("recent_recovery") else "NO_RECOVERY_EVIDENCE")
+            # A loss alone is not evidence that capital should be abandoned.
+            # Keep the position in an advisory watch state until a linked
+            # thesis, horizon, recovery, or replacement signal says more.
+            recovery = bool(source.get("recent_recovery") or source.get("recovery_in_progress"))
+            forward_value = _text(source.get("forward_value_status")).lower()
+            loss_support = bool(source.get("controlled_loss_supported"))
+            if loss_support and forward_value in {"unfavorable", "negative"} and (horizon_expired or opportunity >= 75.0):
+                state, confidence = "EXIT_REVIEW", "medium"
+                reasons.append("CONTROLLED_LOSS_FORWARD_VALUE_UNFAVORABLE")
+            else:
+                state, confidence = "WATCH", "medium" if recovery else "low"
+                reasons.append("RECOVERY_IN_PROGRESS" if recovery else "LOSS_REQUIRES_LINKED_FORWARD_EVIDENCE")
+                contradictions.append("RECOVERY_MOMENTUM_PRESENT" if recovery else "FORWARD_VALUE_NOT_YET_LINKED")
         elif source.get("momentum_deterioration"):
             state, confidence = "WATCH", "medium"
             reasons.append("MOMENTUM_DETERIORATION")
@@ -121,7 +142,7 @@ def classify_position(row: Mapping[str, Any]) -> dict[str, Any]:
         primary_state = "DUST_CLEANUP_REVIEW"
     market_value = _number(source.get("market_value"))
     secondary: list[str] = []
-    if primary_state == "HOLD" and not reasons:
+    if primary_state == "HOLD":
         secondary.append("NORMAL_VOLATILITY")
     if bool(source.get("recent_recovery") or source.get("recovery_in_progress")):
         secondary.append("RECOVERY_IN_PROGRESS")
@@ -137,7 +158,7 @@ def classify_position(row: Mapping[str, Any]) -> dict[str, Any]:
         secondary.append("LOW_RETURN_PER_DAY")
     if (metrics["opportunity_cost_score"] or 0.0) >= 75.0:
         secondary.append("HIGH_OPPORTUNITY_COST")
-    if state == "CONTROLLED_LOSS_ACCEPTABLE":
+    if bool(source.get("controlled_loss_supported")):
         secondary.append("CONTROLLED_LOSS_ACCEPTABLE")
     if bool(source.get("catalyst_pending") or str(source.get("catalyst_condition") or "").lower() in {"pending", "upcoming"}):
         secondary.append("CATALYST_PENDING")
@@ -147,12 +168,13 @@ def classify_position(row: Mapping[str, Any]) -> dict[str, Any]:
         secondary.append("CONCENTRATION_RISK")
     if bool(source.get("stale_thesis") or "STALE_THESIS" in reasons):
         secondary.append("STALE_THESIS")
-    if missing:
+    missing_evidence = [str(value) for value in (source.get("missing_evidence") or []) if value]
+    if missing or missing_evidence:
         secondary.append("MISSING_LIFECYCLE_DATA")
 
     influence_sources = {
         "ranking": ("ranking_score", "rank", "original_rank"),
-        "horizon": ("horizon", "intended_trade_style", "assigned_horizon", "intended_horizon"),
+        "horizon": ("horizon", "intended_trade_style", "assigned_horizon", "intended_horizon", "horizon_source"),
         "momentum": ("momentum_strength", "relative_strength", "momentum_deterioration"),
         "symbol_behavior": ("symbol_behavior", "symbol_behavior_score", "symbol_profile"),
         "mfe_mae": ("mfe", "mae", "maximum_favorable_excursion", "maximum_adverse_excursion"),
@@ -185,6 +207,8 @@ def classify_position(row: Mapping[str, Any]) -> dict[str, Any]:
         "influence_attribution": influence_attribution,
         "persisted_evidence_reference": source.get("position_id") or source.get("asset_id") or symbol,
     }
+    retrieval = dict(source.get("retrieval") or {})
+    evidence_confidence = _number(source.get("evidence_confidence"))
     return {
         "position_id": _text(source.get("position_id")),
         "symbol": symbol,
@@ -202,6 +226,10 @@ def classify_position(row: Mapping[str, Any]) -> dict[str, Any]:
         "missing_fields": missing,
         "data_quality": "COMPLETE" if not missing else "INCOMPLETE",
         "evidence_class": _text(source.get("evidence_class")) or "BROKER_POSITION_SNAPSHOT_DIAGNOSTIC",
+        "lineage": dict(source.get("lineage") or {}),
+        "retrieval": retrieval,
+        "missing_evidence": missing_evidence,
+        "evidence_confidence": evidence_confidence,
         "position_snapshot": {
             "quantity": _number(source.get("qty") or source.get("quantity")),
             "average_entry_price": entry,
@@ -217,8 +245,19 @@ def classify_position(row: Mapping[str, Any]) -> dict[str, Any]:
         "automatic_action_authorized": False,
     }
 
-def build_portfolio_release_review(rows: Iterable[Mapping[str, Any]] | None = None) -> dict[str, Any]:
-    reviews = [classify_position(row) for row in (rows or []) if isinstance(row, Mapping)]
+def build_portfolio_release_review(
+    rows: Iterable[Mapping[str, Any]] | None = None,
+    context_by_symbol: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    context_map = {str(symbol or "").upper(): dict(value or {}) for symbol, value in dict(context_by_symbol or {}).items()}
+    reviews = [
+        classify_position(
+            row,
+            context_map.get(_text(row.get("symbol") or row.get("ticker")).upper()),
+        )
+        for row in (rows or [])
+        if isinstance(row, Mapping)
+    ]
     counts = {state: sum(1 for row in reviews if row.get("state") == state) for state in STATES}
     primary_counts = {state: sum(1 for row in reviews if row.get("primary_state") == state) for state in PRIMARY_STATES}
     action_queue = {
@@ -227,7 +266,13 @@ def build_portfolio_release_review(rows: Iterable[Mapping[str, Any]] | None = No
         "replacement_candidates": [row.get("symbol") for row in reviews if row.get("primary_state") == "REPLACE_CANDIDATE"],
         "profit_protection_candidates": [row.get("symbol") for row in reviews if row.get("primary_state") == "PROTECT_PROFIT"],
         "recovery_candidates": [row.get("symbol") for row in reviews if "RECOVERY_IN_PROGRESS" in (row.get("secondary_labels") or [])],
-        "strongest_holds": [row.get("symbol") for row in reviews if row.get("primary_state") == "HOLD"],
+        "strongest_holds": [
+            row.get("symbol") for row in sorted(
+                (row for row in reviews if row.get("primary_state") == "HOLD"),
+                key=lambda row: _number((row.get("position_snapshot") or {}).get("unrealized_pnl_pct")) or -999.0,
+                reverse=True,
+            )
+        ],
         "dust_anomalies": [row.get("symbol") for row in reviews if row.get("primary_state") == "DUST_CLEANUP_REVIEW"],
         "insufficient_evidence": [row.get("symbol") for row in reviews if row.get("primary_state") == "INSUFFICIENT_EVIDENCE"],
     }
@@ -236,6 +281,23 @@ def build_portfolio_release_review(rows: Iterable[Mapping[str, Any]] | None = No
         influence_summary[name] = sum(
             1 for row in reviews if (row.get("decision_influence") or {}).get(name) == "ACTIVE_CONSUMER"
         )
+    meaningful = [row for row in reviews if row.get("primary_state") != "DUST_CLEANUP_REVIEW"]
+    secondary_counts: dict[str, int] = {}
+    evidence_gap_counts: dict[str, int] = {}
+    for row in meaningful:
+        for label in row.get("secondary_labels") or []:
+            if label == "MISSING_LIFECYCLE_DATA":
+                evidence_gap_counts[label] = evidence_gap_counts.get(label, 0) + 1
+            else:
+                secondary_counts[label] = secondary_counts.get(label, 0) + 1
+    dominant_secondary = max(secondary_counts, key=secondary_counts.get) if secondary_counts else None
+    dominant_count = secondary_counts.get(dominant_secondary, 0) if dominant_secondary else 0
+    blanket_detected = bool(meaningful and dominant_count / len(meaningful) > 0.5)
+    retrieval_counts = {
+        "complete_lineage": sum(1 for row in meaningful if (row.get("retrieval") or {}).get("coverage") == "COMPLETE_LINEAGE"),
+        "partial_lineage": sum(1 for row in meaningful if (row.get("retrieval") or {}).get("coverage") == "PARTIAL_LINEAGE"),
+        "broker_only": sum(1 for row in meaningful if (row.get("retrieval") or {}).get("coverage") == "BROKER_ONLY"),
+    }
     return {
         "portfolio_capacity_release_review_v1": True,
         "total_positions": len(reviews),
@@ -245,6 +307,16 @@ def build_portfolio_release_review(rows: Iterable[Mapping[str, Any]] | None = No
         "review_rows": reviews,
         "action_queue": action_queue,
         "influence_summary": influence_summary,
+        "retrieval_coverage": retrieval_counts,
+        "differentiation_audit": {
+            "meaningful_positions": len(meaningful),
+            "secondary_state_counts": secondary_counts,
+            "evidence_gap_counts": evidence_gap_counts,
+            "dominant_secondary_state": dominant_secondary,
+            "dominant_secondary_count": dominant_count,
+            "blanket_fallback_detected": blanket_detected,
+            "status": "REVIEW_REQUIRED" if blanket_detected else "DIFFERENTIATED_OR_EVIDENCE_LIMITED",
+        },
         "estimated_releasable_slots": sum(int(row.get("estimated_capacity_released_if_closed") or 0) for row in reviews),
         "estimated_releasable_capital": None,
         "automatic_action_authorized": False,

@@ -46482,6 +46482,304 @@ def _portfolio_capacity_release_review_payload_v1(statuses: dict | None = None) 
     return {**review, **_safety_flags_v1()}
 
 
+def _position_intelligence_summary_index_v1(filename: str) -> dict:
+    return _astra_evidence_state_json(os.path.join("storage_summary_indexes", filename))
+
+
+def _position_intelligence_context_v1(statuses: dict | None = None) -> tuple[dict, dict]:
+    """Join bounded symbol-level evidence to a fresh broker position snapshot."""
+    current = dict(statuses or {})
+    broker = _cached_alpaca_paper_status_payload(current)
+    positions = [dict(row) for row in (broker.get("positions") or []) if isinstance(row, dict)][:100]
+    registry = _broker_truth_open_position_rows_v1()
+    registry_by_symbol = {
+        str(row.get("symbol") or "").upper(): dict(row)
+        for row in (registry.get("aggregated_positions") or []) if isinstance(row, dict)
+    }
+    profiles = dict(_astra_evidence_state_json("symbol_behavior_profiles_v1.json").get("profiles") or {})
+    candidates = {
+        str(row.get("symbol") or row.get("ticker") or "").upper(): dict(row)
+        for row in _cached_candidate_rows_for_horizon_flow_v1() if isinstance(row, dict)
+    }
+    lifecycle = _position_intelligence_summary_index_v1("trade_lifecycle_excursion_v2.jsonl.summary_index.json")
+    replay = _position_intelligence_summary_index_v1("replay_counterfactual_learning_v2.jsonl.summary_index.json")
+    candidate_index = _position_intelligence_summary_index_v1("candidate_decision_ledger_v1.jsonl.summary_index.json")
+    opportunity = _position_intelligence_summary_index_v1("opportunity_cost_learning_v1.jsonl.summary_index.json")
+    lifecycle_symbols = {str(key).upper(): int(_to_float(value, 0.0)) for key, value in ((lifecycle.get("dimension_counts") or {}).get("symbol") or {}).items()}
+    replay_symbols = {str(key).upper(): int(_to_float(value, 0.0)) for key, value in ((replay.get("dimension_counts") or {}).get("symbol") or {}).items()}
+    candidate_symbols = {str(key).upper(): int(_to_float(value, 0.0)) for key, value in ((candidate_index.get("dimension_counts") or {}).get("symbol") or {}).items()}
+    opportunity_symbols = {str(key).upper(): int(_to_float(value, 0.0)) for key, value in ((opportunity.get("dimension_counts") or {}).get("symbol") or {}).items()}
+    context_by_symbol: dict[str, dict] = {}
+    coverage_rows: list[dict] = []
+    for position in positions:
+        symbol = str(position.get("symbol") or "").upper().strip()
+        if not symbol:
+            continue
+        registry_row = dict(registry_by_symbol.get(symbol) or {})
+        profile = dict(profiles.get(symbol) or {})
+        candidate = dict(candidates.get(symbol) or {})
+        lifecycle_count = int(lifecycle_symbols.get(symbol, 0))
+        replay_count = int(replay_symbols.get(symbol, 0))
+        candidate_count = int(candidate_symbols.get(symbol, 0))
+        opportunity_count = int(opportunity_symbols.get(symbol, 0))
+        # A current candidate row is useful context for a future replacement
+        # review, but it is not proof of the original recommendation that
+        # opened this broker position.  Keep that distinction explicit.
+        observed_horizon = str(
+            registry_row.get("intended_trade_style")
+            if registry_row.get("intended_trade_style") not in (None, "", "unknown")
+            else registry_row.get("actual_horizon_classification") or ""
+        ).lower()
+        linked = {
+            "broker_truth": True,
+            "recommendation_lineage": False,
+            "horizon_lifecycle": bool(observed_horizon),
+            "symbol_behavior": bool(profile),
+            "lifecycle": lifecycle_count > 0,
+            "replay": replay_count > 0,
+            "candidate_history": candidate_count > 0,
+            "opportunity_cost": opportunity_count > 0 and symbol != "UNKNOWN",
+            "mfe_mae": False,
+            "thesis": False,
+            "regime": False,
+            "catalyst": False,
+        }
+        missing_evidence = [name for name in ("recommendation_lineage", "horizon_lifecycle", "mfe_mae", "opportunity_cost", "thesis") if not linked[name]]
+        supporting_count = sum(1 for value in linked.values() if value)
+        coverage = "COMPLETE_LINEAGE" if all(linked[name] for name in ("broker_truth", "recommendation_lineage", "horizon_lifecycle", "symbol_behavior", "lifecycle")) else "PARTIAL_LINEAGE" if supporting_count > 1 else "BROKER_ONLY"
+        context_by_symbol[symbol] = {
+            "entry_timestamp": registry_row.get("entry_timestamp"),
+            "intended_trade_style": observed_horizon if linked["horizon_lifecycle"] else None,
+            "horizon_source": (registry_row.get("source") if registry_row.get("intended_trade_style") not in (None, "", "unknown") else "broker_registry_observed_age_classification") if linked["horizon_lifecycle"] else None,
+            "lane_id": ({"scalp": "SCALP", "day_trade": "DAY", "swing_trade": "SWING", "short_swing": "SWING", "standard_swing": "SWING", "extended_swing": "SWING"}.get(observed_horizon) if linked["horizon_lifecycle"] else None),
+            "expected_hold_duration_days": registry_row.get("expected_hold_days_for_intended_style"),
+            "days_held": registry_row.get("days_held"),
+            "horizon_expired": bool(registry_row.get("horizon_status") == "horizon_mismatch"),
+            "historical_similarity": "linked_symbol_lifecycle_summary" if lifecycle_count else None,
+            "replay_evidence": "linked_symbol_replay_summary" if replay_count else None,
+            "symbol_behavior": profile or None,
+            "symbol_profile": profile or None,
+            "symbol_evidence_count": int(_to_float(profile.get("sample_size"), 0.0)),
+            "evidence_confidence": profile.get("profile_confidence"),
+            "current_candidate_context_available": bool(candidate),
+            "current_candidate_context": {
+                "symbol": candidate.get("symbol") or candidate.get("ticker"),
+                "score": candidate.get("score") or candidate.get("confidence"),
+                "rank": candidate.get("rank"),
+                "timestamp": candidate.get("generated_at") or candidate.get("timestamp"),
+            } if candidate else None,
+            "lineage": {
+                "position_link_key": position.get("asset_id") or symbol,
+                "broker_order_id": registry_row.get("broker_order_id"),
+                "client_order_id": registry_row.get("client_order_id"),
+                "recommendation_id": None,
+                "lifecycle_id": registry_row.get("stable_key"),
+                "lane_id": None,
+            },
+            "retrieval": {"coverage": coverage, "linked_sources": [name for name, value in linked.items() if value]},
+            "missing_evidence": missing_evidence,
+        }
+        evidence_condition = {
+            "historical_lineage": "missing_historical_lineage" if not linked["recommendation_lineage"] else "linked",
+            "horizon": "identifier_mismatch_or_missing_registry_record" if not linked["horizon_lifecycle"] and not registry_row else "missing_horizon" if not linked["horizon_lifecycle"] else "linked",
+            "mfe_mae": "detailed_lifecycle_retrieval_not_available" if lifecycle_count else "missing_lifecycle_evidence",
+            "opportunity_cost": "index_symbol_dimension_unavailable" if opportunity.get("source_available") else "index_unavailable",
+        }
+        coverage_rows.append({"symbol": symbol, "coverage": coverage, "linked_sources": [name for name, value in linked.items() if value], "missing_evidence": missing_evidence, "evidence_condition": evidence_condition, "lifecycle_count": lifecycle_count, "replay_count": replay_count, "candidate_history_count": candidate_count, "registry_match": bool(registry_row)})
+    source_metadata = {
+        "lifecycle_index": bool(lifecycle.get("source_available")),
+        "replay_index": bool(replay.get("source_available")),
+        "candidate_index": bool(candidate_index.get("source_available")),
+        "opportunity_cost_index": bool(opportunity.get("source_available")),
+    }
+    return context_by_symbol, {
+        "positions": coverage_rows,
+        "source_metadata": source_metadata,
+        "broker_registry_symbols": len(registry_by_symbol),
+        "positions_with_complete_lineage": sum(1 for row in coverage_rows if row.get("coverage") == "COMPLETE_LINEAGE"),
+        "positions_with_partial_lineage": sum(1 for row in coverage_rows if row.get("coverage") == "PARTIAL_LINEAGE"),
+        "positions_with_broker_only_evidence": sum(1 for row in coverage_rows if row.get("coverage") == "BROKER_ONLY"),
+        "positions_missing_horizon": sum(1 for row in coverage_rows if "horizon_lifecycle" in (row.get("missing_evidence") or [])),
+        "positions_missing_thesis": sum(1 for row in coverage_rows if "thesis" in (row.get("missing_evidence") or [])),
+        "positions_missing_mfe_mae": sum(1 for row in coverage_rows if "mfe_mae" in (row.get("missing_evidence") or [])),
+        "positions_missing_opportunity_cost": sum(1 for row in coverage_rows if "opportunity_cost" in (row.get("missing_evidence") or [])),
+        "positions_missing_replacement_analysis": len(coverage_rows),
+        "identifier_mismatch_count": sum(1 for row in coverage_rows if not row.get("registry_match")),
+    }
+
+
+def _position_intelligence_utilization_payload_v1(statuses: dict | None = None, *, persist: bool = False) -> dict:
+    current = dict(statuses or {})
+    broker = _cached_alpaca_paper_status_payload(current)
+    positions = [dict(row) for row in (broker.get("positions") or []) if isinstance(row, dict)][:100]
+    contexts, retrieval = _position_intelligence_context_v1(current)
+    review = build_portfolio_release_review(positions, contexts)
+    rows = list(review.get("review_rows") or [])
+    action_queue = dict(review.get("action_queue") or {})
+    profiles = {symbol: dict(context.get("symbol_profile") or {}) for symbol, context in contexts.items()}
+    roi_rows = []
+    profit_rows = []
+    for row in rows:
+        symbol = str(row.get("symbol") or "").upper()
+        snapshot = dict(row.get("position_snapshot") or {})
+        days = _to_float((contexts.get(symbol) or {}).get("days_held"), 0.0)
+        pnl_pct = snapshot.get("unrealized_pnl_pct")
+        pnl_pct = _to_float(pnl_pct, 0.0) * 100.0 if pnl_pct is not None and abs(_to_float(pnl_pct, 0.0)) <= 2.0 else pnl_pct
+        return_per_day = round(_to_float(pnl_pct, 0.0) / days, 4) if days > 0 and pnl_pct is not None else None
+        profile = profiles.get(symbol) or {}
+        profile_sample = int(_to_float(profile.get("sample_size"), 0.0))
+        profile_giveback = profile.get("giveback_average")
+        if pnl_pct is not None and _to_float(pnl_pct, 0.0) > 0 and profile_sample >= 10 and _to_float(profile_giveback, 0.0) >= 50.0:
+            profit_state = "WATCH_PROFIT_GIVEBACK"
+        elif pnl_pct is not None and _to_float(pnl_pct, 0.0) > 0:
+            profit_state = "LET_WINNER_RUN"
+        else:
+            profit_state = "INSUFFICIENT_EVIDENCE"
+        replacement = "REPLACEMENT_ADVANTAGE_LOW" if not (contexts.get(symbol) or {}).get("recommendation_id") else "WATCH_FOR_REPLACEMENT"
+        roi_rows.append({
+            "symbol": symbol,
+            "unrealized_return_pct": pnl_pct,
+            "holding_days": days if days > 0 else None,
+            "return_per_calendar_day": return_per_day,
+            "return_per_trading_day": return_per_day,
+            "capital_occupied": snapshot.get("market_value"),
+            "drawdown_adjusted_return_per_day": None,
+            "expected_forward_return_per_day": None,
+            "opportunity_cost_assessment": replacement,
+            "replacement_evidence_status": "linked_candidate_lineage" if replacement == "WATCH_FOR_REPLACEMENT" else "no_eligible_linked_replacement_in_cache",
+        })
+        profit_rows.append({"symbol": symbol, "profit_capture_state": profit_state, "current_giveback_available": False, "symbol_giveback_profile": profile_giveback if profile_sample else None, "profile_sample_size": profile_sample, "advisory_only": True})
+    lane_profiles: dict[str, list[dict]] = {"scalp": [], "day_trade": [], "swing_trade": []}
+    for profile in profiles.values():
+        horizon = str(profile.get("best_horizon") or "").lower()
+        lane = "scalp" if horizon == "scalp" else "day_trade" if horizon == "day_trade" else "swing_trade"
+        lane_profiles[lane].append(profile)
+    envelopes = {}
+    strategy_rows = []
+    for lane, lane_rows in lane_profiles.items():
+        evidence = sum(int(_to_float(row.get("sample_size"), 0.0)) for row in lane_rows)
+        information_value = round(max(0.0, 100.0 - min(100.0, evidence)), 2)
+        strategy_state = "EXPLOIT_PROVEN_EDGE" if evidence >= 50 else "EXPLORE_UNDERSAMPLED_SETUP" if evidence >= 10 else "SHADOW_ONLY_EXPERIMENT"
+        envelopes[lane] = {
+            "status": "RECONSTRUCTED_SUPPORTED" if evidence >= 20 else "PROVISIONAL",
+            "evidence_count": evidence,
+            "expected_opportunity_count": None,
+            "expected_win_rate_range": None,
+            "expected_profit_factor_range": None,
+            "expected_return_range": None,
+            "expected_drawdown_range": None,
+            "confidence": round(min(80.0, evidence / 2.0), 2),
+            "regime_compatibility": "symbol_profile_context_only",
+            "strongest_setup_types": [],
+            "weakest_setup_types": [],
+            "likely_failure_modes": ["broker_calibrated_outcomes_not_yet_available"],
+        }
+        strategy_rows.append({
+            "lane": lane,
+            "strategy_state": strategy_state,
+            "evidence_count": evidence,
+            "expected_risk_adjusted_value": None,
+            "information_value": information_value,
+            "trading_profit_claim_available": False,
+            "human_review_required": True,
+        })
+    producer_specs = [
+        ("broker_truth", "alpaca_paper_status_v1.positions", "ACTIVE_AND_CONSUMED"),
+        ("candidate_ranking", "candidate_decision_ledger_v1.summary_index", "AVAILABLE_NOT_LINKED"),
+        ("copilot_ranking", "astra_copilot_suite_v1", "DIAGNOSTIC_ONLY"),
+        ("recommendation_lineage", "broker_truth_records_v1 + original recommendation record", "MISSING"),
+        ("trade_style_assignment", "broker_truth_records_v1", "ACTIVE_AND_CONSUMED"),
+        ("intended_horizon", "broker_truth_records_v1", "ACTIVE_AND_CONSUMED"),
+        ("horizon_lifecycle", "broker_truth_records_v1 + lifecycle summary index", "ACTIVE_AND_CONSUMED"),
+        ("momentum_state", "position/candidate context", "AVAILABLE_NOT_LINKED"),
+        ("thesis_state", "original recommendation lineage", "MISSING"),
+        ("market_regime", "cached market context", "AVAILABLE_NOT_LINKED"),
+        ("breadth", "market breadth cache", "AVAILABLE_NOT_LINKED"),
+        ("sector_rotation", "sector rotation cache", "AVAILABLE_NOT_LINKED"),
+        ("catalyst_intelligence", "catalyst context cache", "AVAILABLE_NOT_LINKED"),
+        ("fundamentals", "provider-backed cached symbol context", "AVAILABLE_NOT_LINKED"),
+        ("symbol_behavior", "symbol_behavior_profiles_v1", "ACTIVE_AND_CONSUMED"),
+        ("historical_similarity", "trade_lifecycle_excursion_v2.summary_index", "ACTIVE_AND_CONSUMED"),
+        ("replay_evidence", "replay_counterfactual_learning_v2.summary_index", "ACTIVE_AND_CONSUMED"),
+        ("shadow_evidence", "realistic_shadow_evidence_learning_lab_v1", "SHADOW_ONLY"),
+        ("reconstructed_lifecycle", "historical_lifecycle_reconstruction_v1", "DIAGNOSTIC_ONLY"),
+        ("mfe_mae", "trade_lifecycle_excursion_v2 detailed rows", "MISSING"),
+        ("time_to_peak", "trade_lifecycle_excursion_v2 detailed rows", "MISSING"),
+        ("profit_giveback", "symbol_behavior_profiles_v1", "ACTIVE_AND_CONSUMED"),
+        ("return_per_day", "broker_truth_records_v1 + fresh broker prices", "ACTIVE_AND_CONSUMED"),
+        ("position_age", "broker_truth_records_v1", "ACTIVE_AND_CONSUMED"),
+        ("time_below_entry", "broker history/lifecycle detail", "MISSING"),
+        ("opportunity_cost", "opportunity_cost_learning_v1.summary_index", "AVAILABLE_NOT_LINKED"),
+        ("replacement_candidate_quality", "cached eligible candidate comparison", "MISSING"),
+        ("concentration_correlation", "portfolio risk cache", "AVAILABLE_NOT_LINKED"),
+        ("liquidity_spread", "market data cache", "AVAILABLE_NOT_LINKED"),
+        ("entry_quality", "candidate lineage + execution evidence", "MISSING"),
+        ("exit_readiness", "exit_readiness_diagnostics_v1", "DIAGNOSTIC_ONLY"),
+        ("governance", "astra_governance_oversight_v1", "ACTIVE_AND_CONSUMED"),
+    ]
+    producer_audit = [
+        {
+            "source": name, "canonical_store": store, "classification": state,
+            "freshness": "fresh_broker_snapshot" if name == "broker_truth" else "bounded_cached_evidence",
+            "symbol_coverage": sum(1 for item in retrieval.get("positions") or [] if name.replace("_evidence", "") in (item.get("linked_sources") or [])),
+            "position_linkage_key": "symbol", "current_consumer": "portfolio_capacity_release_review_v1" if state.startswith("ACTIVE") else None,
+            "expected_consumer": "position_monitoring_and_advisory_review", "active_influence_field": name if state.startswith("ACTIVE") else None,
+            "acknowledgement": "position_intelligence_utilization_v1", "outcome_attribution_path": "advisory_decision_record", "reason": "bounded_symbol_join" if state.startswith("ACTIVE") else "no_current_symbol_level_link_or_required_field",
+        }
+        for name, store, state in producer_specs
+    ]
+    decision_records = [
+        {
+            "decision_id": f"position-intel:{row.get('symbol')}:{str(broker.get('generated_at') or '')[:10]}",
+            "symbol": row.get("symbol"), "lane": row.get("lane_id"), "timestamp": broker.get("generated_at"),
+            "original_decision": row.get("primary_state"), "supporting_intelligence": [name for name, state in (row.get("decision_influence") or {}).items() if state == "ACTIVE_CONSUMER"],
+            "confidence": row.get("evidence_confidence"), "action_taken": "ADVISORY_ONLY_NO_EXECUTION", "later_actual_outcome": None,
+            "counterfactual_outcome": None, "official_broker_metric_eligible": False,
+        }
+        for row in rows
+    ]
+    capacity = _evidence_accumulation_capacity_payload_v1(current)
+    governance = dict(current.get("astra_governance_oversight_v1") or {})
+    capacity_recommendation = "FAIL_CLOSED" if int(_to_float(capacity.get("total_open_positions"), len(rows))) >= int(_to_float(capacity.get("total_capacity"), 20.0)) or int(_to_float(governance.get("high_findings_count"), 0.0)) > 0 else "LIMITED"
+    persistence = {"persisted": False, "mode": "bounded_payload_and_cache", "records": len(decision_records)}
+    if persist:
+        path = os.path.join(STATE, "position_intelligence_utilization_audit_v1.jsonl")
+        try:
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"generated_at": _now_utc_iso(), "broker_snapshot": broker.get("generated_at"), "decision_records": decision_records, "coverage": review.get("retrieval_coverage")}, separators=(",", ":"), default=str) + "\n")
+            persistence = {"persisted": True, "mode": "explicit_force_audit_append_only", "path": "state/position_intelligence_utilization_audit_v1.jsonl", "records": len(decision_records)}
+        except Exception as exc:
+            persistence = {"persisted": False, "mode": "persistence_unavailable", "error": str(exc)[:120], "records": len(decision_records)}
+    return {
+        "endpoint": "/api/astra_position_intelligence_utilization_v1",
+        "status": "PASS_WITH_WARNINGS" if rows else "INSUFFICIENT_EVIDENCE",
+        "generated_at": _now_utc_iso(),
+        "broker_snapshot": {"authoritative": broker.get("broker_snapshot_status") == "FRESH_READ_ONLY", "generated_at": broker.get("generated_at"), "open_positions": len(positions)},
+        "producer_to_consumer_audit": producer_audit,
+        "position_retrieval_coverage": {**retrieval, **dict(review.get("retrieval_coverage") or {})},
+        "portfolio_review": review,
+        "roi_capital_efficiency": {"positions": roi_rows, "return_per_day_available_count": sum(1 for row in roi_rows if row.get("return_per_calendar_day") is not None), "expected_forward_values_available": 0},
+        "profit_capture_advisory": {"positions": profit_rows, "automatic_exits_enabled": False},
+        "bounded_consumers": [
+            {"consumer": "position_monitoring_priority", "previous_state": "broker_only_classification", "new_state": "ACTIVE_ADVISORY", "maximum_influence_pct": 100.0, "confidence_requirement": "linked_broker_truth", "evidence_requirement": "symbol_level_link", "governance_gate": "human_review_required", "rollback_trigger": "retrieval_conflict", "review_period": "each_fresh_audit", "outcome_attribution": "decision_records"},
+            {"consumer": "profit_protection_advisory", "previous_state": "profile_not_joined", "new_state": "ACTIVE_ADVISORY", "maximum_influence_pct": 100.0, "confidence_requirement": "profile_sample>=10", "evidence_requirement": "positive_current_pnl_and_symbol_profile", "governance_gate": "no_exit_execution", "rollback_trigger": "profile_link_missing", "review_period": "each_fresh_audit", "outcome_attribution": "decision_records"},
+            {"consumer": "candidate_priority_tie_break", "previous_state": "not_consumed", "new_state": "DRY_RUN_ONLY", "maximum_influence_pct": 3.0, "confidence_requirement": "validated_symbol_linkage", "evidence_requirement": "future_outcome_attribution", "governance_gate": "ranking_unchanged", "rollback_trigger": "any_ranking_contract_difference", "review_period": "human_approved_future_review", "outcome_attribution": "shadow_comparison_only"},
+        ],
+        "strategy_selection": {
+            "status": "ADVISORY_EVIDENCE_ROUTING_ONLY",
+            "labels": ["EXPLOIT_PROVEN_EDGE", "EXPLORE_UNDERSAMPLED_SETUP", "SHADOW_ONLY_EXPERIMENT", "PAPER_CANARY_ELIGIBLE", "DEPRIORITIZE_LOW_EXPECTANCY", "RETIRE_OR_REDESIGN_SETUP"],
+            "lanes": strategy_rows,
+            "active_strategy_change": False,
+            "reason": "information value is tracked separately from profit because broker-calibrated lane outcomes remain insufficient",
+        },
+        "forward_performance_envelope_by_lane": envelopes,
+        "dynamic_capacity_advisory": {"recommendation": capacity_recommendation, "automatic_capacity_change": False, "capacity_snapshot": capacity.get("snapshot_id"), "governance_high_findings": governance.get("high_findings_count", 0)},
+        "decision_impact_measurement": {"records": decision_records, "intelligence_utilization_rate": round(sum(1 for row in rows if len([value for value in (row.get("decision_influence") or {}).values() if value == "ACTIVE_CONSUMER"]) > 1) / max(1, len(rows)) * 100.0, 3), "positions_with_multi_source_intelligence": sum(1 for row in rows if len([value for value in (row.get("decision_influence") or {}).values() if value == "ACTIVE_CONSUMER"]) > 1), "recommendation_helpfulness_rate": None, "expected_vs_actual_calibration": None, "improvement_claimed": False, "persistence": persistence},
+        "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
 def _pladeu_direct_statuses_v1(force: bool = False) -> dict:
     """Compose PLADEU from bounded local state, never the full I-L validator.
 
@@ -46555,6 +46853,35 @@ def _attach_pladeu_statuses_v1(statuses: dict, force: bool = False) -> dict:
     statuses["pladeu_open_positions"] = _pladeu_open_positions_from_cached_status_v1(statuses)
     statuses["evidence_accumulation_capacity_v1"] = _evidence_accumulation_capacity_payload_v1(statuses)
     statuses["portfolio_capacity_release_review_v1"] = _portfolio_capacity_release_review_payload_v1(statuses)
+    # Unified diagnostics keeps only the executive summary. The detailed
+    # per-position table is available from its dedicated endpoint so the
+    # Learning Center does not inherit another large dashboard hot payload.
+    position_intelligence = _position_intelligence_utilization_payload_v1(statuses, persist=False)
+    retrieval = dict(position_intelligence.get("position_retrieval_coverage") or {})
+    portfolio_review = dict(position_intelligence.get("portfolio_review") or {})
+    impact = dict(position_intelligence.get("decision_impact_measurement") or {})
+    statuses["astra_position_intelligence_utilization_v1"] = {
+        "endpoint": position_intelligence.get("endpoint"),
+        "status": position_intelligence.get("status"),
+        "generated_at": position_intelligence.get("generated_at"),
+        "broker_snapshot": position_intelligence.get("broker_snapshot"),
+        "position_retrieval_coverage": {key: value for key, value in retrieval.items() if key != "positions"},
+        "portfolio_review": {
+            "total_positions": portfolio_review.get("total_positions"),
+            "primary_state_counts": portfolio_review.get("primary_state_counts"),
+            "retrieval_coverage": portfolio_review.get("retrieval_coverage"),
+            "differentiation_audit": portfolio_review.get("differentiation_audit"),
+            "action_queue": portfolio_review.get("action_queue"),
+        },
+        "bounded_consumers": position_intelligence.get("bounded_consumers"),
+        "dynamic_capacity_advisory": position_intelligence.get("dynamic_capacity_advisory"),
+        "strategy_selection": position_intelligence.get("strategy_selection"),
+        "decision_impact_measurement": {key: value for key, value in impact.items() if key != "records"},
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
     statuses["authoritative_broker_truth"] = _canonical_broker_truth_counts_v1(statuses)
     statuses["pladeu_candidate_source_metadata"] = _pladeu_candidate_source_metadata_v1()
     statuses["day_lane_pilot_config"] = _day_lane_pilot_config_v1()
@@ -46866,6 +47193,13 @@ def portfolio_capacity_release_review_v1(force: bool = False):
     """Return advisory congestion classifications without exit authority."""
     base = _pladeu_direct_statuses_v1(force=bool(force))
     return _portfolio_capacity_release_review_payload_v1(base)
+
+
+@router.get("/api/astra_position_intelligence_utilization_v1")
+def astra_position_intelligence_utilization_v1(force: bool = False):
+    """Audit bounded position-evidence consumption without execution authority."""
+    base = _pladeu_direct_statuses_v1(force=bool(force))
+    return _position_intelligence_utilization_payload_v1(base, persist=bool(force))
 
 
 def _learning_return_integrity_v1_payload() -> dict:
@@ -61658,7 +61992,8 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
     funnel = dict(day.get("day_trade_qualification_funnel_v1") or {})
     broker = dict(current.get("alpaca_paper_status_v1") or current.get("alpaca_paper_broker") or {})
     rows = [dict(row) for row in (broker.get("positions") or []) if isinstance(row, dict)]
-    review = build_portfolio_release_review(rows)
+    utilization = _position_intelligence_utilization_payload_v1(current, persist=False)
+    review = dict(utilization.get("portfolio_review") or build_portfolio_release_review(rows))
     findings: list[dict] = []
     if int(_to_float(funnel.get("day_trade_candidates_generated"), 0.0)) > 0 and int(_to_float(funnel.get("day_trade_candidates_qualified"), 0.0)) <= 0:
         findings.append({
@@ -61686,6 +62021,26 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "evidence": {"positions_missing_required_fields": missing_intelligence},
             "recommended_action": "retain INSUFFICIENT_EVIDENCE labels; do not infer unavailable lifecycle fields",
         })
+    retrieval = dict(utilization.get("position_retrieval_coverage") or {})
+    audit_rows = list(utilization.get("producer_to_consumer_audit") or [])
+    unavailable_consumers = [row.get("source") for row in audit_rows if row.get("classification") == "AVAILABLE_NOT_LINKED"]
+    if unavailable_consumers:
+        findings.append({
+            "severity": "medium",
+            "classification": "intelligence_utilization_gap",
+            "issue": "position_intelligence_available_but_not_linked",
+            "evidence": {"sources": unavailable_consumers, "coverage": retrieval},
+            "recommended_action": "preserve advisory-only consumption until position-level lineage exists; do not infer links from dashboard data",
+        })
+    differentiation = dict(review.get("differentiation_audit") or {})
+    if differentiation.get("blanket_fallback_detected"):
+        findings.append({
+            "severity": "medium",
+            "classification": "classification_quality_warning",
+            "issue": "blanket_secondary_classification_detected",
+            "evidence": differentiation,
+            "recommended_action": "review the dominant secondary label against explicit lineage coverage; no portfolio action is authorized",
+        })
     warnings = [str(item.get("issue")) for item in findings]
     high = sum(1 for item in findings if item.get("severity") == "high")
     critical = sum(1 for item in findings if item.get("severity") == "critical")
@@ -61712,6 +62067,12 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "primary_state_counts": review.get("primary_state_counts") or {},
             "dust_cleanup_symbols": [row.get("symbol") for row in (review.get("review_rows") or []) if row.get("primary_state") == "DUST_CLEANUP_REVIEW"],
             "automatic_exits_enabled": False,
+        },
+        "position_intelligence_utilization_v1": {
+            "status": utilization.get("status"),
+            "retrieval_coverage": retrieval,
+            "differentiation_audit": differentiation,
+            "available_but_not_consumed": unavailable_consumers,
         },
         "live_trading_enabled": False,
         "learned_exits_enabled": False,
@@ -85073,6 +85434,9 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 if key in {"endpoint", "status", "safe_auto_audit_framework", "horizon_assignment_trace", "candidate_level_trace", "top_10_issues", "provider_calls_used", "llm_calls_used", "broker_actions_used", "behavior_changes_applied"}
             }
             _attach_astra_intelligence_maturation_readiness_report_v1(out, {**statuses, **out}, force=True)
+            out["astra_position_intelligence_utilization_v1"] = dict(
+                statuses.get("astra_position_intelligence_utilization_v1") or {}
+            )
             _apply_unified_broker_truth_safety_defaults_v1(out)
             wiring_summary = _dashboard_data_wiring_summary_v1(out)
             out["dashboard_data_wiring_v1"] = wiring_summary
