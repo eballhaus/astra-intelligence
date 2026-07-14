@@ -247,8 +247,12 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
                 "capacity_decision": "LANE_RESERVE_EXHAUSTED", "lane_reserve_enabled": True,
                 "lane_capital_remaining": 100, "lane_positions_remaining": 1,
                 "lane_open_position_count": 0, "lane_pending_order_count": 0, "lane_active_commitment_count": 0,
+                "commitment_id": "held-then-released", "commitment_state": "RELEASED",
             }], cycle_id="fixture")
-            self.assertEqual(ledger.summary()["lanes"]["DAY"]["false_reserve_exhaustion_contradictions"], 1)
+            summary = ledger.summary()["lanes"]["DAY"]
+            self.assertEqual(summary["false_reserve_exhaustion_contradictions"], 1)
+            self.assertEqual(summary["reserve_commitments_requested"], 1)
+            self.assertEqual(summary["reserve_commitments_released"], 1)
 
     def test_operational_dry_run_reaches_order_ready_from_crypto_reserve(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(BASE_ENV, clear=False):

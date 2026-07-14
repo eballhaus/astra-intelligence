@@ -46712,6 +46712,7 @@ def _lane_execution_daily_report_v1_payload(statuses: dict | None = None) -> dic
     total_rows = int(_to_float(ledger.get("total_trace_rows"), 0.0))
     current_commitments = dict(capacity_snapshot.get("current_commitment_snapshot") or {})
     current_pending_orders = dict(capacity_snapshot.get("pending_order_snapshot") or {})
+    commitment_stats = dict(current_commitments.get("stats") or {})
     day_capacity = dict((capacity_snapshot.get("lanes") or {}).get("day") or {})
     false_reserve_contradictions = sum(
         int(_to_float((dict(lanes.get(lane) or {})).get("false_reserve_exhaustion_contradictions"), 0.0))
@@ -46769,8 +46770,14 @@ def _lane_execution_daily_report_v1_payload(statuses: dict | None = None) -> dic
         "current_pending_orders_count": day_capacity.get("pending_order_count"),
         "current_active_commitments_count": day_capacity.get("active_commitment_count"),
         "false_reserve_exhaustion_count": false_reserve_contradictions,
-        "reserve_commitments_created": int(_to_float((dict(lanes.get("DAY") or {})).get("reserve_commitments_requested"), 0.0)),
-        "reserve_commitments_released": int(_to_float((dict(lanes.get("DAY") or {})).get("reserve_commitments_released"), 0.0)),
+        "reserve_commitments_created": max(
+            int(_to_float((dict(lanes.get("DAY") or {})).get("reserve_commitments_requested"), 0.0)),
+            int(_to_float(commitment_stats.get("requested"), 0.0)),
+        ),
+        "reserve_commitments_released": max(
+            int(_to_float((dict(lanes.get("DAY") or {})).get("reserve_commitments_released"), 0.0)),
+            int(_to_float(commitment_stats.get("released"), 0.0)),
+        ),
         "reserve_commitments_converted_to_orders": int(_to_float((dict(lanes.get("DAY") or {})).get("reserve_commitments_pending"), 0.0)),
         "portfolio_capacity_release_review_v1": dict(statuses.get("portfolio_capacity_release_review_v1") or {}),
         "activation_contracts": activation,

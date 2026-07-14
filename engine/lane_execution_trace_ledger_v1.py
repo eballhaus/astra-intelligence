@@ -198,7 +198,7 @@ class LaneExecutionTraceLedgerV1:
             lane_summary["blocked_by_duplicate_exposure"] += int(capacity_decision == "DUPLICATE_EXPOSURE_BLOCKED")
             lane_summary["reserve_order_ready_count"] += int(record["order_readiness_result"] == "ORDER_READY" and capacity_decision == "AVAILABLE_FROM_LANE_RESERVE")
             lane_summary["reserve_submission_attempt_count"] += int(record["submission_attempted"] and capacity_decision == "AVAILABLE_FROM_LANE_RESERVE")
-            lane_summary["reserve_commitments_requested"] += int(record["commitment_state"] in {"HELD", "CONVERTED_TO_PENDING_ORDER", "CONVERTED_TO_OPEN_POSITION"})
+            lane_summary["reserve_commitments_requested"] += int(bool(record["commitment_id"]))
             lane_summary["reserve_commitments_released"] += int(record["commitment_state"] == "RELEASED" or record["commitment_final_state"] == "RELEASED")
             lane_summary["reserve_commitments_pending"] += int(record["commitment_state"] == "CONVERTED_TO_PENDING_ORDER")
             lane_summary["false_reserve_exhaustion_contradictions"] += int(
