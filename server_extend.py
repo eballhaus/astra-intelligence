@@ -11,6 +11,8 @@ from engine.astra_multilane_activation_v2 import (
     strict_truth_counts,
 )
 from engine.learning_return_integrity_v1 import audit_learning_return_rows
+from engine.astra_evidence_accumulation_capacity_v1 import build_capacity_snapshot
+from engine.astra_portfolio_capacity_release_review_v1 import build_portfolio_release_review
 
 load_runtime_environment()
 
@@ -35009,8 +35011,10 @@ def _alpaca_paper_status_fast_fallback_v1(reason: str = "cache_first_status") ->
             "behavior_safe_to_apply": False,
         },
         "api_calls_used": 0,
+        "broker_actions_used": 0,
         "provider_calls_used": 0,
         "llm_calls_used": 0,
+        "full_history_scan_count": 0,
         "dashboard_provider_calls_used": 0,
         "dashboard_llm_calls_used": 0,
         "behavior_safe_to_apply": False,
@@ -46309,6 +46313,109 @@ def _pladeu_open_positions_from_cached_status_v1(statuses: dict) -> list[dict]:
     return []
 
 
+def _paper_autopilot_persisted_trace_v1() -> tuple[dict, str]:
+    trace = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("last_execution_trace") or {})
+    if trace.get("broker_position_review_rows"):
+        return trace, "paper_autopilot_runtime"
+    try:
+        with open(os.path.join(STATE, "paper_autopilot_state.json"), "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        persisted_trace = dict(payload.get("last_execution_trace") or {}) if isinstance(payload, dict) else {}
+        if persisted_trace:
+            return persisted_trace, "paper_autopilot_persisted_state"
+        return trace, "paper_autopilot_runtime"
+    except Exception:
+        return {}, "paper_autopilot_unavailable"
+
+
+def _evidence_accumulation_capacity_payload_v1(statuses: dict | None = None) -> dict:
+    """Read the existing cached broker snapshot and build one capacity view."""
+    current = dict(statuses or {})
+    alpaca = _cached_alpaca_paper_status_payload(current)
+    positions = _pladeu_open_positions_from_cached_status_v1({"alpaca_paper_broker": alpaca})
+    worker_trace, worker_state_source = _paper_autopilot_persisted_trace_v1()
+    worker_capacity = dict(worker_trace.get("evidence_accumulation_capacity_v1") or {})
+    if worker_capacity.get("broker_reconciliation_status") == "FRESH":
+        snapshot = dict(worker_capacity)
+        snapshot["position_source"] = worker_state_source
+        snapshot["broker_observed_open_positions_count"] = int(_to_float(worker_trace.get("broker_open_positions_count"), _to_float(snapshot.get("total_open_positions"), 0.0)))
+        snapshot["cache_only_no_broker_refresh_on_get"] = True
+        snapshot["source_timestamp"] = snapshot.get("generated_at")
+        return {**snapshot, **_safety_flags_v1()}
+    worker_count = int(_to_float(worker_trace.get("broker_open_positions_count"), -1.0))
+    fetch_ok = bool(
+        alpaca.get("positions_preflight_ok")
+        or alpaca.get("positions_fetch_ok")
+        or ("positions" in alpaca and alpaca.get("broker_reconciliation_active") is True)
+    )
+    broker_snapshot = {
+        "broker_reconciliation_active": bool(alpaca),
+        "broker_positions_fetch_ok": fetch_ok,
+        "generated_at": alpaca.get("generated_at") or alpaca.get("timestamp"),
+        "broker_state_age_seconds": alpaca.get("broker_state_age_seconds"),
+        "buying_power": alpaca.get("buying_power") or alpaca.get("available_buying_power"),
+        "broker_state_stale": bool(alpaca.get("stale") or alpaca.get("cache_stale")),
+        "broker_open_positions_count": worker_count if not alpaca and worker_count >= 0 else None,
+        "position_details_available": bool(positions) or bool(alpaca.get("positions")),
+    }
+    if not alpaca and worker_count >= 0:
+        broker_snapshot["broker_reconciliation_active"] = bool(worker_trace.get("broker_reconciliation_active", True))
+        broker_snapshot["broker_positions_fetch_ok"] = bool(worker_trace.get("broker_positions_fetch_ok", True))
+        broker_snapshot["generated_at"] = worker_trace.get("last_autopilot_cycle_at") or worker_trace.get("cycle_timestamp")
+    account_snapshot = {
+        "equity": alpaca.get("account_equity") or alpaca.get("equity"),
+        "buying_power": alpaca.get("buying_power") or alpaca.get("available_buying_power"),
+        "cash": alpaca.get("cash"),
+        "open_orders_count": alpaca.get("open_orders_count"),
+    }
+    snapshot = build_capacity_snapshot(
+        broker_snapshot=broker_snapshot,
+        account_snapshot=account_snapshot,
+        open_positions=positions,
+        global_position_limit=int(_to_float(os.getenv("ASTRA_PAPER_GLOBAL_POSITION_LIMIT"), 10.0)),
+        global_risk_allowed=True,
+    )
+    snapshot["position_source"] = "cached_alpaca_paper_status_v1" if alpaca else worker_state_source
+    snapshot["broker_observed_open_positions_count"] = worker_count if worker_count >= 0 else None
+    snapshot["cache_only_no_broker_refresh_on_get"] = True
+    snapshot["source_timestamp"] = alpaca.get("generated_at") or alpaca.get("timestamp")
+    return {**snapshot, **_safety_flags_v1()}
+
+
+def _portfolio_capacity_release_review_payload_v1(statuses: dict | None = None) -> dict:
+    current = dict(statuses or {})
+    positions = _pladeu_open_positions_from_cached_status_v1(current)
+    worker_trace, _worker_source = _paper_autopilot_persisted_trace_v1()
+    if not positions:
+        positions = [
+            dict(row) for row in (worker_trace.get("broker_position_review_rows") or [])
+            if isinstance(row, dict)
+        ][:100]
+    review = build_portfolio_release_review(positions)
+    snapshot = _evidence_accumulation_capacity_payload_v1(current)
+    if snapshot.get("broker_reconciliation_status") != "FRESH" or (
+        int(_to_float(snapshot.get("total_open_positions"), 0.0)) > 0 and not positions
+    ):
+        review["position_data_status"] = "UNAVAILABLE_OR_STALE_BROKER_SNAPSHOT"
+        review["position_data_blocker"] = "BROKER_STATE_STALE"
+        review["total_positions"] = None
+        review["positions_by_state"] = {state: None for state in ("KEEP", "WATCH", "PROTECT_PROFIT", "EXIT_REVIEW", "CONTROLLED_LOSS_ACCEPTABLE", "THESIS_BROKEN", "REPLACE_CANDIDATE", "DATA_INSUFFICIENT")}
+        review["review_rows"] = []
+        review["estimated_releasable_slots"] = None
+    review["capacity_snapshot_id"] = snapshot.get("snapshot_id")
+    review["capacity_status"] = snapshot.get("global_capacity_status")
+    review["positions_by_lane"] = (
+        {lane: sum(1 for row in review.get("review_rows", []) if str(row.get("lane_id") or "").upper() == lane) for lane in ("SWING", "DAY", "CRYPTO")}
+        if snapshot.get("broker_reconciliation_status") == "FRESH"
+        else {lane: None for lane in ("SWING", "DAY", "CRYPTO")}
+    )
+    review["human_review_groups"] = {
+        state: [row.get("symbol") for row in review.get("review_rows", []) if row.get("state") == state]
+        for state in ("KEEP", "WATCH", "PROTECT_PROFIT", "EXIT_REVIEW", "CONTROLLED_LOSS_ACCEPTABLE", "THESIS_BROKEN", "REPLACE_CANDIDATE", "DATA_INSUFFICIENT")
+    }
+    return {**review, **_safety_flags_v1()}
+
+
 def _pladeu_direct_statuses_v1(force: bool = False) -> dict:
     """Compose PLADEU from bounded local state, never the full I-L validator.
 
@@ -46337,6 +46444,8 @@ def _pladeu_direct_statuses_v1(force: bool = False) -> dict:
     except Exception:
         base["pladeu_candidate_rows"] = []
     base["pladeu_open_positions"] = _pladeu_open_positions_from_cached_status_v1(base)
+    base["evidence_accumulation_capacity_v1"] = _evidence_accumulation_capacity_payload_v1(base)
+    base["portfolio_capacity_release_review_v1"] = _portfolio_capacity_release_review_payload_v1(base)
     try:
         base["pladeu_day_lane_allocation"] = PAPER_OPPORTUNITY_ALLOCATION_ENGINE.day_lane_governance(
             rows=base["pladeu_candidate_rows"], open_positions=base["pladeu_open_positions"]
@@ -46367,6 +46476,8 @@ def _attach_pladeu_statuses_v1(statuses: dict, force: bool = False) -> dict:
     except Exception:
         statuses["pladeu_candidate_rows"] = []
     statuses["pladeu_open_positions"] = _pladeu_open_positions_from_cached_status_v1(statuses)
+    statuses["evidence_accumulation_capacity_v1"] = _evidence_accumulation_capacity_payload_v1(statuses)
+    statuses["portfolio_capacity_release_review_v1"] = _portfolio_capacity_release_review_payload_v1(statuses)
     statuses["authoritative_broker_truth"] = _canonical_broker_truth_counts_v1(statuses)
     statuses["pladeu_candidate_source_metadata"] = _pladeu_candidate_source_metadata_v1()
     statuses["day_lane_pilot_config"] = _day_lane_pilot_config_v1()
@@ -46555,6 +46666,7 @@ def _lane_execution_daily_report_v1_payload(statuses: dict | None = None) -> dic
     else:
         broker_snapshot_alignment = "CACHE_DEFERRED_WORKER_SNAPSHOT_AUTHORITATIVE_FOR_CYCLE"
     lanes = dict(ledger.get("lanes") or {})
+    capacity_snapshot = dict(statuses.get("evidence_accumulation_capacity_v1") or _evidence_accumulation_capacity_payload_v1(statuses))
     activation = {
         str(name).upper(): dict((operational.get("lanes") or {}).get(str(name).lower(), {}).get("activation_contract") or {})
         for name in ("SWING", "DAY", "CRYPTO")
@@ -46593,6 +46705,12 @@ def _lane_execution_daily_report_v1_payload(statuses: dict | None = None) -> dic
         "suite": "Astra Multi-Lane Execution Integrity Daily Report V1",
         "generated_at": _now_utc_iso(),
         "lanes": {lane.lower(): dict(lanes.get(lane) or {}) for lane in ("SWING", "DAY", "CRYPTO")},
+        "evidence_accumulation_capacity_v1": capacity_snapshot,
+        "capacity_snapshot_id": capacity_snapshot.get("snapshot_id"),
+        "global_capacity_status": capacity_snapshot.get("global_capacity_status"),
+        "day_reserve_status": dict((capacity_snapshot.get("lanes") or {}).get("day") or {}),
+        "crypto_reserve_status": dict((capacity_snapshot.get("lanes") or {}).get("crypto") or {}),
+        "portfolio_capacity_release_review_v1": dict(statuses.get("portfolio_capacity_release_review_v1") or {}),
         "activation_contracts": activation,
         "activation_contract_consistent": not conflicts,
         "activation_contract_conflicts": conflicts,
@@ -46623,6 +46741,20 @@ def _lane_execution_daily_report_v1_payload(statuses: dict | None = None) -> dic
 def lane_execution_daily_report_v1(force: bool = False):
     base = _pladeu_direct_statuses_v1(force=bool(force))
     return _lane_execution_daily_report_v1_payload(base)
+
+
+@router.get("/api/evidence_accumulation_capacity_v1")
+def evidence_accumulation_capacity_v1(force: bool = False):
+    """Return the canonical cached capacity snapshot; GET never refreshes a broker."""
+    base = _pladeu_direct_statuses_v1(force=bool(force))
+    return _evidence_accumulation_capacity_payload_v1(base)
+
+
+@router.get("/api/portfolio_capacity_release_review_v1")
+def portfolio_capacity_release_review_v1(force: bool = False):
+    """Return advisory congestion classifications without exit authority."""
+    base = _pladeu_direct_statuses_v1(force=bool(force))
+    return _portfolio_capacity_release_review_payload_v1(base)
 
 
 def _learning_return_integrity_v1_payload() -> dict:
@@ -47762,7 +47894,7 @@ def _multilane_paper_operational_status_v1_payload(statuses: dict | None = None)
     )
     if isinstance(crypto_lane.get("activation_contract"), dict):
         activation_contracts["CRYPTO"] = dict(crypto_lane["activation_contract"])
-    return build_multilane_operational_status(
+    operational = build_multilane_operational_status(
         candidates=unique_candidates[:300],
         open_positions=[dict(row) for row in (statuses.get("pladeu_open_positions") or []) if isinstance(row, dict)],
         broker_truth_records=records[:500],
@@ -47772,6 +47904,13 @@ def _multilane_paper_operational_status_v1_payload(statuses: dict | None = None)
         crypto_lane=crypto_lane,
         activation_contracts=activation_contracts,
     )
+    operational["evidence_accumulation_capacity_v1"] = dict(
+        statuses.get("evidence_accumulation_capacity_v1") or _evidence_accumulation_capacity_payload_v1(statuses)
+    )
+    operational["portfolio_capacity_release_review_v1"] = dict(
+        statuses.get("portfolio_capacity_release_review_v1") or _portfolio_capacity_release_review_payload_v1(statuses)
+    )
+    return operational
 
 
 def _multilane_activation_adaptive_truth_v2_payload(statuses: dict | None = None) -> dict:
@@ -50280,8 +50419,10 @@ def _safety_flags_v1() -> dict:
         "scalp_paper_behavior_enabled": False,
         "scalp_live_behavior_enabled": False,
         "api_calls_used": 0,
+        "broker_actions_used": 0,
         "provider_calls_used": 0,
         "llm_calls_used": 0,
+        "full_history_scan_count": 0,
         "dashboard_provider_calls_used": 0,
         "dashboard_llm_calls_used": 0,
     }
@@ -61346,6 +61487,8 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
     horizon_coverage = turnover_audit.get("horizon_persistence_diagnostics_v1") if isinstance(turnover_audit.get("horizon_persistence_diagnostics_v1"), dict) else _broker_truth_horizon_coverage_v1(statuses)
     mode_wiring = turnover_audit.get("paper_autopilot_mode_wiring_v1") if isinstance(turnover_audit.get("paper_autopilot_mode_wiring_v1"), dict) else _paper_autopilot_mode_wiring_v1()
     capacity_lanes = _capacity_lane_diagnostics_v1(statuses)
+    evidence_capacity = _evidence_accumulation_capacity_payload_v1(statuses)
+    portfolio_release = _portfolio_capacity_release_review_payload_v1(statuses)
     source_alignment = _alpaca_position_source_alignment_v1(statuses)
     broker_growth = _broker_truth_growth_monitor_v1_payload(statuses)
     flow = _horizon_candidate_flow_v1(statuses)
@@ -61386,6 +61529,8 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
         "equity_symbol_lineage_missing" if not lineage_v2.get("symbol_rows_available") else "",
         "provider_runtime_blocked" if provider_v2.get("status") not in {"PASS", "ok"} else "",
         "crypto_activation_without_runtime_validation" if crypto_lane_v2.get("paper_crypto_enabled") and crypto_lane_v2.get("activation_state") != "PAPER_ACTIVE_BOUNDED" else "",
+        "global_capacity_starving_learning_lanes" if evidence_capacity.get("global_capacity_status") == "GLOBAL_CAPACITY_EXHAUSTED" and not any(((evidence_capacity.get("lanes") or {}).get(lane) or {}).get("reserve_available") for lane in ("day", "crypto")) else "",
+        "stale_broker_state_blocks_capacity_authorization" if evidence_capacity.get("global_capacity_status") in {"BROKER_STATE_STALE", "BROKER_POSITION_DETAILS_UNAVAILABLE"} else "",
     ]
     warnings = [item for item in warnings if item]
     safe_audit = _astra_safe_auto_audit_repair_v1_payload(statuses)
@@ -61423,6 +61568,12 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
         "horizon_persistence_status": horizon_coverage.get("horizon_persistence_status"),
         "paper_autopilot_mode_wiring_v1": mode_wiring,
         "capacity_lane_diagnostics_v1": capacity_lanes,
+        "evidence_accumulation_capacity_v1": evidence_capacity,
+        "portfolio_capacity_release_review_v1": {
+            "positions_by_state": portfolio_release.get("positions_by_state"),
+            "human_review_required": portfolio_release.get("human_review_required"),
+            "position_data_status": portfolio_release.get("position_data_status", "AVAILABLE"),
+        },
         "alpaca_position_source_alignment_v1": source_alignment,
         "provider_data_knowledge_governance_v2": {
             "status": provider_v2.get("status"),
@@ -65553,6 +65704,8 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
     mode_wiring = audit.get("paper_autopilot_mode_wiring_v1") if isinstance(audit.get("paper_autopilot_mode_wiring_v1"), dict) else _paper_autopilot_mode_wiring_v1()
     horizon_coverage = audit.get("horizon_persistence_diagnostics_v1") if isinstance(audit.get("horizon_persistence_diagnostics_v1"), dict) else _broker_truth_horizon_coverage_v1(statuses)
     capacity_lanes = _capacity_lane_diagnostics_v1(statuses)
+    evidence_capacity = _evidence_accumulation_capacity_payload_v1(statuses)
+    portfolio_release = _portfolio_capacity_release_review_payload_v1(statuses)
     source_alignment = _alpaca_position_source_alignment_v1(statuses)
     recycling = _capacity_recycling_diagnostics_v1(statuses)
     scalp_bucket = _scalp_learning_bucket_v1(statuses)
@@ -65564,6 +65717,15 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
     crypto_lane = _crypto_paper_lane_validation_v1_payload(statuses)
     throughput = _learning_throughput_accelerator_v1_payload(statuses)
     actions = []
+    if evidence_capacity.get("global_capacity_status") in {"GLOBAL_CAPACITY_EXHAUSTED", "BROKER_STATE_STALE", "BROKER_POSITION_DETAILS_UNAVAILABLE"}:
+        actions.append({
+            "action": "Review evidence accumulation capacity",
+            "symbol": "PORTFOLIO",
+            "priority": "high",
+            "reason": evidence_capacity.get("global_capacity_status"),
+            "confidence": 92,
+            "paper_order_action": False,
+        })
     if horizon_coverage.get("legacy_missing_horizon_records"):
         actions.append({
             "action": "Monitor horizon persistence repair",
@@ -65674,6 +65836,12 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
         "horizon_persistence_diagnostics_v1": horizon_coverage,
         "capacity_lane_diagnostics_v1": capacity_lanes,
         "capacity_recycling_diagnostics_v1": recycling,
+        "evidence_accumulation_capacity_v1": evidence_capacity,
+        "portfolio_capacity_release_review_v1": {
+            "positions_by_state": portfolio_release.get("positions_by_state"),
+            "human_review_required": portfolio_release.get("human_review_required"),
+            "position_data_status": portfolio_release.get("position_data_status", "AVAILABLE"),
+        },
         "scalp_learning_bucket_v1": scalp_bucket,
         "alpaca_position_source_alignment_v1": source_alignment,
         "provider_data_knowledge_summary_v2": {
@@ -69899,11 +70067,16 @@ def copilot_turnover_action_center_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
     cached_payload = dict((cached_unified or {}).get("copilot_turnover_action_center_v1") or {})
     if cached_payload and not force:
+        cached_payload["evidence_accumulation_capacity_v1"] = _evidence_accumulation_capacity_payload_v1(cached_unified)
+        cached_payload["portfolio_capacity_release_review_v1"] = _portfolio_capacity_release_review_payload_v1(cached_unified)
         return cached_payload
     if not force:
         fast = dict(cached_unified or {})
         _apply_broker_truth_unification_fast_overlays_v1(fast, compact=True)
-        return dict(fast.get("copilot_turnover_action_center_v1") or {})
+        payload = dict(fast.get("copilot_turnover_action_center_v1") or {})
+        payload["evidence_accumulation_capacity_v1"] = _evidence_accumulation_capacity_payload_v1(fast)
+        payload["portfolio_capacity_release_review_v1"] = _portfolio_capacity_release_review_payload_v1(fast)
+        return payload
     statuses = dict(cached_unified or {})
     payload = _copilot_turnover_action_center_v1_payload(statuses)
     dropoff = _day_trade_candidate_qualification_dropoff_audit_v1_payload({**statuses, "copilot_turnover_action_center_v1": payload})

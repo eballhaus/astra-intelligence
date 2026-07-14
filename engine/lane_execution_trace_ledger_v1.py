@@ -58,6 +58,10 @@ class LaneExecutionTraceLedgerV1:
             "filled_exits": 0, "completed_lifecycles": 0, "strict_broker_truths": 0,
             "learning_deliveries": 0, "metadata_failures": 0, "duplicate_attempts": 0,
             "ownership_conflicts": 0, "top_blockers": {},
+            "blocked_by_global_capacity": 0, "allowed_by_lane_reserve": 0,
+            "blocked_by_lane_reserve": 0, "blocked_by_buying_power": 0,
+            "blocked_by_global_risk": 0, "blocked_by_duplicate_exposure": 0,
+            "reserve_order_ready_count": 0, "reserve_submission_attempt_count": 0,
         }
 
     def _read_summary(self) -> dict[str, Any]:
@@ -67,7 +71,14 @@ class LaneExecutionTraceLedgerV1:
             if isinstance(data, dict):
                 data.setdefault("lanes", {})
                 for lane in LANES:
-                    data["lanes"].setdefault(lane, self._empty_lane())
+                    lane_data = data["lanes"].get(lane)
+                    if not isinstance(lane_data, dict):
+                        lane_data = {}
+                    # Merge newly added counters into summaries written by
+                    # older workers without rewriting historical trace rows.
+                    for key, default in self._empty_lane().items():
+                        lane_data.setdefault(key, default)
+                    data["lanes"][lane] = lane_data
                 data.setdefault("recent_trace_ids", [])
                 return data
         except Exception:
@@ -131,6 +142,14 @@ class LaneExecutionTraceLedgerV1:
                 "expires_at": _text(source.get("expires_at")),
                 "market_session": _text(source.get("market_session_mode") or source.get("session_state")),
                 "capital_book_id": _text(source.get("capital_book_id")),
+                "capacity_decision": _text(source.get("capacity_decision")),
+                "capacity_source": _text(source.get("capacity_source")),
+                "capacity_snapshot_id": _text(source.get("capacity_snapshot_id") or source.get("canonical_capacity_snapshot", {}).get("snapshot_id") if isinstance(source.get("canonical_capacity_snapshot"), Mapping) else ""),
+                "global_capacity_status": _text(source.get("global_capacity_status")),
+                "lane_reserve_status": _text(source.get("lane_reserve_status")),
+                "lane_capital_remaining": source.get("lane_capital_remaining"),
+                "lane_positions_remaining": source.get("lane_positions_remaining"),
+                "capacity_blocker": _text(source.get("capacity_blocker")),
                 "entry_owner": _text(source.get("entry_owner")),
                 "exit_owner": _text(source.get("exit_owner") or source.get("exit_policy_owner")),
             }
@@ -155,6 +174,15 @@ class LaneExecutionTraceLedgerV1:
             lane_summary["strict_broker_truths"] += int(record["truth_status"].upper() == "BROKER_CONFIRMED_COMPLETE")
             lane_summary["learning_deliveries"] += int(record["learning_delivery_status"].upper() in {"DELIVERED", "ACKNOWLEDGED"})
             lane_summary["duplicate_attempts"] += int(record["duplicate_exposure_result"] == "BLOCKED")
+            capacity_decision = record["capacity_decision"]
+            lane_summary["blocked_by_global_capacity"] += int(capacity_decision == "GLOBAL_CAPACITY_EXHAUSTED")
+            lane_summary["allowed_by_lane_reserve"] += int(capacity_decision == "AVAILABLE_FROM_LANE_RESERVE")
+            lane_summary["blocked_by_lane_reserve"] += int(capacity_decision in {"LANE_RESERVE_EXHAUSTED", "CAPITAL_NOT_CONFIGURED"})
+            lane_summary["blocked_by_buying_power"] += int(capacity_decision in {"BUYING_POWER_INSUFFICIENT", "BUYING_POWER_UNAVAILABLE"})
+            lane_summary["blocked_by_global_risk"] += int(capacity_decision == "GLOBAL_RISK_BLOCKED")
+            lane_summary["blocked_by_duplicate_exposure"] += int(capacity_decision == "DUPLICATE_EXPOSURE_BLOCKED")
+            lane_summary["reserve_order_ready_count"] += int(record["order_readiness_result"] == "ORDER_READY" and capacity_decision == "AVAILABLE_FROM_LANE_RESERVE")
+            lane_summary["reserve_submission_attempt_count"] += int(record["submission_attempted"] and capacity_decision == "AVAILABLE_FROM_LANE_RESERVE")
             lane_summary["metadata_failures"] += int(not candidate_id or not recommendation_id)
             if blocker:
                 blockers = lane_summary.setdefault("top_blockers", {})

@@ -15,6 +15,10 @@ from zoneinfo import ZoneInfo
 
 from engine.candidate_execution_integrity_v1 import candidate_execution_integrity
 from engine.runtime_environment import load_runtime_environment
+from engine.astra_evidence_accumulation_capacity_v1 import (
+    build_capacity_snapshot,
+    candidate_capacity_decision,
+)
 
 # The standalone paper worker imports this module directly.  Load the same
 # non-secret repository environment used by server startup before evaluating
@@ -1005,6 +1009,7 @@ class PaperAutopilotEngine:
             "learned_exit_daily": {},
             "learned_exit_rollback": {},
             "authorized_lane_exit_pending": {},
+            "evidence_reserve_entry_timestamps": {"DAY": [], "CRYPTO": []},
         }
 
         self._position_tracker = None
@@ -1132,6 +1137,11 @@ class PaperAutopilotEngine:
                     self._runtime_state["learned_exit_rollback"] = dict(payload.get("learned_exit_rollback") or {})
                 if isinstance(payload.get("authorized_lane_exit_pending"), dict):
                     self._runtime_state["authorized_lane_exit_pending"] = dict(payload.get("authorized_lane_exit_pending") or {})
+                if isinstance(payload.get("evidence_reserve_entry_timestamps"), dict):
+                    self._runtime_state["evidence_reserve_entry_timestamps"] = {
+                        lane: list(payload.get("evidence_reserve_entry_timestamps", {}).get(lane) or [])[-32:]
+                        for lane in ("DAY", "CRYPTO")
+                    }
                 if isinstance(payload.get("adaptive_learning_capacity_policy"), dict):
                     persisted_policy = dict(payload.get("adaptive_learning_capacity_policy") or {})
                     persisted_policy["policy_valid"] = bool(
@@ -1158,6 +1168,10 @@ class PaperAutopilotEngine:
             "learned_exit_daily": dict(self._runtime_state.get("learned_exit_daily") or {}),
             "learned_exit_rollback": dict(self._runtime_state.get("learned_exit_rollback") or {}),
             "authorized_lane_exit_pending": dict(self._runtime_state.get("authorized_lane_exit_pending") or {}),
+            "evidence_reserve_entry_timestamps": {
+                lane: list((self._runtime_state.get("evidence_reserve_entry_timestamps") or {}).get(lane) or [])[-32:]
+                for lane in ("DAY", "CRYPTO")
+            },
             "adaptive_learning_capacity_policy": dict(self._adaptive_learning_capacity_policy or {}),
             "last_execution_trace": {
                 **dict(self._runtime_state.get("last_execution_trace") or {}),
@@ -2574,6 +2588,76 @@ class PaperAutopilotEngine:
             **adaptive,
         }
 
+    def _evidence_capacity_snapshot_v1(
+        self,
+        broker_snapshot: dict[str, Any],
+        open_rows: list[dict[str, Any]],
+        safety: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Build the canonical capacity snapshot from this worker's reads."""
+        account: dict[str, Any] = {}
+        broker = self.alpaca_paper_broker
+        if broker is not None and hasattr(broker, "account") and bool(safety.get("broker_execution_enabled")):
+            try:
+                account = dict(broker.account() or {})
+            except Exception:
+                account = {}
+        broker_payload = dict(broker_snapshot or {})
+        broker_payload["broker_state_age_seconds"] = 0.0 if broker_payload.get("broker_positions_fetch_ok") else None
+        if broker_payload.get("broker_positions_fetch_ok"):
+            positions = []
+            internal_by_symbol = {
+                str(row.get("symbol") or "").upper().strip(): dict(row)
+                for row in open_rows
+                if str(row.get("symbol") or "").strip()
+            }
+            for symbol, broker_row in dict(broker_payload.get("broker_position_by_symbol") or {}).items():
+                positions.append({**internal_by_symbol.get(str(symbol).upper().strip(), {}), **dict(broker_row or {})})
+        else:
+            # A stale/unavailable broker snapshot must not authorize capacity.
+            positions = []
+        snapshot = build_capacity_snapshot(
+            broker_snapshot=broker_payload,
+            account_snapshot=account,
+            open_positions=positions,
+            global_position_limit=self.max_open_positions_total,
+            global_risk_allowed=True,
+            lane_entry_counts=self._evidence_reserve_entry_counts(),
+        )
+        self._runtime_state["last_evidence_capacity_snapshot"] = dict(snapshot)
+        return snapshot
+
+    def _evidence_reserve_entry_counts(self) -> dict[str, int]:
+        """Return bounded DAY/CRYPTO reserve usage without scanning history."""
+        now = datetime.now(UTC)
+        today = now.astimezone(ZoneInfo("America/New_York")).date().isoformat()
+        usage = self._runtime_state.setdefault("evidence_reserve_entry_timestamps", {"DAY": [], "CRYPTO": []})
+        counts: dict[str, int] = {}
+        for lane in ("DAY", "CRYPTO"):
+            kept: list[str] = []
+            for raw in list(usage.get(lane) or []):
+                try:
+                    parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=UTC)
+                    age = (now - parsed.astimezone(UTC)).total_seconds()
+                    same_day = parsed.astimezone(ZoneInfo("America/New_York")).date().isoformat() == today
+                    if (lane == "DAY" and same_day) or (lane == "CRYPTO" and age <= 86400):
+                        kept.append(str(raw))
+                except (TypeError, ValueError):
+                    continue
+            usage[lane] = kept[-32:]
+            counts[lane] = len(kept)
+        return counts
+
+    def _record_evidence_reserve_entry(self, lane: str) -> None:
+        lane = str(lane or "").upper()
+        if lane not in {"DAY", "CRYPTO"}:
+            return
+        self._evidence_reserve_entry_counts()
+        usage = self._runtime_state.setdefault("evidence_reserve_entry_timestamps", {"DAY": [], "CRYPTO": []})
+        usage.setdefault(lane, []).append(_now_iso())
+
     def _position_horizon_by_symbol(self, rows: list[dict[str, Any]]) -> dict[str, str]:
         out: dict[str, str] = {}
         for row in rows:
@@ -2821,6 +2905,7 @@ class PaperAutopilotEngine:
         broker_open_syms: set[str] | None = None,
         broker_reconciliation_active: bool = False,
         max_new_positions_per_cycle: int | None = None,
+        capacity_decision: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], bool, str, dict[str, Any]]:
         r = _normalize_paper_entry_bridge(row)
         symbol = str(r.get("symbol") or "").upper().strip()
@@ -2854,6 +2939,7 @@ class PaperAutopilotEngine:
             elif in_broker:
                 duplicate_source = "broker"
         max_new_limit = int(max_new_positions_per_cycle) if max_new_positions_per_cycle is not None else int(self.max_new_positions_per_cycle)
+        reserve_capacity_allowed = bool((capacity_decision or {}).get("allowed"))
         if not bool(activation.get("execution_enabled")):
             reason = str((activation.get("exact_blockers") or ["LANE_EXECUTION_DISABLED"])[0])
         elif not symbol:
@@ -2862,13 +2948,13 @@ class PaperAutopilotEngine:
             reason = "duplicate_active_position"
         elif self._cooldown_active(symbol):
             reason = "cooldown_active"
-        elif total_capacity <= 0:
+        elif total_capacity <= 0 and not reserve_capacity_allowed:
             reason = "max_concurrent_positions_reached"
         elif selected_so_far >= max_new_limit:
             reason = "max_new_positions_per_cycle_reached"
-        elif asset == "stock" and stock_capacity <= 0:
+        elif asset == "stock" and stock_capacity <= 0 and not reserve_capacity_allowed:
             reason = "stock_capacity_reached"
-        elif asset == "crypto" and crypto_capacity <= 0:
+        elif asset == "crypto" and crypto_capacity <= 0 and not reserve_capacity_allowed:
             reason = "crypto_capacity_reached"
         else:
             allowed, reason, gate_meta = self._is_candidate_paper_eligible(r)
@@ -2902,7 +2988,7 @@ class PaperAutopilotEngine:
             crypto_data_ok, crypto_data_reason, crypto_data_meta = self._crypto_execution_data_gate(r)
             integrity_ok, integrity_reason, integrity_meta = self._crypto_execution_integrity_gate(
                 r,
-                capacity_available=crypto_capacity > 0 and total_capacity > 0,
+                capacity_available=(crypto_capacity > 0 and total_capacity > 0) or reserve_capacity_allowed,
                 duplicate_pending=symbol in open_syms,
                 reconciliation_ok=broker_reconciliation_active,
             )
@@ -3023,6 +3109,14 @@ class PaperAutopilotEngine:
             "participation_quality_score": round(_to_float(r.get("participation_quality_score"), 0.0), 2),
             "risk_adjusted_opportunity_rank": int(_to_float(r.get("risk_adjusted_opportunity_rank"), 0.0)),
             "entry_score": round(_to_float(r.get("paper_entry_bridge_score"), _to_float(r.get("entry_quality_score"), 0.0)), 2),
+            "capacity_decision": str((capacity_decision or {}).get("capacity_decision") or "LEGACY_CAPACITY_PATH"),
+            "capacity_source": str((capacity_decision or {}).get("capacity_source") or "legacy_worker_capacity"),
+            "capacity_snapshot_id": str((capacity_decision or {}).get("snapshot_id") or ""),
+            "global_capacity_status": str((capacity_decision or {}).get("global_capacity_status") or ""),
+            "lane_reserve_status": str((capacity_decision or {}).get("lane_reserve_status") or ""),
+            "lane_capital_remaining": (capacity_decision or {}).get("capital_remaining"),
+            "lane_positions_remaining": (capacity_decision or {}).get("positions_remaining"),
+            "capacity_blocker": str(((capacity_decision or {}).get("exact_blockers") or [""])[0] or ""),
             "confidence": round(_to_float(r.get("confidence"), _to_float(r.get("predicted_win_probability"), 0.0)), 2),
             "horizon_confidence": round(_to_float(r.get("confidence"), _to_float(r.get("predicted_win_probability"), 0.0)), 2),
             "expected_hold_window": _expected_hold_window(
@@ -4368,6 +4462,15 @@ class PaperAutopilotEngine:
             broker_snapshot = self._broker_open_symbols_snapshot()
             broker_open_syms = set(broker_snapshot.get("broker_open_symbols") or set())
             broker_position_by_symbol = dict(broker_snapshot.get("broker_position_by_symbol") or {})
+            broker_position_review_rows = [
+                {
+                    "symbol": str(symbol).upper(),
+                    **dict(broker_position_by_symbol.get(symbol) or {}),
+                    "evidence_class": "BROKER_OPEN_POSITION_SNAPSHOT",
+                    "broker_confirmed": True,
+                }
+                for symbol in sorted(broker_open_syms)
+            ][:100]
             broker_reconciliation_active = bool(broker_snapshot.get("broker_reconciliation_active", False))
             broker_positions_fetch_ok = bool(broker_snapshot.get("broker_positions_fetch_ok", False))
             stale_internal_positions = sorted(x for x in internal_open_syms if x and x not in broker_open_syms)
@@ -4553,6 +4656,12 @@ class PaperAutopilotEngine:
             stock_capacity_reason = "stock_capacity_available"
             horizon_capacity_blocked = 0
             high_confidence_horizon_capacity_blocked = 0
+            evidence_capacity_snapshot = self._evidence_capacity_snapshot_v1(
+                broker_snapshot,
+                open_rows_initial,
+                safety,
+            )
+            reserve_selected_by_lane = {"DAY": 0, "CRYPTO": 0}
             # Normalize every worker-cycle observation before any early gate
             # can reject it.  The ranking and eligibility values are retained;
             # this only gives every candidate a stable operational lineage.
@@ -4659,16 +4768,44 @@ class PaperAutopilotEngine:
                         decision_reason="max_new_positions_per_cycle_reached",
                     ))
                     continue
-                if total_capacity <= 0:
-                    final_blocker_reason = final_blocker_reason or "max_concurrent_positions_reached"
-                    skipped += 1
-                    decision_trace.append(_execution_trace_event(
-                        row, eligible=False, selected=False,
-                        decision_reason="max_concurrent_positions_reached",
-                    ))
-                    continue
                 symbol = str(row.get("symbol") or "").upper().strip()
                 asset = _norm_asset(row.get("asset_type") or "stock")
+                candidate_lane = str(row.get("lane_id") or ("CRYPTO" if asset == "crypto" else "SWING")).upper()
+                capacity_decision = candidate_capacity_decision(
+                    evidence_capacity_snapshot,
+                    lane_id=candidate_lane,
+                    symbol=symbol,
+                    open_symbols=open_syms,
+                )
+                if reserve_selected_by_lane.get(candidate_lane, 0) > 0 and candidate_lane in reserve_selected_by_lane:
+                    capacity_decision = {
+                        **capacity_decision,
+                        "allowed": False,
+                        "capacity_decision": "LANE_RESERVE_EXHAUSTED",
+                        "exact_blockers": ["LANE_POSITION_LIMIT_REACHED"],
+                    }
+                capacity_blocked_by_legacy_global = bool(
+                    (total_capacity <= 0 and not capacity_decision.get("allowed"))
+                    or (asset == "stock" and stock_capacity <= 0 and not capacity_decision.get("allowed"))
+                    or (asset == "crypto" and crypto_capacity <= 0 and not capacity_decision.get("allowed"))
+                )
+                if capacity_blocked_by_legacy_global:
+                    skipped += 1
+                    reason = str(capacity_decision.get("capacity_decision") or "FAIL_CLOSED")
+                    final_blocker_reason = reason
+                    decision_trace.append(_execution_trace_event(
+                        row, symbol=symbol, asset_type=asset, eligible=False,
+                        selected=False, decision_reason=reason,
+                        capacity_decision=reason,
+                        capacity_source=capacity_decision.get("capacity_source"),
+                        capacity_snapshot_id=capacity_decision.get("snapshot_id"),
+                        global_capacity_status=capacity_decision.get("global_capacity_status"),
+                        lane_reserve_status=capacity_decision.get("lane_reserve_status"),
+                        lane_capital_remaining=capacity_decision.get("capital_remaining"),
+                        lane_positions_remaining=capacity_decision.get("positions_remaining"),
+                        capacity_blocker=(capacity_decision.get("exact_blockers") or [reason])[0],
+                    ))
+                    continue
                 if not symbol or symbol in open_syms:
                     skipped += 1
                     reason = "missing_symbol" if not symbol else "duplicate_active_position"
@@ -4715,6 +4852,12 @@ class PaperAutopilotEngine:
                         horizon_capacity_reason = "crypto_day_trade_capacity_available" if horizon_ok else "crypto_day_trade_capacity_reached"
                 else:
                     horizon_ok, horizon_capacity_reason = self._horizon_has_capacity(horizon_capacity, candidate_horizon)
+                if not horizon_ok and capacity_decision.get("allowed") and candidate_lane in {"DAY", "CRYPTO"}:
+                    # The evidence reserve replaces only the exhausted global
+                    # slot.  Candidate quality, session, risk, liquidity, and
+                    # lane position/capital gates still run below.
+                    horizon_ok = True
+                    horizon_capacity_reason = "lane_evidence_reserve_available_global_horizon_full"
                 if not horizon_ok:
                     skipped += 1
                     horizon_capacity_blocked += 1
@@ -4733,20 +4876,30 @@ class PaperAutopilotEngine:
                     final_blocker_reason = horizon_capacity_reason
                     continue
                 if asset == "stock" and stock_capacity <= 0:
-                    final_blocker_reason = "stock_capacity_reached"
-                    stock_capacity_reason = "stock_capacity_reached"
-                    decision_trace.append(_execution_trace_event(
-                        row, eligible=False, selected=False,
-                        decision_reason="stock_capacity_reached",
-                    ))
-                    continue
+                    if not capacity_decision.get("allowed"):
+                        final_blocker_reason = str(capacity_decision.get("capacity_decision") or "stock_capacity_reached")
+                        stock_capacity_reason = final_blocker_reason
+                        decision_trace.append(_execution_trace_event(
+                            row, eligible=False, selected=False,
+                            decision_reason=final_blocker_reason,
+                            capacity_decision=final_blocker_reason,
+                            capacity_source=capacity_decision.get("capacity_source"),
+                            capacity_snapshot_id=capacity_decision.get("snapshot_id"),
+                            capacity_blocker=(capacity_decision.get("exact_blockers") or [final_blocker_reason])[0],
+                        ))
+                        continue
                 if asset == "crypto" and crypto_capacity <= 0:
-                    final_blocker_reason = "crypto_capacity_reached"
-                    decision_trace.append(_execution_trace_event(
-                        row, eligible=False, selected=False,
-                        decision_reason="crypto_capacity_reached",
-                    ))
-                    continue
+                    if not capacity_decision.get("allowed"):
+                        final_blocker_reason = str(capacity_decision.get("capacity_decision") or "crypto_capacity_reached")
+                        decision_trace.append(_execution_trace_event(
+                            row, eligible=False, selected=False,
+                            decision_reason=final_blocker_reason,
+                            capacity_decision=final_blocker_reason,
+                            capacity_source=capacity_decision.get("capacity_source"),
+                            capacity_snapshot_id=capacity_decision.get("snapshot_id"),
+                            capacity_blocker=(capacity_decision.get("exact_blockers") or [final_blocker_reason])[0],
+                        ))
+                        continue
 
                 row_trace, allowed, reason, gate_meta = self._candidate_trace_row(
                     row,
@@ -4758,10 +4911,20 @@ class PaperAutopilotEngine:
                     internal_open_syms=internal_open_syms,
                     broker_open_syms=broker_open_syms,
                     broker_reconciliation_active=broker_reconciliation_active,
+                    capacity_decision=capacity_decision,
                 )
                 row_trace["horizon_capacity_enabled"] = bool(self.horizon_capacity_enabled)
                 row_trace["horizon_capacity_reason"] = str(horizon_capacity_reason)
                 row_trace["horizon_capacity_snapshot"] = dict(horizon_capacity)
+                row_trace["canonical_capacity_snapshot"] = dict(evidence_capacity_snapshot)
+                row_trace["capacity_decision"] = capacity_decision.get("capacity_decision")
+                row_trace["capacity_source"] = capacity_decision.get("capacity_source")
+                row_trace["capacity_snapshot_id"] = capacity_decision.get("snapshot_id")
+                row_trace["global_capacity_status"] = capacity_decision.get("global_capacity_status")
+                row_trace["lane_reserve_status"] = capacity_decision.get("lane_reserve_status")
+                row_trace["lane_capital_remaining"] = capacity_decision.get("capital_remaining")
+                row_trace["lane_positions_remaining"] = capacity_decision.get("positions_remaining")
+                row_trace["capacity_blocker"] = (capacity_decision.get("exact_blockers") or [""])[0]
                 if not allowed:
                     exploration_decision = {}
                     if (
@@ -4817,9 +4980,10 @@ class PaperAutopilotEngine:
 
                 eligible_count += 1
                 selected_count += 1
-                orders_attempted += 1
+                if candidate_lane in reserve_selected_by_lane:
+                    reserve_selected_by_lane[candidate_lane] += 1
                 row_trace["selected"] = True
-                row_trace["order_attempted"] = True
+                row_trace["order_attempted"] = False
                 row_trace["horizon_assignment_confidence"] = round(
                     _to_float(row.get("confidence"), _to_float(row.get("predicted_win_probability"), 0.0)),
                     2,
@@ -4857,6 +5021,13 @@ class PaperAutopilotEngine:
                 row_trace["paper_autopilot_limits_reason"] = str(opened_row.get("paper_autopilot_limits_reason") or "")
                 row_trace["market_session_mode"] = str(opened_row.get("market_session_mode") or row_trace.get("market_session_mode") or "")
                 row_trace["paper_order_submission_allowed"] = bool(opened_row.get("paper_order_submission_allowed", row_trace.get("paper_order_submission_allowed", False)))
+                actual_order_attempted = bool(
+                    opened_row.get("paper_order_submission_allowed")
+                    and (opened_row.get("ok") or opened_row.get("broker_order_id"))
+                )
+                if actual_order_attempted:
+                    orders_attempted += 1
+                    row_trace["order_attempted"] = True
                 row_trace["execution_confirmation_required"] = bool(opened_row.get("execution_confirmation_required", row_trace.get("execution_confirmation_required", True)))
                 row_trace["open_confirmation_score"] = round(_to_float(opened_row.get("open_confirmation_score"), _to_float(row_trace.get("open_confirmation_score"), 0.0)), 2)
                 row_trace["open_confirmation_label"] = str(opened_row.get("open_confirmation_label") or row_trace.get("open_confirmation_label") or "")
@@ -4896,6 +5067,8 @@ class PaperAutopilotEngine:
                             crypto_swing_available = max(0, crypto_swing_available - 1)
                         else:
                             crypto_day_available = max(0, crypto_day_available - 1)
+                    if candidate_lane in {"DAY", "CRYPTO"} and capacity_decision.get("capacity_decision") == "AVAILABLE_FROM_LANE_RESERVE":
+                        self._record_evidence_reserve_entry(candidate_lane)
                     if asset != "crypto":
                         horizon_capacity = self._consume_horizon_capacity(horizon_capacity, candidate_horizon)
                 else:
@@ -4980,6 +5153,11 @@ class PaperAutopilotEngine:
                 "stale_internal_positions": stale_internal_positions[:32],
                 "stale_internal_positions_skipped_for_exit_scan": int(stale_internal_positions_skipped_for_exit_scan),
                 "capacity_source": str(adaptive_capacity.get("capacity_source") or capacity_source),
+                "evidence_accumulation_capacity_v1": dict(evidence_capacity_snapshot),
+                "evidence_reserve_lane_decisions": {
+                    "day": dict(evidence_capacity_snapshot.get("lanes", {}).get("day", {})),
+                    "crypto": dict(evidence_capacity_snapshot.get("lanes", {}).get("crypto", {})),
+                },
                 "effective_capacity_count": int(effective_capacity_count),
                 "capacity_available": int(total_capacity),
                 "capacity_blocked": bool(total_capacity <= 0),
@@ -5040,6 +5218,7 @@ class PaperAutopilotEngine:
                 "regime_execution_survivability": regime_execution_status,
                 "adaptive_execution_exit_intelligence_v2": adaptive_execution_exit_status,
                 "portfolio_diversification_correlation_v2": portfolio_diversification_status,
+                "evidence_accumulation_capacity_v1": dict(evidence_capacity_snapshot),
                 "profit_seeking_adaptive_exploration": profit_seeking_exploration_status,
                 "market_session_mode": str(session_status.get("market_session_mode") or ""),
                 "paper_order_submission_allowed": bool(session_status.get("paper_order_submission_allowed", False)),
@@ -5098,6 +5277,7 @@ class PaperAutopilotEngine:
                 "broker_reconciliation_active": broker_reconciliation_active,
                 "broker_positions_fetch_ok": broker_positions_fetch_ok,
                 "broker_positions_error_sanitized": str(broker_snapshot.get("broker_positions_error_sanitized") or "")[:180],
+                "broker_position_review_rows": broker_position_review_rows,
                 "bridge_available": False,
                 "bridge_used": False,
                 "bridge_selected_symbols": [],
@@ -5135,7 +5315,12 @@ class PaperAutopilotEngine:
             self._save_state_file()
             return out
 
-    def operational_dry_run(self, candidate_rows: list[dict[str, Any]], max_candidates: int = 30) -> dict[str, Any]:
+    def operational_dry_run(
+        self,
+        candidate_rows: list[dict[str, Any]],
+        max_candidates: int = 30,
+        capacity_snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Evaluate the final PaperAutopilot boundary without broker activity.
 
         This compact path is the runtime owner for multi-lane handoff proof. It
@@ -5151,11 +5336,17 @@ class PaperAutopilotEngine:
         stock_capacity = int(capacities.get("stock_capacity", 0))
         crypto_capacity = int(capacities.get("crypto_capacity", 0))
         total_capacity = int(capacities.get("total_capacity", 0))
+        canonical_capacity = dict(capacity_snapshot or {})
         selected = 0
         eligible = 0
         rows: list[dict[str, Any]] = []
         blockers: dict[str, int] = {}
         for row in candidates[:limit]:
+            lane = str(row.get("lane_id") or ("CRYPTO" if _norm_asset(row.get("asset_type") or row.get("asset_class")) == "crypto" else "SWING")).upper()
+            capacity_decision = (
+                candidate_capacity_decision(canonical_capacity, lane_id=lane, symbol=str(row.get("symbol") or ""), open_symbols=open_syms)
+                if canonical_capacity else None
+            )
             trace, allowed, reason, _meta = self._candidate_trace_row(
                 row,
                 open_syms=open_syms,
@@ -5166,7 +5357,10 @@ class PaperAutopilotEngine:
                 internal_open_syms=open_syms,
                 broker_open_syms=set(),
                 broker_reconciliation_active=False,
+                capacity_decision=capacity_decision,
             )
+            if capacity_decision:
+                trace["canonical_capacity_snapshot"] = canonical_capacity
             trace["dry_run_only"] = True
             trace["submit_order"] = False
             trace["broker_actions_used"] = 0
