@@ -36,6 +36,212 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _timestamp(value: Any) -> datetime | None:
+    raw = _text(value)
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def reconstruct_position_lineage(
+    broker_row: Mapping[str, Any],
+    candidate_rows: Iterable[Mapping[str, Any]],
+    *,
+    timestamp_window_seconds: float = 300.0,
+) -> dict[str, Any]:
+    """Return an exact lineage match or an explicit, non-invented blocker.
+
+    Historical candidate ledgers are not broker truth.  A row is therefore
+    linked only when an authoritative identifier is unique, or when a single
+    same-symbol record falls inside a deliberately tight timestamp window.
+    """
+    broker = dict(broker_row or {})
+    symbol = _text(broker.get("symbol")).upper()
+    candidates = [dict(row) for row in candidate_rows if isinstance(row, Mapping)]
+    key_groups = (
+        ("broker_order_id", ("broker_order_id", "order_id"), "BROKER_LINKED_EXACT"),
+        ("client_order_id", ("client_order_id",), "IDENTIFIER_LINKED_HIGH_CONFIDENCE"),
+        ("fill_id", ("fill_id",), "IDENTIFIER_LINKED_HIGH_CONFIDENCE"),
+        ("recommendation_id", ("recommendation_id",), "IDENTIFIER_LINKED_HIGH_CONFIDENCE"),
+        ("candidate_id", ("candidate_id", "decision_id"), "IDENTIFIER_LINKED_HIGH_CONFIDENCE"),
+        ("lifecycle_id", ("lifecycle_id",), "IDENTIFIER_LINKED_HIGH_CONFIDENCE"),
+    )
+    for broker_key, candidate_keys, confidence in key_groups:
+        target = _text(broker.get(broker_key))
+        if not target:
+            continue
+        matches = [
+            row for row in candidates
+            if any(_text(row.get(key)) == target for key in candidate_keys)
+        ]
+        if len(matches) == 1:
+            return {
+                "status": "LINKED",
+                "record": matches[0],
+                "reconstruction_method": broker_key,
+                "reconstruction_confidence": confidence,
+                "ambiguity_count": 0,
+                "conflicting_candidate_count": 0,
+            }
+        if len(matches) > 1:
+            return {
+                "status": "AMBIGUOUS_REJECTED",
+                "record": None,
+                "reconstruction_method": broker_key,
+                "reconstruction_confidence": "AMBIGUOUS_REJECTED",
+                "ambiguity_count": len(matches),
+                "conflicting_candidate_count": len(matches),
+            }
+
+    entry_time = _timestamp(broker.get("entry_timestamp") or broker.get("filled_at") or broker.get("broker_timestamp"))
+    if symbol and entry_time:
+        matches = []
+        for row in candidates:
+            if _text(row.get("symbol") or row.get("ticker")).upper() != symbol:
+                continue
+            candidate_time = _timestamp(row.get("timestamp_utc") or row.get("timestamp") or row.get("generated_at"))
+            if candidate_time and abs((candidate_time - entry_time).total_seconds()) <= timestamp_window_seconds:
+                matches.append(row)
+        if len(matches) == 1:
+            return {
+                "status": "LINKED",
+                "record": matches[0],
+                "reconstruction_method": "symbol_tightly_bounded_timestamp",
+                "reconstruction_confidence": "TIMESTAMP_LINKED_HIGH_CONFIDENCE",
+                "ambiguity_count": 0,
+                "conflicting_candidate_count": 0,
+            }
+        if len(matches) > 1:
+            return {
+                "status": "AMBIGUOUS_REJECTED",
+                "record": None,
+                "reconstruction_method": "symbol_tightly_bounded_timestamp",
+                "reconstruction_confidence": "AMBIGUOUS_REJECTED",
+                "ambiguity_count": len(matches),
+                "conflicting_candidate_count": len(matches),
+            }
+    return {
+        "status": "NOT_RECOVERABLE",
+        "record": None,
+        "reconstruction_method": "no_unique_identifier_or_timestamp_match",
+        "reconstruction_confidence": "NOT_RECOVERABLE",
+        "ambiguity_count": 0,
+        "conflicting_candidate_count": 0,
+    }
+
+
+def validate_excursion_record(
+    record: Mapping[str, Any],
+    *,
+    entry_price: Any,
+    current_price: Any,
+) -> dict[str, Any]:
+    """Normalize a lifecycle excursion record and quarantine impossible rows."""
+    row = dict(record or {})
+    entry = _number(entry_price)
+    current = _number(current_price)
+    def first_numeric(*keys: str) -> float | None:
+        for key in keys:
+            if key in row and row.get(key) not in (None, ""):
+                return _number(row.get(key))
+        return None
+
+    mfe = first_numeric("max_favorable_excursion_pct", "mfe_pct", "mfe")
+    mae = first_numeric("max_adverse_excursion_pct", "mae_pct", "mae")
+    peak = _number(row.get("peak_unrealized_profit_pct"))
+    giveback = first_numeric("profit_giveback_pct", "giveback")
+    capture = first_numeric("profit_capture_ratio", "capture_ratio")
+    record_entry = _number(row.get("entry_price"))
+    record_current = _number(row.get("current_price") or row.get("last_price_seen"))
+    current_return = ((current - entry) / entry * 100.0) if entry and current is not None else None
+    errors: list[str] = []
+    if entry is None or entry <= 0 or current is None:
+        return {"status": "INSUFFICIENT_PRICE_HISTORY", "errors": ["missing_broker_entry_or_current_price"]}
+    if record_entry is not None and abs(record_entry - entry) / entry > 0.015:
+        errors.append("entry_price_mismatch")
+    if record_current is not None and abs(record_current - current) / max(abs(current), 0.01) > 0.20:
+        errors.append("stale_or_mismatched_current_price")
+    if mfe is None or mae is None:
+        return {"status": "PARTIAL_EXCURSION", "errors": errors + ["mfe_or_mae_missing"]}
+    if mae > 0:
+        errors.append("mae_positive_for_long_position")
+    if current_return is not None and mfe + 0.0001 < current_return:
+        errors.append("mfe_below_current_return")
+    if giveback is not None and giveback < 0:
+        errors.append("negative_giveback")
+    if capture is not None and not 0.0 <= capture <= 1.0001:
+        errors.append("capture_ratio_out_of_range")
+    if errors:
+        return {"status": "QUARANTINED_IMPOSSIBLE_EXCURSION", "errors": errors}
+    peak = max(peak if peak is not None else mfe, mfe, current_return or 0.0)
+    giveback = max(0.0, giveback if giveback is not None else peak - max(0.0, current_return or 0.0))
+    return {
+        "status": "BROKER_AND_MARKET_OBSERVED",
+        "errors": [],
+        "mfe_pct": round(mfe, 4),
+        "mae_pct": round(mae, 4),
+        "peak_unrealized_profit_pct": round(peak, 4),
+        "current_return_pct": round(current_return, 4) if current_return is not None else None,
+        "giveback_pct": round(giveback, 4),
+        "capture_ratio": round(capture if capture is not None else (max(0.0, current_return or 0.0) / peak if peak > 0 else 0.0), 4),
+        "time_to_mfe_seconds": _number(row.get("time_to_mfe_seconds")),
+        "time_to_mae_seconds": _number(row.get("time_to_mae_seconds")),
+        "source_lifecycle_id": _text(row.get("lifecycle_id")) or None,
+    }
+
+
+def replacement_analysis(
+    position: Mapping[str, Any],
+    candidates: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Compare only already-eligible cached candidates; never creates an order."""
+    symbol = _text(position.get("symbol")).upper()
+    eligible = []
+    for raw in candidates:
+        row = dict(raw or {})
+        candidate_symbol = _text(row.get("symbol") or row.get("ticker")).upper()
+        qualification = _text(row.get("qualification")).lower()
+        is_eligible = bool(row.get("eligible") or row.get("paper_eligible") or row.get("selected")) or qualification in {"paper_ready", "paper_ready_candidate", "released_buy"}
+        if candidate_symbol and candidate_symbol != symbol and is_eligible:
+            eligible.append(row)
+    if not eligible:
+        return {"replacement_state": "NO_ELIGIBLE_REPLACEMENT", "candidate": None, "confidence": 0.0, "reason": "no_current_candidate_passed_existing_eligibility_and_safety_gates"}
+    incumbent_return = _number(position.get("return_per_day")) or 0.0
+    def score(row: Mapping[str, Any]) -> float:
+        return (_number(row.get("expected_return_per_day")) or 0.0) + (_number(row.get("confidence")) or 0.0) / 100.0
+    best = max(eligible, key=score)
+    advantage = score(best) - incumbent_return
+    state = "REPLACEMENT_ADVANTAGE_HIGH" if advantage >= 2.0 else "REPLACEMENT_ADVANTAGE_MODERATE" if advantage >= 0.75 else "REPLACEMENT_ADVANTAGE_LOW"
+    return {
+        "replacement_state": state,
+        "candidate": {"symbol": _text(best.get("symbol") or best.get("ticker")).upper(), "confidence": _number(best.get("confidence")), "rank": best.get("rank"), "score": best.get("score")},
+        "confidence": min(80.0, max(20.0, (_number(best.get("confidence")) or 0.0))),
+        "reason": "comparison_uses_existing_eligible_cached_candidate_only",
+        "expected_advantage": round(advantage, 4),
+    }
+
+
+def fallback_concentration_audit(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    meaningful = [dict(row) for row in rows if _text(row.get("primary_state")) != "DUST_CLEANUP_REVIEW"]
+    counts: dict[str, int] = {}
+    for row in meaningful:
+        state = _text(row.get("primary_state")) or "INSUFFICIENT_EVIDENCE"
+        counts[state] = counts.get(state, 0) + 1
+    dominant = max(counts, key=counts.get) if counts else None
+    dominant_count = counts.get(dominant, 0) if dominant else 0
+    return {
+        "primary_state_counts": counts,
+        "dominant_primary_state": dominant,
+        "dominant_primary_state_count": dominant_count,
+        "blanket_fallback_detected": bool(meaningful and dominant_count / len(meaningful) > 0.5),
+        "meaningful_positions": len(meaningful),
+    }
+
+
 def _age_days(row: Mapping[str, Any]) -> float | None:
     for key in ("position_age_days", "days_held", "age_days"):
         value = _number(row.get(key))
@@ -85,9 +291,11 @@ def classify_position(row: Mapping[str, Any], context: Mapping[str, Any] | None 
     state = "DATA_INSUFFICIENT"
     confidence = "low"
     dust_position = _number(source.get("market_value")) is not None and abs(_number(source.get("market_value")) or 0.0) < 0.01
+    horizon_expired = bool(source.get("horizon_expired")) or (
+        _number(source.get("days_beyond_horizon")) is not None and _number(source.get("days_beyond_horizon")) > 0
+    )
     if not missing:
         thesis = _text(source.get("thesis_state") or source.get("thesis_status")).lower()
-        horizon_expired = bool(source.get("horizon_expired")) or _number(source.get("days_beyond_horizon")) is not None and _number(source.get("days_beyond_horizon")) > 0
         duplicate = bool(source.get("duplicate_exposure") or source.get("duplicate_exposure_state") in {"DUPLICATE", "DUPLICATE_EXPOSURE"})
         replacement_fresh = bool(source.get("replacement_fresh") or source.get("replacement_candidate_id"))
         opportunity = metrics["opportunity_cost_score"] or 0.0
@@ -108,9 +316,9 @@ def classify_position(row: Mapping[str, Any], context: Mapping[str, Any] | None 
         elif horizon_expired:
             state, confidence = "EXIT_REVIEW", "medium"
             reasons.append("HORIZON_EXPIRED")
-        elif giveback >= 50.0 and (ret or 0.0) > 0:
+        elif bool(source.get("profit_protection_trigger")) or (giveback >= 50.0 and (ret or 0.0) > 0):
             state, confidence = "PROTECT_PROFIT", "medium"
-            reasons.append("PROFIT_GIVEBACK")
+            reasons.append("PROFIT_GIVEBACK_AND_WEAKENING_CONTINUATION" if bool(source.get("profit_protection_trigger")) else "PROFIT_GIVEBACK")
         elif (ret or 0.0) < 0:
             # A loss alone is not evidence that capital should be abandoned.
             # Keep the position in an advisory watch state until a linked
@@ -150,7 +358,7 @@ def classify_position(row: Mapping[str, Any], context: Mapping[str, Any] | None 
         secondary.append("MOMENTUM_IMPROVING")
     if bool(source.get("momentum_deterioration")) or "MOMENTUM_DETERIORATION" in reasons:
         secondary.append("MOMENTUM_DECAY")
-    if (metrics["profit_giveback_pct"] or 0.0) > 0.0 or "PROFIT_GIVEBACK" in reasons:
+    if (metrics["profit_giveback_pct"] or 0.0) > 0.0 or any(reason.startswith("PROFIT_GIVEBACK") for reason in reasons):
         secondary.append("PROFIT_GIVEBACK_RISK")
     if "HORIZON_EXPIRED" in reasons or bool(source.get("horizon_expired")):
         secondary.append("HORIZON_EXPIRED")
@@ -240,6 +448,18 @@ def classify_position(row: Mapping[str, Any], context: Mapping[str, Any] | None 
             "todays_pnl": _number(source.get("today_pnl") or source.get("change_today")),
             "entry_timestamp": source.get("entry_timestamp") or source.get("opened_at") or source.get("created_at"),
         },
+        "original_recommendation": source.get("original_recommendation_id") or (source.get("lineage") or {}).get("original_recommendation_id"),
+        "original_rank": source.get("original_rank") or (source.get("lineage") or {}).get("original_rank"),
+        "original_thesis": source.get("original_thesis") or (source.get("lineage") or {}).get("original_thesis"),
+        "thesis_status": source.get("thesis_state") or "ORIGINAL_THESIS_NOT_RECOVERABLE",
+        "intended_horizon": source.get("intended_horizon") or source.get("intended_trade_style"),
+        "horizon_status": source.get("horizon_status") or ("HORIZON_EXPIRED" if horizon_expired else "WITHIN_OBSERVED_WINDOW"),
+        "mfe_pct": _number(source.get("mfe")),
+        "mae_pct": _number(source.get("mae")),
+        "giveback_pct": metrics["profit_giveback_pct"],
+        "return_per_day": metrics["return_per_day"],
+        "opportunity_cost_state": source.get("opportunity_cost_state") or "INSUFFICIENT_COMPARISON_EVIDENCE",
+        "replacement_state": (source.get("replacement_analysis") or {}).get("replacement_state") or "INSUFFICIENT_REPLACEMENT_EVIDENCE",
         "decision_influence": influence_attribution,
         "consumer_acknowledgement": consumer_acknowledgement,
         "automatic_action_authorized": False,
@@ -298,6 +518,7 @@ def build_portfolio_release_review(
         "partial_lineage": sum(1 for row in meaningful if (row.get("retrieval") or {}).get("coverage") == "PARTIAL_LINEAGE"),
         "broker_only": sum(1 for row in meaningful if (row.get("retrieval") or {}).get("coverage") == "BROKER_ONLY"),
     }
+    primary_concentration = fallback_concentration_audit(reviews)
     return {
         "portfolio_capacity_release_review_v1": True,
         "total_positions": len(reviews),
@@ -315,7 +536,9 @@ def build_portfolio_release_review(
             "dominant_secondary_state": dominant_secondary,
             "dominant_secondary_count": dominant_count,
             "blanket_fallback_detected": blanket_detected,
-            "status": "REVIEW_REQUIRED" if blanket_detected else "DIFFERENTIATED_OR_EVIDENCE_LIMITED",
+            "primary_state_concentration": primary_concentration,
+            "primary_state_concentration_explained_by": "missing_forward_and_excursion_evidence" if primary_concentration.get("blanket_fallback_detected") else "evidence_supported_or_not_concentrated",
+            "status": "REVIEW_REQUIRED" if blanket_detected or primary_concentration.get("blanket_fallback_detected") else "DIFFERENTIATED_OR_EVIDENCE_LIMITED",
         },
         "estimated_releasable_slots": sum(int(row.get("estimated_capacity_released_if_closed") or 0) for row in reviews),
         "estimated_releasable_capital": None,

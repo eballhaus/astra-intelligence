@@ -12,7 +12,13 @@ from engine.astra_multilane_activation_v2 import (
 )
 from engine.learning_return_integrity_v1 import audit_learning_return_rows
 from engine.astra_evidence_accumulation_capacity_v1 import build_capacity_snapshot
-from engine.astra_portfolio_capacity_release_review_v1 import build_portfolio_release_review
+from engine.astra_portfolio_capacity_release_review_v1 import (
+    build_portfolio_release_review,
+    fallback_concentration_audit,
+    reconstruct_position_lineage,
+    replacement_analysis,
+    validate_excursion_record,
+)
 
 load_runtime_environment()
 
@@ -46486,6 +46492,189 @@ def _position_intelligence_summary_index_v1(filename: str) -> dict:
     return _astra_evidence_state_json(os.path.join("storage_summary_indexes", filename))
 
 
+def _position_intelligence_bounded_jsonl_tail_v1(filename: str, *, max_bytes: int, max_rows: int) -> list[dict]:
+    """Read a bounded local evidence window without scanning historical archives."""
+    path = os.path.join(STATE, filename)
+    if not os.path.exists(path):
+        return []
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as handle:
+            handle.seek(max(0, size - max_bytes))
+            lines = handle.read().decode("utf-8", "ignore").splitlines()
+        if size > max_bytes and lines:
+            lines = lines[1:]
+    except Exception:
+        return []
+    rows: list[dict] = []
+    for line in lines[-max_rows:]:
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _position_lineage_excursion_overlay_v1(positions: list[dict], registry_by_symbol: dict[str, dict]) -> tuple[dict[str, dict], dict]:
+    """Recover only exact local links for the active-book advisory review.
+
+    The broker registry establishes order ownership. Candidate and lifecycle
+    ledgers are secondary evidence and cannot populate missing history unless
+    their identifiers or tightly bounded entry attributes resolve uniquely.
+    """
+    candidate_rows = _position_intelligence_bounded_jsonl_tail_v1(
+        "candidate_decision_ledger_v1.jsonl", max_bytes=2_000_000, max_rows=1500
+    )
+    lifecycle_rows = _position_intelligence_bounded_jsonl_tail_v1(
+        "trade_lifecycle_excursion_v1.jsonl", max_bytes=8_000_000, max_rows=5000
+    )
+    lifecycle_by_symbol: dict[str, list[dict]] = defaultdict(list)
+    for row in lifecycle_rows:
+        symbol = str(row.get("symbol") or "").upper().strip()
+        if symbol:
+            lifecycle_by_symbol[symbol].append(row)
+    overlays: dict[str, dict] = {}
+    lineage_rows: list[dict] = []
+    excursion_rows: list[dict] = []
+    replacement_rows: list[dict] = []
+    qualified_candidates = _cached_candidate_rows_for_horizon_flow_v1()
+    now = datetime.now(UTC)
+    for position in positions:
+        symbol = str(position.get("symbol") or "").upper().strip()
+        if not symbol:
+            continue
+        registry = dict(registry_by_symbol.get(symbol) or {})
+        broker_join = {**position, **registry}
+        lineage = reconstruct_position_lineage(broker_join, candidate_rows)
+        source_record = dict(lineage.get("record") or {})
+        source_thesis = source_record.get("thesis") or source_record.get("original_thesis") or source_record.get("entry_rationale")
+        thesis_state = "THESIS_UNCONFIRMED" if source_thesis else "ORIGINAL_THESIS_NOT_RECOVERABLE"
+        entry_time = _turnover_parse_timestamp_v1(registry.get("entry_timestamp") or position.get("entry_timestamp"))
+        entry_price = _to_float(position.get("avg_entry_price") or registry.get("filled_avg_price"), 0.0)
+        current_price = _to_float(position.get("current_price"), 0.0)
+        matching_lifecycles: dict[str, dict] = {}
+        for record in lifecycle_by_symbol.get(symbol, []):
+            record_entry_time = _turnover_parse_timestamp_v1(record.get("entry_timestamp"))
+            record_entry_price = _to_float(record.get("entry_price"), 0.0)
+            if not entry_time or not record_entry_time or not entry_price or not record_entry_price:
+                continue
+            if abs((record_entry_time - entry_time).total_seconds()) > 300.0:
+                continue
+            if abs(record_entry_price - entry_price) / max(abs(entry_price), 0.01) > 0.015:
+                continue
+            lifecycle_key = str(record.get("lifecycle_id") or record.get("entry_timestamp") or id(record))
+            matching_lifecycles[lifecycle_key] = record
+        if len(matching_lifecycles) == 1:
+            lifecycle_record = next(iter(matching_lifecycles.values()))
+            source_time = _turnover_parse_timestamp_v1(
+                lifecycle_record.get("last_update_timestamp") or lifecycle_record.get("current_timestamp") or lifecycle_record.get("generated_at")
+            )
+            age_hours = (now - source_time).total_seconds() / 3600.0 if source_time else None
+            excursion = validate_excursion_record(
+                lifecycle_record, entry_price=entry_price, current_price=current_price
+            )
+            if age_hours is not None and age_hours > 72.0 and excursion.get("status") == "BROKER_AND_MARKET_OBSERVED":
+                excursion = {"status": "STALE_MARKET_HISTORY", "errors": ["lifecycle_record_older_than_72_hours"], "source_lifecycle_id": lifecycle_record.get("lifecycle_id")}
+        elif len(matching_lifecycles) > 1:
+            excursion = {"status": "AMBIGUOUS_ENTRY_TIMESTAMP", "errors": ["multiple_distinct_lifecycle_ids_match_entry"], "ambiguity_count": len(matching_lifecycles)}
+        else:
+            excursion = {"status": "INSUFFICIENT_PRICE_HISTORY", "errors": ["no_exact_bounded_lifecycle_match"]}
+        return_pct = _to_float(position.get("unrealized_plpc"), 0.0) * 100.0
+        days = _to_float(registry.get("days_held"), 0.0)
+        return_per_day = round(return_pct / days, 4) if days > 0 else None
+        replacement = replacement_analysis(
+            {"symbol": symbol, "return_per_day": return_per_day}, qualified_candidates
+        )
+        is_dust = abs(_to_float(position.get("market_value"), 0.0)) < 0.01
+        profit_trigger = (
+            excursion.get("status") == "BROKER_AND_MARKET_OBSERVED"
+            and _to_float(excursion.get("current_return_pct"), 0.0) > 0.0
+            and _to_float(excursion.get("giveback_pct"), 0.0) > 0.5
+            and _to_float(excursion.get("giveback_pct"), 0.0) / max(0.01, _to_float(excursion.get("peak_unrealized_profit_pct"), 0.0)) >= 0.4
+            and str(lifecycle_record.get("follow_through_label") if len(matching_lifecycles) == 1 else "").lower() in {"weak_continuation", "failed_continuation", "stalled_after_entry"}
+        )
+        lineage_info = {
+            "original_recommendation_id": source_record.get("recommendation_id"),
+            "original_candidate_id": source_record.get("candidate_id") or source_record.get("decision_id"),
+            "original_rank": source_record.get("rank"),
+            "original_score": source_record.get("score"),
+            "original_recommendation_action": source_record.get("action") or source_record.get("final_action"),
+            "entry_rationale": source_record.get("entry_rationale"),
+            "original_thesis": source_thesis,
+            "strategy_archetype": source_record.get("strategy_archetype") or source_record.get("setup_type"),
+            "trade_style": source_record.get("trade_style") or registry.get("intended_trade_style"),
+            "intended_horizon": source_record.get("intended_horizon") or registry.get("intended_trade_style"),
+            "lane": source_record.get("lane_id"),
+            "recommendation_timestamp": source_record.get("timestamp_utc") or source_record.get("timestamp"),
+            "order_timestamp": registry.get("created_at") or registry.get("broker_timestamp"),
+            "fill_timestamp": registry.get("filled_at") or registry.get("entry_timestamp"),
+            "source_store": "candidate_decision_ledger_v1.jsonl" if source_record else "broker_truth_records_v1.json",
+            "reconstruction_method": lineage.get("reconstruction_method"),
+            "reconstruction_confidence": lineage.get("reconstruction_confidence"),
+            "ambiguity_count": lineage.get("ambiguity_count", 0),
+            "conflicting_candidate_count": lineage.get("conflicting_candidate_count", 0),
+            "broker_order_id": registry.get("broker_order_id"),
+            "client_order_id": registry.get("client_order_id"),
+            "fill_id": registry.get("fill_id"),
+            "lifecycle_id": excursion.get("source_lifecycle_id"),
+        }
+        overlays[symbol] = {
+            "lineage": lineage_info,
+            "recommendation_lineage_status": lineage.get("reconstruction_confidence"),
+            "thesis_state": thesis_state,
+            "original_thesis": source_thesis,
+            "excursion": excursion,
+            "mfe": excursion.get("mfe_pct"),
+            "mae": excursion.get("mae_pct"),
+            "profit_giveback_pct": excursion.get("giveback_pct"),
+            "capture_ratio": excursion.get("capture_ratio"),
+            "return_per_day": return_per_day,
+            "drawdown_adjusted_return_per_day": (round(return_per_day / max(1.0, 1.0 + abs(_to_float(excursion.get("mae_pct"), 0.0))), 4) if return_per_day is not None and excursion.get("status") == "BROKER_AND_MARKET_OBSERVED" else None),
+            "profit_protection_trigger": profit_trigger,
+            "opportunity_cost_state": "INSUFFICIENT_COMPARISON_EVIDENCE" if replacement.get("replacement_state") == "NO_ELIGIBLE_REPLACEMENT" else "MODERATE_OPPORTUNITY_COST" if _to_float(replacement.get("expected_advantage"), 0.0) >= 0.75 else "LOW_OPPORTUNITY_COST",
+            "replacement_analysis": replacement,
+            "replacement_candidate_id": (replacement.get("candidate") or {}).get("symbol"),
+            "replacement_score": replacement.get("expected_advantage"),
+            "replacement_fresh": replacement.get("replacement_state") in {"REPLACEMENT_ADVANTAGE_MODERATE", "REPLACEMENT_ADVANTAGE_HIGH"},
+            "registry_reconciliation_status": "DUST_ANOMALY" if is_dust and not registry else "UNRESOLVED_EXTERNAL_BROKER_RESIDUE" if not registry else "BROKER_REGISTRY_LINKED",
+            "missing_evidence": [
+                value for value in (
+                    "original_recommendation_not_recoverable" if not source_record else "",
+                    "original_thesis_not_recoverable" if not source_thesis else "",
+                    "excursion_" + str(excursion.get("status")).lower() if excursion.get("status") != "BROKER_AND_MARKET_OBSERVED" else "",
+                    "no_eligible_replacement" if replacement.get("replacement_state") == "NO_ELIGIBLE_REPLACEMENT" else "",
+                ) if value
+            ],
+        }
+        lineage_rows.append({"symbol": symbol, **lineage_info, "lineage_status": lineage.get("status")})
+        excursion_rows.append({"symbol": symbol, **excursion})
+        replacement_rows.append({"symbol": symbol, **replacement})
+    confidence_counts = Counter(str(row.get("reconstruction_confidence") or "NOT_RECOVERABLE") for row in lineage_rows)
+    excursion_counts = Counter(str(row.get("status") or "INSUFFICIENT_PRICE_HISTORY") for row in excursion_rows)
+    replacement_counts = Counter(str(row.get("replacement_state") or "INSUFFICIENT_REPLACEMENT_EVIDENCE") for row in replacement_rows)
+    return overlays, {
+        "lineage_rows": lineage_rows,
+        "excursion_rows": excursion_rows,
+        "replacement_rows": replacement_rows,
+        "bounded_read": {
+            "candidate_ledger_rows": len(candidate_rows),
+            "lifecycle_rows": len(lifecycle_rows),
+            "candidate_ledger_max_bytes": 2_000_000,
+            "lifecycle_max_bytes": 8_000_000,
+        },
+        "coverage_by_confidence_class": dict(confidence_counts),
+        "broker_registry_coverage": {
+            "BROKER_LINKED_EXACT": sum(1 for position in positions if str(position.get("symbol") or "").upper() in registry_by_symbol),
+            "UNRESOLVED_EXTERNAL_BROKER_RESIDUE": sum(1 for position in positions if str(position.get("symbol") or "").upper() not in registry_by_symbol),
+            "note": "broker registry linkage proves order ownership, not original candidate recommendation or thesis lineage",
+        },
+        "coverage_by_excursion_class": dict(excursion_counts),
+        "coverage_by_replacement_state": dict(replacement_counts),
+    }
+
+
 def _position_intelligence_context_v1(statuses: dict | None = None) -> tuple[dict, dict]:
     """Join bounded symbol-level evidence to a fresh broker position snapshot."""
     current = dict(statuses or {})
@@ -46496,6 +46685,7 @@ def _position_intelligence_context_v1(statuses: dict | None = None) -> tuple[dic
         str(row.get("symbol") or "").upper(): dict(row)
         for row in (registry.get("aggregated_positions") or []) if isinstance(row, dict)
     }
+    lineage_overlays, lineage_audit = _position_lineage_excursion_overlay_v1(positions, registry_by_symbol)
     profiles = dict(_astra_evidence_state_json("symbol_behavior_profiles_v1.json").get("profiles") or {})
     candidates = {
         str(row.get("symbol") or row.get("ticker") or "").upper(): dict(row)
@@ -46516,6 +46706,7 @@ def _position_intelligence_context_v1(statuses: dict | None = None) -> tuple[dic
         if not symbol:
             continue
         registry_row = dict(registry_by_symbol.get(symbol) or {})
+        overlay = dict(lineage_overlays.get(symbol) or {})
         profile = dict(profiles.get(symbol) or {})
         candidate = dict(candidates.get(symbol) or {})
         lifecycle_count = int(lifecycle_symbols.get(symbol, 0))
@@ -46530,17 +46721,19 @@ def _position_intelligence_context_v1(statuses: dict | None = None) -> tuple[dic
             if registry_row.get("intended_trade_style") not in (None, "", "unknown")
             else registry_row.get("actual_horizon_classification") or ""
         ).lower()
+        excursion = dict(overlay.get("excursion") or {})
+        replacement = dict(overlay.get("replacement_analysis") or {})
         linked = {
             "broker_truth": True,
-            "recommendation_lineage": False,
+            "recommendation_lineage": bool((overlay.get("lineage") or {}).get("original_recommendation_id")),
             "horizon_lifecycle": bool(observed_horizon),
             "symbol_behavior": bool(profile),
             "lifecycle": lifecycle_count > 0,
             "replay": replay_count > 0,
             "candidate_history": candidate_count > 0,
             "opportunity_cost": opportunity_count > 0 and symbol != "UNKNOWN",
-            "mfe_mae": False,
-            "thesis": False,
+            "mfe_mae": excursion.get("status") == "BROKER_AND_MARKET_OBSERVED",
+            "thesis": bool(overlay.get("original_thesis")),
             "regime": False,
             "catalyst": False,
         }
@@ -46568,22 +46761,25 @@ def _position_intelligence_context_v1(statuses: dict | None = None) -> tuple[dic
                 "rank": candidate.get("rank"),
                 "timestamp": candidate.get("generated_at") or candidate.get("timestamp"),
             } if candidate else None,
+            **overlay,
             "lineage": {
                 "position_link_key": position.get("asset_id") or symbol,
                 "broker_order_id": registry_row.get("broker_order_id"),
                 "client_order_id": registry_row.get("client_order_id"),
-                "recommendation_id": None,
-                "lifecycle_id": registry_row.get("stable_key"),
-                "lane_id": None,
+                "recommendation_id": (overlay.get("lineage") or {}).get("original_recommendation_id"),
+                "lifecycle_id": (overlay.get("lineage") or {}).get("lifecycle_id") or registry_row.get("stable_key"),
+                "lane_id": (overlay.get("lineage") or {}).get("lane"),
+                **dict(overlay.get("lineage") or {}),
             },
             "retrieval": {"coverage": coverage, "linked_sources": [name for name, value in linked.items() if value]},
-            "missing_evidence": missing_evidence,
+            "missing_evidence": list(dict.fromkeys(missing_evidence + list(overlay.get("missing_evidence") or []))),
         }
         evidence_condition = {
             "historical_lineage": "missing_historical_lineage" if not linked["recommendation_lineage"] else "linked",
             "horizon": "identifier_mismatch_or_missing_registry_record" if not linked["horizon_lifecycle"] and not registry_row else "missing_horizon" if not linked["horizon_lifecycle"] else "linked",
-            "mfe_mae": "detailed_lifecycle_retrieval_not_available" if lifecycle_count else "missing_lifecycle_evidence",
-            "opportunity_cost": "index_symbol_dimension_unavailable" if opportunity.get("source_available") else "index_unavailable",
+            "mfe_mae": excursion.get("status") or ("detailed_lifecycle_retrieval_not_available" if lifecycle_count else "missing_lifecycle_evidence"),
+            "opportunity_cost": overlay.get("opportunity_cost_state") or ("index_symbol_dimension_unavailable" if opportunity.get("source_available") else "index_unavailable"),
+            "replacement": replacement.get("replacement_state") or "INSUFFICIENT_REPLACEMENT_EVIDENCE",
         }
         coverage_rows.append({"symbol": symbol, "coverage": coverage, "linked_sources": [name for name, value in linked.items() if value], "missing_evidence": missing_evidence, "evidence_condition": evidence_condition, "lifecycle_count": lifecycle_count, "replay_count": replay_count, "candidate_history_count": candidate_count, "registry_match": bool(registry_row)})
     source_metadata = {
@@ -46603,8 +46799,9 @@ def _position_intelligence_context_v1(statuses: dict | None = None) -> tuple[dic
         "positions_missing_thesis": sum(1 for row in coverage_rows if "thesis" in (row.get("missing_evidence") or [])),
         "positions_missing_mfe_mae": sum(1 for row in coverage_rows if "mfe_mae" in (row.get("missing_evidence") or [])),
         "positions_missing_opportunity_cost": sum(1 for row in coverage_rows if "opportunity_cost" in (row.get("missing_evidence") or [])),
-        "positions_missing_replacement_analysis": len(coverage_rows),
+        "positions_missing_replacement_analysis": sum(1 for row in coverage_rows if (context_by_symbol.get(row.get("symbol")) or {}).get("replacement_analysis", {}).get("replacement_state") == "NO_ELIGIBLE_REPLACEMENT"),
         "identifier_mismatch_count": sum(1 for row in coverage_rows if not row.get("registry_match")),
+        "lineage_excursion_reconstruction_v1": lineage_audit,
     }
 
 
@@ -46622,20 +46819,26 @@ def _position_intelligence_utilization_payload_v1(statuses: dict | None = None, 
     for row in rows:
         symbol = str(row.get("symbol") or "").upper()
         snapshot = dict(row.get("position_snapshot") or {})
-        days = _to_float((contexts.get(symbol) or {}).get("days_held"), 0.0)
+        context = dict(contexts.get(symbol) or {})
+        days = _to_float(context.get("days_held"), 0.0)
         pnl_pct = snapshot.get("unrealized_pnl_pct")
         pnl_pct = _to_float(pnl_pct, 0.0) * 100.0 if pnl_pct is not None and abs(_to_float(pnl_pct, 0.0)) <= 2.0 else pnl_pct
-        return_per_day = round(_to_float(pnl_pct, 0.0) / days, 4) if days > 0 and pnl_pct is not None else None
+        return_per_day = context.get("return_per_day")
+        if return_per_day is None:
+            return_per_day = round(_to_float(pnl_pct, 0.0) / days, 4) if days > 0 and pnl_pct is not None else None
         profile = profiles.get(symbol) or {}
         profile_sample = int(_to_float(profile.get("sample_size"), 0.0))
         profile_giveback = profile.get("giveback_average")
-        if pnl_pct is not None and _to_float(pnl_pct, 0.0) > 0 and profile_sample >= 10 and _to_float(profile_giveback, 0.0) >= 50.0:
+        excursion = dict(context.get("excursion") or {})
+        if bool(context.get("profit_protection_trigger")):
+            profit_state = "PROTECT_PROFIT"
+        elif pnl_pct is not None and _to_float(pnl_pct, 0.0) > 0 and profile_sample >= 10 and _to_float(profile_giveback, 0.0) >= 50.0:
             profit_state = "WATCH_PROFIT_GIVEBACK"
         elif pnl_pct is not None and _to_float(pnl_pct, 0.0) > 0:
             profit_state = "LET_WINNER_RUN"
         else:
             profit_state = "INSUFFICIENT_EVIDENCE"
-        replacement = "REPLACEMENT_ADVANTAGE_LOW" if not (contexts.get(symbol) or {}).get("recommendation_id") else "WATCH_FOR_REPLACEMENT"
+        replacement = dict(context.get("replacement_analysis") or {})
         roi_rows.append({
             "symbol": symbol,
             "unrealized_return_pct": pnl_pct,
@@ -46643,12 +46846,14 @@ def _position_intelligence_utilization_payload_v1(statuses: dict | None = None, 
             "return_per_calendar_day": return_per_day,
             "return_per_trading_day": return_per_day,
             "capital_occupied": snapshot.get("market_value"),
-            "drawdown_adjusted_return_per_day": None,
+            "drawdown_adjusted_return_per_day": context.get("drawdown_adjusted_return_per_day"),
             "expected_forward_return_per_day": None,
-            "opportunity_cost_assessment": replacement,
-            "replacement_evidence_status": "linked_candidate_lineage" if replacement == "WATCH_FOR_REPLACEMENT" else "no_eligible_linked_replacement_in_cache",
+            "opportunity_cost_assessment": context.get("opportunity_cost_state") or "INSUFFICIENT_COMPARISON_EVIDENCE",
+            "replacement_state": replacement.get("replacement_state") or "INSUFFICIENT_REPLACEMENT_EVIDENCE",
+            "replacement_candidate": replacement.get("candidate"),
+            "replacement_evidence_status": replacement.get("reason") or "no_eligible_linked_replacement_in_cache",
         })
-        profit_rows.append({"symbol": symbol, "profit_capture_state": profit_state, "current_giveback_available": False, "symbol_giveback_profile": profile_giveback if profile_sample else None, "profile_sample_size": profile_sample, "advisory_only": True})
+        profit_rows.append({"symbol": symbol, "profit_capture_state": profit_state, "current_giveback_available": excursion.get("status") == "BROKER_AND_MARKET_OBSERVED", "mfe_pct": excursion.get("mfe_pct"), "mae_pct": excursion.get("mae_pct"), "giveback_pct": excursion.get("giveback_pct"), "capture_ratio": excursion.get("capture_ratio"), "symbol_giveback_profile": profile_giveback if profile_sample else None, "profile_sample_size": profile_sample, "advisory_only": True})
     lane_profiles: dict[str, list[dict]] = {"scalp": [], "day_trade": [], "swing_trade": []}
     for profile in profiles.values():
         horizon = str(profile.get("best_horizon") or "").lower()
@@ -46770,6 +46975,7 @@ def _position_intelligence_utilization_payload_v1(statuses: dict | None = None, 
             persistence = {"persisted": True, "mode": "explicit_force_audit_append_only", "path": "state/position_intelligence_utilization_audit_v1.jsonl", "records": len(decision_records)}
         except Exception as exc:
             persistence = {"persisted": False, "mode": "persistence_unavailable", "error": str(exc)[:120], "records": len(decision_records)}
+    lineage_audit = dict(retrieval.get("lineage_excursion_reconstruction_v1") or {})
     return {
         "endpoint": "/api/astra_position_intelligence_utilization_v1",
         "status": "PASS_WITH_WARNINGS" if rows else "INSUFFICIENT_EVIDENCE",
@@ -46780,6 +46986,25 @@ def _position_intelligence_utilization_payload_v1(statuses: dict | None = None, 
         "portfolio_review": review,
         "roi_capital_efficiency": {"positions": roi_rows, "return_per_day_available_count": sum(1 for row in roi_rows if row.get("return_per_calendar_day") is not None), "expected_forward_values_available": 0},
         "profit_capture_advisory": {"positions": profit_rows, "automatic_exits_enabled": False},
+        "position_lineage_excursion_replacement_v1": {
+            "status": "PASS_WITH_WARNINGS" if rows else "INSUFFICIENT_EVIDENCE",
+            "lineage": lineage_audit.get("lineage_rows") or [],
+            "excursions": lineage_audit.get("excursion_rows") or [],
+            "replacements": lineage_audit.get("replacement_rows") or [],
+            "bounded_read": lineage_audit.get("bounded_read") or {},
+            "coverage_by_confidence_class": lineage_audit.get("coverage_by_confidence_class") or {},
+            "broker_registry_coverage": lineage_audit.get("broker_registry_coverage") or {},
+            "coverage_by_excursion_class": lineage_audit.get("coverage_by_excursion_class") or {},
+            "coverage_by_replacement_state": lineage_audit.get("coverage_by_replacement_state") or {},
+            "thesis_recovery_status": {
+                "recovered": sum(1 for row in rows if row.get("original_thesis")),
+                "not_recoverable": sum(1 for row in rows if row.get("thesis_status") == "ORIGINAL_THESIS_NOT_RECOVERABLE"),
+            },
+            "broker_actions_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+            **_safety_flags_v1(),
+        },
         "bounded_consumers": [
             {"consumer": "position_monitoring_priority", "previous_state": "broker_only_classification", "new_state": "ACTIVE_ADVISORY", "maximum_influence_pct": 100.0, "confidence_requirement": "linked_broker_truth", "evidence_requirement": "symbol_level_link", "governance_gate": "human_review_required", "rollback_trigger": "retrieval_conflict", "review_period": "each_fresh_audit", "outcome_attribution": "decision_records"},
             {"consumer": "profit_protection_advisory", "previous_state": "profile_not_joined", "new_state": "ACTIVE_ADVISORY", "maximum_influence_pct": 100.0, "confidence_requirement": "profile_sample>=10", "evidence_requirement": "positive_current_pnl_and_symbol_profile", "governance_gate": "no_exit_execution", "rollback_trigger": "profile_link_missing", "review_period": "each_fresh_audit", "outcome_attribution": "decision_records"},
@@ -46897,6 +47122,21 @@ def _attach_pladeu_statuses_v1(statuses: dict, force: bool = False) -> dict:
         "dynamic_capacity_advisory": position_intelligence.get("dynamic_capacity_advisory"),
         "strategy_selection": position_intelligence.get("strategy_selection"),
         "decision_impact_measurement": {key: value for key, value in impact.items() if key != "records"},
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+    lineage = dict(position_intelligence.get("position_lineage_excursion_replacement_v1") or {})
+    statuses["astra_position_lineage_excursion_replacement_v1"] = {
+        "endpoint": "/api/astra_position_lineage_excursion_replacement_v1",
+        "status": lineage.get("status"),
+        "coverage_by_confidence_class": lineage.get("coverage_by_confidence_class"),
+        "broker_registry_coverage": lineage.get("broker_registry_coverage"),
+        "coverage_by_excursion_class": lineage.get("coverage_by_excursion_class"),
+        "coverage_by_replacement_state": lineage.get("coverage_by_replacement_state"),
+        "thesis_recovery_status": lineage.get("thesis_recovery_status"),
+        "bounded_read": lineage.get("bounded_read"),
         "provider_calls_used": 0,
         "broker_actions_used": 0,
         "llm_calls_used": 0,
@@ -47220,6 +47460,27 @@ def astra_position_intelligence_utilization_v1(force: bool = False):
     """Audit bounded position-evidence consumption without execution authority."""
     base = _pladeu_direct_statuses_v1(force=bool(force))
     return _position_intelligence_utilization_payload_v1(base, persist=bool(force))
+
+
+@router.get("/api/astra_position_lineage_excursion_replacement_v1")
+def astra_position_lineage_excursion_replacement_v1(force: bool = False):
+    """Read-only detailed lineage, excursion, and replacement audit."""
+    base = _pladeu_direct_statuses_v1(force=bool(force))
+    payload = _position_intelligence_utilization_payload_v1(base, persist=bool(force))
+    detail = dict(payload.get("position_lineage_excursion_replacement_v1") or {})
+    return {
+        "endpoint": "/api/astra_position_lineage_excursion_replacement_v1",
+        "generated_at": payload.get("generated_at"),
+        "broker_snapshot": payload.get("broker_snapshot"),
+        "portfolio_classification": payload.get("portfolio_review"),
+        "opportunity_cost": payload.get("roi_capital_efficiency"),
+        "profit_capture": payload.get("profit_capture_advisory"),
+        **detail,
+        "broker_actions_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
 
 
 def _learning_return_integrity_v1_payload() -> dict:
@@ -48516,6 +48777,12 @@ def _candidate_horizon_from_row_v1(row: dict) -> str:
     return "unknown"
 
 
+def _is_equity_candidate_row_v1(row: dict) -> bool:
+    asset_class = str(row.get("asset_class") or row.get("asset_type") or "equity").lower()
+    symbol = str(row.get("symbol") or row.get("ticker") or "").upper().strip()
+    return asset_class not in {"crypto", "cryptocurrency"} and "/" not in symbol
+
+
 def _horizon_candidate_flow_v1(statuses: dict | None = None) -> dict:
     statuses = dict(statuses or {})
     horizon_bundle = statuses.get("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1")
@@ -48560,13 +48827,11 @@ def _horizon_candidate_flow_v1(statuses: dict | None = None) -> dict:
             "day_trade": int(_to_float(assignment.get("qualified_day_trade_candidates"), 0.0)),
             "swing_trade": int(_to_float(assignment.get("qualified_swing_trade_candidates"), 0.0)),
         }
-        replacement_rows = [dict(row) for row in (assignment.get("best_replacement_candidates") or []) if isinstance(row, dict)]
-        assigned_rows = [dict(row) for row in (assignment.get("assigned_horizon_rows") or []) if isinstance(row, dict)]
-        if not any(candidate_counts.values()) and replacement_rows:
-            for row in replacement_rows:
-                horizon = str(row.get("horizon") or _candidate_horizon_from_row_v1(row))
-                if horizon in candidate_counts:
-                    candidate_counts[horizon] += 1
+        replacement_rows = [dict(row) for row in (assignment.get("best_replacement_candidates") or []) if isinstance(row, dict) and _is_equity_candidate_row_v1(row)]
+        assigned_rows = [dict(row) for row in (assignment.get("assigned_horizon_rows") or []) if isinstance(row, dict) and _is_equity_candidate_row_v1(row)]
+        # Replacement suggestions are not candidate-generation records.  They
+        # may be duplicate or capacity-blocked incumbents, so counting them as
+        # DAY candidates fabricated a funnel before horizon qualification.
         if not any(candidate_counts.values()) and assigned_rows:
             for row in assigned_rows:
                 horizon = str(row.get("assigned_horizon") or _candidate_horizon_from_row_v1(row))
@@ -48614,6 +48879,9 @@ def _horizon_candidate_flow_v1(statuses: dict | None = None) -> dict:
             "selected_scalp_shadow_candidates": [r for r in assigned_rows if str(r.get("assigned_horizon") or r.get("horizon") or "") == "scalp"][:8],
             "paper_autopilot_horizon_assignment_used": bool(assignment.get("horizon_assignment_used")),
             "paper_tie_breaker_blocker": str(assignment.get("paper_tie_breaker_blocker") or ""),
+            "candidate_flow_evidence_status": "INSUFFICIENT_EQUITY_CANDIDATE_TRACE" if not any(candidate_counts.values()) and replacement_rows else "CURRENT_CANDIDATE_TRACE",
+            "replacement_rows_excluded_from_candidate_funnel": len(replacement_rows),
+            "excluded_replacement_rows": replacement_rows[:10],
             "provider_calls_used": 0,
             "llm_calls_used": 0,
             **_safety_flags_v1(),
@@ -48626,7 +48894,11 @@ def _horizon_candidate_flow_v1(statuses: dict | None = None) -> dict:
     reasons: dict[str, Counter] = defaultdict(Counter)
     selected_day: list[dict] = []
     selected_scalp: list[dict] = []
+    excluded_non_equity_rows = 0
     for row in trace_rows:
+        if not _is_equity_candidate_row_v1(row):
+            excluded_non_equity_rows += 1
+            continue
         horizon = _candidate_horizon_from_row_v1(row)
         if horizon not in {"scalp", "day_trade", "swing_trade"}:
             horizon = "unknown"
@@ -48659,6 +48931,7 @@ def _horizon_candidate_flow_v1(statuses: dict | None = None) -> dict:
         "selected_scalp_shadow_candidates": selected_scalp[:8],
         "paper_autopilot_horizon_assignment_used": bool(trace.get("horizon_assignment_used", False)),
         "paper_tie_breaker_blocker": str(trace.get("paper_tie_breaker_blocker") or trace.get("horizon_execution_blocker") or trace.get("final_blocker_reason") or ""),
+        "excluded_non_equity_candidate_rows": excluded_non_equity_rows,
         "provider_calls_used": 0,
         "llm_calls_used": 0,
         **_safety_flags_v1(),
@@ -48881,6 +49154,8 @@ def _day_trade_top_rejected_candidates_v1(statuses: dict | None = None, limit: i
     if not source_rows:
         source_rows = _cached_candidate_rows_for_horizon_flow_v1()
     for row in source_rows:
+        if not _is_equity_candidate_row_v1(row):
+            continue
         horizon = _candidate_horizon_from_row_v1(row)
         if horizon != "day_trade":
             continue
@@ -48889,6 +49164,7 @@ def _day_trade_top_rejected_candidates_v1(statuses: dict | None = None, limit: i
         reason = str(row.get("decision_reason") or row.get("rejection_reason") or row.get("blocker") or "not_qualified_or_not_evaluated")
         reason = _horizon_specific_rejection_reason_v1(reason, "day_trade", "day_trade_candidate_not_qualified_or_not_evaluated")
         rows.append({
+            "candidate_id": row.get("candidate_id") or row.get("decision_id") or row.get("ledger_id"),
             "symbol": str(row.get("symbol") or row.get("ticker") or "").upper(),
             "reason": reason,
             "gate_category": _day_trade_gate_category_v1(reason),
@@ -49010,10 +49286,12 @@ def _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses: dict |
         reason = first_blocker_reason if exact_gate == "horizon_assignment_blocker" else str(source_reason or first_blocker_reason)
         candidate_level_rows.append({
             "candidate_index": idx,
+            "candidate_id": row.get("candidate_id") or row.get("decision_id") or row.get("ledger_id"),
             "symbol": row.get("symbol") or None,
             "horizon": "day_trade",
             "final_status": _day_trade_final_status_v1(reason),
             "rejection_reason": reason,
+            "final_reason": reason,
             "gate_category": _day_trade_gate_category_v1(reason),
             "confidence": row.get("confidence"),
             "liquidity": row.get("liquidity"),
@@ -49025,6 +49303,7 @@ def _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses: dict |
             "advisory_only": True,
         })
     candidate_level_rows_available = bool(candidate_level_rows) and all(row.get("trace_row_available") for row in candidate_level_rows)
+    candidate_flow_evidence_status = str(flow.get("candidate_flow_evidence_status") or "CURRENT_CANDIDATE_TRACE")
     misaligned_rejection_reason_fixed = bool(misaligned_day_reason and not any("scalp" in str(reason).lower() for reason in day_reasons))
     day_horizon_rows_created = int(_to_float((flow.get("assigned_count_by_horizon") or {}).get("day_trade"), 0.0)) if isinstance(flow.get("assigned_count_by_horizon"), dict) else 0
     if day_horizon_rows_created <= 0 and day_generated > 0:
@@ -49080,6 +49359,7 @@ def _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses: dict |
         "broker_behavior_unchanged": True,
         "forced_trades_exits_disabled": True,
         "ranking_entry_exit_sizing_allocation_unchanged": True,
+        "equity_candidate_identity_retained": candidate_flow_evidence_status != "INSUFFICIENT_EQUITY_CANDIDATE_TRACE",
     }
     remaining_bottlenecks = [
         exact_gate if exact_gate not in {"no_day_trade_dropoff_detected", "no_day_trade_candidates_generated"} else "",
@@ -49094,7 +49374,7 @@ def _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses: dict |
         "day_trade_candidate_level_rows_unavailable_from_current_cache" if day_generated > 0 and not candidate_level_rows_available else "",
     ]
     newly_discovered = [item for item in newly_discovered if item]
-    status = "PASS" if validation_checks["exact_rejection_gate_identified"] and validation_checks["future_horizon_persistence_path_wired"] else "WARNING"
+    status = "PASS" if validation_checks["exact_rejection_gate_identified"] and validation_checks["future_horizon_persistence_path_wired"] and validation_checks["equity_candidate_identity_retained"] else "WARNING"
     payload = {
         "endpoint": "/api/day_trade_candidate_qualification_dropoff_audit_v1",
         "status": status,
@@ -49141,6 +49421,9 @@ def _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses: dict |
             "source_lineage": {"candidate_flow_source": flow.get("candidate_flow_source"), "paper_autopilot_received_day_trade_candidates": paper_autopilot_received_day},
             "cache_timestamp": flow.get("cache_timestamp") or flow.get("generated_at"),
             "candidate_freshness": "unknown_cache_timestamp" if not (flow.get("cache_timestamp") or flow.get("generated_at")) else "timestamp_available",
+            "candidate_flow_evidence_status": candidate_flow_evidence_status,
+            "replacement_rows_excluded_from_candidate_funnel": flow.get("replacement_rows_excluded_from_candidate_funnel", 0),
+            "excluded_replacement_rows": flow.get("excluded_replacement_rows") or [],
             "scalp_generated": int(_to_float(generated.get("scalp"), 0.0)),
             "scalp_qualified": int(_to_float(qualified.get("scalp"), 0.0)),
             "scalp_rejection_reasons": scalp_reasons,
@@ -62024,6 +62307,17 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "evidence": funnel.get("candidate_level_rows") or [],
             "recommended_action": "human review of horizon assignment; no threshold or strategy change applied",
         })
+    if str(funnel.get("candidate_flow_evidence_status") or "") == "INSUFFICIENT_EQUITY_CANDIDATE_TRACE":
+        findings.append({
+            "severity": "high",
+            "classification": "candidate_trace_integrity_defect",
+            "issue": "equity_day_candidate_identity_not_retained",
+            "evidence": {
+                "replacement_rows_excluded": funnel.get("replacement_rows_excluded_from_candidate_funnel", 0),
+                "excluded_replacement_rows": funnel.get("excluded_replacement_rows") or [],
+            },
+            "recommended_action": "persist the existing equity candidate identifier and horizon-assignment row before qualification; do not use replacement suggestions as entry candidates",
+        })
     if alignment.get("registry_sync_status") == "STALE_REGISTRY_REQUIRES_RECONCILIATION":
         findings.append({
             "severity": "medium",
@@ -62042,6 +62336,7 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "recommended_action": "retain INSUFFICIENT_EVIDENCE labels; do not infer unavailable lifecycle fields",
         })
     retrieval = dict(utilization.get("position_retrieval_coverage") or {})
+    lineage_detail = dict(utilization.get("position_lineage_excursion_replacement_v1") or {})
     audit_rows = list(utilization.get("producer_to_consumer_audit") or [])
     unavailable_consumers = [row.get("source") for row in audit_rows if row.get("classification") == "AVAILABLE_NOT_LINKED"]
     if unavailable_consumers:
@@ -62051,6 +62346,24 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "issue": "position_intelligence_available_but_not_linked",
             "evidence": {"sources": unavailable_consumers, "coverage": retrieval},
             "recommended_action": "preserve advisory-only consumption until position-level lineage exists; do not infer links from dashboard data",
+        })
+    lineage_confidence = dict(lineage_detail.get("coverage_by_confidence_class") or {})
+    excursion_coverage = dict(lineage_detail.get("coverage_by_excursion_class") or {})
+    if int(_to_float(lineage_confidence.get("NOT_RECOVERABLE"), 0.0)) > 0:
+        findings.append({
+            "severity": "medium",
+            "classification": "historical_lineage_gap",
+            "issue": "original_recommendation_or_thesis_not_recoverable",
+            "evidence": {"coverage_by_confidence_class": lineage_confidence},
+            "recommended_action": "preserve explicit unrecoverable labels; require order-linked recommendation persistence for future entries",
+        })
+    if any(key in excursion_coverage for key in ("INSUFFICIENT_PRICE_HISTORY", "STALE_MARKET_HISTORY", "QUARANTINED_IMPOSSIBLE_EXCURSION")):
+        findings.append({
+            "severity": "medium",
+            "classification": "lifecycle_evidence_gap",
+            "issue": "open_position_excursion_evidence_incomplete_or_stale",
+            "evidence": {"coverage_by_excursion_class": excursion_coverage},
+            "recommended_action": "keep lifecycle values diagnostic until a fresh exact cached lifecycle record is available",
         })
     differentiation = dict(review.get("differentiation_audit") or {})
     if differentiation.get("blanket_fallback_detected"):
@@ -62093,6 +62406,11 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "retrieval_coverage": retrieval,
             "differentiation_audit": differentiation,
             "available_but_not_consumed": unavailable_consumers,
+        },
+        "position_lineage_excursion_replacement_v1": {
+            "coverage_by_confidence_class": lineage_confidence,
+            "coverage_by_excursion_class": excursion_coverage,
+            "coverage_by_replacement_state": lineage_detail.get("coverage_by_replacement_state") or {},
         },
         "live_trading_enabled": False,
         "learned_exits_enabled": False,
@@ -85456,6 +85774,9 @@ def unified_learning_diagnostics_v1(force: bool = False):
             _attach_astra_intelligence_maturation_readiness_report_v1(out, {**statuses, **out}, force=True)
             out["astra_position_intelligence_utilization_v1"] = dict(
                 statuses.get("astra_position_intelligence_utilization_v1") or {}
+            )
+            out["astra_position_lineage_excursion_replacement_v1"] = dict(
+                statuses.get("astra_position_lineage_excursion_replacement_v1") or {}
             )
             _apply_unified_broker_truth_safety_defaults_v1(out)
             wiring_summary = _dashboard_data_wiring_summary_v1(out)
