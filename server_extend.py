@@ -35057,30 +35057,43 @@ def alpaca_paper_status_v1(force: bool = False):
     if not force:
         return _alpaca_paper_status_fast_fallback_v1("live_broker_refresh_deferred_unless_force_true")
     try:
-        out = ALPACA_PAPER_BROKER.status()
+        out = ALPACA_PAPER_BROKER.status(include_broker_truth=not force)
         if isinstance(out, dict):
-            try:
-                autopilot_status = PAPER_AUTOPILOT.status()
-            except Exception:
+            if force:
                 autopilot_status = {}
-            try:
-                autopilot_trace = PAPER_AUTOPILOT.execution_trace() if hasattr(PAPER_AUTOPILOT, "execution_trace") else {}
-            except Exception:
                 autopilot_trace = {}
-            try:
-                decision_opt = dict(
-                    DECISION_OPTIMIZATION_TRADE_MANAGEMENT_SUITE.status(statuses=_learning_acceleration_status_bundle(), force=False) or {}
-                )
-            except Exception:
+            else:
+                try:
+                    autopilot_status = PAPER_AUTOPILOT.status()
+                except Exception:
+                    autopilot_status = {}
+                try:
+                    autopilot_trace = PAPER_AUTOPILOT.execution_trace() if hasattr(PAPER_AUTOPILOT, "execution_trace") else {}
+                except Exception:
+                    autopilot_trace = {}
+            # ``force=true`` is the explicit read-only broker-audit path.  It
+            # must return the fresh account snapshot promptly, not wait on
+            # unrelated learning/report builders.  Those diagnostics remain
+            # available through their own cache-first endpoints.
+            if force:
                 decision_opt = {}
-            try:
-                exit_learning = dict(EXIT_LEARNING_EXPANSION_SUITE.status(force=False) or {})
-            except Exception:
                 exit_learning = {}
-            try:
-                mobile_compaction = dict(_mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False) or {})
-            except Exception:
                 mobile_compaction = {}
+            else:
+                try:
+                    decision_opt = dict(
+                        DECISION_OPTIMIZATION_TRADE_MANAGEMENT_SUITE.status(statuses=_learning_acceleration_status_bundle(), force=False) or {}
+                    )
+                except Exception:
+                    decision_opt = {}
+                try:
+                    exit_learning = dict(EXIT_LEARNING_EXPANSION_SUITE.status(force=False) or {})
+                except Exception:
+                    exit_learning = {}
+                try:
+                    mobile_compaction = dict(_mobile_runtime_compaction_snapshot(force=False, include_closed_orders=False) or {})
+                except Exception:
+                    mobile_compaction = {}
             session_timing = dict(autopilot_status.get("market_session_execution_timing") or autopilot_trace.get("market_session_execution_timing") or {})
             session_block_reason = str(session_timing.get("session_block_reason") or autopilot_trace.get("final_blocker_reason") or autopilot_trace.get("why_no_trade_today") or "unknown_blocker")
             broker_truth = dict(out.get("broker_truth_metrics") or {})
@@ -35213,6 +35226,14 @@ def alpaca_paper_status_v1(force: bool = False):
             out["paper_autopilot_status"] = dict(autopilot_status or {})
             out["paper_autopilot_trace"] = dict(autopilot_trace or {})
             out["alpaca_paper_status_v1"] = True
+            out["broker_status_refresh_deferred"] = False
+            out["broker_status_refresh_deferred_reason"] = ""
+            out["broker_snapshot_status"] = str(out.get("broker_snapshot_status") or "FRESH_READ_ONLY")
+            out["broker_snapshot_source"] = str(out.get("broker_snapshot_source") or "alpaca_paper_account_positions_open_orders")
+            out["broker_snapshot_authority"] = "authoritative_paper_broker_snapshot"
+            out["broker_snapshot_age_seconds"] = 0.0
+            out["broker_refresh_success"] = bool(out.get("account_preflight_ok") and out.get("positions_preflight_ok") and out.get("orders_preflight_ok"))
+            out["broker_actions_used"] = 0
             out["live_trading_changed"] = False
             out["broker_live_endpoint_allowed"] = False
             _CACHE["alpaca_paper_status_v1"] = {"data": dict(out), "ts": time.time()}
@@ -45002,7 +45023,17 @@ def astra_learning_preservation_capacity_v1(force: bool = False):
 
 @router.get("/api/astra_truth_controlled_evolution_executive_v1")
 def astra_truth_controlled_evolution_executive_v1(force: bool = False):
-    statuses = _learning_acceleration_status_bundle()
+    # This is a Cortex-readable summary endpoint.  Reuse the unified cache
+    # rather than rebuilding the broad learning bundle on every read.
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    statuses = dict(cached_unified or {})
+    if not statuses:
+        try:
+            with open(os.path.join(STATE, "dashboard_cache", "unified_learning_diagnostics_v1.json"), "r", encoding="utf-8") as handle:
+                cached_payload = json.load(handle)
+            statuses = dict(cached_payload) if isinstance(cached_payload, dict) else {}
+        except Exception:
+            statuses = {}
     try:
         cached_alpaca = ((_CACHE.get("alpaca_paper_status_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
         statuses["alpaca_paper_broker"] = dict(cached_alpaca or {})
@@ -46468,6 +46499,17 @@ def _pladeu_direct_statuses_v1(force: bool = False) -> dict:
             base = dict(cached_payload) if isinstance(cached_payload, dict) else {}
         except Exception:
             base = {}
+    if force:
+        # Keep the explicit audit path authoritative while leaving ordinary
+        # dashboard composition cache-first.  The broker helper performs only
+        # bounded paper account, position, and open-order reads.
+        try:
+            fresh_alpaca = alpaca_paper_status_v1(force=True)
+            if isinstance(fresh_alpaca, dict):
+                base["alpaca_paper_status_v1"] = dict(fresh_alpaca)
+                base["alpaca_paper_broker"] = dict(fresh_alpaca)
+        except Exception:
+            pass
     if not base.get("alpaca_paper_broker"):
         base["alpaca_paper_broker"] = _cached_alpaca_paper_status_payload(base) or _alpaca_paper_status_fast_fallback_v1("pladeu_cache_first")
     base["authoritative_broker_truth"] = _canonical_broker_truth_counts_v1(base)
@@ -48510,13 +48552,33 @@ def _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses: dict |
     cached = (_CACHE.get("day_trade_candidate_qualification_dropoff_audit_v1") or {}) if isinstance(_CACHE.get("day_trade_candidate_qualification_dropoff_audit_v1"), dict) else {}
     if isinstance(cached.get("data"), dict) and time.time() - _to_float(cached.get("ts"), 0.0) < 90.0:
         return dict(cached.get("data") or {})
+    audit_fast = bool(statuses.get("__audit_fast_path"))
     flow = _horizon_candidate_flow_v1(statuses)
     mode = _paper_autopilot_mode_wiring_v1()
-    capacity = _capacity_lane_diagnostics_v1(statuses)
-    recycling = _capacity_recycling_diagnostics_v1(statuses)
+    if audit_fast:
+        capacity_snapshot = _evidence_accumulation_capacity_payload_v1(statuses)
+        day_capacity = dict((capacity_snapshot.get("lanes") or {}).get("day") or {})
+        capacity = {
+            "available_day_trade_slots": int(_to_float(day_capacity.get("positions_remaining"), 0.0)),
+            "day_trade_lane_blocked_reason": "" if bool(day_capacity.get("reserve_available")) else str(day_capacity.get("reserve_state") or "DAY_RESERVE_UNAVAILABLE"),
+            "day_trade_lane_ready_status": "ready_advisory_capacity_available" if bool(day_capacity.get("reserve_available")) else "blocked_or_needs_recycling",
+            "capacity_gate_blockers": {},
+        }
+        recycling = dict(statuses.get("capacity_recycling_support_v1") or {
+            "capacity_recycling_candidates": [],
+            "top_positions_blocking_capacity": [],
+            "stale_positions_count": 0,
+            "exit_review_count": 0,
+            "replacement_candidate_count": 0,
+            "capital_trapped_count": 0,
+            "recycling_blockers": ["bounded_audit_path_uses_cached_recycling_summary"],
+        })
+    else:
+        capacity = _capacity_lane_diagnostics_v1(statuses)
+        recycling = _capacity_recycling_diagnostics_v1(statuses)
     broker_growth = _broker_truth_growth_monitor_v1_payload(statuses)
     horizon_coverage = _broker_truth_horizon_coverage_v1(statuses)
-    readiness = _exit_readiness_diagnostics_v1_payload(statuses)
+    readiness = dict(statuses.get("exit_readiness_diagnostics_v1") or {}) if audit_fast else _exit_readiness_diagnostics_v1_payload(statuses)
     scalp = _scalp_learning_bucket_v1(statuses)
     source_alignment = _alpaca_position_source_alignment_v1(statuses)
 
@@ -48563,9 +48625,9 @@ def _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses: dict |
     if day_generated > 0 and day_qualified <= 0:
         exact_gate = (
             "paper_autopilot_capacity_gate"
-            if capacity_blocked or _to_float(capacity.get("available_day_trade_slots"), 0.0) <= 0
+            if capacity_blocked
             else "horizon_assignment_blocker"
-            if horizon_blocked or str(dropoff.get("day_trade") or "").lower()
+            if horizon_blocked or str(dropoff.get("day_trade") or "").lower() == "horizon_assignment_blocker"
             else "paper_tie_breaker_blocker"
             if tie_breaker_blocked or flow.get("paper_tie_breaker_blocker")
             else "candidate_rows_present_but_no_qualified_horizon_assignment_rows"
@@ -48580,11 +48642,21 @@ def _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses: dict |
     paper_eligible_day = day_qualified if exact_gate not in {"paper_autopilot_capacity_gate", "horizon_assignment_blocker"} else 0
     top_rejected = _day_trade_top_rejected_candidates_v1(statuses)
     candidate_level_rows = []
-    for idx, row in enumerate(top_rejected):
-        reason = str(row.get("reason") or next(iter(day_reasons), "day_trade_candidate_not_qualified_or_not_evaluated"))
+    first_blocker_reason = str(next(iter(day_reasons), exact_gate or "day_trade_candidate_not_qualified_or_not_evaluated"))
+    # The horizon bundle owns the aggregate gate count.  Preserve any
+    # candidate-local reason as source evidence, but do not let an
+    # unclassified/stale row contradict the first failing gate established by
+    # the two-candidate funnel.  Missing candidate rows are explicit
+    # insufficient-evidence placeholders, never invented symbols.
+    candidate_rows_for_funnel = list(top_rejected[:day_generated])
+    while len(candidate_rows_for_funnel) < day_generated:
+        candidate_rows_for_funnel.append({"trace_row_missing": True})
+    for idx, row in enumerate(candidate_rows_for_funnel):
+        source_reason = str(row.get("reason") or row.get("rejection_reason") or "")
+        reason = first_blocker_reason if exact_gate == "horizon_assignment_blocker" else str(source_reason or first_blocker_reason)
         candidate_level_rows.append({
             "candidate_index": idx,
-            "symbol": row.get("symbol") or "UNKNOWN",
+            "symbol": row.get("symbol") or None,
             "horizon": "day_trade",
             "final_status": _day_trade_final_status_v1(reason),
             "rejection_reason": reason,
@@ -48592,9 +48664,13 @@ def _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses: dict |
             "confidence": row.get("confidence"),
             "liquidity": row.get("liquidity"),
             "risk": row.get("risk"),
+            "source_rejection_reason": source_reason or None,
+            "first_blocker_source": "aggregate_day_trade_funnel" if reason == first_blocker_reason and source_reason != reason else "candidate_trace",
+            "trace_row_available": not bool(row.get("trace_row_missing")),
+            "evidence_status": "INSUFFICIENT_EVIDENCE" if row.get("trace_row_missing") else "CURRENT_TRACE",
             "advisory_only": True,
         })
-    candidate_level_rows_available = bool(candidate_level_rows)
+    candidate_level_rows_available = bool(candidate_level_rows) and all(row.get("trace_row_available") for row in candidate_level_rows)
     misaligned_rejection_reason_fixed = bool(misaligned_day_reason and not any("scalp" in str(reason).lower() for reason in day_reasons))
     day_horizon_rows_created = int(_to_float((flow.get("assigned_count_by_horizon") or {}).get("day_trade"), 0.0)) if isinstance(flow.get("assigned_count_by_horizon"), dict) else 0
     if day_horizon_rows_created <= 0 and day_generated > 0:
@@ -48917,10 +48993,21 @@ def _alpaca_position_source_alignment_v1(statuses: dict | None = None) -> dict:
     broker_symbols = int(_to_float(registry.get("deduped_active_symbols"), 0.0))
     broker_rows = int(_to_float(registry.get("raw_open_rows"), 0.0))
     paper_count = int(_to_float(paper_db.get("paper_autopilot_open_positions_count"), 0.0))
-    dashboard_count = max(alpaca_count, broker_symbols, paper_count)
-    if alpaca_count == broker_symbols:
+    dashboard_count = alpaca_count if bool(alpaca.get("broker_refresh_success") or alpaca.get("broker_snapshot_status") == "FRESH_READ_ONLY") else max(alpaca_count, broker_symbols, paper_count)
+    fresh_authoritative = bool(
+        alpaca.get("paper_mode_verified")
+        and alpaca.get("broker_live_endpoint_allowed") is False
+        and alpaca.get("broker_refresh_success")
+        and alpaca.get("broker_snapshot_status") == "FRESH_READ_ONLY"
+    )
+    alpaca_symbols = {str((row or {}).get("symbol") or "").upper() for row in (alpaca.get("positions") or []) if isinstance(row, dict) and (row or {}).get("symbol")}
+    registry_symbols = {str((row or {}).get("symbol") or "").upper() for row in (registry.get("aggregated_positions") or []) if isinstance(row, dict) and (row or {}).get("symbol")}
+    if fresh_authoritative:
+        # A fresh paper broker snapshot is authoritative.  A smaller local
+        # registry is a reconciliation delta, not a competing source of
+        # truth, and must not make the dashboard report zero positions.
         status = "PASS"
-        reason = "sources_aligned"
+        reason = "fresh_authoritative_alpaca_snapshot"
         authoritative = "alpaca_paper_status"
     elif broker_symbols > alpaca_count and broker_rows > 0:
         status = "WARNING"
@@ -48933,8 +49020,23 @@ def _alpaca_position_source_alignment_v1(statuses: dict | None = None) -> dict:
     return {
         "alpaca_open_positions_count": alpaca_count,
         "alpaca_position_symbols": sorted({str((row or {}).get("symbol") or "").upper() for row in (alpaca.get("positions") or []) if isinstance(row, dict) and (row or {}).get("symbol")}),
+        "broker_snapshot_status": alpaca.get("broker_snapshot_status") or ("FRESH_READ_ONLY" if fresh_authoritative else "CACHED_OR_DEFERRED"),
+        "broker_snapshot_source": alpaca.get("broker_snapshot_source") or "cached_alpaca_paper_status_v1",
+        "broker_snapshot_authority": "authoritative_paper_broker_snapshot" if fresh_authoritative else "cached_or_registry_diagnostic",
+        "broker_snapshot_age_seconds": _to_float(alpaca.get("broker_snapshot_age_seconds"), None),
+        "broker_refresh_success": fresh_authoritative,
+        "reconciliation_differences": {
+            "broker_symbols_missing_from_registry": sorted(alpaca_symbols - registry_symbols),
+            "registry_symbols_missing_from_broker": sorted(registry_symbols - alpaca_symbols),
+            "broker_count_minus_registry_count": alpaca_count - broker_symbols,
+            "broker_count_minus_paper_autopilot_count": alpaca_count - paper_count,
+        },
+        "registry_sync_status": "ALIGNED" if alpaca_symbols == registry_symbols else "STALE_REGISTRY_REQUIRES_RECONCILIATION" if fresh_authoritative else "UNKNOWN",
         "broker_truth_active_symbols": broker_symbols,
         "broker_truth_open_rows": broker_rows,
+        "broker_confirmed_count": alpaca_count,
+        "lifecycle_rows_audited": dashboard_count,
+        "unknown_horizon_positions": 0,
         "paper_autopilot_open_count": paper_count,
         "paper_autopilot_open_positions_count": paper_count,
         "paper_autopilot_open_rows": paper_db.get("paper_autopilot_open_rows"),
@@ -48955,9 +49057,9 @@ def _alpaca_position_source_alignment_v1(statuses: dict | None = None) -> dict:
         "authoritative_source_reason": reason,
         "mismatch_reason": reason,
         "safe_repair_available": status != "PASS",
-        "repair_status": "diagnostic_labeling_only_no_broker_mutation",
+        "repair_status": "authoritative_snapshot_selected_registry_delta_reported" if fresh_authoritative and alpaca_symbols != registry_symbols else "diagnostic_labeling_only_no_broker_mutation",
         "human_approval_required": False,
-        "repair_recommendation": "refresh_alpaca_status_cache_and_keep_broker_truth_registry_labeled_diagnostic_until_broker_fetch_confirms" if status != "PASS" else "none",
+        "repair_recommendation": "reconcile_local_registry_from_fresh_paper_snapshot_without_mutating_broker" if fresh_authoritative and alpaca_symbols != registry_symbols else "refresh_alpaca_status_cache_and_keep_broker_truth_registry_labeled_diagnostic_until_broker_fetch_confirms" if status != "PASS" else "none",
         "provider_calls_used": 0,
         "llm_calls_used": 0,
         **_safety_flags_v1(),
@@ -61548,14 +61650,89 @@ def _desktop_mobile_copilot_sync_v1_payload(statuses: dict | None = None) -> dic
     }
 
 
+def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = None) -> dict:
+    """Bounded force-audit governance view built from canonical local inputs."""
+    current = dict(statuses or {})
+    alignment = _alpaca_position_source_alignment_v1(current)
+    day = _day_trade_candidate_qualification_dropoff_audit_v1_payload({**current, "__audit_fast_path": True})
+    funnel = dict(day.get("day_trade_qualification_funnel_v1") or {})
+    broker = dict(current.get("alpaca_paper_status_v1") or current.get("alpaca_paper_broker") or {})
+    rows = [dict(row) for row in (broker.get("positions") or []) if isinstance(row, dict)]
+    review = build_portfolio_release_review(rows)
+    findings: list[dict] = []
+    if int(_to_float(funnel.get("day_trade_candidates_generated"), 0.0)) > 0 and int(_to_float(funnel.get("day_trade_candidates_qualified"), 0.0)) <= 0:
+        findings.append({
+            "severity": "high",
+            "classification": "active defect",
+            "issue": "day_trade_candidates_generated_but_none_qualified",
+            "first_blocker": funnel.get("exact_gate_blocking_day_trades"),
+            "evidence": funnel.get("candidate_level_rows") or [],
+            "recommended_action": "human review of horizon assignment; no threshold or strategy change applied",
+        })
+    if alignment.get("registry_sync_status") == "STALE_REGISTRY_REQUIRES_RECONCILIATION":
+        findings.append({
+            "severity": "medium",
+            "classification": "stale historical warning",
+            "issue": "local_broker_truth_registry_lags_fresh_alpaca_snapshot",
+            "evidence": alignment.get("reconciliation_differences") or {},
+            "recommended_action": "reconcile local registry from the authoritative read-only snapshot without broker mutation",
+        })
+    missing_intelligence = sum(1 for row in (review.get("review_rows") or []) if row.get("data_quality") != "COMPLETE")
+    if missing_intelligence:
+        findings.append({
+            "severity": "medium",
+            "classification": "reporting-semantic mismatch",
+            "issue": "missing_position_intelligence",
+            "evidence": {"positions_missing_required_fields": missing_intelligence},
+            "recommended_action": "retain INSUFFICIENT_EVIDENCE labels; do not infer unavailable lifecycle fields",
+        })
+    warnings = [str(item.get("issue")) for item in findings]
+    high = sum(1 for item in findings if item.get("severity") == "high")
+    critical = sum(1 for item in findings if item.get("severity") == "critical")
+    return {
+        "endpoint": "/api/astra_governance_oversight_v1",
+        "status": "CRITICAL" if critical else "WARNING" if high else "PASS",
+        "generated_at": _now_utc_iso(),
+        "audit_mode": "bounded_force_read_only",
+        "critical_findings_count": critical,
+        "high_findings_count": high,
+        "medium_findings_count": sum(1 for item in findings if item.get("severity") == "medium"),
+        "failed_sources_count": 0,
+        "warnings": warnings,
+        "findings": findings,
+        "alpaca_position_source_alignment_v1": alignment,
+        "day_trade_funnel_status": {
+            "day_trade_candidates_generated": funnel.get("day_trade_candidates_generated"),
+            "day_trade_candidates_qualified": funnel.get("day_trade_candidates_qualified"),
+            "exact_blocker": funnel.get("exact_gate_blocking_day_trades"),
+            "candidate_level_rows": funnel.get("candidate_level_rows") or [],
+        },
+        "portfolio_capacity_release_review_v1": {
+            "total_positions_reviewed": review.get("total_positions"),
+            "primary_state_counts": review.get("primary_state_counts") or {},
+            "dust_cleanup_symbols": [row.get("symbol") for row in (review.get("review_rows") or []) if row.get("primary_state") == "DUST_CLEANUP_REVIEW"],
+            "automatic_exits_enabled": False,
+        },
+        "live_trading_enabled": False,
+        "learned_exits_enabled": False,
+        "automatic_promotions_enabled": False,
+        "autonomous_behavior_changes_enabled": False,
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
+
+
 def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict:
     ctx = _astra_maturation_context_v1(statuses)
     current = ctx["current"]
-    turnover_audit = _horizon_turnover_exit_audit_v1_payload(statuses)
-    exit_readiness = _exit_readiness_diagnostics_v1_payload(statuses)
+    audit_fast = bool((statuses or {}).get("__audit_fast_path"))
+    turnover_audit = dict((statuses or {}).get("horizon_turnover_exit_audit_v1") or {}) if audit_fast else _horizon_turnover_exit_audit_v1_payload(statuses)
+    exit_readiness = dict((statuses or {}).get("exit_readiness_diagnostics_v1") or {}) if audit_fast else _exit_readiness_diagnostics_v1_payload(statuses)
     horizon_coverage = turnover_audit.get("horizon_persistence_diagnostics_v1") if isinstance(turnover_audit.get("horizon_persistence_diagnostics_v1"), dict) else _broker_truth_horizon_coverage_v1(statuses)
     mode_wiring = turnover_audit.get("paper_autopilot_mode_wiring_v1") if isinstance(turnover_audit.get("paper_autopilot_mode_wiring_v1"), dict) else _paper_autopilot_mode_wiring_v1()
-    capacity_lanes = _capacity_lane_diagnostics_v1(statuses)
+    capacity_lanes = dict((statuses or {}).get("capacity_lane_diagnostics_v1") or {}) if audit_fast else _capacity_lane_diagnostics_v1(statuses)
     evidence_capacity = _evidence_accumulation_capacity_payload_v1(statuses)
     portfolio_release = _portfolio_capacity_release_review_payload_v1(statuses)
     source_alignment = _alpaca_position_source_alignment_v1(statuses)
@@ -61605,7 +61782,7 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
     lane_report = _lane_execution_daily_report_v1_payload(statuses)
     if int(_to_float(lane_report.get("false_lane_reserve_exhaustion_contradictions"), 0.0)) > 0:
         warnings.append("FALSE_LANE_RESERVE_EXHAUSTION")
-    safe_audit = _astra_safe_auto_audit_repair_v1_payload(statuses)
+    safe_audit = ({"issues_by_classification": {}, "issue_rows": []} if audit_fast else _astra_safe_auto_audit_repair_v1_payload(statuses))
     return {
         "endpoint": "/api/astra_governance_oversight_v1",
         "status": "CRITICAL" if "FALSE_LANE_RESERVE_EXHAUSTION" in warnings else "PASS",
@@ -69490,7 +69667,17 @@ def desktop_mobile_copilot_sync_v1(force: bool = False):
 
 @router.get("/api/astra_governance_oversight_v1")
 def astra_governance_oversight_v1(force: bool = False):
-    statuses = _astra_maturation_cached_statuses_v1()
+    if force:
+        cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+        statuses = dict(cached_unified or {})
+    else:
+        statuses = _astra_maturation_cached_statuses_v1()
+    if force:
+        fresh = alpaca_paper_status_v1(force=True)
+        statuses["alpaca_paper_status_v1"] = dict(fresh or {})
+        statuses["alpaca_paper_broker"] = dict(fresh or {})
+        statuses["__audit_fast_path"] = True
+        return _astra_governance_oversight_v1_fast_audit_payload(statuses)
     return _astra_governance_oversight_v1_payload(statuses)
 
 
@@ -70237,6 +70424,11 @@ def capacity_recycling_daytrade_brokertruth_validation_v1(force: bool = False):
 def day_trade_candidate_qualification_dropoff_audit_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
     statuses = dict(cached_unified or {})
+    if force:
+        fresh = alpaca_paper_status_v1(force=True)
+        statuses["alpaca_paper_status_v1"] = dict(fresh or {})
+        statuses["alpaca_paper_broker"] = dict(fresh or {})
+        statuses["__audit_fast_path"] = True
     return _day_trade_candidate_qualification_dropoff_audit_v1_payload(statuses)
 
 
@@ -70369,6 +70561,13 @@ def equity_horizon_qualification_completion_v2(force: bool = False):
 def active_position_source_alignment_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
     statuses = dict(cached_unified or {})
+    if force:
+        # Explicit audit refresh: read paper account/positions/orders once and
+        # feed that authoritative snapshot to the alignment helper.  Normal
+        # dashboard reads remain cache-first.
+        fresh = alpaca_paper_status_v1(force=True)
+        statuses["alpaca_paper_status_v1"] = dict(fresh or {})
+        statuses["alpaca_paper_broker"] = dict(fresh or {})
     return _alpaca_position_source_alignment_v1(statuses)
 
 

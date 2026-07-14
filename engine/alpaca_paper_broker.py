@@ -666,7 +666,7 @@ class AlpacaPaperBroker:
         self._last_order_status = "cancel_requested"
         return {"ok": True, "order_id": oid, "status": "cancel_requested"}
 
-    def status(self) -> dict[str, Any]:
+    def status(self, *, include_broker_truth: bool = True) -> dict[str, Any]:
         self._api_calls_used = 0
         safety = self.safety_status()
         account = {"ok": False}
@@ -677,7 +677,8 @@ class AlpacaPaperBroker:
             account = self.account()
             positions = self.positions()
             orders = self.orders(status="open", limit=50)
-            broker_truth = self.broker_truth_metrics(limit=200)
+            if include_broker_truth:
+                broker_truth = self.broker_truth_metrics(limit=200)
         account_ok = bool(isinstance(account, dict) and account.get("ok"))
         positions_ok = bool(isinstance(positions, dict) and positions.get("ok"))
         orders_ok = bool(isinstance(orders, dict) and orders.get("ok"))
@@ -701,6 +702,15 @@ class AlpacaPaperBroker:
             "buying_power": _to_float(account.get("buying_power"), 0.0),
             "open_positions_count": _to_int(positions.get("open_positions_count"), 0),
             "open_orders_count": _to_int(orders.get("open_orders_count"), 0),
+            # Keep the bounded read-only broker snapshot available to the
+            # reconciliation layer.  Previously status() reduced positions
+            # to a count, which made a fresh audit appear empty even after a
+            # successful paper-broker read.
+            "positions": list(positions.get("positions") or [])[:100] if isinstance(positions, dict) else [],
+            "open_orders": list(orders.get("orders") or [])[:100] if isinstance(orders, dict) else [],
+            "broker_snapshot_status": "FRESH_READ_ONLY" if account_ok and positions_ok and orders_ok else "PARTIAL_READ_ONLY",
+            "broker_snapshot_source": "alpaca_paper_account_positions_open_orders",
+            "broker_truth_refresh_included": bool(include_broker_truth),
             "last_order_status": self._last_order_status,
             "last_alpaca_error_sanitized": last_error,
             "safety_status": safety.get("safety_status"),
