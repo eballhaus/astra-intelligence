@@ -188,6 +188,38 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
             self.assertEqual(result["order_ready_candidates"], 1)
             self.assertEqual(result["per_candidate_decision_trace"][0]["capacity_decision"], "AVAILABLE_FROM_LANE_RESERVE")
 
+    def test_operational_dry_run_reaches_order_ready_from_crypto_reserve(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(BASE_ENV, clear=False):
+            engine = PaperAutopilotEngine(
+                db_path=str(pathlib.Path(tmp) / "paper.db"),
+                state_path=str(pathlib.Path(tmp) / "state.json"),
+            )
+            engine._current_execution_capacities = lambda: {
+                "open_symbols": set(), "stock_capacity": 0,
+                "crypto_capacity": 0, "total_capacity": 0,
+            }
+
+            def reserve_trace(_row, **kwargs):
+                decision = kwargs["capacity_decision"]
+                self.assertTrue(decision["allowed"])
+                return ({
+                    "symbol": "BTC/USD",
+                    "capacity_decision": decision["capacity_decision"],
+                    "paper_order_submission_allowed": True,
+                    "requires_open_confirmation": False,
+                }, True, "", {})
+
+            with patch.object(engine, "_candidate_trace_row", side_effect=reserve_trace):
+                result = engine.operational_dry_run(
+                    [{"symbol": "BTC/USD", "asset_type": "crypto", "lane_id": "CRYPTO"}],
+                    capacity_snapshot=snapshot(
+                        positions=[{"symbol": f"S{i}", "lane_id": "SWING", "market_value": 100} for i in range(10)]
+                    ),
+                )
+            self.assertEqual(result["selected_candidates"], 1)
+            self.assertEqual(result["order_ready_candidates"], 1)
+            self.assertEqual(result["per_candidate_decision_trace"][0]["capacity_decision"], "AVAILABLE_FROM_LANE_RESERVE")
+
 
 if __name__ == "__main__":
     unittest.main()
