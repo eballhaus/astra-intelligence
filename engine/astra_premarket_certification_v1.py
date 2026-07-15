@@ -21,7 +21,7 @@ REQUIRED_CONTRACT_FIELDS = (
     "strategy_archetype", "trade_style", "ranking_score", "thesis",
     "thesis_supporting_conditions", "thesis_invalidation_conditions",
     "intended_horizon", "expected_hold_window", "expected_return_range",
-    "expected_downside_range", "expected_drawdown", "expected_return_per_day_range",
+    "risk_envelope_id", "expected_downside_range", "expected_drawdown", "expected_return_per_day_range",
     "entry_conditions",
     "hold_conditions", "profit_protection_conditions", "exit_review_conditions",
     "controlled_loss_conditions", "replacement_review_conditions",
@@ -54,6 +54,8 @@ SAFETY_FLAGS = {
 # Enrichment must never turn a contract build into a provider call or history scan.
 EVIDENCE_SOURCE_REGISTRY = {
     "candidate_ranking_attribution_promotion_intelligence_v1": "CURRENT_SYMBOL_DIRECT",
+    "current_ranking_market_snapshot_v1": "CURRENT_BROKER_QUOTE",
+    "current_crypto_market_snapshot_v1": "CURRENT_BROKER_QUOTE",
     "opportunity_discovery_expansion_v1": "AGGREGATE_ADVISORY",
     "paper_opportunity_allocation_engine_v1": "AGGREGATE_ADVISORY",
     "edge_development_suite_v1": "SHADOW_SUPPORTED",
@@ -69,14 +71,18 @@ EVIDENCE_SOURCE_REGISTRY = {
 
 EVIDENCE_PRECEDENCE = {
     "CURRENT_CANDIDATE_DIRECT": 1,
-    "CURRENT_SYMBOL_DIRECT": 2,
-    "CURRENT_CONTEXT_DIRECT": 3,
-    "HISTORICAL_SYMBOL_SUPPORTED": 4,
-    "RECONSTRUCTED_SUPPORTED": 5,
-    "REPLAY_SUPPORTED": 6,
-    "SHADOW_SUPPORTED": 7,
-    "AGGREGATE_ADVISORY": 8,
-    "BOUNDED_POLICY_DEFAULT": 9,
+    "CURRENT_BROKER_QUOTE": 2,
+    "CURRENT_SYMBOL_DIRECT": 3,
+    "CURRENT_SYMBOL_RISK": 4,
+    "CURRENT_STRATEGY_HORIZON_RISK": 5,
+    "CURRENT_LANE_CONTEXT": 6,
+    "CURRENT_CONTEXT_DIRECT": 7,
+    "HISTORICAL_SYMBOL_SUPPORTED": 8,
+    "RECONSTRUCTED_SUPPORTED": 9,
+    "REPLAY_SUPPORTED": 10,
+    "SHADOW_SUPPORTED": 11,
+    "AGGREGATE_ADVISORY": 12,
+    "BOUNDED_POLICY_DEFAULT": 13,
     "UNAVAILABLE": 99,
     "STALE": 100,
     "CONFLICTING": 101,
@@ -91,8 +97,8 @@ FIELD_ALIASES = {
     "expected_return": ("expected_return_range", "expected_return_pct", "expected_return_percent", "expected_move_percent", "predicted_profit_percent", "profit_prediction_pct"),
     "expected_return_low": ("expected_return_low_pct", "expected_move_low"),
     "expected_return_high": ("expected_return_high_pct", "expected_move_high"),
-    "expected_downside": ("expected_downside_range", "stop_loss", "trailing_stop_price"),
-    "expected_drawdown": ("expected_drawdown", "drawdown_risk_score"),
+    "expected_downside": ("expected_downside_range", "downside_range", "stop_loss", "trailing_stop_price", "stop_loss_pct"),
+    "expected_drawdown": ("expected_drawdown", "expected_drawdown_range", "drawdown_range", "max_drawdown_pct", "adverse_excursion_pct", "drawdown_risk_score"),
     "confidence": ("confidence", "conviction", "predicted_win_probability", "confidence_score"),
     "regime": ("regime_context", "regime_alignment_label", "market_regime_alignment", "regime_fit"),
     "sector": ("sector", "sector_context", "sector_fit"),
@@ -282,6 +288,167 @@ def _range(low: Any, high: Any, fallback: Any = None, *, label: str) -> dict[str
     return {"low_pct": round(min(lo, hi), 4), "high_pct": round(max(lo, hi), 4), "evidence_label": label}
 
 
+def _signed_range(value: Any, *, negative: bool, label: str) -> dict[str, Any] | None:
+    """Normalize a supported percentage range without changing its meaning."""
+    if isinstance(value, Mapping):
+        result = _range(value.get("low_pct", value.get("low")), value.get("high_pct", value.get("high")), label=label)
+    else:
+        result = _range(value, value, label=label)
+    if result is None:
+        return None
+    if negative:
+        low, high = float(result["low_pct"]), float(result["high_pct"])
+        if low > 0 or high > 0:
+            return None
+    return result
+
+
+def build_candidate_risk_envelope_v1(
+    candidate: Mapping[str, Any],
+    *,
+    statuses: Mapping[str, Any] | None = None,
+    current_candidates: Sequence[Mapping[str, Any]] | None = None,
+    market_snapshot: Mapping[str, Any] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Build the single read-only, attributable risk envelope for a candidate.
+
+    This owner consumes only already-produced candidate, cached ranking, or
+    supplied snapshot fields. It never fetches a quote, invents a risk percent,
+    or converts aggregate performance into candidate risk.
+    """
+    row = dict(candidate or {})
+    symbol = _candidate_symbol(row)
+    lane = _lane(_first(row, "lane_id", "lane"))
+    asset = _text(_first(row, "instrument_type", "asset_type", "asset_class")).upper() or "EQUITY"
+    contexts: list[tuple[str, str, Mapping[str, Any]]] = [("candidate_row", "CURRENT_CANDIDATE_DIRECT", row)]
+    if isinstance(market_snapshot, Mapping):
+        contexts.append(("current_market_snapshot", "CURRENT_BROKER_QUOTE", market_snapshot))
+    for peer in list(current_candidates or [])[:64]:
+        if isinstance(peer, Mapping) and _candidate_symbol(peer) == symbol:
+            contexts.append(("current_candidate_snapshot", "CURRENT_SYMBOL_DIRECT", peer))
+    for source, payload in dict(statuses or {}).items():
+        for peer in _bounded_matching_rows(payload, symbol)[:12]:
+            evidence = "CURRENT_SYMBOL_RISK" if "risk" in str(source).lower() or "ranking" in str(source).lower() else EVIDENCE_SOURCE_REGISTRY.get(str(source), "CURRENT_CONTEXT_DIRECT")
+            contexts.append((str(source), evidence, peer))
+
+    provenance: dict[str, dict[str, Any]] = {}
+    def resolve(field: str, aliases: Sequence[str], *, evidence_only: bool = False) -> Any:
+        for source, evidence_class, context in contexts:
+            value, key = _first_field(context, aliases)
+            if value in (None, "", [], {}):
+                continue
+            meta = _provenance(value, source_system=source, source_field=key, source_row=context,
+                               evidence_class=evidence_class, confidence=_first(context, "risk_confidence", "confidence"),
+                               now=now, candidate_specific=source == "candidate_row", symbol_specific=True)
+            if meta["freshness_state"] == "STALE" and evidence_class.startswith("CURRENT_"):
+                continue
+            provenance[field] = meta
+            return value
+        return None
+
+    price = _number(resolve("current_price", ("price", "current_price", "last_price", "last", "close")))
+    bid = _number(resolve("bid", ("bid", "bid_price")))
+    ask = _number(resolve("ask", ("ask", "ask_price")))
+    quote_timestamp = _text(resolve("quote_timestamp", ("quote_timestamp", "data_timestamp", "last_snapshot_timestamp", "timestamp", "updated_at", "as_of")))
+    if not quote_timestamp:
+        quote_timestamp = _source_timestamp(row)
+    quote_freshness = _freshness(quote_timestamp, now)
+    spread_pct = _number(resolve("spread_pct", ("spread_pct", "bid_ask_spread_pct")))
+    if spread_pct is None and bid is not None and ask is not None and bid > 0 and ask >= bid:
+        spread_pct = ((ask - bid) / ((ask + bid) / 2.0)) * 100.0
+        provenance["spread_pct"] = _provenance(spread_pct, source_system="bid_ask_quote", source_field="bid/ask", source_row=row,
+                                                evidence_class="CURRENT_BROKER_QUOTE", now=now, candidate_specific=True,
+                                                symbol_specific=True, derived=True)
+    volume = _number(resolve("volume", ("volume_24h", "quote_volume", "volume", "volume_usd", "avg_volume")))
+    volatility = _number(resolve("volatility_pct", ("atr_pct", "atr_percent", "volatility_pct", "realized_volatility_pct", "recent_range_pct", "risk_pct", "crypto_risk_pct")))
+    if volatility is None and price and _number(_first(row, "atr", "average_true_range")):
+        volatility = abs(float(_number(_first(row, "atr", "average_true_range")) or 0.0) / price) * 100.0
+        provenance["volatility_pct"] = _provenance(volatility, source_system="candidate_atr", source_field="atr/price", source_row=row,
+                                                     evidence_class="CURRENT_CANDIDATE_DIRECT", now=now, candidate_specific=True,
+                                                     symbol_specific=True, derived=True)
+    stop = _number(resolve("invalidation_level", ("stop_loss", "trailing_stop_price", "invalidation_price", "thesis_invalidation_price")))
+    downside = _signed_range(resolve("expected_downside_range", FIELD_ALIASES["expected_downside"]), negative=True, label="SUPPORTED_DOWNSIDE")
+    if downside is None and price and stop and 0 < stop < price:
+        pct = ((stop - price) / price) * 100.0
+        downside = _range(pct, pct, label="CURRENT_STOP_INVALIDATION")
+        provenance["expected_downside_range"] = _provenance(downside, source_system="candidate_stop_invalidation", source_field="stop_loss/price", source_row=row,
+                                                               evidence_class="CURRENT_CANDIDATE_DIRECT", now=now, candidate_specific=True,
+                                                               symbol_specific=True, derived=True)
+    if downside is None and volatility and volatility > 0:
+        downside = _range(-abs(volatility), -abs(volatility), label="CURRENT_VOLATILITY_RISK")
+        provenance["expected_downside_range"] = _provenance(downside, source_system="current_volatility_risk", source_field="atr_pct/volatility_pct", source_row=row,
+                                                               evidence_class="CURRENT_SYMBOL_RISK", now=now, candidate_specific=True,
+                                                               symbol_specific=True, derived=True)
+    drawdown_raw = resolve("expected_drawdown", FIELD_ALIASES["expected_drawdown"])
+    # Existing drawdown fields are commonly stored as a positive loss
+    # magnitude. Normalize that explicitly to the signed return convention;
+    # unlike downside, it is not an invalidation price or a stop percentage.
+    if isinstance(drawdown_raw, Mapping):
+        dd_low = _number(drawdown_raw.get("low_pct", drawdown_raw.get("low")))
+        dd_high = _number(drawdown_raw.get("high_pct", drawdown_raw.get("high")))
+        drawdown = _range(-abs(dd_low) if dd_low is not None else None, -abs(dd_high) if dd_high is not None else None, label="SUPPORTED_DRAWDOWN")
+    else:
+        dd_value = _number(drawdown_raw)
+        drawdown = _range(-abs(dd_value) if dd_value is not None else None, -abs(dd_value) if dd_value is not None else None, label="SUPPORTED_DRAWDOWN")
+    if drawdown is None and volatility and volatility > 0:
+        # A volatility-supported adverse-movement band is distinct from the
+        # downside threshold: one to two current volatility units, not a stop.
+        drawdown = _range(-2.0 * abs(volatility), -abs(volatility), label="VOLATILITY_ADVERSE_MOVEMENT")
+        provenance["expected_drawdown"] = _provenance(drawdown, source_system="current_volatility_risk", source_field="atr_pct/volatility_pct", source_row=row,
+                                                        evidence_class="CURRENT_SYMBOL_RISK", now=now, candidate_specific=True,
+                                                        symbol_specific=True, derived=True)
+    upside = resolve("expected_upside_range", ("expected_return_range", "expected_return_pct", "expected_return_percent", "expected_move_percent", "predicted_profit_percent", "profit_prediction_pct"))
+    upside_range = (
+        _range(upside.get("low_pct", upside.get("low")), upside.get("high_pct", upside.get("high")), label="CANDIDATE_EXPECTED_RETURN")
+        if isinstance(upside, Mapping)
+        else _range(_first(row, "expected_return_low_pct", "expected_move_low"), _first(row, "expected_return_high_pct", "expected_move_high"), upside, label="CANDIDATE_EXPECTED_RETURN")
+    )
+    if upside_range is not None and float(upside_range["high_pct"]) <= 0:
+        upside_range = None
+    if upside_range is not None and "expected_upside_range" not in provenance:
+        provenance["expected_upside_range"] = _provenance(upside_range, source_system="candidate_expected_return", source_field="expected_return/expected_move", source_row=row,
+                                                            evidence_class="CURRENT_CANDIDATE_DIRECT", now=now, candidate_specific=True,
+                                                            symbol_specific=True, derived=True)
+    reward_to_risk = None
+    if upside_range and downside and float(downside["low_pct"]) < 0:
+        reward_to_risk = _range(float(upside_range["low_pct"]) / abs(float(downside["low_pct"])), float(upside_range["high_pct"]) / abs(float(downside["high_pct"])), label="EXPECTED_REWARD_TO_RISK")
+    horizon = _text(_first(row, "intended_horizon", "paper_entry_horizon_style", "trade_horizon_style"))
+    hold_days = 1.0 / 24.0 if horizon == "day_trade" else 3.0 if horizon == "swing_trade" else None
+    per_day = None
+    if upside_range and hold_days:
+        per_day = {"low_pct_per_day": round(float(upside_range["low_pct"]) / hold_days, 4), "high_pct_per_day": round(float(upside_range["high_pct"]) / hold_days, 4), "method": "candidate_expected_return_over_existing_horizon"}
+    missing = [name for name, value in (("expected_downside_range", downside), ("expected_drawdown", drawdown), ("expected_upside_range", upside_range)) if value in (None, "", [], {})]
+    stale = bool(quote_timestamp and quote_freshness == "STALE")
+    state = "RISK_ENVELOPE_STALE" if stale else "RISK_ENVELOPE_INCOMPLETE" if missing else "RISK_ENVELOPE_COMPLETE_WITH_WARNINGS" if not price or quote_freshness == "UNKNOWN" else "RISK_ENVELOPE_COMPLETE"
+    envelope_id = "risk-" + hashlib.sha256(f"{_text(row.get('candidate_id'))}|{symbol}|{quote_timestamp}|{state}".encode("utf-8")).hexdigest()[:20]
+    return {
+        "risk_envelope_id": envelope_id, "candidate_id": _text(row.get("candidate_id")), "symbol": symbol, "lane": lane,
+        "asset_type": asset, "strategy": _text(row.get("strategy_archetype")), "horizon": horizon,
+        "current_price": price, "price_timestamp": quote_timestamp, "quote_freshness": quote_freshness,
+        "bid": bid, "ask": ask, "spread_pct": spread_pct, "liquidity_state": "AVAILABLE" if volume and volume > 0 else "UNAVAILABLE",
+        "volume": volume, "volatility_pct": volatility, "volatility_method": str((provenance.get("volatility_pct") or {}).get("source_field") or "UNAVAILABLE"),
+        "invalidation_level": stop, "expected_downside_range": downside, "expected_drawdown": drawdown,
+        "expected_upside_range": upside_range, "reward_to_risk_range": reward_to_risk, "expected_return_per_day_range": per_day,
+        "confidence": _number(_first(row, "risk_confidence", "confidence")), "evidence_class": str((provenance.get("expected_downside_range") or {}).get("evidence_class") or "UNAVAILABLE"),
+        "freshness_state": quote_freshness, "limitations": missing, "conflicting_evidence": [], "field_provenance_v1": provenance,
+        "risk_envelope_state": state, "consumer_acknowledgements": {"CONSUMED_BY_ENRICHMENT": False, "CONSUMED_BY_CONTRACT": False, "CONSUMED_BY_QUALIFICATION": False, "CONSUMED_BY_RISK_GATE": False, "CONSUMED_BY_ORDER_READY": False, "PERSISTED_FOR_LIFECYCLE": False, "PERSISTED_FOR_TRUTH_ATTRIBUTION": False},
+    }
+
+
+def build_expected_outcome_envelope_v1(candidate: Mapping[str, Any], risk_envelope: Mapping[str, Any]) -> dict[str, Any]:
+    """Canonical expected-outcome view backed by the risk-envelope owner."""
+    risk = dict(risk_envelope or {})
+    required = ("expected_upside_range", "expected_downside_range", "expected_drawdown", "expected_return_per_day_range")
+    missing = [field for field in required if risk.get(field) in (None, "", [], {})]
+    state = "EXPECTED_OUTCOME_INCOMPLETE" if missing else "EXPECTED_OUTCOME_COMPLETE_WITH_WARNINGS" if risk.get("risk_envelope_state") == "RISK_ENVELOPE_COMPLETE_WITH_WARNINGS" else "EXPECTED_OUTCOME_COMPLETE"
+    return {"expected_outcome_id": "outcome-" + str(risk.get("risk_envelope_id") or "unavailable"), "expected_outcome_state": state,
+            "expected_return_range": risk.get("expected_upside_range"), "expected_downside_range": risk.get("expected_downside_range"),
+            "expected_drawdown": risk.get("expected_drawdown"), "reward_to_risk_range": risk.get("reward_to_risk_range"),
+            "expected_return_per_day_range": risk.get("expected_return_per_day_range"), "risk_envelope_id": risk.get("risk_envelope_id"),
+            "missing_fields": missing, "field_provenance_v1": dict(risk.get("field_provenance_v1") or {})}
+
+
 def enrich_candidate_for_pretrade_contract(
     candidate: Mapping[str, Any],
     *,
@@ -296,7 +463,10 @@ def enrich_candidate_for_pretrade_contract(
     may fill a missing field but cannot overwrite stronger evidence.
     """
     row = dict(candidate or {})
-    if dict(row.get("pretrade_enrichment_v1") or {}).get("enrichment_owner") == "astra_premarket_certification_v1":
+    if (
+        dict(row.get("pretrade_enrichment_v1") or {}).get("enrichment_owner") == "astra_premarket_certification_v1"
+        and isinstance(row.get("candidate_risk_envelope_v1"), Mapping)
+    ):
         return row
     symbol = _candidate_symbol(row)
     statuses = dict(statuses or {})
@@ -464,13 +634,6 @@ def enrich_candidate_for_pretrade_contract(
             candidate_specific=True, symbol_specific=True, derived=True,
         )
     drawdown = choose("expected_drawdown", FIELD_ALIASES["expected_drawdown"])
-    if drawdown is None and downside_range:
-        drawdown = downside_range
-        provenance["expected_drawdown"] = _provenance(
-            drawdown, source_system="expected_downside_range", source_field="expected_downside_range", source_row=row,
-            evidence_class="BOUNDED_POLICY_DEFAULT", confidence=confidence, now=now,
-            candidate_specific=True, symbol_specific=True, derived=True,
-        )
     hold_window = _text(_first(row, "expected_hold_window", "hold_window"))
     if not hold_window and horizon:
         hold_window = "same session" if str(horizon) == "day_trade" else "1-5 trading days" if str(horizon) == "swing_trade" else "bounded existing horizon"
@@ -547,6 +710,26 @@ def enrich_candidate_for_pretrade_contract(
     for field, value in plan_fields.items():
         if value not in (None, "", [], {}):
             row[field] = value
+    risk_envelope = build_candidate_risk_envelope_v1(
+        row, statuses=statuses, current_candidates=current_rows, now=now,
+    )
+    expected_outcome = build_expected_outcome_envelope_v1(row, risk_envelope)
+    risk_envelope["consumer_acknowledgements"]["CONSUMED_BY_ENRICHMENT"] = True
+    row["candidate_risk_envelope_v1"] = risk_envelope
+    row["expected_outcome_envelope_v1"] = expected_outcome
+    row["risk_envelope_id"] = risk_envelope.get("risk_envelope_id")
+    row["expected_outcome_id"] = expected_outcome.get("expected_outcome_id")
+    for field, value in {
+        "expected_return_range": expected_outcome.get("expected_return_range"),
+        "expected_downside_range": expected_outcome.get("expected_downside_range"),
+        "expected_drawdown": expected_outcome.get("expected_drawdown"),
+        "expected_return_per_day_range": expected_outcome.get("expected_return_per_day_range"),
+        "reward_to_risk_range": expected_outcome.get("reward_to_risk_range"),
+    }.items():
+        if row.get(field) in (None, "", [], {}) and value not in (None, "", [], {}):
+            row[field] = value
+        if field in risk_envelope.get("field_provenance_v1", {}):
+            provenance[field] = dict(risk_envelope["field_provenance_v1"][field])
     # Alias probes may have failed before a supported target/stop or
     # confidence fallback resolved the canonical field. Do not report those
     # stale probes as missing evidence once the contract has the value.
@@ -585,7 +768,8 @@ def enrich_candidate_for_pretrade_contract(
         "contexts_considered": len(contexts),
         "strategy_state": "STRATEGY_CONFLICTING" if "strategy_archetype" in conflicts else strategy_state,
         "thesis_state": "THESIS_COMPLETE" if thesis else "THESIS_INCOMPLETE",
-        "expected_outcome_state": "EXPECTED_OUTCOME_COMPLETE" if expected_return_range and downside_range and drawdown not in (None, "") else "EXPECTED_OUTCOME_INCOMPLETE",
+        "risk_envelope_state": risk_envelope.get("risk_envelope_state"),
+        "expected_outcome_state": expected_outcome.get("expected_outcome_state"),
         "hold_plan_state": "HOLD_PLAN_COMPLETE" if all((hold_conditions, profit_conditions, exit_conditions, loss_conditions, replacement_conditions)) else "HOLD_PLAN_INCOMPLETE",
         "opportunity_comparison_state": opportunity_state,
         "missing_fields": core_missing,
@@ -659,6 +843,9 @@ def build_pretrade_decision_contract(
         "thesis_invalidation_conditions": _as_list(_first(row, "thesis_invalidation_conditions", "invalidation_conditions", "what_invalidates_setup")),
         "intended_horizon": horizon,
         "expected_hold_window": _text(_first(row, "expected_hold_window", "hold_window")),
+        "risk_envelope_id": _text(row.get("risk_envelope_id")),
+        "candidate_risk_envelope_v1": dict(row.get("candidate_risk_envelope_v1") or {}),
+        "expected_outcome_envelope_v1": dict(row.get("expected_outcome_envelope_v1") or {}),
         "expected_return_range": _first(row, "expected_return_range", "expected_move_high"),
         "expected_downside_range": _first(row, "expected_downside_range", "expected_move_low", "stop_loss"),
         "expected_return_per_day_range": _first(row, "expected_return_per_day_range", "expected_return_per_day"),
@@ -704,14 +891,20 @@ def build_pretrade_decision_contract(
             "strategy_horizon": bool(lane in LANES and horizon),
             "thesis": bool(_text(_first(row, "thesis", "entry_rationale", "intelligence_summary", "summary"))),
             "outcome_envelope": bool(_first(row, "expected_return_range") not in (None, "", [], {})),
+            "risk_envelope": bool(row.get("risk_envelope_id") and dict(row.get("candidate_risk_envelope_v1") or {}).get("risk_envelope_state") in {"RISK_ENVELOPE_COMPLETE", "RISK_ENVELOPE_COMPLETE_WITH_WARNINGS"}),
             "hold_plan": bool(_first(row, "hold_conditions") not in (None, "", [], {})),
         },
         "consumer_acknowledgements": {
+            "risk_envelope": "CONSUMED_BY_CONTRACT",
             "final_qualification": False,
             "order_ready_gate": False,
             "lifecycle_initialization": False,
         },
     }
+    risk = dict(contract.get("candidate_risk_envelope_v1") or {})
+    if risk:
+        risk.setdefault("consumer_acknowledgements", {})["CONSUMED_BY_CONTRACT"] = True
+        contract["candidate_risk_envelope_v1"] = risk
     contract_id_seed = "|".join((candidate_id, recommendation_id, decision_id, _text(contract.get("certification_snapshot_id"))))
     contract["contract_id"] = "contract-" + hashlib.sha256(contract_id_seed.encode("utf-8")).hexdigest()[:20] if contract_id_seed else ""
     validated = validate_pretrade_decision_contract(contract, now=now)
@@ -729,6 +922,12 @@ def validate_pretrade_decision_contract(contract: Mapping[str, Any], *, now: dat
     enrichment = dict(out.get("pretrade_enrichment_v1") or {})
     conflicting = list(enrichment.get("conflicting_fields") or [])
     warning_fields = list(enrichment.get("warning_fields") or [])
+    risk = dict(out.get("candidate_risk_envelope_v1") or {})
+    risk_state = _text(risk.get("risk_envelope_state"))
+    if risk_state not in {"RISK_ENVELOPE_COMPLETE", "RISK_ENVELOPE_COMPLETE_WITH_WARNINGS"}:
+        missing.append("candidate_risk_envelope_v1")
+    if risk_state == "RISK_ENVELOPE_STALE":
+        conflicting.append("stale_risk_envelope")
     if not bool(enrichment.get("enrichment_ran")):
         missing.append("pretrade_enrichment_v1")
     if out.get("lane") not in LANES:

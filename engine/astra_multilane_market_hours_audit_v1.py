@@ -93,6 +93,7 @@ def build_audit(trace: Mapping[str, Any] | None, *, trigger: str = "read_only_re
         bucket = _asset_bucket(row)
         counter = counts.setdefault(bucket, Counter())
         contract = dict(row.get("pretrade_decision_contract") or {})
+        risk = dict(contract.get("candidate_risk_envelope_v1") or row.get("candidate_risk_envelope_v1") or {})
         contract_state = _text(row.get("pretrade_decision_contract_state") or contract.get("contract_state") or "CONTRACT_INCOMPLETE")
         downstream_blocker = _text(row.get("order_readiness_reason") or row.get("decision_reason") or row.get("capacity_blocker") or trace.get("final_blocker_reason"))
         missing = _text((contract.get("missing_required_fields") or [""])[0])
@@ -110,6 +111,7 @@ def build_audit(trace: Mapping[str, Any] | None, *, trigger: str = "read_only_re
             last_stage = "LIFECYCLE_COMPLETE" if row.get("exit_fill_id") else "FILLED" if row.get("entry_fill_id") else "ORDER_ACKNOWLEDGED" if row.get("broker_order_id") else "ORDER_SUBMITTED" if row.get("order_submitted") else "ORDER_READY" if row.get("order_ready") else "SELECTED" if row.get("selected") else "QUALIFIED" if row.get("eligible") else "CONTRACT_COMPLETE"
         counter["candidates_generated"] += 1
         counter[f"contract_{contract_state}"] += 1
+        counter[f"risk_{_text(risk.get('risk_envelope_state') or 'RISK_ENVELOPE_INCOMPLETE')}"] += 1
         counter["qualified"] += int(bool(row.get("eligible")))
         counter["selected"] += int(bool(row.get("selected")))
         counter["order_ready"] += int(bool(row.get("order_ready")))
@@ -125,6 +127,14 @@ def build_audit(trace: Mapping[str, Any] | None, *, trigger: str = "read_only_re
             "lane": canonical_lane_id, "lane_id": canonical_lane_id,
             "asset_type": _text(identity.get("instrument_type") or row.get("instrument_type") or row.get("asset_type")),
             "asset_classification_source": _text(identity.get("asset_classification_source")),
+            "risk_envelope_id": _text(risk.get("risk_envelope_id") or row.get("risk_envelope_id")),
+            "risk_envelope_state": _text(risk.get("risk_envelope_state") or "RISK_ENVELOPE_INCOMPLETE"),
+            "expected_downside_source": _text((risk.get("field_provenance_v1") or {}).get("expected_downside_range", {}).get("source_system")),
+            "expected_drawdown_source": _text((risk.get("field_provenance_v1") or {}).get("expected_drawdown", {}).get("source_system")),
+            "quote_freshness": _text(risk.get("quote_freshness")),
+            "volatility_source": _text(risk.get("volatility_method")),
+            "spread_state": "AVAILABLE" if risk.get("spread_pct") is not None else "UNAVAILABLE",
+            "liquidity_state": _text(risk.get("liquidity_state")),
             "last_completed_stage": last_stage, "contract_state": contract_state,
             "first_blocker": first, "blocker_class": blocker_class(first),
             "downstream_blocker_observed": downstream_blocker,

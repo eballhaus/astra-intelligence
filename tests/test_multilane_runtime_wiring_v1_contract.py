@@ -86,11 +86,12 @@ class MultiLaneRuntimeWiringContractTests(unittest.TestCase):
             engine._crypto_paper_activation_status = lambda: {"paper_active_bounded": True, "exact_blocker": ""}
             engine._crypto_execution_data_gate = lambda row: (True, "ok", {})
             engine._crypto_execution_integrity_gate = lambda row, **kwargs: (True, "ok", {})
+            fixture = crypto_contract_fields()
             dry_run = engine.operational_dry_run([{
                 "symbol": "BTC/USD", "asset_class": "crypto", "asset_type": "crypto",
                 "paper_entry_horizon_style": "day_trade", "candidate_source": "fixture",
-                "source_snapshot_id": "fixture", "candidate_generated_at": "2026-07-13T01:00:00Z",
-                "price": 100, **crypto_contract_fields(),
+                "source_snapshot_id": "fixture", "candidate_generated_at": fixture["expires_at"],
+                "price": 100, **fixture,
             }])
         trace = dry_run["per_candidate_decision_trace"][0]
         self.assertEqual(trace["lane_id"], "CRYPTO")

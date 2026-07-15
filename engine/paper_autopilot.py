@@ -3322,6 +3322,13 @@ class PaperAutopilotEngine:
             contract["candidate_terminal_state"] = "QUALIFIED"
         elif contract.get("contract_state") == "CONTRACT_COMPLETE":
             contract["candidate_terminal_state"] = "REJECTED"
+        risk_envelope = dict(contract.get("candidate_risk_envelope_v1") or {})
+        if risk_envelope:
+            acknowledgements = risk_envelope.setdefault("consumer_acknowledgements", {})
+            acknowledgements["CONSUMED_BY_QUALIFICATION"] = True
+            acknowledgements["CONSUMED_BY_RISK_GATE"] = True
+            acknowledgements["CONSUMED_BY_ORDER_READY"] = bool(allowed)
+            contract["candidate_risk_envelope_v1"] = risk_envelope
         r["pretrade_decision_contract_v1"] = contract
         portfolio_fit = _to_float(r.get("portfolio_fit_score"), 50.0)
         portfolio_fit_label = str(r.get("portfolio_fit_label") or "").strip()
@@ -3504,6 +3511,10 @@ class PaperAutopilotEngine:
             "candidate_terminal_state": str(contract.get("candidate_terminal_state") or "CONTRACT_BUILDING"),
             "pretrade_decision_contract_missing_fields": list(contract.get("missing_required_fields") or []),
             "pretrade_decision_contract_conflicts": list(contract.get("conflicting_fields") or []),
+            "risk_envelope_id": str(risk_envelope.get("risk_envelope_id") or ""),
+            "risk_envelope_state": str(risk_envelope.get("risk_envelope_state") or "RISK_ENVELOPE_INCOMPLETE"),
+            "expected_outcome_state": str((contract.get("expected_outcome_envelope_v1") or {}).get("expected_outcome_state") or "EXPECTED_OUTCOME_INCOMPLETE"),
+            "risk_envelope_consumer_acknowledgements": dict(risk_envelope.get("consumer_acknowledgements") or {}),
             "pretrade_decision_contract": contract,
             "eligible": bool(allowed),
             "decision_reason": str(reason),

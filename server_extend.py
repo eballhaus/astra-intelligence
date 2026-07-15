@@ -25,6 +25,8 @@ from engine.astra_portfolio_capacity_release_review_v1 import (
 from engine.astra_premarket_certification_v1 import (
     SAFETY_FLAGS as PREMARKET_CERTIFICATION_SAFETY_FLAGS,
     build_lane_certification,
+    build_candidate_risk_envelope_v1,
+    build_expected_outcome_envelope_v1,
     build_pretrade_decision_contract,
     certification_ownership_map,
     deterministic_failure_injection_summary,
@@ -47659,6 +47661,12 @@ def candidate_intelligence_enrichment_contract_diagnostic_v1(force: bool = False
     return _candidate_intelligence_enrichment_contract_diagnostic_v1(force=bool(force))
 
 
+@router.get("/api/candidate_risk_outcome_order_truth_closure_diagnostic_v1")
+def candidate_risk_outcome_order_truth_closure_diagnostic_v1(force: bool = False):
+    """Bounded read-only risk-to-order lineage closure diagnostic."""
+    return _candidate_risk_outcome_order_truth_closure_diagnostic_v1(force=bool(force))
+
+
 @router.get("/api/astra_forward_performance_readiness_v1")
 def astra_forward_performance_readiness_v1(force: bool = False):
     certification = _astra_pre_market_trading_certification_payload_v1(force=bool(force))
@@ -48375,6 +48383,11 @@ def _candidate_enrichment_context_v1(rows: list[dict]) -> dict:
     raw = [dict(row) for row in rows[:100] if isinstance(row, dict)]
     context: dict[str, object] = {
         "candidate_ranking_attribution_promotion_intelligence_v1": raw,
+        # Existing in-memory ranking snapshots are the canonical bounded
+        # current-market source. Enrichment reads them only; it never refreshes
+        # rankings or calls a provider from a diagnostic/contract build.
+        "current_ranking_market_snapshot_v1": list((RANKINGS_ENDPOINT_CACHE.get("stocks") or {}).get("payload") or [])[:100],
+        "current_crypto_market_snapshot_v1": list((RANKINGS_ENDPOINT_CACHE.get("crypto") or {}).get("payload") or [])[:100],
         "paper_opportunity_allocation_engine_v1": [],
         "opportunity_discovery_expansion_v1": [],
         "edge_development_suite_v1": [],
@@ -48511,6 +48524,66 @@ def _candidate_intelligence_enrichment_contract_diagnostic_v1(force: bool = Fals
     }
     _CACHE[cache_key] = {"data": dict(payload), "ts": time.time()}
     return payload
+
+
+def _candidate_risk_outcome_order_truth_closure_diagnostic_v1(force: bool = False) -> dict:
+    """Trace the canonical candidate-risk path without refreshing providers."""
+    raw = _cached_candidate_rows_for_horizon_flow_v1()[:100]
+    raw.extend(_crypto_operational_candidate_rows_v3()[:24])
+    snapshot_id = "risk-closure:" + hashlib.sha256(
+        "|".join(sorted(str(row.get("symbol") or "") for row in raw if isinstance(row, dict))).encode("utf-8")
+    ).hexdigest()[:24]
+    expires_at = (datetime.now(UTC) + timedelta(minutes=15)).isoformat().replace("+00:00", "Z")
+    candidates = _enriched_contract_candidates_v1(raw, snapshot_id=snapshot_id, expires_at=expires_at)
+    contracts = [build_pretrade_decision_contract(row, certification_snapshot_id=snapshot_id, expiry_timestamp=expires_at) for row in candidates]
+    try:
+        dry_run = dict(PAPER_AUTOPILOT.operational_dry_run(candidates, max_candidates=100, capacity_snapshot=_evidence_accumulation_capacity_payload_v1({})) or {})
+    except Exception as exc:
+        dry_run = {"per_candidate_decision_trace": [], "final_blocker_reason": f"dry_run_unavailable:{str(exc)[:120]}"}
+    traces = {str(row.get("candidate_id") or ""): dict(row) for row in (dry_run.get("per_candidate_decision_trace") or []) if isinstance(row, dict)}
+    rows = []
+    for candidate, contract in zip(candidates, contracts):
+        risk = dict(candidate.get("candidate_risk_envelope_v1") or {})
+        outcome = dict(candidate.get("expected_outcome_envelope_v1") or {})
+        trace = traces.get(str(candidate.get("candidate_id") or ""), {})
+        risk_state = str(risk.get("risk_envelope_state") or "RISK_ENVELOPE_INCOMPLETE")
+        external = risk_state in {"RISK_ENVELOPE_INCOMPLETE", "RISK_ENVELOPE_STALE"}
+        contract_state = str(contract.get("contract_state") or "CONTRACT_INCOMPLETE")
+        rows.append({
+            "candidate_id": candidate.get("candidate_id"), "symbol": candidate.get("symbol"),
+            "lane": candidate.get("lane_id") or candidate.get("lane"), "asset_type": candidate.get("instrument_type") or candidate.get("asset_type") or candidate.get("asset_class"),
+            "risk_envelope_state": risk_state, "expected_outcome_state": outcome.get("expected_outcome_state"), "contract_state": contract_state,
+            "stages": {
+                "normalization": "PASS", "enrichment": "PASS" if (candidate.get("pretrade_enrichment_v1") or {}).get("enrichment_ran") else "FAILED",
+                "risk_envelope": "EXTERNAL_EVIDENCE_PENDING" if external else "PASS_WITH_WARNINGS" if risk_state.endswith("WARNINGS") else "PASS",
+                "expected_outcome": "EXTERNAL_EVIDENCE_PENDING" if outcome.get("expected_outcome_state") == "EXPECTED_OUTCOME_INCOMPLETE" else "PASS",
+                "contract": "EXTERNAL_EVIDENCE_PENDING" if contract_state == "CONTRACT_INCOMPLETE" and external else "PASS" if contract.get("contract_status") == "VALID" else "FAILED",
+                "qualification": "PASS" if trace.get("eligible") else "EXTERNAL_EVIDENCE_PENDING" if external else "NOT_APPLICABLE",
+                "order_ready": "PASS" if trace.get("order_ready") else "EXTERNAL_EVIDENCE_PENDING" if external else "NOT_APPLICABLE",
+                "submission_lineage": "PASS" if contract.get("risk_envelope_id") else "NOT_CONSUMED",
+                "truth_lineage": "PASS" if contract.get("risk_envelope_id") else "NOT_CONSUMED",
+            },
+            "first_blocker": (contract.get("missing_required_fields") or [trace.get("decision_reason") or "NO_WORTHWHILE_OPPORTUNITY"])[0],
+            "risk_limitations": list(risk.get("limitations") or []), "risk_provenance": dict(risk.get("field_provenance_v1") or {}),
+            "consumer_acknowledgements": dict(risk.get("consumer_acknowledgements") or {}),
+        })
+    repairable = [row for row in rows if any(value in {"FAILED", "DISCONNECTED", "NOT_CONSUMED"} for value in row["stages"].values())]
+    # A risk-envelope ID is persisted into the contract even when a natural
+    # fill is pending. That makes submission/lifecycle/truth lineage ready;
+    # real broker events remain external evidence, not simulated success.
+    return {
+        "endpoint": "/api/candidate_risk_outcome_order_truth_closure_diagnostic_v1", "status": "PASS" if not repairable else "FAIL_CLOSED",
+        "snapshot_id": snapshot_id, "generated_at": _now_utc_iso(), "candidate_count": len(rows),
+        "risk_envelope_distribution": dict(Counter(str(row["risk_envelope_state"]) for row in rows)),
+        "expected_outcome_distribution": dict(Counter(str(row["expected_outcome_state"]) for row in rows)),
+        "contract_distribution": dict(Counter(str(row["contract_state"]) for row in rows)),
+        "order_ready_count": sum(1 for row in (dry_run.get("per_candidate_decision_trace") or []) if row.get("order_ready")),
+        "repairable_failures": repairable, "candidate_rows": rows[:100],
+        "canonical_risk_envelope_owner": "engine.astra_premarket_certification_v1.build_candidate_risk_envelope_v1",
+        "canonical_expected_outcome_owner": "engine.astra_premarket_certification_v1.build_expected_outcome_envelope_v1",
+        "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "full_history_scan_count": 0,
+        **_safety_flags_v1(),
+    }
 
 
 def _astra_pre_market_trading_certification_payload_v1(force: bool = False) -> dict:

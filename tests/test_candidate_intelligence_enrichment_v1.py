@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from engine.astra_premarket_certification_v1 import (
     build_lane_certification,
+    build_candidate_risk_envelope_v1,
     build_pretrade_decision_contract,
     enrich_candidate_for_pretrade_contract,
 )
@@ -29,6 +30,31 @@ def source_row(**overrides):
 
 
 class CandidateIntelligenceEnrichmentTests(unittest.TestCase):
+    def test_stop_and_drawdown_produce_distinct_supported_risk_ranges(self):
+        envelope = build_candidate_risk_envelope_v1(source_row())
+        self.assertIn(envelope["risk_envelope_state"], {"RISK_ENVELOPE_COMPLETE", "RISK_ENVELOPE_COMPLETE_WITH_WARNINGS"})
+        self.assertEqual(envelope["expected_downside_range"]["high_pct"], -4.0)
+        self.assertEqual(envelope["expected_drawdown"]["high_pct"], -4.0)
+        self.assertEqual(envelope["field_provenance_v1"]["expected_drawdown"]["source_field"], "drawdown_risk_score")
+
+    def test_volatility_derives_distinct_downside_and_drawdown_ranges(self):
+        row = source_row(stop_loss="", drawdown_risk_score="", atr_pct=2.0)
+        envelope = build_candidate_risk_envelope_v1(row)
+        self.assertEqual(envelope["expected_downside_range"]["high_pct"], -2.0)
+        self.assertEqual(envelope["expected_drawdown"]["low_pct"], -4.0)
+        self.assertEqual(envelope["field_provenance_v1"]["expected_downside_range"]["evidence_class"], "CURRENT_SYMBOL_RISK")
+
+    def test_etf_and_crypto_use_same_attributable_risk_owner(self):
+        etf = build_candidate_risk_envelope_v1(source_row(symbol="XLB", instrument_type="ETF", lane_id="DAY", atr_pct=1.5, stop_loss="", drawdown_risk_score=""))
+        crypto = build_candidate_risk_envelope_v1(source_row(symbol="BTC/USD", asset_class="crypto", lane_id="CRYPTO", crypto_risk_pct=3.0, stop_loss="", drawdown_risk_score=""))
+        self.assertEqual(etf["asset_type"], "ETF")
+        self.assertEqual(crypto["lane"], "CRYPTO")
+        self.assertEqual(crypto["expected_downside_range"]["high_pct"], -3.0)
+
+    def test_unsupported_candidate_has_no_generic_risk_fallback(self):
+        envelope = build_candidate_risk_envelope_v1({"symbol": "NONE", "candidate_id": "none", "lane_id": "SWING", "expected_return_pct": 3.0})
+        self.assertEqual(envelope["risk_envelope_state"], "RISK_ENVELOPE_INCOMPLETE")
+        self.assertIsNone(envelope["expected_downside_range"])
     def test_raw_candidate_retrieves_current_symbol_evidence_and_completes_contract(self):
         raw = {"symbol": "ENR", "candidate_id": "cand-enr", "recommendation_id": "rec-enr", "lane_id": "SWING", "expires_at": future_iso()}
         enriched = enrich_candidate_for_pretrade_contract(
