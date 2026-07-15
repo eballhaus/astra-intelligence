@@ -2,12 +2,29 @@ import os
 import pathlib
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from engine.astra_multilane_activation_v2 import canonical_lane_activation_contract
 from engine.lane_execution_trace_ledger_v1 import LaneExecutionTraceLedgerV1
 from engine.learning_return_integrity_v1 import audit_learning_return_rows
 from engine.paper_autopilot import PaperAutopilotEngine, _execution_trace_event, normalize_operational_candidate
+
+
+def crypto_contract_fields() -> dict:
+    expires_at = (datetime.now(UTC) + timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+    return {
+        "candidate_id": "candidate-btc", "recommendation_id": "recommendation-btc",
+        "lane_id": "CRYPTO", "strategy_archetype": "test_crypto_momentum", "trade_style": "day_trade",
+        "score": 90.0, "ranking_factors": ["test_signal"], "thesis": "Crypto test thesis is intact.",
+        "thesis_supporting_conditions": ["trend"], "thesis_invalidation_conditions": ["trend_break"],
+        "intended_horizon": "day_trade", "expected_hold_window": "1d", "entry_conditions": ["confirmed"],
+        "hold_conditions": ["thesis_intact"], "profit_protection_conditions": ["giveback"],
+        "exit_review_conditions": ["horizon_review"], "controlled_loss_conditions": ["thesis_broken"],
+        "replacement_review_conditions": ["better_candidate"], "confidence": 90.0,
+        "evidence_classes": ["REPLAY_SUPPORTED"], "certification_snapshot_id": "test-snapshot",
+        "expires_at": expires_at,
+    }
 
 
 class MultiLaneRuntimeWiringContractTests(unittest.TestCase):
@@ -71,7 +88,7 @@ class MultiLaneRuntimeWiringContractTests(unittest.TestCase):
                 "symbol": "BTC/USD", "asset_class": "crypto", "asset_type": "crypto",
                 "paper_entry_horizon_style": "day_trade", "candidate_source": "fixture",
                 "source_snapshot_id": "fixture", "candidate_generated_at": "2026-07-13T01:00:00Z",
-                "price": 100, "confidence": 90,
+                "price": 100, **crypto_contract_fields(),
             }])
         trace = dry_run["per_candidate_decision_trace"][0]
         self.assertEqual(trace["lane_id"], "CRYPTO")

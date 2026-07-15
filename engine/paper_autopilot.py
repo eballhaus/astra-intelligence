@@ -19,6 +19,16 @@ from engine.astra_evidence_accumulation_capacity_v1 import (
     build_capacity_snapshot,
     candidate_capacity_decision,
 )
+try:
+    from engine.astra_premarket_certification_v1 import build_pretrade_decision_contract
+except Exception:  # pragma: no cover - a missing contract library must fail closed
+    def build_pretrade_decision_contract(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "contract_status": "INVALID",
+            "order_ready_allowed": False,
+            "missing_required_fields": ["pretrade_contract_library"],
+            "fail_closed_reason": "PRETRADE_DECISION_CONTRACT_UNAVAILABLE",
+        }
 
 # The standalone paper worker imports this module directly.  Load the same
 # non-secret repository environment used by server startup before evaluating
@@ -692,9 +702,11 @@ def _stable_candidate_identity(row: dict[str, Any]) -> dict[str, str]:
     selection_id = str(r.get("selection_id") or "").strip()
     if not selection_id and candidate_id:
         selection_id = "sel-" + hashlib.sha256((candidate_id + "|paper_autopilot").encode("utf-8")).hexdigest()[:20]
+    decision_id = str(r.get("decision_id") or r.get("source_decision_id") or selection_id or "").strip()
     return {
         "candidate_id": candidate_id,
         "recommendation_id": recommendation_id,
+        "decision_id": decision_id,
         "candidate_source": source,
         "candidate_generated_at": generated_at,
         "source_snapshot_id": snapshot_id,
@@ -775,6 +787,9 @@ def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
     r["exit_owner"] = str(r.get("exit_owner") or r.get("exit_policy_owner") or r.get("lane_id") or "").strip()
     r["candidate_fingerprint"] = str(r.get("candidate_fingerprint") or r.get("candidate_id") or "").strip()
     r["paper_entry_eligibility_bridge_v1"] = True
+    # Contract capture is forward-only.  The final candidate gate below is
+    # responsible for failing closed if a new order lacks required metadata.
+    r["pretrade_decision_contract_v1"] = build_pretrade_decision_contract(r)
     return r
 
 
@@ -3081,6 +3096,12 @@ class PaperAutopilotEngine:
         capacity_decision: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], bool, str, dict[str, Any]]:
         r = _normalize_paper_entry_bridge(row)
+        certification = dict(self._runtime_state.get("pre_market_certification_v1") or {})
+        r["pretrade_decision_contract_v1"] = build_pretrade_decision_contract(
+            r,
+            certification_snapshot_id=str(certification.get("snapshot_id") or ""),
+            expiry_timestamp=str(certification.get("expiry_timestamp") or ""),
+        )
         symbol = str(r.get("symbol") or "").upper().strip()
         asset = _norm_asset(r.get("asset_type") or "stock")
         crypto_source_ready = not bool(r.get("operational_probe_only")) if asset == "crypto" else True
@@ -3131,6 +3152,10 @@ class PaperAutopilotEngine:
             reason = "crypto_capacity_reached"
         else:
             allowed, reason, gate_meta = self._is_candidate_paper_eligible(r)
+        contract = dict(r.get("pretrade_decision_contract_v1") or {})
+        if allowed and not bool(contract.get("order_ready_allowed")):
+            allowed = False
+            reason = str(contract.get("fail_closed_reason") or "PRETRADE_DECISION_CONTRACT_INVALID")
         portfolio_fit = _to_float(r.get("portfolio_fit_score"), 50.0)
         portfolio_fit_label = str(r.get("portfolio_fit_label") or "").strip()
         portfolio_diversification_block_reason = str(r.get("portfolio_diversification_block_reason") or "").strip()
@@ -3201,6 +3226,7 @@ class PaperAutopilotEngine:
             "asset_type": asset,
             "candidate_id": str(r.get("candidate_id") or ""),
             "recommendation_id": str(r.get("recommendation_id") or ""),
+            "decision_id": str(r.get("decision_id") or ""),
             "selection_id": str(r.get("selection_id") or ""),
             "candidate_source": str(r.get("candidate_source") or ""),
             "candidate_generated_at": str(r.get("candidate_generated_at") or r.get("decision_timestamp") or ""),
@@ -3306,6 +3332,10 @@ class PaperAutopilotEngine:
                 str(r.get("paper_entry_horizon_style") or r.get("trade_horizon_style") or r.get("best_horizon_style") or "").strip().lower()
             ),
             "horizon_reason": str(r.get("paper_entry_horizon_source") or r.get("horizon_reason") or r.get("allocation_reason") or ""),
+            "pretrade_decision_contract_status": str(contract.get("contract_status") or "INVALID"),
+            "pretrade_decision_contract_missing_fields": list(contract.get("missing_required_fields") or []),
+            "pretrade_decision_contract_conflicts": list(contract.get("conflicting_fields") or []),
+            "pretrade_decision_contract": contract,
             "eligible": bool(allowed),
             "decision_reason": str(reason),
             "commitment_score": round(_to_float(gate_meta.get("commitment_score"), 0.0), 2),

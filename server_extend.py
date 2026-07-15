@@ -19,6 +19,13 @@ from engine.astra_portfolio_capacity_release_review_v1 import (
     replacement_analysis,
     validate_excursion_record,
 )
+from engine.astra_premarket_certification_v1 import (
+    SAFETY_FLAGS as PREMARKET_CERTIFICATION_SAFETY_FLAGS,
+    build_lane_certification,
+    build_pretrade_decision_contract,
+    certification_ownership_map,
+    deterministic_failure_injection_summary,
+)
 
 load_runtime_environment()
 
@@ -47181,6 +47188,24 @@ def _attach_pladeu_statuses_v1(statuses: dict, force: bool = False) -> dict:
         except Exception:
             statuses[public_key] = {}
     statuses["pladeu_master_validation"] = statuses.get("pladeu_master_validation_v1") or {}
+    # Learning Center consumes only an existing certification snapshot.  It
+    # never starts a dry run or adds another dashboard-time endpoint call.
+    certification_cache = _CACHE.get("astra_pre_market_trading_certification_v1")
+    certification = dict((certification_cache or {}).get("data") or {}) if isinstance(certification_cache, dict) else {}
+    statuses["astra_pre_market_trading_certification_v1"] = {
+        "endpoint": "/api/astra_pre_market_trading_certification_v1",
+        "status": certification.get("status") or "NOT_RUN",
+        "snapshot_id": certification.get("snapshot_id"),
+        "expiry_timestamp": certification.get("expiry_timestamp"),
+        "lanes": {
+            lane: {key: value for key, value in dict(row or {}).items() if key in {"status", "exact_blocker", "severity", "candidate_contract_count", "valid_contract_count", "order_ready_count"}}
+            for lane, row in dict(certification.get("lanes") or {}).items()
+        },
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
     pladeu_packet = dict((statuses.get("pladeu_master_validation_v1") or {}).get("governance_packet") or {})
     for consumer_key in (
         "astra_governance_oversight_v2",
@@ -47193,6 +47218,31 @@ def _attach_pladeu_statuses_v1(statuses: dict, force: bool = False) -> dict:
                 **dict(statuses.get(consumer_key) or {}),
                 "pladeu_advisory_packet_v1": pladeu_packet,
             }
+    return statuses
+
+
+def _attach_premarket_certification_compact_v1(statuses: dict) -> dict:
+    """Attach a cached certification snapshot without rebuilding diagnostics."""
+    certification_cache = _CACHE.get("astra_pre_market_trading_certification_v1")
+    certification = dict((certification_cache or {}).get("data") or {}) if isinstance(certification_cache, dict) else {}
+    statuses["astra_pre_market_trading_certification_v1"] = {
+        "endpoint": "/api/astra_pre_market_trading_certification_v1",
+        "status": certification.get("status") or "NOT_RUN",
+        "snapshot_id": certification.get("snapshot_id"),
+        "expiry_timestamp": certification.get("expiry_timestamp"),
+        "lanes": {
+            lane: {
+                key: value
+                for key, value in dict(row or {}).items()
+                if key in {"status", "exact_blocker", "severity", "candidate_contract_count", "valid_contract_count", "order_ready_count"}
+            }
+            for lane, row in dict(certification.get("lanes") or {}).items()
+        },
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
     return statuses
 
 
@@ -47505,6 +47555,29 @@ def astra_multilane_activation_adaptive_truth_v2(force: bool = False):
     """Read-only V2 activation proof; GET never starts, trades, or reconfigures."""
     base = _pladeu_direct_statuses_v1(force=bool(force))
     return _multilane_activation_adaptive_truth_v2_payload(base)
+
+
+@router.get("/api/astra_pre_market_trading_certification_v1")
+def astra_pre_market_trading_certification_v1(force: bool = False):
+    """Production-contract certification; never submits, changes, or cancels orders."""
+    return _astra_pre_market_trading_certification_payload_v1(force=bool(force))
+
+
+@router.get("/api/astra_forward_performance_readiness_v1")
+def astra_forward_performance_readiness_v1(force: bool = False):
+    certification = _astra_pre_market_trading_certification_payload_v1(force=bool(force))
+    return {
+        "endpoint": "/api/astra_forward_performance_readiness_v1",
+        "status": "PROVISIONAL",
+        "generated_at": _now_utc_iso(),
+        "by_lane": certification.get("forward_performance_envelope_by_lane") or {},
+        "evidence_labels": ["PROVISIONAL", "RECONSTRUCTED_SUPPORTED", "BROKER_VALIDATED"],
+        "calibration_persistence": "expected_vs_actual_requires_future_natural_paper_lifecycles",
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "broker_actions_used": 0,
+        **_safety_flags_v1(),
+    }
 
 
 @router.get("/api/day_lane_pilot_control_status_v1")
@@ -48184,6 +48257,137 @@ def _paper_autopilot_authoritative_trace_v3(force: bool = False) -> dict:
     })
     _CACHE[cache_key] = {"data": dict(trace), "ts": time.time()}
     return trace
+
+
+def _production_commit_v1() -> str:
+    """Best-effort source revision for invalidating a stale certification."""
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=os.path.dirname(os.path.abspath(__file__)), text=True, timeout=2
+        ).strip()
+    except Exception:
+        return "commit_unavailable"
+
+
+def _astra_pre_market_trading_certification_payload_v1(force: bool = False) -> dict:
+    """Certify the existing PaperAutopilot boundary without a broker mutation.
+
+    The candidate rows pass through the same normalizer and operational dry run
+    used by the production path.  Empty/stale candidate evidence therefore
+    fails closed instead of being replaced by a permissive fixture.
+    """
+    cache_key = "astra_pre_market_trading_certification_v1"
+    cached = _CACHE.get(cache_key) if isinstance(_CACHE.get(cache_key), dict) else {}
+    if not force and cached.get("data") and time.time() - _to_float(cached.get("ts"), 0.0) < 300.0:
+        return dict(cached.get("data") or {})
+    production_commit = _production_commit_v1()
+    raw_candidates = _cached_candidate_rows_for_horizon_flow_v1()[:30]
+    raw_candidates.extend(_crypto_operational_candidate_rows_v3()[:30])
+    candidate_fingerprint = "|".join(
+        sorted(
+            f"{row.get('symbol') or row.get('ticker') or ''}:{row.get('source_snapshot_id') or row.get('generated_at') or ''}"
+            for row in raw_candidates if isinstance(row, dict)
+        )
+    )
+    snapshot_id = "premarket:" + hashlib.sha256(
+        f"{production_commit}|{candidate_fingerprint}".encode("utf-8")
+    ).hexdigest()[:24]
+    expires_at = (datetime.now(UTC) + timedelta(minutes=15)).isoformat().replace("+00:00", "Z")
+    candidates = [
+        {**dict(row), "certification_snapshot_id": snapshot_id, "expires_at": expires_at}
+        for row in raw_candidates if isinstance(row, dict)
+    ]
+    contracts = [
+        build_pretrade_decision_contract(
+            row, certification_snapshot_id=snapshot_id, expiry_timestamp=expires_at
+        )
+        for row in candidates
+    ]
+    capacity = _evidence_accumulation_capacity_payload_v1({})
+    try:
+        dry_run = dict(PAPER_AUTOPILOT.operational_dry_run(candidates, max_candidates=30, capacity_snapshot=capacity) or {})
+    except Exception as exc:
+        dry_run = {"per_candidate_decision_trace": [], "final_blocker_reason": f"production_dry_run_unavailable:{str(exc)[:120]}"}
+    broker = _cached_alpaca_paper_status_payload({})
+    activation = canonical_multilane_activation_contract(
+        broker_safety={
+            "paper_mode_verified": bool(broker.get("paper_mode_verified")),
+            "broker_live_endpoint_allowed": bool(broker.get("broker_live_endpoint_allowed")),
+            "broker_execution_enabled": bool(broker.get("broker_execution_enabled")),
+        }
+    )
+    lane_results = {
+        lane.lower(): build_lane_certification(
+            lane,
+            activation=dict(activation.get(lane) or {}),
+            dry_run=dry_run,
+            contracts=contracts,
+            production_commit=production_commit,
+            snapshot_id=snapshot_id,
+        )
+        for lane in ("SWING", "DAY", "CRYPTO")
+    }
+    all_certified = all(row.get("status") == "CERTIFIED" for row in lane_results.values())
+    # Do not activate an incomplete certification.  A future all-certified
+    # result becomes a short-lived runtime token only, never broker state.
+    if all_certified:
+        PAPER_AUTOPILOT._runtime_state["pre_market_certification_v1"] = {
+            "snapshot_id": snapshot_id,
+            "expiry_timestamp": expires_at,
+            "production_commit": production_commit,
+            "status": "CERTIFIED",
+        }
+    else:
+        PAPER_AUTOPILOT._runtime_state.pop("pre_market_certification_v1", None)
+    overall = "CERTIFIED" if all_certified else "FAIL_CLOSED"
+    forward = _position_intelligence_utilization_payload_v1({}, persist=False)
+    payload = {
+        "endpoint": "/api/astra_pre_market_trading_certification_v1",
+        "suite": "Astra Pre-Market Operational Readiness & End-to-End Truth Pipeline Certification V1",
+        "status": overall,
+        "snapshot_id": snapshot_id,
+        "production_commit": production_commit,
+        "certification_timestamp": _now_utc_iso(),
+        "expiry_timestamp": expires_at,
+        "service_process_ids": {"backend": os.getpid(), "paper_autopilot_runtime": id(PAPER_AUTOPILOT)},
+        "broker_snapshot": {
+            "paper_mode_verified": bool(broker.get("paper_mode_verified")),
+            "broker_live_endpoint_allowed": bool(broker.get("broker_live_endpoint_allowed")),
+            "open_positions_count": int(_to_float(broker.get("open_positions_count"), 0.0)),
+            "open_orders_count": int(_to_float(broker.get("open_orders_count"), 0.0)),
+        },
+        "canonical_ownership_map": certification_ownership_map(),
+        "lanes": lane_results,
+        "pretrade_decision_contract_coverage": {
+            "candidate_count": len(contracts),
+            "valid_contract_count": sum(1 for row in contracts if row.get("contract_status") == "VALID"),
+            "invalid_contract_count": sum(1 for row in contracts if row.get("contract_status") != "VALID"),
+            "legacy_positions_label": "LEGACY_INCOMPLETE_LINEAGE",
+            "order_ready_requires_valid_contract": True,
+        },
+        "forward_performance_envelope_by_lane": forward.get("forward_performance_envelope_by_lane") or {},
+        "strategy_competition": forward.get("strategy_selection") or {},
+        "dynamic_capacity_recommendation": forward.get("dynamic_capacity_advisory") or {},
+        "intelligence_utilization": forward.get("producer_to_consumer_audit") or [],
+        "dry_run": {
+            "trace_owner": dry_run.get("trace_owner"),
+            "candidates_seen": dry_run.get("candidates_seen", 0),
+            "order_ready_candidates": dry_run.get("order_ready_candidates", 0),
+            "final_blocker_reason": dry_run.get("final_blocker_reason"),
+            "submit_order": False,
+        },
+        "fixture_cleanup": {"fixture_truths_created": 0, "residual_fixture_orders": 0, "residual_fixture_positions": 0, "residual_fixture_commitments": 0},
+        "failure_injection_coverage": deterministic_failure_injection_summary(),
+        "governance_fail_closed": not all_certified,
+        "human_action_required": not all_certified,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "broker_actions_used": 0,
+        **PREMARKET_CERTIFICATION_SAFETY_FLAGS,
+        **_safety_flags_v1(),
+    }
+    _CACHE[cache_key] = {"data": dict(payload), "ts": time.time()}
+    return payload
 
 
 def _paper_autopilot_db_open_counts_v1() -> dict:
@@ -84857,66 +85061,11 @@ def unified_learning_diagnostics_v1(force: bool = False):
             force_cached["force_refresh_deferred_reason"] = "bounded_validation_path_preserves_dashboard_responsiveness_and_zero_provider_calls"
             force_cached["failed_sources_count"] = int(_to_float(force_cached.get("failed_sources_count"), 0.0))
             force_cached["initial_learning_tab_endpoint_count"] = int(_to_float(force_cached.get("initial_learning_tab_endpoint_count"), 1.0) or 1)
-            try:
-                force_cached["astra_build_h_ownership_map_v1"] = ASTRA_BUILD_H_OWNERSHIP_MAP.status(statuses={}, force=False)
-            except Exception:
-                force_cached["astra_build_h_ownership_map_v1"] = {
-                    "endpoint": "/api/astra_build_h_ownership_map_v1",
-                    "status": "OWNERSHIP_MAP_BLOCKED",
-                    "behavior_safe_to_apply": False,
-                    "provider_calls_used": 0,
-                    "broker_calls_used": 0,
-                    "llm_calls_used": 0,
-                }
-            try:
-                force_cached["astra_knowledge_warehouse_v1"] = ASTRA_KNOWLEDGE_WAREHOUSE.status(statuses={}, force=False)
-            except Exception:
-                force_cached["astra_knowledge_warehouse_v1"] = {
-                    "endpoint": "/api/astra_knowledge_warehouse_v1",
-                    "status": "insufficient_evidence",
-                    "behavior_safe_to_apply": False,
-                    "provider_calls_used": 0,
-                    "broker_calls_used": 0,
-                    "llm_calls_used": 0,
-                }
-            try:
-                force_cached["astra_intelligence_effectiveness_learning_velocity_v1"] = ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses={}, force=False)
-            except Exception:
-                force_cached["astra_intelligence_effectiveness_learning_velocity_v1"] = {
-                    "endpoint": "/api/astra_intelligence_effectiveness_learning_velocity_v1",
-                    "status": "insufficient_evidence",
-                    "passive_presence_excluded": True,
-                    "behavior_safe_to_apply": False,
-                    "provider_calls_used": 0,
-                    "broker_calls_used": 0,
-                    "llm_calls_used": 0,
-                }
-            try:
-                force_cached["astra_shadow_experiment_governance_v1"] = ASTRA_SHADOW_EXPERIMENT_GOVERNANCE.status(statuses={}, force=False)
-            except Exception:
-                force_cached["astra_shadow_experiment_governance_v1"] = {
-                    "endpoint": "/api/astra_shadow_experiment_governance_v1",
-                    "status": "insufficient_evidence",
-                    "current_stage": 0,
-                    "automatic_promotions_enabled": False,
-                    "behavior_safe_to_apply": False,
-                    "provider_calls_used": 0,
-                    "broker_calls_used": 0,
-                    "llm_calls_used": 0,
-                }
-            try:
-                force_cached["astra_build_h_final_validation_v1"] = ASTRA_BUILD_H_FINAL_VALIDATION.status(statuses={}, force=False)
-            except Exception:
-                force_cached["astra_build_h_final_validation_v1"] = {
-                    "endpoint": "/api/build_h_final_validation_v1",
-                    "status": "BUILD_H_BLOCKED",
-                    "checks_failed": ["final_validator_unavailable"],
-                    "runtime_files_excluded": True,
-                    "behavior_safe_to_apply": False,
-                    "provider_calls_used": 0,
-                    "broker_calls_used": 0,
-                    "llm_calls_used": 0,
-                }
+            # `force` means revalidate the compact transport and safety
+            # overlays, not recursively rebuild heavyweight learning suites.
+            # Those suites own their dedicated refresh paths; rebuilding them
+            # here had made a one-endpoint Learning Center request time out.
+            force_cached["force_refresh_owner"] = "dedicated_suite_endpoints_and_workers"
             force_cached["api_calls_used"] = 0
             force_cached["provider_calls_used"] = 0
             force_cached["llm_calls_used"] = 0
@@ -84954,22 +85103,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 "behavior_changes_applied": False,
                 **_safety_flags_v1(),
             })
-            try:
-                force_cached["cortex_effectiveness_audit_v1"] = _cortex_effectiveness_audit_payload_v1()
-                force_cached["intelligence_future_bottleneck_audit_v1"] = _intelligence_future_bottleneck_audit_payload_v1()
-                force_cached["backend_intelligence_copilot_wiring_audit_v1"] = _backend_intelligence_copilot_wiring_audit_payload_v1()
-                force_cached["astra_backend_intelligence_build_validation_v1"] = _astra_backend_intelligence_build_validation_payload_v1()
-            except Exception as exc:
-                force_cached["astra_backend_intelligence_build_validation_v1"] = {
-                    "endpoint": "/api/astra_backend_intelligence_build_validation_v1",
-                    "status": "BUILD_A_BLOCKED",
-                    "failed_checks": [f"builder_exception:{str(exc)[:120]}"],
-                    "provider_calls_used": 0,
-                    "broker_actions_used": 0,
-                    "llm_calls_used": 0,
-                    **_safety_flags_v1(),
-                }
-            _attach_pladeu_statuses_v1(force_cached, force=False)
+            _attach_premarket_certification_compact_v1(force_cached)
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(force_cached), "ts": time.time()}
             return force_cached
 

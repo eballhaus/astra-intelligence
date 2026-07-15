@@ -42,6 +42,22 @@ def snapshot(*, positions=None, fresh=True, risk=True):
     )
 
 
+def contract_fields(symbol: str, lane: str, horizon: str) -> dict:
+    expires_at = (datetime.now(UTC) + timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+    return {
+        "candidate_id": f"candidate-{symbol}", "recommendation_id": f"recommendation-{symbol}",
+        "lane_id": lane, "strategy_archetype": "test_momentum", "trade_style": horizon,
+        "score": 90.0, "ranking_factors": ["test_signal"], "thesis": "Test thesis is intact.",
+        "thesis_supporting_conditions": ["trend"], "thesis_invalidation_conditions": ["trend_break"],
+        "intended_horizon": horizon, "expected_hold_window": "1d", "entry_conditions": ["confirmed"],
+        "hold_conditions": ["thesis_intact"], "profit_protection_conditions": ["giveback"],
+        "exit_review_conditions": ["horizon_review"], "controlled_loss_conditions": ["thesis_broken"],
+        "replacement_review_conditions": ["better_candidate"], "confidence": 90.0,
+        "evidence_classes": ["REPLAY_SUPPORTED"], "certification_snapshot_id": "test-snapshot",
+        "expires_at": expires_at,
+    }
+
+
 class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
 
     def test_legacy_trace_summary_gets_new_capacity_counters(self):
@@ -222,7 +238,7 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
             capacity = snapshot(positions=positions)
             decision = candidate_capacity_decision(capacity, lane_id="DAY", symbol="DAYTEST", open_symbols=[])
             trace, allowed, reason, _ = engine._candidate_trace_row(
-                {"symbol": "DAYTEST", "asset_class": "equity", "paper_entry_horizon_style": "day_trade", "confidence": 90},
+                {"symbol": "DAYTEST", "asset_class": "equity", "paper_entry_horizon_style": "day_trade", **contract_fields("DAYTEST", "DAY", "day_trade")},
                 open_syms=set(), stock_capacity=0, crypto_capacity=0, total_capacity=0,
                 internal_open_syms=set(), broker_open_syms=set(), broker_reconciliation_active=True,
                 capacity_decision=decision,
@@ -257,7 +273,7 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
                     }
             engine.market_session_timing_suite = _OpenSession()
             result = engine.operational_dry_run(
-                [{"symbol": "DAYFIXTURE", "asset_type": "stock", "lane_id": "DAY", "paper_entry_horizon_style": "day_trade", "confidence": 90}],
+                [{"symbol": "DAYFIXTURE", "asset_type": "stock", "paper_entry_horizon_style": "day_trade", **contract_fields("DAYFIXTURE", "DAY", "day_trade")}],
                 capacity_snapshot=snapshot(
                     positions=[{"symbol": f"S{i}", "lane_id": "SWING", "market_value": 100} for i in range(10)]
                 ),
