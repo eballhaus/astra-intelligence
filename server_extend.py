@@ -25,6 +25,7 @@ from engine.astra_premarket_certification_v1 import (
     build_pretrade_decision_contract,
     certification_ownership_map,
     deterministic_failure_injection_summary,
+    enrich_candidate_for_pretrade_contract,
 )
 
 load_runtime_environment()
@@ -47563,6 +47564,12 @@ def astra_pre_market_trading_certification_v1(force: bool = False):
     return _astra_pre_market_trading_certification_payload_v1(force=bool(force))
 
 
+@router.get("/api/candidate_intelligence_enrichment_contract_diagnostic_v1")
+def candidate_intelligence_enrichment_contract_diagnostic_v1(force: bool = False):
+    """Read-only candidate enrichment and contract parity diagnostic."""
+    return _candidate_intelligence_enrichment_contract_diagnostic_v1(force=bool(force))
+
+
 @router.get("/api/astra_forward_performance_readiness_v1")
 def astra_forward_performance_readiness_v1(force: bool = False):
     certification = _astra_pre_market_trading_certification_payload_v1(force=bool(force))
@@ -48269,6 +48276,153 @@ def _production_commit_v1() -> str:
         return "commit_unavailable"
 
 
+def _candidate_enrichment_context_v1(rows: list[dict]) -> dict:
+    """Build bounded, read-only source packets for contract enrichment.
+
+    These are existing candidate decorators and cached summaries, not a new
+    evidence store. Their labels are applied by the canonical enrichment
+    owner, so shadow/advisory fields cannot become candidate or broker truth.
+    """
+    raw = [dict(row) for row in rows[:100] if isinstance(row, dict)]
+    context: dict[str, object] = {
+        "candidate_ranking_attribution_promotion_intelligence_v1": raw,
+        "paper_opportunity_allocation_engine_v1": [],
+        "opportunity_discovery_expansion_v1": [],
+        "edge_development_suite_v1": [],
+    }
+    try:
+        context["paper_opportunity_allocation_engine_v1"] = list(
+            PAPER_OPPORTUNITY_ALLOCATION_ENGINE.decorate_candidates(raw) or []
+        )[:100]
+    except Exception:
+        pass
+    try:
+        context["opportunity_discovery_expansion_v1"] = [
+            dict(OPPORTUNITY_DISCOVERY_EXPANSION_SUITE.score_row(row) or {})
+            for row in raw[:100]
+        ]
+    except Exception:
+        pass
+    try:
+        context["edge_development_suite_v1"] = list(
+            EDGE_DEVELOPMENT_SUITE.decorate_candidates(raw) or []
+        )[:100]
+    except Exception:
+        pass
+    return context
+
+
+def _enriched_contract_candidates_v1(
+    rows: list[dict],
+    *,
+    snapshot_id: str = "",
+    expires_at: str = "",
+) -> list[dict]:
+    """Use the same normalized/enriched contract path for every reader."""
+    raw = [dict(row) for row in rows[:100] if isinstance(row, dict)]
+    context = _candidate_enrichment_context_v1(raw)
+    normalized = [
+        normalize_operational_candidate(
+            {**row, "certification_snapshot_id": snapshot_id, "expires_at": expires_at}
+        )
+        for row in raw
+    ]
+    return [
+        enrich_candidate_for_pretrade_contract(
+            row, statuses=context, current_candidates=normalized
+        )
+        for row in normalized
+    ]
+
+
+def _candidate_intelligence_enrichment_contract_diagnostic_v1(force: bool = False) -> dict:
+    """Bounded read-only audit of the real candidate-to-contract join."""
+    cache_key = "candidate_intelligence_enrichment_contract_diagnostic_v1"
+    cached = _CACHE.get(cache_key) if isinstance(_CACHE.get(cache_key), dict) else {}
+    if not force and cached.get("data") and time.time() - _to_float(cached.get("ts"), 0.0) < 60.0:
+        return dict(cached.get("data") or {})
+    raw = _cached_candidate_rows_for_horizon_flow_v1()[:100]
+    raw.extend(_crypto_operational_candidate_rows_v3()[:100])
+    snapshot_id = "enrichment:" + hashlib.sha256(
+        "|".join(sorted(str(row.get("symbol") or row.get("ticker") or "") for row in raw if isinstance(row, dict))).encode("utf-8")
+    ).hexdigest()[:24]
+    expires_at = (datetime.now(UTC) + timedelta(minutes=15)).isoformat().replace("+00:00", "Z")
+    candidates = _enriched_contract_candidates_v1(raw, snapshot_id=snapshot_id, expires_at=expires_at)
+    contracts = [
+        build_pretrade_decision_contract(row, certification_snapshot_id=snapshot_id, expiry_timestamp=expires_at)
+        for row in candidates
+    ]
+    capacity = _evidence_accumulation_capacity_payload_v1({})
+    try:
+        dry_run = dict(PAPER_AUTOPILOT.operational_dry_run(candidates, max_candidates=30, capacity_snapshot=capacity) or {})
+    except Exception as exc:
+        dry_run = {"per_candidate_decision_trace": [], "final_blocker_reason": f"dry_run_unavailable:{str(exc)[:120]}"}
+    rows = []
+    for candidate, contract in zip(candidates, contracts):
+        enrichment = dict(candidate.get("pretrade_enrichment_v1") or {})
+        rows.append({
+            "candidate_id": candidate.get("candidate_id"),
+            "symbol": candidate.get("symbol"),
+            "contract_state": contract.get("contract_state"),
+            "contract_status": contract.get("contract_status"),
+            "first_missing_field": (contract.get("missing_required_fields") or [""])[0],
+            "missing_sources": enrichment.get("missing_sources") or {},
+            "conflicting_fields": contract.get("conflicting_fields") or [],
+            "enrichment_ran": bool(enrichment.get("enrichment_ran")),
+            "strategy_state": enrichment.get("strategy_state"),
+            "thesis_state": enrichment.get("thesis_state"),
+            "expected_outcome_state": enrichment.get("expected_outcome_state"),
+            "hold_plan_state": enrichment.get("hold_plan_state"),
+            "opportunity_comparison_state": enrichment.get("opportunity_comparison_state"),
+            "available_candidate_fields": sorted(
+                key for key, value in candidate.items()
+                if value not in (None, "", [], {}) and key in {
+                    "rank", "rank_position", "ranking_score", "score", "confidence", "confidence_score",
+                    "prediction", "expected_return_pct", "expected_move_percent", "predicted_profit_percent",
+                    "expected_return_low_pct", "expected_return_high_pct", "expected_downside_range", "stop_loss",
+                    "drawdown_risk_score", "expected_drawdown", "price", "current_price", "last_price",
+                    "expected_target_low", "expected_target_high", "entry_conditions", "hold_conditions",
+                    "profit_protection_conditions", "exit_review_conditions", "controlled_loss_conditions",
+                    "setup_type", "strategy_archetype", "trade_archetype", "paper_entry_horizon_style",
+                }
+            ),
+        })
+    distribution = Counter(str(contract.get("contract_state") or "CONTRACT_INCOMPLETE") for contract in contracts)
+    payload = {
+        "endpoint": "/api/candidate_intelligence_enrichment_contract_diagnostic_v1",
+        "status": "PASS" if all(bool(row.get("enrichment_ran")) for row in rows) else "FAIL_CLOSED",
+        "generated_at": _now_utc_iso(),
+        "snapshot_id": snapshot_id,
+        "candidate_count": len(candidates),
+        "identity_valid_count": sum(1 for row in contracts if row.get("candidate_id") and row.get("recommendation_id")),
+        "strategy_enriched_count": sum(1 for row in candidates if row.get("strategy_archetype")),
+        "horizon_enriched_count": sum(1 for row in candidates if row.get("intended_horizon")),
+        "thesis_complete_count": sum(1 for row in candidates if row.get("thesis")),
+        "expected_outcome_complete_count": sum(1 for row in candidates if row.get("expected_return_range") and row.get("expected_downside_range")),
+        "hold_plan_complete_count": sum(1 for row in candidates if row.get("hold_conditions") and row.get("exit_review_conditions")),
+        "opportunity_comparison_complete_count": sum(1 for row in candidates if str(row.get("opportunity_cost_state") or "") != "NO_VALID_COMPARISON_SET"),
+        "contract_distribution": dict(distribution),
+        "contract_complete_count": int(distribution.get("CONTRACT_COMPLETE", 0)),
+        "contract_complete_with_warnings_count": int(distribution.get("CONTRACT_COMPLETE_WITH_WARNINGS", 0)),
+        "contract_incomplete_count": int(distribution.get("CONTRACT_INCOMPLETE", 0)),
+        "contract_conflicting_count": int(distribution.get("CONTRACT_CONFLICTING", 0)),
+        "order_ready_dry_run_count": sum(1 for row in (dry_run.get("per_candidate_decision_trace") or []) if row.get("order_ready")),
+        "first_blocker": str(dry_run.get("final_blocker_reason") or "NO_CURRENT_SIGNAL"),
+        "candidate_rows": rows[:100],
+        "evidence_source_registry": list(_candidate_enrichment_context_v1(raw)),
+        "canonical_enrichment_owner": "engine.astra_premarket_certification_v1.enrich_candidate_for_pretrade_contract",
+        "paper_autopilot_contract_owner": "PaperAutopilot._candidate_trace_row",
+        "certification_contract_owner": "_astra_pre_market_trading_certification_payload_v1",
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        "full_history_scan_count": 0,
+        **_safety_flags_v1(),
+    }
+    _CACHE[cache_key] = {"data": dict(payload), "ts": time.time()}
+    return payload
+
+
 def _astra_pre_market_trading_certification_payload_v1(force: bool = False) -> dict:
     """Certify the existing PaperAutopilot boundary without a broker mutation.
 
@@ -48296,12 +48450,7 @@ def _astra_pre_market_trading_certification_payload_v1(force: bool = False) -> d
     # Certification must consume the same canonical candidate normalizer as
     # PaperAutopilot.  Raw ranking rows do not carry the durable identity and
     # forward-plan aliases that the production order boundary receives.
-    candidates = [
-        normalize_operational_candidate(
-            {**dict(row), "certification_snapshot_id": snapshot_id, "expires_at": expires_at}
-        )
-        for row in raw_candidates if isinstance(row, dict)
-    ]
+    candidates = _enriched_contract_candidates_v1(raw_candidates, snapshot_id=snapshot_id, expires_at=expires_at)
     contracts = [
         build_pretrade_decision_contract(
             row, certification_snapshot_id=snapshot_id, expiry_timestamp=expires_at
@@ -62512,7 +62661,29 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
     rows = [dict(row) for row in (broker.get("positions") or []) if isinstance(row, dict)]
     utilization = _position_intelligence_utilization_payload_v1(current, persist=False)
     review = dict(utilization.get("portfolio_review") or build_portfolio_release_review(rows))
+    enrichment = _candidate_intelligence_enrichment_contract_diagnostic_v1(force=False)
     findings: list[dict] = []
+    if int(_to_float(enrichment.get("candidate_count"), 0.0)) > 0 and not all(
+        bool(row.get("enrichment_ran")) for row in (enrichment.get("candidate_rows") or [])
+    ):
+        findings.append({
+            "severity": "high",
+            "classification": "candidate_contract_integrity_defect",
+            "issue": "candidate_enrichment_not_run",
+            "evidence": enrichment.get("candidate_rows") or [],
+            "recommended_action": "repair the canonical candidate-to-contract join; do not weaken contract requirements",
+        })
+    if int(_to_float(enrichment.get("contract_incomplete_count"), 0.0)) > 0:
+        findings.append({
+            "severity": "medium",
+            "classification": "candidate_evidence_availability",
+            "issue": "candidate_contract_evidence_incomplete",
+            "evidence": [
+                {key: row.get(key) for key in ("candidate_id", "symbol", "first_missing_field", "missing_sources")}
+                for row in (enrichment.get("candidate_rows") or [])[:10]
+            ],
+            "recommended_action": "retain fail-closed status until a current candidate source supplies the missing attributed evidence",
+        })
     if int(_to_float(funnel.get("day_trade_candidates_generated"), 0.0)) > 0 and int(_to_float(funnel.get("day_trade_candidates_qualified"), 0.0)) <= 0:
         findings.append({
             "severity": "high",
@@ -62610,6 +62781,10 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "exact_blocker": funnel.get("exact_gate_blocking_day_trades"),
             "candidate_level_rows": funnel.get("candidate_level_rows") or [],
         },
+        "candidate_intelligence_enrichment_contract_v1": {
+            key: enrichment.get(key)
+            for key in ("status", "snapshot_id", "candidate_count", "contract_distribution", "first_blocker", "canonical_enrichment_owner")
+        },
         "portfolio_capacity_release_review_v1": {
             "total_positions_reviewed": review.get("total_positions"),
             "primary_state_counts": review.get("primary_state_counts") or {},
@@ -62662,6 +62837,7 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
     provider_v2 = statuses.get("astra_provider_data_knowledge_validation_v2") if isinstance(statuses.get("astra_provider_data_knowledge_validation_v2"), dict) else _provider_data_knowledge_v2_payload()
     lineage_v2 = _equity_candidate_lineage_completion_v2_payload(statuses)
     crypto_lane_v2 = _crypto_paper_lane_validation_v1_payload(statuses)
+    enrichment = _candidate_intelligence_enrichment_contract_diagnostic_v1(force=False)
     safety_score = 100.0
     learning_score = round(_astra_score_average_v1(current["evidence_consumption_pct"], current["opportunity_cost_utilization_pct"], current["historical_similarity_utilization_pct"], current["replay_utilization_pct"]), 3)
     retrieval_score = current["retrieval_health_pct"]
@@ -62691,6 +62867,7 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
         "crypto_activation_without_runtime_validation" if crypto_lane_v2.get("paper_crypto_enabled") and crypto_lane_v2.get("activation_state") != "PAPER_ACTIVE_BOUNDED" else "",
         "global_capacity_starving_learning_lanes" if evidence_capacity.get("global_capacity_status") == "GLOBAL_CAPACITY_EXHAUSTED" and not any(((evidence_capacity.get("lanes") or {}).get(lane) or {}).get("reserve_available") for lane in ("day", "crypto")) else "",
         "stale_broker_state_blocks_capacity_authorization" if evidence_capacity.get("global_capacity_status") in {"BROKER_STATE_STALE", "BROKER_POSITION_DETAILS_UNAVAILABLE"} else "",
+        "candidate_contract_evidence_incomplete" if int(_to_float(enrichment.get("contract_incomplete_count"), 0.0)) > 0 else "",
     ]
     warnings = [item for item in warnings if item]
     lane_report = _lane_execution_daily_report_v1_payload(statuses)
@@ -62755,6 +62932,10 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
             "diagnostics_external_provider_calls": provider_v2.get("normal_diagnostics_external_provider_calls"),
         },
         "candidate_lineage_governance_v2": {key: lineage_v2.get(key) for key in ("status", "trace_coverage_pct", "silent_dropoff_count", "aggregate_only_placeholder")},
+        "candidate_intelligence_enrichment_contract_v1": {
+            key: enrichment.get(key)
+            for key in ("status", "snapshot_id", "candidate_count", "contract_distribution", "first_blocker", "canonical_enrichment_owner")
+        },
         "crypto_activation_governance_v2": {key: crypto_lane_v2.get(key) for key in ("activation_state", "paper_crypto_enabled", "activation_blockers", "crypto_day_trade_capacity", "crypto_short_swing_capacity", "crypto_scalp_shadow_status")},
         "live_trading_enabled": False,
         "learned_exits_enabled": False,

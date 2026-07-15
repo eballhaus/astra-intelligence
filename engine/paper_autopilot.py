@@ -20,7 +20,10 @@ from engine.astra_evidence_accumulation_capacity_v1 import (
     candidate_capacity_decision,
 )
 try:
-    from engine.astra_premarket_certification_v1 import build_pretrade_decision_contract
+    from engine.astra_premarket_certification_v1 import (
+        build_pretrade_decision_contract,
+        enrich_candidate_for_pretrade_contract,
+    )
 except Exception:  # pragma: no cover - a missing contract library must fail closed
     def build_pretrade_decision_contract(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         return {
@@ -29,6 +32,9 @@ except Exception:  # pragma: no cover - a missing contract library must fail clo
             "missing_required_fields": ["pretrade_contract_library"],
             "fail_closed_reason": "PRETRADE_DECISION_CONTRACT_UNAVAILABLE",
         }
+
+    def enrich_candidate_for_pretrade_contract(row: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
+        return dict(row or {})
 
 # The standalone paper worker imports this module directly.  Load the same
 # non-secret repository environment used by server startup before evaluating
@@ -915,14 +921,9 @@ def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
     r["exit_owner"] = str(r.get("exit_owner") or r.get("exit_policy_owner") or r.get("lane_id") or "").strip()
     r["candidate_fingerprint"] = str(r.get("candidate_fingerprint") or r.get("candidate_id") or "").strip()
     r["paper_entry_eligibility_bridge_v1"] = True
-    # Contract planning consumes only the already-produced candidate snapshot.
-    # It does not recalculate ranking or alter any existing execution gate.
-    for key, value in _forward_contract_plan_from_existing_evidence(r).items():
-        if r.get(key) in (None, "", [], {}):
-            r[key] = value
-    # Contract capture is forward-only.  The final candidate gate below is
-    # responsible for failing closed if a new order lacks required metadata.
-    r["pretrade_decision_contract_v1"] = build_pretrade_decision_contract(r)
+    # Enrichment and contract capture are owned by
+    # astra_premarket_certification_v1 after this normalization boundary. That
+    # keeps PaperAutopilot and certification on one evidence/preference path.
     return r
 
 
@@ -934,7 +935,8 @@ def _execution_trace_event(row: dict[str, Any], **values: Any) -> dict[str, Any]
     the bounded lane ledger because their lane and stable identifiers were
     absent.  This is observational-only metadata enrichment.
     """
-    normalized = _normalize_paper_entry_bridge(row)
+    normalized = enrich_candidate_for_pretrade_contract(_normalize_paper_entry_bridge(row))
+    normalized["pretrade_decision_contract_v1"] = build_pretrade_decision_contract(normalized)
     trace = {
         "symbol": str(normalized.get("symbol") or "").upper().strip(),
         "canonical_symbol": str(normalized.get("canonical_symbol") or "").upper().strip(),
@@ -965,6 +967,8 @@ def _execution_trace_event(row: dict[str, Any], **values: Any) -> dict[str, Any]
         "market_session_mode": str(normalized.get("market_session_mode") or ""),
         "same_session_exit_required": bool(normalized.get("same_session_exit_required")),
         "overnight_allowed": bool(normalized.get("overnight_allowed")),
+        "pretrade_decision_contract": dict(normalized.get("pretrade_decision_contract_v1") or {}),
+        "pretrade_decision_contract_status": str((normalized.get("pretrade_decision_contract_v1") or {}).get("contract_status") or "INVALID"),
     }
     trace.update(values)
     return trace
@@ -3227,8 +3231,10 @@ class PaperAutopilotEngine:
         broker_reconciliation_active: bool = False,
         max_new_positions_per_cycle: int | None = None,
         capacity_decision: dict[str, Any] | None = None,
+        current_candidates: list[dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], bool, str, dict[str, Any]]:
         r = _normalize_paper_entry_bridge(row)
+        r = enrich_candidate_for_pretrade_contract(r, current_candidates=current_candidates)
         certification = dict(self._runtime_state.get("pre_market_certification_v1") or {})
         r["pretrade_decision_contract_v1"] = build_pretrade_decision_contract(
             r,
@@ -5289,8 +5295,9 @@ class PaperAutopilotEngine:
                     selected_so_far=selected_count,
                     internal_open_syms=internal_open_syms,
                     broker_open_syms=broker_open_syms,
-                    broker_reconciliation_active=broker_reconciliation_active,
-                    capacity_decision=capacity_decision,
+                broker_reconciliation_active=broker_reconciliation_active,
+                capacity_decision=capacity_decision,
+                current_candidates=candidates,
                 )
                 row_trace["horizon_capacity_enabled"] = bool(self.horizon_capacity_enabled)
                 row_trace["horizon_capacity_reason"] = str(horizon_capacity_reason)
@@ -5769,6 +5776,7 @@ class PaperAutopilotEngine:
                 broker_open_syms=set(),
                 broker_reconciliation_active=False,
                 capacity_decision=capacity_decision,
+                current_candidates=candidates,
             )
             if capacity_decision:
                 trace["canonical_capacity_snapshot"] = canonical_capacity
@@ -6002,6 +6010,7 @@ class PaperAutopilotEngine:
                 internal_open_syms=internal_open_syms,
                 broker_open_syms=broker_open_syms,
                 broker_reconciliation_active=broker_reconciliation_active,
+                current_candidates=candidates,
             )
             if allowed:
                 eligible += 1
@@ -6312,6 +6321,7 @@ class PaperAutopilotEngine:
                 broker_open_syms=broker_open_syms,
                 broker_reconciliation_active=broker_reconciliation_active,
                 max_new_positions_per_cycle=simulated_max_new,
+                current_candidates=candidates,
             )
             trace.update({
                 "dry_run_only": True,

@@ -57,7 +57,7 @@ class PreMarketCertificationContractTests(unittest.TestCase):
         self.assertTrue(contract["candidate_id"])
         self.assertTrue(contract["expected_return_range"])
         self.assertTrue(contract["hold_conditions"])
-        self.assertEqual(contract["evidence_classes"], ["PROVISIONAL"])
+        self.assertIn("CURRENT_CANDIDATE_DIRECT", contract["evidence_classes"])
 
     def test_missing_thesis_fails_closed(self):
         contract = build_pretrade_decision_contract(qualifying_candidate(thesis=""))
@@ -66,7 +66,9 @@ class PreMarketCertificationContractTests(unittest.TestCase):
         self.assertFalse(contract["order_ready_allowed"])
 
     def test_missing_horizon_fails_closed(self):
-        contract = build_pretrade_decision_contract(qualifying_candidate(intended_horizon="", paper_entry_horizon_style=""))
+        contract = build_pretrade_decision_contract(qualifying_candidate(
+            intended_horizon="", paper_entry_horizon_style="", trade_style="", strategy_archetype="unsupported_strategy",
+        ))
         self.assertIn("intended_horizon", contract["missing_required_fields"])
 
     def test_expired_contract_fails_closed(self):
