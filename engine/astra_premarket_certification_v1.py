@@ -439,6 +439,18 @@ def enrich_candidate_for_pretrade_contract(
     downside = choose("expected_downside", FIELD_ALIASES["expected_downside"])
     if provenance.get("expected_downside", {}).get("source_field") in {"stop_loss", "trailing_stop_price"}:
         downside = None
+    # Crypto candidates may expose a current volatility/risk envelope rather
+    # than an equity-style stop.  Consume that existing candidate evidence
+    # directly, preserve its source, and never invent a platform-wide percent.
+    asset_class = _text(_first(row, "asset_class", "asset_type")).lower()
+    crypto_risk_pct = _number(contextual(("crypto_risk_pct", "risk_pct", "atr_pct", "atr_percent", "volatility_pct")))
+    if downside is None and asset_class in {"crypto", "cryptocurrency", "digital_asset"} and crypto_risk_pct is not None and crypto_risk_pct > 0:
+        downside = {"low_pct": -abs(crypto_risk_pct), "high_pct": -abs(crypto_risk_pct), "evidence_label": "CRYPTO_CANDIDATE_RISK_ENVELOPE"}
+        provenance["expected_downside_range"] = _provenance(
+            downside, source_system="crypto_candidate_risk_envelope", source_field="crypto_risk_pct/risk_pct/atr_pct/volatility_pct",
+            source_row=row, evidence_class="CURRENT_CANDIDATE_DIRECT", confidence=confidence, now=now,
+            candidate_specific=True, symbol_specific=True, derived=True,
+        )
     downside_range = downside if isinstance(downside, Mapping) else _range(
         ((stop - price) / price) * 100.0 if price and stop else None,
         ((stop - price) / price) * 100.0 if price and stop else None,

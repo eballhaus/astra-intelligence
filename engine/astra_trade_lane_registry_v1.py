@@ -24,12 +24,14 @@ LANE_CRYPTO = "CRYPTO"
 VALID_LANES = {LANE_SWING, LANE_DAY, LANE_CRYPTO}
 
 # Instrument classification is deliberately independent from the execution
-# lane.  These are the bounded, locally known ETF symbols in Astra's existing
-# broad-universe seed; explicit upstream metadata always takes precedence.
-KNOWN_ETF_SYMBOLS = {
+# lane.  This is Astra's existing canonical ETF registry, not a ticker-name
+# heuristic. Explicit broker or upstream security metadata always wins.
+CANONICAL_ETF_SYMBOL_REGISTRY = {
     "SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLE", "XLV", "XLY", "XLI",
     "XLP", "XLU", "XLB", "XLC", "SMH", "SOXX", "ARKK",
 }
+# Backward-compatible public name retained for existing consumers.
+KNOWN_ETF_SYMBOLS = CANONICAL_ETF_SYMBOL_REGISTRY
 
 CONTRACT_FIELDS = (
     "lane_id",
@@ -82,7 +84,20 @@ def _instrument_type(row: Mapping[str, Any], asset_class: str) -> str:
     if explicit in {"ETF", "FUND", "EXCHANGE_TRADED_FUND"}:
         return "ETF"
     symbol = _text(_first(row, "symbol", "ticker")).upper()
-    return "ETF" if symbol in KNOWN_ETF_SYMBOLS else "EQUITY"
+    return "ETF" if symbol in CANONICAL_ETF_SYMBOL_REGISTRY else "EQUITY"
+
+
+def _asset_classification_source(row: Mapping[str, Any], asset_class: str, instrument_type: str) -> str:
+    """Keep ETF attribution deterministic and explainable across lanes."""
+    if asset_class == "crypto":
+        return _text(_first(row, "asset_classification_source", "asset_metadata_source")) or "candidate_or_broker_crypto_metadata"
+    explicit = _text(_first(row, "instrument_type", "security_type", "product_type", "asset_type")).upper()
+    if explicit in {"ETF", "FUND", "EXCHANGE_TRADED_FUND"}:
+        return "candidate_or_broker_asset_metadata"
+    symbol = _text(_first(row, "symbol", "ticker")).upper()
+    if instrument_type == "ETF" and symbol in CANONICAL_ETF_SYMBOL_REGISTRY:
+        return "existing_canonical_etf_registry"
+    return _text(_first(row, "asset_classification_source", "asset_metadata_source")) or "candidate_equity_metadata"
 
 
 def _normalized_style(row: Mapping[str, Any]) -> str:
@@ -146,6 +161,7 @@ def apply_trade_lane_contract(
     timestamp = now or datetime.now(timezone.utc).isoformat()
     asset_class = _normalized_asset_class(result)
     instrument_type = _instrument_type(result, asset_class)
+    asset_classification_source = _asset_classification_source(result, asset_class, instrument_type)
     style = _normalized_style(result)
     explicit_lane = _text(result.get("lane_id")).upper()
 
@@ -183,7 +199,12 @@ def apply_trade_lane_contract(
             "trade_style": style,
             "intended_horizon": intended_horizon,
             "asset_class": asset_class,
+            # ``asset_class`` remains the broker-compatible market class;
+            # ``asset_type`` is the performance cohort requested by the
+            # multi-lane operational reports.
+            "asset_type": "crypto" if asset_class == "crypto" else instrument_type,
             "instrument_type": instrument_type,
+            "asset_classification_source": asset_classification_source,
             "strategy_cohort": _text(result.get("strategy_cohort")) or _cohort(result, asset_class, style, instrument_type),
             "recommendation_id": _text(_first(result, "recommendation_id", "canonical_recommendation_id")),
             "candidate_id": _text(_first(result, "candidate_id", "decision_id", "opportunity_id")),

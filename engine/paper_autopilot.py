@@ -54,6 +54,7 @@ try:
         canonical_lane_activation_contract,
         lane_capital_status,
         lane_owner_contract,
+        natural_paper_trade_label,
         strict_broker_truth,
     )
 except Exception:  # pragma: no cover - fail closed when the bounded contract is unavailable
@@ -68,6 +69,14 @@ except Exception:  # pragma: no cover - fail closed when the bounded contract is
 
     def strict_broker_truth(_row: dict[str, Any]) -> bool:
         return False
+
+    def natural_paper_trade_label(_row: dict[str, Any]) -> str:
+        return ""
+
+try:
+    from engine.astra_multilane_market_hours_audit_v1 import MarketHoursAuditRegistry
+except Exception:  # pragma: no cover - audit persistence must never affect execution
+    MarketHoursAuditRegistry = None  # type: ignore[assignment]
 
 try:
     from engine.position_tracker import PositionTracker
@@ -942,6 +951,8 @@ def _execution_trace_event(row: dict[str, Any], **values: Any) -> dict[str, Any]
         "canonical_symbol": str(normalized.get("canonical_symbol") or "").upper().strip(),
         "asset_type": _norm_asset(normalized.get("asset_type") or normalized.get("asset_class") or "stock"),
         "asset_class": str(normalized.get("asset_class") or ""),
+        "instrument_type": str(normalized.get("instrument_type") or ""),
+        "asset_classification_source": str(normalized.get("asset_classification_source") or ""),
         "lane_id": str(normalized.get("lane_id") or "").upper(),
         "candidate_id": str(normalized.get("candidate_id") or ""),
         "recommendation_id": str(normalized.get("recommendation_id") or ""),
@@ -1774,9 +1785,17 @@ class PaperAutopilotEngine:
             "exit_price": float(exit_price), "quantity": _to_float(open_row.get("quantity"), 0.0),
             "realized_return": round(float(return_percent), 6), "hold_duration": round(float(hold_seconds), 3),
             "return_per_hour": round(float(return_percent) / max(hold_seconds / 3600.0, 1e-9), 6),
+            # These fields are carried only when the live lifecycle has
+            # actually recorded them; unknown remains unknown.
+            "mfe": _safe_json_load(open_row.get("row_json")).get("max_favorable_excursion_pct"),
+            "mae": _safe_json_load(open_row.get("row_json")).get("max_adverse_excursion_pct"),
+            "time_to_peak": _safe_json_load(open_row.get("row_json")).get("time_to_peak"),
+            "profit_giveback": _safe_json_load(open_row.get("row_json")).get("profit_giveback_pct"),
             "exit_reason": str(exit_reason or ""), "paper_mode_verified": True,
             "official_metric_eligible": False, "created_at": _now_iso(), "updated_at": _now_iso(),
         }
+        record["natural_trade_label"] = natural_paper_trade_label(record)
+        record["truth_state"] = "BROKER_TRUTH_CONFIRMED"
         if not strict_broker_truth(record):
             return {"persisted": False, "reason": "strict_truth_required_fields_missing"}
         path = os.path.join(os.path.dirname(self.db_path) or "state", "broker_truth_records_v1.json")
@@ -5729,6 +5748,15 @@ class PaperAutopilotEngine:
             self._runtime_state["last_cycle_utc"] = out["cycle_timestamp"]
             self._runtime_state["last_cycle_summary"] = dict(out)
             self._runtime_state["last_execution_trace"] = dict(trace)
+            # Reuse the worker as the existing scheduler. The audit observes
+            # a completed trace only and has no broker/provider side effects.
+            if MarketHoursAuditRegistry is not None:
+                try:
+                    audit = MarketHoursAuditRegistry(os.path.dirname(self.db_path) or "state").record_if_due(trace)
+                    if audit:
+                        self._runtime_state["automated_market_hours_multilane_audit_v1"] = audit
+                except Exception:
+                    pass
             self._runtime_state["last_error"] = ""
             self._save_state_file()
             return out

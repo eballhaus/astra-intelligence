@@ -475,6 +475,69 @@ def strict_truth_counts(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
+def natural_paper_trade_label(row: Mapping[str, Any]) -> str:
+    """Return a lane/cohort label only for real natural paper execution."""
+    lane = _row_lane(row)
+    if lane not in {LANE_SWING, LANE_DAY, LANE_CRYPTO}:
+        return ""
+    if lane == LANE_CRYPTO:
+        return "NATURAL_PAPER_CRYPTO"
+    instrument = _text(row.get("instrument_type") or row.get("asset_type")).upper()
+    cohort = "ETF" if instrument == "ETF" else "EQUITY"
+    return f"NATURAL_PAPER_{lane}_{cohort}"
+
+
+def is_natural_paper_truth(row: Mapping[str, Any]) -> bool:
+    """Fixtures, replay, shadow, and legacy incomplete rows never qualify."""
+    if not strict_broker_truth(row):
+        return False
+    label = _text(row.get("natural_trade_label") or row.get("trade_origin_label")).upper()
+    return label == natural_paper_trade_label(row)
+
+
+def natural_lane_performance_attribution(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Small, honest cohort scorecard over strict natural broker truths only."""
+    buckets = ("DAY_EQUITY", "DAY_ETF", "SWING_EQUITY", "SWING_ETF", "CRYPTO")
+    grouped = {bucket: [] for bucket in buckets}
+    for source in rows:
+        if not isinstance(source, Mapping) or not is_natural_paper_truth(source):
+            continue
+        row = dict(source)
+        lane = _row_lane(row)
+        instrument = _text(row.get("instrument_type") or row.get("asset_type")).upper()
+        bucket = "CRYPTO" if lane == LANE_CRYPTO else f"{lane}_{'ETF' if instrument == 'ETF' else 'EQUITY'}"
+        if bucket in grouped:
+            grouped[bucket].append(row)
+
+    def _number(value: Any) -> float | None:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed == parsed else None
+
+    output: dict[str, Any] = {}
+    for bucket, bucket_rows in grouped.items():
+        returns = [value for value in (_number(row.get("realized_return") or row.get("return_percent")) for row in bucket_rows) if value is not None]
+        winners = [value for value in returns if value > 0]
+        losers = [value for value in returns if value < 0]
+        output[bucket] = {
+            "sample_size": len(bucket_rows),
+            "official_metric_eligible": len(bucket_rows) >= 25,
+            "performance_conclusion": "INSUFFICIENT_STRICT_NATURAL_TRUTH_SAMPLE" if len(bucket_rows) < 25 else "OBSERVATIONAL_ONLY",
+            "win_rate": (len(winners) / len(returns)) if returns else None,
+            "average_return": (sum(returns) / len(returns)) if returns else None,
+            "profit_factor": (sum(winners) / abs(sum(losers))) if losers else (None if not winners else None),
+            "excluded_evidence_classes": ["FIXTURE", "SHADOW", "REPLAY", "RECONSTRUCTED", "LEGACY_INCOMPLETE"],
+        }
+    return {
+        "attribution_owner": "astra_multilane_activation_v2.natural_lane_performance_attribution",
+        "strict_natural_truth_required": True,
+        "cohorts": output,
+        "total_natural_strict_truths": sum(len(rows) for rows in grouped.values()),
+    }
+
+
 def adaptive_throughput(lane_id: str, strict_truth_rows: Iterable[Mapping[str, Any]], health: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Select an operating level only inside Eric's approved paper envelope."""
     lane = _text(lane_id).upper()

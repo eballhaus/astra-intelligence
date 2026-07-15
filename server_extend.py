@@ -7,9 +7,12 @@ from engine.astra_multilane_activation_v2 import (
     day_regular_session_allowed,
     lane_capital_status,
     lane_handoff_proof,
+    natural_lane_performance_attribution,
     operational_freshness,
     strict_truth_counts,
 )
+from engine.astra_multilane_market_hours_audit_v1 import MarketHoursAuditRegistry, build_audit
+from engine.astra_trade_lane_registry_v1 import apply_trade_lane_contract
 from engine.learning_return_integrity_v1 import audit_learning_return_rows
 from engine.astra_evidence_accumulation_capacity_v1 import build_capacity_snapshot
 from engine.astra_portfolio_capacity_release_review_v1 import (
@@ -47369,6 +47372,7 @@ def _lane_execution_daily_report_v1_payload(statuses: dict | None = None) -> dic
     # so surface both observations without triggering another broker request.
     worker_runtime = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
     worker_trace = dict(worker_runtime.get("last_execution_trace") or {})
+    market_hours_audit = MarketHoursAuditRegistry(STATE).latest()
     worker_broker_count = int(_to_float(worker_trace.get("broker_open_positions_count"), -1.0))
     cached_alpaca = dict(statuses.get("alpaca_paper_status_v1") or {})
     cached_broker_count = int(_to_float(cached_alpaca.get("open_positions_count"), -1.0))
@@ -47473,6 +47477,10 @@ def _lane_execution_daily_report_v1_payload(statuses: dict | None = None) -> dic
         "broker_snapshot_alignment": broker_snapshot_alignment,
         "truth_pipeline_health": "PENDING_PAIRED_BROKER_FILLS",
         "consumer_delivery_health": "PENDING_STRICT_TRUTH",
+        "automated_market_hours_multilane_audit_v1": {
+            key: market_hours_audit.get(key)
+            for key in ("generated_at", "trigger", "session_state", "exact_first_blocker", "counts_by_lane_asset")
+        },
         "governance_findings": findings,
         "governance_critical_findings": sum(1 for item in findings if item.get("severity") == "critical"),
         "governance_high_findings": sum(1 for item in findings if item.get("severity") == "high"),
@@ -47490,6 +47498,87 @@ def _lane_execution_daily_report_v1_payload(statuses: dict | None = None) -> dic
 def lane_execution_daily_report_v1(force: bool = False):
     base = _pladeu_direct_statuses_v1(force=bool(force))
     return _lane_execution_daily_report_v1_payload(base)
+
+
+def _automated_market_hours_multilane_audit_payload_v1(*, force: bool = False) -> dict:
+    """Read the persisted worker audit; force is still strictly read-only."""
+    registry = MarketHoursAuditRegistry(STATE)
+    if not force:
+        payload = registry.latest()
+    else:
+        trace, source = _paper_autopilot_persisted_trace_v1()
+        payload = build_audit(trace, trigger="explicit_read_only_force_refresh")
+        payload["trace_source"] = source
+        payload["persisted"] = False
+    payload.update({
+        "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
+        "full_history_scan_count": 0, "audit_read_only": True,
+        **_safety_flags_v1(),
+    })
+    return payload
+
+
+@router.get("/api/automated_market_hours_multilane_audit_v1")
+def automated_market_hours_multilane_audit_v1(force: bool = False):
+    """GET never schedules, executes, or mutates a broker action."""
+    return _automated_market_hours_multilane_audit_payload_v1(force=bool(force))
+
+
+@router.on_event("startup")
+def _automated_market_hours_multilane_audit_startup_v1():
+    """Record one backend-restart observation without invoking the worker."""
+    try:
+        trace = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("last_execution_trace") or {})
+        MarketHoursAuditRegistry(STATE).record(trace, trigger="backend_restart")
+    except Exception:
+        # Startup diagnostics must never block the paper worker.
+        pass
+
+
+@router.get("/api/multilane_natural_performance_attribution_v1")
+def multilane_natural_performance_attribution_v1():
+    """Official lane scorecards are limited to paired-fill natural truths."""
+    records = [
+        dict(row) for row in (_astra_evidence_state_json("broker_truth_records_v1.json").get("records") or [])
+        if isinstance(row, dict)
+    ]
+    return {
+        "endpoint": "/api/multilane_natural_performance_attribution_v1",
+        "generated_at": _now_utc_iso(),
+        **natural_lane_performance_attribution(records),
+        "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
+        "full_history_scan_count": 0,
+        **_safety_flags_v1(),
+    }
+
+
+@router.get("/api/etf_lane_classification_report_v1")
+def etf_lane_classification_report_v1():
+    """Expose deterministic cohort identity without rewriting broker history."""
+    statuses = _pladeu_direct_statuses_v1(force=False)
+    candidates = [dict(row) for row in (statuses.get("pladeu_candidate_rows") or []) if isinstance(row, dict)][:100]
+    trace, _source = _paper_autopilot_persisted_trace_v1()
+    positions = [dict(row) for row in (trace.get("broker_position_review_rows") or []) if isinstance(row, dict)][:100]
+    rows = []
+    for source, kind in ((candidates, "CURRENT_CANDIDATE"), (positions, "CURRENT_POSITION")):
+        for row in source:
+            identity = apply_trade_lane_contract(row, legacy=kind == "CURRENT_POSITION")
+            if str(identity.get("instrument_type") or "").upper() == "ETF":
+                rows.append({
+                    "record_kind": kind, "symbol": identity.get("symbol"), "asset_id": identity.get("asset_id") or identity.get("id") or "",
+                    "asset_class": identity.get("asset_class"), "asset_type": identity.get("asset_type"),
+                    "instrument_type": identity.get("instrument_type"), "lane": identity.get("lane_id"),
+                    "strategy": identity.get("strategy_cohort"), "horizon": identity.get("intended_horizon"),
+                    "classification_source": identity.get("asset_classification_source"),
+                    "historical_classification_status": "HISTORICAL_ASSET_CLASS_UNCERTAIN" if kind == "CURRENT_POSITION" and not identity.get("asset_classification_source") else "CLASSIFIED",
+                })
+    return {
+        "endpoint": "/api/etf_lane_classification_report_v1", "classification_owner": "astra_trade_lane_registry_v1.apply_trade_lane_contract",
+        "etf_rows": rows, "day_etf_count": sum(1 for row in rows if row["lane"] == "DAY"),
+        "swing_etf_count": sum(1 for row in rows if row["lane"] == "SWING"),
+        "etf_is_cohort_not_lane": True, "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
+        **_safety_flags_v1(),
+    }
 
 
 @router.get("/api/evidence_accumulation_capacity_v1")
@@ -62699,6 +62788,8 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
         if str(row.get("lane_id") or "").upper() == "DAY"
     ]
     if (
+        int(_to_float(funnel.get("day_trade_candidates_generated"), 0.0)) > 0
+        and
         str(funnel.get("candidate_flow_evidence_status") or "") == "INSUFFICIENT_EQUITY_CANDIDATE_TRACE"
         and active_day_contract_rows
     ):
@@ -62847,6 +62938,7 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
     lineage_v2 = _equity_candidate_lineage_completion_v2_payload(statuses)
     crypto_lane_v2 = _crypto_paper_lane_validation_v1_payload(statuses)
     enrichment = _candidate_intelligence_enrichment_contract_diagnostic_v1(force=False)
+    market_hours_audit = _automated_market_hours_multilane_audit_payload_v1(force=False)
     safety_score = 100.0
     learning_score = round(_astra_score_average_v1(current["evidence_consumption_pct"], current["opportunity_cost_utilization_pct"], current["historical_similarity_utilization_pct"], current["replay_utilization_pct"]), 3)
     retrieval_score = current["retrieval_health_pct"]
@@ -62877,6 +62969,7 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
         "global_capacity_starving_learning_lanes" if evidence_capacity.get("global_capacity_status") == "GLOBAL_CAPACITY_EXHAUSTED" and not any(((evidence_capacity.get("lanes") or {}).get(lane) or {}).get("reserve_available") for lane in ("day", "crypto")) else "",
         "stale_broker_state_blocks_capacity_authorization" if evidence_capacity.get("global_capacity_status") in {"BROKER_STATE_STALE", "BROKER_POSITION_DETAILS_UNAVAILABLE"} else "",
         "candidate_contract_evidence_incomplete" if int(_to_float(enrichment.get("contract_incomplete_count"), 0.0)) > 0 else "",
+        "automated_market_hours_audit_stale" if not market_hours_audit.get("generated_at") else "",
     ]
     warnings = [item for item in warnings if item]
     lane_report = _lane_execution_daily_report_v1_payload(statuses)
@@ -62946,6 +63039,7 @@ def _astra_governance_oversight_v1_payload(statuses: dict | None = None) -> dict
             for key in ("status", "snapshot_id", "candidate_count", "contract_distribution", "first_blocker", "canonical_enrichment_owner")
         },
         "crypto_activation_governance_v2": {key: crypto_lane_v2.get(key) for key in ("activation_state", "paper_crypto_enabled", "activation_blockers", "crypto_day_trade_capacity", "crypto_short_swing_capacity", "crypto_scalp_shadow_status")},
+        "automated_market_hours_multilane_audit_v1": {key: market_hours_audit.get(key) for key in ("generated_at", "trigger", "session_state", "exact_first_blocker", "counts_by_lane_asset")},
         "live_trading_enabled": False,
         "learned_exits_enabled": False,
         "automatic_promotions_enabled": False,
@@ -67080,6 +67174,7 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
     equity_qualification = _equity_horizon_qualification_completion_v2_payload(statuses)
     crypto_lane = _crypto_paper_lane_validation_v1_payload(statuses)
     throughput = _learning_throughput_accelerator_v1_payload(statuses)
+    market_hours_audit = _automated_market_hours_multilane_audit_payload_v1(force=False)
     actions = []
     if evidence_capacity.get("global_capacity_status") in {"GLOBAL_CAPACITY_EXHAUSTED", "BROKER_STATE_STALE", "BROKER_POSITION_DETAILS_UNAVAILABLE"}:
         actions.append({
@@ -67180,6 +67275,15 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
             "confidence": 55,
             "paper_order_action": False,
         })
+    if market_hours_audit.get("exact_first_blocker"):
+        actions.append({
+            "action": "Monitor automated multi-lane audit",
+            "symbol": "MULTILANE",
+            "priority": "medium",
+            "reason": market_hours_audit.get("exact_first_blocker"),
+            "confidence": 80,
+            "paper_order_action": False,
+        })
     return {
         "endpoint": "/api/copilot_turnover_action_center_v1",
         "status": "ok",
@@ -67219,6 +67323,7 @@ def _copilot_turnover_action_center_v1_payload(statuses: dict | None = None) -> 
         "equity_qualification_summary_v2": {key: equity_qualification.get(key) for key in ("status", "generated", "qualified", "paper_eligible", "paper_autopilot_handoff", "actual_root_cause")},
         "crypto_paper_summary_v2": {key: crypto_lane.get(key) for key in ("activation_state", "paper_crypto_enabled", "selected_universe", "day_trade_capacity_available", "short_swing_capacity_available", "activation_blockers")},
         "broker_truth_throughput_summary_v2": {key: throughput.get(key) for key in ("status", "equity_complete_truths", "crypto_complete_truths", "combined_broker_lifecycle_total")},
+        "automated_market_hours_multilane_audit_v1": {key: market_hours_audit.get(key) for key in ("generated_at", "trigger", "session_state", "exact_first_blocker", "counts_by_lane_asset")},
         "copilot_behavior": "advisory_only_no_orders",
         "human_review_required": True,
         "advisory_only": True,
@@ -67606,6 +67711,53 @@ def _crypto_operational_candidate_rows_v3() -> list[dict]:
     rows = []
     for rank, raw in enumerate(_crypto_ranking_rows_cached_v1()[:24], start=1):
         row = dict(raw)
+        # The ranking cache already carries any quote/risk observations the
+        # producer collected. Normalize those aliases once at the canonical
+        # operational bridge; do not fetch a quote or manufacture a risk
+        # envelope in this read-only adapter.
+        quote = next(
+            (dict(raw.get(key) or {}) for key in ("latest_quote", "quote", "crypto_quote", "market_quote") if isinstance(raw.get(key), dict)),
+            {},
+        )
+        def observed(*keys: str):
+            for key in keys:
+                value = row.get(key)
+                if value not in (None, ""):
+                    return value
+                value = quote.get(key)
+                if value not in (None, ""):
+                    return value
+            return None
+        bid = observed("bid", "bid_price")
+        ask = observed("ask", "ask_price")
+        price = observed("price", "current_price", "last_price", "last", "close")
+        spread_pct = observed("spread_pct", "bid_ask_spread_pct")
+        try:
+            if spread_pct in (None, "") and float(bid) > 0 and float(ask) >= float(bid):
+                spread_pct = ((float(ask) - float(bid)) / ((float(ask) + float(bid)) / 2.0)) * 100.0
+        except (TypeError, ValueError):
+            pass
+        row.update({
+            "price": price if price not in (None, "") else row.get("price"),
+            "current_price": price if price not in (None, "") else row.get("current_price"),
+            "bid": bid if bid not in (None, "") else row.get("bid"),
+            "ask": ask if ask not in (None, "") else row.get("ask"),
+            "quote_timestamp": observed("quote_timestamp", "timestamp", "updated_at", "as_of"),
+            "quote_age_seconds": observed("quote_age_seconds", "freshness_seconds", "age_seconds"),
+            "spread_pct": spread_pct if spread_pct not in (None, "") else row.get("spread_pct"),
+            "volume_24h": observed("volume_24h", "quote_volume", "volume", "volume_usd"),
+            "data_quality_score": observed("data_quality_score", "quote_quality_score", "market_data_quality_score"),
+            "crypto_risk_pct": observed("crypto_risk_pct", "risk_pct", "atr_pct", "atr_percent", "volatility_pct"),
+            "expected_downside_range": observed("expected_downside_range", "downside_range"),
+            "expected_drawdown": observed("expected_drawdown", "drawdown_range", "max_drawdown_pct"),
+            "crypto_quote_evidence_source": "crypto_ranking_cache_quote_fields" if quote or price not in (None, "") else "UNAVAILABLE",
+        })
+        if row.get("quote_age_seconds") in (None, "") and row.get("quote_timestamp"):
+            try:
+                quote_time = datetime.fromisoformat(str(row["quote_timestamp"]).replace("Z", "+00:00"))
+                row["quote_age_seconds"] = max(0.0, (datetime.now(UTC) - quote_time.astimezone(UTC)).total_seconds())
+            except (TypeError, ValueError):
+                pass
         row.update({
             "asset_class": "crypto",
             "asset_type": "crypto",
