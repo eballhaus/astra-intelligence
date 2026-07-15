@@ -19,9 +19,11 @@ def crypto_contract_fields() -> dict:
         "score": 90.0, "ranking_factors": ["test_signal"], "thesis": "Crypto test thesis is intact.",
         "thesis_supporting_conditions": ["trend"], "thesis_invalidation_conditions": ["trend_break"],
         "intended_horizon": "day_trade", "expected_hold_window": "1d", "entry_conditions": ["confirmed"],
+        "expected_return_range": {"low": 1.0, "high": 3.0}, "expected_downside_range": {"low": -2.0, "high": -1.0},
+        "expected_drawdown": -2.0, "expected_return_per_day_range": {"low": 0.2, "high": 0.6},
         "hold_conditions": ["thesis_intact"], "profit_protection_conditions": ["giveback"],
         "exit_review_conditions": ["horizon_review"], "controlled_loss_conditions": ["thesis_broken"],
-        "replacement_review_conditions": ["better_candidate"], "confidence": 90.0,
+        "replacement_review_conditions": ["better_candidate"], "monitoring_priorities": ["thesis_and_horizon"], "confidence": 90.0,
         "evidence_classes": ["REPLAY_SUPPORTED"], "certification_snapshot_id": "test-snapshot",
         "expires_at": expires_at,
     }

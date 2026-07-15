@@ -48293,8 +48293,13 @@ def _astra_pre_market_trading_certification_payload_v1(force: bool = False) -> d
         f"{production_commit}|{candidate_fingerprint}".encode("utf-8")
     ).hexdigest()[:24]
     expires_at = (datetime.now(UTC) + timedelta(minutes=15)).isoformat().replace("+00:00", "Z")
+    # Certification must consume the same canonical candidate normalizer as
+    # PaperAutopilot.  Raw ranking rows do not carry the durable identity and
+    # forward-plan aliases that the production order boundary receives.
     candidates = [
-        {**dict(row), "certification_snapshot_id": snapshot_id, "expires_at": expires_at}
+        normalize_operational_candidate(
+            {**dict(row), "certification_snapshot_id": snapshot_id, "expires_at": expires_at}
+        )
         for row in raw_candidates if isinstance(row, dict)
     ]
     contracts = [
@@ -48339,7 +48344,13 @@ def _astra_pre_market_trading_certification_payload_v1(force: bool = False) -> d
         }
     else:
         PAPER_AUTOPILOT._runtime_state.pop("pre_market_certification_v1", None)
-    overall = "CERTIFIED" if all_certified else "FAIL_CLOSED"
+    lane_statuses = {str(row.get("status") or "") for row in lane_results.values()}
+    overall = (
+        "CERTIFIED" if all_certified
+        else "CONTRACT_INCOMPLETE" if "CONTRACT_INCOMPLETE" in lane_statuses
+        else "READY_NO_TRADE" if lane_statuses == {"READY_NO_TRADE"}
+        else "FAIL_CLOSED"
+    )
     forward = _position_intelligence_utilization_payload_v1({}, persist=False)
     payload = {
         "endpoint": "/api/astra_pre_market_trading_certification_v1",

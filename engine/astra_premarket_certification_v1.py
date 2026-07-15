@@ -20,10 +20,13 @@ REQUIRED_CONTRACT_FIELDS = (
     "candidate_id", "recommendation_id", "decision_id", "symbol", "lane",
     "strategy_archetype", "trade_style", "ranking_score", "thesis",
     "thesis_supporting_conditions", "thesis_invalidation_conditions",
-    "intended_horizon", "expected_hold_window", "entry_conditions",
+    "intended_horizon", "expected_hold_window", "expected_return_range",
+    "expected_downside_range", "expected_drawdown", "expected_return_per_day_range",
+    "entry_conditions",
     "hold_conditions", "profit_protection_conditions", "exit_review_conditions",
     "controlled_loss_conditions", "replacement_review_conditions",
-    "confidence", "evidence_classes", "certification_snapshot_id", "expiry_timestamp",
+    "confidence", "evidence_classes", "monitoring_priorities",
+    "certification_snapshot_id", "expiry_timestamp",
 )
 
 SAFETY_FLAGS = {
@@ -92,6 +95,14 @@ def _as_list(value: Any) -> list[Any]:
     return [value] if value not in (None, "") else []
 
 
+def _contract_state(contract: Mapping[str, Any]) -> str:
+    if contract.get("conflicting_fields"):
+        return "CONTRACT_CONFLICTING"
+    if contract.get("missing_required_fields"):
+        return "CONTRACT_INCOMPLETE"
+    return "CONTRACT_COMPLETE"
+
+
 def build_pretrade_decision_contract(
     candidate: Mapping[str, Any],
     *,
@@ -155,13 +166,43 @@ def build_pretrade_decision_contract(
         "exit_review_conditions": _as_list(_first(row, "exit_review_conditions", "exit_conditions")),
         "controlled_loss_conditions": _as_list(_first(row, "controlled_loss_conditions", "loss_acceptance_conditions")),
         "replacement_review_conditions": _as_list(_first(row, "replacement_review_conditions", "replacement_conditions")),
+        "monitoring_priorities": _as_list(_first(row, "monitoring_priorities", "monitoring_plan", "monitoring_conditions")),
         "confidence": _first(row, "confidence", "predicted_win_probability"),
         "evidence_classes": _as_list(_first(row, "evidence_classes", "evidence_class", "truth_quality")),
         "certification_snapshot_id": _text(certification_snapshot_id or row.get("certification_snapshot_id")),
         "expiry_timestamp": expiry,
         "candidate_generated_at": generated,
+        "thesis_id": _text(_first(row, "thesis_id")) or ("thesis-" + decision_id[4:] if decision_id.startswith("dec-") else ""),
+        "thesis_state": "THESIS_COMPLETE" if _text(_first(row, "thesis", "entry_rationale", "intelligence_summary", "summary")) else "THESIS_INCOMPLETE",
+        "expected_outcome_state": "EXPECTED_OUTCOME_COMPLETE" if all(
+            _first(row, key) not in (None, "", [], {})
+            for key in ("expected_return_range", "expected_downside_range", "expected_drawdown", "expected_return_per_day_range")
+        ) else "EXPECTED_OUTCOME_INCOMPLETE",
+        "hold_plan_state": "HOLD_PLAN_COMPLETE" if all(
+            _first(row, key) not in (None, "", [], {})
+            for key in ("expected_hold_window", "hold_conditions", "profit_protection_conditions", "exit_review_conditions", "controlled_loss_conditions", "replacement_review_conditions")
+        ) else "HOLD_PLAN_INCOMPLETE",
+        "opportunity_cost_state": _text(_first(row, "opportunity_cost_state", "opportunity_cost_comparison")) or "NO_VALID_COMPARISON_SET",
+        "competing_candidate_summary": _as_list(_first(row, "competing_candidate_summary", "competing_candidates_considered", "competing_candidates")),
+        "producer_acknowledgements": {
+            "candidate_identity": bool(candidate_id and recommendation_id and decision_id),
+            "strategy_horizon": bool(lane in LANES and horizon),
+            "thesis": bool(_text(_first(row, "thesis", "entry_rationale", "intelligence_summary", "summary"))),
+            "outcome_envelope": bool(_first(row, "expected_return_range") not in (None, "", [], {})),
+            "hold_plan": bool(_first(row, "hold_conditions") not in (None, "", [], {})),
+        },
+        "consumer_acknowledgements": {
+            "final_qualification": False,
+            "order_ready_gate": False,
+            "lifecycle_initialization": False,
+        },
     }
-    return validate_pretrade_decision_contract(contract, now=now)
+    contract_id_seed = "|".join((candidate_id, recommendation_id, decision_id, _text(contract.get("certification_snapshot_id"))))
+    contract["contract_id"] = "contract-" + hashlib.sha256(contract_id_seed.encode("utf-8")).hexdigest()[:20] if contract_id_seed else ""
+    validated = validate_pretrade_decision_contract(contract, now=now)
+    validated["contract_state"] = _contract_state(validated)
+    validated["candidate_terminal_state"] = "CONTRACT_COMPLETE" if validated["contract_state"] == "CONTRACT_COMPLETE" else "CONTRACT_BUILDING"
+    return validated
 
 
 def validate_pretrade_decision_contract(contract: Mapping[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
@@ -261,12 +302,22 @@ def build_lane_certification(
         else:
             result = "PASS_NO_FIXTURES_PERSISTED"
         stages.append({"stage": name, "result": result, "owner": "PaperAutopilot" if name in {"ranking_eligibility_risk_capacity", "order_ready"} else "certification_contract"})
-    status = "CERTIFIED" if order_ready else "FAIL_CLOSED" if passed_contract or no_current else "NOT_CERTIFIED"
+    if order_ready:
+        status = "CERTIFIED"
+    elif no_current:
+        status = "READY_NO_TRADE"
+    elif not valid_contracts:
+        status = "CONTRACT_INCOMPLETE"
+    elif activation_blockers:
+        status = "NOT_CERTIFIED"
+    else:
+        status = "FAIL_CLOSED"
     generated = _iso(now)
     return {
         "lane": lane_id, "snapshot_id": snapshot_id, "certification_timestamp": generated,
         "expiry_timestamp": _iso(_now(now) + timedelta(minutes=15)), "production_commit": production_commit,
-        "status": status, "exact_blocker": blocker or None, "severity": "HIGH" if status != "CERTIFIED" else "NONE",
+        "status": status, "exact_blocker": blocker or None,
+        "severity": "HIGH" if status == "FAIL_CLOSED" else "WARNING" if status in {"CONTRACT_INCOMPLETE", "NOT_CERTIFIED"} else "NONE",
         "candidate_contract_count": len(lane_contracts), "valid_contract_count": len(valid_contracts),
         "missing_contract_field_counts": dict(sorted(missing_field_counts.items(), key=lambda item: (-item[1], item[0]))),
         "contract_evidence_samples": [

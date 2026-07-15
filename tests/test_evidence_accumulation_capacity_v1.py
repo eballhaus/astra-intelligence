@@ -50,9 +50,11 @@ def contract_fields(symbol: str, lane: str, horizon: str) -> dict:
         "score": 90.0, "ranking_factors": ["test_signal"], "thesis": "Test thesis is intact.",
         "thesis_supporting_conditions": ["trend"], "thesis_invalidation_conditions": ["trend_break"],
         "intended_horizon": horizon, "expected_hold_window": "1d", "entry_conditions": ["confirmed"],
+        "expected_return_range": {"low": 1.0, "high": 3.0}, "expected_downside_range": {"low": -2.0, "high": -1.0},
+        "expected_drawdown": -2.0, "expected_return_per_day_range": {"low": 0.2, "high": 0.6},
         "hold_conditions": ["thesis_intact"], "profit_protection_conditions": ["giveback"],
         "exit_review_conditions": ["horizon_review"], "controlled_loss_conditions": ["thesis_broken"],
-        "replacement_review_conditions": ["better_candidate"], "confidence": 90.0,
+        "replacement_review_conditions": ["better_candidate"], "monitoring_priorities": ["thesis_and_horizon"], "confidence": 90.0,
         "evidence_classes": ["REPLAY_SUPPORTED"], "certification_snapshot_id": "test-snapshot",
         "expires_at": expires_at,
     }
@@ -284,7 +286,39 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
             self.assertTrue(result["per_candidate_decision_trace"][0]["lane_reserve_enabled"])
             self.assertTrue(result["per_candidate_decision_trace"][0]["lane_reserve_available"])
             self.assertEqual(result["per_candidate_decision_trace"][0]["commitment_final_state"], "RELEASED")
+            contract = result["per_candidate_decision_trace"][0]["pretrade_decision_contract"]
+            self.assertEqual(contract["contract_state"], "CONTRACT_COMPLETE")
+            self.assertEqual(contract["consumer_acknowledgements"]["order_ready_status"], "CONSUMED_ORDER_READY")
+            self.assertEqual(contract["candidate_terminal_state"], "ORDER_READY")
             self.assertEqual(engine._lane_reserve_commitment_snapshot()["active_commitments"], 0)
+
+    def test_valid_swing_contract_reaches_order_ready_dry_run(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, BASE_ENV, clear=False):
+            engine = PaperAutopilotEngine(
+                db_path=str(pathlib.Path(tmp) / "paper.db"),
+                state_path=str(pathlib.Path(tmp) / "state.json"),
+            )
+            engine._current_execution_capacities = lambda: {
+                "open_symbols": set(), "stock_capacity": 1, "crypto_capacity": 0, "total_capacity": 1,
+            }
+            engine._alpaca_safety_snapshot = lambda: {
+                "paper_mode_verified": True, "paper_endpoint_verified": True,
+                "broker_execution_enabled": True, "live_endpoint_rejected": True,
+            }
+            engine._is_candidate_paper_eligible = lambda row: (True, "eligible", {"commitment_score": 90})
+
+            class _OpenSession:
+                def confirmation_for_candidate(self, *_args, **_kwargs):
+                    return {"market_is_open": True, "market_is_tradable": True, "paper_order_submission_allowed": True,
+                            "execution_confirmation_required": False, "requires_open_confirmation": False}
+
+            engine.market_session_timing_suite = _OpenSession()
+            result = engine.operational_dry_run([{
+                "symbol": "SWINGFIXTURE", "asset_type": "stock", "paper_entry_horizon_style": "swing_trade",
+                **contract_fields("SWINGFIXTURE", "SWING", "swing_trade"),
+            }])
+            self.assertEqual(result["order_ready_candidates"], 1)
+            self.assertEqual(result["per_candidate_decision_trace"][0]["pretrade_decision_contract_state"], "CONTRACT_COMPLETE")
 
     def test_lane_ledger_detects_false_reserve_exhaustion(self):
         with tempfile.TemporaryDirectory() as state_dir:

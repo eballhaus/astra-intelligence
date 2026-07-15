@@ -714,6 +714,134 @@ def _stable_candidate_identity(row: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _as_plan_list(*values: Any) -> list[str]:
+    """Return bounded, non-empty operational plan items from existing evidence."""
+    out: list[str] = []
+    for value in values:
+        if isinstance(value, (list, tuple)):
+            out.extend(str(item).strip() for item in value if str(item or "").strip())
+        elif str(value or "").strip():
+            out.append(str(value).strip())
+    return out[:6]
+
+
+def _format_percent_range(low: Any, high: Any, fallback: Any = None) -> dict[str, Any] | None:
+    low_value = _pick_first_number(low, fallback)
+    high_value = _pick_first_number(high, fallback)
+    if low_value is None and high_value is None:
+        return None
+    if low_value is None:
+        low_value = high_value
+    if high_value is None:
+        high_value = low_value
+    return {
+        "low_pct": round(float(low_value), 4),
+        "high_pct": round(float(high_value), 4),
+        "evidence_label": "PROVISIONAL",
+    }
+
+
+def _forward_contract_plan_from_existing_evidence(row: dict[str, Any]) -> dict[str, Any]:
+    """Complete contract fields only from existing candidate evidence.
+
+    This is deliberately a normalization bridge, not a second ranking or
+    strategy engine.  It preserves the upstream score and recommendation while
+    making its existing expected-return, stop, target, horizon, and evidence
+    fields consumable at the pre-trade contract boundary.
+    """
+    r = dict(row or {})
+    horizon = str(r.get("paper_entry_horizon_style") or r.get("intended_horizon") or "").strip()
+    price = _pick_first_number(r.get("price"), r.get("current_price"), r.get("last_price"))
+    stop = _pick_first_number(r.get("stop_loss"), r.get("trailing_stop_price"))
+    target_low = _pick_first_number(r.get("expected_target_low"), r.get("target_zone_low"), r.get("target_1"))
+    target_high = _pick_first_number(r.get("expected_target_high"), r.get("target_zone_high"), r.get("target_2"), r.get("stretch_target"))
+    return_low = _pick_first_number(r.get("expected_return_low_pct"), r.get("expected_move_low"))
+    return_high = _pick_first_number(r.get("expected_return_high_pct"), r.get("expected_move_high"))
+    return_mid = _pick_first_number(r.get("expected_return_pct"), r.get("expected_move_percent"))
+    if return_low is None and price and target_low:
+        return_low = ((target_low - price) / price) * 100.0
+    if return_high is None and price and target_high:
+        return_high = ((target_high - price) / price) * 100.0
+    expected_return = _format_percent_range(return_low, return_high, return_mid)
+    downside_pct = ((stop - price) / price) * 100.0 if price and stop else None
+    expected_downside = _format_percent_range(downside_pct, downside_pct)
+    hold_days = max(1.0 / 24.0, _expected_hold_minutes(horizon) / 1440.0)
+    per_day = None
+    if expected_return:
+        per_day = {
+            "low_pct_per_day": round(float(expected_return["low_pct"]) / hold_days, 4),
+            "high_pct_per_day": round(float(expected_return["high_pct"]) / hold_days, 4),
+            "method": "existing_expected_return_over_existing_horizon",
+            "evidence_label": "PROVISIONAL",
+        }
+    summary = _pick_first_text(r.get("thesis"), r.get("entry_rationale"), r.get("intelligence_summary"), r.get("summary"), r.get("ranked_reason"))
+    strategy = _pick_first_text(
+        r.get("strategy_archetype"), r.get("trade_archetype"), r.get("strategy_cohort"),
+        r.get("detected_setup_type"), r.get("setup_type"), r.get("expected_return_method"),
+    )
+    ranking_score = _pick_first_number(
+        r.get("ranking_score"), r.get("score"), r.get("confidence_score"), r.get("rank_score"),
+        r.get("astra_composite_score"), r.get("opportunity_score_pct"), r.get("confidence"),
+    )
+    evidence = _as_plan_list(r.get("evidence_classes"), r.get("evidence_class"), r.get("truth_quality"))
+    if not evidence and (summary or ranking_score is not None or expected_return):
+        evidence = ["PROVISIONAL"]
+        if r.get("expected_return_method"):
+            evidence.append("RECONSTRUCTED_SUPPORTED")
+    support = _as_plan_list(
+        r.get("thesis_supporting_conditions"), r.get("supporting_conditions"), r.get("positive_factors"),
+        r.get("ranked_reason"), r.get("expected_return_method"), r.get("context_summary"),
+    )
+    invalidation = _as_plan_list(r.get("thesis_invalidation_conditions"), r.get("invalidation_conditions"), r.get("what_invalidates_setup"))
+    if stop is not None:
+        invalidation.append(f"existing stop reference reached at {stop:.4f}")
+    entry_conditions = _as_plan_list(
+        r.get("entry_conditions"), r.get("entry_confirmation_conditions"), r.get("recommended_entry_mode"),
+        r.get("entry_quality_summary_v2"), r.get("entry_timing_decision"),
+    )
+    hold_conditions = _as_plan_list(r.get("hold_conditions"), r.get("thesis_hold_conditions"), r.get("trend_state"), r.get("market_regime_alignment"))
+    if horizon:
+        hold_conditions.append(f"hold only within existing {horizon} plan")
+    profit_protection = _as_plan_list(r.get("profit_protection_conditions"), r.get("profit_lock_conditions"))
+    if target_high is not None:
+        profit_protection.append(f"review existing target reference at {target_high:.4f}")
+    exit_review = _as_plan_list(r.get("exit_review_conditions"), r.get("exit_conditions"), r.get("sell_reason"))
+    if target_low is not None:
+        exit_review.append(f"review existing target zone from {target_low:.4f}")
+    controlled_loss = _as_plan_list(r.get("controlled_loss_conditions"), r.get("loss_acceptance_conditions"))
+    if stop is not None:
+        controlled_loss.append(f"review existing stop reference at {stop:.4f}")
+    replacement = _as_plan_list(r.get("replacement_review_conditions"), r.get("replacement_conditions"), r.get("replacement_reason"))
+    if not replacement:
+        replacement.append("review only against current eligible comparison set")
+    monitoring = _as_plan_list(r.get("monitoring_priorities"), r.get("monitoring_plan"), r.get("monitoring_conditions"), r.get("trend_state"), r.get("catalyst_context_label"), r.get("data_quality_score"))
+    if not monitoring and _pick_first_text(r.get("candidate_generated_at"), r.get("generated_at"), r.get("expires_at")):
+        monitoring.append("monitor existing candidate snapshot freshness before entry")
+    plan = {
+        "strategy_archetype": strategy,
+        "trade_style": _pick_first_text(r.get("trade_style"), r.get("intended_trade_style"), horizon),
+        "ranking_score": ranking_score,
+        "thesis": summary,
+        "thesis_supporting_conditions": support,
+        "thesis_invalidation_conditions": invalidation,
+        "expected_return_range": expected_return,
+        "expected_downside_range": expected_downside,
+        "expected_drawdown": _pick_first_number(r.get("expected_drawdown"), r.get("drawdown_risk_score")),
+        "expected_return_per_day_range": per_day,
+        "entry_conditions": entry_conditions,
+        "hold_conditions": hold_conditions,
+        "profit_protection_conditions": profit_protection,
+        "exit_review_conditions": exit_review,
+        "controlled_loss_conditions": controlled_loss,
+        "replacement_review_conditions": replacement,
+        "monitoring_priorities": monitoring,
+        "evidence_classes": evidence,
+        "thesis_evidence_label": "PROVISIONAL" if summary else "INSUFFICIENT_EVIDENCE",
+        "expected_outcome_evidence_label": "PROVISIONAL" if expected_return else "INSUFFICIENT_EVIDENCE",
+    }
+    return {key: value for key, value in plan.items() if value not in (None, "", [], {})}
+
+
 def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
     r = dict(row or {})
     score, source = _entry_bridge_quality(r)
@@ -787,6 +915,11 @@ def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
     r["exit_owner"] = str(r.get("exit_owner") or r.get("exit_policy_owner") or r.get("lane_id") or "").strip()
     r["candidate_fingerprint"] = str(r.get("candidate_fingerprint") or r.get("candidate_id") or "").strip()
     r["paper_entry_eligibility_bridge_v1"] = True
+    # Contract planning consumes only the already-produced candidate snapshot.
+    # It does not recalculate ranking or alter any existing execution gate.
+    for key, value in _forward_contract_plan_from_existing_evidence(r).items():
+        if r.get(key) in (None, "", [], {}):
+            r[key] = value
     # Contract capture is forward-only.  The final candidate gate below is
     # responsible for failing closed if a new order lacks required metadata.
     r["pretrade_decision_contract_v1"] = build_pretrade_decision_contract(r)
@@ -3156,6 +3289,15 @@ class PaperAutopilotEngine:
         if allowed and not bool(contract.get("order_ready_allowed")):
             allowed = False
             reason = str(contract.get("fail_closed_reason") or "PRETRADE_DECISION_CONTRACT_INVALID")
+        contract.setdefault("consumer_acknowledgements", {})["final_qualification"] = True
+        contract["consumer_acknowledgements"]["final_qualification_status"] = (
+            "CONSUMED" if allowed else "REJECTED_WITH_EXACT_BLOCKER"
+        )
+        if allowed:
+            contract["candidate_terminal_state"] = "QUALIFIED"
+        elif contract.get("contract_state") == "CONTRACT_COMPLETE":
+            contract["candidate_terminal_state"] = "REJECTED"
+        r["pretrade_decision_contract_v1"] = contract
         portfolio_fit = _to_float(r.get("portfolio_fit_score"), 50.0)
         portfolio_fit_label = str(r.get("portfolio_fit_label") or "").strip()
         portfolio_diversification_block_reason = str(r.get("portfolio_diversification_block_reason") or "").strip()
@@ -3333,6 +3475,8 @@ class PaperAutopilotEngine:
             ),
             "horizon_reason": str(r.get("paper_entry_horizon_source") or r.get("horizon_reason") or r.get("allocation_reason") or ""),
             "pretrade_decision_contract_status": str(contract.get("contract_status") or "INVALID"),
+            "pretrade_decision_contract_state": str(contract.get("contract_state") or "CONTRACT_INCOMPLETE"),
+            "candidate_terminal_state": str(contract.get("candidate_terminal_state") or "CONTRACT_BUILDING"),
             "pretrade_decision_contract_missing_fields": list(contract.get("missing_required_fields") or []),
             "pretrade_decision_contract_conflicts": list(contract.get("conflicting_fields") or []),
             "pretrade_decision_contract": contract,
@@ -5672,6 +5816,17 @@ class PaperAutopilotEngine:
                 if trace.get("selected") and not trace.get("paper_order_submission_allowed")
                 else str(trace.get("open_confirmation_reason") or reason or "not_selected")
             )
+            contract = dict(trace.get("pretrade_decision_contract") or {})
+            contract.setdefault("consumer_acknowledgements", {})["order_ready_gate"] = True
+            contract["consumer_acknowledgements"]["order_ready_status"] = (
+                "CONSUMED_ORDER_READY" if trace["order_ready"] else "CONSUMED_BLOCKED"
+            )
+            if trace["order_ready"]:
+                contract["candidate_terminal_state"] = "ORDER_READY"
+            elif trace.get("selected"):
+                contract["candidate_terminal_state"] = "SELECTED"
+            trace["pretrade_decision_contract"] = contract
+            trace["candidate_terminal_state"] = str(contract.get("candidate_terminal_state") or trace.get("candidate_terminal_state") or "CONTRACT_BUILDING")
             if not trace["order_ready"]:
                 blockers[trace["order_readiness_reason"]] = blockers.get(trace["order_readiness_reason"], 0) + 1
             if trace.get("commitment_id"):
