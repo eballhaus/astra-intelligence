@@ -48374,6 +48374,7 @@ def _candidate_intelligence_enrichment_contract_diagnostic_v1(force: bool = Fals
             "expected_outcome_state": enrichment.get("expected_outcome_state"),
             "hold_plan_state": enrichment.get("hold_plan_state"),
             "opportunity_comparison_state": enrichment.get("opportunity_comparison_state"),
+            "lane_id": candidate.get("lane_id") or candidate.get("lane"),
             "available_candidate_fields": sorted(
                 key for key, value in candidate.items()
                 if value not in (None, "", [], {}) and key in {
@@ -62693,12 +62694,20 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "evidence": funnel.get("candidate_level_rows") or [],
             "recommended_action": "human review of horizon assignment; no threshold or strategy change applied",
         })
-    if str(funnel.get("candidate_flow_evidence_status") or "") == "INSUFFICIENT_EQUITY_CANDIDATE_TRACE":
+    active_day_contract_rows = [
+        row for row in (enrichment.get("candidate_rows") or [])
+        if str(row.get("lane_id") or "").upper() == "DAY"
+    ]
+    if (
+        str(funnel.get("candidate_flow_evidence_status") or "") == "INSUFFICIENT_EQUITY_CANDIDATE_TRACE"
+        and active_day_contract_rows
+    ):
         findings.append({
             "severity": "high",
             "classification": "candidate_trace_integrity_defect",
             "issue": "equity_day_candidate_identity_not_retained",
             "evidence": {
+                "active_day_contract_rows": active_day_contract_rows[:10],
                 "replacement_rows_excluded": funnel.get("replacement_rows_excluded_from_candidate_funnel", 0),
                 "excluded_replacement_rows": funnel.get("excluded_replacement_rows") or [],
             },
