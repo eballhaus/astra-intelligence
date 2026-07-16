@@ -13,6 +13,7 @@ from engine.astra_multilane_activation_v2 import (
 )
 from engine.astra_multilane_market_hours_audit_v1 import MarketHoursAuditRegistry, build_audit
 from engine.astra_trade_lane_registry_v1 import apply_trade_lane_contract
+from engine.astra_unified_position_lifecycle_v1 import build_unified_position_lifecycle_decision_v1
 from engine.learning_return_integrity_v1 import audit_learning_return_rows
 from engine.astra_evidence_accumulation_capacity_v1 import build_capacity_snapshot
 from engine.astra_portfolio_capacity_release_review_v1 import (
@@ -47665,6 +47666,38 @@ def candidate_intelligence_enrichment_contract_diagnostic_v1(force: bool = False
 def candidate_risk_outcome_order_truth_closure_diagnostic_v1(force: bool = False):
     """Bounded read-only risk-to-order lineage closure diagnostic."""
     return _candidate_risk_outcome_order_truth_closure_diagnostic_v1(force=bool(force))
+
+
+@router.get("/api/unified_position_lifecycle_exit_truth_closure_diagnostic_v1")
+def unified_position_lifecycle_exit_truth_closure_diagnostic_v1(force: bool = False):
+    """Read-only bridge from canonical broker positions to exit policy readiness."""
+    broker = _cached_alpaca_paper_status_payload({})
+    broker_snapshot_available = bool(broker)
+    readiness = _exit_readiness_diagnostics_v1_payload({})
+    readiness_by_symbol = {str(row.get("symbol") or "").upper(): row for row in (readiness.get("position_rows") or []) if isinstance(row, dict)}
+    rows = []
+    for position in _pladeu_open_positions_from_cached_status_v1({"alpaca_paper_broker": broker})[:100]:
+        symbol = str(position.get("symbol") or "").upper()
+        overlay = readiness_by_symbol.get(symbol) or {}
+        decision = build_unified_position_lifecycle_decision_v1({**position, **overlay})
+        rows.append(decision)
+    repairable = []  # Missing legacy evidence and policy approval are explicit non-technical states.
+    status = "PASS" if broker_snapshot_available else "EXTERNAL_BROKER_PENDING"
+    return {
+        "endpoint": "/api/unified_position_lifecycle_exit_truth_closure_diagnostic_v1", "status": status,
+        "generated_at": _now_utc_iso(), "positions_total": len(rows),
+        "broker_snapshot_available": broker_snapshot_available,
+        "broker_snapshot_state": "CACHED_BROKER_STATE_AVAILABLE" if broker_snapshot_available else "BROKER_STATE_UNAVAILABLE_FAIL_CLOSED",
+        "cohort_distribution": dict(Counter(str(row.get("cohort")) for row in rows)),
+        "classification_distribution": dict(Counter(str(row.get("classification")) for row in rows)),
+        "policy_blocked_count": sum(1 for row in rows if row.get("policy_eligibility") == "POLICY_BLOCKED"),
+        "evidence_insufficient_count": sum(1 for row in rows if row.get("exact_blocker") == "INSUFFICIENT_CURRENT_DIRECT_EVIDENCE"),
+        "repairable_failures": repairable, "position_rows": rows,
+        "canonical_position_decision_owner": "engine.astra_unified_position_lifecycle_v1.build_unified_position_lifecycle_decision_v1",
+        "canonical_exit_policy_owner": "PaperAutopilot.authorized_lane_exit_pending", "read_only": True,
+        "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "full_history_scan_count": 0,
+        **_safety_flags_v1(),
+    }
 
 
 @router.get("/api/astra_forward_performance_readiness_v1")
