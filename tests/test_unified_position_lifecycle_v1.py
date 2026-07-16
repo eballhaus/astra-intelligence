@@ -1,8 +1,11 @@
 import unittest
 
 from engine.astra_unified_position_lifecycle_v1 import (
+    build_legacy_forward_baseline_v1,
     build_unified_position_lifecycle_decision_v1,
+    build_position_shadow_twin_v1,
     classify_position_cohort_v1,
+    estimate_legacy_provisional_horizon_v1,
     retrieve_position_lifecycle_evidence_v1,
 )
 
@@ -54,6 +57,23 @@ class UnifiedPositionLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(decision["predictive_forecast_state"], "FORECAST_COMPLETE")
         self.assertEqual(decision["expected_remaining_upside_range"], [1.0, 3.0])
+
+    def test_legacy_baseline_horizon_and_shadow_are_forward_only(self):
+        position = {"symbol": "ABC", "qty": 1, "market_value": 10, "current_price": 10, "days_held": 20, "legacy_activation_timestamp": "2026-07-16T00:00:00Z"}
+        baseline = build_legacy_forward_baseline_v1(position)
+        horizon = estimate_legacy_provisional_horizon_v1(position, baseline)
+        twin = build_position_shadow_twin_v1(position, baseline, horizon)
+        self.assertEqual(baseline["original_horizon"], "UNKNOWN")
+        self.assertEqual(horizon["provisional_horizon"], "SWING_MULTI_WEEK")
+        self.assertEqual(twin["state"], "POSITION_SHADOW_TWIN_ACTIVE")
+        self.assertTrue(all(not row["broker_mutation"] for row in twin["scenarios"]))
+
+    def test_legacy_canary_is_fail_closed_without_runtime_switch(self):
+        decision = build_unified_position_lifecycle_decision_v1(
+            {"symbol": "ABC", "qty": 1, "market_value": 10, "current_price": 10, "days_held": 31, "unrealized_return_pct": -1},
+        )
+        self.assertEqual(decision["legacy_canary_policy"]["state"], "LEGACY_CANARY_ADVISORY_ONLY")
+        self.assertFalse(decision["legacy_canary_policy"]["paper_action_ready"])
 
 
 if __name__ == "__main__":

@@ -19,6 +19,11 @@ from engine.astra_evidence_accumulation_capacity_v1 import (
     build_capacity_snapshot,
     candidate_capacity_decision,
 )
+from engine.astra_unified_position_lifecycle_v1 import (
+    build_legacy_forward_baseline_v1,
+    build_position_shadow_twin_v1,
+    estimate_legacy_provisional_horizon_v1,
+)
 try:
     from engine.astra_premarket_certification_v1 import (
         build_pretrade_decision_contract,
@@ -1172,6 +1177,7 @@ class PaperAutopilotEngine:
             "learned_exit_daily": {},
             "learned_exit_rollback": {},
             "authorized_lane_exit_pending": {},
+            "legacy_forward_activations": {},
             "evidence_reserve_entry_timestamps": {"DAY": [], "CRYPTO": []},
             "lane_reserve_commitments": {"DAY": {}, "CRYPTO": {}},
             "lane_reserve_commitment_stats": {
@@ -1305,6 +1311,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["learned_exit_rollback"] = dict(payload.get("learned_exit_rollback") or {})
                 if isinstance(payload.get("authorized_lane_exit_pending"), dict):
                     self._runtime_state["authorized_lane_exit_pending"] = dict(payload.get("authorized_lane_exit_pending") or {})
+                if isinstance(payload.get("legacy_forward_activations"), dict):
+                    self._runtime_state["legacy_forward_activations"] = dict(payload.get("legacy_forward_activations") or {})
                 if isinstance(payload.get("evidence_reserve_entry_timestamps"), dict):
                     self._runtime_state["evidence_reserve_entry_timestamps"] = {
                         lane: list(payload.get("evidence_reserve_entry_timestamps", {}).get(lane) or [])[-32:]
@@ -1345,6 +1353,7 @@ class PaperAutopilotEngine:
             "learned_exit_daily": dict(self._runtime_state.get("learned_exit_daily") or {}),
             "learned_exit_rollback": dict(self._runtime_state.get("learned_exit_rollback") or {}),
             "authorized_lane_exit_pending": dict(self._runtime_state.get("authorized_lane_exit_pending") or {}),
+            "legacy_forward_activations": dict(self._runtime_state.get("legacy_forward_activations") or {}),
             "evidence_reserve_entry_timestamps": {
                 lane: list((self._runtime_state.get("evidence_reserve_entry_timestamps") or {}).get(lane) or [])[-32:]
                 for lane in ("DAY", "CRYPTO")
@@ -1718,6 +1727,31 @@ class PaperAutopilotEngine:
             filled += 1 if closed.get("ok") else 0
         self._runtime_state["authorized_lane_exit_pending"] = remaining
         return {"checked": checked, "filled": filled, "pending": len(remaining)}
+
+    def _refresh_legacy_forward_activations(self, broker_positions: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        """Persist forward-only legacy baselines from the normal worker cycle."""
+        registry = dict(self._runtime_state.get("legacy_forward_activations") or {})
+        created = reused = 0
+        for symbol, raw in broker_positions.items():
+            row = dict(raw or {})
+            row.setdefault("symbol", symbol)
+            key = str(row.get("asset_id") or row.get("position_id") or symbol).upper()
+            if not key:
+                continue
+            if key in registry:
+                registry[key]["last_observed_at"] = _now_iso()
+                reused += 1
+                continue
+            row["legacy_activation_timestamp"] = _now_iso()
+            baseline = build_legacy_forward_baseline_v1(row)
+            if baseline.get("baseline_state") == "NOT_APPLICABLE":
+                continue
+            horizon = estimate_legacy_provisional_horizon_v1(row, baseline)
+            twin = build_position_shadow_twin_v1(row, baseline, horizon)
+            registry[key] = {**baseline, "activation_id": baseline.get("baseline_id"), "provisional_horizon": horizon, "shadow_twin": twin, "created_at": _now_iso(), "last_observed_at": _now_iso(), "registry_version": 1}
+            created += 1
+        self._runtime_state["legacy_forward_activations"] = registry
+        return {"ACTIVATION_WORKER_CALLED": True, "ACTIVATION_RECORD_CREATED": created, "ACTIVATION_RECORD_REUSED": reused, "records": len(registry)}
 
     def _lane_forced_exit_reason(self, open_row: dict[str, Any]) -> str:
         """DAY force-flat is scoped to explicit DAY owners and never CRYPTO."""
@@ -4859,6 +4893,7 @@ class PaperAutopilotEngine:
             broker_snapshot = self._broker_open_symbols_snapshot()
             broker_open_syms = set(broker_snapshot.get("broker_open_symbols") or set())
             broker_position_by_symbol = dict(broker_snapshot.get("broker_position_by_symbol") or {})
+            legacy_activation_refresh = self._refresh_legacy_forward_activations(broker_position_by_symbol)
             broker_position_review_rows = [
                 {
                     "symbol": str(symbol).upper(),

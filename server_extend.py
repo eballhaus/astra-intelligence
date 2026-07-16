@@ -47675,11 +47675,13 @@ def unified_position_lifecycle_exit_truth_closure_diagnostic_v1(force: bool = Fa
     broker_snapshot_available = bool(broker)
     readiness = _exit_readiness_diagnostics_v1_payload({})
     contexts, context_audit = _position_intelligence_context_v1({"alpaca_paper_broker": broker})
+    legacy_activations = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("legacy_forward_activations") or {})
     readiness_by_symbol = {str(row.get("symbol") or "").upper(): row for row in (readiness.get("position_rows") or []) if isinstance(row, dict)}
     rows = []
     for position in _pladeu_open_positions_from_cached_status_v1({"alpaca_paper_broker": broker})[:100]:
         symbol = str(position.get("symbol") or "").upper()
-        overlay = {**dict(contexts.get(symbol) or {}), **dict(readiness_by_symbol.get(symbol) or {})}
+        activation = dict(legacy_activations.get(str(position.get("asset_id") or position.get("position_id") or symbol).upper()) or {})
+        overlay = {**activation, **dict(contexts.get(symbol) or {}), **dict(readiness_by_symbol.get(symbol) or {})}
         decision = build_unified_position_lifecycle_decision_v1(
             {**position, **overlay}, current_market_evidence=position,
             lifecycle_plan=overlay, evidence_context=overlay,
@@ -47688,6 +47690,14 @@ def unified_position_lifecycle_exit_truth_closure_diagnostic_v1(force: bool = Fa
     stage_rows = []
     repairable = []
     for row in rows:
+        baseline = dict(row.get("forward_baseline") or {})
+        horizon = dict(row.get("provisional_horizon") or {})
+        twin = dict(row.get("shadow_twin") or {})
+        stage_rows.extend([
+            {"position_id": row.get("position_id"), "symbol": row.get("symbol"), "cohort": row.get("cohort"), "lane": row.get("lane"), "horizon": horizon.get("provisional_horizon"), "stage": "forward_baseline", "state": "PASS" if baseline.get("baseline_state") == "LEGACY_FORWARD_BASELINE_COMPLETE" else "PASS_WITH_WARNINGS" if baseline.get("baseline_state") == "LEGACY_FORWARD_BASELINE_PARTIAL" else "NOT_APPLICABLE", "owner": "engine.astra_unified_position_lifecycle_v1.build_legacy_forward_baseline_v1", "blocker": (baseline.get("limitations") or [None])[0], "blocker_category": "evidence", "safe_repair_allowed": False},
+            {"position_id": row.get("position_id"), "symbol": row.get("symbol"), "cohort": row.get("cohort"), "lane": row.get("lane"), "horizon": horizon.get("provisional_horizon"), "stage": "provisional_horizon", "state": "PASS" if horizon.get("state") == "PROVISIONAL_HORIZON_ACTIVE" else "INSUFFICIENT_EVIDENCE", "owner": "engine.astra_unified_position_lifecycle_v1.estimate_legacy_provisional_horizon_v1", "blocker": None if horizon.get("state") == "PROVISIONAL_HORIZON_ACTIVE" else "holding_age_unavailable", "blocker_category": "evidence", "safe_repair_allowed": False},
+            {"position_id": row.get("position_id"), "symbol": row.get("symbol"), "cohort": row.get("cohort"), "lane": row.get("lane"), "horizon": horizon.get("provisional_horizon"), "stage": "position_shadow_twin", "state": "PASS" if twin.get("state") == "POSITION_SHADOW_TWIN_ACTIVE" else "BROKER_EVIDENCE_PENDING", "owner": "engine.astra_unified_position_lifecycle_v1.build_position_shadow_twin_v1", "blocker": (twin.get("limitations") or ["forward_activation_timestamp_required"])[0], "blocker_category": "evidence", "safe_repair_allowed": False},
+        ])
         for evidence in row.get("evidence_rows") or []:
             state = "PASS" if evidence.get("consumed") else "NOT_AVAILABLE"
             stage_rows.append({
@@ -47720,6 +47730,9 @@ def unified_position_lifecycle_exit_truth_closure_diagnostic_v1(force: bool = Fa
         "evidence_consumed_count": sum(int(row.get("evidence_consumed_count") or 0) for row in rows),
         "evidence_influenced_count": sum(int(row.get("evidence_influenced_count") or 0) for row in rows),
         "predictive_forecast_distribution": dict(Counter(str(row.get("predictive_forecast_state")) for row in rows)),
+        "forward_baseline_distribution": dict(Counter(str((row.get("forward_baseline") or {}).get("baseline_state")) for row in rows)),
+        "provisional_horizon_distribution": dict(Counter(str((row.get("provisional_horizon") or {}).get("provisional_horizon")) for row in rows)),
+        "shadow_twin_distribution": dict(Counter(str((row.get("shadow_twin") or {}).get("state")) for row in rows)),
         "policy_blocked_count": sum(1 for row in rows if row.get("policy_eligibility") == "POLICY_BLOCKED"),
         "evidence_insufficient_count": sum(1 for row in rows if row.get("exact_blocker") == "INSUFFICIENT_CURRENT_DIRECT_EVIDENCE"),
         "repairable_failures": repairable, "stage_rows": stage_rows, "position_rows": rows,
