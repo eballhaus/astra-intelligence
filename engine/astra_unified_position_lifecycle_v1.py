@@ -42,14 +42,108 @@ def classify_position_cohort_v1(position: Mapping[str, Any]) -> dict[str, Any]:
             "original_history_state": "UNAVAILABLE" if cohort.startswith("LEGACY") else "AVAILABLE"}
 
 
+def _evidence_row(
+    name: str,
+    *,
+    available: bool,
+    matched: bool = False,
+    evidence_class: str = "UNAVAILABLE",
+    owner: str,
+    weight: float = 0.0,
+    influence: str = "NONE",
+    limitation: str | None = None,
+) -> dict[str, Any]:
+    """Create an honest source-consumption row for the lifecycle ledger."""
+    retrieved = bool(available)
+    weighted = bool(matched and weight > 0.0)
+    consumed = bool(weighted)
+    return {
+        "source": name,
+        "owner": owner,
+        "evidence_class": evidence_class if available else "UNAVAILABLE",
+        "available": bool(available),
+        "retrieved": retrieved,
+        "matched": bool(matched),
+        "weighted": weighted,
+        "consumed": consumed,
+        "influenced_decision": bool(consumed and influence != "NONE"),
+        "influence_weight": round(max(0.0, min(1.0, weight)), 4),
+        "influence_direction": influence,
+        "freshness": "CURRENT_OR_CACHED_BOUNDED" if available else "UNAVAILABLE",
+        "limitation": limitation,
+        "consumer_acknowledgements": {
+            "RETRIEVED_FOR_POSITION": retrieved,
+            "MATCHED_TO_POSITION": bool(matched),
+            "WEIGHTED_FOR_LIFECYCLE": weighted,
+            "CONSUMED_BY_UNIFIED_DECISION": consumed,
+            "INFLUENCED_CLASSIFICATION": bool(consumed and influence != "NONE"),
+            "PERSISTED_FOR_OUTCOME_CALIBRATION": consumed,
+        },
+    }
+
+
+def retrieve_position_lifecycle_evidence_v1(
+    position: Mapping[str, Any],
+    *,
+    lifecycle_plan: Mapping[str, Any] | None = None,
+    evidence_context: Mapping[str, Any] | None = None,
+    now: datetime | None = None,
+    max_records_per_source: int = 25,
+) -> dict[str, Any]:
+    """Consume the existing bounded position-intelligence context once.
+
+    This owner does not scan stores or fetch market data.  Its caller supplies
+    the canonical, bounded context assembled by ``_position_intelligence_context_v1``.
+    That keeps GET diagnostics read-only and makes unavailable per-position
+    evidence explicit rather than silently treating aggregate evidence as a match.
+    """
+    del now, max_records_per_source  # The upstream context owns bounded reads and freshness.
+    row, plan, context = dict(position or {}), dict(lifecycle_plan or {}), dict(evidence_context or {})
+    direct = bool(row.get("current_price") or row.get("market_price") or row.get("unrealized_plpc") is not None)
+    profile = dict(context.get("symbol_profile") or context.get("symbol_behavior") or {})
+    lifecycle = bool(context.get("historical_similarity") or context.get("excursion"))
+    replay = bool(context.get("replay_evidence"))
+    replacement = dict(context.get("replacement_analysis") or {})
+    opportunity = bool(context.get("opportunity_cost_state"))
+    lineage = dict(context.get("lineage") or {})
+    has_plan = bool(plan or lineage.get("recommendation_id") or context.get("expected_hold_duration_days"))
+    rows = [
+        _evidence_row("current_direct", available=direct, matched=direct, evidence_class="CURRENT_DIRECT", owner="alpaca_paper_status_v1.positions", weight=1.0 if direct else 0.0, influence="PRIMARY_CLASSIFICATION", limitation=None if direct else "current_quote_or_position_return_missing"),
+        _evidence_row("lifecycle_plan", available=has_plan, matched=has_plan, evidence_class="CURRENT_CONTRACT" if has_plan else "UNAVAILABLE", owner="broker_truth_records_v1/position_lineage", weight=0.9 if has_plan else 0.0, influence="HORIZON_AND_CONTEXT", limitation="legacy_position_without_original_contract" if not has_plan else None),
+        _evidence_row("symbol_behavior", available=bool(profile), matched=bool(profile), evidence_class="CURRENT_SYMBOL_DIRECT" if profile else "UNAVAILABLE", owner="symbol_behavior_profiles_v1", weight=0.45 if profile else 0.0, influence="CONFIDENCE_CONTEXT", limitation="symbol_profile_unavailable" if not profile else None),
+        _evidence_row("historical_lifecycle", available=lifecycle, matched=lifecycle, evidence_class="HISTORICAL_SYMBOL_SUPPORTED" if lifecycle else "UNAVAILABLE", owner="trade_lifecycle_excursion_v2.summary_index", weight=0.35 if lifecycle else 0.0, influence="CONTEXTUAL_CALIBRATION", limitation="no_bounded_symbol_lifecycle_match" if not lifecycle else None),
+        _evidence_row("replay", available=replay, matched=replay, evidence_class="REPLAY_SUPPORTED" if replay else "UNAVAILABLE", owner="replay_counterfactual_learning_v2.summary_index", weight=0.25 if replay else 0.0, influence="CONTEXTUAL_CALIBRATION", limitation="no_bounded_symbol_replay_match" if not replay else None),
+        _evidence_row("shadow", available=bool(context.get("shadow_evidence")), matched=bool(context.get("shadow_evidence")), evidence_class="SHADOW_SUPPORTED", owner="realistic_shadow_evidence_learning_lab_v1", weight=0.20 if context.get("shadow_evidence") else 0.0, influence="CONTEXTUAL_CALIBRATION", limitation="no_position_specific_shadow_match" if not context.get("shadow_evidence") else None),
+        _evidence_row("taught_lessons", available=bool(context.get("taught_lessons")), matched=bool(context.get("taught_lessons")), evidence_class="TAUGHT_SUPPORTED", owner="canonical_lifecycle_lessons_v1", weight=0.20 if context.get("taught_lessons") else 0.0, influence="CONTEXTUAL_CALIBRATION", limitation="no_position_specific_taught_lesson_match" if not context.get("taught_lessons") else None),
+        _evidence_row("opportunity_cost", available=opportunity, matched=opportunity, evidence_class="AGGREGATE_ADVISORY", owner="opportunity_cost_learning_v1.summary_index", weight=0.30 if opportunity else 0.0, influence="REPLACEMENT_CONTEXT", limitation="opportunity_cost_not_available" if not opportunity else None),
+        _evidence_row("replacement", available=bool(replacement), matched=bool(replacement.get("candidate")), evidence_class="CURRENT_CANDIDATE_DIRECT" if replacement.get("candidate") else "AGGREGATE_ADVISORY", owner="paper_opportunity_allocation_engine_v1", weight=0.40 if replacement.get("candidate") else 0.0, influence="REPLACEMENT_CONTEXT", limitation=str(replacement.get("reason") or "no_eligible_replacement") if not replacement.get("candidate") else None),
+    ]
+    return {
+        "position_id": _text(row.get("asset_id") or row.get("position_id") or row.get("symbol")),
+        "symbol": _text(row.get("symbol")).upper(),
+        "evidence_rows": rows,
+        "retrieved_count": sum(1 for item in rows if item["retrieved"]),
+        "matched_count": sum(1 for item in rows if item["matched"]),
+        "weighted_count": sum(1 for item in rows if item["weighted"]),
+        "consumed_count": sum(1 for item in rows if item["consumed"]),
+        "influenced_count": sum(1 for item in rows if item["influenced_decision"]),
+        "unavailable_sources": [item["source"] for item in rows if not item["available"]],
+        "context": context,
+    }
+
+
 def build_unified_position_lifecycle_decision_v1(
     position: Mapping[str, Any], *, current_market_evidence: Mapping[str, Any] | None = None,
     lifecycle_plan: Mapping[str, Any] | None = None, learned_evidence: Mapping[str, Any] | None = None,
     shadow_evidence: Mapping[str, Any] | None = None, replacement_candidates: Sequence[Mapping[str, Any]] | None = None,
-    now: datetime | None = None,
+    now: datetime | None = None, evidence_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return one evidence-labelled, advisory lifecycle decision per position."""
     row, market, plan, learned, shadow = dict(position or {}), dict(current_market_evidence or {}), dict(lifecycle_plan or {}), dict(learned_evidence or {}), dict(shadow_evidence or {})
+    context = {**learned, **dict(evidence_context or {})}
+    if shadow:
+        context["shadow_evidence"] = shadow
+    evidence = retrieve_position_lifecycle_evidence_v1(row, lifecycle_plan=plan, evidence_context=context, now=now)
     cohort = classify_position_cohort_v1(row)
     lane = _text(row.get("lane_id") or plan.get("lane") or "SWING").upper()
     original_horizon = _text(row.get("intended_horizon") or row.get("paper_entry_horizon_style") or plan.get("intended_horizon"))
@@ -64,24 +158,32 @@ def build_unified_position_lifecycle_decision_v1(
     elif ret > 0 and _num(row.get("profit_giveback_pct")) and (_num(row.get("profit_giveback_pct")) or 0) > 2: state = "PROTECT_PROFIT"
     elif days >= 30: state = "EXIT_REVIEW"
     else: state = "HOLD_WITH_WATCH" if days >= 15 else "HOLD_AS_PLANNED"
-    direct = bool(market or row.get("current_price") or row.get("market_price"))
-    evidence_rows = [
-        {"source_system": "broker_position", "evidence_class": "CURRENT_DIRECT", "retrieved": True, "matched": True, "consumed": True, "influenced_decision": True},
-        {"source_system": "lifecycle_plan", "evidence_class": "CURRENT_CONTRACT" if plan else "UNAVAILABLE", "retrieved": bool(plan), "matched": bool(plan), "consumed": bool(plan), "influenced_decision": bool(plan)},
-        {"source_system": "learned_evidence", "evidence_class": "HISTORICAL_SUPPORTED" if learned else "UNAVAILABLE", "retrieved": bool(learned), "matched": bool(learned), "consumed": bool(learned), "influenced_decision": bool(learned)},
-        {"source_system": "shadow_replay", "evidence_class": "SHADOW_SUPPORTED" if shadow else "UNAVAILABLE", "retrieved": bool(shadow), "matched": bool(shadow), "consumed": bool(shadow), "influenced_decision": bool(shadow)},
-    ]
+    direct = bool(market or next((item for item in evidence["evidence_rows"] if item["source"] == "current_direct" and item["available"]), None))
     policy_eligible = state in {"PROTECT_PROFIT", "THESIS_BROKEN", "CONTROLLED_LOSS_ACCEPTABLE", "REPLACE_CANDIDATE", "DUST_CLEANUP_REVIEW"}
     blocker = "HUMAN_POLICY_DECISION_REQUIRED" if policy_eligible else "ADVISORY_CLASSIFICATION_ONLY"
     if not direct: blocker = "INSUFFICIENT_CURRENT_DIRECT_EVIDENCE"
     horizon_state = "HORIZON_EXPIRED" if original_horizon == "day_trade" and days > 1.25 else "ORIGINAL_HORIZON_MAINTAINED" if original_horizon else "HORIZON_EVIDENCE_INSUFFICIENT"
+    profile = dict(context.get("symbol_profile") or context.get("symbol_behavior") or {})
+    expected_upside = profile.get("expected_upside_range") or context.get("expected_upside_range")
+    expected_downside = profile.get("expected_downside_range") or context.get("expected_downside_range")
+    forecast_complete = bool(direct and (expected_upside or expected_downside))
+    confidence = min(0.9, round(0.25 + sum(item["influence_weight"] for item in evidence["evidence_rows"] if item["consumed"]) / 4.0, 3))
+    if not direct:
+        confidence = 0.0
     return {"position_id": cohort["position_id"], "symbol": _text(row.get("symbol")).upper(), "cohort": cohort["cohort"], "lane": lane,
             "original_horizon": original_horizon or "UNKNOWN", "current_recommended_horizon": original_horizon or "UNKNOWN", "horizon_state": horizon_state,
             "lifecycle_plan_state": "AVAILABLE" if plan else "LEGACY_FORWARD_ONLY", "lifecycle_stage": "POSITION_ACTIVE", "classification": state,
             "consensus_state": "LOW_CONFIDENCE" if not direct else "CONSENSUS_EXIT_REVIEW" if state in {"EXIT_REVIEW", "THESIS_BROKEN"} else "CONSENSUS_HOLD_WITH_WATCH",
-            "hold_forward_value": "UNKNOWN" if ret is None else round(ret, 4), "exit_now_forward_value": ret, "replacement_forward_value": "UNKNOWN",
-            "shadow_guidance": "SHADOW_INSUFFICIENT" if not shadow else "SHADOW_SUPPORTS_EXIT_REVIEW" if state == "EXIT_REVIEW" else "SHADOW_SUPPORTS_HOLD",
-            "evidence_rows": evidence_rows, "evidence_consumed_count": sum(1 for item in evidence_rows if item["consumed"]),
+            "predictive_forecast_state": "FORECAST_COMPLETE" if forecast_complete else "INSUFFICIENT_EVIDENCE",
+            "predicted_time_to_peak_range": context.get("predicted_time_to_peak_range"), "expected_remaining_upside_range": expected_upside,
+            "expected_downside_from_hold_range": expected_downside, "recovery_probability": context.get("recovery_probability"),
+            "giveback_probability": context.get("giveback_probability"), "forecast_confidence": confidence,
+            "hold_forward_value": "UNKNOWN" if ret is None else round(ret, 4), "exit_now_forward_value": ret,
+            "partial_protection_forward_value": "UNKNOWN", "replacement_forward_value": context.get("replacement_analysis", {}).get("expected_advantage") if isinstance(context.get("replacement_analysis"), dict) else "UNKNOWN",
+            "shadow_guidance": "SHADOW_INSUFFICIENT" if not context.get("shadow_evidence") else "SHADOW_SUPPORTS_EXIT_REVIEW" if state == "EXIT_REVIEW" else "SHADOW_SUPPORTS_HOLD",
+            "evidence_rows": evidence["evidence_rows"], "evidence_retrieved_count": evidence["retrieved_count"], "evidence_matched_count": evidence["matched_count"],
+            "evidence_weighted_count": evidence["weighted_count"], "evidence_consumed_count": evidence["consumed_count"], "evidence_influenced_count": evidence["influenced_count"],
+            "unavailable_evidence_sources": evidence["unavailable_sources"],
             "policy_eligibility": "POLICY_BLOCKED" if policy_eligible else "ADVISORY_ONLY", "paper_action_ready": False,
             "exact_blocker": blocker, "next_review": "next_session" if lane != "CRYPTO" else "continuous_crypto_review",
             "monitoring_intensity": "HEIGHTENED_MONITORING" if state in {"EXIT_REVIEW", "THESIS_BROKEN"} else "NORMAL_MONITORING",

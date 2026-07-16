@@ -46693,7 +46693,7 @@ def _position_intelligence_context_v1(statuses: dict | None = None) -> tuple[dic
     """Join bounded symbol-level evidence to a fresh broker position snapshot."""
     current = dict(statuses or {})
     broker = _cached_alpaca_paper_status_payload(current)
-    positions = [dict(row) for row in (broker.get("positions") or []) if isinstance(row, dict)][:100]
+    positions = _pladeu_open_positions_from_cached_status_v1({"alpaca_paper_broker": broker})[:100]
     registry = _broker_truth_open_position_rows_v1()
     registry_by_symbol = {
         str(row.get("symbol") or "").upper(): dict(row)
@@ -47674,25 +47674,55 @@ def unified_position_lifecycle_exit_truth_closure_diagnostic_v1(force: bool = Fa
     broker = _cached_alpaca_paper_status_payload({})
     broker_snapshot_available = bool(broker)
     readiness = _exit_readiness_diagnostics_v1_payload({})
+    contexts, context_audit = _position_intelligence_context_v1({"alpaca_paper_broker": broker})
     readiness_by_symbol = {str(row.get("symbol") or "").upper(): row for row in (readiness.get("position_rows") or []) if isinstance(row, dict)}
     rows = []
     for position in _pladeu_open_positions_from_cached_status_v1({"alpaca_paper_broker": broker})[:100]:
         symbol = str(position.get("symbol") or "").upper()
-        overlay = readiness_by_symbol.get(symbol) or {}
-        decision = build_unified_position_lifecycle_decision_v1({**position, **overlay})
+        overlay = {**dict(contexts.get(symbol) or {}), **dict(readiness_by_symbol.get(symbol) or {})}
+        decision = build_unified_position_lifecycle_decision_v1(
+            {**position, **overlay}, current_market_evidence=position,
+            lifecycle_plan=overlay, evidence_context=overlay,
+        )
         rows.append(decision)
-    repairable = []  # Missing legacy evidence and policy approval are explicit non-technical states.
+    stage_rows = []
+    repairable = []
+    for row in rows:
+        for evidence in row.get("evidence_rows") or []:
+            state = "PASS" if evidence.get("consumed") else "NOT_AVAILABLE"
+            stage_rows.append({
+                "position_id": row.get("position_id"), "symbol": row.get("symbol"), "cohort": row.get("cohort"),
+                "lane": row.get("lane"), "horizon": row.get("original_horizon"), "stage": f"evidence:{evidence.get('source')}",
+                "state": state, "owner": evidence.get("owner"), "producer": evidence.get("owner"),
+                "consumer": "engine.astra_unified_position_lifecycle_v1", "actual_value": evidence.get("consumed"),
+                "expected_value": True, "blocker": evidence.get("limitation"),
+                "blocker_category": "evidence" if state != "PASS" else None,
+                "safe_repair_allowed": False if state != "PASS" else None,
+            })
+        action_state = "HUMAN_POLICY_DECISION_REQUIRED" if row.get("policy_eligibility") == "POLICY_BLOCKED" else "NOT_APPLICABLE"
+        stage_rows.extend([
+            {"position_id": row.get("position_id"), "symbol": row.get("symbol"), "cohort": row.get("cohort"), "lane": row.get("lane"), "horizon": row.get("original_horizon"), "stage": "policy_validation", "state": action_state, "owner": "PaperAutopilot.authorized_lane_exit_pending", "producer": "unified_position_lifecycle", "consumer": "PaperAutopilot", "blocker": row.get("exact_blocker"), "blocker_category": "policy", "safe_repair_allowed": False},
+            {"position_id": row.get("position_id"), "symbol": row.get("symbol"), "cohort": row.get("cohort"), "lane": row.get("lane"), "horizon": row.get("original_horizon"), "stage": "paper_order_readiness", "state": action_state, "owner": "PaperAutopilot", "producer": "PaperAutopilot.authorized_lane_exit_pending", "consumer": "AlpacaPaperBroker", "blocker": row.get("exact_blocker"), "blocker_category": "policy", "safe_repair_allowed": False},
+            {"position_id": row.get("position_id"), "symbol": row.get("symbol"), "cohort": row.get("cohort"), "lane": row.get("lane"), "horizon": row.get("original_horizon"), "stage": "broker_ack_fill_truth", "state": "EXTERNAL_BROKER_PENDING", "owner": "PaperAutopilot", "producer": "AlpacaPaperBroker", "consumer": "broker_truth_records_v1", "blocker": "NO_POLICY_AUTHORIZED_EXIT_ORDER_SUBMITTED", "blocker_category": "broker", "safe_repair_allowed": False},
+        ])
     status = "PASS" if broker_snapshot_available else "EXTERNAL_BROKER_PENDING"
     return {
         "endpoint": "/api/unified_position_lifecycle_exit_truth_closure_diagnostic_v1", "status": status,
         "generated_at": _now_utc_iso(), "positions_total": len(rows),
         "broker_snapshot_available": broker_snapshot_available,
         "broker_snapshot_state": "CACHED_BROKER_STATE_AVAILABLE" if broker_snapshot_available else "BROKER_STATE_UNAVAILABLE_FAIL_CLOSED",
+        "evidence_context_audit": context_audit,
         "cohort_distribution": dict(Counter(str(row.get("cohort")) for row in rows)),
         "classification_distribution": dict(Counter(str(row.get("classification")) for row in rows)),
+        "evidence_retrieved_count": sum(int(row.get("evidence_retrieved_count") or 0) for row in rows),
+        "evidence_matched_count": sum(int(row.get("evidence_matched_count") or 0) for row in rows),
+        "evidence_weighted_count": sum(int(row.get("evidence_weighted_count") or 0) for row in rows),
+        "evidence_consumed_count": sum(int(row.get("evidence_consumed_count") or 0) for row in rows),
+        "evidence_influenced_count": sum(int(row.get("evidence_influenced_count") or 0) for row in rows),
+        "predictive_forecast_distribution": dict(Counter(str(row.get("predictive_forecast_state")) for row in rows)),
         "policy_blocked_count": sum(1 for row in rows if row.get("policy_eligibility") == "POLICY_BLOCKED"),
         "evidence_insufficient_count": sum(1 for row in rows if row.get("exact_blocker") == "INSUFFICIENT_CURRENT_DIRECT_EVIDENCE"),
-        "repairable_failures": repairable, "position_rows": rows,
+        "repairable_failures": repairable, "stage_rows": stage_rows, "position_rows": rows,
         "canonical_position_decision_owner": "engine.astra_unified_position_lifecycle_v1.build_unified_position_lifecycle_decision_v1",
         "canonical_exit_policy_owner": "PaperAutopilot.authorized_lane_exit_pending", "read_only": True,
         "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "full_history_scan_count": 0,
@@ -62856,6 +62886,7 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
     broker = dict(current.get("alpaca_paper_status_v1") or current.get("alpaca_paper_broker") or {})
     rows = [dict(row) for row in (broker.get("positions") or []) if isinstance(row, dict)]
     utilization = _position_intelligence_utilization_payload_v1(current, persist=False)
+    lifecycle_closure = unified_position_lifecycle_exit_truth_closure_diagnostic_v1(force=False)
     review = dict(utilization.get("portfolio_review") or build_portfolio_release_review(rows))
     enrichment = _candidate_intelligence_enrichment_contract_diagnostic_v1(force=False)
     findings: list[dict] = []
@@ -62939,6 +62970,14 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "evidence": {"sources": unavailable_consumers, "coverage": retrieval},
             "recommended_action": "preserve advisory-only consumption until position-level lineage exists; do not infer links from dashboard data",
         })
+    if lifecycle_closure.get("repairable_failures"):
+        findings.append({
+            "severity": "high",
+            "classification": "lifecycle_connection_defect",
+            "issue": "unified_position_lifecycle_repairable_failure",
+            "evidence": lifecycle_closure.get("repairable_failures"),
+            "recommended_action": "repair the canonical lifecycle evidence or lineage join; do not change exit policy",
+        })
     lineage_confidence = dict(lineage_detail.get("coverage_by_confidence_class") or {})
     excursion_coverage = dict(lineage_detail.get("coverage_by_excursion_class") or {})
     if int(_to_float(lineage_confidence.get("NOT_RECOVERABLE"), 0.0)) > 0:
@@ -63002,6 +63041,10 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "retrieval_coverage": retrieval,
             "differentiation_audit": differentiation,
             "available_but_not_consumed": unavailable_consumers,
+        },
+        "unified_position_lifecycle_exit_truth_closure_v1": {
+            key: lifecycle_closure.get(key)
+            for key in ("status", "positions_total", "evidence_retrieved_count", "evidence_consumed_count", "predictive_forecast_distribution", "policy_blocked_count", "repairable_failures")
         },
         "position_lineage_excursion_replacement_v1": {
             "coverage_by_confidence_class": lineage_confidence,
