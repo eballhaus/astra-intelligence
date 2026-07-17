@@ -30,6 +30,12 @@ safe_kill_pid() {
     log_info "skip kill: non-numeric pid='${pid}'"
     return 0
   fi
+  local command
+  command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+  if [[ "${command}" != *"uvicorn server:app"* && "${command}" != *"engine.paper_worker"* && "${command}" != *"paper_worker.py"* && "${command}" != *"backend_watchdog"* && "${command}" != *"start_astra_backend.sh"* && "${command}" != *"npm run dev"* && "${command}" != *"vite"* ]]; then
+    log_info "skip kill: pid=${pid} is not a recognized Astra runtime process"
+    return 0
+  fi
   kill "${pid}" >/dev/null 2>&1 || true
   log_info "kill attempted for pid=${pid}"
 }
@@ -115,7 +121,7 @@ pkill -f "npm run dev -- --host .* --port 5173" >/dev/null 2>&1 || true
 if command -v lsof >/dev/null 2>&1; then
   for port in 5173 5174 5175 8000; do
     for pid in $(lsof -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true); do
-      kill "${pid}" >/dev/null 2>&1 || true
+      safe_kill_pid "${pid}"
     done
   done
 fi

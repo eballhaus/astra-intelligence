@@ -17541,27 +17541,31 @@ def _paper_autopilot_sync_worker_artifacts():
     if str(os.getenv("ASTRA_PAPER_EXTERNAL_WORKER", "0")).strip().lower() in {"1", "true", "yes", "on"}:
         return
     try:
-        status = PAPER_AUTOPILOT.status()
-        control = PAPER_AUTOPILOT.control_status()
+        liveness = dict(PAPER_AUTOPILOT.worker_liveness_status() or {})
     except Exception:
         return
-    thread_alive = bool(getattr(PAPER_AUTOPILOT, "_thread", None) and PAPER_AUTOPILOT._thread.is_alive())
+    runtime_state = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
+    thread_alive = bool(liveness.get("running"))
     now_iso = _now_utc_iso()
-    last_cycle_utc = str(status.get("last_cycle_utc") or "")
+    last_cycle_utc = str(liveness.get("last_cycle_utc") or "")
     if last_cycle_utc and last_cycle_utc != str(_PAPER_INPROC_HEARTBEAT_STATE.get("last_cycle_utc") or ""):
         _PAPER_INPROC_HEARTBEAT_STATE["last_cycle_utc"] = last_cycle_utc
         _PAPER_INPROC_HEARTBEAT_STATE["cycle_count"] = int(_to_float(_PAPER_INPROC_HEARTBEAT_STATE.get("cycle_count"), 0.0)) + 1
-    cycle_count = int(_to_float(_PAPER_INPROC_HEARTBEAT_STATE.get("cycle_count"), 0.0))
-    cycle_summary = dict(status.get("last_cycle_summary") or {})
+    cycle_count = max(int(_to_float(_PAPER_INPROC_HEARTBEAT_STATE.get("cycle_count"), 0.0)), int(_to_float(liveness.get("worker_cycle_count"), 0.0)))
+    cycle_summary = dict(runtime_state.get("last_cycle_summary") or {})
     hb_payload = {
-        "updated_at": now_iso,
+        "updated_at": str(liveness.get("worker_heartbeat_at") or now_iso),
         "pid": int(os.getpid()),
         "running": bool(thread_alive),
-        "autopilot_enabled": bool(control.get("autopilot_enabled", False)),
+        "autopilot_enabled": bool(liveness.get("autopilot_enabled", False)),
         "cycle_count": int(cycle_count),
         "last_cycle_utc": last_cycle_utc,
-        "last_error": str(status.get("last_error") or ""),
-        "interval_seconds": int(_to_float(control.get("interval_seconds"), 45.0)),
+        "last_error": str(liveness.get("worker_cycle_error") or ""),
+        "interval_seconds": int(_to_float(liveness.get("interval_seconds"), 45.0)),
+        "worker_generation_id": str(liveness.get("worker_generation_id") or ""),
+        "worker_cycle_started_at": str(liveness.get("worker_cycle_started_at") or ""),
+        "worker_cycle_completed_at": str(liveness.get("worker_cycle_completed_at") or ""),
+        "worker_cycle_phase": str(liveness.get("worker_cycle_phase") or "not_started"),
         "replay_training_enabled": bool(False),
         "replay_interval_seconds": None,
         "replay_runs_per_cycle": 0,
@@ -37956,9 +37960,10 @@ def _paper_worker_status_payload():
     else:
         operational_mode = "degraded"
     learning_loop_summary = _learning_loop_summary_fast()
-    closed_trade_learning_feed_available = bool(
-        _to_float((PAPER_AUTOPILOT.status() or {}).get("total_closed_trades"), 0.0) > 0
-    )
+    # This status endpoint must stay read-only and bounded.  Calling the full
+    # autopilot status here performs broker reconciliation reads and can turn a
+    # health probe into a long-running dependency of the worker itself.
+    closed_trade_learning_feed_available = bool(hb.get("last_trade_closed_timestamp"))
     lifecycle_learning_active = bool(
         running_effective
         and bool(hb.get("autopilot_enabled", False))
@@ -37978,6 +37983,10 @@ def _paper_worker_status_payload():
         "operational_mode": operational_mode,
         "pid": pid if pid > 0 else None,
         "last_cycle_utc": hb.get("last_cycle_utc"),
+        "worker_generation_id": hb.get("worker_generation_id"),
+        "worker_cycle_started_at": hb.get("worker_cycle_started_at"),
+        "worker_cycle_completed_at": hb.get("worker_cycle_completed_at"),
+        "worker_cycle_phase": hb.get("worker_cycle_phase"),
         "last_error": hb.get("last_error"),
         "autopilot_enabled": bool(hb.get("autopilot_enabled")),
         "replay_training_enabled": bool(hb.get("replay_training_enabled")),
@@ -47870,7 +47879,16 @@ def _legacy_swing_canary_activation_readiness_payload_v1() -> dict:
     required = _legacy_swing_required_evidence_payload_v1()
     market = _broker_market_evidence_payload_v1()
     fmp = _fmp_production_consumption_payload_v1()
-    governance = _astra_governance_oversight_v1_fast_audit_payload()
+    # Readiness is polled during normal worker activity.  Use the canonical
+    # in-scope safety audits rather than recursively building the broad
+    # Governance bundle, which can fan out into unrelated dashboard work.
+    historical = _legacy_swing_historical_bar_momentum_payload_v1()
+    runtime_reliability = _astra_runtime_worker_reliability_payload_v1()
+    governance = {
+        "critical_findings_count": int(historical.get("governance_critical") or 0),
+        "high_findings_count": int(historical.get("governance_high") or 0)
+        + (0 if runtime_reliability.get("overall_status") in {"PASS", "PASS_WITH_WARNINGS"} else 1),
+    }
     safety = dict(getattr(PAPER_AUTOPILOT, "_alpaca_safety_snapshot", lambda: {})() or {})
     candidate_rows, quality_rows = [], []
     for activation_id, raw in sorted(reviews.items()):
@@ -48209,17 +48227,19 @@ def _broker_market_evidence_payload_v1() -> dict:
     for family in families:
         family_activity = dict((activity.get("families") or {}).get(family) or {})
         family_rows = [dict((dict(bundle or {})).get(family) or {}) for bundle in records.values() if dict((dict(bundle or {})).get(family) or {})]
-        success = [row for row in family_rows if str(row.get("response_state") or "").upper() == "SUCCESS" and str(row.get("freshness_state") or "").upper() == "CURRENT" and str(row.get("quality_state") or "").upper() not in {"INSUFFICIENT", "INVALID", "INVALID_SPREAD"}]
+        insufficient_quality = {"INSUFFICIENT", "CURRENT_INSUFFICIENT", "STALE_INSUFFICIENT", "EMPTY", "INVALID", "INVALID_SPREAD", "PROVIDER_FAILED"}
+        success = [row for row in family_rows if str(row.get("response_state") or "").upper() == "SUCCESS" and str(row.get("freshness_state") or "").upper() == "CURRENT" and str(row.get("quality_state") or "").upper() not in insufficient_quality]
         missing = max(0, len(activations) - len(success))
         for row in family_rows:
-            state_name = "PASS" if row in success and row.get("records_stored") and row.get("consumer_acknowledged") and row.get("influence_state") else "LEGITIMATELY_UNAVAILABLE" if str(row.get("response_state") or "").upper() in {"RATE_LIMITED", "TIMEOUT", "MARKET_CLOSED", "PROVIDER_ERROR", "AUTHENTICATION_FAILED", "ENTITLEMENT_BLOCKED", "UNSUPPORTED_ENDPOINT", "EMPTY_RESPONSE", "MALFORMED_RESPONSE"} or str(row.get("quality_state") or "").upper() == "INSUFFICIENT" else "FAILED"
+            quality = str(row.get("quality_state") or "").upper()
+            state_name = "PASS" if row in success and row.get("records_stored") and row.get("consumer_acknowledged") and row.get("influence_state") else "LEGITIMATELY_UNAVAILABLE" if str(row.get("response_state") or "").upper() in {"RATE_LIMITED", "TIMEOUT", "MARKET_CLOSED", "PROVIDER_ERROR", "AUTHENTICATION_FAILED", "ENTITLEMENT_BLOCKED", "UNSUPPORTED_ENDPOINT", "EMPTY_RESPONSE", "MALFORMED_RESPONSE"} or quality in insufficient_quality else "FAILED"
             if str(row.get("response_state") or "").upper() == "SUCCESS" and not row.get("records_stored"):
                 state_name = "NOT_STORED"
             elif str(row.get("response_state") or "").upper() == "SUCCESS" and not row.get("consumer_acknowledged"):
                 state_name = "NOT_ACKNOWLEDGED"
             elif str(row.get("response_state") or "").upper() == "SUCCESS" and not row.get("influence_state"):
                 state_name = "NOT_INFLUENCING"
-            item = {"symbol": row.get("symbol"), "activation_id": row.get("activation_id"), "evidence_type": "MOMENTUM" if family == "HISTORICAL_BARS" else "LIQUIDITY", "request_family": family, "provider": row.get("provider"), "stage": "broker_market_evidence", "owner": "AlpacaPaperBroker", "producer": "PaperAutopilot._refresh_legacy_swing_broker_market_evidence", "consumer": row.get("consumer") or "build_legacy_swing_required_evidence_v1", "store": "paper_autopilot_state.json:legacy_swing_market_evidence", "join_key": row.get("record_id"), "expected_state": "STORED_ACKNOWLEDGED_INFLUENCING", "actual_state": state_name, "exact_blocker": row.get("source_error") or ("insufficient_current_bars" if str(row.get("quality_state") or "").upper() == "INSUFFICIENT" else None), "blocker_category": "external" if state_name == "LEGITIMATELY_UNAVAILABLE" else "technical" if state_name != "PASS" else None, "technical_or_external": "external" if state_name == "LEGITIMATELY_UNAVAILABLE" else "technical" if state_name != "PASS" else "pass", "safe_repair_allowed": state_name in {"FAILED", "NOT_STORED", "NOT_ACKNOWLEDGED", "NOT_INFLUENCING"}, "exact_safe_repair": "persist and consume the canonical broker market record" if state_name != "PASS" else None, "next_refresh_at": row.get("next_refresh_at")}
+            item = {"symbol": row.get("symbol"), "activation_id": row.get("activation_id"), "evidence_type": "MOMENTUM" if family == "HISTORICAL_BARS" else "LIQUIDITY", "request_family": family, "provider": row.get("provider"), "stage": "broker_market_evidence", "owner": "AlpacaPaperBroker", "producer": "PaperAutopilot._refresh_legacy_swing_broker_market_evidence", "consumer": row.get("consumer") or "build_legacy_swing_required_evidence_v1", "store": "paper_autopilot_state.json:legacy_swing_market_evidence", "join_key": row.get("record_id"), "expected_state": "STORED_ACKNOWLEDGED_INFLUENCING", "actual_state": state_name, "exact_blocker": row.get("source_error") or row.get("latest_source_error") or ("insufficient_current_bars" if quality in {"INSUFFICIENT", "CURRENT_INSUFFICIENT", "STALE_INSUFFICIENT", "EMPTY"} else None), "blocker_category": "external" if state_name == "LEGITIMATELY_UNAVAILABLE" else "technical" if state_name != "PASS" else None, "technical_or_external": "external" if state_name == "LEGITIMATELY_UNAVAILABLE" else "technical" if state_name != "PASS" else "pass", "safe_repair_allowed": state_name in {"FAILED", "NOT_STORED", "NOT_ACKNOWLEDGED", "NOT_INFLUENCING"}, "exact_safe_repair": "persist and consume the canonical broker market record" if state_name != "PASS" else None, "next_refresh_at": row.get("next_refresh_at"), "quality_state": quality, "replacement_reason": row.get("replacement_reason")}
             rows.append(item)
             if item["safe_repair_allowed"]:
                 repairable.append(item)
@@ -48248,6 +48268,185 @@ def legacy_swing_market_evidence_acquisition_audit_v1():
 @router.get("/api/legacy_swing_market_evidence_closure_diagnostic_v1")
 def legacy_swing_market_evidence_closure_diagnostic_v1():
     return {"endpoint": "/api/legacy_swing_market_evidence_closure_diagnostic_v1", **_broker_market_evidence_payload_v1(), "stage_chain": ["evidence_requirement", "worker_trigger", "broker_market_data_request", "provider_response", "validation", "normalization", "storage", "momentum_or_liquidity_builder", "classifier_acknowledgement", "classification_influence"], **_safety_flags_v1()}
+
+
+def _astra_runtime_worker_reliability_payload_v1() -> dict:
+    """Inspect persisted worker state and local processes without side effects."""
+    state = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
+    runtime = dict(state.get("legacy_swing_canary") or {})
+    activity = dict(runtime.get("market_activity") or state.get("legacy_swing_market_activity") or {})
+    scheduler = dict(activity.get("scheduler") or {})
+    heartbeat = _paper_worker_heartbeat_snapshot_v1()
+    try:
+        result = subprocess.run(["lsof", "-nP", "-iTCP:8000", "-sTCP:LISTEN", "-Fp"], capture_output=True, text=True, timeout=2.0)
+        listener_pids = [int(line[1:]) for line in str(result.stdout or "").splitlines() if line.startswith("p") and line[1:].isdigit()]
+    except Exception:
+        listener_pids = []
+    owners = []
+    for pid in sorted(set(listener_pids)):
+        try:
+            proc = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True, timeout=1.5)
+            command = str(proc.stdout or "").strip().lower()
+        except Exception:
+            command = ""
+        owners.append({"pid": pid, "owner_type": "ASTRA_BACKEND" if "uvicorn" in command and "server:app" in command else "UNEXPECTED_PROCESS"})
+    backend_count = sum(1 for owner in owners if owner["owner_type"] == "ASTRA_BACKEND")
+    per_symbol = dict(scheduler.get("per_symbol") or {})
+    max_symbols_per_cycle = max(1, int(_to_float(activity.get("max_symbols_per_cycle"), 3.0)))
+    starvation_cycle_limit = max(
+        4,
+        int(_to_float(scheduler.get("starvation_cycle_limit"), 0.0))
+        or int(math.ceil(len(per_symbol) / max_symbols_per_cycle)) * 2,
+    )
+    starved = sorted(
+        str(row.get("symbol") or activation_id)
+        for activation_id, row in per_symbol.items()
+        if int(dict(row or {}).get("starvation_cycles") or 0) >= starvation_cycle_limit
+    )
+    now = datetime.now(UTC)
+    overdue_grace_seconds = max(180, int(_to_float(heartbeat.get("heartbeat_stale_after_seconds"), 180.0)))
+    overdue = []
+    for activation_id, row in per_symbol.items():
+        try:
+            due = datetime.fromisoformat(str(dict(row or {}).get("next_refresh_at") or "").replace("Z", "+00:00")).astimezone(UTC)
+            if due < now - timedelta(seconds=overdue_grace_seconds):
+                overdue.append(str(dict(row or {}).get("symbol") or activation_id))
+        except (TypeError, ValueError):
+            continue
+    expected_owner = len(owners) == 1 and backend_count == 1
+    cycle_started_at = str(heartbeat.get("worker_cycle_started_at") or state.get("worker_cycle_started_at") or "")
+    cycle_completed_at = str(heartbeat.get("worker_cycle_completed_at") or state.get("worker_cycle_completed_at") or heartbeat.get("last_cycle_utc") or "")
+    cycle_started_age = _iso_age_seconds(cycle_started_at)
+    cycle_completed_age = _iso_age_seconds(cycle_completed_at)
+    cycle_in_progress = bool(cycle_started_at and (not cycle_completed_at or cycle_started_at > cycle_completed_at))
+    cycle_stalled = bool(
+        cycle_in_progress and cycle_started_age is not None and cycle_started_age > overdue_grace_seconds
+    ) or bool(
+        (not cycle_in_progress) and cycle_completed_age is not None and cycle_completed_age > overdue_grace_seconds
+    )
+    status = "PASS"
+    if not owners:
+        status = "BACKEND_NOT_RUNNING"
+    elif not expected_owner:
+        status = "DUPLICATE_BACKEND" if backend_count > 1 else "PORT_OWNER_CONFLICT"
+    elif not heartbeat.get("running"):
+        status = "WORKER_HEARTBEAT_STALE"
+    elif cycle_stalled:
+        status = "SCHEDULER_STALLED"
+    elif starved:
+        status = "SCHEDULER_STALLED"
+    return {
+        "overall_status": status,
+        "backend_process_count": backend_count,
+        "port_8000_owner": owners,
+        "backend_health": "PASS" if expected_owner else status,
+        "frontend_health": "NOT_APPLICABLE",
+        "worker_generation_id": heartbeat.get("worker_generation_id") or state.get("worker_generation_id") or scheduler.get("worker_generation_id"),
+        "worker_heartbeat_at": heartbeat.get("worker_heartbeat_at") or state.get("worker_heartbeat_at") or scheduler.get("worker_heartbeat_at") or heartbeat.get("last_cycle_utc"),
+        "worker_heartbeat_age": heartbeat.get("heartbeat_age_seconds"),
+        "duplicate_worker_state": "PASS" if heartbeat.get("running") and not cycle_stalled else "WORKER_CYCLE_STALLED" if cycle_stalled else "WORKER_NOT_RUNNING",
+        "last_worker_cycle": heartbeat.get("last_cycle_utc"),
+        "worker_cycle_started_at": cycle_started_at,
+        "worker_cycle_completed_at": cycle_completed_at,
+        "worker_cycle_started_age": cycle_started_age,
+        "worker_cycle_completed_age": cycle_completed_age,
+        "worker_cycle_in_progress": cycle_in_progress,
+        "worker_cycle_phase": heartbeat.get("worker_cycle_phase") or state.get("worker_cycle_phase"),
+        "last_bar_request": dict((activity.get("families") or {}).get("HISTORICAL_BARS") or {}).get("last_attempt_at"),
+        "last_bar_success": dict((activity.get("families") or {}).get("HISTORICAL_BARS") or {}).get("last_success_at"),
+        "round_robin_cursor": scheduler.get("round_robin_cursor", activity.get("next_symbol_cursor")),
+        "priority_queue_depth": len(list(scheduler.get("priority_queue") or [])),
+        "starved_symbols": starved,
+        "starvation_cycle_limit": starvation_cycle_limit,
+        "overdue_symbols": overdue,
+        "overdue_grace_seconds": overdue_grace_seconds,
+        "restart_state": "RESTART_PASS" if expected_owner and heartbeat.get("running") and not cycle_stalled else "WORKER_HEARTBEAT_FAILED" if cycle_stalled else "RESTART_INCOMPLETE",
+        "read_only": True,
+        "provider_calls": 0,
+        "broker_order_actions": 0,
+    }
+
+
+@router.get("/api/astra_runtime_worker_reliability_audit_v1")
+def astra_runtime_worker_reliability_audit_v1():
+    return {"endpoint": "/api/astra_runtime_worker_reliability_audit_v1", **_astra_runtime_worker_reliability_payload_v1(), **_safety_flags_v1()}
+
+
+def _legacy_swing_historical_bar_momentum_payload_v1() -> dict:
+    audit = _broker_market_evidence_payload_v1()
+    state = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
+    runtime = dict(state.get("legacy_swing_canary") or {})
+    records = dict(runtime.get("market_records") or state.get("legacy_swing_market_evidence") or {})
+    reviews = dict(runtime.get("reviews") or {})
+    bar_rows = [dict(dict(bundle or {}).get("HISTORICAL_BARS") or {}) for bundle in records.values() if dict(dict(bundle or {}).get("HISTORICAL_BARS") or {})]
+    counts = Counter(str(row.get("quality_state") or "UNKNOWN") for row in bar_rows)
+    repairable = list(audit.get("repairable_failures") or [])
+    position_rows = []
+    for activation_id, review in reviews.items():
+        row = dict(review or {})
+        bar = dict((records.get(activation_id) or {}).get("HISTORICAL_BARS") or {})
+        evidence = dict((row.get("required_evidence") or {}).get("MOMENTUM") or {})
+        state_name = "PASS" if evidence.get("status") == "CURRENT" else "LEGITIMATELY_UNAVAILABLE"
+        position_rows.append({
+            "symbol": row.get("symbol") or bar.get("symbol"), "position_id": row.get("position_id"), "activation_id": activation_id,
+            "stage": "historical_bar_to_momentum", "owner": "PaperAutopilot._refresh_legacy_swing_broker_market_evidence",
+            "producer": "AlpacaPaperBroker.historical_bars", "consumer": "build_legacy_swing_required_evidence_v1",
+            "store": "paper_autopilot_state.json:legacy_swing_market_evidence", "join_key": bar.get("record_id"),
+            "source_record_id": bar.get("record_id"), "expected_state": "CURRENT_SUFFICIENT", "actual_state": bar.get("quality_state") or "NOT_PRODUCED",
+            "exact_blocker": None if state_name == "PASS" else (bar.get("source_error") or bar.get("latest_source_error") or "insufficient_or_unavailable_historical_bars"),
+            "blocker_category": "external" if state_name != "PASS" else None, "technical_or_external": "external" if state_name != "PASS" else "pass",
+            "safe_repair_allowed": False, "exact_safe_repair": None, "next_refresh_at": bar.get("next_refresh_at"),
+            "momentum_state": evidence.get("status"), "momentum_influence": evidence.get("classification_influence"),
+        })
+    activity = dict(runtime.get("market_activity") or state.get("legacy_swing_market_activity") or {})
+    family = dict((activity.get("families") or {}).get("HISTORICAL_BARS") or {})
+    scheduler = dict(activity.get("scheduler") or {})
+    runtime_reliability = _astra_runtime_worker_reliability_payload_v1()
+    governance_findings = []
+    if runtime_reliability.get("starved_symbols"):
+        governance_findings.append({"severity": "HIGH", "code": "LEGACY_SWING_BAR_SCHEDULER_STARVATION", "symbols": runtime_reliability.get("starved_symbols"), "repairable": True})
+    if runtime_reliability.get("overall_status") in {"DUPLICATE_BACKEND", "PORT_OWNER_CONFLICT", "WORKER_HEARTBEAT_STALE", "SCHEDULER_STALLED", "WORKER_NOT_RUNNING"}:
+        governance_findings.append({"severity": "HIGH", "code": "LEGACY_SWING_RUNTIME_RELIABILITY_FAILURE", "state": runtime_reliability.get("overall_status"), "repairable": True})
+    return {
+        "overall_status": "PASS" if not repairable else "FAILED", "positions_processed": len(reviews), "bar_batches_total": len(bar_rows),
+        "bar_batches_current_sufficient": counts.get("CURRENT_SUFFICIENT", 0), "bar_batches_current_insufficient": counts.get("CURRENT_INSUFFICIENT", 0),
+        "bar_batches_stale_sufficient": counts.get("STALE_SUFFICIENT", 0), "bar_batches_stale_insufficient": counts.get("STALE_INSUFFICIENT", 0),
+        "bar_batches_empty": counts.get("EMPTY", 0),
+        "bar_batches_invalid": counts.get("INVALID", 0) + counts.get("PROVIDER_FAILED", 0),
+        "momentum_current": sum(1 for row in position_rows if row.get("momentum_state") == "CURRENT"),
+        "momentum_stale": sum(1 for row in position_rows if row.get("momentum_state") == "STALE"),
+        "momentum_insufficient": sum(1 for row in position_rows if row.get("momentum_state") == "UNAVAILABLE"),
+        "momentum_missing": sum(1 for row in position_rows if row.get("momentum_state") != "CURRENT"),
+        "coverage_before": {}, "coverage_after": Counter(str(dict(row or {}).get("direct_evidence_coverage", {}).get("coverage_state") or "UNKNOWN") for row in reviews.values()),
+        "refresh_attempts": int(family.get("request_count") or 0), "refresh_successes": int(family.get("success_count") or 0), "refresh_failures": int(family.get("failure_count") or 0),
+        "replacement_blocks": sum(1 for row in bar_rows if row.get("replacement_reason") == "LOWER_QUALITY_REJECTED_PRESERVED_PRIOR"),
+        "preserved_prior_valid_records": sum(1 for row in bar_rows if row.get("replacement_reason") == "LOWER_QUALITY_REJECTED_PRESERVED_PRIOR"),
+        "round_robin_progress": scheduler.get("round_robin_cursor"), "priority_progress": scheduler.get("last_processed_symbol"),
+        "starved_symbols": runtime_reliability.get("starved_symbols"), "overdue_symbols": runtime_reliability.get("overdue_symbols"),
+        "repairable_failures": repairable, "external_blockers": [row for row in position_rows if row.get("technical_or_external") == "external"], "position_rows": position_rows,
+        "governance_findings": governance_findings, "governance_critical": 0, "governance_high": len(governance_findings),
+        "read_only": True, "provider_calls": 0, "broker_order_actions": 0,
+    }
+
+
+@router.get("/api/legacy_swing_historical_bar_momentum_audit_v1")
+def legacy_swing_historical_bar_momentum_audit_v1():
+    return {"endpoint": "/api/legacy_swing_historical_bar_momentum_audit_v1", **_legacy_swing_historical_bar_momentum_payload_v1(), **_safety_flags_v1()}
+
+
+@router.get("/api/legacy_swing_historical_bar_reliability_closure_diagnostic_v1")
+def legacy_swing_historical_bar_reliability_closure_diagnostic_v1():
+    audit = _legacy_swing_historical_bar_momentum_payload_v1()
+    runtime = _astra_runtime_worker_reliability_payload_v1()
+    return {
+        "endpoint": "/api/legacy_swing_historical_bar_reliability_closure_diagnostic_v1", **audit,
+        "bar_coverage_current": audit.get("bar_batches_current_sufficient"), "bar_coverage_insufficient": audit.get("bar_batches_current_insufficient"),
+        "bar_coverage_stale": audit.get("bar_batches_stale_sufficient", 0) + audit.get("bar_batches_stale_insufficient", 0),
+        "restart_recovery_pass": runtime.get("restart_state") == "RESTART_PASS", "worker_heartbeat_pass": runtime.get("duplicate_worker_state") == "PASS",
+        "round_robin_progress": audit.get("round_robin_progress"), "starvation_count": len(runtime.get("starved_symbols") or []),
+        "stage_chain": ["bar_requirement", "worker_scheduling", "broker_request", "response_validation", "canonical_persistence", "quality_precedence", "restart_recovery", "momentum_production", "downstream_acknowledgement"],
+        "service_restarts": 0, "provider_calls": 0, "broker_order_actions": 0, **_safety_flags_v1(),
+    }
 
 
 @router.get("/api/astra_forward_performance_readiness_v1")
@@ -58321,6 +58520,12 @@ def _paper_worker_heartbeat_snapshot_v1() -> dict:
         "heartbeat_stale_after_seconds": stale_after,
         "pid": pid if pid > 0 else None,
         "last_cycle_utc": hb.get("last_cycle_utc"),
+        "worker_heartbeat_at": hb.get("updated_at"),
+        "worker_generation_id": hb.get("worker_generation_id"),
+        "worker_cycle_started_at": hb.get("worker_cycle_started_at"),
+        "worker_cycle_completed_at": hb.get("worker_cycle_completed_at"),
+        "worker_cycle_phase": hb.get("worker_cycle_phase"),
+        "worker_cycle_count": int(_to_float(hb.get("cycle_count"), 0.0)),
         "autopilot_enabled": bool(hb.get("autopilot_enabled")),
         "last_error": str(hb.get("last_error") or ""),
     }
@@ -63412,6 +63617,8 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
     required_evidence = _legacy_swing_required_evidence_payload_v1()
     fmp_consumption = _fmp_production_consumption_payload_v1()
     market_evidence = _broker_market_evidence_payload_v1()
+    historical_bar_reliability = _legacy_swing_historical_bar_momentum_payload_v1()
+    runtime_worker_reliability = _astra_runtime_worker_reliability_payload_v1()
     legacy_exit_truth = _legacy_swing_exit_truth_closure_payload_v1()
     legacy_canary_config = legacy_swing_canary_configuration_v1()
     legacy_canary_runtime = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("legacy_swing_canary") or {})
@@ -63541,6 +63748,24 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "evidence": market_evidence.get("repairable_failures"),
             "recommended_action": "repair bounded read-only broker market-data production, storage, acknowledgement, or influence; do not submit an order",
         })
+    if historical_bar_reliability.get("repairable_failures") or int(historical_bar_reliability.get("governance_high") or 0) > 0:
+        findings.append({
+            "severity": "high", "classification": "legacy_historical_bar_reliability_defect",
+            "issue": "legacy_swing_historical_bar_or_momentum_repairable_failure",
+            "evidence": historical_bar_reliability.get("repairable_failures") or historical_bar_reliability.get("governance_findings") or [],
+            "recommended_action": "repair canonical bar persistence, worker scheduling, or momentum lineage; do not weaken freshness requirements",
+        })
+    if runtime_worker_reliability.get("overall_status") not in {"PASS", "PASS_WITH_WARNINGS"}:
+        findings.append({
+            "severity": "high", "classification": "legacy_runtime_worker_reliability_defect",
+            "issue": "legacy_swing_worker_or_backend_reliability_failure",
+            "evidence": {
+                "overall_status": runtime_worker_reliability.get("overall_status"),
+                "starved_symbols": runtime_worker_reliability.get("starved_symbols") or [],
+                "duplicate_worker_state": runtime_worker_reliability.get("duplicate_worker_state"),
+            },
+            "recommended_action": "restore exactly one backend and a progressing worker heartbeat before treating market evidence as operational",
+        })
     if legacy_exit_truth.get("repairable_failures"):
         findings.append({
             "severity": "high", "classification": "legacy_swing_exit_truth_connection_defect",
@@ -63646,6 +63871,14 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
         "legacy_swing_broker_market_evidence_v1": {
             key: market_evidence.get(key)
             for key in ("overall_status", "positions_processed", "families", "bounded_backlog", "repairable_failures")
+        },
+        "legacy_swing_historical_bar_reliability_v1": {
+            key: historical_bar_reliability.get(key)
+            for key in ("overall_status", "bar_batches_current_sufficient", "bar_batches_empty", "momentum_current", "momentum_missing", "repairable_failures", "governance_high")
+        },
+        "astra_runtime_worker_reliability_v1": {
+            key: runtime_worker_reliability.get(key)
+            for key in ("overall_status", "backend_process_count", "duplicate_worker_state", "starved_symbols", "restart_state")
         },
         "legacy_swing_exit_truth_closure_v1": {
             key: legacy_exit_truth.get(key)

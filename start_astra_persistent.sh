@@ -51,6 +51,20 @@ wait_for_port() {
   return 1
 }
 
+wait_for_port_release() {
+  local port="$1"
+  local attempts="${2:-30}"
+  local delay="${3:-0.5}"
+  local i
+  for ((i=1; i<=attempts; i++)); do
+    if ! is_port_listening "${port}"; then
+      return 0
+    fi
+    sleep "${delay}"
+  done
+  return 1
+}
+
 wait_for_http_200() {
   local url="$1"
   local attempts="${2:-20}"
@@ -80,6 +94,18 @@ wait_for_frontend_html() {
   return 1
 }
 
+is_astra_listener() {
+  local port="$1"
+  local pid="$2"
+  local command
+  command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+  if [[ "${port}" == "8000" ]]; then
+    [[ "${command}" == *"uvicorn server:app"* || "${command}" == *"start_astra_backend.sh"* || "${command}" == *"backend_watchdog"* ]]
+  else
+    [[ "${command}" == *"npm run dev"* || "${command}" == *"vite"* ]]
+  fi
+}
+
 kill_port_listeners() {
   local port="$1"
   if ! command -v lsof >/dev/null 2>&1; then
@@ -90,8 +116,12 @@ kill_port_listeners() {
   if [[ -n "${pids}" ]]; then
     while IFS= read -r pid; do
       [[ -n "${pid}" ]] || continue
+      if ! is_astra_listener "${port}" "${pid}"; then
+        log_info "unexpected listener pid=${pid} on port ${port}; refusing to kill it"
+        return 1
+      fi
       kill "${pid}" >/dev/null 2>&1 || true
-      log_info "killed stale listener pid=${pid} on port ${port}"
+      log_info "stopped Astra listener pid=${pid} on port ${port}"
     done <<< "${pids}"
   fi
 }
@@ -121,6 +151,10 @@ if [[ "${START_COMPONENT}" == "all" && "${SKIP_CLEANUP}" != "1" ]]; then
   # Keep lifecycle consistent and avoid duplicate owners for a full start.
   bash "${ROOT_DIR}/stop_astra_persistent.sh" >/dev/null 2>&1 || true
   log_info "pre-start cleanup invoked via stop_astra_persistent.sh"
+  if ! wait_for_port_release "${BACKEND_PORT}" 30 0.5; then
+    log_info "backend port ${BACKEND_PORT} did not release after stop"
+    exit 1
+  fi
   kill_port_listeners "${BACKEND_PORT}"
   kill_port_listeners 5173
   kill_port_listeners 5174
@@ -130,6 +164,7 @@ fi
 if [[ "${START_COMPONENT}" == "backend" ]]; then
   stop_tmux_session "${BACKEND_SESSION}"
   kill_port_listeners "${BACKEND_PORT}"
+  wait_for_port_release "${BACKEND_PORT}" 30 0.5
 fi
 if [[ "${START_COMPONENT}" == "frontend" ]]; then
   stop_tmux_session "${FRONTEND_SESSION}"
@@ -142,6 +177,10 @@ if [[ "${START_COMPONENT}" == "all" || "${START_COMPONENT}" == "backend" ]]; the
   else
     stop_tmux_session "${BACKEND_SESSION}"
     kill_port_listeners "${BACKEND_PORT}"
+    if ! wait_for_port_release "${BACKEND_PORT}" 30 0.5; then
+      log_info "backend port ${BACKEND_PORT} release timeout before launch"
+      exit 1
+    fi
     tmux new-session -d -s "${BACKEND_SESSION}" \
       "cd '${ROOT_DIR}' && ASTRA_BACKEND_HOST='${BACKEND_HOST}' ASTRA_BACKEND_PORT='${BACKEND_PORT}' ASTRA_REMOTE_MODE='${ASTRA_REMOTE_MODE:-0}' bash '${ROOT_DIR}/start_astra_backend.sh'"
     log_info "backend session launched: ${BACKEND_SESSION} (${BACKEND_HOST}:${BACKEND_PORT})"

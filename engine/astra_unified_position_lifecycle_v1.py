@@ -467,7 +467,8 @@ def build_legacy_swing_required_evidence_v1(position: Mapping[str, Any], baselin
     volumes = [value for value in volumes if value is not None and value >= 0]
     bar_state = _text(bar_context.get("response_state")).upper()
     bar_freshness = _text(bar_context.get("freshness_state")).upper()
-    if bar_state == "SUCCESS" and bar_freshness == "CURRENT" and len(closes) >= 5:
+    bar_quality = _text(bar_context.get("quality_state")).upper()
+    if bar_state == "SUCCESS" and bar_freshness == "CURRENT" and bar_quality not in {"CURRENT_INSUFFICIENT", "STALE_INSUFFICIENT", "EMPTY", "INVALID", "PROVIDER_FAILED"} and len(closes) >= 5:
         short = (closes[-1] / closes[-3] - 1.0) * 100.0
         medium = (closes[-1] / closes[0] - 1.0) * 100.0
         direction = "POSITIVE" if short > 0.25 and medium >= 0 else "NEGATIVE" if short < -0.25 and medium <= 0 else "STABLE"
@@ -484,7 +485,7 @@ def build_legacy_swing_required_evidence_v1(position: Mapping[str, Any], baselin
         momentum = record("MOMENTUM", "STALE", "STALE", 0.0, ["stale_canonical_bar_record"], source="AlpacaPaperBroker.historical_bars", short_term_direction="STALE", supporting_inputs=[])
     elif bar_state == "SUCCESS":
         momentum = record("MOMENTUM", "UNAVAILABLE", "INSUFFICIENT", 0.0, ["insufficient_canonical_bar_count"], source="AlpacaPaperBroker.historical_bars", short_term_direction="UNAVAILABLE", supporting_inputs=[])
-    elif price is not None and activation is not None and row.get("recent_price_path"):
+    elif not bar_context and price is not None and activation is not None and row.get("recent_price_path"):
         change = (price / activation - 1.0) * 100.0 if activation else 0.0
         momentum_state = "POSITIVE" if change > 0 else "NEGATIVE" if change < 0 else "STABLE"
         momentum = record("MOMENTUM", "CURRENT", momentum_state, 0.55, [], short_term_direction=momentum_state, momentum_score=change, supporting_inputs=["activation_price", "current_price", "recent_price_path"])

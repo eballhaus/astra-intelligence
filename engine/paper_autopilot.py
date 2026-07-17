@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
 import os
 import re
 import sqlite3
@@ -1199,7 +1200,21 @@ class PaperAutopilotEngine:
             "authorized_lane_exit_pending": {},
             "legacy_forward_activations": {},
             "legacy_swing_canary": {},
+            # These keys mirror the durable canary bundle.  Keeping the
+            # canonical market records explicit avoids a restart depending on
+            # an incidental nested fallback.
+            "legacy_swing_market_evidence": {},
+            "legacy_swing_market_activity": {},
             "legacy_swing_exit_lifecycle": {},
+            # Liveness is worker-owned.  Read-only endpoints consume these
+            # fields and must never manufacture a heartbeat by doing broker I/O.
+            "worker_generation_id": "",
+            "worker_heartbeat_at": "",
+            "worker_cycle_started_at": "",
+            "worker_cycle_completed_at": "",
+            "worker_cycle_phase": "not_started",
+            "worker_cycle_count": 0,
+            "worker_cycle_error": "",
             "evidence_reserve_entry_timestamps": {"DAY": [], "CRYPTO": []},
             "lane_reserve_commitments": {"DAY": {}, "CRYPTO": {}},
             "lane_reserve_commitment_stats": {
@@ -1337,6 +1352,15 @@ class PaperAutopilotEngine:
                     self._runtime_state["legacy_forward_activations"] = dict(payload.get("legacy_forward_activations") or {})
                 if isinstance(payload.get("legacy_swing_canary"), dict):
                     self._runtime_state["legacy_swing_canary"] = dict(payload.get("legacy_swing_canary") or {})
+                nested_canary = dict(self._runtime_state.get("legacy_swing_canary") or {})
+                if isinstance(payload.get("legacy_swing_market_evidence"), dict):
+                    self._runtime_state["legacy_swing_market_evidence"] = dict(payload.get("legacy_swing_market_evidence") or {})
+                elif isinstance(nested_canary.get("market_records"), dict):
+                    self._runtime_state["legacy_swing_market_evidence"] = dict(nested_canary.get("market_records") or {})
+                if isinstance(payload.get("legacy_swing_market_activity"), dict):
+                    self._runtime_state["legacy_swing_market_activity"] = dict(payload.get("legacy_swing_market_activity") or {})
+                elif isinstance(nested_canary.get("market_activity"), dict):
+                    self._runtime_state["legacy_swing_market_activity"] = dict(nested_canary.get("market_activity") or {})
                 if isinstance(payload.get("legacy_swing_exit_lifecycle"), dict):
                     self._runtime_state["legacy_swing_exit_lifecycle"] = dict(payload.get("legacy_swing_exit_lifecycle") or {})
                 if isinstance(payload.get("evidence_reserve_entry_timestamps"), dict):
@@ -1366,14 +1390,27 @@ class PaperAutopilotEngine:
                     self._runtime_state["last_execution_trace"] = dict(payload.get("last_execution_trace") or {})
                 if payload.get("last_cycle_utc"):
                     self._runtime_state["last_cycle_utc"] = str(payload.get("last_cycle_utc") or "")
+                for key in (
+                    "worker_generation_id", "worker_heartbeat_at", "worker_cycle_started_at",
+                    "worker_cycle_completed_at", "worker_cycle_phase", "worker_cycle_count", "worker_cycle_error",
+                ):
+                    if key in payload:
+                        self._runtime_state[key] = payload.get(key)
         except Exception:
             return
 
     def _save_state_file(self):
         payload = {
-            "autopilot_enabled": bool(self._enabled),
+            "autopilot_enabled": bool(getattr(self, "_enabled", False)),
             "paper_mode": self.paper_mode,
             "last_cycle_utc": self._runtime_state.get("last_cycle_utc") or "",
+            "worker_generation_id": str(self._runtime_state.get("worker_generation_id") or ""),
+            "worker_heartbeat_at": str(self._runtime_state.get("worker_heartbeat_at") or ""),
+            "worker_cycle_started_at": str(self._runtime_state.get("worker_cycle_started_at") or ""),
+            "worker_cycle_completed_at": str(self._runtime_state.get("worker_cycle_completed_at") or ""),
+            "worker_cycle_phase": str(self._runtime_state.get("worker_cycle_phase") or "not_started"),
+            "worker_cycle_count": _to_int(self._runtime_state.get("worker_cycle_count"), 0),
+            "worker_cycle_error": str(self._runtime_state.get("worker_cycle_error") or ""),
             "last_close_by_symbol": dict(self._runtime_state.get("last_close_by_symbol") or {}),
             "learned_exit_pending_sells": dict(self._runtime_state.get("learned_exit_pending_sells") or {}),
             "learned_exit_daily": dict(self._runtime_state.get("learned_exit_daily") or {}),
@@ -1381,6 +1418,8 @@ class PaperAutopilotEngine:
             "authorized_lane_exit_pending": dict(self._runtime_state.get("authorized_lane_exit_pending") or {}),
             "legacy_forward_activations": dict(self._runtime_state.get("legacy_forward_activations") or {}),
             "legacy_swing_canary": dict(self._runtime_state.get("legacy_swing_canary") or {}),
+            "legacy_swing_market_evidence": dict(self._runtime_state.get("legacy_swing_market_evidence") or {}),
+            "legacy_swing_market_activity": dict(self._runtime_state.get("legacy_swing_market_activity") or {}),
             "legacy_swing_exit_lifecycle": dict(self._runtime_state.get("legacy_swing_exit_lifecycle") or {}),
             "evidence_reserve_entry_timestamps": {
                 lane: list((self._runtime_state.get("evidence_reserve_entry_timestamps") or {}).get(lane) or [])[-32:]
@@ -1404,6 +1443,29 @@ class PaperAutopilotEngine:
                 json.dump(payload, f, separators=(",", ":"), ensure_ascii=True)
         except Exception:
             pass
+
+    def _note_worker_progress(self, phase: str, *, error: str = "") -> None:
+        """Publish in-memory progress without invoking providers or the database."""
+        self._runtime_state["worker_heartbeat_at"] = _now_iso()
+        self._runtime_state["worker_cycle_phase"] = str(phase or "unknown")[:96]
+        if error:
+            self._runtime_state["worker_cycle_error"] = str(error)[:240]
+
+    def worker_liveness_status(self) -> dict[str, Any]:
+        """Return worker-owned liveness without status-path broker reads."""
+        return {
+            "running": bool(getattr(self, "_thread", None) and self._thread.is_alive()),
+            "worker_generation_id": str(self._runtime_state.get("worker_generation_id") or ""),
+            "worker_heartbeat_at": str(self._runtime_state.get("worker_heartbeat_at") or ""),
+            "worker_cycle_started_at": str(self._runtime_state.get("worker_cycle_started_at") or ""),
+            "worker_cycle_completed_at": str(self._runtime_state.get("worker_cycle_completed_at") or self._runtime_state.get("last_cycle_utc") or ""),
+            "worker_cycle_phase": str(self._runtime_state.get("worker_cycle_phase") or "not_started"),
+            "worker_cycle_count": _to_int(self._runtime_state.get("worker_cycle_count"), 0),
+            "worker_cycle_error": str(self._runtime_state.get("worker_cycle_error") or self._runtime_state.get("last_error") or ""),
+            "last_cycle_utc": str(self._runtime_state.get("last_cycle_utc") or ""),
+            "interval_seconds": int(getattr(self, "interval_seconds", 45)),
+            "autopilot_enabled": bool(getattr(self, "_enabled", False)),
+        }
 
     def _min_hold_seconds(self) -> int:
         return self.min_hold_seconds_swing if self.paper_mode == "swing" else self.min_hold_seconds_intraday
@@ -2161,19 +2223,92 @@ class PaperAutopilotEngine:
     def _legacy_swing_market_record_current(record: dict[str, Any], now: datetime, max_age_seconds: int) -> bool:
         if str(record.get("response_state") or "").upper() != "SUCCESS" or str(record.get("freshness_state") or "").upper() != "CURRENT":
             return False
-        if str(record.get("request_family") or "").upper() == "HISTORICAL_BARS" and str(record.get("timeframe") or "") != "1Hour":
+        family = str(record.get("request_family") or "").upper()
+        quality = str(record.get("quality_state") or "").upper()
+        if family == "HISTORICAL_BARS" and str(record.get("timeframe") or "") != "1Hour":
             return False
-        if str(record.get("request_family") or "").upper() == "HISTORICAL_BARS" and int(record.get("records_valid") or 0) < 5:
-            try:
-                retry_at = datetime.fromisoformat(str(record.get("next_refresh_at") or "").replace("Z", "+00:00")).astimezone(UTC)
-                return now < retry_at
-            except (TypeError, ValueError):
-                return False
+        if family == "HISTORICAL_BARS" and (int(record.get("records_valid") or 0) < 5 or quality in {"CURRENT_INSUFFICIENT", "STALE_INSUFFICIENT", "EMPTY", "INVALID", "PROVIDER_FAILED"}):
+            return False
+        if family != "HISTORICAL_BARS" and quality in {"INVALID", "INVALID_SPREAD", "EMPTY", "PROVIDER_FAILED"}:
+            return False
         try:
             observed = datetime.fromisoformat(str(record.get("received_at") or "").replace("Z", "+00:00")).astimezone(UTC)
         except (TypeError, ValueError):
             return False
         return (now - observed).total_seconds() <= max_age_seconds
+
+    @staticmethod
+    def _legacy_swing_market_quality_rank(record: dict[str, Any]) -> int:
+        """Return the canonical replacement rank without treating errors as evidence."""
+        family = str(record.get("request_family") or "").upper()
+        quality = str(record.get("quality_state") or "").upper()
+        freshness = str(record.get("freshness_state") or "").upper()
+        valid = int(record.get("records_valid") or 0)
+        if quality == "CURRENT_SUFFICIENT":
+            return 5
+        if quality == "STALE_SUFFICIENT":
+            return 4
+        if quality == "CURRENT_INSUFFICIENT":
+            return 3
+        if quality == "STALE_INSUFFICIENT":
+            return 2
+        # Backward-compatible ranking for records written before the explicit
+        # precedence schema existed.
+        if str(record.get("response_state") or "").upper() == "SUCCESS":
+            sufficient = valid >= 5 if family == "HISTORICAL_BARS" else valid >= 1
+            if sufficient:
+                return 5 if freshness == "CURRENT" else 4 if freshness == "STALE" else 0
+            return 3 if freshness == "CURRENT" else 2 if freshness == "STALE" else 0
+        return 0
+
+    @classmethod
+    def _legacy_swing_market_mark_stale_if_due(cls, record: dict[str, Any], now: datetime, max_age_seconds: int) -> dict[str, Any]:
+        """Retain prior valid evidence, but never present it as current once expired."""
+        prior = dict(record or {})
+        if not prior or cls._legacy_swing_market_record_current(prior, now, max_age_seconds):
+            return prior
+        rank = cls._legacy_swing_market_quality_rank(prior)
+        if rank == 5:
+            prior["freshness_state"] = "STALE"
+            prior["quality_state"] = "STALE_SUFFICIENT"
+        elif rank == 3:
+            prior["freshness_state"] = "STALE"
+            prior["quality_state"] = "STALE_INSUFFICIENT"
+        return prior
+
+    @classmethod
+    def _legacy_swing_market_prefer_record(
+        cls,
+        previous: dict[str, Any],
+        candidate: dict[str, Any],
+        now: datetime,
+        max_age_seconds: int,
+    ) -> dict[str, Any]:
+        """Preserve a better prior record when a refresh is lower quality.
+
+        A successful HTTP response with no/invalid bars is not newer evidence.
+        The refresh attempt remains observable through source_state and the
+        scheduler fields while the canonical bar lineage remains intact.
+        """
+        prior = cls._legacy_swing_market_mark_stale_if_due(previous, now, max_age_seconds)
+        if cls._legacy_swing_market_quality_rank(prior) <= cls._legacy_swing_market_quality_rank(candidate):
+            candidate["replacement_reason"] = "ACCEPTED_EQUAL_OR_HIGHER_QUALITY"
+            candidate["supersedes_record_id"] = prior.get("record_id") or None
+            return candidate
+        preserved = dict(prior)
+        preserved.update({
+            "last_attempt_at": candidate.get("requested_at"),
+            "latest_request_id": candidate.get("request_id"),
+            "source_state": candidate.get("response_state"),
+            "latest_source_error": candidate.get("source_error"),
+            "http_status": candidate.get("http_status"),
+            "retry_count": candidate.get("retry_count"),
+            "next_refresh_at": candidate.get("next_refresh_at"),
+            "replacement_reason": "LOWER_QUALITY_REJECTED_PRESERVED_PRIOR",
+            "supersedes_record_id": candidate.get("record_id"),
+            "records_stored": 1,
+        })
+        return preserved
 
     def _refresh_legacy_swing_broker_market_evidence(self, registry: dict[str, dict[str, Any]]) -> tuple[dict[str, dict[str, dict[str, Any]]], dict[str, Any]]:
         """Acquire bounded, read-only Alpaca market evidence in the normal worker."""
@@ -2185,13 +2320,57 @@ class PaperAutopilotEngine:
         for activation_id, raw in raw_store.items():
             bundle = dict(raw or {})
             valid = {family: dict(value or {}) for family, value in bundle.items() if family in {"HISTORICAL_BARS", "LATEST_QUOTE", "ASSET_METADATA"} and isinstance(value, dict) and value.get("record_id")}
-            for market_record in valid.values():
+            for family, market_record in valid.items():
                 market_record.setdefault("activation_id", activation_id)
                 market_record.setdefault("position_id", (dict(registry.get(activation_id) or {})).get("position_id"))
+                # Upgrade records written by the v1 worker without changing
+                # their evidence payload or lineage.  Empty responses were
+                # formerly represented as INVALID, which made an external
+                # provider limitation look like a canonical data corruption.
+                state = str(market_record.get("response_state") or "").upper()
+                quality = str(market_record.get("quality_state") or "").upper()
+                freshness = str(market_record.get("freshness_state") or "").upper()
+                if family == "HISTORICAL_BARS":
+                    if state == "EMPTY_RESPONSE" or (
+                        not list(market_record.get("bars") or [])
+                        and int(market_record.get("records_received") or market_record.get("bars_received") or 0) == 0
+                        and str(market_record.get("source_error") or market_record.get("latest_source_error") or "").lower() == "empty_response"
+                    ):
+                        market_record["quality_state"] = "EMPTY"
+                        if not market_record.get("source_error"):
+                            market_record["source_error"] = "empty_response"
+                    elif state == "SUCCESS" and quality in {"VALID", "INSUFFICIENT"}:
+                        sufficient = int(market_record.get("records_valid") or 0) >= 5
+                        market_record["quality_state"] = ("CURRENT_SUFFICIENT" if sufficient else "CURRENT_INSUFFICIENT") if freshness == "CURRENT" else ("STALE_SUFFICIENT" if sufficient else "STALE_INSUFFICIENT")
+                elif state == "SUCCESS" and quality == "VALID":
+                    market_record["quality_state"] = "CURRENT_SUFFICIENT" if freshness == "CURRENT" else "STALE_SUFFICIENT"
             if valid:
                 records[activation_id] = valid
         prior = dict(self._runtime_state.get("legacy_swing_market_activity") or runtime_canary.get("market_activity") or {})
-        activity = {"schema_version": "legacy_swing_broker_market_activity_v1", "provider": "ALPACA_MARKET_DATA", "worker_owner": "PaperAutopilot._refresh_legacy_swing_broker_market_evidence", "worker_invoked": True, "max_symbols_per_cycle": 3, "symbols_requiring": 0, "symbols_requested": [], "broker_order_actions": 0, "families": {}, "next_symbol_cursor": int(prior.get("next_symbol_cursor") or 0), "priority_policy": "priority_desc_then_persisted_round_robin"}
+        prior_scheduler = dict(prior.get("scheduler") or {})
+        activity = {
+            "schema_version": "legacy_swing_broker_market_activity_v2",
+            "provider": "ALPACA_MARKET_DATA",
+            "worker_owner": "PaperAutopilot._refresh_legacy_swing_broker_market_evidence",
+            "worker_invoked": True,
+            "max_symbols_per_cycle": 3,
+            "symbols_requiring": 0,
+            "symbols_requested": [],
+            "broker_order_actions": 0,
+            "families": {},
+            "next_symbol_cursor": int(prior.get("next_symbol_cursor") or prior_scheduler.get("round_robin_cursor") or 0),
+            "priority_policy": "priority_desc_starvation_boost_then_persisted_round_robin",
+            "scheduler": {
+                "round_robin_cursor": int(prior.get("next_symbol_cursor") or prior_scheduler.get("round_robin_cursor") or 0),
+                "priority_queue": [],
+                "last_processed_symbol": prior_scheduler.get("last_processed_symbol"),
+                "last_cycle_at": now_iso,
+                "next_cycle_at": (now + timedelta(seconds=45)).isoformat().replace("+00:00", "Z"),
+                "per_symbol": dict(prior_scheduler.get("per_symbol") or {}),
+                "worker_generation_id": f"paper-autopilot:{os.getpid()}",
+                "worker_heartbeat_at": now_iso,
+            },
+        }
         for family in ("HISTORICAL_BARS", "LATEST_QUOTE", "ASSET_METADATA"):
             old = dict((prior.get("families") or {}).get(family) or {})
             activity["families"][family] = {"request_family": family, "request_count": int(old.get("request_count") or 0), "success_count": int(old.get("success_count") or 0), "failure_count": int(old.get("failure_count") or 0), "last_attempt_at": old.get("last_attempt_at"), "last_success_at": old.get("last_success_at"), "next_refresh_at": old.get("next_refresh_at"), "latest_error_category": old.get("latest_error_category") or ""}
@@ -2207,14 +2386,28 @@ class PaperAutopilotEngine:
         registry_items = sorted(registry.items())
         if registry_items:
             cursor = int(activity["next_symbol_cursor"]) % len(registry_items)
-            ordered_items = registry_items[cursor:] + registry_items[:cursor]
+            rotated = [(index, activation_id, raw) for index, (activation_id, raw) in enumerate(registry_items[cursor:] + registry_items[:cursor])]
             # Priority advances deteriorating or incomplete direct evidence,
-            # while the persisted rotation remains the deterministic tie-break.
-            ordered_items = sorted(ordered_items, key=lambda item: -int(dict(item[1] or {}).get("refresh_priority") or 0))
+            # while starvation boosts and the persisted rotation prevent a
+            # permanently high-priority set from starving later symbols.
+            def scheduling_priority(item: tuple[int, str, dict[str, Any]]) -> int:
+                _sequence, activation_id, raw = item
+                prior_symbol = dict(activity["scheduler"]["per_symbol"].get(activation_id) or {})
+                return int(dict(raw or {}).get("refresh_priority") or 0) + min(80, int(prior_symbol.get("starvation_cycles") or 0) * 20)
+            ordered_items = sorted(rotated, key=lambda item: -scheduling_priority(item))
+            activity["scheduler"]["priority_queue"] = [activation_id for _sequence, activation_id, _raw in ordered_items]
+            # A bounded three-symbol budget needs multiple cycles to service
+            # the legacy universe.  Starvation is therefore measured against
+            # two complete round-robin passes, not a fixed small cycle count.
+            activity["scheduler"]["starvation_cycle_limit"] = max(
+                4,
+                int(math.ceil(len(registry_items) / max(1, int(activity["max_symbols_per_cycle"])))) * 2,
+            )
         else:
             ordered_items = []
-        last_processed_index: int | None = None
-        for sequence_index, (activation_id, raw) in enumerate(ordered_items):
+        last_processed_original_index: int | None = None
+        processed_activation_ids: set[str] = set()
+        for _sequence_index, (rotated_index, activation_id, raw) in enumerate(ordered_items):
             record = dict(raw or {})
             symbol = str(record.get("symbol") or "").upper().strip()
             if not symbol:
@@ -2227,10 +2420,12 @@ class PaperAutopilotEngine:
             if requested_symbols >= int(activity["max_symbols_per_cycle"]):
                 continue
             requested_symbols += 1
-            last_processed_index = sequence_index
+            last_processed_original_index = (cursor + rotated_index) % len(registry_items)
+            processed_activation_ids.add(activation_id)
             activity["symbols_requested"].append(symbol)
             for family in missing:
                 method_name, _age = config[family]
+                self._note_worker_progress(f"market_data:{family}:{symbol}")
                 family_activity = activity["families"][family]
                 family_activity["request_count"] += 1
                 family_activity["last_attempt_at"] = now_iso
@@ -2241,7 +2436,10 @@ class PaperAutopilotEngine:
                 state = str(response.get("response_state") or "PROVIDER_ERROR").upper()
                 payload: dict[str, Any] = {}
                 quality, valid_count = "INVALID", 0
-                if family == "HISTORICAL_BARS" and state == "SUCCESS":
+                if family == "HISTORICAL_BARS" and state == "EMPTY_RESPONSE":
+                    quality = "EMPTY"
+                    payload = {"timeframe": "1Hour", "bars": [], "bars_received": 0, "first_bar_at": None, "last_bar_at": None, "missing_intervals": []}
+                elif family == "HISTORICAL_BARS" and state == "SUCCESS":
                     seen, bars = set(), []
                     for item in list(response.get("bars") or []):
                         row = dict(item or {}) if isinstance(item, dict) else {}
@@ -2252,30 +2450,31 @@ class PaperAutopilotEngine:
                         seen.add(ts); bars.append({"timestamp": ts, "open": o, "high": h, "low": l, "close": c, "volume": v})
                     bars.sort(key=lambda item: item["timestamp"])
                     payload = {"timeframe": "1Hour", "bars": bars, "bars_received": len(list(response.get("bars") or [])), "first_bar_at": bars[0]["timestamp"] if bars else None, "last_bar_at": bars[-1]["timestamp"] if bars else None, "missing_intervals": []}
-                    valid_count, quality = len(bars), "VALID" if len(bars) >= 5 else "INSUFFICIENT"
-                    state = "SUCCESS" if bars else "MALFORMED_RESPONSE"
+                    valid_count = len(bars)
+                    raw_bar_count = len(list(response.get("bars") or []))
+                    quality = "CURRENT_SUFFICIENT" if valid_count >= 5 else "CURRENT_INSUFFICIENT" if valid_count else "INVALID" if raw_bar_count else "EMPTY"
+                    state = "SUCCESS" if bars else "MALFORMED_RESPONSE" if raw_bar_count else "EMPTY_RESPONSE"
                 elif family == "LATEST_QUOTE" and state == "SUCCESS":
                     quote = dict(response.get("quote") or {})
                     bid, ask = _to_float(quote.get("bp") or quote.get("bid_price"), 0.0), _to_float(quote.get("ap") or quote.get("ask_price"), 0.0)
                     if bid > 0 and ask >= bid:
                         payload = {"bid": bid, "ask": ask, "mid": round((bid + ask) / 2.0, 8), "last": _to_float(quote.get("ap") or quote.get("ask_price"), 0.0), "quote_timestamp": quote.get("t") or quote.get("timestamp")}
-                        valid_count, quality = 1, "VALID"
+                        valid_count, quality = 1, "CURRENT_SUFFICIENT"
                     else:
                         state, quality = "MALFORMED_RESPONSE", "INVALID_SPREAD"
                 elif family == "ASSET_METADATA" and state == "SUCCESS":
                     asset = dict(response.get("asset") or {})
                     if asset.get("symbol") and str(asset.get("symbol") or "").upper() == symbol:
                         payload = {"tradable": bool(asset.get("tradable")), "fractionable": bool(asset.get("fractionable")), "shortable": asset.get("shortable"), "status": asset.get("status"), "exchange": asset.get("exchange"), "market": asset.get("asset_class")}
-                        valid_count, quality = 1, "VALID"
+                        valid_count, quality = 1, "CURRENT_SUFFICIENT"
                     else:
                         state, quality = "MALFORMED_RESPONSE", "SYMBOL_MISMATCH"
                 success = state == "SUCCESS" and valid_count > 0
                 previous = dict(bundle.get(family) or {})
-                refresh_delay = config[family][1] if success and quality != "INSUFFICIENT" else 15 * 60
-                market_record = {"schema_version": "legacy_swing_broker_market_record_v1", "record_id": f"legacy-market:{family.lower()}:{activation_id}", "request_id": f"legacy-market-request:{family.lower()}:{activation_id}:{now.strftime('%Y%m%d%H')}", "request_family": family, "provider": "ALPACA_MARKET_DATA" if family != "ASSET_METADATA" else "ALPACA_PAPER_BROKER", "activation_id": activation_id, "position_id": record.get("position_id"), "symbol": symbol, "asset_class": "equity", "lane": "SWING", "requested_at": now_iso, "received_at": now_iso, "response_state": state, "http_status": int(response.get("http_status") or 0), "records_received": int(payload.get("bars_received") or (1 if response.get("ok") else 0)), "records_valid": valid_count, "records_stored": int(success), "freshness_state": "CURRENT" if success else "UNAVAILABLE", "quality_state": quality, "source_error": str(response.get("error") or "")[:180], "retry_count": int(previous.get("retry_count") or 0) + (0 if success else 1), "next_refresh_at": (now + timedelta(seconds=refresh_delay)).isoformat().replace("+00:00", "Z"), **payload}
-                if not success and str(previous.get("response_state") or "").upper() == "SUCCESS":
-                    market_record.update({key: value for key, value in previous.items() if key in {"bars", "bid", "ask", "mid", "last", "quote_timestamp", "tradable", "fractionable", "shortable", "status", "exchange", "market"}})
-                    market_record["freshness_state"] = "STALE"
+                refresh_delay = config[family][1] if quality == "CURRENT_SUFFICIENT" else 15 * 60
+                source_error = str(response.get("error") or ("" if success else state.lower()))[:180]
+                candidate = {"schema_version": "legacy_swing_broker_market_record_v2", "record_id": f"legacy-market:{family.lower()}:{activation_id}", "request_id": f"legacy-market-request:{family.lower()}:{activation_id}:{now.strftime('%Y%m%d%H%M%S')}", "request_family": family, "provider": "ALPACA_MARKET_DATA" if family != "ASSET_METADATA" else "ALPACA_PAPER_BROKER", "activation_id": activation_id, "position_id": record.get("position_id"), "symbol": symbol, "asset_class": "equity", "lane": "SWING", "lookback_start": payload.get("first_bar_at"), "lookback_end": payload.get("last_bar_at"), "requested_at": now_iso, "received_at": now_iso, "response_state": state, "source_state": state, "http_status": int(response.get("http_status") or 0), "records_received": int((payload.get("bars_received") or 0) if family == "HISTORICAL_BARS" else (1 if response.get("ok") else 0)), "records_valid": valid_count, "records_stored": int(success), "freshness_state": "CURRENT" if success else "UNAVAILABLE", "quality_state": quality, "source_error": source_error, "retry_count": int(previous.get("retry_count") or 0) + (0 if success else 1), "next_refresh_at": (now + timedelta(seconds=refresh_delay)).isoformat().replace("+00:00", "Z"), "replacement_reason": "INITIAL_OR_REPLACEMENT_CANDIDATE", "supersedes_record_id": previous.get("record_id") or None, **payload}
+                market_record = self._legacy_swing_market_prefer_record(previous, candidate, now, config[family][1])
                 bundle[family] = market_record
                 family_activity["latest_error_category"] = market_record["source_error"]
                 if success:
@@ -2290,9 +2489,39 @@ class PaperAutopilotEngine:
                 str((dict(bundle.get(family) or {})).get("next_refresh_at") or now_iso)
                 for family in missing
             )
+            schedule_row = dict(activity["scheduler"]["per_symbol"].get(activation_id) or {})
+            schedule_row.update({
+                "symbol": symbol,
+                "last_attempt_at": now_iso,
+                "last_success_at": now_iso if any(str(dict(bundle.get(family) or {}).get("freshness_state") or "") == "CURRENT" for family in missing) else schedule_row.get("last_success_at"),
+                "next_refresh_at": record["market_evidence_next_refresh_at"],
+                "retry_count": max(int(dict(bundle.get(family) or {}).get("retry_count") or 0) for family in missing),
+                "starvation_cycles": 0,
+            })
+            activity["scheduler"]["per_symbol"][activation_id] = schedule_row
             registry[activation_id] = record
-        if registry_items and last_processed_index is not None:
-            activity["next_symbol_cursor"] = (cursor + last_processed_index + 1) % len(registry_items)
+            # Persist each bounded symbol result.  A later slow provider call
+            # or restart cannot discard an already validated bar batch.
+            self._runtime_state["legacy_swing_market_evidence"] = records
+            self._runtime_state["legacy_swing_market_activity"] = activity
+            if getattr(self, "state_path", None):
+                self._save_state_file()
+        for activation_id, raw in registry_items:
+            if activation_id in processed_activation_ids:
+                continue
+            bundle = dict(records.get(activation_id) or {})
+            if not any(not self._legacy_swing_market_record_current(dict(bundle.get(family) or {}), now, age) for family, (_method, age) in config.items()):
+                continue
+            schedule_row = dict(activity["scheduler"]["per_symbol"].get(activation_id) or {})
+            schedule_row.update({
+                "symbol": str(dict(raw or {}).get("symbol") or "").upper(),
+                "starvation_cycles": int(schedule_row.get("starvation_cycles") or 0) + 1,
+            })
+            activity["scheduler"]["per_symbol"][activation_id] = schedule_row
+        if registry_items and last_processed_original_index is not None:
+            activity["next_symbol_cursor"] = (last_processed_original_index + 1) % len(registry_items)
+            activity["scheduler"]["round_robin_cursor"] = activity["next_symbol_cursor"]
+            activity["scheduler"]["last_processed_symbol"] = str(registry_items[last_processed_original_index][1].get("symbol") or "").upper()
         self._runtime_state["legacy_swing_market_evidence"] = records
         self._runtime_state["legacy_swing_market_activity"] = activity
         return records, activity
@@ -5432,13 +5661,28 @@ class PaperAutopilotEngine:
         if self._thread and self._thread.is_alive():
             return {"ok": True, "started": False, "already_running": True}
         self._stop_event.clear()
+        self._runtime_state["worker_generation_id"] = f"paper-autopilot:{os.getpid()}:{int(time.time())}"
+        self._note_worker_progress("starting")
 
         def _loop():
             while not self._stop_event.is_set():
+                cycle_started_at = _now_iso()
+                self._runtime_state["worker_cycle_started_at"] = cycle_started_at
+                self._runtime_state["worker_cycle_error"] = ""
+                self._note_worker_progress("cycle_start")
                 try:
                     self.run_cycle()
                 except Exception as e:
                     self._runtime_state["last_error"] = str(e)[:240]
+                    self._note_worker_progress("cycle_failed", error=str(e))
+                else:
+                    self._runtime_state["worker_cycle_completed_at"] = _now_iso()
+                    self._runtime_state["worker_cycle_count"] = _to_int(self._runtime_state.get("worker_cycle_count"), 0) + 1
+                    self._note_worker_progress("cycle_completed")
+                    # A complete cycle is the only point that advances the
+                    # durable heartbeat.  This prevents GET traffic from
+                    # masking a stalled worker after a restart.
+                    self._save_state_file()
                 self._stop_event.wait(max(5, int(self.interval_seconds)))
 
         self._thread = threading.Thread(target=_loop, daemon=True, name="astra-paper-autopilot")
@@ -5566,7 +5810,10 @@ class PaperAutopilotEngine:
             "cooldown_after_close_seconds": int(self.cooldown_after_close_seconds),
             "throughput_expansion_enabled": bool(self.throughput_expansion_enabled),
             "adaptive_learning_capacity_policy": self._adaptive_execution_capacity(
-                _to_int(last_trace.get("broker_open_positions_count"), self._count_open_positions().get("stock", 0) + self._count_open_positions().get("crypto", 0))
+                # Control status is intentionally broker/provider/database
+                # free.  The last completed worker trace is sufficient for a
+                # configuration view and cannot block a read-only endpoint.
+                _to_int(last_trace.get("broker_open_positions_count"), 0)
             ),
             "soft_candidate_expansion_enabled": bool(self.soft_candidate_expansion_enabled),
             "paper_entry_threshold_relief_points": round(float(self.paper_entry_threshold_relief_points), 3),
@@ -5609,6 +5856,7 @@ class PaperAutopilotEngine:
 
         with self._cycle_lock:
             cycle_id = _now_iso()
+            self._note_worker_progress("safety_preflight")
             opened = 0
             closed = 0
             skipped = 0
@@ -5628,15 +5876,23 @@ class PaperAutopilotEngine:
             horizon_execution_blocker = ""
             decision_trace: list[dict[str, Any]] = []
             safety = self._alpaca_safety_snapshot()
+            self._note_worker_progress("pending_exit_reconciliation")
             learned_exit_refresh = self._refresh_learned_exit_pending_sells()
             authorized_lane_exit_refresh = self._refresh_authorized_lane_exit_pending()
             open_rows_initial = self._fetch_open_positions()
             internal_open_syms = {str(r.get("symbol") or "").upper().strip() for r in open_rows_initial}
+            self._note_worker_progress("broker_position_snapshot")
             broker_snapshot = self._broker_open_symbols_snapshot()
             broker_open_syms = set(broker_snapshot.get("broker_open_symbols") or set())
             broker_position_by_symbol = dict(broker_snapshot.get("broker_position_by_symbol") or {})
             legacy_activation_refresh = self._refresh_legacy_forward_activations(broker_position_by_symbol)
+            self._note_worker_progress("legacy_market_evidence")
             legacy_canary_refresh = self._refresh_legacy_swing_canary_pre_submit(broker_position_by_symbol)
+            # Market evidence is a restart-stable worker product.  Persist it
+            # before the broader candidate scan, which may take longer than a
+            # bounded provider refresh cycle.
+            self._save_state_file()
+            self._note_worker_progress("open_position_review")
             broker_position_review_rows = [
                 {
                     "symbol": str(symbol).upper(),
@@ -5839,6 +6095,7 @@ class PaperAutopilotEngine:
             # Normalize every worker-cycle observation before any early gate
             # can reject it.  The ranking and eligibility values are retained;
             # this only gives every candidate a stable operational lineage.
+            self._note_worker_progress("candidate_collection")
             candidates = [_normalize_paper_entry_bridge(row) for row in self._collect_candidate_rows() if isinstance(row, dict)]
             candidate_source = "candidate_source_empty"
             if candidates:

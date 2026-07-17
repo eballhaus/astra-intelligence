@@ -35,6 +35,12 @@ class _MalformedBars(_MarketDataFixture):
         return {"ok": True, "symbol": symbol, "response_state": "SUCCESS", "http_status": 200, "bars": [{"t": "bad", "o": 10, "h": 9, "l": 11, "c": 10, "v": -1}], "broker_actions": 0}
 
 
+class _EmptyBars(_MarketDataFixture):
+    def historical_bars(self, symbol, **_kwargs):
+        self.bar_calls.append(symbol)
+        return {"ok": True, "symbol": symbol, "response_state": "EMPTY_RESPONSE", "http_status": 200, "bars": [], "broker_actions": 0}
+
+
 def _fmp_success(symbol):
     now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     return {"provider": "FMP", "endpoint_family": "company_profile", "symbol": symbol, "requested_at": now, "response_at": now, "response_state": "SUCCESS", "records_received": 1, "records_valid": 1, "normalized_fields": {"sector": "Technology"}}
@@ -42,6 +48,18 @@ def _fmp_success(symbol):
 
 def _registry():
     return {"activation-a": {"activation_id": "activation-a", "baseline_id": "legacy-forward:asset-a", "position_id": "asset-a", "symbol": "AAA", "legacy_activation_timestamp": "2026-07-15T12:00:00Z", "activation_price": 10.0}}
+
+
+def _registry_with_backlog():
+    return {
+        f"activation-{index}": {
+            "activation_id": f"activation-{index}", "baseline_id": f"legacy-forward:asset-{index}",
+            "position_id": f"asset-{index}", "symbol": f"A{index:02d}",
+            "legacy_activation_timestamp": "2026-07-15T12:00:00Z", "activation_price": 10.0,
+            "refresh_priority": 100,
+        }
+        for index in range(6)
+    }
 
 
 def _engine(market):
@@ -83,6 +101,26 @@ class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
         self.assertEqual(market.quote_calls, ["AAA"])
         self.assertEqual(market.asset_calls, ["AAA"])
 
+    def test_worker_liveness_is_local_and_does_not_require_a_broker_status_read(self):
+        engine = _engine(_MarketDataFixture())
+        engine._thread = None
+        engine.interval_seconds = 45
+        engine._enabled = True
+        engine._runtime_state.update({
+            "worker_generation_id": "paper-autopilot:test",
+            "worker_heartbeat_at": "2026-07-17T12:00:00Z",
+            "worker_cycle_started_at": "2026-07-17T12:00:00Z",
+            "worker_cycle_completed_at": "2026-07-17T11:59:00Z",
+            "worker_cycle_phase": "market_data:HISTORICAL_BARS:AAA",
+            "worker_cycle_count": 3,
+            "last_cycle_utc": "2026-07-17T11:59:00Z",
+        })
+        liveness = engine.worker_liveness_status()
+        self.assertFalse(liveness["running"])
+        self.assertEqual(liveness["worker_cycle_phase"], "market_data:HISTORICAL_BARS:AAA")
+        self.assertEqual(liveness["worker_cycle_count"], 3)
+        self.assertEqual(liveness["interval_seconds"], 45)
+
     def test_nested_canary_market_records_survive_worker_restart(self):
         market = _MarketDataFixture()
         first = _engine(market)
@@ -101,6 +139,58 @@ class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
         self.assertEqual(record["response_state"], "MALFORMED_RESPONSE")
         self.assertEqual(record["records_stored"], 0)
         self.assertEqual(record["freshness_state"], "UNAVAILABLE")
+
+    def test_empty_refresh_preserves_prior_sufficient_bars_as_stale(self):
+        market = _MarketDataFixture()
+        engine = _engine(market)
+        records, _activity = engine._refresh_legacy_swing_broker_market_evidence(_registry())
+        prior = records["activation-a"]["HISTORICAL_BARS"]
+        prior["received_at"] = "2026-07-01T00:00:00Z"
+        prior["freshness_state"] = "CURRENT"
+        prior["quality_state"] = "CURRENT_SUFFICIENT"
+        engine._runtime_state["legacy_swing_market_evidence"] = records
+        engine._legacy_swing_market_broker = _EmptyBars()
+        restored, _activity = engine._refresh_legacy_swing_broker_market_evidence(_registry())
+        bar = restored["activation-a"]["HISTORICAL_BARS"]
+        self.assertEqual(bar["response_state"], "SUCCESS")
+        self.assertEqual(bar["freshness_state"], "STALE")
+        self.assertEqual(bar["quality_state"], "STALE_SUFFICIENT")
+        self.assertEqual(len(bar["bars"]), 6)
+        self.assertEqual(bar["replacement_reason"], "LOWER_QUALITY_REJECTED_PRESERVED_PRIOR")
+
+    def test_empty_broker_response_is_external_empty_not_invalid_bar_data(self):
+        engine = _engine(_EmptyBars())
+        records, _activity = engine._refresh_legacy_swing_broker_market_evidence(_registry())
+        bar = records["activation-a"]["HISTORICAL_BARS"]
+        self.assertEqual(bar["response_state"], "EMPTY_RESPONSE")
+        self.assertEqual(bar["quality_state"], "EMPTY")
+        self.assertEqual(bar["source_error"], "empty_response")
+
+    def test_round_robin_persists_and_eventually_reaches_later_symbols(self):
+        market = _EmptyBars()
+        engine = _engine(market)
+        registry = _registry_with_backlog()
+        _records, first = engine._refresh_legacy_swing_broker_market_evidence(registry)
+        self.assertEqual(len(first["symbols_requested"]), 3)
+        engine._runtime_state["legacy_swing_market_activity"] = first
+        _records, second = engine._refresh_legacy_swing_broker_market_evidence(registry)
+        self.assertEqual(len(second["symbols_requested"]), 3)
+        self.assertEqual(len(set(first["symbols_requested"] + second["symbols_requested"])), 6)
+        self.assertNotEqual(first["next_symbol_cursor"], second["next_symbol_cursor"])
+        self.assertEqual(second["scheduler"]["worker_generation_id"].split(":")[0], "paper-autopilot")
+
+    def test_insufficient_bar_context_cannot_fallback_to_current_momentum(self):
+        evidence = build_legacy_swing_required_evidence_v1(
+            {
+                "symbol": "AAA", "current_price": 10.5, "recent_price_path": [10.0],
+                "broker_bar_record": {
+                    "response_state": "SUCCESS", "freshness_state": "CURRENT", "quality_state": "CURRENT_INSUFFICIENT",
+                    "bars": [{"close": 10.0, "volume": 1000}],
+                },
+            },
+            _registry()["activation-a"],
+        )
+        self.assertEqual(evidence["MOMENTUM"]["status"], "UNAVAILABLE")
 
     def test_canonical_records_produce_current_momentum_and_liquidity(self):
         market = _MarketDataFixture()
