@@ -67,6 +67,7 @@ def _registry_with_backlog():
 def _engine(market):
     engine = object.__new__(PaperAutopilotEngine)
     engine._runtime_state = {}
+    engine.max_stocks = 3
     engine._legacy_swing_market_broker = market
     engine._legacy_swing_fmp_fetcher = _fmp_success
     engine._legacy_swing_fmp_historical_fetcher = lambda *_args, **_kwargs: {"response_state": "EMPTY_RESPONSE", "bars": []}
@@ -75,6 +76,14 @@ def _engine(market):
 
 
 class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
+    def test_runtime_reduced_batch_bounds_existing_legacy_loop(self):
+        engine = _engine(_MarketDataFixture())
+        engine.max_stocks = 1
+        _records, activity = engine._refresh_legacy_swing_broker_market_evidence(_registry_with_backlog())
+        self.assertEqual(activity["max_symbols_per_cycle"], 1)
+        self.assertEqual(len(activity["symbols_attempted"]), 1)
+        self.assertLessEqual(activity["provider_requests_this_cycle"], 12)
+
     def test_existing_fmp_router_normalizes_hourly_historical_response(self):
         router = ProviderRouter()
         router._stock_keys["FMP"] = "test-key"

@@ -1444,8 +1444,12 @@ class PaperAutopilotEngine:
             },
         }
         try:
-            with open(self.state_path, "w", encoding="utf-8") as f:
+            temporary_path = f"{self.state_path}.{os.getpid()}.tmp"
+            with open(temporary_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, separators=(",", ":"), ensure_ascii=True)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary_path, self.state_path)
         except Exception:
             pass
 
@@ -2475,7 +2479,9 @@ class PaperAutopilotEngine:
             "provider": "ALPACA_MARKET_DATA",
             "worker_owner": "PaperAutopilot._refresh_legacy_swing_broker_market_evidence",
             "worker_invoked": True,
-            "max_symbols_per_cycle": 3,
+            # The isolated runtime may temporarily reduce this existing
+            # acquisition loop to one symbol under elevated host pressure.
+            "max_symbols_per_cycle": min(3, max(1, int(getattr(self, "max_stocks", 3) or 3))),
             "maximum_provider_requests_per_cycle": 12,
             "maximum_pages_per_symbol": 2,
             "maximum_cycle_elapsed_seconds": 20,

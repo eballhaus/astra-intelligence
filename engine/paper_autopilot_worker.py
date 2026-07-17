@@ -11,6 +11,7 @@ import os
 import signal
 import sys
 import time
+import urllib.request
 from typing import Any
 
 from engine.astra_runtime_governance_v1 import (
@@ -18,6 +19,7 @@ from engine.astra_runtime_governance_v1 import (
     WORKER_STATE_PATH,
     RuntimeLimits,
     WorkerLease,
+    advance_resource_policy,
     read_snapshot,
     resource_snapshot,
     rotate_log,
@@ -35,9 +37,10 @@ class PaperAutopilotWorker:
         self.stop_requested = False
         self.cycle_count = int(read_snapshot().get("cycle_count") or 0)
         self.previous_cursor = str(read_snapshot().get("cursor") or "")
-        self.cooldown_until = 0.0
+        self.resource_policy = dict(read_snapshot().get("resource_policy") or {})
 
     def _base_state(self) -> dict[str, Any]:
+        previous = read_snapshot()
         return {
             "schema_version": "1.0.0",
             "state_version": "1.1.0",
@@ -46,6 +49,16 @@ class PaperAutopilotWorker:
             "process_id": os.getpid(),
             "parent_process_id": os.getppid(),
             "process_role": "PAPER_AUTOPILOT_WORKER",
+            "active_worker_present": True,
+            "active_worker_pid": os.getpid(),
+            "active_worker_instance_id": self.lease.instance_id,
+            "active_worker_generation_id": self.lease.generation_id,
+            "last_known_worker_pid": previous.get("last_known_worker_pid") or previous.get("process_id"),
+            "last_known_worker_instance_id": previous.get("last_known_worker_instance_id") or previous.get("worker_instance_id"),
+            "last_known_worker_generation_id": previous.get("last_known_worker_generation_id") or previous.get("worker_generation_id"),
+            "last_known_worker_cycle_id": previous.get("last_known_worker_cycle_id") or previous.get("cycle_id"),
+            "last_known_worker_stopped_at": previous.get("last_known_worker_stopped_at"),
+            "last_known_worker_exit_reason": previous.get("last_known_worker_exit_reason") or previous.get("cycle_stop_reason"),
             "started_at": utc_now(),
             "heartbeat_at": utc_now(),
             "cycle_id": "",
@@ -67,6 +80,7 @@ class PaperAutopilotWorker:
             "downstream_acknowledgements": {},
             "recovered_daily_symbols": [],
             "resource_pause_state": "RESOURCE_NORMAL",
+            "resource_policy": self.resource_policy,
             "last_error": "",
             "last_error_at": "",
             "next_cycle_at": utc_now(),
@@ -77,13 +91,18 @@ class PaperAutopilotWorker:
             "broker_actions_used_by_status": 0,
         }
 
-    def _publish(self, **updates: Any) -> dict[str, Any]:
+    def _publish(self, *, resource: dict[str, Any] | None = None, resource_policy: dict[str, Any] | None = None, **updates: Any) -> dict[str, Any]:
         current = read_snapshot()
         state = self._base_state() if not current or current.get("worker_generation_id") != self.lease.generation_id else current
         state.update(updates)
         state["heartbeat_at"] = utc_now()
-        worker_pid = int(state.get("process_id") or os.getpid())
-        state["resource"] = resource_snapshot(worker_pid=worker_pid)
+        if state.get("active_worker_present") is not False:
+            state["active_worker_present"] = True
+            state["active_worker_pid"] = os.getpid()
+            state["active_worker_instance_id"] = self.lease.instance_id
+            state["active_worker_generation_id"] = self.lease.generation_id
+        state["resource"] = dict(resource or state.get("resource") or resource_snapshot(worker_pid=os.getpid()))
+        state["resource_policy"] = dict(resource_policy or self.resource_policy)
         state["resource_state"] = state["resource"].get("resource_state")
         state["host_load_observed"] = state["resource"].get("host_load_1m")
         state["worker_memory_observed"] = (state["resource"].get("worker_process") or {}).get("memory_mb")
@@ -92,17 +111,51 @@ class PaperAutopilotWorker:
         state["autopilot_enabled"] = bool(getattr(self.autopilot, "_enabled", False))
         return state
 
+    def _backend_health_latency_ms(self) -> float | None:
+        """Bounded internal health probe; never calls a provider or broker."""
+        host = os.getenv("ASTRA_BACKEND_HOST", "127.0.0.1")
+        port = os.getenv("ASTRA_BACKEND_PORT", "8000")
+        started = time.monotonic()
+        try:
+            with urllib.request.urlopen(f"http://{host}:{port}/api/health", timeout=1.5) as response:
+                if int(getattr(response, "status", 0) or 0) != 200:
+                    return None
+            return round((time.monotonic() - started) * 1000.0, 2)
+        except Exception:
+            return None
+
+    def _sample_resource(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        sample = resource_snapshot(
+            worker_pid=os.getpid(),
+            backend_health_latency_ms=self._backend_health_latency_ms(),
+            require_complete=True,
+        )
+        self.resource_policy = advance_resource_policy(self.resource_policy, sample, limits=self.limits)
+        sample["resource_state"] = self.resource_policy["resource_state"]
+        sample["resource_reason"] = self.resource_policy["resource_transition_reason"]
+        sample["resource_decision"] = self.resource_policy["resource_decision"]
+        return sample, self.resource_policy
+
     def _evidence_summary(self) -> dict[str, Any]:
         """Summarize already-produced worker evidence without new reads or calls."""
         runtime = dict(getattr(self.autopilot, "_runtime_state", {}).get("legacy_swing_canary") or {})
         records = dict(runtime.get("market_records") or getattr(self.autopilot, "_runtime_state", {}).get("legacy_swing_market_evidence") or {})
         reviews = dict(runtime.get("reviews") or {})
+        activity = dict(runtime.get("market_activity") or getattr(self.autopilot, "_runtime_state", {}).get("legacy_swing_market_activity") or {})
+        current_symbols = {str(symbol or "").upper() for symbol in list(activity.get("symbols_completed") or [])}
+        bounded_records = [
+            (activation_id, bundle_raw)
+            for activation_id, bundle_raw in records.items()
+            if str(dict((bundle_raw or {}).get("HISTORICAL_BARS_DAILY") or {}).get("symbol") or "").upper() in current_symbols
+        ]
+        if not bounded_records:
+            bounded_records = list(records.items())
         sufficient = insufficient = failed = momentum = 0
         recovered: list[dict[str, Any]] = []
         acknowledgements = {"direct_evidence": 0, "forward_value": 0, "profit_capture": 0, "direct_confirmation": 0, "lifecycle": 0}
-        for activation_id, review_raw in list(reviews.items())[: self.limits.maximum_downstream_symbols_per_cycle]:
-            review = dict(review_raw or {})
-            daily = dict((records.get(activation_id) or {}).get("HISTORICAL_BARS_DAILY") or {})
+        for activation_id, bundle_raw in bounded_records[: self.limits.maximum_downstream_symbols_per_cycle]:
+            review = dict(reviews.get(activation_id) or {})
+            daily = dict((bundle_raw or {}).get("HISTORICAL_BARS_DAILY") or {})
             required = int(daily.get("required_completed_bars") or 15)
             completed = int(daily.get("records_valid") or 0)
             quality = str(daily.get("quality_state") or "")
@@ -132,13 +185,14 @@ class PaperAutopilotWorker:
     def _bounded_cycle(self) -> None:
         started = time.monotonic()
         cycle_id = f"cycle-{self.cycle_count + 1}-{int(time.time())}"
-        before = resource_snapshot(worker_pid=os.getpid())
+        before, policy = self._sample_resource()
         resource_state = str(before.get("resource_state") or "RESOURCE_NORMAL")
-        if resource_state in {"RESOURCE_HIGH_PAUSE", "MEMORY_PRESSURE_PAUSE"}:
-            self.cooldown_until = time.monotonic() + self.limits.recovery_cooldown_seconds
+        if resource_state in {"RESOURCE_HIGH_PAUSE", "RESOURCE_MEMORY_PAUSE", "RESOURCE_API_LATENCY_PAUSE", "RESOURCE_UNKNOWN_FAIL_CLOSED"}:
             self._publish(
+                resource=before,
+                resource_policy=policy,
                 cycle_id=cycle_id,
-                cycle_state="PAUSED_MEMORY_PRESSURE" if resource_state == "MEMORY_PRESSURE_PAUSE" else "PAUSED_HIGH_LOAD",
+                cycle_state="PAUSED_MEMORY_PRESSURE" if resource_state == "RESOURCE_MEMORY_PAUSE" else "PAUSED_API_LATENCY" if resource_state == "RESOURCE_API_LATENCY_PAUSE" else "PAUSED_RESOURCE_UNKNOWN" if resource_state == "RESOURCE_UNKNOWN_FAIL_CLOSED" else "PAUSED_HIGH_LOAD",
                 cycle_stop_reason=str(before.get("resource_reason") or "resource_pause"),
                 resource_pause_state=resource_state,
                 symbols_due=0,
@@ -151,8 +205,10 @@ class PaperAutopilotWorker:
                 next_cycle_at=utc_now(),
             )
             return
-        if time.monotonic() < self.cooldown_until:
+        if resource_state == "RESOURCE_RECOVERY_COOLDOWN":
             self._publish(
+                resource=before,
+                resource_policy=policy,
                 cycle_id=cycle_id,
                 cycle_state="CHECKPOINTED",
                 cycle_stop_reason="RECOVERY_COOLDOWN",
@@ -168,10 +224,10 @@ class PaperAutopilotWorker:
             return
 
         original_max_stocks = getattr(self.autopilot, "max_stocks", self.limits.maximum_symbols_per_cycle)
-        symbol_budget = 1 if resource_state == "RESOURCE_ELEVATED" else self.limits.maximum_symbols_per_cycle
+        symbol_budget = 1 if resource_state == "RESOURCE_ELEVATED" or policy.get("resume_mode") == "RESUME_ONE_SYMBOL" else self.limits.maximum_symbols_per_cycle
         # This is a per-process cycle budget, not a persistent strategy setting.
         self.autopilot.max_stocks = min(int(original_max_stocks), symbol_budget)
-        self._publish(cycle_id=cycle_id, cycle_state="ACTIVE_BOUNDED", last_cycle_started_at=utc_now(), resource_pause_state=resource_state)
+        self._publish(resource=before, resource_policy=policy, cycle_id=cycle_id, cycle_state="ACTIVE_BOUNDED", last_cycle_started_at=utc_now(), resource_pause_state=resource_state)
         try:
             result = dict(self.autopilot.run_cycle() or {})
             elapsed = time.monotonic() - started
@@ -185,7 +241,12 @@ class PaperAutopilotWorker:
             elif str(market.get("cycle_state") or "").startswith("CYCLE_PARTIAL"):
                 state, stop_reason = "PARTIAL_SYMBOL_LIMIT", str(market.get("cycle_state"))
             self.cycle_count += 1
+            if policy.get("resume_mode") == "RESUME_ONE_SYMBOL":
+                policy = {**policy, "resume_mode": "RESUME_NORMAL_BOUNDED"}
+                self.resource_policy = policy
             self._publish(
+                resource=before,
+                resource_policy=policy,
                 cycle_id=cycle_id,
                 cycle_state=state,
                 cycle_stop_reason=stop_reason,
@@ -195,18 +256,18 @@ class PaperAutopilotWorker:
                 cycle_count=self.cycle_count,
                 cursor=str(scheduler.get("round_robin_cursor") or ""),
                 symbols_due=int(scheduler.get("symbols_due") or 0),
-                symbols_attempted=min(symbol_budget, int(scheduler.get("symbols_processed") or 0)),
-                symbols_completed=min(symbol_budget, int(scheduler.get("symbols_processed") or 0)),
-                symbols_deferred=int(scheduler.get("symbols_deferred") or 0),
-                provider_requests=min(self.limits.maximum_provider_requests_per_cycle, int((market.get("families") or {}).get("HISTORICAL_BARS", {}).get("request_count") or 0)),
-                pages_consumed=min(self.limits.maximum_pages_per_symbol * self.limits.maximum_symbols_per_cycle, int(market.get("pages_consumed") or 0)),
-                records_persisted=int(market.get("records_persisted") or 0),
+                symbols_attempted=min(symbol_budget, len(list(market.get("symbols_attempted") or []))),
+                symbols_completed=min(symbol_budget, len(list(market.get("symbols_completed") or []))),
+                symbols_deferred=len(list(market.get("symbols_deferred") or [])),
+                provider_requests=min(self.limits.maximum_provider_requests_per_cycle, int(market.get("provider_requests_this_cycle") or 0)),
+                pages_consumed=min(self.limits.maximum_pages_per_symbol * symbol_budget, int(market.get("pages_consumed_this_cycle") or 0)),
+                records_persisted=int(market.get("records_persisted_this_cycle") or 0),
                 **self._evidence_summary(),
                 last_error=str(trace.get("worker_cycle_error") or "")[:240],
                 next_cycle_at=utc_now(),
             )
         except Exception as exc:  # Fail closed and leave the API unaffected.
-            self._publish(cycle_id=cycle_id, cycle_state="FAILED_SAFE", cycle_stop_reason="worker_cycle_exception", last_error=str(exc)[:240], last_error_at=utc_now())
+            self._publish(resource=before, resource_policy=policy, cycle_id=cycle_id, cycle_state="FAILED_SAFE", cycle_stop_reason="worker_cycle_exception", last_error=str(exc)[:240], last_error_at=utc_now())
         finally:
             self.autopilot.max_stocks = original_max_stocks
 
@@ -217,7 +278,10 @@ class PaperAutopilotWorker:
             return 2
         signal.signal(signal.SIGTERM, self._on_signal)
         signal.signal(signal.SIGINT, self._on_signal)
-        self._publish(cycle_state="IDLE", ownership_state="SINGLE_WORKER_ACTIVE")
+        if hasattr(signal, "SIGHUP"):
+            signal.signal(signal.SIGHUP, self._on_signal)
+        initial_resource, initial_policy = self._sample_resource()
+        self._publish(resource=initial_resource, resource_policy=initial_policy, cycle_state="IDLE", ownership_state="SINGLE_WORKER_ACTIVE")
         try:
             while not self.stop_requested:
                 self._bounded_cycle()
@@ -229,7 +293,22 @@ class PaperAutopilotWorker:
                     time.sleep(min(5.0, self.limits.minimum_sleep_between_cycles_seconds))
         finally:
             self.stop_requested = True
-            self._publish(cycle_state="CHECKPOINTED", cycle_stop_reason="worker_stopped", ownership_state="NO_WORKER_ACTIVE")
+            last_cycle = read_snapshot()
+            self._publish(
+                cycle_state="CHECKPOINTED",
+                cycle_stop_reason="worker_stopped",
+                ownership_state="NO_WORKER_ACTIVE",
+                active_worker_present=False,
+                active_worker_pid=None,
+                active_worker_instance_id=None,
+                active_worker_generation_id=None,
+                last_known_worker_pid=os.getpid(),
+                last_known_worker_instance_id=self.lease.instance_id,
+                last_known_worker_generation_id=self.lease.generation_id,
+                last_known_worker_cycle_id=last_cycle.get("cycle_id"),
+                last_known_worker_stopped_at=utc_now(),
+                last_known_worker_exit_reason="worker_stopped",
+            )
             self.lease.release()
         return 0
 

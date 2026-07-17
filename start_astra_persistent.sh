@@ -148,6 +148,39 @@ stop_tmux_session() {
   fi
 }
 
+stop_canonical_worker() {
+  local snapshot="${STATE_DIR}/astra_worker_runtime_state_v1.json"
+  local pid command attempt
+  [[ -f "${snapshot}" ]] || return 0
+  pid="$(python3 - "${snapshot}" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        state = json.load(handle)
+    if state.get("active_worker_present") is False:
+        raise SystemExit
+    value = state.get("active_worker_pid") or state.get("process_id")
+    print(int(value) if value else "")
+except Exception:
+    pass
+PY
+)"
+  [[ "${pid}" =~ ^[0-9]+$ ]] || return 0
+  command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+  if [[ "${command}" != *"engine.paper_autopilot_worker"* ]]; then
+    return 0
+  fi
+  kill -TERM "${pid}" >/dev/null 2>&1 || true
+  for attempt in {1..20}; do
+    if ! ps -p "${pid}" >/dev/null 2>&1; then
+      log_info "canonical worker checkpointed: ${pid}"
+      return 0
+    fi
+    sleep 0.25
+  done
+  log_info "canonical worker did not exit after bounded TERM wait: ${pid}"
+}
+
 if ! command -v tmux >/dev/null 2>&1; then
   log_info "tmux is required but not installed."
   exit 1
@@ -182,6 +215,7 @@ if [[ "${START_COMPONENT}" == "backend" ]]; then
 fi
 if [[ "${START_COMPONENT}" == "worker" ]]; then
   stop_tmux_session "${WORKER_SESSION}"
+  stop_canonical_worker
 fi
 if [[ "${START_COMPONENT}" == "frontend" ]]; then
   stop_tmux_session "${FRONTEND_SESSION}"

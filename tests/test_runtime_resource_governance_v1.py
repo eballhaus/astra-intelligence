@@ -1,16 +1,20 @@
 import os
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from engine.astra_runtime_governance_v1 import (
     RuntimeLimits,
     WorkerLease,
+    advance_resource_policy,
     canonical_runtime_invariants,
     canonical_worker_state,
+    classify_resource_signals,
     read_snapshot,
     rotate_log,
     write_snapshot,
+    worker_liveness,
 )
 
 
@@ -86,8 +90,106 @@ class RuntimeResourceGovernanceTests(unittest.TestCase):
             "updated_at": "2026-01-01T00:00:00Z",
         }
         invariants = canonical_runtime_invariants(state)
-        self.assertEqual(invariants["SUFFICIENT_BARS_BUILD_MOMENTUM"]["state"], "AWAITING_BOUNDED_PROGRESS")
-        self.assertEqual(invariants["MOMENTUM_IS_ACKNOWLEDGED"]["state"], "AWAITING_BOUNDED_PROGRESS")
+        self.assertEqual(invariants["SUFFICIENT_BARS_BUILD_MOMENTUM"]["state"], "AWAITING_SAMPLES")
+        self.assertEqual(invariants["MOMENTUM_IS_ACKNOWLEDGED"]["state"], "AWAITING_SAMPLES")
+
+    def _signals(self, **overrides):
+        data = {
+            "logical_cpu_count": 6,
+            "host_load_1m": 4.3,
+            "host_load_5m": 4.9,
+            "host_load_15m": 5.0,
+            "cpu_idle_percent": 51.0,
+            "memory_pressure_state": "normal",
+            "available_memory_mb": 20 * 1024,
+            "backend_health_latency_ms": 25.0,
+            "worker_process": {"memory_mb": 120.0},
+        }
+        data.update(overrides)
+        return data
+
+    def test_six_cpu_healthy_baseline_is_not_saturated(self):
+        sample = classify_resource_signals(self._signals(), require_complete=True)
+        self.assertAlmostEqual(sample["normalized_load_1m"], 4.3 / 6, places=3)
+        self.assertEqual(sample["resource_candidate_state"], "RESOURCE_NORMAL")
+
+    def test_high_load_with_healthy_idle_is_elevated_not_pause(self):
+        sample = classify_resource_signals(self._signals(host_load_1m=7.2, cpu_idle_percent=52.0), require_complete=True)
+        self.assertEqual(sample["resource_candidate_state"], "RESOURCE_ELEVATED")
+
+    def test_single_high_sample_reduces_before_pause(self):
+        sample = classify_resource_signals(self._signals(host_load_1m=7.2, cpu_idle_percent=10.0), require_complete=True)
+        policy = advance_resource_policy({}, sample)
+        self.assertEqual(policy["resource_state"], "RESOURCE_ELEVATED")
+        self.assertEqual(policy["consecutive_high_samples"], 1)
+
+    def test_sustained_high_samples_pause(self):
+        sample = classify_resource_signals(self._signals(host_load_1m=7.2, cpu_idle_percent=10.0), require_complete=True)
+        policy = {}
+        for _ in range(RuntimeLimits().sustained_high_samples_required):
+            policy = advance_resource_policy(policy, sample)
+        self.assertEqual(policy["resource_state"], "RESOURCE_HIGH_PAUSE")
+        self.assertEqual(policy["resource_decision"], "PAUSE")
+
+    def test_memory_and_latency_fail_safe(self):
+        memory = classify_resource_signals(self._signals(memory_pressure_state="high"), require_complete=True)
+        self.assertEqual(advance_resource_policy({}, memory)["resource_state"], "RESOURCE_MEMORY_PAUSE")
+        latency = classify_resource_signals(self._signals(backend_health_latency_ms=2000.0), require_complete=True)
+        policy = {}
+        for _ in range(RuntimeLimits().sustained_high_samples_required):
+            policy = advance_resource_policy(policy, latency)
+        self.assertEqual(policy["resource_state"], "RESOURCE_API_LATENCY_PAUSE")
+
+    def test_missing_required_signals_fail_closed(self):
+        sample = classify_resource_signals(self._signals(cpu_idle_percent=None), require_complete=True)
+        self.assertEqual(sample["resource_candidate_state"], "RESOURCE_UNKNOWN_FAIL_CLOSED")
+        self.assertEqual(advance_resource_policy({}, sample)["resource_state"], "RESOURCE_UNKNOWN_FAIL_CLOSED")
+
+    def test_recovery_requires_cooldown_and_healthy_hysteresis(self):
+        now = datetime.now(UTC)
+        unsafe = classify_resource_signals(self._signals(host_load_1m=7.2, cpu_idle_percent=10.0), require_complete=True)
+        policy = {}
+        for _ in range(RuntimeLimits().sustained_high_samples_required):
+            policy = advance_resource_policy(policy, unsafe, now=now)
+        healthy = classify_resource_signals(self._signals(), require_complete=True)
+        policy = advance_resource_policy(policy, healthy, now=now)
+        self.assertEqual(policy["resource_state"], "RESOURCE_RECOVERY_COOLDOWN")
+        resumed_at = now + timedelta(seconds=RuntimeLimits().recovery_cooldown_seconds + 1)
+        for _ in range(RuntimeLimits().healthy_samples_required):
+            policy = advance_resource_policy(policy, healthy, now=resumed_at)
+        self.assertEqual(policy["resource_state"], "RESOURCE_NORMAL")
+        self.assertEqual(policy["resume_mode"], "RESUME_ONE_SYMBOL")
+
+    def test_missing_or_reused_worker_is_historical_not_active(self):
+        state = {
+            "process_id": 8123,
+            "worker_instance_id": "old-worker",
+            "worker_generation_id": "old-generation",
+            "heartbeat_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "limits": RuntimeLimits().__dict__,
+            "ownership_state": "SINGLE_WORKER_ACTIVE",
+        }
+        missing = worker_liveness(state, process={"pid": 8123, "running": False, "command": ""})
+        self.assertFalse(missing["active_worker_present"])
+        self.assertEqual(missing["liveness_state"], "PROCESS_MISSING")
+        reused = worker_liveness(state, process={"pid": 8123, "running": True, "command": "unrelated-process"})
+        self.assertFalse(reused["active_worker_present"])
+        self.assertEqual(reused["liveness_state"], "PID_REUSED")
+
+    def test_clean_stop_retains_only_last_known_worker(self):
+        state = {
+            "process_id": 8123,
+            "worker_instance_id": "old-worker",
+            "worker_generation_id": "old-generation",
+            "active_worker_present": False,
+            "last_known_worker_pid": 8123,
+            "last_known_worker_generation_id": "old-generation",
+            "last_known_worker_exit_reason": "worker_stopped",
+        }
+        result = worker_liveness(state, process={"pid": 8123, "running": False, "command": ""})
+        self.assertEqual(result["liveness_state"], "STOPPED_CLEANLY")
+        self.assertIsNone(result["active_worker_pid"])
+        self.assertEqual(result["last_known_worker_pid"], 8123)
 
 
 if __name__ == "__main__":

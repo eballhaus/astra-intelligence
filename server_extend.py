@@ -42,6 +42,7 @@ from engine.astra_runtime_governance_v1 import (
     read_snapshot as _runtime_read_snapshot,
     resource_snapshot as _runtime_resource_snapshot,
     snapshot_age_seconds as _runtime_snapshot_age_seconds,
+    worker_liveness as _runtime_worker_liveness,
 )
 
 load_runtime_environment()
@@ -37861,38 +37862,15 @@ def _backend_watchdog_status_payload():
 def _paper_worker_status_payload():
     """Canonical snapshot adapter; compatibility files cannot supply ownership."""
     canonical = _canonical_worker_state()
-    pid = int(canonical.get("process_id") or 0)
-    running_strict_proc = bool(_pid_alive(pid))
-    running_strict = bool(running_strict_proc)
-    if running_strict:
-        try:
-            proc = subprocess.run(
-                ["ps", "-p", str(int(pid)), "-o", "command="],
-                capture_output=True,
-                text=True,
-                timeout=1.5,
-            )
-            cmd = str(proc.stdout or "").strip().lower()
-            running_strict = "engine.paper_autopilot_worker" in cmd
-        except Exception:
-            running_strict = False
-    hb_updated = canonical.get("heartbeat_at")
-    hb_fresh = False
-    hb_age_seconds = None
-    stale_after = 180
-    if hb_updated:
-        try:
-            hb_dt = datetime.fromisoformat(str(hb_updated).replace("Z", "+00:00"))
-            hb_age_seconds = max(0.0, (datetime.now(UTC) - hb_dt).total_seconds())
-            interval = int((canonical.get("limits") or {}).get("minimum_sleep_between_cycles_seconds") or 45)
-            stale_after = max(180, interval * 4)
-            hb_fresh = hb_age_seconds <= stale_after
-            if not hb_fresh:
-                running_strict = False
-        except Exception:
-            pass
-    stale_pid_detected = bool(pid > 0 and (not running_strict_proc))
-    stale_heartbeat_detected = bool(hb_updated and (not hb_fresh))
+    liveness = _runtime_worker_liveness(canonical)
+    pid = liveness.get("active_worker_pid")
+    hb_fresh = bool(liveness.get("heartbeat_current"))
+    hb_age_seconds = liveness.get("active_worker_heartbeat_age_seconds")
+    stale_after = max(180, int((canonical.get("limits") or {}).get("minimum_sleep_between_cycles_seconds") or 45) * 4)
+    running_strict_proc = bool((liveness.get("active_worker_process") or {}).get("running"))
+    running_strict = bool(liveness.get("command_matches"))
+    stale_pid_detected = liveness.get("liveness_state") in {"PROCESS_MISSING", "PID_REUSED"}
+    stale_heartbeat_detected = liveness.get("liveness_state") == "STALE_HEARTBEAT"
     continuity_score = 100.0
     if not running_strict_proc:
         continuity_score -= 35.0
@@ -37907,7 +37885,7 @@ def _paper_worker_status_payload():
     continuity_score = max(0.0, min(100.0, continuity_score))
     # Heartbeats are evidence, not ownership.  A reused/stale PID or a
     # rejected duplicate must never be reported as the mutable worker.
-    running_effective = bool(running_strict and hb_fresh)
+    running_effective = bool(liveness.get("active_worker_present"))
     if running_effective and continuity_score >= 80:
         operational_mode = "healthy"
     elif running_effective and continuity_score >= 55:
@@ -37935,7 +37913,20 @@ def _paper_worker_status_payload():
         "stale_heartbeat_detected": stale_heartbeat_detected,
         "continuity_score": round(continuity_score, 2),
         "operational_mode": operational_mode,
-        "pid": pid if pid > 0 else None,
+        "pid": pid,
+        "active_worker_present": running_effective,
+        "active_worker_pid": pid,
+        "active_worker_instance_id": liveness.get("active_worker_instance_id"),
+        "active_worker_generation_id": liveness.get("active_worker_generation_id"),
+        "active_worker_started_at": liveness.get("active_worker_started_at"),
+        "active_worker_heartbeat_at": liveness.get("active_worker_heartbeat_at"),
+        "worker_liveness_state": liveness.get("liveness_state"),
+        "last_known_worker_pid": liveness.get("last_known_worker_pid"),
+        "last_known_worker_instance_id": liveness.get("last_known_worker_instance_id"),
+        "last_known_worker_generation_id": liveness.get("last_known_worker_generation_id"),
+        "last_known_worker_cycle_id": liveness.get("last_known_worker_cycle_id"),
+        "last_known_worker_stopped_at": liveness.get("last_known_worker_stopped_at"),
+        "last_known_worker_exit_reason": liveness.get("last_known_worker_exit_reason"),
         "last_cycle_utc": canonical.get("last_cycle_utc"),
         "worker_generation_id": canonical.get("worker_generation_id"),
         "worker_instance_id": canonical.get("worker_instance_id"),
@@ -48337,8 +48328,10 @@ def astra_runtime_worker_reliability_audit_v1():
 
 def _astra_runtime_resource_governance_payload_v1() -> dict:
     """Fast snapshot-only runtime view.  This must not touch providers or broker APIs."""
+    state = _canonical_worker_state()
+    liveness = _runtime_worker_liveness(state)
     worker = _paper_worker_status_payload()
-    worker_pid = int(worker.get("pid") or 0) or None
+    worker_pid = liveness.get("active_worker_pid")
     resources = _runtime_resource_snapshot(worker_pid=worker_pid, backend_pid=os.getpid())
     frontend_pid = None
     try:
@@ -48348,33 +48341,33 @@ def _astra_runtime_resource_governance_payload_v1() -> dict:
     except Exception:
         frontend_pid = None
     frontend = _runtime_process_info(frontend_pid)
-    state = _runtime_read_snapshot()
-    worker_age = _runtime_snapshot_age_seconds(state)
-    resource_state = str(resources.get("resource_state") or "RESOURCE_NORMAL")
+    published_resource = dict(state.get("resource") or {}) if liveness.get("active_worker_present") else {}
+    resource_state = str(published_resource.get("resource_state") or resources.get("resource_candidate_state") or "RESOURCE_UNKNOWN_FAIL_CLOSED")
+    worker_age = liveness.get("active_worker_heartbeat_age_seconds")
     canary_state = "CANARY_RUNTIME_BLOCKED_PREFLIGHT"
-    if resource_state in {"RESOURCE_HIGH_PAUSE", "MEMORY_PRESSURE_PAUSE"}:
-        canary_state = "CANARY_RUNTIME_BLOCKED_RESOURCE_PRESSURE"
-    elif not bool(worker.get("running_effective")):
+    if not bool(worker.get("running_effective")):
         canary_state = "CANARY_RUNTIME_BLOCKED_WORKER_FAILURE"
+    elif resource_state in {"RESOURCE_HIGH_PAUSE", "RESOURCE_MEMORY_PAUSE", "RESOURCE_API_LATENCY_PAUSE", "RESOURCE_RECOVERY_COOLDOWN", "RESOURCE_UNKNOWN_FAIL_CLOSED"}:
+        canary_state = "CANARY_RUNTIME_BLOCKED_RESOURCE_PRESSURE"
     return {
         "endpoint": "/api/astra_runtime_resource_governance_v1",
-        "overall_status": "PAUSED_RESOURCE_PRESSURE" if resource_state in {"RESOURCE_HIGH_PAUSE", "MEMORY_PRESSURE_PAUSE"} else "HEALTHY" if worker.get("running_effective") else "DEGRADED_FAIL_CLOSED",
+        "overall_status": "DEGRADED_FAIL_CLOSED" if not worker.get("running_effective") else "PAUSED_RESOURCE_PRESSURE" if resource_state in {"RESOURCE_HIGH_PAUSE", "RESOURCE_MEMORY_PAUSE", "RESOURCE_API_LATENCY_PAUSE", "RESOURCE_RECOVERY_COOLDOWN"} else "HEALTHY",
         "backend_pid": os.getpid(),
         "backend_cpu": resources.get("backend_process", {}).get("cpu_percent", 0.0),
         "backend_memory": resources.get("backend_process", {}).get("memory_mb", 0.0),
         "backend_uptime": resources.get("backend_process", {}).get("uptime", ""),
-        "backend_health_latency_ms": None,
+        "backend_health_latency_ms": published_resource.get("backend_health_latency_ms"),
         "worker_pid": worker_pid,
-        "worker_instance_id": state.get("worker_instance_id"),
-        "worker_generation_id": state.get("worker_generation_id"),
+        "worker_instance_id": liveness.get("active_worker_instance_id"),
+        "worker_generation_id": liveness.get("active_worker_generation_id"),
         "cycle_id": state.get("cycle_id"),
         "cycle_state": state.get("cycle_state"),
         "heartbeat_at": state.get("heartbeat_at"),
         "heartbeat_age_seconds": state.get("heartbeat_age_seconds"),
         "cursor": state.get("cursor"),
-        "worker_cpu": resources.get("worker_process", {}).get("cpu_percent", 0.0),
-        "worker_memory": resources.get("worker_process", {}).get("memory_mb", 0.0),
-        "worker_uptime": resources.get("worker_process", {}).get("uptime", ""),
+        "worker_cpu": resources.get("worker_process", {}).get("cpu_percent") if worker_pid else None,
+        "worker_memory": resources.get("worker_process", {}).get("memory_mb") if worker_pid else None,
+        "worker_uptime": resources.get("worker_process", {}).get("uptime") if worker_pid else None,
         "worker_heartbeat_age": worker_age,
         "worker_cycle_state": state.get("cycle_state") or worker.get("worker_cycle_phase") or "STALE",
         "worker_cycle_elapsed": state.get("cycle_elapsed_seconds", 0.0),
@@ -48384,15 +48377,40 @@ def _astra_runtime_resource_governance_payload_v1() -> dict:
         "host_load_1m": resources.get("host_load_1m"),
         "host_load_5m": resources.get("host_load_5m"),
         "host_load_15m": resources.get("host_load_15m"),
+        "logical_cpu_count": resources.get("logical_cpu_count"),
+        "normalized_load_1m": resources.get("normalized_load_1m"),
+        "normalized_load_5m": resources.get("normalized_load_5m"),
+        "normalized_load_15m": resources.get("normalized_load_15m"),
+        "CPU_idle_percent": resources.get("cpu_idle_percent"),
         "available_memory": resources.get("available_memory_mb"),
         "memory_pressure": resources.get("memory_pressure_state"),
+        "resource_state": resource_state,
+        "resource_decision": (state.get("resource_policy") or {}).get("resource_decision"),
+        "resource_transition_reason": (state.get("resource_policy") or {}).get("resource_transition_reason") or published_resource.get("resource_reason") or resources.get("resource_candidate_reason"),
+        "consecutive_sample_counts": {key: (state.get("resource_policy") or {}).get(key, 0) for key in ("resource_sample_sequence", "consecutive_normal_samples", "consecutive_elevated_samples", "consecutive_high_samples", "consecutive_memory_pressure_samples", "consecutive_latency_failure_samples")},
+        "cooldown_state": {key: (state.get("resource_policy") or {}).get(key) for key in ("cooldown_until", "pause_started_at", "pause_reason", "healthy_samples_required", "healthy_samples_observed")},
+        "resume_mode": (state.get("resource_policy") or {}).get("resume_mode"),
+        "active_worker_present": liveness.get("active_worker_present"),
+        "active_worker_pid": worker_pid,
+        "worker_liveness_state": liveness.get("liveness_state"),
+        "active_worker_generation_id": liveness.get("active_worker_generation_id"),
+        "active_worker_heartbeat_age": worker_age,
+        "active_worker_CPU": resources.get("worker_process", {}).get("cpu_percent") if worker_pid else None,
+        "active_worker_memory": resources.get("worker_process", {}).get("memory_mb") if worker_pid else None,
+        "active_worker_uptime": resources.get("worker_process", {}).get("uptime") if worker_pid else None,
+        "last_known_worker_pid": liveness.get("last_known_worker_pid"),
+        "last_known_worker_instance_id": liveness.get("last_known_worker_instance_id"),
+        "last_known_worker_generation_id": liveness.get("last_known_worker_generation_id"),
+        "last_known_worker_cycle_id": liveness.get("last_known_worker_cycle_id"),
+        "last_known_worker_stopped_at": liveness.get("last_known_worker_stopped_at"),
+        "last_known_worker_exit_reason": liveness.get("last_known_worker_exit_reason"),
         "large_store_reads_active": False,
         "full_scan_detected": False,
         "log_sizes": _runtime_log_sizes(),
         "log_rotation_state": "configured_before_process_start",
         "canary_runtime_authorization": canary_state,
         "repairable_failures": [] if worker.get("running_effective") else ["dedicated_worker_not_running"],
-        "warnings": [resources.get("resource_reason")] if resource_state != "RESOURCE_NORMAL" else [],
+        "warnings": [((state.get("resource_policy") or {}).get("resource_transition_reason") or resources.get("resource_candidate_reason"))] if resource_state != "RESOURCE_NORMAL" else [],
         "api_calls_used": 0,
         "provider_calls_used": 0,
         "llm_calls_used": 0,
@@ -58910,21 +58928,27 @@ def _sell_attempt_ledger_rows_v1(limit: int = 1000) -> list[dict]:
 
 def _paper_worker_heartbeat_snapshot_v1() -> dict:
     state = _canonical_worker_state()
-    pid = int(_to_float(state.get("process_id"), 0.0))
-    age = state.get("heartbeat_age_seconds")
+    liveness = _runtime_worker_liveness(state)
+    pid = liveness.get("active_worker_pid")
+    age = liveness.get("active_worker_heartbeat_age_seconds")
     interval = int(_to_float((state.get("limits") or {}).get("minimum_sleep_between_cycles_seconds"), 45.0))
     stale_after = max(180, interval * 4)
-    process = _runtime_process_info(pid if pid > 0 else None)
-    command = str(process.get("command") or "").lower()
-    fresh = bool(age is not None and float(age) <= stale_after)
-    running = bool(fresh and process.get("running") and "engine.paper_autopilot_worker" in command)
+    fresh = bool(liveness.get("heartbeat_current"))
+    running = bool(liveness.get("active_worker_present"))
     return {
         "running": running,
         "running_effective": running,
         "heartbeat_fresh": fresh,
         "heartbeat_age_seconds": round(age, 2) if age is not None else None,
         "heartbeat_stale_after_seconds": stale_after,
-        "pid": pid if pid > 0 else None,
+        "pid": pid,
+        "active_worker_present": running,
+        "active_worker_pid": pid,
+        "worker_liveness_state": liveness.get("liveness_state"),
+        "last_known_worker_pid": liveness.get("last_known_worker_pid"),
+        "last_known_worker_generation_id": liveness.get("last_known_worker_generation_id"),
+        "last_known_worker_cycle_id": liveness.get("last_known_worker_cycle_id"),
+        "last_known_worker_exit_reason": liveness.get("last_known_worker_exit_reason"),
         "last_cycle_utc": state.get("last_cycle_utc"),
         "worker_heartbeat_at": state.get("heartbeat_at"),
         "worker_generation_id": state.get("worker_generation_id"),
