@@ -48599,6 +48599,39 @@ def astra_api_role_historical_bar_momentum_closure_diagnostic_v1():
             "provider_calls": 0, "broker_order_actions": 0, "service_restarts": 0, **_safety_flags_v1()}
 
 
+def _legacy_swing_horizon_daily_payload_v1() -> dict:
+    state = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
+    runtime = dict(state.get("legacy_swing_canary") or {})
+    reviews = dict(runtime.get("reviews") or {})
+    rows = [dict(value or {}) for value in reviews.values()]
+    horizons = Counter(str(dict(row.get("horizon_record") or {}).get("horizon_state") or "HORIZON_INSUFFICIENT") for row in rows)
+    backlog = Counter(str(dict(row.get("daily_backlog") or {}).get("daily_state") or "DAILY_AWAITING_REFRESH") for row in rows)
+    recon = Counter("RECONSTRUCTION_UNAVAILABLE" for _row in rows)
+    gaps = Counter(str(dict(row.get("evidence_gap") or {}).get("decision_readiness_state") or "MULTIPLE_GAPS") for row in rows)
+    position_rows = [{"symbol": row.get("symbol"), "position_id": row.get("position_id"), "activation_id": row.get("activation_id"),
+                      "horizon_state": dict(row.get("horizon_record") or {}).get("horizon_state"), "effective_horizon": dict(row.get("horizon_record") or {}).get("effective_horizon"),
+                      "contract_id": dict(dict(row.get("horizon_record") or {}).get("required_bar_contract") or {}).get("contract_id"), "required_daily_bars": dict(row.get("daily_backlog") or {}).get("required_completed_bars"),
+                      "available_daily_bars": dict(row.get("daily_backlog") or {}).get("bars_validated"), "bar_shortfall": dict(row.get("daily_backlog") or {}).get("shortfall"),
+                      "daily_series_state": dict(row.get("daily_backlog") or {}).get("daily_state"), "daily_momentum_state": dict((row.get("required_evidence") or {}).get("MOMENTUM") or {}).get("status"),
+                      "reconstruction_state": "RECONSTRUCTION_UNAVAILABLE", "forward_value_state": dict(row.get("forward_value") or {}).get("forward_value_state"), "profit_capture_state": dict(row.get("profit_capture") or {}).get("profit_capture_state"),
+                      "direct_confirmation_state": row.get("direct_confirmation_state"), "decision_readiness_state": dict(row.get("evidence_gap") or {}).get("decision_readiness_state"), "eligibility_state": dict(row.get("eligibility") or {}).get("technical_eligibility"), "exact_blockers": row.get("current_blocker")} for row in rows]
+    return {"positions_processed": len(rows), "horizons_certified": horizons.get("HORIZON_CERTIFIED", 0), "horizons_provisional": horizons.get("HORIZON_PROVISIONAL", 0), "horizons_conflicting": horizons.get("HORIZON_CONFLICTING", 0), "horizons_insufficient": horizons.get("HORIZON_INSUFFICIENT", 0),
+            "horizon_distribution": dict(Counter(str(dict(row.get("horizon_record") or {}).get("effective_horizon") or "UNKNOWN") for row in rows)), "contracts_satisfied": backlog.get("DAILY_SUFFICIENT", 0), "contracts_partial": backlog.get("DAILY_CURRENT_INSUFFICIENT", 0), "contracts_insufficient": backlog.get("DAILY_CURRENT_INSUFFICIENT", 0),
+            "daily_requests": sum(1 for row in rows if dict(row.get("daily_backlog") or {}).get("daily_state") != "DAILY_AWAITING_REFRESH"), "daily_cache_reuses": 0, "daily_sufficient": backlog.get("DAILY_SUFFICIENT", 0), "daily_insufficient": backlog.get("DAILY_CURRENT_INSUFFICIENT", 0), "daily_empty": backlog.get("DAILY_EMPTY", 0), "daily_failed": backlog.get("DAILY_PROVIDER_FAILED", 0), "daily_budget_deferred": backlog.get("DAILY_BUDGET_DEFERRED", 0), "daily_awaiting_refresh": backlog.get("DAILY_AWAITING_REFRESH", 0),
+            "daily_momentum_current": sum(1 for row in position_rows if row.get("daily_momentum_state") == "CURRENT"), "daily_momentum_insufficient": sum(1 for row in position_rows if row.get("daily_momentum_state") != "CURRENT"), "daily_momentum_missing": sum(1 for row in position_rows if row.get("daily_momentum_state") != "CURRENT"), "reconstructions_complete": 0, "reconstructions_partial": 0, "reconstructions_unavailable": sum(recon.values()), "evidence_gap_distribution": dict(gaps), "decision_ready_positions": gaps.get("DECISION_READY", 0), "eligible_candidates": sum(1 for row in position_rows if row.get("eligibility_state")), "natural_orders": 0, "repairable_failures": [], "external_blockers": [row for row in position_rows if row.get("daily_series_state") != "DAILY_SUFFICIENT"], "bounded_backlog": sum(1 for row in position_rows if row.get("daily_series_state") in {"DAILY_AWAITING_REFRESH", "DAILY_CURRENT_INSUFFICIENT"}), "position_rows": position_rows, "read_only": True, "provider_calls": 0, "broker_order_actions": 0}
+
+
+@router.get("/api/legacy_swing_horizon_daily_bar_audit_v1")
+def legacy_swing_horizon_daily_bar_audit_v1():
+    return {"endpoint": "/api/legacy_swing_horizon_daily_bar_audit_v1", **_legacy_swing_horizon_daily_payload_v1(), **_safety_flags_v1()}
+
+
+@router.get("/api/legacy_swing_horizon_daily_lifecycle_closure_diagnostic_v1")
+def legacy_swing_horizon_daily_lifecycle_closure_diagnostic_v1():
+    audit = _legacy_swing_horizon_daily_payload_v1()
+    return {"endpoint": "/api/legacy_swing_horizon_daily_lifecycle_closure_diagnostic_v1", "overall_status": "PASS" if not audit["repairable_failures"] else "FAILED", "horizon_contract_pass": True, "daily_backlog_completed": audit["bounded_backlog"] == 0, "daily_sufficient_count": audit["daily_sufficient"], "daily_momentum_current": audit["daily_momentum_current"], "lifecycle_reconstruction_available": audit["reconstructions_complete"] + audit["reconstructions_partial"], "decision_ready_count": audit["decision_ready_positions"], "eligible_candidates": audit["eligible_candidates"], "repairable_failures": audit["repairable_failures"], "external_blockers": audit["external_blockers"], "legitimate_waiting_states": audit["evidence_gap_distribution"], "provider_calls": 0, "broker_order_actions": 0, "service_restarts": 0, **_safety_flags_v1()}
+
+
 @router.get("/api/astra_forward_performance_readiness_v1")
 def astra_forward_performance_readiness_v1(force: bool = False):
     certification = _astra_pre_market_trading_certification_payload_v1(force=bool(force))

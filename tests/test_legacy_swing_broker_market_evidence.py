@@ -148,7 +148,7 @@ class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
         self.assertEqual(bar["timeframe"], "1Day")
         self.assertEqual(bar["momentum_contract"], "LEGACY_SWING_DAILY")
         evidence = build_legacy_swing_required_evidence_v1({"symbol": "AAA", "broker_bar_record": bar}, _registry()["activation-a"])
-        self.assertEqual(evidence["MOMENTUM"]["momentum_timeframe"], "1Day")
+        self.assertEqual(evidence["MOMENTUM"]["status"], "UNAVAILABLE")
     def test_existing_client_uses_read_only_market_routes(self):
         broker = AlpacaPaperBroker()
         broker._market_data_request = lambda path: (True, {"bars": [{"t": "2026-07-16T00:00:00Z"}]}, "", 200)  # type: ignore[method-assign]

@@ -26,6 +26,8 @@ from engine.astra_unified_position_lifecycle_v1 import (
     build_legacy_swing_forward_value_v1,
     build_legacy_swing_opportunity_cost_v1,
     build_legacy_swing_profit_capture_v1,
+    build_legacy_swing_horizon_record_v1,
+    legacy_swing_horizon_daily_contract_v1,
     build_legacy_swing_canary_pre_submit_v1,
     build_legacy_swing_required_evidence_v1,
     build_legacy_forward_baseline_v1,
@@ -2569,6 +2571,12 @@ class PaperAutopilotEngine:
                             daily_response, provider="ALPACA_MARKET_DATA", family="HISTORICAL_BARS",
                             activation_id=activation_id, position_id=record.get("position_id"), symbol=symbol, now=now, timeframe="1Day",
                         )
+                        provisional = dict(record.get("provisional_horizon") or {})
+                        daily_contract = legacy_swing_horizon_daily_contract_v1(provisional.get("provisional_horizon"))
+                        daily["horizon_contract"] = daily_contract
+                        daily["required_completed_bars"] = daily_contract["minimum_completed_bars"]
+                        if int(daily.get("records_valid") or 0) < int(daily_contract["minimum_completed_bars"]):
+                            daily["quality_state"] = "CURRENT_INSUFFICIENT" if daily.get("freshness_state") == "CURRENT" else "STALE_INSUFFICIENT"
                         daily["momentum_contract"] = "LEGACY_SWING_DAILY"
                         bundle["HISTORICAL_BARS_DAILY"] = daily
                     selected = alpaca
@@ -2584,6 +2592,9 @@ class PaperAutopilotEngine:
                         elif daily.get("quality_state") == "CURRENT_SUFFICIENT":
                             selected = dict(daily)
                             routing_state = "ALPACA_DAILY_FALLBACK_ACCEPTED"
+                        elif daily.get("quality_state") == "CURRENT_INSUFFICIENT":
+                            selected = dict(daily)
+                            routing_state = "ALPACA_DAILY_FALLBACK_INSUFFICIENT"
                         elif alpaca.get("quality_state") == "CURRENT_INSUFFICIENT":
                             routing_state = "FMP_FALLBACK_INSUFFICIENT"
                         elif alpaca.get("quality_state") == "EMPTY":
@@ -2757,6 +2768,8 @@ class PaperAutopilotEngine:
                 row.update({key: row["broker_quote_record"].get(key) for key in ("bid", "ask")})
             if row["broker_asset_record"].get("freshness_state") == "CURRENT":
                 row["tradable"] = row["broker_asset_record"].get("tradable")
+            horizon_record = build_legacy_swing_horizon_record_v1(row, record)
+            row["legacy_swing_horizon_record"] = horizon_record
             required_evidence = build_legacy_swing_required_evidence_v1(row, record)
             coverage = build_legacy_swing_direct_evidence_coverage_v1(row, record, required_evidence)
             row["direct_evidence_coverage"] = coverage
@@ -2822,6 +2835,16 @@ class PaperAutopilotEngine:
             decision["direct_confirmation_confidence"] = direct_confidence
             decision["direct_confirmation"] = confirmation
             eligibility = evaluate_legacy_swing_canary_eligibility_v1(row, decision, config)
+            daily = dict((market_records.get(activation_id) or {}).get("HISTORICAL_BARS_DAILY") or {})
+            daily_required = int((horizon_record.get("required_bar_contract") or {}).get("minimum_completed_bars") or 0)
+            daily_available = int(daily.get("records_valid") or 0)
+            daily_state = "DAILY_SUFFICIENT" if daily.get("quality_state") == "CURRENT_SUFFICIENT" and daily_available >= daily_required else "DAILY_CURRENT_INSUFFICIENT" if daily else "DAILY_AWAITING_REFRESH"
+            evidence_gap = {"schema_version": "legacy_swing_evidence_gap_v1", "evidence_gap_id": f"legacy-gap:{activation_id}", "position_id": decision.get("position_id"), "activation_id": activation_id, "symbol": symbol, "lane": "SWING", "horizon": horizon_record.get("effective_horizon"), "as_of": _now_iso(),
+                            "required_evidence": ["MOMENTUM", "THESIS_STATE", "LIQUIDITY", "DIRECT_CONFIRMATION"], "available_evidence": [name for name, item in required_evidence.items() if item.get("status") == "CURRENT"],
+                            "missing_evidence": [name for name, item in required_evidence.items() if item.get("status") != "CURRENT"], "stale_evidence": [], "conflicting_evidence": [], "insufficient_evidence": ["DAILY_BARS"] if daily_state != "DAILY_SUFFICIENT" else [],
+                            "daily_bars_required": daily_required, "daily_bars_available": daily_available, "daily_bar_shortfall": max(0, daily_required - daily_available), "current_thesis_required": True, "current_quote_required": True, "current_liquidity_required": True, "direct_confirmation_required": True,
+                            "decision_readiness_state": "MOMENTUM_GAP" if daily_state != "DAILY_SUFFICIENT" else "MULTIPLE_GAPS" if not coverage.get("required_evidence_complete") else "DECISION_READY", "readiness_percentage": coverage.get("coverage_percentage"),
+                            "highest_priority_gap": "DAILY_BARS" if daily_state != "DAILY_SUFFICIENT" else (coverage.get("missing_evidence") or [None])[0], "priority_reason": "HORIZON_DAILY_CONTRACT_SHORTFALL" if daily_state != "DAILY_SUFFICIENT" else "OTHER_REQUIRED_EVIDENCE", "next_safe_action": "REQUEST_N_MORE_COMPLETED_DAILY_SESSIONS" if daily_state != "DAILY_SUFFICIENT" else "REBUILD_DIRECT_CONFIRMATION", "next_refresh_at": daily.get("next_refresh_at") or coverage.get("next_refresh_at")}
             review = {
                 "activation_id": record.get("activation_id") or activation_id,
                 "position_id": decision.get("position_id"), "symbol": symbol,
@@ -2844,6 +2867,7 @@ class PaperAutopilotEngine:
                 "classification_transition_reason": "INITIAL_CLASSIFICATION" if not previous else "EVIDENCE_REAFFIRMED" if previous == current else f"{previous}_TO_{current}:{decision.get('classification_reason')}",
                 "required_evidence": required_evidence,
                 "direct_evidence_coverage": coverage,
+                "horizon_record": horizon_record, "daily_backlog": {"daily_state": daily_state, "contract_id": (horizon_record.get("required_bar_contract") or {}).get("contract_id"), "required_completed_bars": daily_required, "bars_validated": daily_available, "shortfall": max(0, daily_required - daily_available), "next_refresh_at": daily.get("next_refresh_at")}, "evidence_gap": evidence_gap,
                 "forward_value": forward_value,
                 "opportunity_cost": opportunity_cost,
                 "profit_capture": profit_capture,

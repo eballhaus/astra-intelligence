@@ -412,6 +412,38 @@ def estimate_legacy_provisional_horizon_v1(position: Mapping[str, Any], baseline
     }
 
 
+def legacy_swing_horizon_daily_contract_v1(horizon: str) -> dict[str, Any]:
+    """Conservative completed-session contracts for legacy daily context."""
+    key = _text(horizon).upper() or "SWING_UNKNOWN_PROVISIONAL"
+    contracts = {
+        "SWING_1_TO_3_DAY": (8, 12, 16), "SWING_4_TO_7_DAY": (10, 15, 21),
+        "SWING_1_TO_2_WEEK": (15, 22, 31), "SWING_MULTI_WEEK": (25, 35, 45),
+        "SWING_UNKNOWN_PROVISIONAL": (15, 22, 31),
+    }
+    minimum, preferred, calendar_days = contracts.get(key, contracts["SWING_UNKNOWN_PROVISIONAL"])
+    return {"contract_id": f"legacy-swing-daily:{key.lower()}", "lane": "SWING", "horizon": key,
+            "preferred_timeframe": "1Hour", "fallback_timeframe": "1Day", "minimum_completed_bars": minimum,
+            "preferred_completed_bars": preferred, "minimum_calendar_lookback_days": calendar_days,
+            "maximum_latest_completed_bar_age": "market_calendar_aware", "session_scope": "DAILY_COMPLETED_BARS",
+            "volume_requirement": "EXPLICIT_IF_AVAILABLE", "gap_tolerance": 2, "adjustment_requirement": "KNOWN_OR_UNKNOWN_EXPLICIT",
+            "minimum_source_quality": "CURRENT_SUFFICIENT", "momentum_outputs_supported": ["MEDIUM_TERM_SWING_CONTEXT", "NO_INTRADAY_PRECISION"],
+            "limitations": ["daily_context_cannot_claim_intraday_precision"]}
+
+
+def build_legacy_swing_horizon_record_v1(position: Mapping[str, Any], baseline: Mapping[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
+    provisional = estimate_legacy_provisional_horizon_v1(position, baseline, now=now)
+    horizon = _text(provisional.get("provisional_horizon") or "SWING_UNKNOWN_PROVISIONAL").upper()
+    state = "HORIZON_PROVISIONAL" if horizon else "HORIZON_INSUFFICIENT"
+    position_id = _text(position.get("asset_id") or position.get("position_id") or baseline.get("baseline_id"))
+    return {"schema_version": "legacy_swing_horizon_record_v1", "horizon_record_id": f"legacy-horizon:{position_id}",
+            "position_id": position_id, "activation_id": baseline.get("baseline_id"), "symbol": _text(position.get("symbol")).upper(),
+            "asset_class": "equity", "lane": "SWING", "strategy": baseline.get("strategy") or "LEGACY_SWING", "original_horizon": provisional.get("original_horizon") or "UNKNOWN",
+            "provisional_horizon": horizon, "certified_horizon": None, "effective_horizon": horizon, "horizon_state": state,
+            "horizon_confidence": provisional.get("provisional_horizon_confidence") or 0.0, "horizon_basis": provisional.get("provisional_horizon_sources") or [],
+            "supporting_evidence": provisional.get("provisional_horizon_sources") or [], "opposing_evidence": [], "limitations": ["original_horizon_unknown_preserved"],
+            "required_bar_contract": legacy_swing_horizon_daily_contract_v1(horizon), "next_review_at": _iso(now), "as_of": _iso(now)}
+
+
 def build_position_shadow_twin_v1(position: Mapping[str, Any], baseline: Mapping[str, Any], horizon: Mapping[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
     """Create read-only forward scenarios from the observed activation state."""
     row = dict(position or {})
@@ -470,7 +502,8 @@ def build_legacy_swing_required_evidence_v1(position: Mapping[str, Any], baselin
     bar_quality = _text(bar_context.get("quality_state")).upper()
     bar_provider = _text(bar_context.get("canonical_provider") or bar_context.get("provider") or "AlpacaPaperBroker.historical_bars")
     bar_timeframe = _text(bar_context.get("timeframe") or "1Hour")
-    if bar_state == "SUCCESS" and bar_freshness == "CURRENT" and bar_quality not in {"CURRENT_INSUFFICIENT", "STALE_INSUFFICIENT", "EMPTY", "INVALID", "PROVIDER_FAILED", "CONFLICT_BLOCKED"} and len(closes) >= 5:
+    required_bar_count = int(bar_context.get("required_completed_bars") or 5)
+    if bar_state == "SUCCESS" and bar_freshness == "CURRENT" and bar_quality not in {"CURRENT_INSUFFICIENT", "STALE_INSUFFICIENT", "EMPTY", "INVALID", "PROVIDER_FAILED", "CONFLICT_BLOCKED"} and len(closes) >= required_bar_count:
         short = (closes[-1] / closes[-3] - 1.0) * 100.0
         medium = (closes[-1] / closes[0] - 1.0) * 100.0
         direction = "POSITIVE" if short > 0.25 and medium >= 0 else "NEGATIVE" if short < -0.25 and medium <= 0 else "STABLE"
