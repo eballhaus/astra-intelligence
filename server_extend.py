@@ -47846,6 +47846,62 @@ def legacy_swing_canary_pre_submit_audit_v1():
     return _legacy_swing_canary_pre_submit_audit_payload_v1()
 
 
+@router.get("/api/legacy_swing_classification_integrity_diagnostic_v1")
+def legacy_swing_classification_integrity_diagnostic_v1():
+    """Read-only proof that legacy classifications are evidence-backed."""
+    runtime = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("legacy_swing_canary") or {})
+    reviews = dict(runtime.get("reviews") or {})
+    rows = []
+    repairable = []
+    for activation_id, raw in sorted(reviews.items()):
+        review = dict(raw or {})
+        decision = dict(review.get("decision") or {})
+        classification = str(review.get("current_classification") or decision.get("classification") or "INSUFFICIENT_EVIDENCE")
+        missing = list(decision.get("evidence_missing") or [])
+        stale = bool(decision.get("evidence_stale"))
+        conflict = bool(decision.get("evidence_conflicting"))
+        default = bool(decision.get("default_branch_used"))
+        invalid_hold = classification == "HOLD_AS_PLANNED" and (missing or stale or conflict or default or not decision.get("classification_reason"))
+        missing_review = not review.get("next_review_at") or not review.get("classification_components")
+        state = "FAILED" if invalid_hold or missing_review else "PASS"
+        item = {
+            "symbol": review.get("symbol"), "position_id": review.get("position_id"), "activation_id": review.get("activation_id") or activation_id,
+            "stage": "classification_integrity", "owner": "engine.astra_unified_position_lifecycle_v1.classify_legacy_swing_lifecycle_v1",
+            "producer": "PaperAutopilot._refresh_legacy_swing_canary_pre_submit", "consumer": "legacy_swing_canary runtime state",
+            "store": "paper_autopilot_state.json", "join_key": activation_id, "expected_state": "EVIDENCE_BACKED_CLASSIFICATION",
+            "actual_state": state, "classification": classification, "confidence": decision.get("classification_confidence"),
+            "exact_blocker": "UNSAFE_DEFAULT_HOLD" if invalid_hold else "REASSESSMENT_PERSISTENCE_REQUIRED" if missing_review else review.get("current_blocker"),
+            "blocker_category": "technical" if state == "FAILED" else "evidence" if classification in {"INSUFFICIENT_EVIDENCE", "LOW_CONFIDENCE", "CONFLICTING_EVIDENCE"} else None,
+            "technical_or_legitimate": "technical" if state == "FAILED" else "legitimate_evidence" if classification in {"INSUFFICIENT_EVIDENCE", "LOW_CONFIDENCE", "CONFLICTING_EVIDENCE"} else "pass",
+            "safe_repair_allowed": state == "FAILED", "exact_safe_repair": "persist explicit evidence-quality classification and review fields" if state == "FAILED" else None,
+            "reason": decision.get("classification_reason"), "components": decision.get("classification_components") or {},
+            "missing_evidence": missing, "stale_evidence": stale, "conflicting_evidence": conflict,
+            "default_used": default, "next_review_at": review.get("next_review_at"),
+            "transition_reason": review.get("classification_transition_reason"),
+        }
+        rows.append(item)
+        if state == "FAILED":
+            repairable.append(item)
+    counts = Counter(str(row.get("classification")) for row in rows)
+    return {
+        "endpoint": "/api/legacy_swing_classification_integrity_diagnostic_v1",
+        "overall_status": "PASS" if not repairable else "FAILED", "positions_processed": len(rows),
+        "classification_distribution": dict(counts), "default_hold_count": sum(1 for row in rows if row.get("classification") == "HOLD_AS_PLANNED" and row.get("default_used")),
+        "repairable_failures": repairable, "legitimate_evidence_blocks": sum(1 for row in rows if row.get("technical_or_legitimate") == "legitimate_evidence"),
+        "stale_evidence_count": sum(1 for row in rows if row.get("stale_evidence")), "missing_evidence_count": sum(1 for row in rows if row.get("missing_evidence")),
+        "conflict_count": sum(1 for row in rows if row.get("conflicting_evidence")), "low_confidence_count": int(counts.get("LOW_CONFIDENCE", 0)),
+        "suppressed_classification_count": sum(len((dict(reviews.get(str(row.get("activation_id") or "")) or {}).get("decision") or {}).get("suppressed_classifications") or []) for row in rows),
+        "position_rows": rows, "read_only": True, "broker_actions": 0, "natural_orders": 0, "fixture_orders": 0,
+        **_safety_flags_v1(),
+    }
+
+
+@router.get("/api/legacy_swing_classification_distribution_audit_v1")
+def legacy_swing_classification_distribution_audit_v1():
+    """Read-only audit alias for the canonical classification integrity payload."""
+    return legacy_swing_classification_integrity_diagnostic_v1()
+
+
 @router.get("/api/astra_forward_performance_readiness_v1")
 def astra_forward_performance_readiness_v1(force: bool = False):
     certification = _astra_pre_market_trading_certification_payload_v1(force=bool(force))
@@ -63004,6 +63060,7 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
     utilization = _position_intelligence_utilization_payload_v1(current, persist=False)
     lifecycle_closure = unified_position_lifecycle_exit_truth_closure_diagnostic_v1(force=False)
     canary_pre_submit = _legacy_swing_canary_pre_submit_audit_payload_v1()
+    classification_integrity = legacy_swing_classification_integrity_diagnostic_v1()
     review = dict(utilization.get("portfolio_review") or build_portfolio_release_review(rows))
     enrichment = _candidate_intelligence_enrichment_contract_diagnostic_v1(force=False)
     findings: list[dict] = []
@@ -63103,6 +63160,13 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "evidence": canary_pre_submit.get("repairable_failures"),
             "recommended_action": "repair the worker-owned disabled canary join; do not enable execution or alter the writer",
         })
+    if classification_integrity.get("repairable_failures"):
+        findings.append({
+            "severity": "high", "classification": "legacy_classification_integrity_defect",
+            "issue": "legacy_swing_classification_repairable_failure",
+            "evidence": classification_integrity.get("repairable_failures"),
+            "recommended_action": "repair evidence-backed lifecycle classification; do not change canary or writer safety state",
+        })
     lineage_confidence = dict(lineage_detail.get("coverage_by_confidence_class") or {})
     excursion_coverage = dict(lineage_detail.get("coverage_by_excursion_class") or {})
     if int(_to_float(lineage_confidence.get("NOT_RECOVERABLE"), 0.0)) > 0:
@@ -63174,6 +63238,10 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
         "legacy_swing_canary_pre_submit_v1": {
             key: canary_pre_submit.get(key)
             for key in ("status", "positions_processed", "canary_enabled", "kill_switch_state", "repairable_failures")
+        },
+        "legacy_swing_classification_integrity_v1": {
+            key: classification_integrity.get(key)
+            for key in ("overall_status", "positions_processed", "classification_distribution", "default_hold_count", "repairable_failures")
         },
         "position_lineage_excursion_replacement_v1": {
             "coverage_by_confidence_class": lineage_confidence,

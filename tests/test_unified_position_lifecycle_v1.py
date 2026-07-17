@@ -29,9 +29,9 @@ class UnifiedPositionLifecycleTests(unittest.TestCase):
         self.assertEqual(decision["horizon_state"], "HORIZON_EXPIRED")
         self.assertEqual(decision["current_recommended_horizon"], "day_trade")
 
-    def test_action_worthy_state_remains_policy_blocked(self):
+    def test_missing_lifecycle_evidence_remains_fail_closed(self):
         decision = build_unified_position_lifecycle_decision_v1({"symbol": "OLD", "qty": 1, "market_value": 10, "days_held": 31, "current_price": 10, "unrealized_return_pct": -1})
-        self.assertEqual(decision["classification"], "EXIT_REVIEW")
+        self.assertEqual(decision["classification"], "INSUFFICIENT_EVIDENCE")
         self.assertFalse(decision["paper_action_ready"])
 
     def test_bounded_context_is_retrieved_matched_and_consumed(self):
@@ -51,7 +51,8 @@ class UnifiedPositionLifecycleTests(unittest.TestCase):
             {"symbol": "ABC", "qty": 1, "market_value": 10, "current_price": 10, "days_held": 31, "unrealized_return_pct": -1},
             evidence_context={"shadow_evidence": {"supports": "exit"}},
         )
-        self.assertEqual(decision["shadow_guidance"], "SHADOW_SUPPORTS_EXIT_REVIEW")
+        self.assertEqual(decision["classification"], "INSUFFICIENT_EVIDENCE")
+        self.assertEqual(decision["shadow_guidance"], "SHADOW_SUPPORTS_HOLD")
         self.assertFalse(decision["paper_action_ready"])
 
     def test_supported_forecast_remains_range_based(self):

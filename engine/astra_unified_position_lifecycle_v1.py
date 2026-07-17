@@ -406,6 +406,89 @@ def retrieve_position_lifecycle_evidence_v1(
     }
 
 
+def classify_legacy_swing_lifecycle_v1(
+    position: Mapping[str, Any], *, evidence: Mapping[str, Any], confidence: float,
+) -> dict[str, Any]:
+    """Classify legacy SWING positions from explicit current evidence.
+
+    A positive hold is deliberately hard to earn: absent, stale, conflicting,
+    or low-confidence evidence is never coerced into ``HOLD_AS_PLANNED``.
+    """
+    row = dict(position or {})
+    evidence_rows = list(evidence.get("evidence_rows") or [])
+    direct_row = next((item for item in evidence_rows if item.get("source") == "current_direct"), {})
+    price = _num(row.get("current_price") or row.get("market_price"))
+    ret = _num(row.get("unrealized_return_pct") or row.get("unrealized_plpc"))
+    if ret is not None and abs(ret) <= 1:
+        ret *= 100.0
+    momentum = _text(row.get("momentum_state") or row.get("momentum") or row.get("trend_state")).upper()
+    thesis = _text(row.get("thesis_state") or row.get("thesis_health")).upper()
+    liquidity = _text(row.get("liquidity_state") or row.get("liquidity")).upper()
+    catalyst = _text(row.get("catalyst_state")).upper()
+    regime = _text(row.get("regime_state") or row.get("regime")).upper()
+    sector = _text(row.get("sector_state") or row.get("sector")).upper()
+    giveback = _num(row.get("profit_giveback_pct") or row.get("giveback_pct"))
+    return_per_day = _num(row.get("return_per_day") or row.get("return_per_day_pct"))
+    opportunity = _text(row.get("opportunity_cost_state")).upper()
+    replacement = bool(row.get("replacement_qualified") or row.get("replacement_candidate"))
+    explicit_conflict = bool(row.get("evidence_conflicting") or row.get("conflicting_evidence"))
+    stale = bool(row.get("quote_stale") or str(row.get("quote_freshness") or "").upper() == "STALE")
+    missing = []
+    if price is None:
+        missing.append("CURRENT_QUOTE")
+    if not momentum:
+        missing.append("MOMENTUM")
+    if not thesis:
+        missing.append("THESIS_STATE")
+    if not liquidity:
+        missing.append("LIQUIDITY")
+    components = {
+        "thesis_integrity": thesis or "UNKNOWN", "momentum": momentum or "UNKNOWN", "liquidity": liquidity or "UNKNOWN",
+        "quote_freshness": "STALE" if stale else "CURRENT" if price is not None else "MISSING",
+        "giveback": giveback, "return_per_day": return_per_day, "opportunity_cost": opportunity or "UNKNOWN",
+        "replacement_qualified": replacement, "catalyst": catalyst or "UNKNOWN", "regime": regime or "UNKNOWN",
+        "sector": sector or "UNKNOWN", "evidence_complete": not missing and not stale,
+        "evidence_conflicting": explicit_conflict, "direct_evidence_consumed": bool(direct_row.get("consumed")),
+    }
+    suppressed = []
+    if _text(row.get("symbol")) == "" or not bool(direct_row.get("available")):
+        state, reason = "INSUFFICIENT_EVIDENCE", "CURRENT_DIRECT_EVIDENCE_REQUIRED"
+    elif explicit_conflict:
+        state, reason = "CONFLICTING_EVIDENCE", "MATERIAL_EVIDENCE_CONFLICT"
+    elif stale:
+        state, reason = "INSUFFICIENT_EVIDENCE", "STALE_CURRENT_QUOTE"
+    elif missing:
+        state, reason = "INSUFFICIENT_EVIDENCE", f"MISSING_{missing[0]}"
+    elif confidence < 0.50:
+        state, reason = "LOW_CONFIDENCE", "CLASSIFICATION_CONFIDENCE_BELOW_MINIMUM"
+    elif thesis in {"BROKEN", "INVALID", "THESIS_BROKEN"} and bool(row.get("hard_invalidation") or row.get("direct_thesis_invalidation")):
+        state, reason = "THESIS_BROKEN", "DIRECT_THESIS_INVALIDATION"
+    elif thesis in {"BROKEN", "DETERIORATING"} and ret is not None and ret < 0 and bool(row.get("controlled_loss_preferred")):
+        state, reason = "CONTROLLED_LOSS_ACCEPTABLE", "DIRECT_LOSS_CONTINUATION_DISADVANTAGE"
+    elif replacement and opportunity in {"HIGH", "ELEVATED"}:
+        state, reason = "REPLACE_CANDIDATE", "QUALIFIED_REPLACEMENT_FORWARD_VALUE_ADVANTAGE"
+    elif ret is not None and ret > 0 and giveback is not None and giveback >= 2.0:
+        state, reason = "PROTECT_PROFIT", "MATERIAL_PROFIT_GIVEBACK"
+    elif liquidity in {"POOR", "DETERIORATING"} or momentum in {"COLLAPSE", "NEGATIVE"} or thesis == "DETERIORATING":
+        state, reason = "REDUCE_RISK", "DIRECT_RISK_DETERIORATION"
+    elif bool(row.get("exit_concern") or row.get("recovery_stalled")):
+        state, reason = "EXIT_REVIEW", "EXIT_EVIDENCE_REQUIRES_CONFIRMATION"
+    elif momentum in {"WEAK", "DETERIORATING"} or giveback not in (None, 0.0) or (return_per_day is not None and return_per_day < 0):
+        state, reason = "HOLD_WITH_WATCH", "MONITORED_LIFECYCLE_RISK"
+    elif thesis in {"INTACT", "HEALTHY"} and momentum in {"HEALTHY", "POSITIVE", "STABLE"} and liquidity in {"ADEQUATE", "HEALTHY", "LIQUID"}:
+        state, reason = "HOLD_AS_PLANNED", "AFFIRMATIVE_CURRENT_EVIDENCE_SUPPORTS_CONTINUATION"
+    else:
+        state, reason = "INSUFFICIENT_EVIDENCE", "NO_AFFIRMATIVE_HOLD_EVIDENCE"
+    if state != "HOLD_AS_PLANNED" and thesis in {"INTACT", "HEALTHY"}:
+        suppressed.append("HOLD_AS_PLANNED")
+    return {
+        "classification": state, "classification_reason": reason, "classification_confidence": round(confidence, 4),
+        "classification_components": components, "evidence_missing": missing,
+        "evidence_stale": stale, "evidence_conflicting": explicit_conflict,
+        "default_branch_used": False, "suppressed_classifications": suppressed,
+    }
+
+
 def build_unified_position_lifecycle_decision_v1(
     position: Mapping[str, Any], *, current_market_evidence: Mapping[str, Any] | None = None,
     lifecycle_plan: Mapping[str, Any] | None = None, learned_evidence: Mapping[str, Any] | None = None,
@@ -432,17 +515,7 @@ def build_unified_position_lifecycle_decision_v1(
     ret = _num(row.get("unrealized_return_pct") or row.get("unrealized_plpc"))
     if ret is not None and abs(ret) <= 1:
         ret *= 100.0
-    exit_state = _text(row.get("exit_readiness_state") or "").upper()
-    if cohort["cohort"] == "DUST_POSITION": state = "DUST_CLEANUP_REVIEW"
-    elif exit_state in {"THESIS_BROKEN", "EXIT_REVIEW", "REPLACE_CANDIDATE"}: state = exit_state
-    elif ret is None: state = "INSUFFICIENT_EVIDENCE"
-    elif ret > 0 and _num(row.get("profit_giveback_pct")) and (_num(row.get("profit_giveback_pct")) or 0) > 2: state = "PROTECT_PROFIT"
-    elif days >= 30: state = "EXIT_REVIEW"
-    else: state = "HOLD_WITH_WATCH" if days >= 15 else "HOLD_AS_PLANNED"
     direct = bool(market or next((item for item in evidence["evidence_rows"] if item["source"] == "current_direct" and item["available"]), None))
-    policy_eligible = state in {"PROTECT_PROFIT", "THESIS_BROKEN", "CONTROLLED_LOSS_ACCEPTABLE", "REPLACE_CANDIDATE", "DUST_CLEANUP_REVIEW"}
-    blocker = "HUMAN_POLICY_DECISION_REQUIRED" if policy_eligible else "ADVISORY_CLASSIFICATION_ONLY"
-    if not direct: blocker = "INSUFFICIENT_CURRENT_DIRECT_EVIDENCE"
     horizon_state = "HORIZON_EXPIRED" if original_horizon == "day_trade" and days > 1.25 else "ORIGINAL_HORIZON_MAINTAINED" if original_horizon else "HORIZON_EVIDENCE_INSUFFICIENT"
     profile = dict(context.get("symbol_profile") or context.get("symbol_behavior") or {})
     expected_upside = profile.get("expected_upside_range") or context.get("expected_upside_range")
@@ -451,6 +524,27 @@ def build_unified_position_lifecycle_decision_v1(
     confidence = min(0.9, round(0.25 + sum(item["influence_weight"] for item in evidence["evidence_rows"] if item["consumed"]) / 4.0, 3))
     if not direct:
         confidence = 0.0
+    classifier_input = {**row, **market}
+    exit_state = _text(row.get("exit_readiness_state") or "").upper()
+    if exit_state == "EXIT_REVIEW":
+        classifier_input["exit_concern"] = True
+    elif exit_state == "THESIS_BROKEN":
+        classifier_input["thesis_state"] = "BROKEN"
+        classifier_input["direct_thesis_invalidation"] = True
+    elif exit_state == "REPLACE_CANDIDATE":
+        classifier_input["replacement_qualified"] = True
+    classification_detail = (
+        {"classification": "DUST_CLEANUP_REVIEW", "classification_reason": "CANONICAL_DUST_COHORT",
+         "classification_confidence": confidence, "classification_components": {}, "evidence_missing": [],
+         "evidence_stale": False, "evidence_conflicting": False, "default_branch_used": False, "suppressed_classifications": []}
+        if cohort["cohort"] == "DUST_POSITION"
+        else classify_legacy_swing_lifecycle_v1(classifier_input, evidence=evidence, confidence=confidence)
+    )
+    state = str(classification_detail["classification"])
+    policy_eligible = state in {"PROTECT_PROFIT", "PROTECT_PARTIAL", "REDUCE_RISK", "THESIS_BROKEN", "CONTROLLED_LOSS_ACCEPTABLE", "REPLACE_CANDIDATE", "DUST_CLEANUP_REVIEW"}
+    blocker = "HUMAN_POLICY_DECISION_REQUIRED" if policy_eligible else str(classification_detail.get("classification_reason") or "ADVISORY_CLASSIFICATION_ONLY")
+    if not direct:
+        blocker = "INSUFFICIENT_CURRENT_DIRECT_EVIDENCE"
     direct_confirmation = bool(direct and state in {"PROTECT_PROFIT", "THESIS_BROKEN", "CONTROLLED_LOSS_ACCEPTABLE", "REPLACE_CANDIDATE", "DUST_CLEANUP_REVIEW"})
     decision = {"position_id": cohort["position_id"], "symbol": _text(row.get("symbol")).upper(), "cohort": cohort["cohort"], "lane": lane,
             "original_horizon": original_horizon or "UNKNOWN", "current_recommended_horizon": original_horizon or "UNKNOWN", "horizon_state": horizon_state,
@@ -469,6 +563,10 @@ def build_unified_position_lifecycle_decision_v1(
             "unavailable_evidence_sources": evidence["unavailable_sources"],
             "policy_eligibility": "POLICY_BLOCKED" if policy_eligible else "ADVISORY_ONLY", "paper_action_ready": False,
             "current_direct_confirmation": direct_confirmation,
+            "classification_reason": classification_detail["classification_reason"], "classification_confidence": classification_detail["classification_confidence"],
+            "classification_components": classification_detail["classification_components"], "evidence_missing": classification_detail["evidence_missing"],
+            "evidence_stale": classification_detail["evidence_stale"], "evidence_conflicting": classification_detail["evidence_conflicting"],
+            "default_branch_used": classification_detail["default_branch_used"], "suppressed_classifications": classification_detail["suppressed_classifications"],
             "exact_blocker": blocker, "next_review": "next_session" if lane != "CRYPTO" else "continuous_crypto_review",
             "monitoring_intensity": "HEIGHTENED_MONITORING" if state in {"EXIT_REVIEW", "THESIS_BROKEN"} else "NORMAL_MONITORING",
             "consumer_acknowledgements": {"LIFECYCLE_PLAN_CONSUMED_BY_POSITION_MONITOR": bool(plan), "LIFECYCLE_PLAN_CONSUMED_BY_EXIT_REVIEW": bool(plan), "LIFECYCLE_PLAN_PERSISTED_FOR_TRUTH_CALIBRATION": bool(plan), "FORWARD_BASELINE_CONSUMED": True, "PROVISIONAL_HORIZON_CONSUMED": True, "POSITION_SHADOW_TWIN_CONSUMED": shadow_twin.get("state") == "POSITION_SHADOW_TWIN_ACTIVE", "FORECAST_INFLUENCE_PERSISTED": True},
