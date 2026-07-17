@@ -129,8 +129,9 @@ class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
         engine = _engine(_MarketDataFixture())
         calls = []
         engine._legacy_swing_fmp_historical_fetcher = lambda symbol, **_kwargs: calls.append(symbol) or {"response_state": "SUCCESS", "bars": []}
-        engine._refresh_legacy_swing_broker_market_evidence(_registry())
+        _records, activity = engine._refresh_legacy_swing_broker_market_evidence(_registry())
         self.assertEqual(calls, [])
+        self.assertGreaterEqual(activity["fmp_requests_avoided"], 1)
     def test_existing_client_uses_read_only_market_routes(self):
         broker = AlpacaPaperBroker()
         broker._market_data_request = lambda path: (True, {"bars": [{"t": "2026-07-16T00:00:00Z"}]}, "", 200)  # type: ignore[method-assign]

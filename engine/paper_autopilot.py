@@ -2435,6 +2435,12 @@ class PaperAutopilotEngine:
             "symbols_requiring": 0,
             "symbols_requested": [],
             "broker_order_actions": 0,
+            "cache_hits": int(prior.get("cache_hits") or 0),
+            "cache_misses": int(prior.get("cache_misses") or 0),
+            "alpaca_requests_avoided": int(prior.get("alpaca_requests_avoided") or 0),
+            "fmp_requests_avoided": int(prior.get("fmp_requests_avoided") or 0),
+            "duplicate_requests_suppressed": int(prior.get("duplicate_requests_suppressed") or 0),
+            "budget_deferred_symbols": list(prior.get("budget_deferred_symbols") or []),
             "families": {},
             "next_symbol_cursor": int(prior.get("next_symbol_cursor") or prior_scheduler.get("round_robin_cursor") or 0),
             "priority_policy": "priority_desc_starvation_boost_then_persisted_round_robin",
@@ -2493,7 +2499,11 @@ class PaperAutopilotEngine:
             bundle = dict(records.get(activation_id) or {})
             missing = [family for family, (_method, age) in config.items() if not self._legacy_swing_market_record_current(dict(bundle.get(family) or {}), now, age)]
             if not missing:
+                activity["cache_hits"] += 1
+                activity["alpaca_requests_avoided"] += 1
+                activity["fmp_requests_avoided"] += 1
                 continue
+            activity["cache_misses"] += 1
             activity["symbols_requiring"] += 1
             if requested_symbols >= int(activity["max_symbols_per_cycle"]):
                 continue
@@ -2545,6 +2555,8 @@ class PaperAutopilotEngine:
                             fallback_activity["success_count"] += 1; fallback_activity["last_success_at"] = now_iso
                         else:
                             fallback_activity["failure_count"] += 1
+                        if str(fmp_response.get("response_state") or "").upper() == "BUDGET_BLOCKED":
+                            activity["budget_deferred_symbols"] = sorted(set(activity["budget_deferred_symbols"] + [symbol]))
                         if alpaca.get("records_valid") and fmp.get("records_valid"):
                             comparison = self._compare_legacy_swing_bar_batches(alpaca, fmp)
                     selected = alpaca
@@ -2563,6 +2575,8 @@ class PaperAutopilotEngine:
                             routing_state = "BOTH_PROVIDERS_UNAVAILABLE"
                         else:
                             routing_state = "FMP_FALLBACK_FAILED"
+                    else:
+                        activity["fmp_requests_avoided"] += 1
                     selected = dict(selected)
                     selected.update({
                         "record_id": f"legacy-market:historical_bars:{activation_id}", "canonical_owner": True,
