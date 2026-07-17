@@ -48056,6 +48056,59 @@ def fmp_production_consumption_closure_diagnostic_v1():
     }
 
 
+def _broker_market_evidence_payload_v1() -> dict:
+    """Read persisted broker market evidence only; never triggers market data."""
+    state = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
+    runtime = dict(state.get("legacy_swing_canary") or {})
+    activity = dict(runtime.get("market_activity") or state.get("legacy_swing_market_activity") or {})
+    records = dict(runtime.get("market_records") or state.get("legacy_swing_market_evidence") or {})
+    activations = dict(state.get("legacy_forward_activations") or {})
+    families = ("HISTORICAL_BARS", "LATEST_QUOTE", "ASSET_METADATA")
+    summaries, rows, repairable = {}, [], []
+    for family in families:
+        family_activity = dict((activity.get("families") or {}).get(family) or {})
+        family_rows = [dict((dict(bundle or {})).get(family) or {}) for bundle in records.values() if dict((dict(bundle or {})).get(family) or {})]
+        success = [row for row in family_rows if str(row.get("response_state") or "").upper() == "SUCCESS" and str(row.get("freshness_state") or "").upper() == "CURRENT" and str(row.get("quality_state") or "").upper() not in {"INSUFFICIENT", "INVALID", "INVALID_SPREAD"}]
+        missing = max(0, len(activations) - len(success))
+        for row in family_rows:
+            state_name = "PASS" if row in success and row.get("records_stored") and row.get("consumer_acknowledged") and row.get("influence_state") else "LEGITIMATELY_UNAVAILABLE" if str(row.get("response_state") or "").upper() in {"RATE_LIMITED", "TIMEOUT", "MARKET_CLOSED", "PROVIDER_ERROR", "AUTHENTICATION_FAILED", "ENTITLEMENT_BLOCKED", "UNSUPPORTED_ENDPOINT", "EMPTY_RESPONSE", "MALFORMED_RESPONSE"} or str(row.get("quality_state") or "").upper() == "INSUFFICIENT" else "FAILED"
+            if str(row.get("response_state") or "").upper() == "SUCCESS" and not row.get("records_stored"):
+                state_name = "NOT_STORED"
+            elif str(row.get("response_state") or "").upper() == "SUCCESS" and not row.get("consumer_acknowledged"):
+                state_name = "NOT_ACKNOWLEDGED"
+            elif str(row.get("response_state") or "").upper() == "SUCCESS" and not row.get("influence_state"):
+                state_name = "NOT_INFLUENCING"
+            item = {"symbol": row.get("symbol"), "activation_id": row.get("activation_id"), "evidence_type": "MOMENTUM" if family == "HISTORICAL_BARS" else "LIQUIDITY", "request_family": family, "provider": row.get("provider"), "stage": "broker_market_evidence", "owner": "AlpacaPaperBroker", "producer": "PaperAutopilot._refresh_legacy_swing_broker_market_evidence", "consumer": row.get("consumer") or "build_legacy_swing_required_evidence_v1", "store": "paper_autopilot_state.json:legacy_swing_market_evidence", "join_key": row.get("record_id"), "expected_state": "STORED_ACKNOWLEDGED_INFLUENCING", "actual_state": state_name, "exact_blocker": row.get("source_error") or ("insufficient_current_bars" if str(row.get("quality_state") or "").upper() == "INSUFFICIENT" else None), "blocker_category": "external" if state_name == "LEGITIMATELY_UNAVAILABLE" else "technical" if state_name != "PASS" else None, "technical_or_external": "external" if state_name == "LEGITIMATELY_UNAVAILABLE" else "technical" if state_name != "PASS" else "pass", "safe_repair_allowed": state_name in {"FAILED", "NOT_STORED", "NOT_ACKNOWLEDGED", "NOT_INFLUENCING"}, "exact_safe_repair": "persist and consume the canonical broker market record" if state_name != "PASS" else None, "next_refresh_at": row.get("next_refresh_at")}
+            rows.append(item)
+            if item["safe_repair_allowed"]:
+                repairable.append(item)
+        requests = int(family_activity.get("request_count") or 0)
+        worker_connected = callable(getattr(PAPER_AUTOPILOT, "_legacy_swing_market_broker", None) and getattr(getattr(PAPER_AUTOPILOT, "_legacy_swing_market_broker", None), {"HISTORICAL_BARS": "historical_bars", "LATEST_QUOTE": "latest_quote", "ASSET_METADATA": "asset_metadata"}[family], None))
+        starvation = bool(len(activations) and not requests and bool(activity.get("worker_invoked")))
+        if not worker_connected or not activity.get("worker_invoked") or starvation:
+            repairable.append({"stage": "worker_invocation", "owner": "PaperAutopilot._refresh_legacy_swing_broker_market_evidence", "producer": "PaperAutopilot normal worker", "consumer": "AlpacaPaperBroker", "store": "paper_autopilot_state.json", "join_key": family, "expected_state": "WORKER_INVOKED", "actual_state": "WORKER_DISCONNECTED" if not worker_connected else "CONFIGURED_NOT_INVOKED", "exact_blocker": "market_data_method_or_worker_missing", "blocker_category": "technical", "technical_or_external": "technical", "safe_repair_allowed": True, "exact_safe_repair": "connect the existing AlpacaPaperBroker market-data method to the worker"})
+        summaries[family] = {"configured": worker_connected, "credentials_present_without_exposing_them": bool(getattr(PAPER_AUTOPILOT, "_alpaca_safety_snapshot", lambda: {})().get("paper_mode_verified")), "worker_connected": worker_connected, "worker_invoked": bool(activity.get("worker_invoked")), "requests_attempted": requests, "requests_succeeded": int(family_activity.get("success_count") or 0), "requests_failed": int(family_activity.get("failure_count") or 0), "records_received": sum(int(row.get("records_received") or 0) for row in family_rows), "records_validated": sum(int(row.get("records_valid") or 0) for row in family_rows), "records_stored": sum(int(row.get("records_stored") or 0) for row in family_rows), "records_current": len(success), "records_stale": sum(1 for row in family_rows if str(row.get("freshness_state") or "") == "STALE"), "records_consumed": sum(1 for row in family_rows if row.get("consumer_acknowledged")), "records_acknowledged": sum(1 for row in family_rows if row.get("consumer_acknowledged")), "records_influencing": sum(1 for row in family_rows if str(row.get("influence_state") or "") not in {"", "UNAVAILABLE"}), "backlog_count": missing, "latest_attempt": family_activity.get("last_attempt_at"), "latest_success": family_activity.get("last_success_at"), "latest_consumer_ack": max((str(row.get("consumed_at") or "") for row in family_rows), default=""), "starvation_state": "PROVIDER_STARVED" if starvation else "ACTIVE" if requests else "LEGITIMATELY_UNAVAILABLE", "false_operational_state": bool(worker_connected and starvation)}
+    return {"overall_status": "PASS" if not repairable else "FAILED", "positions_processed": len(activations), "families": summaries, "position_rows": rows, "repairable_failures": repairable, "bounded_backlog": max((value.get("backlog_count", 0) for value in summaries.values()), default=0), "read_only": True, "provider_calls": 0, "broker_order_actions": 0}
+
+
+@router.get("/api/broker_market_evidence_accountability_audit_v1")
+def broker_market_evidence_accountability_audit_v1():
+    return {"endpoint": "/api/broker_market_evidence_accountability_audit_v1", **_broker_market_evidence_payload_v1(), **_safety_flags_v1()}
+
+
+@router.get("/api/legacy_swing_market_evidence_acquisition_audit_v1")
+def legacy_swing_market_evidence_acquisition_audit_v1():
+    audit = _broker_market_evidence_payload_v1(); families = dict(audit.get("families") or {})
+    bars, quotes, assets = (dict(families.get("HISTORICAL_BARS") or {}), dict(families.get("LATEST_QUOTE") or {}), dict(families.get("ASSET_METADATA") or {}))
+    bar_rows = [row for row in audit.get("position_rows") or [] if row.get("request_family") == "HISTORICAL_BARS"]
+    return {"endpoint": "/api/legacy_swing_market_evidence_acquisition_audit_v1", **audit, "bars_available": bars.get("records_current", 0), "bars_missing": bars.get("backlog_count", 0), "bars_stale": bars.get("records_stale", 0), "bars_insufficient": sum(1 for row in bar_rows if row.get("exact_blocker") == "insufficient_current_bars"), "quotes_available": quotes.get("records_current", 0), "quotes_missing": quotes.get("backlog_count", 0), "quotes_stale": quotes.get("records_stale", 0), "assets_available": assets.get("records_current", 0), "assets_missing": assets.get("backlog_count", 0), "assets_stale": assets.get("records_stale", 0), "momentum_available": bars.get("records_current", 0), "liquidity_available": min(quotes.get("records_current", 0), assets.get("records_current", 0)), **_safety_flags_v1()}
+
+
+@router.get("/api/legacy_swing_market_evidence_closure_diagnostic_v1")
+def legacy_swing_market_evidence_closure_diagnostic_v1():
+    return {"endpoint": "/api/legacy_swing_market_evidence_closure_diagnostic_v1", **_broker_market_evidence_payload_v1(), "stage_chain": ["evidence_requirement", "worker_trigger", "broker_market_data_request", "provider_response", "validation", "normalization", "storage", "momentum_or_liquidity_builder", "classifier_acknowledgement", "classification_influence"], **_safety_flags_v1()}
+
+
 @router.get("/api/astra_forward_performance_readiness_v1")
 def astra_forward_performance_readiness_v1(force: bool = False):
     certification = _astra_pre_market_trading_certification_payload_v1(force=bool(force))
@@ -63217,6 +63270,7 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
     classification_integrity = legacy_swing_classification_integrity_diagnostic_v1()
     required_evidence = _legacy_swing_required_evidence_payload_v1()
     fmp_consumption = _fmp_production_consumption_payload_v1()
+    market_evidence = _broker_market_evidence_payload_v1()
     review = dict(utilization.get("portfolio_review") or build_portfolio_release_review(rows))
     enrichment = _candidate_intelligence_enrichment_contract_diagnostic_v1(force=False)
     findings: list[dict] = []
@@ -63336,6 +63390,13 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "evidence": fmp_consumption.get("repairable_failures"),
             "recommended_action": "repair the existing FMP worker-to-thesis lineage; do not weaken evidence requirements",
         })
+    if market_evidence.get("repairable_failures"):
+        findings.append({
+            "severity": "high", "classification": "legacy_broker_market_evidence_connection_defect",
+            "issue": "legacy_swing_market_evidence_repairable_failure",
+            "evidence": market_evidence.get("repairable_failures"),
+            "recommended_action": "repair bounded read-only broker market-data production, storage, acknowledgement, or influence; do not submit an order",
+        })
     lineage_confidence = dict(lineage_detail.get("coverage_by_confidence_class") or {})
     excursion_coverage = dict(lineage_detail.get("coverage_by_excursion_class") or {})
     if int(_to_float(lineage_confidence.get("NOT_RECOVERABLE"), 0.0)) > 0:
@@ -63419,6 +63480,10 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
         "legacy_swing_fmp_production_consumption_v1": {
             key: fmp_consumption.get(key)
             for key in ("overall_status", "worker_connected", "worker_invoked", "requests_attempted", "requests_succeeded", "records_stored", "records_consumed", "records_influencing", "repairable_failures")
+        },
+        "legacy_swing_broker_market_evidence_v1": {
+            key: market_evidence.get(key)
+            for key in ("overall_status", "positions_processed", "families", "bounded_backlog", "repairable_failures")
         },
         "position_lineage_excursion_replacement_v1": {
             "coverage_by_confidence_class": lineage_confidence,

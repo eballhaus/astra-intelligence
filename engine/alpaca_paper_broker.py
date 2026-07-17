@@ -12,6 +12,7 @@ from engine.candidate_execution_integrity_v1 import candidate_execution_integrit
 
 VERSION = "1.0.0"
 PAPER_BASE = "https://paper-api.alpaca.markets"
+MARKET_DATA_BASE = "https://data.alpaca.markets"
 
 
 def _now_iso() -> str:
@@ -332,6 +333,75 @@ class AlpacaPaperBroker:
         except Exception as exc:
             self._last_error = str(exc)[:180]
             return False, None, self._last_error
+
+    def _market_data_request(self, path: str) -> tuple[bool, Any, str, int]:
+        """Read Alpaca market data with paper-account credentials only.
+
+        Market-data reads use Alpaca's dedicated data host, never either live
+        or paper trading submission endpoint.  The paper-account safety guard
+        remains mandatory before the request is constructed.
+        """
+        safety = self.safety_status()
+        if not safety.get("paper_mode_verified") or safety.get("live_endpoint_detected"):
+            return False, None, "paper_market_data_environment_not_verified", 0
+        url = MARKET_DATA_BASE.rstrip("/") + "/" + str(path or "").lstrip("/")
+        req = urllib.request.Request(url, headers=self._headers(), method="GET")
+        try:
+            self._api_calls_used += 1
+            with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:
+                raw = resp.read().decode("utf-8", "ignore")
+                status = int(getattr(resp, "status", 200) or 200)
+            return True, json.loads(raw) if raw else {}, "", status
+        except urllib.error.HTTPError as exc:
+            try:
+                raw = exc.read().decode("utf-8", "ignore")
+                payload = json.loads(raw) if raw else {}
+                message = _safe_text(payload.get("message") if isinstance(payload, dict) else raw, f"http_{exc.code}")
+            except Exception:
+                message = f"http_{exc.code}"
+            self._last_error = message[:180]
+            return False, None, self._last_error, int(exc.code)
+        except Exception as exc:
+            self._last_error = str(exc)[:180]
+            return False, None, self._last_error, 0
+
+    @staticmethod
+    def _market_error_state(status: int, error: str) -> str:
+        text = str(error or "").lower()
+        if status == 401:
+            return "AUTHENTICATION_FAILED"
+        if status == 403:
+            return "ENTITLEMENT_BLOCKED"
+        if status == 429:
+            return "RATE_LIMITED"
+        if "timeout" in text:
+            return "TIMEOUT"
+        return "PROVIDER_ERROR"
+
+    def historical_bars(self, symbol: str, timeframe: str = "1Day", limit: int = 20) -> dict[str, Any]:
+        sym = _safe_text(symbol).upper()
+        query = urllib.parse.urlencode({"timeframe": str(timeframe or "1Day"), "limit": max(5, min(60, _to_int(limit, 20))), "feed": "iex"})
+        ok, data, error, status = self._market_data_request(f"/v2/stocks/{urllib.parse.quote(sym)}/bars?{query}")
+        if not ok:
+            return {"ok": False, "symbol": sym, "response_state": self._market_error_state(status, error), "http_status": status, "error": error, "bars": [], "broker_actions": 0}
+        bars = list(data.get("bars") or []) if isinstance(data, dict) else []
+        return {"ok": True, "symbol": sym, "response_state": "SUCCESS" if bars else "EMPTY_RESPONSE", "http_status": status, "bars": bars, "broker_actions": 0}
+
+    def latest_quote(self, symbol: str) -> dict[str, Any]:
+        sym = _safe_text(symbol).upper()
+        ok, data, error, status = self._market_data_request(f"/v2/stocks/{urllib.parse.quote(sym)}/quotes/latest?feed=iex")
+        quote = dict(data.get("quote") or {}) if isinstance(data, dict) else {}
+        if not ok:
+            return {"ok": False, "symbol": sym, "response_state": self._market_error_state(status, error), "http_status": status, "error": error, "quote": {}, "broker_actions": 0}
+        return {"ok": bool(quote), "symbol": sym, "response_state": "SUCCESS" if quote else "EMPTY_RESPONSE", "http_status": status, "quote": quote, "broker_actions": 0}
+
+    def asset_metadata(self, symbol: str) -> dict[str, Any]:
+        """Read canonical asset metadata from the paper trading API; no order path."""
+        sym = _safe_text(symbol).upper()
+        ok, data, error = self._request("GET", f"/assets/{urllib.parse.quote(sym)}")
+        if not ok or not isinstance(data, dict):
+            return {"ok": False, "symbol": sym, "response_state": "PROVIDER_ERROR", "http_status": 0, "error": error, "asset": {}, "broker_actions": 0}
+        return {"ok": True, "symbol": sym, "response_state": "SUCCESS", "http_status": 200, "asset": data, "broker_actions": 0}
 
     def account(self) -> dict[str, Any]:
         ok, data, err = self._request("GET", "/account")

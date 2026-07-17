@@ -296,6 +296,9 @@ def build_legacy_swing_required_evidence_v1(position: Mapping[str, Any], baselin
     volume = _num(row.get("volume") or row.get("recent_volume"))
     direct_thesis = _text(row.get("thesis_state") or row.get("thesis_health")).upper()
     fmp_context = dict(row.get("fmp_thesis_context") or {})
+    bar_context = dict(row.get("broker_bar_record") or {})
+    quote_context = dict(row.get("broker_quote_record") or {})
+    asset_context = dict(row.get("broker_asset_record") or {})
     def record(kind: str, status: str, state: str, confidence: float, limitations: list[str], **extra: Any) -> dict[str, Any]:
         return {"evidence_type": kind, "record_id": f"legacy-evidence:{kind.lower()}:{position_id}", "symbol": symbol,
                 "position_id": position_id, "activation_id": baseline.get("baseline_id"), "as_of": as_of,
@@ -303,7 +306,31 @@ def build_legacy_swing_required_evidence_v1(position: Mapping[str, Any], baselin
                 "next_refresh_at": as_of, "source": "PaperAutopilot.broker_position_snapshot", "status": status,
                 "freshness": status, "quality": status, "confidence": confidence, "limitations": limitations,
                 "consumer_acknowledged": True, "classification_influence": "NEUTRAL" if status == "CURRENT" else "UNAVAILABLE", **extra}
-    if price is not None and activation is not None and row.get("recent_price_path"):
+    bars = list(bar_context.get("bars") or [])
+    closes = [_num(item.get("close")) for item in bars if isinstance(item, Mapping)]
+    closes = [value for value in closes if value is not None and value > 0]
+    volumes = [_num(item.get("volume")) for item in bars if isinstance(item, Mapping)]
+    volumes = [value for value in volumes if value is not None and value >= 0]
+    bar_state = _text(bar_context.get("response_state")).upper()
+    bar_freshness = _text(bar_context.get("freshness_state")).upper()
+    if bar_state == "SUCCESS" and bar_freshness == "CURRENT" and len(closes) >= 5:
+        short = (closes[-1] / closes[-3] - 1.0) * 100.0
+        medium = (closes[-1] / closes[0] - 1.0) * 100.0
+        direction = "POSITIVE" if short > 0.25 and medium >= 0 else "NEGATIVE" if short < -0.25 and medium <= 0 else "STABLE"
+        breakdown = "BREAKDOWN" if short < -1.0 and medium < -1.0 else "BREAKOUT" if short > 1.0 and medium > 1.0 else "NONE"
+        volume_confirmation = "CONFIRMED" if len(volumes) >= 3 and volumes[-1] >= sum(volumes[-3:]) / 3.0 else "UNAVAILABLE" if not volumes else "NOT_CONFIRMED"
+        momentum = record("MOMENTUM", "CURRENT", direction, 0.65, [] if volume_confirmation != "UNAVAILABLE" else ["volume_confirmation_unavailable"],
+                          source="AlpacaPaperBroker.historical_bars", provider_record_ids=[bar_context.get("record_id")],
+                          short_term_direction=direction, medium_term_direction="POSITIVE" if medium > 0 else "NEGATIVE" if medium < 0 else "STABLE",
+                          momentum_score=round((short + medium) / 2.0, 6), momentum_acceleration=round(short - medium, 6),
+                          trend_strength=abs(round(medium, 6)), volume_confirmation=volume_confirmation,
+                          breakout_or_breakdown_state=breakdown, recovery_state="RECOVERING" if short > 0 and medium < 0 else "NONE",
+                          deterioration_state="DETERIORATING" if direction == "NEGATIVE" and breakdown != "BREAKDOWN" else "NONE", supporting_inputs=["canonical_recent_bars"])
+    elif bar_freshness == "STALE":
+        momentum = record("MOMENTUM", "STALE", "STALE", 0.0, ["stale_canonical_bar_record"], source="AlpacaPaperBroker.historical_bars", short_term_direction="STALE", supporting_inputs=[])
+    elif bar_state == "SUCCESS":
+        momentum = record("MOMENTUM", "UNAVAILABLE", "INSUFFICIENT", 0.0, ["insufficient_canonical_bar_count"], source="AlpacaPaperBroker.historical_bars", short_term_direction="UNAVAILABLE", supporting_inputs=[])
+    elif price is not None and activation is not None and row.get("recent_price_path"):
         change = (price / activation - 1.0) * 100.0 if activation else 0.0
         momentum_state = "POSITIVE" if change > 0 else "NEGATIVE" if change < 0 else "STABLE"
         momentum = record("MOMENTUM", "CURRENT", momentum_state, 0.55, [], short_term_direction=momentum_state, momentum_score=change, supporting_inputs=["activation_price", "current_price", "recent_price_path"])
@@ -334,10 +361,26 @@ def build_legacy_swing_required_evidence_v1(position: Mapping[str, Any], baselin
         thesis = record("THESIS_STATE", "UNAVAILABLE", "UNKNOWN", 0.0, [limitation], thesis_state="UNKNOWN", direct_evidence=False,
                         source="FMP.company_profile" if fmp_context else "PaperAutopilot.broker_position_snapshot",
                         fmp_record_id=fmp_context.get("record_id"), endpoint_family=fmp_context.get("endpoint_family"))
-    if bid is not None and ask is not None and bid > 0 and ask >= bid and bool(row.get("tradable", True)):
+    quote_bid, quote_ask = _num(quote_context.get("bid")), _num(quote_context.get("ask"))
+    quote_current = _text(quote_context.get("freshness_state")).upper() == "CURRENT" and _text(quote_context.get("response_state")).upper() == "SUCCESS"
+    asset_current = _text(asset_context.get("freshness_state")).upper() == "CURRENT" and _text(asset_context.get("response_state")).upper() == "SUCCESS"
+    # Retain the established worker-owned direct broker snapshot contract when
+    # a caller has not supplied any canonical market record yet.  Once a
+    # canonical record exists, its freshness and validation are authoritative.
+    direct_snapshot_available = not quote_context and not asset_context and bid is not None and ask is not None and row.get("tradable") is not None
+    if quote_current:
+        bid, ask = quote_bid, quote_ask
+    tradable = asset_context.get("tradable") if asset_current else row.get("tradable")
+    liquidity_current = (quote_current and asset_current) or direct_snapshot_available
+    if bid is not None and ask is not None and bid > 0 and ask >= bid and bool(tradable) and liquidity_current:
         spread_pct = (ask - bid) / max((ask + bid) / 2.0, 1e-9) * 100.0
-        state = "ACCEPTABLE" if spread_pct <= 1.0 else "THIN"
-        liquidity = record("LIQUIDITY", "CURRENT", state, 0.65, [] if volume is not None else ["volume_unavailable"], bid=bid, ask=ask, spread_percentage=spread_pct, recent_volume=volume, tradable=True, liquidity_state=state)
+        state = "ACCEPTABLE" if spread_pct <= 1.0 else "THIN" if spread_pct <= 2.0 else "POOR"
+        source = "AlpacaPaperBroker.latest_quote+asset_metadata" if quote_current else "PaperAutopilot.broker_position_snapshot"
+        liquidity = record("LIQUIDITY", "CURRENT", state, 0.65, [] if volume is not None else ["volume_unavailable"], source=source, quote_record_id=quote_context.get("record_id"), asset_record_id=asset_context.get("record_id"), bid=bid, ask=ask, spread_percentage=spread_pct, recent_volume=volume, tradable=True, liquidity_state=state)
+    elif _text(quote_context.get("freshness_state")).upper() == "STALE" or _text(asset_context.get("freshness_state")).upper() == "STALE":
+        liquidity = record("LIQUIDITY", "STALE", "STALE", 0.0, ["stale_canonical_quote_or_asset_record"], source="AlpacaPaperBroker.latest_quote+asset_metadata", liquidity_state="STALE", tradable=asset_context.get("tradable"))
+    elif asset_current and asset_context.get("tradable") is False:
+        liquidity = record("LIQUIDITY", "CURRENT", "NOT_TRADABLE", 0.7, ["broker_asset_not_tradable"], source="AlpacaPaperBroker.asset_metadata", liquidity_state="NOT_TRADABLE", tradable=False)
     else:
         liquidity = record("LIQUIDITY", "UNAVAILABLE", "UNAVAILABLE", 0.0, ["bid_ask_and_tradability_required"], liquidity_state="UNAVAILABLE", tradable=row.get("tradable"))
     return {"MOMENTUM": momentum, "THESIS_STATE": thesis, "LIQUIDITY": liquidity}

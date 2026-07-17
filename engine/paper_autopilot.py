@@ -1052,6 +1052,7 @@ class PaperAutopilotEngine:
         self.exit_engine = kwargs.get("exit_engine")
         self.exit_learning = kwargs.get("exit_learning")
         self.alpaca_paper_broker = kwargs.get("alpaca_paper_broker")
+        self._legacy_swing_market_broker = kwargs.get("legacy_swing_market_broker") or self.alpaca_paper_broker
         self._legacy_swing_fmp_router = kwargs.get("legacy_swing_fmp_router")
         if self._legacy_swing_fmp_router is None:
             self._legacy_swing_fmp_router = ProviderRouter()
@@ -2013,6 +2014,143 @@ class PaperAutopilotEngine:
         self._runtime_state["legacy_swing_fmp_activity"] = activity
         return records, activity
 
+    @staticmethod
+    def _legacy_swing_market_record_current(record: dict[str, Any], now: datetime, max_age_seconds: int) -> bool:
+        if str(record.get("response_state") or "").upper() != "SUCCESS" or str(record.get("freshness_state") or "").upper() != "CURRENT":
+            return False
+        if str(record.get("request_family") or "").upper() == "HISTORICAL_BARS" and str(record.get("timeframe") or "") != "1Hour":
+            return False
+        if str(record.get("request_family") or "").upper() == "HISTORICAL_BARS" and int(record.get("records_valid") or 0) < 5:
+            try:
+                retry_at = datetime.fromisoformat(str(record.get("next_refresh_at") or "").replace("Z", "+00:00")).astimezone(UTC)
+                return now < retry_at
+            except (TypeError, ValueError):
+                return False
+        try:
+            observed = datetime.fromisoformat(str(record.get("received_at") or "").replace("Z", "+00:00")).astimezone(UTC)
+        except (TypeError, ValueError):
+            return False
+        return (now - observed).total_seconds() <= max_age_seconds
+
+    def _refresh_legacy_swing_broker_market_evidence(self, registry: dict[str, dict[str, Any]]) -> tuple[dict[str, dict[str, dict[str, Any]]], dict[str, Any]]:
+        """Acquire bounded, read-only Alpaca market evidence in the normal worker."""
+        now = datetime.now(UTC)
+        now_iso = now.isoformat().replace("+00:00", "Z")
+        runtime_canary = dict(self._runtime_state.get("legacy_swing_canary") or {})
+        raw_store = dict(self._runtime_state.get("legacy_swing_market_evidence") or runtime_canary.get("market_records") or {})
+        records: dict[str, dict[str, dict[str, Any]]] = {}
+        for activation_id, raw in raw_store.items():
+            bundle = dict(raw or {})
+            valid = {family: dict(value or {}) for family, value in bundle.items() if family in {"HISTORICAL_BARS", "LATEST_QUOTE", "ASSET_METADATA"} and isinstance(value, dict) and value.get("record_id")}
+            for market_record in valid.values():
+                market_record.setdefault("activation_id", activation_id)
+                market_record.setdefault("position_id", (dict(registry.get(activation_id) or {})).get("position_id"))
+            if valid:
+                records[activation_id] = valid
+        prior = dict(self._runtime_state.get("legacy_swing_market_activity") or runtime_canary.get("market_activity") or {})
+        activity = {"schema_version": "legacy_swing_broker_market_activity_v1", "provider": "ALPACA_MARKET_DATA", "worker_owner": "PaperAutopilot._refresh_legacy_swing_broker_market_evidence", "worker_invoked": True, "max_symbols_per_cycle": 3, "symbols_requiring": 0, "symbols_requested": [], "broker_order_actions": 0, "families": {}, "next_symbol_cursor": int(prior.get("next_symbol_cursor") or 0)}
+        for family in ("HISTORICAL_BARS", "LATEST_QUOTE", "ASSET_METADATA"):
+            old = dict((prior.get("families") or {}).get(family) or {})
+            activity["families"][family] = {"request_family": family, "request_count": int(old.get("request_count") or 0), "success_count": int(old.get("success_count") or 0), "failure_count": int(old.get("failure_count") or 0), "last_attempt_at": old.get("last_attempt_at"), "last_success_at": old.get("last_success_at"), "next_refresh_at": old.get("next_refresh_at"), "latest_error_category": old.get("latest_error_category") or ""}
+        broker = getattr(self, "_legacy_swing_market_broker", None)
+        requested_symbols = 0
+        config = {
+            "HISTORICAL_BARS": ("historical_bars", 6 * 60 * 60),
+            "LATEST_QUOTE": ("latest_quote", 90),
+            "ASSET_METADATA": ("asset_metadata", 24 * 60 * 60),
+        }
+        # Rotate the bounded acquisition budget.  A lexical loop would keep
+        # refreshing the first symbols whenever quote freshness expires.
+        registry_items = sorted(registry.items())
+        if registry_items:
+            cursor = int(activity["next_symbol_cursor"]) % len(registry_items)
+            ordered_items = registry_items[cursor:] + registry_items[:cursor]
+        else:
+            ordered_items = []
+        last_processed_index: int | None = None
+        for sequence_index, (activation_id, raw) in enumerate(ordered_items):
+            record = dict(raw or {})
+            symbol = str(record.get("symbol") or "").upper().strip()
+            if not symbol:
+                continue
+            bundle = dict(records.get(activation_id) or {})
+            missing = [family for family, (_method, age) in config.items() if not self._legacy_swing_market_record_current(dict(bundle.get(family) or {}), now, age)]
+            if not missing:
+                continue
+            activity["symbols_requiring"] += 1
+            if requested_symbols >= int(activity["max_symbols_per_cycle"]):
+                continue
+            requested_symbols += 1
+            last_processed_index = sequence_index
+            activity["symbols_requested"].append(symbol)
+            for family in missing:
+                method_name, _age = config[family]
+                family_activity = activity["families"][family]
+                family_activity["request_count"] += 1
+                family_activity["last_attempt_at"] = now_iso
+                if broker is not None and callable(getattr(broker, method_name, None)):
+                    response = dict(getattr(broker, method_name)(symbol, timeframe="1Hour", limit=20) or {}) if family == "HISTORICAL_BARS" else dict(getattr(broker, method_name)(symbol) or {})
+                else:
+                    response = {"response_state": "UNSUPPORTED_ENDPOINT", "error": "broker_market_data_method_unavailable"}
+                state = str(response.get("response_state") or "PROVIDER_ERROR").upper()
+                payload: dict[str, Any] = {}
+                quality, valid_count = "INVALID", 0
+                if family == "HISTORICAL_BARS" and state == "SUCCESS":
+                    seen, bars = set(), []
+                    for item in list(response.get("bars") or []):
+                        row = dict(item or {}) if isinstance(item, dict) else {}
+                        ts = str(row.get("t") or row.get("timestamp") or "")
+                        o, h, l, c, v = (_to_float(row.get("o") or row.get("open"), 0.0), _to_float(row.get("h") or row.get("high"), 0.0), _to_float(row.get("l") or row.get("low"), 0.0), _to_float(row.get("c") or row.get("close"), 0.0), _to_float(row.get("v") or row.get("volume"), 0.0))
+                        if not ts or ts in seen or min(o, h, l, c) <= 0 or h < max(o, c, l) or l > min(o, c, h) or v < 0:
+                            continue
+                        seen.add(ts); bars.append({"timestamp": ts, "open": o, "high": h, "low": l, "close": c, "volume": v})
+                    bars.sort(key=lambda item: item["timestamp"])
+                    payload = {"timeframe": "1Hour", "bars": bars, "bars_received": len(list(response.get("bars") or [])), "first_bar_at": bars[0]["timestamp"] if bars else None, "last_bar_at": bars[-1]["timestamp"] if bars else None, "missing_intervals": []}
+                    valid_count, quality = len(bars), "VALID" if len(bars) >= 5 else "INSUFFICIENT"
+                    state = "SUCCESS" if bars else "MALFORMED_RESPONSE"
+                elif family == "LATEST_QUOTE" and state == "SUCCESS":
+                    quote = dict(response.get("quote") or {})
+                    bid, ask = _to_float(quote.get("bp") or quote.get("bid_price"), 0.0), _to_float(quote.get("ap") or quote.get("ask_price"), 0.0)
+                    if bid > 0 and ask >= bid:
+                        payload = {"bid": bid, "ask": ask, "mid": round((bid + ask) / 2.0, 8), "last": _to_float(quote.get("ap") or quote.get("ask_price"), 0.0), "quote_timestamp": quote.get("t") or quote.get("timestamp")}
+                        valid_count, quality = 1, "VALID"
+                    else:
+                        state, quality = "MALFORMED_RESPONSE", "INVALID_SPREAD"
+                elif family == "ASSET_METADATA" and state == "SUCCESS":
+                    asset = dict(response.get("asset") or {})
+                    if asset.get("symbol") and str(asset.get("symbol") or "").upper() == symbol:
+                        payload = {"tradable": bool(asset.get("tradable")), "fractionable": bool(asset.get("fractionable")), "shortable": asset.get("shortable"), "status": asset.get("status"), "exchange": asset.get("exchange"), "market": asset.get("asset_class")}
+                        valid_count, quality = 1, "VALID"
+                    else:
+                        state, quality = "MALFORMED_RESPONSE", "SYMBOL_MISMATCH"
+                success = state == "SUCCESS" and valid_count > 0
+                previous = dict(bundle.get(family) or {})
+                refresh_delay = config[family][1] if success and quality != "INSUFFICIENT" else 15 * 60
+                market_record = {"schema_version": "legacy_swing_broker_market_record_v1", "record_id": f"legacy-market:{family.lower()}:{activation_id}", "request_id": f"legacy-market-request:{family.lower()}:{activation_id}:{now.strftime('%Y%m%d%H')}", "request_family": family, "provider": "ALPACA_MARKET_DATA" if family != "ASSET_METADATA" else "ALPACA_PAPER_BROKER", "activation_id": activation_id, "position_id": record.get("position_id"), "symbol": symbol, "asset_class": "equity", "lane": "SWING", "requested_at": now_iso, "received_at": now_iso, "response_state": state, "http_status": int(response.get("http_status") or 0), "records_received": int(payload.get("bars_received") or (1 if response.get("ok") else 0)), "records_valid": valid_count, "records_stored": int(success), "freshness_state": "CURRENT" if success else "UNAVAILABLE", "quality_state": quality, "source_error": str(response.get("error") or "")[:180], "retry_count": int(previous.get("retry_count") or 0) + (0 if success else 1), "next_refresh_at": (now + timedelta(seconds=refresh_delay)).isoformat().replace("+00:00", "Z"), **payload}
+                if not success and str(previous.get("response_state") or "").upper() == "SUCCESS":
+                    market_record.update({key: value for key, value in previous.items() if key in {"bars", "bid", "ask", "mid", "last", "quote_timestamp", "tradable", "fractionable", "shortable", "status", "exchange", "market"}})
+                    market_record["freshness_state"] = "STALE"
+                bundle[family] = market_record
+                family_activity["latest_error_category"] = market_record["source_error"]
+                if success:
+                    family_activity["success_count"] += 1; family_activity["last_success_at"] = now_iso
+                else:
+                    family_activity["failure_count"] += 1
+                family_activity["next_refresh_at"] = market_record["next_refresh_at"]
+            records[activation_id] = bundle
+            # This is a scheduling acknowledgement, not evidence.  It keeps
+            # an unprocessed bounded backlog visible across worker restarts.
+            record["market_evidence_next_refresh_at"] = min(
+                str((dict(bundle.get(family) or {})).get("next_refresh_at") or now_iso)
+                for family in missing
+            )
+            registry[activation_id] = record
+        if registry_items and last_processed_index is not None:
+            activity["next_symbol_cursor"] = (cursor + last_processed_index + 1) % len(registry_items)
+        self._runtime_state["legacy_swing_market_evidence"] = records
+        self._runtime_state["legacy_swing_market_activity"] = activity
+        return records, activity
+
     def _refresh_legacy_swing_canary_pre_submit(self, broker_positions: dict[str, dict[str, Any]]) -> dict[str, Any]:
         """Persist disabled-canary reviews without invoking an order or writer.
 
@@ -2024,6 +2162,7 @@ class PaperAutopilotEngine:
         safety = self._alpaca_safety_snapshot()
         registry = dict(self._runtime_state.get("legacy_forward_activations") or {})
         fmp_records, fmp_activity = self._refresh_legacy_swing_fmp_evidence(registry)
+        market_records, market_activity = self._refresh_legacy_swing_broker_market_evidence(registry)
         reviews: dict[str, dict[str, Any]] = {}
         candidates: list[dict[str, Any]] = []
         reviewed = exit_reviews = 0
@@ -2044,7 +2183,16 @@ class PaperAutopilotEngine:
                 "paper_mode_verified": bool(safety.get("paper_mode_verified")),
                 "live_endpoint_allowed": bool(safety.get("live_endpoint_detected")),
                 "fmp_thesis_context": dict(fmp_records.get(activation_id) or record.get("fmp_evidence") or {}),
+                "broker_bar_record": dict((market_records.get(activation_id) or {}).get("HISTORICAL_BARS") or {}),
+                "broker_quote_record": dict((market_records.get(activation_id) or {}).get("LATEST_QUOTE") or {}),
+                "broker_asset_record": dict((market_records.get(activation_id) or {}).get("ASSET_METADATA") or {}),
             }
+            if row["broker_bar_record"].get("freshness_state") == "CURRENT":
+                row["recent_price_path"] = [item.get("close") for item in list(row["broker_bar_record"].get("bars") or [])]
+            if row["broker_quote_record"].get("freshness_state") == "CURRENT":
+                row.update({key: row["broker_quote_record"].get(key) for key in ("bid", "ask")})
+            if row["broker_asset_record"].get("freshness_state") == "CURRENT":
+                row["tradable"] = row["broker_asset_record"].get("tradable")
             required_evidence = build_legacy_swing_required_evidence_v1(row, record)
             for evidence_type, evidence_row in required_evidence.items():
                 if evidence_row.get("status") == "CURRENT":
@@ -2079,6 +2227,17 @@ class PaperAutopilotEngine:
                     fmp_record["influence_reason"] = decision.get("classification_reason")
                     fmp_records[activation_id] = fmp_record
                     record["fmp_evidence"] = fmp_record
+                if evidence_row.get("evidence_type") == "MOMENTUM":
+                    market_record = dict((market_records.get(activation_id) or {}).get("HISTORICAL_BARS") or {})
+                    if market_record.get("record_id"):
+                        market_record.update({"consumer_acknowledged": True, "consumer": "build_legacy_swing_required_evidence_v1", "consumed_at": _now_iso(), "acknowledgement_state": "CONSUMED_BY_UNIFIED_DECISION", "influence_state": evidence_row["classification_influence"]})
+                        market_records.setdefault(activation_id, {})["HISTORICAL_BARS"] = market_record
+                if evidence_row.get("evidence_type") == "LIQUIDITY":
+                    for family in ("LATEST_QUOTE", "ASSET_METADATA"):
+                        market_record = dict((market_records.get(activation_id) or {}).get(family) or {})
+                        if market_record.get("record_id"):
+                            market_record.update({"consumer_acknowledged": True, "consumer": "build_legacy_swing_required_evidence_v1", "consumed_at": _now_iso(), "acknowledgement_state": "CONSUMED_BY_UNIFIED_DECISION", "influence_state": evidence_row["classification_influence"]})
+                            market_records.setdefault(activation_id, {})[family] = market_record
             current = str(decision.get("classification") or "INSUFFICIENT_EVIDENCE")
             is_exit_review = current == "EXIT_REVIEW"
             if is_exit_review:
@@ -2131,6 +2290,7 @@ class PaperAutopilotEngine:
                 eligibility=dict(review.get("eligibility") or {}), selection=selection, configuration=config,
             )
         self._runtime_state["legacy_forward_activations"] = registry
+        self._runtime_state["legacy_swing_market_evidence"] = market_records
         self._runtime_state["legacy_swing_canary"] = {
             "configuration": config, "reviews": reviews, "selection": selection,
             "pre_submit": pre_submit, "writer_adapter_contract": legacy_swing_writer_adapter_contract_v1(),
@@ -2138,6 +2298,8 @@ class PaperAutopilotEngine:
             "worker_acknowledgement": "CANARY_CONFIGURATION_CONSUMED_BY_WORKER",
             "fmp_activity": fmp_activity,
             "fmp_records": fmp_records,
+            "market_activity": market_activity,
+            "market_records": market_records,
         }
         return {
             "CANARY_CONFIGURATION_CONSUMED_BY_WORKER": True, "reviewed": reviewed,
