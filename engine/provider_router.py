@@ -96,6 +96,7 @@ _FMP_EFFICIENCY_LOCK = threading.Lock()
 _FMP_RECENT_CALLS: dict[tuple[str, str], float] = {}
 _FMP_RECENT_CALL_TTL_SECONDS = 90.0
 _FMP_LARGE_ENDPOINTS_ALLOW_FLAG = str(os.getenv("ASTRA_FMP_LARGE_ENDPOINTS_ALLOW", "0")).strip().lower() in {"1", "true", "yes", "on"}
+_FMP_HISTORICAL_FALLBACK_ENABLED = str(os.getenv("ASTRA_FMP_HISTORICAL_FALLBACK_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
 _FMP_SMART_BUDGET_ENABLED = str(os.getenv("ASTRA_FMP_SMART_BUDGET_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
 _TEMP_FMP_REST_DISABLED_EXPLICIT = "ASTRA_TEMP_FMP_REST_DISABLED" in os.environ
 _FMP_ENDPOINT_POLICY = {
@@ -224,8 +225,11 @@ def _fmp_endpoint_policy(path_template: str) -> tuple[str, str, bool]:
         policy = "small_quote_profile"
     family = str((_FMP_ENDPOINT_POLICY.get(policy) or {}).get("family") or "unknown")
     allowed = bool((_FMP_ENDPOINT_POLICY.get(policy) or {}).get("allowed_default", False))
-    if policy in {"historical", "screener", "bulk"} and not _FMP_LARGE_ENDPOINTS_ALLOW_FLAG:
+    if policy in {"screener", "bulk"} and not _FMP_LARGE_ENDPOINTS_ALLOW_FLAG:
         allowed = False
+    if policy == "historical":
+        # This is the bounded worker fallback, not a broad historical scan.
+        allowed = bool(_FMP_LARGE_ENDPOINTS_ALLOW_FLAG or _FMP_HISTORICAL_FALLBACK_ENABLED)
     return family, policy, allowed
 
 
@@ -1387,6 +1391,129 @@ class ProviderRouter:
         return outcome(
             "SUCCESS", http_status=status, normalized_fields=normalized,
             records_received=1, records_valid=1, latency_ms=latency,
+        )
+
+    def fetch_fmp_historical_bars(self, symbol: str, *, timeframe: str = "1Hour", limit: int = 20) -> dict[str, Any]:
+        """Fetch bounded FMP intraday bars for the legacy-SWING worker.
+
+        This is deliberately a narrow fallback API.  It shares the router's
+        credential lookup, request coalescing, governor, timeout, and FMP
+        efficiency ledger rather than creating another FMP client.
+        """
+        provider = "FMP"
+        sym = _safe_symbol(symbol)
+        requested_at = _now_iso()
+        normalized_timeframe = str(timeframe or "1Hour").strip()
+        interval = {"1hour": "1hour", "1h": "1hour"}.get(normalized_timeframe.lower())
+        endpoint_family = "historical_prices"
+        endpoint_template = "/stable/historical-chart/1hour?symbol={symbol}"
+
+        def outcome(
+            response_state: str,
+            *,
+            http_status: int | None = None,
+            error_category: str = "",
+            bars: list[dict[str, Any]] | None = None,
+            records_received: int = 0,
+            records_valid: int = 0,
+            latency_ms: float = 0.0,
+        ) -> dict[str, Any]:
+            clean_bars = list(bars or [])
+            success = response_state == "SUCCESS"
+            _fmp_efficiency_record(
+                {
+                    "endpoint_family": endpoint_family,
+                    "endpoint_path_template": endpoint_template,
+                    "symbol_count": 1,
+                    "status_code": int(http_status or 0),
+                    "ok": success,
+                    "cache_hit": False,
+                    "bytes_estimated": 0,
+                    "bytes_actual_if_available": 0,
+                    "useful_fields_count": int(records_valid),
+                    "useful_score": float(min(100, records_valid * 5)) if success else 0.0,
+                    "call_reason": "legacy_swing_historical_bar_fallback",
+                    "caller_context": "paper_autopilot_legacy_swing_worker",
+                    "ttl_seconds": 6 * 60 * 60,
+                    "blocked_reason": str(error_category or ""),
+                    "api_calls_delta": 1 if http_status is not None else 0,
+                    "bandwidth_delta": 0,
+                    "provider_governor_allowed": response_state not in {"RATE_LIMITED", "BUDGET_BLOCKED"},
+                }
+            )
+            return {
+                "provider": provider,
+                "endpoint_family": endpoint_family,
+                "endpoint_template": endpoint_template,
+                "symbol": sym,
+                "timeframe": normalized_timeframe,
+                "requested_at": requested_at,
+                "response_at": _now_iso(),
+                "http_status": int(http_status or 0),
+                "authentication_state": "PRESENT" if bool(self._key_for(provider, "stock")) else "MISSING",
+                "entitlement_state": "UNKNOWN" if success else "BLOCKED" if response_state == "ENTITLEMENT_BLOCKED" else "UNVERIFIED",
+                "response_state": response_state,
+                "error_category": str(error_category or ""),
+                "bars": clean_bars,
+                "records_received": int(records_received),
+                "records_valid": int(records_valid),
+                "latency_ms": round(_to_float(latency_ms, 0.0), 3),
+                "broker_actions": 0,
+                "secret_exposed": False,
+            }
+
+        if not sym or not interval:
+            return outcome("UNSUPPORTED_ENDPOINT", error_category="unsupported_timeframe")
+        _family, _policy, allowed = _fmp_endpoint_policy(endpoint_template)
+        if not allowed:
+            return outcome("BUDGET_BLOCKED", error_category="historical_fallback_policy_blocked")
+        key = self._key_for(provider, "stock")
+        if not key:
+            return outcome("AUTHENTICATION_FAILED", error_category="missing_fmp_credential")
+        if self._temp_fmp_rest_disabled:
+            return outcome("PROVIDER_ERROR", error_category="fmp_rest_temporarily_disabled")
+        if self._provider_in_cooldown(provider) or self._fmp_probe_hard_limited():
+            return outcome("RATE_LIMITED", error_category="provider_cooldown_or_budget")
+
+        data, status, error, latency = self._request(
+            provider,
+            f"https://financialmodelingprep.com/stable/historical-chart/{interval}",
+            params={"symbol": sym, "apikey": key},
+        )
+        if error:
+            category = str(error or "provider_error")
+            state = (
+                "AUTHENTICATION_FAILED" if int(status or 0) == 401 else
+                "ENTITLEMENT_BLOCKED" if int(status or 0) == 403 else
+                "RATE_LIMITED" if int(status or 0) == 429 else
+                "TIMEOUT" if "timeout" in category.lower() else "PROVIDER_ERROR"
+            )
+            self._mark_result(provider, False, latency, rate_limited=state == "RATE_LIMITED")
+            return outcome(state, http_status=status, error_category=category, latency_ms=latency)
+        rows = data.get("_list") if isinstance(data, dict) and isinstance(data.get("_list"), list) else data
+        if not isinstance(rows, list) or not rows:
+            self._mark_result(provider, False, latency)
+            return outcome("EMPTY_RESPONSE", http_status=status, error_category="empty_historical_response", latency_ms=latency)
+        normalized: list[dict[str, Any]] = []
+        for raw in rows[: max(1, min(int(limit or 20) * 3, 200))]:
+            row = dict(raw or {}) if isinstance(raw, dict) else {}
+            returned_symbol = _safe_symbol(row.get("symbol"))
+            if returned_symbol and returned_symbol != sym:
+                continue
+            normalized.append({
+                "timestamp": row.get("date") or row.get("datetime") or row.get("timestamp"),
+                "open": row.get("open"), "high": row.get("high"), "low": row.get("low"),
+                "close": row.get("close"), "volume": row.get("volume"),
+            })
+        self._mark_result(provider, bool(normalized), latency)
+        return outcome(
+            "SUCCESS" if normalized else "MALFORMED_RESPONSE",
+            http_status=status,
+            error_category="" if normalized else "historical_rows_unusable",
+            bars=normalized,
+            records_received=len(rows),
+            records_valid=len(normalized),
+            latency_ms=latency,
         )
 
     def diagnostics(self) -> dict[str, Any]:

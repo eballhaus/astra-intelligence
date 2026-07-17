@@ -1065,6 +1065,9 @@ class PaperAutopilotEngine:
         self._legacy_swing_fmp_fetcher = kwargs.get("legacy_swing_fmp_fetcher") or getattr(
             self._legacy_swing_fmp_router, "fetch_fmp_profile_context", None
         )
+        self._legacy_swing_fmp_historical_fetcher = kwargs.get("legacy_swing_fmp_historical_fetcher") or getattr(
+            self._legacy_swing_fmp_router, "fetch_fmp_historical_bars", None
+        )
         self.live_performance_fn = kwargs.get("live_performance_fn") if callable(kwargs.get("live_performance_fn")) else None
         self.freshness_manager = kwargs.get("freshness_manager")
         self.max_open_positions_total = max(2, _to_int(kwargs.get("max_open_positions_total"), 10))
@@ -2310,6 +2313,81 @@ class PaperAutopilotEngine:
         })
         return preserved
 
+    @staticmethod
+    def _normalize_legacy_swing_bar_response(
+        response: dict[str, Any], *, provider: str, family: str, activation_id: str,
+        position_id: str | None, symbol: str, now: datetime,
+    ) -> dict[str, Any]:
+        """Normalize one provider-native hourly batch without merging providers."""
+        raw_bars = list(response.get("bars") or [])
+        seen, bars = set(), []
+        for item in raw_bars:
+            row = dict(item or {}) if isinstance(item, dict) else {}
+            timestamp = str(row.get("t") or row.get("timestamp") or row.get("date") or "")
+            o = _to_float(row.get("o") or row.get("open"), 0.0)
+            h = _to_float(row.get("h") or row.get("high"), 0.0)
+            l = _to_float(row.get("l") or row.get("low"), 0.0)
+            c = _to_float(row.get("c") or row.get("close"), 0.0)
+            volume_raw = row.get("v") if row.get("v") is not None else row.get("volume")
+            volume = _to_float(volume_raw, 0.0)
+            if not timestamp or timestamp in seen or min(o, h, l, c) <= 0 or h < max(o, c, l) or l > min(o, c, h) or volume < 0:
+                continue
+            seen.add(timestamp)
+            try:
+                local = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).astimezone(ZoneInfo("America/New_York"))
+                session_type = "REGULAR_SESSION" if local.weekday() < 5 and ((local.hour > 9 or (local.hour == 9 and local.minute >= 30)) and local.hour < 16) else "PRE_MARKET" if local.hour < 9 or (local.hour == 9 and local.minute < 30) else "AFTER_HOURS"
+            except (TypeError, ValueError):
+                continue
+            fingerprint = hashlib.sha256(f"{symbol}|1Hour|{timestamp}|{session_type}|{o:.8f}|{h:.8f}|{l:.8f}|{c:.8f}|{volume:.4f}".encode("utf-8")).hexdigest()[:24]
+            bars.append({"bar_id": f"legacy-bar:{fingerprint}", "bar_fingerprint": fingerprint, "timestamp": timestamp, "session_type": session_type, "open": o, "high": h, "low": l, "close": c, "volume": volume, "provider": provider, "provider_adjustment_state": "UNKNOWN"})
+        bars.sort(key=lambda item: item["timestamp"])
+        # Legacy momentum is regular-session hourly evidence.  Preserve any
+        # extended-hours bars in native provenance, never mix them into it.
+        regular = [bar for bar in bars if bar["session_type"] == "REGULAR_SESSION"]
+        usable = regular if regular else bars
+        received = len(raw_bars)
+        valid = len(usable)
+        source_state = str(response.get("response_state") or "PROVIDER_ERROR").upper()
+        if source_state == "SUCCESS" and valid:
+            quality = "CURRENT_SUFFICIENT" if valid >= 5 else "CURRENT_INSUFFICIENT"
+            state = "SUCCESS"
+        elif source_state == "EMPTY_RESPONSE" or not received:
+            quality, state = "EMPTY", "EMPTY_RESPONSE"
+        else:
+            quality, state = "INVALID", "MALFORMED_RESPONSE"
+        now_iso = now.isoformat().replace("+00:00", "Z")
+        record_id = f"legacy-market:{family.lower()}:{provider.lower()}:{activation_id}"
+        return {
+            "schema_version": "legacy_swing_multi_provider_bar_batch_v1", "record_id": record_id,
+            "request_id": str(response.get("request_id") or f"legacy-market-request:{family.lower()}:{provider.lower()}:{activation_id}:{now.strftime('%Y%m%d%H%M%S')}") ,
+            "request_family": family, "provider": provider, "activation_id": activation_id, "position_id": position_id,
+            "symbol": symbol, "asset_class": "equity", "lane": "SWING", "timeframe": "1Hour",
+            "session_scope": "REGULAR_SESSION" if regular else "UNKNOWN_SESSION", "requested_at": response.get("requested_at") or now_iso,
+            "received_at": response.get("response_at") or now_iso, "response_state": state, "source_state": source_state,
+            "http_status": int(response.get("http_status") or 0), "bars": usable, "bars_received": received,
+            "records_received": int(response.get("records_received") or received), "records_valid": valid,
+            "records_stored": int(state == "SUCCESS" and valid > 0), "first_bar_at": usable[0]["timestamp"] if usable else None,
+            "last_bar_at": usable[-1]["timestamp"] if usable else None, "lookback_start": usable[0]["timestamp"] if usable else None,
+            "lookback_end": usable[-1]["timestamp"] if usable else None, "missing_intervals": [],
+            "freshness_state": "CURRENT" if state == "SUCCESS" and valid else "UNAVAILABLE", "quality_state": quality,
+            "source_error": str(response.get("error") or response.get("error_category") or ("" if state == "SUCCESS" else state.lower()))[:180],
+            "retry_count": 0, "next_refresh_at": (now + timedelta(hours=6 if quality == "CURRENT_SUFFICIENT" else 0.25)).isoformat().replace("+00:00", "Z"),
+            "canonical_owner": False, "candidate_record_ids": [], "deduplicated_record_ids": [], "broker_actions": 0,
+        }
+
+    @staticmethod
+    def _compare_legacy_swing_bar_batches(alpaca: dict[str, Any], fmp: dict[str, Any]) -> dict[str, Any]:
+        """Compare only overlapping normalized bars; never choose by direction."""
+        left = {str(bar.get("timestamp")): bar for bar in list(alpaca.get("bars") or [])}
+        right = {str(bar.get("timestamp")): bar for bar in list(fmp.get("bars") or [])}
+        overlap = sorted(set(left) & set(right))
+        if not overlap:
+            return {"comparison_state": "INSUFFICIENT_COMPARISON", "overlapping_bar_count": 0, "comparison_confidence": 0.0}
+        variances = [abs(_to_float(left[key].get("close")) - _to_float(right[key].get("close"))) / max(0.000001, _to_float(left[key].get("close"))) for key in overlap]
+        maximum = max(variances or [0.0])
+        state = "PROVIDERS_AGREE" if maximum <= 0.0025 else "MINOR_ACCEPTABLE_VARIANCE" if maximum <= 0.01 else "MATERIAL_PRICE_CONFLICT"
+        return {"comparison_state": state, "overlapping_bar_count": len(overlap), "price_variance_statistics": {"max_relative_variance": round(maximum, 8)}, "comparison_confidence": round(max(0.0, 1.0 - maximum), 4)}
+
     def _refresh_legacy_swing_broker_market_evidence(self, registry: dict[str, dict[str, Any]]) -> tuple[dict[str, dict[str, dict[str, Any]]], dict[str, Any]]:
         """Acquire bounded, read-only Alpaca market evidence in the normal worker."""
         now = datetime.now(UTC)
@@ -2319,7 +2397,7 @@ class PaperAutopilotEngine:
         records: dict[str, dict[str, dict[str, Any]]] = {}
         for activation_id, raw in raw_store.items():
             bundle = dict(raw or {})
-            valid = {family: dict(value or {}) for family, value in bundle.items() if family in {"HISTORICAL_BARS", "LATEST_QUOTE", "ASSET_METADATA"} and isinstance(value, dict) and value.get("record_id")}
+            valid = {family: dict(value or {}) for family, value in bundle.items() if family in {"HISTORICAL_BARS", "HISTORICAL_BARS_ALPACA", "HISTORICAL_BARS_FMP", "HISTORICAL_BARS_ROUTING", "LATEST_QUOTE", "ASSET_METADATA"} and isinstance(value, dict) and value.get("record_id")}
             for family, market_record in valid.items():
                 market_record.setdefault("activation_id", activation_id)
                 market_record.setdefault("position_id", (dict(registry.get(activation_id) or {})).get("position_id"))
@@ -2330,7 +2408,7 @@ class PaperAutopilotEngine:
                 state = str(market_record.get("response_state") or "").upper()
                 quality = str(market_record.get("quality_state") or "").upper()
                 freshness = str(market_record.get("freshness_state") or "").upper()
-                if family == "HISTORICAL_BARS":
+                if family in {"HISTORICAL_BARS", "HISTORICAL_BARS_ALPACA", "HISTORICAL_BARS_FMP"}:
                     if state == "EMPTY_RESPONSE" or (
                         not list(market_record.get("bars") or [])
                         and int(market_record.get("records_received") or market_record.get("bars_received") or 0) == 0
@@ -2371,7 +2449,7 @@ class PaperAutopilotEngine:
                 "worker_heartbeat_at": now_iso,
             },
         }
-        for family in ("HISTORICAL_BARS", "LATEST_QUOTE", "ASSET_METADATA"):
+        for family in ("HISTORICAL_BARS", "FMP_HISTORICAL_BARS", "LATEST_QUOTE", "ASSET_METADATA"):
             old = dict((prior.get("families") or {}).get(family) or {})
             activity["families"][family] = {"request_family": family, "request_count": int(old.get("request_count") or 0), "success_count": int(old.get("success_count") or 0), "failure_count": int(old.get("failure_count") or 0), "last_attempt_at": old.get("last_attempt_at"), "last_success_at": old.get("last_success_at"), "next_refresh_at": old.get("next_refresh_at"), "latest_error_category": old.get("latest_error_category") or ""}
         broker = getattr(self, "_legacy_swing_market_broker", None)
@@ -2433,6 +2511,84 @@ class PaperAutopilotEngine:
                     response = dict(getattr(broker, method_name)(symbol, timeframe="1Hour", limit=20) or {}) if family == "HISTORICAL_BARS" else dict(getattr(broker, method_name)(symbol) or {})
                 else:
                     response = {"response_state": "UNSUPPORTED_ENDPOINT", "error": "broker_market_data_method_unavailable"}
+                if family == "HISTORICAL_BARS":
+                    previous = dict(bundle.get("HISTORICAL_BARS") or {})
+                    alpaca = self._normalize_legacy_swing_bar_response(
+                        response, provider="ALPACA_MARKET_DATA", family="HISTORICAL_BARS",
+                        activation_id=activation_id, position_id=record.get("position_id"), symbol=symbol, now=now,
+                    )
+                    alpaca["retry_count"] = int(dict(bundle.get("HISTORICAL_BARS_ALPACA") or {}).get("retry_count") or 0) + (0 if alpaca.get("quality_state") == "CURRENT_SUFFICIENT" else 1)
+                    bundle["HISTORICAL_BARS_ALPACA"] = alpaca
+                    fallback_required = alpaca.get("quality_state") != "CURRENT_SUFFICIENT"
+                    fmp: dict[str, Any] = {}
+                    comparison: dict[str, Any] = {}
+                    if fallback_required:
+                        fallback_activity = activity["families"]["FMP_HISTORICAL_BARS"]
+                        fallback_activity["request_count"] += 1
+                        fallback_activity["last_attempt_at"] = now_iso
+                        self._note_worker_progress(f"market_data:FMP_HISTORICAL_BARS:{symbol}")
+                        fmp_response = (
+                            dict(self._legacy_swing_fmp_historical_fetcher(symbol, timeframe="1Hour", limit=20) or {})
+                            if callable(getattr(self, "_legacy_swing_fmp_historical_fetcher", None))
+                            else {"response_state": "UNSUPPORTED_ENDPOINT", "error_category": "fmp_historical_client_unavailable"}
+                        )
+                        fmp = self._normalize_legacy_swing_bar_response(
+                            fmp_response, provider="FMP_HISTORICAL_PRICES", family="HISTORICAL_BARS",
+                            activation_id=activation_id, position_id=record.get("position_id"), symbol=symbol, now=now,
+                        )
+                        fmp["request_id"] = str(fmp_response.get("request_id") or fmp["request_id"])
+                        fmp["retry_count"] = int(dict(bundle.get("HISTORICAL_BARS_FMP") or {}).get("retry_count") or 0) + (0 if fmp.get("quality_state") == "CURRENT_SUFFICIENT" else 1)
+                        bundle["HISTORICAL_BARS_FMP"] = fmp
+                        fallback_activity["latest_error_category"] = fmp.get("source_error") or ""
+                        fallback_activity["next_refresh_at"] = fmp.get("next_refresh_at")
+                        if fmp.get("quality_state") == "CURRENT_SUFFICIENT":
+                            fallback_activity["success_count"] += 1; fallback_activity["last_success_at"] = now_iso
+                        else:
+                            fallback_activity["failure_count"] += 1
+                        if alpaca.get("records_valid") and fmp.get("records_valid"):
+                            comparison = self._compare_legacy_swing_bar_batches(alpaca, fmp)
+                    selected = alpaca
+                    routing_state = "ALPACA_PRIMARY_ACCEPTED"
+                    if fallback_required:
+                        if comparison.get("comparison_state") in {"MATERIAL_PRICE_CONFLICT", "TIMESTAMP_CONFLICT", "ADJUSTMENT_CONFLICT", "SESSION_SCOPE_CONFLICT"}:
+                            selected = dict(alpaca)
+                            selected.update({"quality_state": "CONFLICT_BLOCKED", "freshness_state": "UNAVAILABLE", "response_state": "CONFLICT_BLOCKED", "source_error": "material_provider_conflict"})
+                            routing_state = "PROVIDER_CONFLICT_BLOCKED"
+                        elif fmp.get("quality_state") == "CURRENT_SUFFICIENT":
+                            selected = dict(fmp)
+                            routing_state = "FMP_FALLBACK_ACCEPTED"
+                        elif alpaca.get("quality_state") == "CURRENT_INSUFFICIENT":
+                            routing_state = "FMP_FALLBACK_INSUFFICIENT"
+                        elif alpaca.get("quality_state") == "EMPTY":
+                            routing_state = "BOTH_PROVIDERS_UNAVAILABLE"
+                        else:
+                            routing_state = "FMP_FALLBACK_FAILED"
+                    selected = dict(selected)
+                    selected.update({
+                        "record_id": f"legacy-market:historical_bars:{activation_id}", "canonical_owner": True,
+                        "canonical_provider": selected.get("provider"), "candidate_record_ids": [value.get("record_id") for value in (alpaca, fmp) if value.get("record_id")],
+                        "provider_comparison": comparison, "provider_comparison_state": comparison.get("comparison_state") or ("PRIMARY_INSUFFICIENT_FALLBACK_ACCEPTED" if selected.get("provider") == "FMP_HISTORICAL_PRICES" else "NOT_REQUIRED"),
+                        "fallback_used": bool(selected.get("provider") == "FMP_HISTORICAL_PRICES"), "routing_state": routing_state,
+                    })
+                    canonical = self._legacy_swing_market_prefer_record(previous, selected, now, config[family][1])
+                    bundle["HISTORICAL_BARS"] = canonical
+                    bundle["HISTORICAL_BARS_ROUTING"] = {
+                        "schema_version": "legacy_swing_bar_routing_v1", "record_id": f"legacy-market-routing:{activation_id}",
+                        "routing_id": f"legacy-bar-routing:{activation_id}:{now.strftime('%Y%m%d%H')}", "symbol": symbol,
+                        "position_id": record.get("position_id"), "activation_id": activation_id, "timeframe": "1Hour", "as_of": now_iso,
+                        "alpaca_request_id": alpaca.get("request_id"), "alpaca_record_id": alpaca.get("record_id"), "alpaca_quality_state": alpaca.get("quality_state"),
+                        "fallback_required": fallback_required, "fallback_reason": "ALPACA_NOT_CURRENT_SUFFICIENT" if fallback_required else "", "fmp_request_id": fmp.get("request_id"),
+                        "fmp_record_id": fmp.get("record_id"), "fmp_quality_state": fmp.get("quality_state"), "comparison_id": f"legacy-bar-comparison:{activation_id}:{now.strftime('%Y%m%d%H')}" if comparison else None,
+                        "comparison_state": comparison.get("comparison_state") or "NOT_REQUIRED", "canonical_record_id": canonical.get("record_id"), "canonical_provider": canonical.get("canonical_provider") or canonical.get("provider"),
+                        "routing_state": routing_state, "routing_reason": canonical.get("replacement_reason"), "next_refresh_at": canonical.get("next_refresh_at"), "retry_count": canonical.get("retry_count") or 0,
+                    }
+                    family_activity["latest_error_category"] = alpaca.get("source_error") or ""
+                    family_activity["next_refresh_at"] = canonical.get("next_refresh_at")
+                    if alpaca.get("quality_state") == "CURRENT_SUFFICIENT":
+                        family_activity["success_count"] += 1; family_activity["last_success_at"] = now_iso
+                    else:
+                        family_activity["failure_count"] += 1
+                    continue
                 state = str(response.get("response_state") or "PROVIDER_ERROR").upper()
                 payload: dict[str, Any] = {}
                 quality, valid_count = "INVALID", 0

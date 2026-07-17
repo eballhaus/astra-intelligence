@@ -1,9 +1,11 @@
 import unittest
 from datetime import UTC, datetime
 
+import engine.provider_router as provider_router_module
 from engine.alpaca_paper_broker import AlpacaPaperBroker
 from engine.astra_unified_position_lifecycle_v1 import build_legacy_swing_required_evidence_v1
 from engine.paper_autopilot import PaperAutopilotEngine
+from engine.provider_router import ProviderRouter
 
 
 class _MarketDataFixture:
@@ -67,11 +69,68 @@ def _engine(market):
     engine._runtime_state = {}
     engine._legacy_swing_market_broker = market
     engine._legacy_swing_fmp_fetcher = _fmp_success
+    engine._legacy_swing_fmp_historical_fetcher = lambda *_args, **_kwargs: {"response_state": "EMPTY_RESPONSE", "bars": []}
     engine._alpaca_safety_snapshot = lambda: {"paper_mode_verified": True, "live_endpoint_detected": False}  # type: ignore[method-assign]
     return engine
 
 
 class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
+    def test_existing_fmp_router_normalizes_hourly_historical_response(self):
+        router = ProviderRouter()
+        router._stock_keys["FMP"] = "test-key"
+        router._temp_fmp_rest_disabled = False
+        router._fmp_probe_hard_limited = lambda: False  # type: ignore[method-assign]
+        router._request = lambda *_args, **_kwargs: ({"_list": [
+            {"date": "2026-07-15T14:00:00Z", "open": 10, "high": 11, "low": 9, "close": 10.5, "volume": 1000}
+        ]}, 200, "", 1.0)  # type: ignore[method-assign]
+        original = provider_router_module._FMP_HISTORICAL_FALLBACK_ENABLED
+        provider_router_module._FMP_HISTORICAL_FALLBACK_ENABLED = True
+        try:
+            response = router.fetch_fmp_historical_bars("AAA", limit=5)
+        finally:
+            provider_router_module._FMP_HISTORICAL_FALLBACK_ENABLED = original
+        self.assertEqual(response["response_state"], "SUCCESS")
+        self.assertEqual(response["endpoint_family"], "historical_prices")
+        self.assertEqual(response["bars"][0]["timestamp"], "2026-07-15T14:00:00Z")
+    def test_alpaca_empty_uses_valid_fmp_fallback_as_canonical(self):
+        engine = _engine(_EmptyBars())
+        calls = []
+        def fallback(symbol, **_kwargs):
+            calls.append(symbol)
+            return {"response_state": "SUCCESS", "http_status": 200, "bars": [
+                {"timestamp": f"2026-07-15T{14 + index:02d}:00:00Z", "open": close - .1, "high": close + .2, "low": close - .2, "close": close, "volume": 1000}
+                for index, close in enumerate((10.0, 10.2, 10.4, 10.5, 10.7, 10.9))
+            ]}
+        engine._legacy_swing_fmp_historical_fetcher = fallback
+        records, activity = engine._refresh_legacy_swing_broker_market_evidence(_registry())
+        bar = records["activation-a"]["HISTORICAL_BARS"]
+        self.assertEqual(calls, ["AAA"])
+        self.assertEqual(bar["canonical_provider"], "FMP_HISTORICAL_PRICES")
+        self.assertEqual(bar["quality_state"], "CURRENT_SUFFICIENT")
+        self.assertTrue(bar["fallback_used"])
+        self.assertEqual(activity["families"]["FMP_HISTORICAL_BARS"]["success_count"], 1)
+
+    def test_material_provider_conflict_blocks_canonical_momentum(self):
+        class _InsufficientBars(_MarketDataFixture):
+            def historical_bars(self, symbol, **_kwargs):
+                return {"response_state": "SUCCESS", "bars": [
+                    {"t": f"2026-07-15T{14 + index:02d}:00:00Z", "o": 10, "h": 11, "l": 9, "c": 10, "v": 1000}
+                    for index in range(4)
+                ]}
+        engine = _engine(_InsufficientBars())
+        engine._legacy_swing_fmp_historical_fetcher = lambda *_args, **_kwargs: {"response_state": "SUCCESS", "bars": [
+            {"timestamp": f"2026-07-15T{14 + index:02d}:00:00Z", "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1000}
+            for index in range(6)
+        ]}
+        records, _activity = engine._refresh_legacy_swing_broker_market_evidence(_registry())
+        self.assertEqual(records["activation-a"]["HISTORICAL_BARS"]["quality_state"], "CONFLICT_BLOCKED")
+
+    def test_fresh_alpaca_bars_do_not_invoke_fmp_fallback(self):
+        engine = _engine(_MarketDataFixture())
+        calls = []
+        engine._legacy_swing_fmp_historical_fetcher = lambda symbol, **_kwargs: calls.append(symbol) or {"response_state": "SUCCESS", "bars": []}
+        engine._refresh_legacy_swing_broker_market_evidence(_registry())
+        self.assertEqual(calls, [])
     def test_existing_client_uses_read_only_market_routes(self):
         broker = AlpacaPaperBroker()
         broker._market_data_request = lambda path: (True, {"bars": [{"t": "2026-07-16T00:00:00Z"}]}, "", 200)  # type: ignore[method-assign]

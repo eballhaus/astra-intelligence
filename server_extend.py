@@ -48449,6 +48449,87 @@ def legacy_swing_historical_bar_reliability_closure_diagnostic_v1():
     }
 
 
+def _legacy_swing_multi_provider_bar_payload_v1() -> dict:
+    """Read-only accountability for the worker-owned Alpaca -> FMP route."""
+    state = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
+    runtime = dict(state.get("legacy_swing_canary") or {})
+    records = dict(runtime.get("market_records") or state.get("legacy_swing_market_evidence") or {})
+    reviews = dict(runtime.get("reviews") or {})
+    activity = dict(runtime.get("market_activity") or state.get("legacy_swing_market_activity") or {})
+    families = dict(activity.get("families") or {})
+    alpaca_activity = dict(families.get("HISTORICAL_BARS") or {})
+    fmp_activity = dict(families.get("FMP_HISTORICAL_BARS") or {})
+    rows, canonical = [], []
+    for activation_id, bundle_raw in records.items():
+        bundle = dict(bundle_raw or {})
+        bar = dict(bundle.get("HISTORICAL_BARS") or {})
+        if not bar:
+            continue
+        route = dict(bundle.get("HISTORICAL_BARS_ROUTING") or {})
+        review = dict(reviews.get(activation_id) or {})
+        canonical.append(bar)
+        rows.append({
+            "symbol": bar.get("symbol"), "position_id": bar.get("position_id"), "activation_id": activation_id,
+            "timeframe": bar.get("timeframe"), "alpaca_state": route.get("alpaca_quality_state"), "alpaca_record_id": route.get("alpaca_record_id"),
+            "fmp_state": route.get("fmp_quality_state"), "fmp_record_id": route.get("fmp_record_id"), "fallback_reason": route.get("fallback_reason"),
+            "comparison_state": route.get("comparison_state") or bar.get("provider_comparison_state"), "canonical_provider": bar.get("canonical_provider") or bar.get("provider"),
+            "canonical_record_id": bar.get("record_id"), "bar_quality": bar.get("quality_state"), "session_scope": bar.get("session_scope"),
+            "momentum_state": dict((review.get("required_evidence") or {}).get("MOMENTUM") or {}).get("status"),
+            "coverage_state": dict(review.get("direct_evidence_coverage") or {}).get("required_evidence_complete"),
+            "confirmation_state": review.get("direct_confirmation_state"), "eligibility_state": dict(review.get("eligibility") or {}).get("technical_eligibility"),
+            "exact_blockers": review.get("current_blocker"), "next_refresh_at": bar.get("next_refresh_at"),
+        })
+    quality = Counter(str(row.get("quality_state") or "UNKNOWN") for row in canonical)
+    provider_counts = Counter(str(row.get("canonical_provider") or row.get("provider") or "UNKNOWN") for row in canonical)
+    comparisons = Counter(str(row.get("comparison_state") or "NOT_REQUIRED") for row in rows)
+    current = sum(1 for row in rows if row.get("momentum_state") == "CURRENT")
+    alpaca_requests, fmp_requests = int(alpaca_activity.get("request_count") or 0), int(fmp_activity.get("request_count") or 0)
+    alpaca_usable, fmp_usable = int(alpaca_activity.get("success_count") or 0), int(fmp_activity.get("success_count") or 0)
+    reliability = {
+        "ALPACA_MARKET_DATA": {"requests": alpaca_requests, "usable_responses": alpaca_usable, "empty_or_failed": int(alpaca_activity.get("failure_count") or 0), "reliability_state": "HEALTHY" if alpaca_usable else "UNUSABLE" if alpaca_requests else "UNKNOWN"},
+        "FMP_HISTORICAL_PRICES": {"requests": fmp_requests, "usable_responses": fmp_usable, "empty_or_failed": int(fmp_activity.get("failure_count") or 0), "reliability_state": "HEALTHY" if fmp_usable else "DEGRADED" if fmp_requests else "UNKNOWN"},
+    }
+    repairable = []
+    if alpaca_requests and not alpaca_usable and not fmp_requests:
+        repairable.append({"code": "FMP_FALLBACK_NOT_INVOKED", "safe_repair_allowed": True})
+    return {
+        "overall_status": "FAILED" if repairable else "PASS_WITH_WARNINGS" if current < len(rows) else "PASS",
+        "positions_processed": len(reviews), "alpaca_requests": alpaca_requests, "alpaca_usable": alpaca_usable,
+        "alpaca_empty": quality.get("EMPTY", 0), "alpaca_insufficient": quality.get("CURRENT_INSUFFICIENT", 0), "alpaca_failed": int(alpaca_activity.get("failure_count") or 0),
+        "fmp_fallback_requests": fmp_requests, "fmp_usable": fmp_usable, "fmp_empty": sum(1 for row in rows if row.get("fmp_state") == "EMPTY"),
+        "fmp_insufficient": sum(1 for row in rows if row.get("fmp_state") == "CURRENT_INSUFFICIENT"), "fmp_failed": int(fmp_activity.get("failure_count") or 0),
+        "fmp_budget_deferred": sum(1 for row in rows if row.get("fmp_state") == "BUDGET_BLOCKED"), "provider_comparisons": sum(value for key, value in comparisons.items() if key != "NOT_REQUIRED"),
+        "provider_agreements": comparisons.get("PROVIDERS_AGREE", 0), "minor_variances": comparisons.get("MINOR_ACCEPTABLE_VARIANCE", 0), "material_conflicts": comparisons.get("MATERIAL_PRICE_CONFLICT", 0),
+        "canonical_alpaca_records": provider_counts.get("ALPACA_MARKET_DATA", 0), "canonical_fmp_records": provider_counts.get("FMP_HISTORICAL_PRICES", 0),
+        "prior_valid_records_preserved": sum(1 for row in canonical if row.get("replacement_reason") == "LOWER_QUALITY_REJECTED_PRESERVED_PRIOR"),
+        "lower_quality_overwrites_blocked": sum(1 for row in canonical if row.get("replacement_reason") == "LOWER_QUALITY_REJECTED_PRESERVED_PRIOR"),
+        "duplicate_bars_removed": 0, "duplicate_batches_suppressed": 0, "momentum_current": current,
+        "momentum_stale": sum(1 for row in rows if row.get("momentum_state") == "STALE"), "momentum_insufficient": sum(1 for row in rows if row.get("momentum_state") == "UNAVAILABLE"),
+        "momentum_conflicting": sum(1 for row in canonical if row.get("quality_state") == "CONFLICT_BLOCKED"), "momentum_missing": len(rows) - current,
+        "direct_evidence_complete": sum(1 for row in rows if row.get("coverage_state") is True), "eligible_candidates": sum(1 for row in rows if row.get("eligibility_state") is True),
+        "natural_orders": 0, "repairable_failures": repairable, "external_blockers": [row for row in rows if row.get("bar_quality") in {"EMPTY", "CURRENT_INSUFFICIENT", "STALE_INSUFFICIENT"}],
+        "bounded_backlog": max(0, len(reviews) - len(rows)), "provider_reliability": reliability, "position_rows": rows,
+        "read_only": True, "provider_calls": 0, "broker_order_actions": 0,
+    }
+
+
+@router.get("/api/legacy_swing_multi_provider_bar_audit_v1")
+def legacy_swing_multi_provider_bar_audit_v1():
+    return {"endpoint": "/api/legacy_swing_multi_provider_bar_audit_v1", **_legacy_swing_multi_provider_bar_payload_v1(), **_safety_flags_v1()}
+
+
+@router.get("/api/legacy_swing_multi_provider_momentum_closure_diagnostic_v1")
+def legacy_swing_multi_provider_momentum_closure_diagnostic_v1():
+    audit = _legacy_swing_multi_provider_bar_payload_v1()
+    return {"endpoint": "/api/legacy_swing_multi_provider_momentum_closure_diagnostic_v1", **audit,
+            "canonical_bar_coverage": audit.get("canonical_alpaca_records", 0) + audit.get("canonical_fmp_records", 0),
+            "alpaca_canonical_count": audit.get("canonical_alpaca_records"), "fmp_canonical_count": audit.get("canonical_fmp_records"),
+            "provider_conflicts": audit.get("material_conflicts"), "direct_evidence_complete": audit.get("direct_evidence_complete"),
+            "budget_blockers": audit.get("fmp_budget_deferred"), "legitimate_waiting_states": audit.get("external_blockers"),
+            "stage_chain": ["bar_requirement", "cache", "alpaca_request", "alpaca_validation", "fallback_decision", "fmp_request", "fmp_validation", "normalization", "deduplication", "provider_comparison", "canonical_selection", "momentum", "downstream_acknowledgement"],
+            "service_restarts": 0, "provider_calls": 0, "broker_order_actions": 0}
+
+
 @router.get("/api/astra_forward_performance_readiness_v1")
 def astra_forward_performance_readiness_v1(force: bool = False):
     certification = _astra_pre_market_trading_certification_payload_v1(force=bool(force))
@@ -63618,6 +63699,7 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
     fmp_consumption = _fmp_production_consumption_payload_v1()
     market_evidence = _broker_market_evidence_payload_v1()
     historical_bar_reliability = _legacy_swing_historical_bar_momentum_payload_v1()
+    multi_provider_bars = _legacy_swing_multi_provider_bar_payload_v1()
     runtime_worker_reliability = _astra_runtime_worker_reliability_payload_v1()
     legacy_exit_truth = _legacy_swing_exit_truth_closure_payload_v1()
     legacy_canary_config = legacy_swing_canary_configuration_v1()
@@ -63755,6 +63837,13 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "evidence": historical_bar_reliability.get("repairable_failures") or historical_bar_reliability.get("governance_findings") or [],
             "recommended_action": "repair canonical bar persistence, worker scheduling, or momentum lineage; do not weaken freshness requirements",
         })
+    if multi_provider_bars.get("repairable_failures"):
+        findings.append({
+            "severity": "high", "classification": "legacy_multi_provider_bar_routing_defect",
+            "issue": "alpaca_unusable_without_bounded_fmp_fallback",
+            "evidence": multi_provider_bars.get("repairable_failures"),
+            "recommended_action": "repair the existing worker-owned fallback route and preserve canonical quality gates",
+        })
     if runtime_worker_reliability.get("overall_status") not in {"PASS", "PASS_WITH_WARNINGS"}:
         findings.append({
             "severity": "high", "classification": "legacy_runtime_worker_reliability_defect",
@@ -63875,6 +63964,10 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
         "legacy_swing_historical_bar_reliability_v1": {
             key: historical_bar_reliability.get(key)
             for key in ("overall_status", "bar_batches_current_sufficient", "bar_batches_empty", "momentum_current", "momentum_missing", "repairable_failures", "governance_high")
+        },
+        "legacy_swing_multi_provider_bars_v1": {
+            key: multi_provider_bars.get(key)
+            for key in ("overall_status", "alpaca_requests", "alpaca_usable", "fmp_fallback_requests", "fmp_usable", "material_conflicts", "momentum_current", "repairable_failures")
         },
         "astra_runtime_worker_reliability_v1": {
             key: runtime_worker_reliability.get(key)
