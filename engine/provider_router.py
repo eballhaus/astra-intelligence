@@ -1267,6 +1267,128 @@ class ProviderRouter:
             "secret_exposed": False,
         }
 
+    def fetch_fmp_profile_context(self, symbol: str) -> dict[str, Any]:
+        """Fetch one bounded, secret-free FMP profile record for a worker.
+
+        This is intentionally narrower than quote routing: legacy lifecycle
+        monitoring needs thesis context, not a second quote system.  The
+        existing request coalescing, API governor, timeout, and FMP ledger
+        remain the sole owners of provider access and accounting.
+        """
+        provider = "FMP"
+        sym = _safe_symbol(symbol)
+        requested_at = _now_iso()
+        endpoint_family = "company_profile"
+        endpoint_template = "/stable/profile?symbol={symbol}"
+
+        def outcome(
+            response_state: str,
+            *,
+            http_status: int | None = None,
+            error_category: str = "",
+            normalized_fields: dict[str, Any] | None = None,
+            records_received: int = 0,
+            records_valid: int = 0,
+            latency_ms: float = 0.0,
+        ) -> dict[str, Any]:
+            success = response_state == "SUCCESS"
+            _fmp_efficiency_record(
+                {
+                    "endpoint_family": endpoint_family,
+                    "endpoint_path_template": endpoint_template,
+                    "symbol_count": 1,
+                    "status_code": int(http_status or 0),
+                    "ok": success,
+                    "cache_hit": False,
+                    "bytes_estimated": 0,
+                    "bytes_actual_if_available": 0,
+                    "useful_fields_count": len(normalized_fields or {}),
+                    "useful_score": float(min(100, len(normalized_fields or {}) * 12)) if success else 0.0,
+                    "call_reason": "legacy_swing_thesis_context",
+                    "caller_context": "paper_autopilot_legacy_swing_worker",
+                    "ttl_seconds": 3600,
+                    "blocked_reason": str(error_category or ""),
+                    "api_calls_delta": 1 if http_status is not None else 0,
+                    "bandwidth_delta": 0,
+                    "provider_governor_allowed": response_state not in {"RATE_LIMITED", "PROVIDER_UNAVAILABLE"},
+                }
+            )
+            return {
+                "provider": provider,
+                "endpoint_family": endpoint_family,
+                "endpoint_template": endpoint_template,
+                "symbol": sym,
+                "requested_at": requested_at,
+                "response_at": _now_iso(),
+                "http_status": int(http_status or 0),
+                "authentication_state": "PRESENT" if bool(self._key_for(provider, "stock")) else "MISSING",
+                "entitlement_state": "UNKNOWN" if success else "BLOCKED" if response_state == "ENTITLEMENT_BLOCKED" else "UNVERIFIED",
+                "response_state": response_state,
+                "error_category": str(error_category or ""),
+                "records_received": int(records_received),
+                "records_valid": int(records_valid),
+                "normalized_fields": dict(normalized_fields or {}),
+                "latency_ms": round(_to_float(latency_ms, 0.0), 3),
+                "broker_actions": 0,
+                "secret_exposed": False,
+            }
+
+        if not sym:
+            return outcome("MALFORMED_RESPONSE", error_category="symbol_required")
+        key = self._key_for(provider, "stock")
+        if not key:
+            return outcome("AUTHENTICATION_FAILED", error_category="missing_fmp_credential")
+        if self._temp_fmp_rest_disabled:
+            return outcome("PROVIDER_UNAVAILABLE", error_category="fmp_rest_temporarily_disabled")
+        if self._provider_in_cooldown(provider):
+            return outcome("RATE_LIMITED", error_category="provider_cooldown")
+
+        data, status, error, latency = self._request(
+            provider,
+            "https://financialmodelingprep.com/stable/profile",
+            params={"symbol": sym, "apikey": key},
+        )
+        if error:
+            category = str(error or "provider_error")
+            state = (
+                "AUTHENTICATION_FAILED" if int(status or 0) == 401 else
+                "ENTITLEMENT_BLOCKED" if int(status or 0) == 403 else
+                "RATE_LIMITED" if int(status or 0) == 429 or "budget" in category else
+                "TIMEOUT" if "timeout" in category.lower() else
+                "PROVIDER_ERROR"
+            )
+            self._mark_result(provider, False, latency, rate_limited=state == "RATE_LIMITED")
+            self._set_last_error(provider, category)
+            return outcome(state, http_status=status, error_category=category, latency_ms=latency)
+
+        rows = data.get("_list") if isinstance(data, dict) and isinstance(data.get("_list"), list) else data
+        row = dict(rows[0] or {}) if isinstance(rows, list) and rows else dict(rows or {}) if isinstance(rows, dict) else {}
+        if not row:
+            self._mark_result(provider, False, latency)
+            return outcome("EMPTY_RESPONSE", http_status=status, error_category="empty_profile_response", latency_ms=latency)
+        returned_symbol = _safe_symbol(row.get("symbol"))
+        if returned_symbol and returned_symbol != sym:
+            self._mark_result(provider, False, latency)
+            return outcome("MALFORMED_RESPONSE", http_status=status, error_category="symbol_mismatch", records_received=1, latency_ms=latency)
+        normalized = {
+            "company_name": str(row.get("companyName") or row.get("company_name") or "").strip(),
+            "sector": str(row.get("sector") or "").strip(),
+            "industry": str(row.get("industry") or "").strip(),
+            "exchange": str(row.get("exchange") or "").strip(),
+            "market_cap": _to_float(row.get("mktCap") or row.get("marketCap"), 0.0) or None,
+            "beta": _to_float(row.get("beta"), 0.0) or None,
+            "is_etf": bool(row.get("isEtf") or row.get("isETF")),
+        }
+        normalized = {key: value for key, value in normalized.items() if value not in (None, "")}
+        if not normalized:
+            self._mark_result(provider, False, latency)
+            return outcome("EMPTY_RESPONSE", http_status=status, error_category="profile_fields_empty", records_received=1, latency_ms=latency)
+        self._mark_result(provider, True, latency)
+        return outcome(
+            "SUCCESS", http_status=status, normalized_fields=normalized,
+            records_received=1, records_valid=1, latency_ms=latency,
+        )
+
     def diagnostics(self) -> dict[str, Any]:
         with self._lock:
             stats = {k: dict(v or {}) for k, v in self._provider_stats.items()}

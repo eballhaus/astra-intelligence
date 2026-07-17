@@ -31,6 +31,7 @@ from engine.astra_unified_position_lifecycle_v1 import (
     legacy_swing_writer_adapter_contract_v1,
     select_legacy_swing_canary_candidate_v1,
 )
+from engine.provider_router import ProviderRouter
 try:
     from engine.astra_premarket_certification_v1 import (
         build_pretrade_decision_contract,
@@ -1051,6 +1052,12 @@ class PaperAutopilotEngine:
         self.exit_engine = kwargs.get("exit_engine")
         self.exit_learning = kwargs.get("exit_learning")
         self.alpaca_paper_broker = kwargs.get("alpaca_paper_broker")
+        self._legacy_swing_fmp_router = kwargs.get("legacy_swing_fmp_router")
+        if self._legacy_swing_fmp_router is None:
+            self._legacy_swing_fmp_router = ProviderRouter()
+        self._legacy_swing_fmp_fetcher = kwargs.get("legacy_swing_fmp_fetcher") or getattr(
+            self._legacy_swing_fmp_router, "fetch_fmp_profile_context", None
+        )
         self.live_performance_fn = kwargs.get("live_performance_fn") if callable(kwargs.get("live_performance_fn")) else None
         self.freshness_manager = kwargs.get("freshness_manager")
         self.max_open_positions_total = max(2, _to_int(kwargs.get("max_open_positions_total"), 10))
@@ -1868,6 +1875,144 @@ class PaperAutopilotEngine:
         self._runtime_state["legacy_forward_activations"] = registry
         return {"ACTIVATION_WORKER_CALLED": True, "ACTIVATION_RECORD_CREATED": created, "ACTIVATION_RECORD_REUSED": reused, "records": len(registry)}
 
+    @staticmethod
+    def _legacy_swing_fmp_is_current(record: dict[str, Any], now: datetime) -> bool:
+        if str(record.get("response_state") or "").upper() != "SUCCESS":
+            return False
+        try:
+            value = str(record.get("as_of") or record.get("response_at") or "").replace("Z", "+00:00")
+            observed = datetime.fromisoformat(value).astimezone(UTC)
+        except (TypeError, ValueError):
+            return False
+        return (now - observed).total_seconds() <= 6 * 60 * 60
+
+    def _refresh_legacy_swing_fmp_evidence(self, registry: dict[str, dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+        """Refresh bounded FMP profile context from the normal non-GET worker.
+
+        FMP supplies forward monitoring context only.  The worker retains a
+        prior valid record after a failed refresh and persists every attempt as
+        a secret-free activity record so diagnostics never confuse configured
+        code with a consumed provider source.
+        """
+        now = datetime.now(UTC)
+        now_iso = now.isoformat().replace("+00:00", "Z")
+        records = {
+            key: dict(value or {})
+            for key, value in dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {}).items()
+            if isinstance(value, dict) and value.get("record_id") and value.get("symbol")
+        }
+        prior_activity = dict(self._runtime_state.get("legacy_swing_fmp_activity") or {})
+        activity = {
+            "schema_version": "legacy_swing_fmp_activity_v1",
+            "provider": "FMP",
+            "worker_owner": "PaperAutopilot._refresh_legacy_swing_fmp_evidence",
+            "worker_invoked": True,
+            "last_attempt_at": prior_activity.get("last_attempt_at"),
+            "last_success_at": prior_activity.get("last_success_at"),
+            "next_refresh_at": prior_activity.get("next_refresh_at"),
+            "request_count": int(prior_activity.get("request_count") or 0),
+            "success_count": int(prior_activity.get("success_count") or 0),
+            "failure_count": int(prior_activity.get("failure_count") or 0),
+            "retry_count": int(prior_activity.get("retry_count") or 0),
+            "latest_endpoint_family": prior_activity.get("latest_endpoint_family") or "company_profile",
+            "latest_error_category": prior_activity.get("latest_error_category") or "",
+            "symbols_requiring_fmp": 0,
+            "symbols_requested": [],
+            "requests_attempted_this_cycle": 0,
+            "requests_succeeded_this_cycle": 0,
+            "requests_failed_this_cycle": 0,
+            "max_symbols_per_cycle": 5,
+            "broker_actions": 0,
+        }
+        attempted = 0
+        for activation_id, raw in sorted(registry.items()):
+            record = dict(raw or {})
+            symbol = str(record.get("symbol") or "").upper().strip()
+            if not symbol:
+                continue
+            previous = dict(records.get(activation_id) or {})
+            if self._legacy_swing_fmp_is_current(previous, now):
+                continue
+            activity["symbols_requiring_fmp"] += 1
+            retry_at = str(previous.get("next_retry_at") or "")
+            if retry_at:
+                try:
+                    if datetime.fromisoformat(retry_at.replace("Z", "+00:00")).astimezone(UTC) > now:
+                        continue
+                except (TypeError, ValueError):
+                    pass
+            if attempted >= int(activity["max_symbols_per_cycle"]):
+                continue
+            attempted += 1
+            activity["symbols_requested"].append(symbol)
+            activity["requests_attempted_this_cycle"] += 1
+            activity["request_count"] += 1
+            activity["last_attempt_at"] = now_iso
+            response = (
+                dict(self._legacy_swing_fmp_fetcher(symbol) or {})
+                if callable(self._legacy_swing_fmp_fetcher)
+                else {"provider": "FMP", "endpoint_family": "company_profile", "symbol": symbol,
+                      "response_state": "PROVIDER_UNAVAILABLE", "error_category": "fmp_client_unavailable"}
+            )
+            state = str(response.get("response_state") or "PROVIDER_ERROR").upper()
+            success = state == "SUCCESS" and bool(response.get("normalized_fields"))
+            retry_count = int(previous.get("retry_count") or 0) + (0 if success else 1)
+            backoff_minutes = 60 if retry_count >= 2 else 15
+            fmp_record = {
+                "schema_version": "legacy_swing_fmp_evidence_v1",
+                "record_id": f"legacy-fmp:company-profile:{activation_id}",
+                "activity_id": f"legacy-fmp-activity:{activation_id}:{now.date().isoformat()}",
+                "provider": "FMP", "endpoint_family": str(response.get("endpoint_family") or "company_profile"),
+                "request_id": f"legacy-fmp-request:{activation_id}:{now.strftime('%Y%m%d%H')}",
+                "symbol": symbol, "position_id": record.get("position_id") or record.get("baseline_id"),
+                "activation_id": record.get("activation_id") or activation_id,
+                "requested_at": response.get("requested_at") or now_iso,
+                "response_at": response.get("response_at") or now_iso,
+                "as_of": response.get("response_at") or now_iso,
+                "http_status": int(response.get("http_status") or 0),
+                "authentication_state": response.get("authentication_state") or "UNVERIFIED",
+                "entitlement_state": response.get("entitlement_state") or "UNVERIFIED",
+                "response_state": state,
+                "records_received": int(response.get("records_received") or 0),
+                "records_valid": int(response.get("records_valid") or 0),
+                "records_stored": int(success),
+                "freshness_state": "CURRENT" if success else "UNAVAILABLE",
+                "quality_state": "VALID" if success else "INVALID",
+                "normalized_fields": dict(response.get("normalized_fields") or {}),
+                "error_category": str(response.get("error_category") or ""),
+                "retry_count": retry_count,
+                "next_retry_at": (now + timedelta(minutes=backoff_minutes)).isoformat().replace("+00:00", "Z") if not success else None,
+                "last_success_at": response.get("response_at") if success else previous.get("last_success_at"),
+                "consumer_acknowledged": False,
+                "influence_state": "UNAVAILABLE" if not success else "NEUTRAL",
+                "broker_actions": 0,
+            }
+            # Preserve last valid context when a refresh fails; the failed
+            # attempt remains visible through activity/error metadata.
+            if not success and str(previous.get("response_state") or "").upper() == "SUCCESS" and previous.get("normalized_fields"):
+                fmp_record["normalized_fields"] = dict(previous.get("normalized_fields") or {})
+                fmp_record["freshness_state"] = "STALE"
+                fmp_record["quality_state"] = "STALE_PRIOR_USED"
+                fmp_record["response_state"] = "STALE_PRIOR_USED"
+            records[activation_id] = fmp_record
+            record["fmp_evidence"] = fmp_record
+            registry[activation_id] = record
+            activity["latest_endpoint_family"] = fmp_record["endpoint_family"]
+            activity["latest_error_category"] = fmp_record["error_category"]
+            if success:
+                activity["success_count"] += 1
+                activity["requests_succeeded_this_cycle"] += 1
+                activity["last_success_at"] = fmp_record["response_at"]
+                activity["next_refresh_at"] = (now + timedelta(hours=6)).isoformat().replace("+00:00", "Z")
+            else:
+                activity["failure_count"] += 1
+                activity["requests_failed_this_cycle"] += 1
+                activity["retry_count"] = retry_count
+                activity["next_refresh_at"] = fmp_record["next_retry_at"]
+        self._runtime_state["legacy_swing_fmp_evidence"] = records
+        self._runtime_state["legacy_swing_fmp_activity"] = activity
+        return records, activity
+
     def _refresh_legacy_swing_canary_pre_submit(self, broker_positions: dict[str, dict[str, Any]]) -> dict[str, Any]:
         """Persist disabled-canary reviews without invoking an order or writer.
 
@@ -1878,6 +2023,7 @@ class PaperAutopilotEngine:
         config = legacy_swing_canary_configuration_v1()
         safety = self._alpaca_safety_snapshot()
         registry = dict(self._runtime_state.get("legacy_forward_activations") or {})
+        fmp_records, fmp_activity = self._refresh_legacy_swing_fmp_evidence(registry)
         reviews: dict[str, dict[str, Any]] = {}
         candidates: list[dict[str, Any]] = []
         reviewed = exit_reviews = 0
@@ -1897,6 +2043,7 @@ class PaperAutopilotEngine:
                 "legacy_activation_unrealized_return_pct": record.get("activation_unrealized_return_pct"),
                 "paper_mode_verified": bool(safety.get("paper_mode_verified")),
                 "live_endpoint_allowed": bool(safety.get("live_endpoint_detected")),
+                "fmp_thesis_context": dict(fmp_records.get(activation_id) or record.get("fmp_evidence") or {}),
             }
             required_evidence = build_legacy_swing_required_evidence_v1(row, record)
             for evidence_type, evidence_row in required_evidence.items():
@@ -1918,6 +2065,20 @@ class PaperAutopilotEngine:
                 evidence_row["classification_after"] = decision.get("classification")
                 evidence_row["classification_influence"] = "BLOCKING" if evidence_row.get("status") != "CURRENT" and decision.get("classification") == "INSUFFICIENT_EVIDENCE" else "NEUTRAL"
                 evidence_row["influence_reason"] = decision.get("classification_reason")
+                if evidence_row.get("evidence_type") == "THESIS_STATE":
+                    fmp_record = dict(row.get("fmp_thesis_context") or {})
+                    if not fmp_record.get("record_id"):
+                        continue
+                    fmp_record["consumer_acknowledged"] = True
+                    fmp_record["consumer"] = "build_legacy_swing_required_evidence_v1"
+                    fmp_record["consumed_at"] = _now_iso()
+                    fmp_record["acknowledgement_state"] = "CONSUMED_BY_UNIFIED_DECISION"
+                    fmp_record["influence_state"] = evidence_row["classification_influence"]
+                    fmp_record["classification_before"] = previous or None
+                    fmp_record["classification_after"] = decision.get("classification")
+                    fmp_record["influence_reason"] = decision.get("classification_reason")
+                    fmp_records[activation_id] = fmp_record
+                    record["fmp_evidence"] = fmp_record
             current = str(decision.get("classification") or "INSUFFICIENT_EVIDENCE")
             is_exit_review = current == "EXIT_REVIEW"
             if is_exit_review:
@@ -1975,6 +2136,8 @@ class PaperAutopilotEngine:
             "pre_submit": pre_submit, "writer_adapter_contract": legacy_swing_writer_adapter_contract_v1(),
             "last_refresh_at": _now_iso(), "broker_actions": 0, "natural_orders": 0, "fixture_orders": 0,
             "worker_acknowledgement": "CANARY_CONFIGURATION_CONSUMED_BY_WORKER",
+            "fmp_activity": fmp_activity,
+            "fmp_records": fmp_records,
         }
         return {
             "CANARY_CONFIGURATION_CONSUMED_BY_WORKER": True, "reviewed": reviewed,

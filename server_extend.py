@@ -47951,6 +47951,111 @@ def legacy_swing_required_evidence_closure_diagnostic_v1():
             "liquidity_available": (totals.get("LIQUIDITY") or {}).get("available", 0), "liquidity_missing": (totals.get("LIQUIDITY") or {}).get("missing", 0), "liquidity_stale": (totals.get("LIQUIDITY") or {}).get("stale", 0), "liquidity_not_consumed": audit.get("positions_processed", 0) - (totals.get("LIQUIDITY") or {}).get("consumed", 0)}
 
 
+def _fmp_production_consumption_payload_v1() -> dict:
+    """Read worker-owned FMP lineage only; this function never calls FMP."""
+    runtime_state = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
+    runtime = dict(runtime_state.get("legacy_swing_canary") or {})
+    activity = dict(runtime.get("fmp_activity") or runtime_state.get("legacy_swing_fmp_activity") or {})
+    records = dict(runtime.get("fmp_records") or runtime_state.get("legacy_swing_fmp_evidence") or {})
+    router = getattr(PAPER_AUTOPILOT, "_legacy_swing_fmp_router", None)
+    fetcher = getattr(PAPER_AUTOPILOT, "_legacy_swing_fmp_fetcher", None)
+    try:
+        provider_status = dict(router.diagnostics() or {}) if router is not None and hasattr(router, "diagnostics") else {}
+    except Exception:
+        provider_status = {}
+    credentials_present = bool("FMP" in set(provider_status.get("providers_enabled") or []))
+    rows, repairable = [], []
+    for activation_id, raw in sorted(records.items()):
+        record = dict(raw or {})
+        response_state = str(record.get("response_state") or "PROVIDER_UNAVAILABLE").upper()
+        stored = bool(record.get("records_stored"))
+        acknowledged = bool(record.get("consumer_acknowledged"))
+        influence = str(record.get("influence_state") or "")
+        state = "PASS" if response_state == "SUCCESS" and stored and acknowledged and influence else (
+            "LEGITIMATELY_UNAVAILABLE" if response_state in {"AUTHENTICATION_FAILED", "ENTITLEMENT_BLOCKED", "RATE_LIMITED", "TIMEOUT", "EMPTY_RESPONSE", "PROVIDER_ERROR", "PROVIDER_UNAVAILABLE", "STALE_PRIOR_USED"} else "FAILED"
+        )
+        if response_state == "SUCCESS" and not stored:
+            state = "NOT_STORED"
+        elif response_state == "SUCCESS" and not acknowledged:
+            state = "NOT_ACKNOWLEDGED"
+        elif response_state == "SUCCESS" and not influence:
+            state = "NOT_INFLUENCING"
+        row = {
+            "symbol": record.get("symbol"), "position_id": record.get("position_id"), "activation_id": record.get("activation_id") or activation_id,
+            "stage": "fmp_production_consumption", "owner": "engine.provider_router.ProviderRouter.fetch_fmp_profile_context",
+            "producer": "PaperAutopilot._refresh_legacy_swing_fmp_evidence", "consumer": record.get("consumer") or "build_legacy_swing_required_evidence_v1",
+            "store": "paper_autopilot_state.json:legacy_swing_fmp_evidence", "join_key": activation_id,
+            "expected_state": "STORED_ACKNOWLEDGED_INFLUENCING" if response_state == "SUCCESS" else "EXPLICIT_EXTERNAL_BLOCK",
+            "actual_state": state, "response_state": response_state, "endpoint_family": record.get("endpoint_family"),
+            "exact_blocker": record.get("error_category") or None,
+            "blocker_category": "external" if state == "LEGITIMATELY_UNAVAILABLE" else "technical" if state != "PASS" else None,
+            "technical_or_external": "external" if state == "LEGITIMATELY_UNAVAILABLE" else "technical" if state != "PASS" else "pass",
+            "safe_repair_allowed": state in {"NOT_STORED", "NOT_ACKNOWLEDGED", "NOT_INFLUENCING", "FAILED"},
+            "exact_safe_repair": "persist and consume the normalized FMP record through the worker" if state != "PASS" else None,
+            "record_id": record.get("record_id"), "consumer_acknowledged": acknowledged, "influence_state": influence,
+        }
+        rows.append(row)
+        if row["safe_repair_allowed"]:
+            repairable.append(row)
+    worker_connected = callable(fetcher)
+    worker_invoked = bool(activity.get("worker_invoked"))
+    if not worker_connected or not worker_invoked:
+        failure = {
+            "stage": "worker_invocation", "owner": "PaperAutopilot._refresh_legacy_swing_fmp_evidence",
+            "producer": "PaperAutopilot normal worker", "consumer": "ProviderRouter.fetch_fmp_profile_context",
+            "store": "paper_autopilot_state.json", "join_key": "legacy_swing_fmp_activity",
+            "expected_state": "WORKER_CONNECTED_AND_INVOKED", "actual_state": "WORKER_DISCONNECTED" if not worker_connected else "CONFIGURED_NOT_INVOKED",
+            "exact_blocker": "fmp_fetcher_unavailable" if not worker_connected else "worker_activity_missing",
+            "blocker_category": "technical", "technical_or_external": "technical", "safe_repair_allowed": True,
+            "exact_safe_repair": "connect the existing ProviderRouter to the normal PaperAutopilot worker",
+        }
+        repairable.append(failure)
+    no_usage = bool(credentials_present and worker_invoked and int(activity.get("request_count") or 0) == 0 and int(activity.get("symbols_requiring_fmp") or 0) > 0)
+    if no_usage:
+        repairable.append({
+            "stage": "provider_usage", "owner": "engine.provider_router.ProviderRouter", "producer": "PaperAutopilot normal worker",
+            "consumer": "build_legacy_swing_required_evidence_v1", "store": "paper_autopilot_state.json:legacy_swing_fmp_activity",
+            "join_key": "FMP", "expected_state": "REQUEST_ATTEMPTED", "actual_state": "CONFIGURED_NOT_INVOKED",
+            "exact_blocker": "fmp_credentials_present_but_worker_made_no_request", "blocker_category": "technical",
+            "technical_or_external": "technical", "safe_repair_allowed": True,
+            "exact_safe_repair": "run the bounded worker FMP refresh for missing thesis evidence",
+        })
+    succeeded = sum(1 for row in rows if row.get("response_state") == "SUCCESS")
+    return {
+        "overall_status": "PASS" if not repairable else "FAILED", "configured": bool(worker_connected),
+        "credentials_present_without_exposing_them": credentials_present, "worker_connected": worker_connected,
+        "worker_invoked": worker_invoked, "requests_attempted": int(activity.get("request_count") or 0),
+        "requests_succeeded": int(activity.get("success_count") or 0), "requests_failed": int(activity.get("failure_count") or 0),
+        "records_received": sum(int((records.get(key) or {}).get("records_received") or 0) for key in records),
+        "records_validated": sum(int((records.get(key) or {}).get("records_valid") or 0) for key in records),
+        "records_stored": sum(int((records.get(key) or {}).get("records_stored") or 0) for key in records),
+        "records_current": succeeded, "records_stale": sum(1 for row in records.values() if str((row or {}).get("freshness_state") or "") == "STALE"),
+        "records_consumed": sum(1 for row in rows if row.get("consumer_acknowledged")),
+        "records_acknowledged": sum(1 for row in rows if row.get("consumer_acknowledged")),
+        "records_influencing": sum(1 for row in rows if str(row.get("influence_state") or "") not in {"", "UNAVAILABLE"}),
+        "fallback_count": 0, "latest_attempt": activity.get("last_attempt_at"), "latest_success": activity.get("last_success_at"),
+        "latest_consumer_ack": max((str((record or {}).get("consumed_at") or "") for record in records.values()), default=""),
+        "starvation_state": "CONFIGURED_NOT_INVOKED" if no_usage else "ACTIVE" if int(activity.get("request_count") or 0) else "LEGITIMATELY_UNAVAILABLE",
+        "false_operational_state": bool(credentials_present and no_usage), "activity": activity, "position_rows": rows,
+        "repairable_failures": repairable, "read_only": True, "provider_calls_used": 0, "broker_actions": 0,
+    }
+
+
+@router.get("/api/fmp_production_consumption_accountability_audit_v1")
+def fmp_production_consumption_accountability_audit_v1():
+    return {"endpoint": "/api/fmp_production_consumption_accountability_audit_v1", **_fmp_production_consumption_payload_v1(), **_safety_flags_v1()}
+
+
+@router.get("/api/fmp_production_consumption_closure_diagnostic_v1")
+def fmp_production_consumption_closure_diagnostic_v1():
+    audit = _fmp_production_consumption_payload_v1()
+    return {
+        "endpoint": "/api/fmp_production_consumption_closure_diagnostic_v1", **audit,
+        "stage_chain": ["evidence_requirement", "worker_invocation", "fmp_request", "provider_response", "validation", "normalization", "canonical_storage", "thesis_consumer", "acknowledgement", "influence"],
+        **_safety_flags_v1(),
+    }
+
+
 @router.get("/api/astra_forward_performance_readiness_v1")
 def astra_forward_performance_readiness_v1(force: bool = False):
     certification = _astra_pre_market_trading_certification_payload_v1(force=bool(force))
@@ -63111,6 +63216,7 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
     canary_pre_submit = _legacy_swing_canary_pre_submit_audit_payload_v1()
     classification_integrity = legacy_swing_classification_integrity_diagnostic_v1()
     required_evidence = _legacy_swing_required_evidence_payload_v1()
+    fmp_consumption = _fmp_production_consumption_payload_v1()
     review = dict(utilization.get("portfolio_review") or build_portfolio_release_review(rows))
     enrichment = _candidate_intelligence_enrichment_contract_diagnostic_v1(force=False)
     findings: list[dict] = []
@@ -63223,6 +63329,13 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "issue": "legacy_swing_required_evidence_repairable_failure", "evidence": required_evidence.get("repairable_failures"),
             "recommended_action": "repair worker production, acknowledgement, or influence; do not treat unavailable evidence as neutral",
         })
+    if fmp_consumption.get("repairable_failures"):
+        findings.append({
+            "severity": "high", "classification": "legacy_fmp_consumption_connection_defect",
+            "issue": "legacy_fmp_production_consumption_repairable_failure",
+            "evidence": fmp_consumption.get("repairable_failures"),
+            "recommended_action": "repair the existing FMP worker-to-thesis lineage; do not weaken evidence requirements",
+        })
     lineage_confidence = dict(lineage_detail.get("coverage_by_confidence_class") or {})
     excursion_coverage = dict(lineage_detail.get("coverage_by_excursion_class") or {})
     if int(_to_float(lineage_confidence.get("NOT_RECOVERABLE"), 0.0)) > 0:
@@ -63302,6 +63415,10 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
         "legacy_swing_required_evidence_v1": {
             key: required_evidence.get(key)
             for key in ("overall_status", "positions_processed", "evidence_totals", "repairable_failures", "legitimate_external_blocks")
+        },
+        "legacy_swing_fmp_production_consumption_v1": {
+            key: fmp_consumption.get(key)
+            for key in ("overall_status", "worker_connected", "worker_invoked", "requests_attempted", "requests_succeeded", "records_stored", "records_consumed", "records_influencing", "repairable_failures")
         },
         "position_lineage_excursion_replacement_v1": {
             "coverage_by_confidence_class": lineage_confidence,

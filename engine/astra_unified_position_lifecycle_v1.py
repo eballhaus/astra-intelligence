@@ -295,6 +295,7 @@ def build_legacy_swing_required_evidence_v1(position: Mapping[str, Any], baselin
     bid, ask = _num(row.get("bid")), _num(row.get("ask"))
     volume = _num(row.get("volume") or row.get("recent_volume"))
     direct_thesis = _text(row.get("thesis_state") or row.get("thesis_health")).upper()
+    fmp_context = dict(row.get("fmp_thesis_context") or {})
     def record(kind: str, status: str, state: str, confidence: float, limitations: list[str], **extra: Any) -> dict[str, Any]:
         return {"evidence_type": kind, "record_id": f"legacy-evidence:{kind.lower()}:{position_id}", "symbol": symbol,
                 "position_id": position_id, "activation_id": baseline.get("baseline_id"), "as_of": as_of,
@@ -310,8 +311,29 @@ def build_legacy_swing_required_evidence_v1(position: Mapping[str, Any], baselin
         momentum = record("MOMENTUM", "UNAVAILABLE", "UNAVAILABLE", 0.0, ["recent_price_path_required"], short_term_direction="UNAVAILABLE", supporting_inputs=[])
     if direct_thesis in {"INTACT", "WEAKENING", "MATERIALLY_DETERIORATED", "BROKEN", "CONFLICTING"}:
         thesis = record("THESIS_STATE", "CURRENT", direct_thesis, 0.60, [], thesis_state=direct_thesis, direct_evidence=True)
+    elif str(fmp_context.get("response_state") or "").upper() == "SUCCESS" and dict(fmp_context.get("normalized_fields") or {}):
+        # Profile context proves current provider support but cannot invent an
+        # original thesis or independently assert an invalidation.
+        thesis = record(
+            "THESIS_STATE", "CURRENT", "UNKNOWN", 0.45,
+            ["original_thesis_unavailable_forward_monitoring_baseline"],
+            thesis_state="UNKNOWN", direct_evidence=False,
+            source="FMP.company_profile", fmp_record_id=fmp_context.get("record_id"),
+            endpoint_family=fmp_context.get("endpoint_family"),
+            supporting_inputs=sorted(dict(fmp_context.get("normalized_fields") or {}).keys()),
+        )
+    elif str(fmp_context.get("freshness_state") or "").upper() == "STALE" and dict(fmp_context.get("normalized_fields") or {}):
+        thesis = record(
+            "THESIS_STATE", "STALE", "UNKNOWN", 0.0,
+            ["stale_fmp_profile_context"], thesis_state="UNKNOWN", direct_evidence=False,
+            source="FMP.company_profile", fmp_record_id=fmp_context.get("record_id"),
+            endpoint_family=fmp_context.get("endpoint_family"),
+        )
     else:
-        thesis = record("THESIS_STATE", "UNAVAILABLE", "UNKNOWN", 0.0, ["original_or_current_thesis_evidence_unavailable"], thesis_state="UNKNOWN", direct_evidence=False)
+        limitation = str(fmp_context.get("error_category") or "original_or_current_thesis_evidence_unavailable")
+        thesis = record("THESIS_STATE", "UNAVAILABLE", "UNKNOWN", 0.0, [limitation], thesis_state="UNKNOWN", direct_evidence=False,
+                        source="FMP.company_profile" if fmp_context else "PaperAutopilot.broker_position_snapshot",
+                        fmp_record_id=fmp_context.get("record_id"), endpoint_family=fmp_context.get("endpoint_family"))
     if bid is not None and ask is not None and bid > 0 and ask >= bid and bool(row.get("tradable", True)):
         spread_pct = (ask - bid) / max((ask + bid) / 2.0, 1e-9) * 100.0
         state = "ACCEPTABLE" if spread_pct <= 1.0 else "THIN"
