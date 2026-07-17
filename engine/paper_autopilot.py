@@ -2316,6 +2316,26 @@ class PaperAutopilotEngine:
         return preserved
 
     @staticmethod
+    def _legacy_swing_daily_request_contract(now: datetime, contract: dict[str, Any]) -> dict[str, Any]:
+        """Build a bounded completed-session daily request, never a default window."""
+        eastern = now.astimezone(ZoneInfo("America/New_York"))
+        session_complete = eastern.weekday() >= 5 or (eastern.hour, eastern.minute) >= (16, 15)
+        # Before the regular close, exclude the incomplete provider daily bar.
+        end_local = eastern if session_complete else eastern.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(seconds=1)
+        required = max(15, int(contract.get("minimum_completed_bars") or 15))
+        preferred = max(required, int(contract.get("preferred_completed_bars") or required))
+        requested_days = max(int(contract.get("minimum_calendar_lookback_days") or 31), required + 23)
+        start_local = end_local - timedelta(days=requested_days)
+        return {
+            "start": start_local.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+            "end": end_local.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+            "limit": min(60, max(required + 5, preferred + 2)),
+            "feed": "iex", "adjustment": "raw", "sort": "asc", "max_pages": 2,
+            "requested_completed_sessions": required, "requested_calendar_days": requested_days,
+            "current_session_complete": session_complete,
+        }
+
+    @staticmethod
     def _normalize_legacy_swing_bar_response(
         response: dict[str, Any], *, provider: str, family: str, activation_id: str,
         position_id: str | None, symbol: str, now: datetime, timeframe: str = "1Hour",
@@ -2323,6 +2343,7 @@ class PaperAutopilotEngine:
         """Normalize one provider-native hourly batch without merging providers."""
         raw_bars = list(response.get("bars") or [])
         seen, bars = set(), []
+        excluded_incomplete_daily = 0
         for item in raw_bars:
             row = dict(item or {}) if isinstance(item, dict) else {}
             timestamp = str(row.get("t") or row.get("timestamp") or row.get("date") or "")
@@ -2342,6 +2363,11 @@ class PaperAutopilotEngine:
                 session_type = "REGULAR_SESSION" if local.weekday() < 5 and ((local.hour > 9 or (local.hour == 9 and local.minute >= 30)) and local.hour <= 16) else "PRE_MARKET" if local.hour < 9 or (local.hour == 9 and local.minute < 30) else "AFTER_HOURS"
             except (TypeError, ValueError):
                 continue
+            if timeframe == "1Day":
+                market_now = now.astimezone(ZoneInfo("America/New_York"))
+                if local.date() == market_now.date() and market_now.weekday() < 5 and (market_now.hour, market_now.minute) < (16, 15):
+                    excluded_incomplete_daily += 1
+                    continue
             fingerprint = hashlib.sha256(f"{symbol}|{timeframe}|{timestamp}|{session_type}|{o:.8f}|{h:.8f}|{l:.8f}|{c:.8f}|{volume:.4f}".encode("utf-8")).hexdigest()[:24]
             bars.append({"bar_id": f"legacy-bar:{fingerprint}", "bar_fingerprint": fingerprint, "timestamp": timestamp, "session_type": session_type, "open": o, "high": h, "low": l, "close": c, "volume": volume, "provider": provider, "provider_adjustment_state": "UNKNOWN"})
         bars.sort(key=lambda item: item["timestamp"])
@@ -2355,6 +2381,8 @@ class PaperAutopilotEngine:
         if source_state == "SUCCESS" and valid:
             quality = "CURRENT_SUFFICIENT" if valid >= 5 else "CURRENT_INSUFFICIENT"
             state = "SUCCESS"
+        elif source_state == "SUCCESS" and excluded_incomplete_daily == received:
+            quality, state = "CURRENT_INSUFFICIENT", "SUCCESS"
         elif source_state == "EMPTY_RESPONSE" or not received:
             quality, state = "EMPTY", "EMPTY_RESPONSE"
         else:
@@ -2374,9 +2402,15 @@ class PaperAutopilotEngine:
             "last_bar_at": usable[-1]["timestamp"] if usable else None, "lookback_start": usable[0]["timestamp"] if usable else None,
             "lookback_end": usable[-1]["timestamp"] if usable else None, "missing_intervals": [],
             "freshness_state": "CURRENT" if state == "SUCCESS" and valid else "UNAVAILABLE", "quality_state": quality,
-            "source_error": str(response.get("error") or response.get("error_category") or ("" if state == "SUCCESS" else state.lower()))[:180],
+            "source_error": str(response.get("error") or response.get("error_category") or ("incomplete_current_session_excluded" if excluded_incomplete_daily and not valid else "" if state == "SUCCESS" else state.lower()))[:180],
             "retry_count": 0, "next_refresh_at": (now + timedelta(hours=6 if quality == "CURRENT_SUFFICIENT" else 0.25)).isoformat().replace("+00:00", "Z"),
             "canonical_owner": False, "candidate_record_ids": [], "deduplicated_record_ids": [], "broker_actions": 0,
+            "requested_start": response.get("requested_start"), "requested_end": response.get("requested_end"),
+            "requested_limit": response.get("requested_limit"), "requested_feed": response.get("requested_feed"),
+            "requested_adjustment": response.get("requested_adjustment"), "requested_sort": response.get("requested_sort"),
+            "pagination_state": response.get("pagination_state") or "NOT_REQUIRED", "pages_consumed": int(response.get("pages_consumed") or 0),
+            "next_page_token_present": bool(response.get("next_page_token_present")), "response_truncated": bool(response.get("response_truncated")),
+            "excluded_incomplete_daily": excluded_incomplete_daily,
         }
 
     @staticmethod
@@ -2566,15 +2600,19 @@ class PaperAutopilotEngine:
                             comparison = self._compare_legacy_swing_bar_batches(alpaca, fmp)
                     if fallback_required and fmp.get("quality_state") != "CURRENT_SUFFICIENT" and broker is not None and callable(getattr(broker, "historical_bars", None)):
                         self._note_worker_progress(f"market_data:HISTORICAL_BARS_DAILY:{symbol}")
-                        daily_response = dict(broker.historical_bars(symbol, timeframe="1Day", limit=20) or {})
+                        provisional = dict(record.get("provisional_horizon") or {})
+                        daily_contract = legacy_swing_horizon_daily_contract_v1(provisional.get("provisional_horizon"))
+                        daily_request = self._legacy_swing_daily_request_contract(now, daily_contract)
+                        daily_response = dict(broker.historical_bars(symbol, timeframe="1Day", **daily_request) or {})
                         daily = self._normalize_legacy_swing_bar_response(
                             daily_response, provider="ALPACA_MARKET_DATA", family="HISTORICAL_BARS",
                             activation_id=activation_id, position_id=record.get("position_id"), symbol=symbol, now=now, timeframe="1Day",
                         )
-                        provisional = dict(record.get("provisional_horizon") or {})
-                        daily_contract = legacy_swing_horizon_daily_contract_v1(provisional.get("provisional_horizon"))
                         daily["horizon_contract"] = daily_contract
                         daily["required_completed_bars"] = daily_contract["minimum_completed_bars"]
+                        daily["requested_completed_sessions"] = daily_request["requested_completed_sessions"]
+                        daily["requested_calendar_days"] = daily_request["requested_calendar_days"]
+                        daily["requested_session_scope"] = "REGULAR_SESSION_COMPLETED_ONLY"
                         if int(daily.get("records_valid") or 0) < int(daily_contract["minimum_completed_bars"]):
                             daily["quality_state"] = "CURRENT_INSUFFICIENT" if daily.get("freshness_state") == "CURRENT" else "STALE_INSUFFICIENT"
                         daily["momentum_contract"] = "LEGACY_SWING_DAILY"
@@ -6036,6 +6074,17 @@ class PaperAutopilotEngine:
 
     def run_cycle(self):
         if not self._enabled:
+            # Evidence acquisition must remain worker-owned even when the
+            # global order worker is disabled.  This calls only the existing
+            # legacy-SWING read/normalization path; it never enters submission.
+            legacy_refresh: dict[str, Any] = {}
+            try:
+                self._note_worker_progress("legacy_swing_observation")
+                broker_snapshot = self._broker_open_symbols_snapshot()
+                broker_positions = dict(broker_snapshot.get("broker_position_by_symbol") or {})
+                legacy_refresh = self._refresh_legacy_swing_canary_pre_submit(broker_positions)
+            except Exception as exc:
+                legacy_refresh = {"observation_state": "FAILED", "error": str(exc)[:180]}
             safety = self._alpaca_safety_snapshot()
             out = {
                 "ok": True,
@@ -6043,6 +6092,7 @@ class PaperAutopilotEngine:
                 "orders_submitted": 0,
                 "positions_closed": 0,
                 "cycle_reason": "disabled",
+                "legacy_swing_observation": legacy_refresh,
             }
             trace = {
                 "paper_worker_running": bool(self._thread and self._thread.is_alive()),
@@ -6058,6 +6108,7 @@ class PaperAutopilotEngine:
                 "last_alpaca_error_sanitized": "",
                 "live_trading_changed": False,
                 "secrets_exposed": False,
+                "legacy_swing_observation": legacy_refresh,
             }
             self._runtime_state["last_cycle_utc"] = _now_iso()
             self._runtime_state["last_cycle_summary"] = out
@@ -6066,6 +6117,16 @@ class PaperAutopilotEngine:
 
         with self._cycle_lock:
             cycle_id = _now_iso()
+            # Keep legacy market evidence ahead of generic preflight work.
+            # This is the same bounded worker-owned refresh and has no order
+            # submission path; the later position-aware pass reuses its cache.
+            legacy_canary_refresh: dict[str, Any] = {}
+            try:
+                self._note_worker_progress("legacy_market_evidence_preflight")
+                legacy_canary_refresh = self._refresh_legacy_swing_canary_pre_submit({})
+                self._save_state_file()
+            except Exception as exc:
+                legacy_canary_refresh = {"observation_state": "FAILED", "error": str(exc)[:180]}
             self._note_worker_progress("safety_preflight")
             opened = 0
             closed = 0
@@ -6086,9 +6147,6 @@ class PaperAutopilotEngine:
             horizon_execution_blocker = ""
             decision_trace: list[dict[str, Any]] = []
             safety = self._alpaca_safety_snapshot()
-            self._note_worker_progress("pending_exit_reconciliation")
-            learned_exit_refresh = self._refresh_learned_exit_pending_sells()
-            authorized_lane_exit_refresh = self._refresh_authorized_lane_exit_pending()
             open_rows_initial = self._fetch_open_positions()
             internal_open_syms = {str(r.get("symbol") or "").upper().strip() for r in open_rows_initial}
             self._note_worker_progress("broker_position_snapshot")
@@ -6102,6 +6160,9 @@ class PaperAutopilotEngine:
             # before the broader candidate scan, which may take longer than a
             # bounded provider refresh cycle.
             self._save_state_file()
+            self._note_worker_progress("pending_exit_reconciliation")
+            learned_exit_refresh = self._refresh_learned_exit_pending_sells()
+            authorized_lane_exit_refresh = self._refresh_authorized_lane_exit_pending()
             self._note_worker_progress("open_position_review")
             broker_position_review_rows = [
                 {

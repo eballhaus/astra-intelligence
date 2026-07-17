@@ -162,6 +162,47 @@ class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
         self.assertEqual(asset["response_state"], "SUCCESS")
         self.assertEqual(bars["broker_actions"] + quote["broker_actions"] + asset["broker_actions"], 0)
 
+    def test_existing_client_consumes_bounded_bar_pagination_with_request_lineage(self):
+        broker = AlpacaPaperBroker()
+        paths = []
+        def request(path):
+            paths.append(path)
+            if "page_token=" not in path:
+                return True, {"bars": [{"t": "2026-06-01T00:00:00Z"}], "next_page_token": "next"}, "", 200
+            return True, {"bars": [{"t": "2026-06-02T00:00:00Z"}]}, "", 200
+        broker._market_data_request = request  # type: ignore[method-assign]
+        bars = broker.historical_bars("AAA", timeframe="1Day", limit=20, start="2026-06-01T00:00:00Z", end="2026-07-01T00:00:00Z")
+        self.assertEqual(len(bars["bars"]), 2)
+        self.assertEqual(bars["pagination_state"], "MULTI_PAGE_COMPLETE")
+        self.assertEqual(bars["pages_consumed"], 2)
+        self.assertIn("start=2026-06-01T00%3A00%3A00Z", paths[0])
+        self.assertEqual(bars["broker_actions"], 0)
+
+    def test_daily_fallback_uses_explicit_completed_session_contract(self):
+        class _DailyHistory(_EmptyBars):
+            def historical_bars(self, symbol, **kwargs):
+                if kwargs.get("timeframe") != "1Day":
+                    return super().historical_bars(symbol, **kwargs)
+                self.bar_calls.append(symbol)
+                bars = [
+                    {"t": f"2026-06-{day:02d}T04:00:00Z", "o": 10, "h": 11, "l": 9, "c": 10 + day / 100, "v": 1000}
+                    for day in range(1, 25) if day not in {6, 7, 13, 14, 20, 21}
+                ]
+                return {"response_state": "SUCCESS", "http_status": 200, "bars": bars,
+                        "requested_start": kwargs.get("start"), "requested_end": kwargs.get("end"),
+                        "requested_limit": kwargs.get("limit"), "requested_feed": kwargs.get("feed"),
+                        "requested_adjustment": kwargs.get("adjustment"), "requested_sort": kwargs.get("sort"),
+                        "pagination_state": "PAGE_COMPLETE", "pages_consumed": 1}
+        engine = _engine(_DailyHistory())
+        records, _activity = engine._refresh_legacy_swing_broker_market_evidence(_registry())
+        daily = records["activation-a"]["HISTORICAL_BARS_DAILY"]
+        self.assertTrue(daily["requested_start"])
+        self.assertTrue(daily["requested_end"])
+        self.assertGreaterEqual(daily["requested_limit"], 15)
+        self.assertGreaterEqual(daily["records_valid"], 15)
+        self.assertEqual(daily["quality_state"], "CURRENT_SUFFICIENT")
+        self.assertEqual(records["activation-a"]["HISTORICAL_BARS"]["momentum_contract"], "LEGACY_SWING_DAILY")
+
     def test_worker_normalizes_and_reuses_fresh_market_records(self):
         market = _MarketDataFixture()
         engine = _engine(market)

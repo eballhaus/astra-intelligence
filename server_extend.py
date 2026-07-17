@@ -17523,8 +17523,14 @@ def _ensure_paper_autopilot_started():
     if _PAPER_AUTOPILOT_STARTED:
         _paper_autopilot_sync_worker_artifacts()
         return
-    # When using an external worker process, avoid duplicate in-process loop.
-    if str(os.getenv("ASTRA_PAPER_EXTERNAL_WORKER", "0")).strip().lower() in {"1", "true", "yes", "on"}:
+    # Avoid a duplicate only when the configured external worker entrypoint
+    # actually exists.  A stale environment flag previously left the normal
+    # evidence worker disconnected after a guarded backend restart.
+    external_worker_path = os.path.join(os.path.dirname(__file__), "engine", "paper_worker.py")
+    if (
+        str(os.getenv("ASTRA_PAPER_EXTERNAL_WORKER", "0")).strip().lower() in {"1", "true", "yes", "on"}
+        and os.path.isfile(external_worker_path)
+    ):
         _PAPER_AUTOPILOT_STARTED = True
         return
     PAPER_AUTOPILOT.start()
@@ -17537,9 +17543,22 @@ def _ensure_paper_autopilot_started():
     _paper_autopilot_sync_worker_artifacts()
 
 
+@router.on_event("startup")
+def _paper_autopilot_worker_startup_v1():
+    """Start the normal worker at backend boot; it is never GET-triggered."""
+    try:
+        _ensure_paper_autopilot_started()
+    except Exception:
+        pass
+
+
 def _paper_autopilot_sync_worker_artifacts():
     # External worker owns these artifacts in external-worker mode.
-    if str(os.getenv("ASTRA_PAPER_EXTERNAL_WORKER", "0")).strip().lower() in {"1", "true", "yes", "on"}:
+    external_worker_path = os.path.join(os.path.dirname(__file__), "engine", "paper_worker.py")
+    if (
+        str(os.getenv("ASTRA_PAPER_EXTERNAL_WORKER", "0")).strip().lower() in {"1", "true", "yes", "on"}
+        and os.path.isfile(external_worker_path)
+    ):
         return
     try:
         liveness = dict(PAPER_AUTOPILOT.worker_liveness_status() or {})
@@ -48587,6 +48606,90 @@ def legacy_swing_historical_bar_contract_audit_v1():
     return {"endpoint": "/api/legacy_swing_historical_bar_contract_audit_v1", **_api_role_historical_bar_contract_payload_v1(), **_safety_flags_v1()}
 
 
+def _legacy_swing_historical_data_resolution_payload_v1() -> dict:
+    """Read persisted request lineage only; GET never refreshes providers."""
+    state = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
+    runtime = dict(state.get("legacy_swing_canary") or {})
+    records = dict(runtime.get("market_records") or state.get("legacy_swing_market_evidence") or {})
+    reviews = dict(runtime.get("reviews") or {})
+    rows, reasons, repairable = [], Counter(), []
+    for activation_id, review_raw in reviews.items():
+        review = dict(review_raw or {})
+        bundle = dict(records.get(activation_id) or {})
+        daily = dict(bundle.get("HISTORICAL_BARS_DAILY") or {})
+        required = int(daily.get("required_completed_bars") or 15)
+        completed = int(daily.get("records_valid") or 0)
+        state_name = str(daily.get("response_state") or "NOT_REQUESTED").upper()
+        http_status = int(daily.get("http_status") or 0)
+        pagination = str(daily.get("pagination_state") or "NOT_RECORDED")
+        reason, safe_repair = "DAILY_SUFFICIENT", False
+        if completed < required:
+            if not daily:
+                reason, safe_repair = "REQUEST_RANGE_TOO_SHORT", True
+            elif not daily.get("requested_start") or not daily.get("requested_end"):
+                reason, safe_repair = "REQUEST_RANGE_TOO_SHORT", True
+            elif int(daily.get("requested_limit") or 0) < required:
+                reason, safe_repair = "REQUEST_LIMIT_TOO_LOW", True
+            elif bool(daily.get("next_page_token_present")) and pagination in {"PAGE_LIMIT_REACHED", "REQUIRED_BUT_NOT_CONSUMED"}:
+                reason, safe_repair = "PAGINATION_NOT_CONSUMED", True
+            elif bool(daily.get("response_truncated")):
+                reason, safe_repair = "RESPONSE_TRUNCATED", True
+            elif http_status == 401 or state_name == "AUTHENTICATION_FAILED":
+                reason = "ENTITLEMENT_LIMITATION"
+            elif http_status == 403 or state_name == "ENTITLEMENT_BLOCKED":
+                reason = "PLAN_LIMITATION"
+            elif state_name == "EMPTY_RESPONSE":
+                reason = "EMPTY_PROVIDER_RESPONSE"
+            elif completed:
+                reason = "PROVIDER_RETENTION_LIMIT"
+            else:
+                reason = "UNKNOWN_EXTERNAL_LIMITATION"
+        row = {
+            "symbol": daily.get("symbol") or review.get("symbol"), "position_id": daily.get("position_id") or review.get("position_id"),
+            "activation_id": activation_id, "provider": daily.get("provider") or "ALPACA_MARKET_DATA",
+            "endpoint": "AlpacaPaperBroker.historical_bars", "requested_timeframe": daily.get("timeframe") or "1Day",
+            "requested_start": daily.get("requested_start"), "requested_end": daily.get("requested_end"),
+            "requested_limit": daily.get("requested_limit"), "requested_feed": daily.get("requested_feed"),
+            "requested_adjustment": daily.get("requested_adjustment"), "requested_session_scope": daily.get("requested_session_scope"),
+            "HTTP_status": http_status, "provider_response_state": state_name, "pagination_present": pagination not in {"NOT_RECORDED", "NOT_REQUIRED", "PAGE_COMPLETE"},
+            "pagination_consumed": int(daily.get("pages_consumed") or 0), "next_page_token_present": bool(daily.get("next_page_token_present")),
+            "response_truncated": bool(daily.get("response_truncated")), "raw_bars_returned": int(daily.get("bars_received") or 0),
+            "validated_bars": completed, "completed_sessions": completed, "required_sessions": required,
+            "session_shortfall": max(0, required - completed), "first_returned_session": daily.get("first_bar_at"),
+            "last_returned_session": daily.get("last_bar_at"), "latest_expected_completed_session": daily.get("requested_end"),
+            "exact_insufficiency_reason": reason, "safe_technical_repair_available": safe_repair,
+        }
+        rows.append(row)
+        reasons[reason] += 1
+        if safe_repair:
+            repairable.append({"symbol": row["symbol"], "activation_id": activation_id, "reason": reason, "repair": "use bounded explicit daily start/end/limit/pagination contract"})
+    sufficient = sum(1 for row in rows if row["completed_sessions"] >= row["required_sessions"])
+    repaired = sum(1 for row in rows if row["requested_start"] and row["requested_end"] and int(row["requested_limit"] or 0) >= row["required_sessions"])
+    momentum = sum(1 for review in reviews.values() if str(dict((dict(review or {}).get("required_evidence") or {}).get("MOMENTUM") or {}).get("status") or "") == "CURRENT")
+    external = [row for row in rows if row["exact_insufficiency_reason"] not in {"DAILY_SUFFICIENT", "REQUEST_RANGE_TOO_SHORT", "REQUEST_LIMIT_TOO_LOW", "PAGINATION_NOT_CONSUMED", "RESPONSE_TRUNCATED"}]
+    status = "PASS_MOMENTUM_RECOVERED" if sufficient == len(rows) and momentum else "PASS_PARTIAL_MOMENTUM_RECOVERY" if sufficient else "FAIL_WITH_REPAIRABLE_BLOCKERS" if repairable else "PASS_WITH_PROVEN_EXTERNAL_DATA_LIMITATION"
+    return {
+        "overall_status": status, "positions_processed": len(rows), "positions_request_contract_repaired": repaired,
+        "positions_pagination_repaired": sum(1 for row in rows if row["pagination_consumed"] > 1),
+        "positions_limit_repaired": sum(1 for row in rows if int(row["requested_limit"] or 0) >= row["required_sessions"]),
+        "positions_symbol_repaired": 0, "positions_feed_repaired": 0, "positions_entitlement_blocked": sum(1 for row in rows if row["exact_insufficiency_reason"] == "ENTITLEMENT_LIMITATION"),
+        "positions_plan_blocked": sum(1 for row in rows if row["exact_insufficiency_reason"] == "PLAN_LIMITATION"),
+        "positions_external_blocked": len(external), "providers_examined": ["ALPACA_MARKET_DATA", "FMP_HISTORICAL_PRICES"],
+        "providers_capable": ["ALPACA_MARKET_DATA:1Day"], "providers_miswired": ["ALPACA_MARKET_DATA:1Day"] if repairable else [],
+        "providers_disconnected": [], "providers_connected_during_run": ["ALPACA_MARKET_DATA:1Day"] if repaired else [],
+        "daily_series_sufficient": sufficient, "daily_series_insufficient": len(rows) - sufficient,
+        "daily_momentum_current": momentum, "direct_evidence_complete": sum(1 for review in reviews.values() if bool(dict(review or {}).get("direct_evidence_coverage", {}).get("required_evidence_complete"))),
+        "eligible_candidates": sum(1 for review in reviews.values() if bool(dict(review or {}).get("eligibility"))),
+        "repairable_failures": repairable, "remaining_external_blockers": external, "root_cause_distribution": dict(reasons),
+        "position_rows": rows, "read_only": True, "provider_calls": 0, "broker_actions": 0, "service_restarts": 0,
+    }
+
+
+@router.get("/api/legacy_swing_historical_data_resolution_v1")
+def legacy_swing_historical_data_resolution_v1():
+    return {"endpoint": "/api/legacy_swing_historical_data_resolution_v1", **_legacy_swing_historical_data_resolution_payload_v1(), **_safety_flags_v1()}
+
+
 @router.get("/api/astra_api_role_historical_bar_momentum_closure_diagnostic_v1")
 def astra_api_role_historical_bar_momentum_closure_diagnostic_v1():
     audit = _api_role_historical_bar_contract_payload_v1()
@@ -63802,6 +63905,7 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
     market_evidence = _broker_market_evidence_payload_v1()
     historical_bar_reliability = _legacy_swing_historical_bar_momentum_payload_v1()
     multi_provider_bars = _legacy_swing_multi_provider_bar_payload_v1()
+    historical_data_resolution = _legacy_swing_historical_data_resolution_payload_v1()
     runtime_worker_reliability = _astra_runtime_worker_reliability_payload_v1()
     legacy_exit_truth = _legacy_swing_exit_truth_closure_payload_v1()
     legacy_canary_config = legacy_swing_canary_configuration_v1()
@@ -63945,6 +64049,13 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "issue": "alpaca_unusable_without_bounded_fmp_fallback",
             "evidence": multi_provider_bars.get("repairable_failures"),
             "recommended_action": "repair the existing worker-owned fallback route and preserve canonical quality gates",
+        })
+    if historical_data_resolution.get("repairable_failures"):
+        findings.append({
+            "severity": "high", "classification": "historical_data_request_contract_defect",
+            "issue": "legacy_swing_daily_history_request_is_insufficient",
+            "evidence": historical_data_resolution.get("repairable_failures") or [],
+            "recommended_action": "repair the existing bounded historical-bar request contract; do not lower the completed-session requirement",
         })
     if runtime_worker_reliability.get("overall_status") not in {"PASS", "PASS_WITH_WARNINGS"}:
         findings.append({

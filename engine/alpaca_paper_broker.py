@@ -378,14 +378,86 @@ class AlpacaPaperBroker:
             return "TIMEOUT"
         return "PROVIDER_ERROR"
 
-    def historical_bars(self, symbol: str, timeframe: str = "1Day", limit: int = 20) -> dict[str, Any]:
+    def historical_bars(
+        self,
+        symbol: str,
+        timeframe: str = "1Day",
+        limit: int = 20,
+        *,
+        start: str | None = None,
+        end: str | None = None,
+        feed: str = "iex",
+        adjustment: str = "raw",
+        sort: str = "asc",
+        max_pages: int = 2,
+    ) -> dict[str, Any]:
+        """Read bounded historical bars with explicit, secret-free request lineage.
+
+        Alpaca otherwise defaults this endpoint to a very short recent window.
+        A date range is therefore required by the legacy-SWING daily worker; the
+        generic method remains compatible for existing quote-free read callers.
+        """
         sym = _safe_text(symbol).upper()
-        query = urllib.parse.urlencode({"timeframe": str(timeframe or "1Day"), "limit": max(5, min(60, _to_int(limit, 20))), "feed": "iex"})
-        ok, data, error, status = self._market_data_request(f"/v2/stocks/{urllib.parse.quote(sym)}/bars?{query}")
-        if not ok:
-            return {"ok": False, "symbol": sym, "response_state": self._market_error_state(status, error), "http_status": status, "error": error, "bars": [], "broker_actions": 0}
-        bars = list(data.get("bars") or []) if isinstance(data, dict) else []
-        return {"ok": True, "symbol": sym, "response_state": "SUCCESS" if bars else "EMPTY_RESPONSE", "http_status": status, "bars": bars, "broker_actions": 0}
+        requested_limit = max(5, min(60, _to_int(limit, 20)))
+        params: dict[str, Any] = {
+            "timeframe": str(timeframe or "1Day"),
+            "limit": requested_limit,
+            "feed": _safe_text(feed, "iex").lower() or "iex",
+            "adjustment": _safe_text(adjustment, "raw").lower() or "raw",
+            "sort": "asc" if _safe_text(sort, "asc").lower() != "desc" else "desc",
+        }
+        if _safe_text(start):
+            params["start"] = _safe_text(start)
+        if _safe_text(end):
+            params["end"] = _safe_text(end)
+        pages = 0
+        all_bars: list[dict[str, Any]] = []
+        next_page_token = ""
+        status = 0
+        while True:
+            page_params = dict(params)
+            if next_page_token:
+                page_params["page_token"] = next_page_token
+            query = urllib.parse.urlencode(page_params)
+            ok, data, error, status = self._market_data_request(f"/v2/stocks/{urllib.parse.quote(sym)}/bars?{query}")
+            pages += 1
+            if not ok:
+                return {
+                    "ok": False, "symbol": sym, "response_state": self._market_error_state(status, error),
+                    "http_status": status, "error": error, "bars": all_bars, "broker_actions": 0,
+                    "requested_timeframe": params["timeframe"], "requested_start": params.get("start"),
+                    "requested_end": params.get("end"), "requested_limit": requested_limit,
+                    "requested_feed": params["feed"], "requested_adjustment": params["adjustment"],
+                    "requested_sort": params["sort"], "pages_consumed": pages,
+                    "pagination_state": "PROVIDER_ERROR" if not next_page_token else "MULTI_PAGE_PARTIAL",
+                }
+            payload = dict(data or {}) if isinstance(data, dict) else {}
+            all_bars.extend(item for item in list(payload.get("bars") or []) if isinstance(item, dict))
+            token = _safe_text(payload.get("next_page_token"))
+            if not token:
+                next_page_token = ""
+                break
+            if pages >= max(1, min(4, _to_int(max_pages, 2))):
+                next_page_token = token
+                break
+            next_page_token = token
+        seen, bars = set(), []
+        for bar in all_bars:
+            fingerprint = json.dumps(bar, sort_keys=True, default=str)
+            if fingerprint not in seen:
+                seen.add(fingerprint)
+                bars.append(bar)
+        return {
+            "ok": True, "symbol": sym, "response_state": "SUCCESS" if bars else "EMPTY_RESPONSE",
+            "http_status": status, "bars": bars, "broker_actions": 0,
+            "requested_timeframe": params["timeframe"], "requested_start": params.get("start"),
+            "requested_end": params.get("end"), "requested_limit": requested_limit,
+            "requested_feed": params["feed"], "requested_adjustment": params["adjustment"],
+            "requested_sort": params["sort"], "pages_consumed": pages,
+            "next_page_token_present": bool(next_page_token), "next_page_token": next_page_token or None,
+            "pagination_state": "PAGE_LIMIT_REACHED" if next_page_token else "MULTI_PAGE_COMPLETE" if pages > 1 else "PAGE_COMPLETE",
+            "response_truncated": bool(next_page_token),
+        }
 
     def latest_quote(self, symbol: str) -> dict[str, Any]:
         sym = _safe_text(symbol).upper()
