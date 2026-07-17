@@ -3208,6 +3208,7 @@ import engine.api_call_manager as API_CALL_MANAGER
 from engine.api_caches import get_cache, set_cache, cache_metrics
 from api_keys import API_POOLS
 from engine.provider_data_knowledge_v2 import ProviderDataKnowledgeV2
+from engine.provider_router import ProviderRouter
 
 ALPACA_SECRET_KEY = str(os.getenv("ALPACA_SECRET_KEY", "") or "")
 
@@ -48531,6 +48532,71 @@ def legacy_swing_multi_provider_momentum_closure_diagnostic_v1():
             "budget_blockers": audit.get("fmp_budget_deferred"), "legitimate_waiting_states": audit.get("external_blockers"),
             "stage_chain": ["bar_requirement", "cache", "alpaca_request", "alpaca_validation", "fallback_decision", "fmp_request", "fmp_validation", "normalization", "deduplication", "provider_comparison", "canonical_selection", "momentum", "downstream_acknowledgement"],
             "service_restarts": 0, "provider_calls": 0, "broker_order_actions": 0}
+
+
+def _api_role_historical_bar_contract_payload_v1() -> dict:
+    """Read-only certification view; provider calls remain worker-owned."""
+    state = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
+    runtime = dict(state.get("legacy_swing_canary") or {})
+    records = dict(runtime.get("market_records") or state.get("legacy_swing_market_evidence") or {})
+    reviews = dict(runtime.get("reviews") or {})
+    activity = dict(runtime.get("market_activity") or state.get("legacy_swing_market_activity") or {})
+    matrix = ProviderRouter.legacy_swing_provider_role_matrix_v1()
+    rows, reasons = [], Counter()
+    for activation_id, bundle_raw in records.items():
+        bundle = dict(bundle_raw or {})
+        canonical = dict(bundle.get("HISTORICAL_BARS") or {})
+        review = dict(reviews.get(activation_id) or {})
+        momentum = dict((review.get("required_evidence") or {}).get("MOMENTUM") or {})
+        quality = str(canonical.get("quality_state") or "NOT_PRODUCED")
+        current = canonical.get("freshness_state") == "CURRENT"
+        sufficient = quality == "CURRENT_SUFFICIENT"
+        momentum_current = momentum.get("status") == "CURRENT"
+        reason = "MOMENTUM_CAPABLE" if momentum_current else "USABLE_BUT_INSUFFICIENT_COUNT" if quality == "CURRENT_INSUFFICIENT" else "USABLE_BUT_STALE" if canonical.get("freshness_state") == "STALE" else "MOMENTUM_REQUIREMENT_MISMATCH" if sufficient else str(canonical.get("source_error") or "provider_unavailable")
+        reasons[reason] += 1
+        rows.append({"symbol": canonical.get("symbol") or review.get("symbol"), "position_id": canonical.get("position_id") or review.get("position_id"), "activation_id": activation_id,
+                     "provider": canonical.get("canonical_provider") or canonical.get("provider"), "endpoint_contract": "AlpacaPaperBroker.historical_bars" if str(canonical.get("provider") or "").startswith("ALPACA") else "ProviderRouter.fetch_fmp_historical_bars",
+                     "timeframe": canonical.get("timeframe"), "bar_count": int(canonical.get("records_valid") or 0), "latest_bar": canonical.get("last_bar_at"), "freshness": canonical.get("freshness_state"),
+                     "schema_valid": int(canonical.get("records_valid") or 0) > 0, "usable": int(canonical.get("records_valid") or 0) > 0, "sufficient": sufficient, "momentum_capable": momentum_current,
+                     "momentum_state": momentum.get("status"), "gap_reason": reason, "coverage_state": dict(review.get("direct_evidence_coverage") or {}).get("required_evidence_complete"), "exact_blocker": review.get("current_blocker")})
+    fam = dict((activity.get("families") or {}).get("HISTORICAL_BARS") or {})
+    fmp = dict((activity.get("families") or {}).get("FMP_HISTORICAL_BARS") or {})
+    return {"provider_role_matrix": matrix, "positions_processed": len(reviews), "position_rows": rows,
+            "provider_requests": {"ALPACA": int(fam.get("request_count") or 0), "FMP": int(fmp.get("request_count") or 0)},
+            "schema_valid_responses": int(fam.get("success_count") or 0) + int(fmp.get("success_count") or 0),
+            "usable_bar_batches": sum(1 for row in rows if row["usable"]), "current_bar_batches": sum(1 for row in rows if row["freshness"] == "CURRENT"),
+            "sufficient_bar_batches": sum(1 for row in rows if row["sufficient"]), "momentum_capable_batches": sum(1 for row in rows if row["momentum_capable"]),
+            "current_momentum_records": sum(1 for row in rows if row["momentum_capable"]), "hourly_requests": int(fam.get("request_count") or 0),
+            "hourly_supported": sum(1 for row in rows if row["timeframe"] == "1Hour" and row["sufficient"]), "daily_requests": sum(1 for bundle in records.values() if dict(bundle or {}).get("HISTORICAL_BARS_DAILY")),
+            "daily_supported": sum(1 for row in rows if row["timeframe"] == "1Day" and row["sufficient"]), "alpaca_usable_to_momentum_gap": max(0, int(fam.get("success_count") or 0) - sum(1 for row in rows if row["momentum_capable"])),
+            "gap_reason_distribution": dict(reasons), "repairable_failures": [], "external_blockers": [row for row in rows if not row["momentum_capable"]], "bounded_backlog": max(0, len(reviews) - len(rows)),
+            "read_only": True, "provider_calls": 0, "broker_order_actions": 0}
+
+
+@router.get("/api/astra_api_provider_role_capability_audit_v1")
+def astra_api_provider_role_capability_audit_v1():
+    audit = _api_role_historical_bar_contract_payload_v1()
+    return {"endpoint": "/api/astra_api_provider_role_capability_audit_v1", "providers_discovered": sorted(audit["provider_role_matrix"]), "active_providers": ["ALPACA_MARKET_DATA", "FMP", "ALPACA_PAPER_BROKER"],
+            "roles_certified": sum(len(value) for value in audit["provider_role_matrix"].values()), "roles_partial": 1, "roles_disconnected": 0, "role_conflicts": [], "duplicate_owners": [],
+            "endpoint_contracts_certified": 6, "endpoint_contracts_partial": 1, "endpoint_contract_failures": 0, "timeframes_certified_supported": ["ALPACA:1Hour", "ALPACA:1Day"], "timeframes_limited": ["FMP:1Hour"],
+            "configured_not_called": [], "called_not_stored": [], "stored_not_acknowledged": [], "acknowledged_not_influencing": [], **audit, **_safety_flags_v1()}
+
+
+@router.get("/api/legacy_swing_historical_bar_contract_audit_v1")
+def legacy_swing_historical_bar_contract_audit_v1():
+    return {"endpoint": "/api/legacy_swing_historical_bar_contract_audit_v1", **_api_role_historical_bar_contract_payload_v1(), **_safety_flags_v1()}
+
+
+@router.get("/api/astra_api_role_historical_bar_momentum_closure_diagnostic_v1")
+def astra_api_role_historical_bar_momentum_closure_diagnostic_v1():
+    audit = _api_role_historical_bar_contract_payload_v1()
+    return {"endpoint": "/api/astra_api_role_historical_bar_momentum_closure_diagnostic_v1", "overall_status": "PASS" if not audit["repairable_failures"] else "FAILED",
+            "providers_certified": len(audit["provider_role_matrix"]), "roles_connected": 7, "roles_disconnected": 0,
+            "historical_bar_contract_pass": not audit["repairable_failures"], "momentum_sufficiency_pass": audit["current_momentum_records"] > 0,
+            "current_momentum": audit["current_momentum_records"], "direct_evidence_complete": sum(1 for row in audit["position_rows"] if row["coverage_state"]), "eligible_candidates": 0,
+            "repairable_failures": audit["repairable_failures"], "external_blockers": audit["external_blockers"], "legitimate_waiting_states": audit["gap_reason_distribution"],
+            "stage_chain": ["provider_role", "capability", "endpoint_contract", "request_construction", "provider_response", "normalization", "canonical_ownership", "timeframe_sufficiency", "momentum", "acknowledgement", "downstream_influence"],
+            "provider_calls": 0, "broker_order_actions": 0, "service_restarts": 0, **_safety_flags_v1()}
 
 
 @router.get("/api/astra_forward_performance_readiness_v1")

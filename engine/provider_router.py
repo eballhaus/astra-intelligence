@@ -263,6 +263,28 @@ class ProviderRouter:
 
     RATE_LIMIT_COOLDOWN_SECONDS = 120
 
+    @staticmethod
+    def legacy_swing_provider_role_matrix_v1() -> dict[str, Any]:
+        """Canonical, secret-free role contract for legacy-SWING evidence."""
+        return {
+            "ALPACA_MARKET_DATA": [
+                {"role": "HISTORICAL_INTRADAY_BARS", "endpoint": "AlpacaPaperBroker.historical_bars", "timeframes": ["1Hour"], "session_scope": "REGULAR_SESSION", "certification_state": "CERTIFIED_PRIMARY"},
+                {"role": "HISTORICAL_DAILY_BARS", "endpoint": "AlpacaPaperBroker.historical_bars", "timeframes": ["1Day"], "session_scope": "DAILY_COMPLETED_BARS", "certification_state": "CERTIFIED_FALLBACK"},
+                {"role": "LATEST_QUOTE", "endpoint": "AlpacaPaperBroker.latest_quote", "certification_state": "CERTIFIED_PRIMARY"},
+                {"role": "ASSET_METADATA", "endpoint": "AlpacaPaperBroker.asset_metadata", "certification_state": "CERTIFIED_PRIMARY"},
+            ],
+            "FMP": [
+                {"role": "HISTORICAL_INTRADAY_BARS", "endpoint": "ProviderRouter.fetch_fmp_historical_bars", "timeframes": ["1Hour"], "session_scope": "REGULAR_SESSION", "certification_state": "PARTIALLY_CERTIFIED"},
+                {"role": "COMPANY_PROFILE", "endpoint": "ProviderRouter.fetch_fmp_profile_context", "certification_state": "CERTIFIED_CONTEXT_ONLY"},
+            ],
+            "ALPACA_PAPER_BROKER": [
+                {"role": "BROKER_ACCOUNT_TRUTH", "certification_state": "CERTIFIED_BROKER_TRUTH"},
+                {"role": "BROKER_POSITION_TRUTH", "certification_state": "CERTIFIED_BROKER_TRUTH"},
+                {"role": "BROKER_ORDER_TRUTH", "certification_state": "CERTIFIED_BROKER_TRUTH"},
+                {"role": "BROKER_FILL_TRUTH", "certification_state": "CERTIFIED_BROKER_TRUTH"},
+            ],
+        }
+
     def __init__(self) -> None:
         self._stock_keys = {
             str(name).upper(): str(key or "") for name, key in (API_POOLS.get("stocks") or [])

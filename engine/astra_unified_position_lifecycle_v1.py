@@ -469,15 +469,17 @@ def build_legacy_swing_required_evidence_v1(position: Mapping[str, Any], baselin
     bar_freshness = _text(bar_context.get("freshness_state")).upper()
     bar_quality = _text(bar_context.get("quality_state")).upper()
     bar_provider = _text(bar_context.get("canonical_provider") or bar_context.get("provider") or "AlpacaPaperBroker.historical_bars")
+    bar_timeframe = _text(bar_context.get("timeframe") or "1Hour")
     if bar_state == "SUCCESS" and bar_freshness == "CURRENT" and bar_quality not in {"CURRENT_INSUFFICIENT", "STALE_INSUFFICIENT", "EMPTY", "INVALID", "PROVIDER_FAILED", "CONFLICT_BLOCKED"} and len(closes) >= 5:
         short = (closes[-1] / closes[-3] - 1.0) * 100.0
         medium = (closes[-1] / closes[0] - 1.0) * 100.0
         direction = "POSITIVE" if short > 0.25 and medium >= 0 else "NEGATIVE" if short < -0.25 and medium <= 0 else "STABLE"
         breakdown = "BREAKDOWN" if short < -1.0 and medium < -1.0 else "BREAKOUT" if short > 1.0 and medium > 1.0 else "NONE"
         volume_confirmation = "CONFIRMED" if len(volumes) >= 3 and volumes[-1] >= sum(volumes[-3:]) / 3.0 else "UNAVAILABLE" if not volumes else "NOT_CONFIRMED"
-        momentum = record("MOMENTUM", "CURRENT", direction, 0.65, [] if volume_confirmation != "UNAVAILABLE" else ["volume_confirmation_unavailable"],
+        momentum = record("MOMENTUM", "CURRENT", direction, 0.60 if bar_timeframe == "1Day" else 0.65, ([] if volume_confirmation != "UNAVAILABLE" else ["volume_confirmation_unavailable"]) + (["daily_swing_fallback_no_intraday_precision"] if bar_timeframe == "1Day" else []),
                           source=bar_provider, provider_record_ids=[bar_context.get("record_id")], source_provider=bar_provider,
                           fallback_used=bool(bar_context.get("fallback_used")), provider_comparison_state=bar_context.get("provider_comparison_state"),
+                          momentum_timeframe=bar_timeframe, momentum_contract=bar_context.get("momentum_contract") or ("LEGACY_SWING_DAILY" if bar_timeframe == "1Day" else "LEGACY_SWING_HOURLY"),
                           short_term_direction=direction, medium_term_direction="POSITIVE" if medium > 0 else "NEGATIVE" if medium < 0 else "STABLE",
                           momentum_score=round((short + medium) / 2.0, 6), momentum_acceleration=round(short - medium, 6),
                           trend_strength=abs(round(medium, 6)), volume_confirmation=volume_confirmation,

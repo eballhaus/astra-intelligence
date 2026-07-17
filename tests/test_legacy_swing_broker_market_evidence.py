@@ -19,7 +19,7 @@ class _MarketDataFixture:
         self.bar_calls.append(symbol)
         bars = []
         for index, close in enumerate((10.0, 10.1, 10.2, 10.35, 10.5, 10.7)):
-            bars.append({"t": f"2026-07-{10 + index:02d}T20:00:00Z", "o": close - 0.1, "h": close + 0.15, "l": close - 0.2, "c": close, "v": 1000 + index})
+            bars.append({"t": f"2026-07-15T{14 + index:02d}:00:00Z", "o": close - 0.1, "h": close + 0.15, "l": close - 0.2, "c": close, "v": 1000 + index})
         return {"ok": True, "symbol": symbol, "response_state": "SUCCESS", "http_status": 200, "bars": bars, "broker_actions": 0}
 
     def latest_quote(self, symbol):
@@ -132,6 +132,23 @@ class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
         _records, activity = engine._refresh_legacy_swing_broker_market_evidence(_registry())
         self.assertEqual(calls, [])
         self.assertGreaterEqual(activity["fmp_requests_avoided"], 1)
+
+    def test_certified_daily_swing_fallback_remains_distinct_from_hourly(self):
+        class _DailyFallback(_EmptyBars):
+            def historical_bars(self, symbol, **kwargs):
+                if kwargs.get("timeframe") == "1Day":
+                    return {"response_state": "SUCCESS", "bars": [
+                        {"t": f"2026-07-{10 + index:02d}T00:00:00Z", "o": 10, "h": 11, "l": 9, "c": 10 + index * .1, "v": 1000}
+                        for index in range(6)
+                    ]}
+                return super().historical_bars(symbol, **kwargs)
+        engine = _engine(_DailyFallback())
+        records, _activity = engine._refresh_legacy_swing_broker_market_evidence(_registry())
+        bar = records["activation-a"]["HISTORICAL_BARS"]
+        self.assertEqual(bar["timeframe"], "1Day")
+        self.assertEqual(bar["momentum_contract"], "LEGACY_SWING_DAILY")
+        evidence = build_legacy_swing_required_evidence_v1({"symbol": "AAA", "broker_bar_record": bar}, _registry()["activation-a"])
+        self.assertEqual(evidence["MOMENTUM"]["momentum_timeframe"], "1Day")
     def test_existing_client_uses_read_only_market_routes(self):
         broker = AlpacaPaperBroker()
         broker._market_data_request = lambda path: (True, {"bars": [{"t": "2026-07-16T00:00:00Z"}]}, "", 200)  # type: ignore[method-assign]

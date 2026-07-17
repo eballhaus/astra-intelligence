@@ -2228,7 +2228,7 @@ class PaperAutopilotEngine:
             return False
         family = str(record.get("request_family") or "").upper()
         quality = str(record.get("quality_state") or "").upper()
-        if family == "HISTORICAL_BARS" and str(record.get("timeframe") or "") != "1Hour":
+        if family == "HISTORICAL_BARS" and str(record.get("timeframe") or "") not in {"1Hour", "1Day"}:
             return False
         if family == "HISTORICAL_BARS" and (int(record.get("records_valid") or 0) < 5 or quality in {"CURRENT_INSUFFICIENT", "STALE_INSUFFICIENT", "EMPTY", "INVALID", "PROVIDER_FAILED"}):
             return False
@@ -2316,7 +2316,7 @@ class PaperAutopilotEngine:
     @staticmethod
     def _normalize_legacy_swing_bar_response(
         response: dict[str, Any], *, provider: str, family: str, activation_id: str,
-        position_id: str | None, symbol: str, now: datetime,
+        position_id: str | None, symbol: str, now: datetime, timeframe: str = "1Hour",
     ) -> dict[str, Any]:
         """Normalize one provider-native hourly batch without merging providers."""
         raw_bars = list(response.get("bars") or [])
@@ -2335,16 +2335,18 @@ class PaperAutopilotEngine:
             seen.add(timestamp)
             try:
                 local = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).astimezone(ZoneInfo("America/New_York"))
-                session_type = "REGULAR_SESSION" if local.weekday() < 5 and ((local.hour > 9 or (local.hour == 9 and local.minute >= 30)) and local.hour < 16) else "PRE_MARKET" if local.hour < 9 or (local.hour == 9 and local.minute < 30) else "AFTER_HOURS"
+                # Provider timestamps identify the bar close.  A 16:00 ET
+                # hourly timestamp is the completed 15:00-16:00 regular bar.
+                session_type = "REGULAR_SESSION" if local.weekday() < 5 and ((local.hour > 9 or (local.hour == 9 and local.minute >= 30)) and local.hour <= 16) else "PRE_MARKET" if local.hour < 9 or (local.hour == 9 and local.minute < 30) else "AFTER_HOURS"
             except (TypeError, ValueError):
                 continue
-            fingerprint = hashlib.sha256(f"{symbol}|1Hour|{timestamp}|{session_type}|{o:.8f}|{h:.8f}|{l:.8f}|{c:.8f}|{volume:.4f}".encode("utf-8")).hexdigest()[:24]
+            fingerprint = hashlib.sha256(f"{symbol}|{timeframe}|{timestamp}|{session_type}|{o:.8f}|{h:.8f}|{l:.8f}|{c:.8f}|{volume:.4f}".encode("utf-8")).hexdigest()[:24]
             bars.append({"bar_id": f"legacy-bar:{fingerprint}", "bar_fingerprint": fingerprint, "timestamp": timestamp, "session_type": session_type, "open": o, "high": h, "low": l, "close": c, "volume": volume, "provider": provider, "provider_adjustment_state": "UNKNOWN"})
         bars.sort(key=lambda item: item["timestamp"])
         # Legacy momentum is regular-session hourly evidence.  Preserve any
         # extended-hours bars in native provenance, never mix them into it.
         regular = [bar for bar in bars if bar["session_type"] == "REGULAR_SESSION"]
-        usable = regular if regular else bars
+        usable = bars if timeframe == "1Day" else (regular if regular else bars)
         received = len(raw_bars)
         valid = len(usable)
         source_state = str(response.get("response_state") or "PROVIDER_ERROR").upper()
@@ -2361,8 +2363,8 @@ class PaperAutopilotEngine:
             "schema_version": "legacy_swing_multi_provider_bar_batch_v1", "record_id": record_id,
             "request_id": str(response.get("request_id") or f"legacy-market-request:{family.lower()}:{provider.lower()}:{activation_id}:{now.strftime('%Y%m%d%H%M%S')}") ,
             "request_family": family, "provider": provider, "activation_id": activation_id, "position_id": position_id,
-            "symbol": symbol, "asset_class": "equity", "lane": "SWING", "timeframe": "1Hour",
-            "session_scope": "REGULAR_SESSION" if regular else "UNKNOWN_SESSION", "requested_at": response.get("requested_at") or now_iso,
+            "symbol": symbol, "asset_class": "equity", "lane": "SWING", "timeframe": timeframe,
+            "session_scope": "REGULAR_SESSION" if regular else "DAILY_COMPLETED_BARS" if timeframe == "1Day" else "UNKNOWN_SESSION", "requested_at": response.get("requested_at") or now_iso,
             "received_at": response.get("response_at") or now_iso, "response_state": state, "source_state": source_state,
             "http_status": int(response.get("http_status") or 0), "bars": usable, "bars_received": received,
             "records_received": int(response.get("records_received") or received), "records_valid": valid,
@@ -2397,7 +2399,7 @@ class PaperAutopilotEngine:
         records: dict[str, dict[str, dict[str, Any]]] = {}
         for activation_id, raw in raw_store.items():
             bundle = dict(raw or {})
-            valid = {family: dict(value or {}) for family, value in bundle.items() if family in {"HISTORICAL_BARS", "HISTORICAL_BARS_ALPACA", "HISTORICAL_BARS_FMP", "HISTORICAL_BARS_ROUTING", "LATEST_QUOTE", "ASSET_METADATA"} and isinstance(value, dict) and value.get("record_id")}
+            valid = {family: dict(value or {}) for family, value in bundle.items() if family in {"HISTORICAL_BARS", "HISTORICAL_BARS_ALPACA", "HISTORICAL_BARS_FMP", "HISTORICAL_BARS_DAILY", "HISTORICAL_BARS_ROUTING", "LATEST_QUOTE", "ASSET_METADATA"} and isinstance(value, dict) and value.get("record_id")}
             for family, market_record in valid.items():
                 market_record.setdefault("activation_id", activation_id)
                 market_record.setdefault("position_id", (dict(registry.get(activation_id) or {})).get("position_id"))
@@ -2408,7 +2410,7 @@ class PaperAutopilotEngine:
                 state = str(market_record.get("response_state") or "").upper()
                 quality = str(market_record.get("quality_state") or "").upper()
                 freshness = str(market_record.get("freshness_state") or "").upper()
-                if family in {"HISTORICAL_BARS", "HISTORICAL_BARS_ALPACA", "HISTORICAL_BARS_FMP"}:
+                if family in {"HISTORICAL_BARS", "HISTORICAL_BARS_ALPACA", "HISTORICAL_BARS_FMP", "HISTORICAL_BARS_DAILY"}:
                     if state == "EMPTY_RESPONSE" or (
                         not list(market_record.get("bars") or [])
                         and int(market_record.get("records_received") or market_record.get("bars_received") or 0) == 0
@@ -2531,6 +2533,7 @@ class PaperAutopilotEngine:
                     bundle["HISTORICAL_BARS_ALPACA"] = alpaca
                     fallback_required = alpaca.get("quality_state") != "CURRENT_SUFFICIENT"
                     fmp: dict[str, Any] = {}
+                    daily: dict[str, Any] = {}
                     comparison: dict[str, Any] = {}
                     if fallback_required:
                         fallback_activity = activity["families"]["FMP_HISTORICAL_BARS"]
@@ -2559,6 +2562,15 @@ class PaperAutopilotEngine:
                             activity["budget_deferred_symbols"] = sorted(set(activity["budget_deferred_symbols"] + [symbol]))
                         if alpaca.get("records_valid") and fmp.get("records_valid"):
                             comparison = self._compare_legacy_swing_bar_batches(alpaca, fmp)
+                    if fallback_required and fmp.get("quality_state") != "CURRENT_SUFFICIENT" and broker is not None and callable(getattr(broker, "historical_bars", None)):
+                        self._note_worker_progress(f"market_data:HISTORICAL_BARS_DAILY:{symbol}")
+                        daily_response = dict(broker.historical_bars(symbol, timeframe="1Day", limit=20) or {})
+                        daily = self._normalize_legacy_swing_bar_response(
+                            daily_response, provider="ALPACA_MARKET_DATA", family="HISTORICAL_BARS",
+                            activation_id=activation_id, position_id=record.get("position_id"), symbol=symbol, now=now, timeframe="1Day",
+                        )
+                        daily["momentum_contract"] = "LEGACY_SWING_DAILY"
+                        bundle["HISTORICAL_BARS_DAILY"] = daily
                     selected = alpaca
                     routing_state = "ALPACA_PRIMARY_ACCEPTED"
                     if fallback_required:
@@ -2569,6 +2581,9 @@ class PaperAutopilotEngine:
                         elif fmp.get("quality_state") == "CURRENT_SUFFICIENT":
                             selected = dict(fmp)
                             routing_state = "FMP_FALLBACK_ACCEPTED"
+                        elif daily.get("quality_state") == "CURRENT_SUFFICIENT":
+                            selected = dict(daily)
+                            routing_state = "ALPACA_DAILY_FALLBACK_ACCEPTED"
                         elif alpaca.get("quality_state") == "CURRENT_INSUFFICIENT":
                             routing_state = "FMP_FALLBACK_INSUFFICIENT"
                         elif alpaca.get("quality_state") == "EMPTY":
@@ -2583,6 +2598,7 @@ class PaperAutopilotEngine:
                         "canonical_provider": selected.get("provider"), "candidate_record_ids": [value.get("record_id") for value in (alpaca, fmp) if value.get("record_id")],
                         "provider_comparison": comparison, "provider_comparison_state": comparison.get("comparison_state") or ("PRIMARY_INSUFFICIENT_FALLBACK_ACCEPTED" if selected.get("provider") == "FMP_HISTORICAL_PRICES" else "NOT_REQUIRED"),
                         "fallback_used": bool(selected.get("provider") == "FMP_HISTORICAL_PRICES"), "routing_state": routing_state,
+                        "momentum_contract": "LEGACY_SWING_DAILY" if selected.get("timeframe") == "1Day" else "LEGACY_SWING_HOURLY",
                     })
                     canonical = self._legacy_swing_market_prefer_record(previous, selected, now, config[family][1])
                     bundle["HISTORICAL_BARS"] = canonical
