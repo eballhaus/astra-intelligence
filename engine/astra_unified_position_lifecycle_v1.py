@@ -119,7 +119,8 @@ def build_legacy_swing_direct_confirmation_v1(
     classification = _text(decision.get("classification")).upper()
     momentum, thesis, liquidity = (dict(evidence.get("MOMENTUM") or {}), dict(evidence.get("THESIS_STATE") or {}), dict(evidence.get("LIQUIDITY") or {}))
     quote = dict(row.get("broker_quote_record") or {})
-    current = all(str(item.get("status") or "").upper() == "CURRENT" for item in (momentum, thesis, liquidity))
+    coverage = dict(row.get("direct_evidence_coverage") or {})
+    current = bool(coverage.get("required_evidence_complete")) if coverage else all(str(item.get("status") or "").upper() == "CURRENT" for item in (momentum, thesis, liquidity))
     quote_current = str(quote.get("freshness_state") or "").upper() == "CURRENT" and _num(quote.get("bid")) not in (None, 0.0) and _num(quote.get("ask")) not in (None, 0.0)
     conflict = bool(decision.get("evidence_conflicting") or row.get("direct_evidence_conflicting"))
     stale = bool(decision.get("evidence_stale")) or any(str(item.get("freshness") or item.get("freshness_state") or "").upper() == "STALE" for item in (momentum, thesis, liquidity))
@@ -158,9 +159,47 @@ def build_legacy_swing_direct_confirmation_v1(
         "conflicting_evidence": conflict, "quote_record_id": quote.get("record_id"), "bar_record_id": momentum.get("record_id"),
         "liquidity_record_id": liquidity.get("record_id"), "thesis_record_id": thesis.get("record_id"),
         "classification_record_id": activation_id, "freshness_state": "CURRENT" if current and quote_current else "STALE" if stale else "UNAVAILABLE",
-        "quality_state": "PASS" if state.startswith("CONFIRMED") else state, "limitations": missing,
+        "quality_state": "PASS" if state.startswith("CONFIRMED") else state, "limitations": missing + list(coverage.get("missing_evidence") or []),
         "next_confirmation_at": _iso(datetime.now(timezone.utc) + timedelta(hours=1)), "retry_count": 0,
     }
+
+
+def build_legacy_swing_direct_evidence_coverage_v1(position: Mapping[str, Any], baseline: Mapping[str, Any], evidence: Mapping[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
+    """Canonical current-direct-evidence coverage; contextual evidence never counts as complete."""
+    row, base, required = dict(position or {}), dict(baseline or {}), dict(evidence or {})
+    states = {name: str(dict(required.get(name) or {}).get("status") or "MISSING").upper() for name in ("MOMENTUM", "THESIS_STATE", "LIQUIDITY")}
+    quote = dict(row.get("broker_quote_record") or {})
+    quote_current = str(quote.get("freshness_state") or "").upper() == "CURRENT" and _num(quote.get("bid")) not in (None, 0.0) and _num(quote.get("ask")) not in (None, 0.0)
+    asset = dict(row.get("broker_asset_record") or {})
+    tradable = str(asset.get("freshness_state") or "").upper() == "CURRENT" and bool(asset.get("tradable"))
+    missing = [name for name, state in states.items() if state != "CURRENT"] + ([] if quote_current else ["QUOTE"]) + ([] if tradable else ["TRADABILITY"])
+    stale = [name for name, item in required.items() if str(dict(item or {}).get("freshness") or "").upper() == "STALE"]
+    complete = not missing and not stale
+    position_id = _text(row.get("position_id") or row.get("asset_id") or base.get("position_id"))
+    activation_id = _text(base.get("baseline_id") or row.get("activation_id"))
+    return {"schema_version": "legacy_swing_direct_evidence_coverage_v1", "coverage_id": f"legacy-coverage:{activation_id or position_id}", "position_id": position_id, "activation_id": activation_id, "symbol": _text(row.get("symbol")).upper(), "as_of": _iso(now), "quote_state": "CURRENT" if quote_current else "MISSING", "bar_state": states["MOMENTUM"], "momentum_state": states["MOMENTUM"], "liquidity_state": states["LIQUIDITY"], "tradability_state": "CURRENT" if tradable else "MISSING", "thesis_state": states["THESIS_STATE"], "mfe_state": "CURRENT" if _num(row.get("mfe")) is not None else "INSUFFICIENT", "mae_state": "CURRENT" if _num(row.get("mae")) is not None else "INSUFFICIENT", "giveback_state": "CURRENT" if _num(row.get("profit_giveback_pct") or row.get("giveback")) is not None else "INSUFFICIENT", "return_per_day_state": "CURRENT" if _num(row.get("return_per_day")) is not None else "INSUFFICIENT", "position_age_state": "CURRENT" if _num(row.get("days_held")) is not None else "INSUFFICIENT", "required_evidence_complete": complete, "missing_evidence": missing, "stale_evidence": stale, "conflicting_evidence": [], "last_complete_at": _iso(now) if complete else None, "coverage_percentage": round((5 - len(missing)) / 5 * 100, 2), "next_refresh_at": _iso(datetime.now(timezone.utc) + timedelta(minutes=15 if not complete else 60)), "refresh_priority": 100 if not complete else 25}
+
+
+def build_legacy_swing_forward_value_v1(position: Mapping[str, Any], decision: Mapping[str, Any], coverage: Mapping[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
+    row, d, c = dict(position or {}), dict(decision or {}), dict(coverage or {})
+    ret, rpd = _num(row.get("unrealized_return_pct") or row.get("unrealized_plpc")), _num(row.get("return_per_day"))
+    state = "INSUFFICIENT_FORWARD_EVIDENCE" if not c.get("required_evidence_complete") else "REDUCE_FORWARD_VALUE" if str(d.get("classification") or "") == "REDUCE_RISK" else "WATCH_FORWARD_VALUE" if str(d.get("classification") or "") == "HOLD_WITH_WATCH" else "HOLD_FORWARD_VALUE"
+    return {"forward_value_id": f"legacy-forward-value:{c.get('activation_id')}", "position_id": c.get("position_id"), "activation_id": c.get("activation_id"), "symbol": c.get("symbol"), "as_of": _iso(now), "classification": d.get("classification"), "current_position_value": _num(row.get("market_value")), "current_unrealized_return": ret, "position_age": _num(row.get("days_held")), "hold_duration": _num(row.get("days_held")), "return_per_day": rpd, "momentum_state": row.get("momentum_state"), "thesis_state": row.get("thesis_state"), "liquidity_state": row.get("liquidity_state"), "MFE": _num(row.get("mfe")), "MAE": _num(row.get("mae")), "peak_unrealized": _num(row.get("peak_unrealized")), "giveback": _num(row.get("profit_giveback_pct") or row.get("giveback")), "forward_value_state": state, "forward_value_score": ret or 0.0, "forward_value_confidence": 0.8 if c.get("required_evidence_complete") else 0.0, "supporting_evidence": [], "opposing_evidence": [], "limitations": c.get("missing_evidence") or [], "next_review_at": c.get("next_refresh_at")}
+
+
+def build_legacy_swing_opportunity_cost_v1(coverage: Mapping[str, Any], forward_value: Mapping[str, Any], context: Mapping[str, Any] | None = None, *, now: datetime | None = None) -> dict[str, Any]:
+    c, f, ctx = dict(coverage or {}), dict(forward_value or {}), dict(context or {})
+    alternative = dict(ctx.get("replacement_analysis") or {})
+    qualified = bool(alternative.get("qualified"))
+    state = "INSUFFICIENT_EVIDENCE" if not c.get("required_evidence_complete") else "REPLACE_CANDIDATE" if qualified and _num(alternative.get("expected_advantage")) and _num(alternative.get("expected_advantage")) > 0 else "NO_QUALIFIED_ALTERNATIVE"
+    return {"opportunity_cost_id": f"legacy-opportunity:{c.get('activation_id')}", "position_id": c.get("position_id"), "activation_id": c.get("activation_id"), "symbol": c.get("symbol"), "as_of": _iso(now), "current_forward_value": f.get("forward_value_score"), "current_expected_return_per_day": f.get("return_per_day"), "alternative_available": qualified, "alternative_symbol_or_archetype": alternative.get("archetype"), "switching_advantage": alternative.get("expected_advantage"), "opportunity_cost_score": _num(alternative.get("expected_advantage")) or 0.0, "opportunity_cost_confidence": 0.5 if qualified else 0.0, "opportunity_cost_state": state, "limitations": f.get("limitations") or [], "advisory_only": True}
+
+
+def build_legacy_swing_profit_capture_v1(position: Mapping[str, Any], coverage: Mapping[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
+    row, c = dict(position or {}), dict(coverage or {})
+    ret, peak, giveback = _num(row.get("unrealized_return_pct") or row.get("unrealized_plpc")) or 0.0, _num(row.get("peak_unrealized")) or 0.0, _num(row.get("profit_giveback_pct") or row.get("giveback")) or 0.0
+    state = "INSUFFICIENT_EVIDENCE" if not c.get("required_evidence_complete") else "PROTECT_PROFIT" if peak > 0 and giveback >= 2 else "WATCH_GIVEBACK" if peak > 0 and giveback > 0 else "HEALTHY_CONTINUATION"
+    return {"profit_capture_id": f"legacy-profit-capture:{c.get('activation_id')}", "position_id": c.get("position_id"), "activation_id": c.get("activation_id"), "symbol": c.get("symbol"), "as_of": _iso(now), "entry_price": _num(row.get("legacy_activation_price")), "current_price": _num(row.get("current_price") or row.get("market_price")), "current_unrealized_return": ret, "peak_unrealized_return": peak, "MFE": _num(row.get("mfe")), "MAE": _num(row.get("mae")), "giveback_percentage": giveback, "profit_capture_percentage": max(0.0, peak - giveback), "profit_capture_state": state, "protection_urgency": "HIGH" if state == "PROTECT_PROFIT" else "LOW", "confidence": 0.8 if c.get("required_evidence_complete") else 0.0, "supporting_evidence": [], "limitations": c.get("missing_evidence") or []}
 
 
 def evaluate_legacy_swing_canary_eligibility_v1(position: Mapping[str, Any], decision: Mapping[str, Any], configuration: Mapping[str, Any]) -> dict[str, Any]:

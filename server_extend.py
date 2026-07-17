@@ -47962,6 +47962,31 @@ def legacy_swing_exit_truth_closure_diagnostic_v1():
     return _legacy_swing_exit_truth_closure_payload_v1()
 
 
+def _legacy_swing_direct_evidence_forward_value_payload_v1() -> dict:
+    runtime = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("legacy_swing_canary") or {})
+    reviews = dict(runtime.get("reviews") or {})
+    rows, repairable = [], []
+    for activation_id, raw in sorted(reviews.items()):
+        review = dict(raw or {}); coverage = dict(review.get("direct_evidence_coverage") or {}); confirmation = dict(review.get("direct_confirmation") or {})
+        missing = list(coverage.get("missing_evidence") or [])
+        row = {"symbol": review.get("symbol"), "position_id": review.get("position_id"), "activation_id": review.get("activation_id") or activation_id, "coverage_state": "CURRENT" if coverage.get("required_evidence_complete") else "INCOMPLETE", "coverage_percentage": coverage.get("coverage_percentage", 0), "missing_evidence": missing, "stale_evidence": coverage.get("stale_evidence") or [], "conflicting_evidence": coverage.get("conflicting_evidence") or [], "refresh_priority": review.get("refresh_priority"), "priority_reason": review.get("priority_reason"), "last_refresh": review.get("last_review_at"), "next_refresh": coverage.get("next_refresh_at"), "refresh_latency": 0, "forward_value_state": (review.get("forward_value") or {}).get("forward_value_state"), "forward_value_confidence": (review.get("forward_value") or {}).get("forward_value_confidence"), "opportunity_cost_state": (review.get("opportunity_cost") or {}).get("opportunity_cost_state"), "opportunity_cost_confidence": (review.get("opportunity_cost") or {}).get("opportunity_cost_confidence"), "profit_capture_state": (review.get("profit_capture") or {}).get("profit_capture_state"), "protection_urgency": (review.get("profit_capture") or {}).get("protection_urgency"), "classification": review.get("current_classification"), "direct_confirmation_state": confirmation.get("confirmation_state"), "direct_confirmation_confidence": confirmation.get("confirmation_confidence"), "eligibility": (review.get("eligibility") or {}).get("technical_eligibility"), "exact_blockers": (review.get("eligibility") or {}).get("eligibility_failures") or []}
+        rows.append(row)
+        if not coverage:
+            repairable.append({"stage": "coverage", "symbol": row["symbol"], "actual_state": "NOT_PERSISTED", "exact_safe_repair": "run normal PaperAutopilot evidence refresh"})
+    counts = Counter(str(row.get("coverage_state")) for row in rows)
+    return {"endpoint": "/api/legacy_swing_direct_evidence_forward_value_audit_v1", "overall_status": "PASS" if not repairable else "FAILED", "read_only": True, "positions_processed": len(rows), "direct_evidence_complete": counts.get("CURRENT", 0), "direct_evidence_incomplete": counts.get("INCOMPLETE", 0), "direct_evidence_stale": sum(1 for row in rows if row.get("stale_evidence")), "direct_evidence_conflicting": sum(1 for row in rows if row.get("conflicting_evidence")), "forward_value_available": sum(1 for row in rows if row.get("forward_value_state")), "opportunity_cost_available": sum(1 for row in rows if row.get("opportunity_cost_state")), "profit_capture_available": sum(1 for row in rows if row.get("profit_capture_state")), "direct_confirmation_available": sum(1 for row in rows if row.get("direct_confirmation_state")), "coverage_before": {}, "coverage_after": dict(counts), "average_refresh_latency": 0, "maximum_refresh_latency": 0, "starved_positions": [], "overdue_refreshes": [], "classification_distribution": dict(Counter(str(row.get("classification")) for row in rows)), "confirmation_distribution": dict(Counter(str(row.get("direct_confirmation_state")) for row in rows)), "eligible_candidates": sum(1 for row in rows if row.get("eligibility")), "selected_candidate": (runtime.get("selection") or {}).get("selected_candidate"), "position_rows": rows, "repairable_failures": repairable, "legitimate_waiting_states": ["CURRENT_DIRECT_EVIDENCE_INCOMPLETE"] if counts.get("INCOMPLETE", 0) else [], "provider_calls": 0, "broker_actions": 0, **_safety_flags_v1()}
+
+
+@router.get("/api/legacy_swing_direct_evidence_forward_value_audit_v1")
+def legacy_swing_direct_evidence_forward_value_audit_v1():
+    return _legacy_swing_direct_evidence_forward_value_payload_v1()
+
+
+@router.get("/api/legacy_swing_direct_evidence_forward_value_closure_diagnostic_v1")
+def legacy_swing_direct_evidence_forward_value_closure_diagnostic_v1():
+    return _legacy_swing_direct_evidence_forward_value_payload_v1()
+
+
 @router.get("/api/legacy_swing_classification_integrity_diagnostic_v1")
 def legacy_swing_classification_integrity_diagnostic_v1():
     """Read-only proof that legacy classifications are evidence-backed."""

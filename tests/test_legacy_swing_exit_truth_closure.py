@@ -1,6 +1,12 @@
 import unittest
 
-from engine.astra_unified_position_lifecycle_v1 import build_legacy_swing_direct_confirmation_v1
+from engine.astra_unified_position_lifecycle_v1 import (
+    build_legacy_swing_direct_confirmation_v1,
+    build_legacy_swing_direct_evidence_coverage_v1,
+    build_legacy_swing_forward_value_v1,
+    build_legacy_swing_opportunity_cost_v1,
+    build_legacy_swing_profit_capture_v1,
+)
 from engine.paper_autopilot import PaperAutopilotEngine
 
 
@@ -61,6 +67,23 @@ class LegacySwingExitTruthClosureTests(unittest.TestCase):
         self.assertEqual(result["reconciliation_state"], "RECONCILED_PARTIAL")
         self.assertFalse(lifecycle["closures"])
         self.assertFalse(lifecycle["capacity_releases"])
+
+    def test_coverage_forward_value_opportunity_and_profit_capture_remain_advisory(self):
+        position = {**_position(), "broker_asset_record": {"freshness_state": "CURRENT", "tradable": True}, "mfe": 5, "mae": -2, "peak_unrealized": 5, "profit_giveback_pct": 3, "unrealized_return_pct": 2, "days_held": 5, "return_per_day": 0.4}
+        coverage = build_legacy_swing_direct_evidence_coverage_v1(position, {"baseline_id": "activation-1"}, _evidence())
+        self.assertTrue(coverage["required_evidence_complete"])
+        forward = build_legacy_swing_forward_value_v1(position, _decision(), coverage)
+        opportunity = build_legacy_swing_opportunity_cost_v1(coverage, forward, {"replacement_analysis": {"qualified": True, "expected_advantage": 1.0}})
+        capture = build_legacy_swing_profit_capture_v1(position, coverage)
+        self.assertEqual(opportunity["opportunity_cost_state"], "REPLACE_CANDIDATE")
+        self.assertTrue(opportunity["advisory_only"])
+        self.assertEqual(capture["profit_capture_state"], "PROTECT_PROFIT")
+
+    def test_incomplete_coverage_blocks_confirmation_and_forward_value(self):
+        coverage = build_legacy_swing_direct_evidence_coverage_v1(_position(), {"baseline_id": "activation-1"}, {**_evidence(), "LIQUIDITY": {"status": "MISSING"}})
+        self.assertFalse(coverage["required_evidence_complete"])
+        self.assertEqual(build_legacy_swing_forward_value_v1(_position(), _decision(), coverage)["forward_value_state"], "INSUFFICIENT_FORWARD_EVIDENCE")
+        self.assertEqual(build_legacy_swing_direct_confirmation_v1({**_position(), "direct_evidence_coverage": coverage}, _decision(), _evidence())["confirmation_state"], "INSUFFICIENT")
 
 
 if __name__ == "__main__":

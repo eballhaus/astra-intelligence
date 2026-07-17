@@ -21,6 +21,10 @@ from engine.astra_evidence_accumulation_capacity_v1 import (
 )
 from engine.astra_unified_position_lifecycle_v1 import (
     build_legacy_swing_direct_confirmation_v1,
+    build_legacy_swing_direct_evidence_coverage_v1,
+    build_legacy_swing_forward_value_v1,
+    build_legacy_swing_opportunity_cost_v1,
+    build_legacy_swing_profit_capture_v1,
     build_legacy_swing_canary_pre_submit_v1,
     build_legacy_swing_required_evidence_v1,
     build_legacy_forward_baseline_v1,
@@ -2187,7 +2191,7 @@ class PaperAutopilotEngine:
             if valid:
                 records[activation_id] = valid
         prior = dict(self._runtime_state.get("legacy_swing_market_activity") or runtime_canary.get("market_activity") or {})
-        activity = {"schema_version": "legacy_swing_broker_market_activity_v1", "provider": "ALPACA_MARKET_DATA", "worker_owner": "PaperAutopilot._refresh_legacy_swing_broker_market_evidence", "worker_invoked": True, "max_symbols_per_cycle": 3, "symbols_requiring": 0, "symbols_requested": [], "broker_order_actions": 0, "families": {}, "next_symbol_cursor": int(prior.get("next_symbol_cursor") or 0)}
+        activity = {"schema_version": "legacy_swing_broker_market_activity_v1", "provider": "ALPACA_MARKET_DATA", "worker_owner": "PaperAutopilot._refresh_legacy_swing_broker_market_evidence", "worker_invoked": True, "max_symbols_per_cycle": 3, "symbols_requiring": 0, "symbols_requested": [], "broker_order_actions": 0, "families": {}, "next_symbol_cursor": int(prior.get("next_symbol_cursor") or 0), "priority_policy": "priority_desc_then_persisted_round_robin"}
         for family in ("HISTORICAL_BARS", "LATEST_QUOTE", "ASSET_METADATA"):
             old = dict((prior.get("families") or {}).get(family) or {})
             activity["families"][family] = {"request_family": family, "request_count": int(old.get("request_count") or 0), "success_count": int(old.get("success_count") or 0), "failure_count": int(old.get("failure_count") or 0), "last_attempt_at": old.get("last_attempt_at"), "last_success_at": old.get("last_success_at"), "next_refresh_at": old.get("next_refresh_at"), "latest_error_category": old.get("latest_error_category") or ""}
@@ -2204,6 +2208,9 @@ class PaperAutopilotEngine:
         if registry_items:
             cursor = int(activity["next_symbol_cursor"]) % len(registry_items)
             ordered_items = registry_items[cursor:] + registry_items[:cursor]
+            # Priority advances deteriorating or incomplete direct evidence,
+            # while the persisted rotation remains the deterministic tie-break.
+            ordered_items = sorted(ordered_items, key=lambda item: -int(dict(item[1] or {}).get("refresh_priority") or 0))
         else:
             ordered_items = []
         last_processed_index: int | None = None
@@ -2336,6 +2343,9 @@ class PaperAutopilotEngine:
             if row["broker_asset_record"].get("freshness_state") == "CURRENT":
                 row["tradable"] = row["broker_asset_record"].get("tradable")
             required_evidence = build_legacy_swing_required_evidence_v1(row, record)
+            coverage = build_legacy_swing_direct_evidence_coverage_v1(row, record, required_evidence)
+            row["direct_evidence_coverage"] = coverage
+            row["refresh_priority"] = coverage.get("refresh_priority")
             for evidence_type, evidence_row in required_evidence.items():
                 if evidence_row.get("status") == "CURRENT":
                     if evidence_type == "MOMENTUM":
@@ -2349,6 +2359,10 @@ class PaperAutopilotEngine:
                 row, current_market_evidence=row, lifecycle_plan=record, evidence_context={"shadow_evidence": record.get("shadow_twin")}
             )
             decision["required_evidence"] = required_evidence
+            forward_value = build_legacy_swing_forward_value_v1(row, decision, coverage)
+            opportunity_cost = build_legacy_swing_opportunity_cost_v1(coverage, forward_value, record)
+            profit_capture = build_legacy_swing_profit_capture_v1(row, coverage)
+            decision.update({"direct_evidence_coverage": coverage, "forward_value": forward_value, "opportunity_cost_assessment": opportunity_cost, "profit_capture_assessment": profit_capture})
             for evidence_row in required_evidence.values():
                 evidence_row["consumer_acknowledged"] = True
                 evidence_row["acknowledgement_state"] = "CONSUMED_BY_UNIFIED_DECISION"
@@ -2414,6 +2428,12 @@ class PaperAutopilotEngine:
                 "classification_components": dict(decision.get("classification_components") or {}),
                 "classification_transition_reason": "INITIAL_CLASSIFICATION" if not previous else "EVIDENCE_REAFFIRMED" if previous == current else f"{previous}_TO_{current}:{decision.get('classification_reason')}",
                 "required_evidence": required_evidence,
+                "direct_evidence_coverage": coverage,
+                "forward_value": forward_value,
+                "opportunity_cost": opportunity_cost,
+                "profit_capture": profit_capture,
+                "refresh_priority": coverage.get("refresh_priority"),
+                "priority_reason": "DIRECT_EVIDENCE_INCOMPLETE" if not coverage.get("required_evidence_complete") else "CURRENT_EVIDENCE_REUSE",
                 "direct_confirmation": confirmation,
                 "decision": decision, "eligibility": eligibility,
                 "acknowledgements": {
