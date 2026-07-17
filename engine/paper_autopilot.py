@@ -20,9 +20,15 @@ from engine.astra_evidence_accumulation_capacity_v1 import (
     candidate_capacity_decision,
 )
 from engine.astra_unified_position_lifecycle_v1 import (
+    build_legacy_swing_canary_pre_submit_v1,
     build_legacy_forward_baseline_v1,
     build_position_shadow_twin_v1,
+    build_unified_position_lifecycle_decision_v1,
     estimate_legacy_provisional_horizon_v1,
+    evaluate_legacy_swing_canary_eligibility_v1,
+    legacy_swing_canary_configuration_v1,
+    legacy_swing_writer_adapter_contract_v1,
+    select_legacy_swing_canary_candidate_v1,
 )
 try:
     from engine.astra_premarket_certification_v1 import (
@@ -1178,6 +1184,7 @@ class PaperAutopilotEngine:
             "learned_exit_rollback": {},
             "authorized_lane_exit_pending": {},
             "legacy_forward_activations": {},
+            "legacy_swing_canary": {},
             "evidence_reserve_entry_timestamps": {"DAY": [], "CRYPTO": []},
             "lane_reserve_commitments": {"DAY": {}, "CRYPTO": {}},
             "lane_reserve_commitment_stats": {
@@ -1313,6 +1320,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["authorized_lane_exit_pending"] = dict(payload.get("authorized_lane_exit_pending") or {})
                 if isinstance(payload.get("legacy_forward_activations"), dict):
                     self._runtime_state["legacy_forward_activations"] = dict(payload.get("legacy_forward_activations") or {})
+                if isinstance(payload.get("legacy_swing_canary"), dict):
+                    self._runtime_state["legacy_swing_canary"] = dict(payload.get("legacy_swing_canary") or {})
                 if isinstance(payload.get("evidence_reserve_entry_timestamps"), dict):
                     self._runtime_state["evidence_reserve_entry_timestamps"] = {
                         lane: list(payload.get("evidence_reserve_entry_timestamps", {}).get(lane) or [])[-32:]
@@ -1354,6 +1363,7 @@ class PaperAutopilotEngine:
             "learned_exit_rollback": dict(self._runtime_state.get("learned_exit_rollback") or {}),
             "authorized_lane_exit_pending": dict(self._runtime_state.get("authorized_lane_exit_pending") or {}),
             "legacy_forward_activations": dict(self._runtime_state.get("legacy_forward_activations") or {}),
+            "legacy_swing_canary": dict(self._runtime_state.get("legacy_swing_canary") or {}),
             "evidence_reserve_entry_timestamps": {
                 lane: list((self._runtime_state.get("evidence_reserve_entry_timestamps") or {}).get(lane) or [])[-32:]
                 for lane in ("DAY", "CRYPTO")
@@ -1752,6 +1762,99 @@ class PaperAutopilotEngine:
             created += 1
         self._runtime_state["legacy_forward_activations"] = registry
         return {"ACTIVATION_WORKER_CALLED": True, "ACTIVATION_RECORD_CREATED": created, "ACTIVATION_RECORD_REUSED": reused, "records": len(registry)}
+
+    def _refresh_legacy_swing_canary_pre_submit(self, broker_positions: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        """Persist disabled-canary reviews without invoking an order or writer.
+
+        This is deliberately part of the normal PaperAutopilot worker, rather
+        than a GET route.  The configuration has both an off switch and an
+        active kill switch, so it records technical readiness only.
+        """
+        config = legacy_swing_canary_configuration_v1()
+        safety = self._alpaca_safety_snapshot()
+        registry = dict(self._runtime_state.get("legacy_forward_activations") or {})
+        reviews: dict[str, dict[str, Any]] = {}
+        candidates: list[dict[str, Any]] = []
+        reviewed = exit_reviews = 0
+        for activation_id, persisted in registry.items():
+            record = dict(persisted or {})
+            symbol = str(record.get("symbol") or "").upper().strip()
+            broker = dict(broker_positions.get(symbol) or {})
+            if not broker:
+                continue
+            # Overlay immutable activation fields; the decision then consumes
+            # persisted context instead of reconstructing a fictional entry.
+            row = {
+                **broker,
+                "symbol": symbol,
+                "legacy_activation_timestamp": record.get("legacy_activation_timestamp"),
+                "legacy_activation_price": record.get("activation_price"),
+                "legacy_activation_unrealized_return_pct": record.get("activation_unrealized_return_pct"),
+                "paper_mode_verified": bool(safety.get("paper_mode_verified")),
+                "live_endpoint_allowed": bool(safety.get("live_endpoint_detected")),
+            }
+            decision = build_unified_position_lifecycle_decision_v1(
+                row, current_market_evidence=row, lifecycle_plan=record, evidence_context={"shadow_evidence": record.get("shadow_twin")}
+            )
+            previous = str(record.get("current_classification") or "")
+            current = str(decision.get("classification") or "INSUFFICIENT_EVIDENCE")
+            is_exit_review = current == "EXIT_REVIEW"
+            if is_exit_review:
+                exit_reviews += 1
+            escalation = int(record.get("escalation_count") or 0) + (1 if is_exit_review and previous == current else 0)
+            direct_confidence = float(decision.get("forecast_confidence") or 0.0) if decision.get("current_direct_confirmation") else 0.0
+            decision["direct_confirmation_confidence"] = direct_confidence
+            eligibility = evaluate_legacy_swing_canary_eligibility_v1(row, decision, config)
+            review = {
+                "activation_id": record.get("activation_id") or activation_id,
+                "position_id": decision.get("position_id"), "symbol": symbol,
+                "last_review_at": _now_iso(), "next_review_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
+                "review_reason": "EXIT_REVIEW_ESCALATION" if is_exit_review else "NORMAL_WORKER_REASSESSMENT",
+                "escalation_count": escalation, "previous_classification": previous or None,
+                "current_classification": current, "current_blocker": eligibility.get("exact_blocker") or decision.get("exact_blocker"),
+                "required_next_evidence": "CURRENT_DIRECT_CONFIRMATION" if not decision.get("current_direct_confirmation") else "CANARY_REMAINS_DISABLED",
+                "direct_confirmation_state": bool(decision.get("current_direct_confirmation")),
+                "direct_confirmation_confidence": direct_confidence,
+                "decision": decision, "eligibility": eligibility,
+                "acknowledgements": {
+                    "CANARY_CONFIGURATION_CONSUMED_BY_WORKER": True,
+                    "REASSESSMENT_PERSISTED_BY_NON_GET_WORKER": True,
+                    "TECHNICAL_ELIGIBILITY_EVALUATED": True,
+                    "EXECUTION_BLOCKED_BY_DISABLED_POLICY": True,
+                },
+            }
+            record.update(review)
+            registry[activation_id] = record
+            reviews[activation_id] = review
+            candidates.append({
+                "position_id": decision.get("position_id"), "symbol": symbol,
+                "technical_eligibility": eligibility.get("technical_eligibility"),
+                "decision": decision, "eligibility": eligibility,
+            })
+            reviewed += 1
+        selection = select_legacy_swing_canary_candidate_v1(candidates)
+        selected = dict(selection.get("selected_candidate") or {})
+        pre_submit = None
+        if selected:
+            activation_id = next((key for key, value in reviews.items() if str(value.get("position_id") or "") == str(selected.get("position_id") or "")), "")
+            review = dict(reviews.get(activation_id) or {})
+            broker = dict(broker_positions.get(str(review.get("symbol") or "").upper()) or {})
+            pre_submit = build_legacy_swing_canary_pre_submit_v1(
+                position=broker, lifecycle_decision=dict(review.get("decision") or {}),
+                eligibility=dict(review.get("eligibility") or {}), selection=selection, configuration=config,
+            )
+        self._runtime_state["legacy_forward_activations"] = registry
+        self._runtime_state["legacy_swing_canary"] = {
+            "configuration": config, "reviews": reviews, "selection": selection,
+            "pre_submit": pre_submit, "writer_adapter_contract": legacy_swing_writer_adapter_contract_v1(),
+            "last_refresh_at": _now_iso(), "broker_actions": 0, "natural_orders": 0, "fixture_orders": 0,
+            "worker_acknowledgement": "CANARY_CONFIGURATION_CONSUMED_BY_WORKER",
+        }
+        return {
+            "CANARY_CONFIGURATION_CONSUMED_BY_WORKER": True, "reviewed": reviewed,
+            "exit_reviews": exit_reviews, "technically_eligible": len(selection.get("technically_eligible_candidates") or []),
+            "selected": bool(selected), "execution_authorized": False, "broker_actions": 0,
+        }
 
     def _lane_forced_exit_reason(self, open_row: dict[str, Any]) -> str:
         """DAY force-flat is scoped to explicit DAY owners and never CRYPTO."""
@@ -4759,6 +4862,7 @@ class PaperAutopilotEngine:
 
         learned_runtime = self._learned_exit_runtime_summary()
         last_trace = dict(self._runtime_state.get("last_execution_trace") or {})
+        legacy_canary = dict(self._runtime_state.get("legacy_swing_canary") or {})
         return {
             "ok": True,
             "autopilot_enabled": self._enabled,
@@ -4788,6 +4892,13 @@ class PaperAutopilotEngine:
             "last_cycle_utc": str(self._runtime_state.get("last_cycle_utc") or ""),
             "last_cycle_summary": dict(self._runtime_state.get("last_cycle_summary") or {}),
             "last_execution_trace": dict(self._runtime_state.get("last_execution_trace") or {}),
+            "legacy_swing_canary": {
+                "configuration": dict(legacy_canary.get("configuration") or legacy_swing_canary_configuration_v1()),
+                "worker_acknowledgement": legacy_canary.get("worker_acknowledgement"),
+                "reviews_count": len(dict(legacy_canary.get("reviews") or {})),
+                "technically_eligible_count": len(dict(legacy_canary.get("selection") or {}).get("technically_eligible_candidates") or []),
+                "broker_actions": int(legacy_canary.get("broker_actions") or 0),
+            },
             "last_error": str(self._runtime_state.get("last_error") or ""),
             "last_updated_utc": _now_iso(),
         }
@@ -4894,6 +5005,7 @@ class PaperAutopilotEngine:
             broker_open_syms = set(broker_snapshot.get("broker_open_symbols") or set())
             broker_position_by_symbol = dict(broker_snapshot.get("broker_position_by_symbol") or {})
             legacy_activation_refresh = self._refresh_legacy_forward_activations(broker_position_by_symbol)
+            legacy_canary_refresh = self._refresh_legacy_swing_canary_pre_submit(broker_position_by_symbol)
             broker_position_review_rows = [
                 {
                     "symbol": str(symbol).upper(),

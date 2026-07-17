@@ -27,6 +27,186 @@ def _iso(now: datetime | None = None) -> str:
     return value.isoformat().replace("+00:00", "Z")
 
 
+def legacy_swing_canary_configuration_v1() -> dict[str, Any]:
+    """The disabled-only canary contract. It cannot authorize execution."""
+    return {
+        "policy_id": "LEGACY_SWING_CONTROLLED_PAPER_CANARY_V1",
+        "enabled": False,
+        "kill_switch": True,
+        "paper_only": True,
+        "max_active_exit_orders": 1,
+        "max_exit_submissions_per_cycle": 1,
+        "max_exit_submissions_per_day": 1,
+        "max_canary_notional_usd": 100.0,
+        "max_legacy_book_percentage_per_cycle": 0.02,
+        "minimum_decision_confidence": 0.80,
+        "minimum_direct_confirmation_confidence": 0.80,
+        "rejection_limit": 2,
+        "fail_closed_after_rejections": True,
+        "cooldown_after_action": "one_trading_day",
+        "require_fresh_quote": True,
+        "require_acceptable_spread": True,
+        "require_liquidity": True,
+        "require_governance_pass": True,
+        "require_complete_lineage": True,
+        "require_reconciled_quantity": True,
+        "require_idempotency": True,
+        "disable_on_governance_high_or_critical": True,
+        "allow_replacement_before_exit_fill": False,
+        "allow_shadow_only_action": False,
+        "allow_conflicting_evidence_action": False,
+        "allow_exit_review_alone": False,
+        "eligible_classifications": [
+            "THESIS_BROKEN", "CONTROLLED_LOSS_ACCEPTABLE", "PROTECT_PROFIT",
+            "PROTECT_PARTIAL", "REDUCE_RISK", "REPLACE_CANDIDATE",
+        ],
+        "advisory_classifications": [
+            "HOLD_AS_PLANNED", "HOLD_WITH_WATCH", "EXIT_REVIEW",
+            "INSUFFICIENT_EVIDENCE", "CONFLICTING_EVIDENCE", "LOW_CONFIDENCE",
+        ],
+    }
+
+
+def evaluate_legacy_swing_canary_eligibility_v1(position: Mapping[str, Any], decision: Mapping[str, Any], configuration: Mapping[str, Any]) -> dict[str, Any]:
+    """Evaluate execution-independent requirements; disabled state never skips gates."""
+    row, d, cfg = dict(position or {}), dict(decision or {}), dict(configuration or {})
+    confidence = float(d.get("forecast_confidence") or 0.0)
+    direct = bool(d.get("current_direct_confirmation"))
+    direct_confidence = float(d.get("direct_confirmation_confidence") or (confidence if direct else 0.0))
+    classification = str(d.get("classification") or "")
+    checks: dict[str, bool] = {
+        "persisted_activation": bool(d.get("forward_baseline", {}).get("legacy_activation_timestamp")),
+        "active_shadow_twin": d.get("shadow_twin", {}).get("state") == "POSITION_SHADOW_TWIN_ACTIVE",
+        "provisional_horizon": bool(d.get("provisional_horizon", {}).get("provisional_horizon")),
+        "eligible_classification": classification in set(cfg.get("eligible_classifications") or ()),
+        "decision_confidence": confidence >= float(cfg.get("minimum_decision_confidence") or 0.8),
+        "direct_confirmation": direct,
+        "direct_confirmation_confidence": direct_confidence >= float(cfg.get("minimum_direct_confirmation_confidence") or 0.8),
+        "fresh_quote": bool(row.get("current_price") or row.get("market_price")),
+        "acceptable_spread": not bool(row.get("spread_unacceptable") or row.get("wide_spread")),
+        "liquidity": not bool(row.get("liquidity_unacceptable") or row.get("illiquid")),
+        "reconciled_quantity": bool(row.get("qty") or row.get("quantity")),
+        "complete_lineage": bool(d.get("position_id") and d.get("forward_baseline", {}).get("baseline_id")),
+        "governance_pass": not bool(row.get("governance_high_or_critical") or row.get("governance_blocked")),
+        "paper_mode": bool(row.get("paper_mode_verified", True)),
+        "live_endpoint_prohibited": not bool(row.get("live_endpoint_allowed", False)),
+        "no_duplicate_pending_exit": not bool(row.get("duplicate_pending_exit") or row.get("pending_exit")),
+        "idempotency": bool(d.get("position_id")),
+    }
+    names = {
+        "persisted_activation": "PERSISTED_ACTIVATION_REQUIRED", "active_shadow_twin": "ACTIVE_SHADOW_TWIN_REQUIRED",
+        "provisional_horizon": "PROVISIONAL_HORIZON_REQUIRED", "eligible_classification": "ADVISORY_CLASSIFICATION",
+        "decision_confidence": "DECISION_CONFIDENCE_BELOW_MINIMUM", "direct_confirmation": "DIRECT_CONFIRMATION_REQUIRED",
+        "direct_confirmation_confidence": "DIRECT_CONFIRMATION_CONFIDENCE_BELOW_MINIMUM", "fresh_quote": "FRESH_QUOTE_REQUIRED",
+        "acceptable_spread": "ACCEPTABLE_SPREAD_REQUIRED", "liquidity": "LIQUIDITY_REQUIRED",
+        "reconciled_quantity": "RECONCILED_QUANTITY_REQUIRED", "complete_lineage": "COMPLETE_LINEAGE_REQUIRED",
+        "governance_pass": "GOVERNANCE_PASS_REQUIRED", "paper_mode": "PAPER_MODE_REQUIRED",
+        "live_endpoint_prohibited": "LIVE_ENDPOINT_PROHIBITED", "no_duplicate_pending_exit": "DUPLICATE_PENDING_EXIT",
+        "idempotency": "IDEMPOTENCY_REQUIRED",
+    }
+    failures = [names[key] for key, passed in checks.items() if not passed]
+    position_id = str(d.get("position_id") or row.get("asset_id") or row.get("symbol") or "")
+    action_id = f"legacy-canary:{position_id}:{classification}"
+    quantity = _num(row.get("qty") or row.get("quantity")) or 0.0
+    price = _num(row.get("current_price") or row.get("market_price")) or 0.0
+    proposed = min(quantity, float(cfg.get("max_canary_notional_usd") or 0.0) / price) if price > 0 else 0.0
+    return {
+        "technical_eligibility": not failures,
+        "eligibility_checks": checks,
+        "eligibility_failures": failures,
+        "exact_blocker": failures[0] if failures else None,
+        "action_id": action_id,
+        "client_order_id": action_id[:48],
+        "idempotency_key": action_id,
+        "proposed_quantity": proposed,
+        "proposed_notional": round(proposed * price, 6),
+        "decision_confidence": confidence,
+        "direct_confirmation_confidence": direct_confidence,
+        "execution_authorized": False,
+        "final_state": "KILL_SWITCH_ACTIVE" if cfg.get("kill_switch") else "CANARY_DISABLED" if not cfg.get("enabled") else "TECHNICALLY_ELIGIBLE",
+    }
+
+
+def select_legacy_swing_canary_candidate_v1(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    eligible = [dict(row) for row in rows if row.get("technical_eligibility")]
+    for row in eligible:
+        decision = dict(row.get("decision") or {})
+        eligibility = dict(row.get("eligibility") or row)
+        components = {
+            "decision_confidence": float(eligibility.get("decision_confidence") or decision.get("forecast_confidence") or 0.0),
+            "direct_deterioration": float(decision.get("direct_deterioration_strength") or 0.0),
+            "avoided_loss": float(decision.get("expected_avoided_loss") or 0.0),
+            "forward_value_disadvantage": max(0.0, float(decision.get("exit_now_forward_value") or 0.0) - float(decision.get("hold_forward_value") or 0.0)),
+            "opportunity_cost": float(decision.get("opportunity_cost") or 0.0),
+            "liquidity_quality": 1.0 if eligibility.get("eligibility_checks", {}).get("liquidity", True) else 0.0,
+            "evidence_conflict": 1.0 if decision.get("consensus_state") == "CONFLICTING_EVIDENCE" else 0.0,
+            "execution_risk": 0.0,
+        }
+        row["score_components"] = components
+        row["candidate_score"] = round(
+            components["decision_confidence"] + components["direct_deterioration"] + components["avoided_loss"]
+            + components["forward_value_disadvantage"] + components["opportunity_cost"] + components["liquidity_quality"]
+            - components["evidence_conflict"] - components["execution_risk"], 6,
+        )
+    ranked = sorted(eligible, key=lambda r: (-float(r.get("candidate_score") or 0.0), str(r.get("symbol") or ""), str(r.get("position_id") or "")))
+    return {"technically_eligible_candidates": ranked, "selected_candidate": ranked[0] if ranked else None,
+            "non_selected_candidates": ranked[1:], "tie_break_reason": "score_desc_symbol_position_asc", "selection_timestamp": _iso()}
+
+
+def build_legacy_swing_canary_pre_submit_v1(
+    *, position: Mapping[str, Any], lifecycle_decision: Mapping[str, Any],
+    eligibility: Mapping[str, Any], selection: Mapping[str, Any],
+    configuration: Mapping[str, Any], now: datetime | None = None,
+) -> dict[str, Any] | None:
+    """Build a broker-neutral handoff. This owner never calls an order writer."""
+    row, decision, gate, selected, cfg = (dict(position or {}), dict(lifecycle_decision or {}),
+                                           dict(eligibility or {}), dict(selection or {}), dict(configuration or {}))
+    chosen = dict(selected.get("selected_candidate") or {})
+    position_id = str(decision.get("position_id") or row.get("asset_id") or row.get("symbol") or "")
+    if not gate.get("technical_eligibility") or str(chosen.get("position_id") or "") != position_id:
+        return None
+    price = _num(row.get("current_price") or row.get("market_price")) or 0.0
+    quantity = _num(gate.get("proposed_quantity")) or 0.0
+    return {
+        "schema_version": "legacy_swing_canary_pre_submit_v1",
+        "policy_id": cfg.get("policy_id"), "pre_submit_id": f"pre-submit:{gate.get('action_id')}", "created_at": _iso(now),
+        "position_id": position_id, "activation_id": decision.get("forward_baseline", {}).get("baseline_id"),
+        "symbol": decision.get("symbol") or row.get("symbol"), "asset_class": row.get("asset_class") or row.get("asset_type"),
+        "lane": decision.get("lane"), "cohort": decision.get("cohort"),
+        "provisional_horizon": decision.get("provisional_horizon", {}).get("provisional_horizon"),
+        "classification": decision.get("classification"), "decision_confidence": gate.get("decision_confidence"),
+        "direct_confirmation_state": decision.get("current_direct_confirmation"),
+        "direct_confirmation_confidence": gate.get("direct_confirmation_confidence"),
+        "quote_timestamp": row.get("quote_timestamp") or row.get("updated_at"), "quote_price": price,
+        "bid": row.get("bid"), "ask": row.get("ask"), "spread": row.get("spread"),
+        "liquidity_state": "ACCEPTABLE", "quantity_available": row.get("qty") or row.get("quantity"),
+        "proposed_quantity": quantity, "proposed_notional": gate.get("proposed_notional"),
+        "normalized_quantity_preview": quantity, "action_id": gate.get("action_id"),
+        "client_order_id": gate.get("client_order_id"), "idempotency_key": gate.get("idempotency_key"),
+        "governance_state": "PASS", "lineage_state": "COMPLETE", "technical_eligibility": True,
+        "candidate_score": chosen.get("candidate_score"), "selected_state": "SELECTED",
+        "canary_enabled": bool(cfg.get("enabled")), "kill_switch_state": bool(cfg.get("kill_switch")),
+        "execution_authorized": False, "writer_contract_status": "WRITER_ADAPTER_PENDING",
+        "writer_adapter_required": True, "blocker": "WRITER_ADAPTER_PENDING",
+        "limitations": ["disabled_canary_no_writer_invocation"], "evidence_sources": decision.get("evidence_rows") or [],
+    }
+
+
+def legacy_swing_writer_adapter_contract_v1() -> dict[str, Any]:
+    """Machine-readable boundary for the deliberately excluded writer adapter."""
+    return {
+        "status": "WRITER_ADAPTER_PENDING",
+        "existing_policy_owner": "PaperAutopilot.authorized_lane_exit_pending",
+        "existing_writer": "PaperAutopilot._submit_authorized_lane_exit",
+        "existing_writer_inputs": ["open_row", "broker_position", "exit_reason"],
+        "current_lane_assumption": "existing authorization is DAY/CRYPTO-owned; legacy SWING requires a minimal adapter",
+        "required_pre_submit_fields": ["position_id", "action_id", "client_order_id", "idempotency_key", "proposed_quantity", "proposed_notional", "classification", "lineage_state", "governance_state"],
+        "required_validations": ["paper_mode", "live_endpoint_prohibited", "quote_spread_liquidity", "quantity_normalization", "duplicate_order", "idempotency", "canary_limits"],
+        "expected_return_states": ["WRITER_PATH_CONNECTED", "CANARY_DISABLED", "KILL_SWITCH_ACTIVE", "POLICY_BLOCKED"],
+        "future_adapter_tests": ["legacy_swing_pre_submit_contract", "disabled_no_broker_submission", "writer_quantity_idempotency"],
+    }
+
+
 def build_legacy_forward_baseline_v1(position: Mapping[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
     """Describe forward-only evidence without inventing a legacy entry plan."""
     row = dict(position or {})

@@ -47743,6 +47743,103 @@ def unified_position_lifecycle_exit_truth_closure_diagnostic_v1(force: bool = Fa
     }
 
 
+def _legacy_swing_canary_pre_submit_audit_payload_v1() -> dict:
+    """Read persisted worker output only; this is never an execution trigger."""
+    runtime = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("legacy_swing_canary") or {})
+    activations = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("legacy_forward_activations") or {})
+    config = dict(runtime.get("configuration") or {})
+    reviews = dict(runtime.get("reviews") or {})
+    selection = dict(runtime.get("selection") or {})
+    pre_submit = runtime.get("pre_submit") if isinstance(runtime.get("pre_submit"), dict) else None
+    adapter = dict(runtime.get("writer_adapter_contract") or {})
+    stage_rows = []
+    repairable = []
+    config_ok = bool(config.get("policy_id") == "LEGACY_SWING_CONTROLLED_PAPER_CANARY_V1")
+    worker_ok = bool(runtime.get("worker_acknowledgement") == "CANARY_CONFIGURATION_CONSUMED_BY_WORKER")
+    for activation_id, record in sorted(activations.items()):
+        row = dict(record or {})
+        if str(row.get("cohort") or "").startswith("DUST"):
+            continue
+        review = dict(reviews.get(activation_id) or {})
+        position_id = review.get("position_id") or row.get("position_id")
+        symbol = review.get("symbol") or row.get("symbol")
+        base = {"position_id": position_id, "activation_id": row.get("activation_id") or activation_id, "symbol": symbol,
+                "owner": "PaperAutopilot._refresh_legacy_swing_canary_pre_submit", "producer": "PaperAutopilot worker",
+                "consumer": "legacy_swing_canary runtime state", "store": "paper_autopilot_state.json", "join_key": activation_id}
+        stages = [
+            ("activation", "PASS" if row.get("legacy_activation_timestamp") else "NOT_PERSISTED", "persisted activation required"),
+            ("shadow_twin", "PASS" if dict(row.get("shadow_twin") or {}).get("state") == "POSITION_SHADOW_TWIN_ACTIVE" else "DISCONNECTED", "active shadow twin required"),
+            ("reassessment", "PASS" if review.get("next_review_at") else "DISCONNECTED", "worker must persist next review"),
+            ("technical_eligibility", "PASS" if "eligibility" in review else "DISCONNECTED", "worker must evaluate eligibility"),
+        ]
+        for stage, state, expected in stages:
+            repair = state in {"NOT_PERSISTED", "DISCONNECTED"}
+            result = {**base, "stage": stage, "expected_state": "PASS", "actual_state": state,
+                      "acknowledgement": (review.get("acknowledgements") or {}).get("TECHNICAL_ELIGIBILITY_EVALUATED"),
+                      "blocker": None if state == "PASS" else expected,
+                      "blocker_type": "technical" if repair else None, "safe_repair_allowed": repair,
+                      "exact_repair": "run normal PaperAutopilot worker refresh" if repair else None}
+            stage_rows.append(result)
+            if repair:
+                repairable.append(result)
+        eligibility = dict(review.get("eligibility") or {})
+        stage_rows.append({**base, "stage": "execution_enforcement", "expected_state": "KILL_SWITCH_ACTIVE",
+                           "actual_state": eligibility.get("final_state") or "CANARY_DISABLED",
+                           "acknowledgement": "EXECUTION_BLOCKED_BY_DISABLED_POLICY", "blocker": "disabled_by_design",
+                           "blocker_type": "legitimate safety block", "safe_repair_allowed": False, "exact_repair": None})
+    global_rows = [
+        {"stage": "configuration", "owner": "engine.astra_unified_position_lifecycle_v1.legacy_swing_canary_configuration_v1",
+         "producer": "canonical configuration", "consumer": "PaperAutopilot worker", "store": "paper_autopilot_state.json",
+         "join_key": "policy_id", "expected_state": "PASS", "actual_state": "PASS" if config_ok else "NOT_CONSUMED",
+         "acknowledgement": runtime.get("worker_acknowledgement"), "blocker": None if config_ok else "configuration_missing",
+         "blocker_type": "technical" if not config_ok else None, "safe_repair_allowed": not config_ok,
+         "exact_repair": "persist canonical disabled configuration from worker" if not config_ok else None},
+        {"stage": "worker_consumption", "owner": "PaperAutopilot._refresh_legacy_swing_canary_pre_submit",
+         "producer": "PaperAutopilot worker", "consumer": "legacy_swing_canary runtime state", "store": "paper_autopilot_state.json",
+         "join_key": "policy_id", "expected_state": "PASS", "actual_state": "PASS" if worker_ok else "NOT_CONSUMED",
+         "acknowledgement": runtime.get("worker_acknowledgement"), "blocker": None if worker_ok else "worker_not_yet_run",
+         "blocker_type": "technical" if not worker_ok else None, "safe_repair_allowed": not worker_ok,
+         "exact_repair": "run normal PaperAutopilot worker cycle" if not worker_ok else None},
+        {"stage": "candidate_ranking", "owner": "engine.astra_unified_position_lifecycle_v1.select_legacy_swing_canary_candidate_v1",
+         "producer": "PaperAutopilot worker", "consumer": "legacy_swing_canary runtime state", "store": "paper_autopilot_state.json",
+         "join_key": "position_id", "expected_state": "PASS", "actual_state": "PASS" if worker_ok and "selected_candidate" in selection else "DISCONNECTED",
+         "acknowledgement": selection.get("tie_break_reason"), "blocker": None if worker_ok and "selected_candidate" in selection else "selection_not_persisted",
+         "blocker_type": "technical" if worker_ok and "selected_candidate" not in selection else None,
+         "safe_repair_allowed": worker_ok and "selected_candidate" not in selection,
+         "exact_repair": "persist deterministic selection from worker" if worker_ok and "selected_candidate" not in selection else None},
+        {"stage": "writer_adapter_contract", "owner": "engine.astra_unified_position_lifecycle_v1.legacy_swing_writer_adapter_contract_v1",
+         "producer": "canonical adapter specification", "consumer": "future minimal writer adapter", "store": "paper_autopilot_state.json",
+         "join_key": "policy_id", "expected_state": "WRITER_ADAPTER_PENDING", "actual_state": adapter.get("status") or "DISCONNECTED",
+         "acknowledgement": adapter.get("existing_writer"), "blocker": "intentionally excluded from this pre-submit scope",
+         "blocker_type": "legitimate safety block", "safe_repair_allowed": False, "exact_repair": None},
+    ]
+    stage_rows.extend(global_rows)
+    repairable.extend([row for row in global_rows if row.get("safe_repair_allowed")])
+    return {
+        "endpoint": "/api/legacy_swing_canary_pre_submit_closure_diagnostic_v1", "status": "PASS" if not repairable else "FAILED",
+        "generated_at": _now_utc_iso(), "read_only": True, "configuration": config,
+        "kill_switch_state": bool(config.get("kill_switch")), "canary_enabled": bool(config.get("enabled")),
+        "positions_processed": len(reviews), "activation_records": len(activations), "reviews": list(reviews.values()),
+        "selection": selection, "pre_submit": pre_submit, "writer_adapter_contract": adapter,
+        "stage_rows": stage_rows, "repairable_failures": repairable,
+        "broker_actions": int(runtime.get("broker_actions") or 0), "natural_orders": int(runtime.get("natural_orders") or 0),
+        "fixture_orders": int(runtime.get("fixture_orders") or 0), "provider_calls_used": 0, "llm_calls_used": 0,
+        "broker_actions_used": 0, **_safety_flags_v1(),
+    }
+
+
+@router.get("/api/legacy_swing_canary_pre_submit_closure_diagnostic_v1")
+def legacy_swing_canary_pre_submit_closure_diagnostic_v1():
+    """Read-only disabled-canary closure diagnostic; never invokes a writer."""
+    return _legacy_swing_canary_pre_submit_audit_payload_v1()
+
+
+@router.get("/api/legacy_swing_canary_pre_submit_audit_v1")
+def legacy_swing_canary_pre_submit_audit_v1():
+    """Alias for the canonical pre-submit runtime audit."""
+    return _legacy_swing_canary_pre_submit_audit_payload_v1()
+
+
 @router.get("/api/astra_forward_performance_readiness_v1")
 def astra_forward_performance_readiness_v1(force: bool = False):
     certification = _astra_pre_market_trading_certification_payload_v1(force=bool(force))
@@ -62900,6 +62997,7 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
     rows = [dict(row) for row in (broker.get("positions") or []) if isinstance(row, dict)]
     utilization = _position_intelligence_utilization_payload_v1(current, persist=False)
     lifecycle_closure = unified_position_lifecycle_exit_truth_closure_diagnostic_v1(force=False)
+    canary_pre_submit = _legacy_swing_canary_pre_submit_audit_payload_v1()
     review = dict(utilization.get("portfolio_review") or build_portfolio_release_review(rows))
     enrichment = _candidate_intelligence_enrichment_contract_diagnostic_v1(force=False)
     findings: list[dict] = []
@@ -62991,6 +63089,14 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "evidence": lifecycle_closure.get("repairable_failures"),
             "recommended_action": "repair the canonical lifecycle evidence or lineage join; do not change exit policy",
         })
+    if canary_pre_submit.get("repairable_failures"):
+        findings.append({
+            "severity": "high",
+            "classification": "legacy_swing_canary_connection_defect",
+            "issue": "legacy_swing_canary_pre_submit_repairable_failure",
+            "evidence": canary_pre_submit.get("repairable_failures"),
+            "recommended_action": "repair the worker-owned disabled canary join; do not enable execution or alter the writer",
+        })
     lineage_confidence = dict(lineage_detail.get("coverage_by_confidence_class") or {})
     excursion_coverage = dict(lineage_detail.get("coverage_by_excursion_class") or {})
     if int(_to_float(lineage_confidence.get("NOT_RECOVERABLE"), 0.0)) > 0:
@@ -63058,6 +63164,10 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
         "unified_position_lifecycle_exit_truth_closure_v1": {
             key: lifecycle_closure.get(key)
             for key in ("status", "positions_total", "evidence_retrieved_count", "evidence_consumed_count", "predictive_forecast_distribution", "policy_blocked_count", "repairable_failures")
+        },
+        "legacy_swing_canary_pre_submit_v1": {
+            key: canary_pre_submit.get(key)
+            for key in ("status", "positions_processed", "canary_enabled", "kill_switch_state", "repairable_failures")
         },
         "position_lineage_excursion_replacement_v1": {
             "coverage_by_confidence_class": lineage_confidence,
