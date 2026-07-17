@@ -47910,6 +47910,58 @@ def legacy_swing_canary_activation_readiness_v1():
     return {**_legacy_swing_canary_activation_readiness_payload_v1(), **_safety_flags_v1()}
 
 
+def _legacy_swing_exit_truth_closure_payload_v1() -> dict:
+    """Read persisted legacy canary lifecycle state only; never refreshes a broker."""
+    runtime = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("legacy_swing_canary") or {})
+    lifecycle = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("legacy_swing_exit_lifecycle") or {})
+    reviews = dict(runtime.get("reviews") or {})
+    selection = dict(runtime.get("selection") or {})
+    orders, fills = dict(lifecycle.get("orders") or {}), dict(lifecycle.get("fills") or {})
+    reconciliations, closures = dict(lifecycle.get("reconciliations") or {}), dict(lifecycle.get("closures") or {})
+    truths, releases = dict(lifecycle.get("truths") or {}), dict(lifecycle.get("capacity_releases") or {})
+    effectiveness = dict(lifecycle.get("effectiveness") or {})
+    stage_rows, repairable, waiting = [], [], []
+    actionable = directly_confirmed = 0
+    for activation_id, review in sorted(reviews.items()):
+        row = dict(review or {})
+        classification = str(row.get("current_classification") or "")
+        direct = dict(row.get("direct_confirmation") or {})
+        confirmation_state = str(direct.get("confirmation_state") or row.get("direct_confirmation_state") or "UNCONFIRMED")
+        if classification in {"THESIS_BROKEN", "CONTROLLED_LOSS_ACCEPTABLE", "PROTECT_PROFIT", "PROTECT_PARTIAL", "REDUCE_RISK", "REPLACE_CANDIDATE"}:
+            actionable += 1
+        if confirmation_state.startswith("CONFIRMED_"):
+            directly_confirmed += 1
+        base = {"position_id": row.get("position_id"), "activation_id": row.get("activation_id") or activation_id, "symbol": row.get("symbol"), "store": "paper_autopilot_state.json", "join_key": activation_id}
+        confirmation_missing = not bool(direct.get("confirmation_id"))
+        confirmation_stage = {**base, "stage": "direct_confirmation", "owner": "engine.astra_unified_position_lifecycle_v1.build_legacy_swing_direct_confirmation_v1", "producer": "PaperAutopilot._refresh_legacy_swing_canary_pre_submit", "consumer": "evaluate_legacy_swing_canary_eligibility_v1", "expected_state": "POSITION_SPECIFIC_CONFIRMATION", "actual_state": confirmation_state, "latest_activity": direct.get("as_of"), "acknowledgement": bool(direct.get("confirmation_id")), "blocker": direct.get("confirmation_reason"), "blocker_type": "evidence" if not confirmation_state.startswith("CONFIRMED_") else None, "technical_or_legitimate": "technical" if confirmation_missing else "legitimate", "safe_repair_allowed": confirmation_missing, "exact_safe_repair": "run the normal PaperAutopilot confirmation refresh" if confirmation_missing else None}
+        stage_rows.append(confirmation_stage)
+        if confirmation_missing:
+            repairable.append(confirmation_stage)
+        eligibility = dict(row.get("eligibility") or {})
+        stage_rows.append({**base, "stage": "eligibility", "owner": "evaluate_legacy_swing_canary_eligibility_v1", "producer": "PaperAutopilot worker", "consumer": "legacy SWING writer adapter", "expected_state": "CANARY_ELIGIBLE", "actual_state": "PASS" if eligibility.get("technical_eligibility") else "ELIGIBILITY_BLOCKED", "latest_activity": row.get("last_review_at"), "acknowledgement": True, "blocker": eligibility.get("exact_blocker"), "blocker_type": "legitimate evidence/policy block" if not eligibility.get("technical_eligibility") else None, "technical_or_legitimate": "legitimate", "safe_repair_allowed": False, "exact_safe_repair": None})
+    if not orders:
+        waiting.append("WAITING_FOR_NATURAL_CANDIDATE")
+    for key, order in orders.items():
+        order_row = dict(order or {})
+        reconciliation = dict(reconciliations.get(key) or {})
+        stage_rows.extend([
+            {"stage": "broker_acknowledgement", "owner": "PaperAutopilot._record_legacy_swing_exit_broker_update", "producer": "authoritative paper broker order", "consumer": "legacy_swing_exit_lifecycle", "store": "paper_autopilot_state.json", "join_key": key, "expected_state": "BROKER_ACCEPTED_OR_TERMINAL", "actual_state": order_row.get("order_status"), "latest_activity": order_row.get("last_update_at"), "acknowledgement": bool(order_row.get("broker_order_id")), "blocker": order_row.get("rejection_reason"), "blocker_type": "broker" if order_row.get("order_status") == "REJECTED" else None, "technical_or_legitimate": "legitimate", "safe_repair_allowed": False, "exact_safe_repair": None},
+            {"stage": "reconciliation", "owner": "PaperAutopilot._record_legacy_swing_exit_broker_update", "producer": "broker position/order/fill", "consumer": "lifecycle closure", "store": "paper_autopilot_state.json", "join_key": key, "expected_state": "RECONCILED_CLOSED", "actual_state": reconciliation.get("reconciliation_state") or "RECONCILIATION_BLOCKED", "latest_activity": reconciliation.get("reconciled_at"), "acknowledgement": bool(reconciliation), "blocker": reconciliation.get("reconciliation_reason"), "blocker_type": "broker", "technical_or_legitimate": "legitimate", "safe_repair_allowed": False, "exact_safe_repair": None},
+        ])
+    status = "PASS" if not repairable else "FAILED"
+    return {"endpoint": "/api/legacy_swing_exit_truth_closure_audit_v1", "overall_status": status, "read_only": True, "positions_processed": len(reviews), "actionable_positions": actionable, "directly_confirmed_positions": directly_confirmed, "eligible_candidates": len(selection.get("technically_eligible_candidates") or []), "selected_candidate": selection.get("selected_candidate"), "orders_submitted": len(orders), "orders_accepted": sum(1 for row in orders.values() if str(row.get("order_status") or "") in {"ACCEPTED", "NEW", "PARTIALLY_FILLED", "FILLED"}), "orders_rejected": sum(1 for row in orders.values() if str(row.get("order_status") or "") == "REJECTED"), "partial_fills": sum(1 for row in orders.values() if str(row.get("order_status") or "") == "PARTIALLY_FILLED"), "complete_fills": sum(1 for row in orders.values() if str(row.get("order_status") or "") == "FILLED"), "reconciliation_states": dict(Counter(str(row.get("reconciliation_state") or "UNKNOWN") for row in reconciliations.values())), "lifecycles_closed": len(closures), "strict_truth_records_created": len(truths), "capacity_releases": len(releases), "effectiveness_records_created": len(effectiveness), "effectiveness_pending": sum(1 for row in effectiveness.values() if row.get("evaluation_pending")), "stage_rows": stage_rows, "repairable_failures": repairable, "legitimate_waiting_states": waiting, "broker_actions": 0, "provider_calls": 0, **_safety_flags_v1()}
+
+
+@router.get("/api/legacy_swing_exit_truth_closure_audit_v1")
+def legacy_swing_exit_truth_closure_audit_v1():
+    return _legacy_swing_exit_truth_closure_payload_v1()
+
+
+@router.get("/api/legacy_swing_exit_truth_closure_diagnostic_v1")
+def legacy_swing_exit_truth_closure_diagnostic_v1():
+    return _legacy_swing_exit_truth_closure_payload_v1()
+
+
 @router.get("/api/legacy_swing_classification_integrity_diagnostic_v1")
 def legacy_swing_classification_integrity_diagnostic_v1():
     """Read-only proof that legacy classifications are evidence-backed."""
@@ -63335,6 +63387,7 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
     required_evidence = _legacy_swing_required_evidence_payload_v1()
     fmp_consumption = _fmp_production_consumption_payload_v1()
     market_evidence = _broker_market_evidence_payload_v1()
+    legacy_exit_truth = _legacy_swing_exit_truth_closure_payload_v1()
     legacy_canary_config = legacy_swing_canary_configuration_v1()
     legacy_canary_runtime = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("legacy_swing_canary") or {})
     review = dict(utilization.get("portfolio_review") or build_portfolio_release_review(rows))
@@ -63463,6 +63516,13 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "evidence": market_evidence.get("repairable_failures"),
             "recommended_action": "repair bounded read-only broker market-data production, storage, acknowledgement, or influence; do not submit an order",
         })
+    if legacy_exit_truth.get("repairable_failures"):
+        findings.append({
+            "severity": "high", "classification": "legacy_swing_exit_truth_connection_defect",
+            "issue": "legacy_swing_exit_truth_repairable_failure",
+            "evidence": legacy_exit_truth.get("repairable_failures"),
+            "recommended_action": "repair direct confirmation or canonical lifecycle lineage; do not submit or fabricate an exit",
+        })
     if bool(legacy_canary_config.get("enabled")) and (
         bool(legacy_canary_config.get("kill_switch"))
         or str(legacy_canary_config.get("activation_readiness_state") or "") not in {"READY", "READY_WITH_BACKLOG"}
@@ -63561,6 +63621,10 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
         "legacy_swing_broker_market_evidence_v1": {
             key: market_evidence.get(key)
             for key in ("overall_status", "positions_processed", "families", "bounded_backlog", "repairable_failures")
+        },
+        "legacy_swing_exit_truth_closure_v1": {
+            key: legacy_exit_truth.get(key)
+            for key in ("overall_status", "positions_processed", "directly_confirmed_positions", "orders_submitted", "lifecycles_closed", "strict_truth_records_created", "capacity_releases", "repairable_failures")
         },
         "legacy_swing_canary_activation_control_v1": {
             key: legacy_canary_config.get(key)

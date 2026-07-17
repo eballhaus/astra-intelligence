@@ -20,6 +20,7 @@ from engine.astra_evidence_accumulation_capacity_v1 import (
     candidate_capacity_decision,
 )
 from engine.astra_unified_position_lifecycle_v1 import (
+    build_legacy_swing_direct_confirmation_v1,
     build_legacy_swing_canary_pre_submit_v1,
     build_legacy_swing_required_evidence_v1,
     build_legacy_forward_baseline_v1,
@@ -1194,6 +1195,7 @@ class PaperAutopilotEngine:
             "authorized_lane_exit_pending": {},
             "legacy_forward_activations": {},
             "legacy_swing_canary": {},
+            "legacy_swing_exit_lifecycle": {},
             "evidence_reserve_entry_timestamps": {"DAY": [], "CRYPTO": []},
             "lane_reserve_commitments": {"DAY": {}, "CRYPTO": {}},
             "lane_reserve_commitment_stats": {
@@ -1331,6 +1333,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["legacy_forward_activations"] = dict(payload.get("legacy_forward_activations") or {})
                 if isinstance(payload.get("legacy_swing_canary"), dict):
                     self._runtime_state["legacy_swing_canary"] = dict(payload.get("legacy_swing_canary") or {})
+                if isinstance(payload.get("legacy_swing_exit_lifecycle"), dict):
+                    self._runtime_state["legacy_swing_exit_lifecycle"] = dict(payload.get("legacy_swing_exit_lifecycle") or {})
                 if isinstance(payload.get("evidence_reserve_entry_timestamps"), dict):
                     self._runtime_state["evidence_reserve_entry_timestamps"] = {
                         lane: list(payload.get("evidence_reserve_entry_timestamps", {}).get(lane) or [])[-32:]
@@ -1373,6 +1377,7 @@ class PaperAutopilotEngine:
             "authorized_lane_exit_pending": dict(self._runtime_state.get("authorized_lane_exit_pending") or {}),
             "legacy_forward_activations": dict(self._runtime_state.get("legacy_forward_activations") or {}),
             "legacy_swing_canary": dict(self._runtime_state.get("legacy_swing_canary") or {}),
+            "legacy_swing_exit_lifecycle": dict(self._runtime_state.get("legacy_swing_exit_lifecycle") or {}),
             "evidence_reserve_entry_timestamps": {
                 lane: list((self._runtime_state.get("evidence_reserve_entry_timestamps") or {}).get(lane) or [])[-32:]
                 for lane in ("DAY", "CRYPTO")
@@ -1864,6 +1869,80 @@ class PaperAutopilotEngine:
         self._runtime_state["authorized_lane_exit_pending"] = pending_map
         return {"ok": True, "submitted": True, "pending_order_id": pending_id, "contract": contract, **normalized}
 
+    def _record_legacy_swing_exit_broker_update(self, item: dict[str, Any], order: dict[str, Any], broker_position: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Persist authoritative legacy canary order/fill lineage; never infers a broker fill."""
+        lifecycle = dict(self._runtime_state.get("legacy_swing_exit_lifecycle") or {})
+        orders = dict(lifecycle.get("orders") or {})
+        fills = dict(lifecycle.get("fills") or {})
+        reconciliations = dict(lifecycle.get("reconciliations") or {})
+        closures = dict(lifecycle.get("closures") or {})
+        truths = dict(lifecycle.get("truths") or {})
+        releases = dict(lifecycle.get("capacity_releases") or {})
+        effectiveness = dict(lifecycle.get("effectiveness") or {})
+        action_id = str(item.get("action_id") or item.get("legacy_swing_canary_pre_submit", {}).get("action_id") or "")
+        order_id = str(order.get("id") or item.get("order_id") or "")
+        status = str(order.get("status") or "UNKNOWN").upper()
+        submitted_qty = _to_float(item.get("normalized_sell_qty"), _to_float(item.get("quantity"), 0.0))
+        filled_qty = _to_float(order.get("filled_qty"), _to_float(order.get("filled_quantity"), 0.0))
+        remaining_qty = max(0.0, submitted_qty - filled_qty)
+        key = action_id or order_id
+        order_record = {
+            "broker_order_id": order_id, "client_order_id": item.get("client_order_id"), "action_id": action_id,
+            "position_id": item.get("position_id"), "symbol": item.get("symbol"), "submitted_quantity": submitted_qty,
+            "accepted_quantity": submitted_qty if status in {"ACCEPTED", "NEW", "PARTIALLY_FILLED", "FILLED"} else 0.0,
+            "filled_quantity": filled_qty, "remaining_quantity": remaining_qty, "average_fill_price": _to_float(order.get("filled_avg_price"), 0.0),
+            "order_status": status, "submitted_at": item.get("submitted_at"), "accepted_at": order.get("accepted_at") or order.get("submitted_at"),
+            "last_update_at": _now_iso(), "filled_at": order.get("filled_at"), "rejected_at": order.get("rejected_at"),
+            "canceled_at": order.get("canceled_at"), "rejection_reason": order.get("reject_reason") or order.get("reason"),
+        }
+        orders[key] = order_record
+        terminal = status in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}
+        if status in {"PARTIALLY_FILLED", "FILLED"} and filled_qty > 0:
+            fill_id = str(order.get("fill_id") or order.get("execution_id") or f"{order_id}:{order.get('filled_at') or filled_qty}")
+            fills[fill_id] = {"fill_id": fill_id, "broker_order_id": order_id, "client_order_id": item.get("client_order_id"), "action_id": action_id,
+                              "position_id": item.get("position_id"), "symbol": item.get("symbol"), "fill_timestamp": order.get("filled_at") or _now_iso(),
+                              "fill_quantity": filled_qty, "fill_price": _to_float(order.get("filled_avg_price"), 0.0), "cumulative_filled_quantity": filled_qty,
+                              "remaining_quantity": remaining_qty, "source": "authoritative_paper_broker_order"}
+        broker_qty = _to_float((broker_position or {}).get("qty"), _to_float((broker_position or {}).get("quantity"), 0.0))
+        reconciliation_state = "RECONCILED_OPEN"
+        if status == "FILLED":
+            reconciliation_state = "RECONCILED_CLOSED" if broker_qty <= 1e-9 else "RECONCILED_PARTIAL"
+        elif status == "PARTIALLY_FILLED":
+            reconciliation_state = "RECONCILED_PARTIAL"
+        elif status in {"REJECTED", "CANCELED", "EXPIRED"}:
+            reconciliation_state = "RECONCILED_OPEN"
+        reconciliations[key] = {"reconciliation_id": f"legacy-reconciliation:{key}", "position_id": item.get("position_id"),
+                                "activation_id": item.get("legacy_swing_canary_pre_submit", {}).get("activation_id"), "action_id": action_id,
+                                "broker_order_id": order_id, "expected_quantity": submitted_qty, "submitted_quantity": submitted_qty,
+                                "filled_quantity": filled_qty, "broker_remaining_quantity": broker_qty, "astra_position_quantity": broker_qty,
+                                "reconciliation_state": reconciliation_state, "reconciliation_reason": status, "reconciled_at": _now_iso()}
+        closure = None
+        if reconciliation_state == "RECONCILED_CLOSED" and status == "FILLED" and filled_qty <= submitted_qty + 1e-9:
+            activation_id = item.get("legacy_swing_canary_pre_submit", {}).get("activation_id")
+            closure_id = f"legacy-closure:{activation_id or key}"
+            closure = closures.setdefault(closure_id, {"lifecycle_closure_id": closure_id, "position_id": item.get("position_id"), "activation_id": activation_id,
+                "action_id": action_id, "broker_order_id": order_id, "symbol": item.get("symbol"), "lane": "SWING", "exit_quantity": filled_qty,
+                "average_exit_price": _to_float(order.get("filled_avg_price"), 0.0), "closure_state": "CLOSED_CONFIRMED", "closure_reason": "AUTHORITATIVE_BROKER_FILL_RECONCILED", "closed_at": _now_iso()})
+            entry_fill_id = str(item.get("entry_fill_id") or "")
+            entry_order_id = str(item.get("entry_order_id") or "")
+            if entry_fill_id and entry_order_id:
+                truth_id = f"legacy-truth:{closure_id}"
+                truths.setdefault(truth_id, {"truth_id": truth_id, "lifecycle_closure_id": closure_id, "position_id": item.get("position_id"), "activation_id": activation_id,
+                    "action_id": action_id, "broker_order_id": order_id, "symbol": item.get("symbol"), "lane": "SWING", "truth_class": "BROKER_CONFIRMED",
+                    "entry_truth": entry_fill_id, "exit_truth": str(order.get("fill_id") or order_id), "quantity_truth": filled_qty, "created_at": _now_iso()})
+                release_id = f"legacy-capacity:{closure_id}"
+                releases.setdefault(release_id, {"capacity_release_id": release_id, "position_id": item.get("position_id"), "activation_id": activation_id,
+                    "lifecycle_closure_id": closure_id, "truth_id": truth_id, "released_quantity": filled_qty,
+                    "released_notional": round(filled_qty * _to_float(order.get("filled_avg_price"), 0.0), 6), "released_at": _now_iso(), "release_reason": "AUTHORITATIVE_CLOSED_BROKER_TRUTH"})
+                effectiveness_id = f"legacy-effectiveness:{closure_id}"
+                effectiveness.setdefault(effectiveness_id, {"effectiveness_id": effectiveness_id, "lifecycle_closure_id": closure_id, "truth_id": truth_id,
+                    "position_id": item.get("position_id"), "activation_id": activation_id, "symbol": item.get("symbol"), "lane": "SWING",
+                    "initial_effectiveness_state": "NEUTRAL_INITIAL_RESULT", "evaluation_pending": True,
+                    "next_evaluation_at": (datetime.now(UTC) + timedelta(days=1)).isoformat().replace("+00:00", "Z")})
+        lifecycle.update({"orders": orders, "fills": fills, "reconciliations": reconciliations, "closures": closures, "truths": truths, "capacity_releases": releases, "effectiveness": effectiveness, "last_updated_at": _now_iso()})
+        self._runtime_state["legacy_swing_exit_lifecycle"] = lifecycle
+        return {"terminal": terminal, "order_status": status, "reconciliation_state": reconciliation_state, "closure": closure, "truth_created": bool(closure and any(row.get("lifecycle_closure_id") == closure.get("lifecycle_closure_id") for row in truths.values()))}
+
     def _refresh_authorized_lane_exit_pending(self) -> dict[str, Any]:
         """Close local lifecycle rows only after a broker-filled lane exit."""
         pending = self._authorized_lane_exit_pending_map()
@@ -1884,6 +1963,15 @@ class PaperAutopilotEngine:
                 remaining[key] = item
                 continue
             order = dict(lookup.get("order") or {})
+            if bool(item.get("legacy_swing_canary_adapter_v1")):
+                matching = [row for row in self._fetch_open_positions() if str(row.get("position_id") or "") == str(item.get("position_id") or "")]
+                result = self._record_legacy_swing_exit_broker_update(item, order, matching[0] if matching else None)
+                if not result.get("terminal"):
+                    remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": order.get("status")}
+                elif str(order.get("status") or "").lower() == "filled" and result.get("reconciliation_state") != "RECONCILED_CLOSED":
+                    remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": order.get("status")}
+                filled += 1 if result.get("closure") else 0
+                continue
             if not bool(lookup.get("ok")) or str(order.get("status") or "").lower() != "filled":
                 remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": order.get("status")}
                 continue
@@ -2298,8 +2386,12 @@ class PaperAutopilotEngine:
             if is_exit_review:
                 exit_reviews += 1
             escalation = int(record.get("escalation_count") or 0) + (1 if is_exit_review and previous == current else 0)
-            direct_confidence = float(decision.get("forecast_confidence") or 0.0) if decision.get("current_direct_confirmation") else 0.0
+            confirmation = build_legacy_swing_direct_confirmation_v1(row, decision, required_evidence)
+            direct_confidence = float(confirmation.get("confirmation_confidence") or 0.0)
+            direct_confirmed = str(confirmation.get("confirmation_state") or "").upper().startswith("CONFIRMED_")
+            decision["current_direct_confirmation"] = direct_confirmed
             decision["direct_confirmation_confidence"] = direct_confidence
+            decision["direct_confirmation"] = confirmation
             eligibility = evaluate_legacy_swing_canary_eligibility_v1(row, decision, config)
             review = {
                 "activation_id": record.get("activation_id") or activation_id,
@@ -2308,20 +2400,28 @@ class PaperAutopilotEngine:
                 "review_reason": "EXIT_REVIEW_ESCALATION" if is_exit_review else "NORMAL_WORKER_REASSESSMENT",
                 "escalation_count": escalation, "previous_classification": previous or None,
                 "current_classification": current, "current_blocker": eligibility.get("exact_blocker") or decision.get("exact_blocker"),
-                "required_next_evidence": ",".join(decision.get("evidence_missing") or []) or ("CURRENT_DIRECT_CONFIRMATION" if not decision.get("current_direct_confirmation") else "CANARY_REMAINS_DISABLED"),
-                "direct_confirmation_state": bool(decision.get("current_direct_confirmation")),
+                "required_next_evidence": ",".join(decision.get("evidence_missing") or []) or ("CURRENT_DIRECT_CONFIRMATION" if not direct_confirmed else "CANARY_CANDIDATE_GATE"),
+                "direct_confirmation_id": confirmation.get("confirmation_id"),
+                "direct_confirmation_state": confirmation.get("confirmation_state"),
                 "direct_confirmation_confidence": direct_confidence,
+                "confirmation_blocker": None if direct_confirmed else confirmation.get("confirmation_reason"),
+                "last_confirmation_attempt_at": confirmation.get("as_of"),
+                "last_confirmation_success_at": confirmation.get("as_of") if direct_confirmed else None,
+                "next_confirmation_at": confirmation.get("next_confirmation_at"),
+                "confirmation_retry_count": int(confirmation.get("retry_count") or 0),
                 "classification_confidence": decision.get("classification_confidence"),
                 "classification_reason": decision.get("classification_reason"),
                 "classification_components": dict(decision.get("classification_components") or {}),
                 "classification_transition_reason": "INITIAL_CLASSIFICATION" if not previous else "EVIDENCE_REAFFIRMED" if previous == current else f"{previous}_TO_{current}:{decision.get('classification_reason')}",
                 "required_evidence": required_evidence,
+                "direct_confirmation": confirmation,
                 "decision": decision, "eligibility": eligibility,
                 "acknowledgements": {
                     "CANARY_CONFIGURATION_CONSUMED_BY_WORKER": True,
                     "REASSESSMENT_PERSISTED_BY_NON_GET_WORKER": True,
                     "TECHNICAL_ELIGIBILITY_EVALUATED": True,
-                    "EXECUTION_BLOCKED_BY_DISABLED_POLICY": True,
+                    "DIRECT_CONFIRMATION_PERSISTED_BY_NON_GET_WORKER": True,
+                    "EXECUTION_GATED_BY_CURRENT_CANARY_POLICY": True,
                 },
             }
             record.update(review)
@@ -2359,6 +2459,7 @@ class PaperAutopilotEngine:
             "fmp_records": fmp_records,
             "market_activity": market_activity,
             "market_records": market_records,
+            "direct_confirmations": {key: dict(value.get("direct_confirmation") or {}) for key, value in reviews.items()},
         }
         return {
             "CANARY_CONFIGURATION_CONSUMED_BY_WORKER": True, "reviewed": reviewed,

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Sequence
 
 
@@ -102,6 +102,64 @@ def legacy_swing_canary_configuration_v1(control: Mapping[str, Any] | None = Non
         ],
         "activation_control_state": runtime_control.get("activation_state") or "DISABLED_FAIL_CLOSED",
         "activation_readiness_state": runtime_control.get("readiness_state") or "NOT_READY",
+    }
+
+
+def build_legacy_swing_direct_confirmation_v1(
+    position: Mapping[str, Any],
+    lifecycle_decision: Mapping[str, Any],
+    required_evidence: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Build direct, current, position-specific confirmation without inferred thesis evidence."""
+    row, decision, evidence = dict(position or {}), dict(lifecycle_decision or {}), dict(required_evidence or {})
+    position_id = _text(decision.get("position_id") or row.get("position_id") or row.get("asset_id"))
+    activation_id = _text((decision.get("forward_baseline") or {}).get("baseline_id") or row.get("activation_id"))
+    classification = _text(decision.get("classification")).upper()
+    momentum, thesis, liquidity = (dict(evidence.get("MOMENTUM") or {}), dict(evidence.get("THESIS_STATE") or {}), dict(evidence.get("LIQUIDITY") or {}))
+    quote = dict(row.get("broker_quote_record") or {})
+    current = all(str(item.get("status") or "").upper() == "CURRENT" for item in (momentum, thesis, liquidity))
+    quote_current = str(quote.get("freshness_state") or "").upper() == "CURRENT" and _num(quote.get("bid")) not in (None, 0.0) and _num(quote.get("ask")) not in (None, 0.0)
+    conflict = bool(decision.get("evidence_conflicting") or row.get("direct_evidence_conflicting"))
+    stale = bool(decision.get("evidence_stale")) or any(str(item.get("freshness") or item.get("freshness_state") or "").upper() == "STALE" for item in (momentum, thesis, liquidity))
+    missing = list(decision.get("evidence_missing") or [])
+    negative_momentum = str(momentum.get("short_term_direction") or "").upper() in {"NEGATIVE", "COLLAPSE", "DETERIORATING"}
+    poor_liquidity = str(liquidity.get("liquidity_state") or "").upper() in {"POOR", "THIN", "DETERIORATING"}
+    direct_invalidation = bool(row.get("direct_thesis_invalidation") or decision.get("direct_thesis_invalidation"))
+    giveback = _num(row.get("profit_giveback_pct") or row.get("giveback")) or 0.0
+    return_pct = _num(row.get("unrealized_return_pct") or row.get("unrealized_plpc")) or 0.0
+    state, confidence, reason = "UNCONFIRMED", 0.0, "DIRECT_ACTION_EVIDENCE_NOT_YET_SUFFICIENT"
+    if conflict:
+        state, reason = "CONFLICTING", "CURRENT_DIRECT_EVIDENCE_CONFLICT"
+    elif stale:
+        state, reason = "STALE", "CURRENT_DIRECT_EVIDENCE_STALE"
+    elif not current or not quote_current:
+        state, reason = "INSUFFICIENT", "CURRENT_DIRECT_EVIDENCE_INCOMPLETE"
+    elif classification == "THESIS_BROKEN" and direct_invalidation:
+        state, confidence, reason = "CONFIRMED_INVALIDATION", 0.9, "DIRECT_THESIS_INVALIDATION_WITH_CURRENT_MARKET_EVIDENCE"
+    elif classification in {"CONTROLLED_LOSS_ACCEPTABLE", "REDUCE_RISK"} and negative_momentum and poor_liquidity:
+        state, confidence, reason = "CONFIRMED_RISK_REDUCTION", 0.85, "CURRENT_MOMENTUM_AND_LIQUIDITY_RISK_DIVERGENCE"
+    elif classification in {"PROTECT_PROFIT", "PROTECT_PARTIAL"} and return_pct > 0 and giveback >= 2.0:
+        state, confidence, reason = "CONFIRMED_PROFIT_PROTECTION", 0.85, "CURRENT_PROFIT_GIVEBACK_CONFIRMED"
+    elif classification in {"HOLD_AS_PLANNED", "HOLD_WITH_WATCH"} and not negative_momentum and not poor_liquidity:
+        state, confidence, reason = "CONFIRMED_SUPPORT", 0.8, "CURRENT_DIRECT_EVIDENCE_SUPPORTS_CONTINUATION"
+    confirmation_id = f"legacy-confirmation:{activation_id or position_id}:{classification}:{str(quote.get('record_id') or quote.get('quote_timestamp') or 'none')}"
+    return {
+        "schema_version": "legacy_swing_direct_confirmation_v1", "confirmation_id": confirmation_id,
+        "position_id": position_id, "activation_id": activation_id, "symbol": _text(decision.get("symbol") or row.get("symbol")).upper(),
+        "asset_class": row.get("asset_class") or "equity", "lane": decision.get("lane") or "SWING", "as_of": _iso(now),
+        "lifecycle_classification": classification, "classification_confidence": _num(decision.get("classification_confidence") or decision.get("forecast_confidence")) or 0.0,
+        "confirmation_state": state, "confirmation_confidence": confidence, "confirmation_reason": reason,
+        "direct_market_evidence": {"quote_current": quote_current, "momentum_negative": negative_momentum, "liquidity_poor": poor_liquidity},
+        "direct_position_evidence": {"return_pct": return_pct, "giveback": giveback},
+        "direct_lifecycle_evidence": {"classification": classification, "direct_thesis_invalidation": direct_invalidation},
+        "supporting_context": [], "opposing_evidence": [], "missing_evidence": missing, "stale_evidence": stale,
+        "conflicting_evidence": conflict, "quote_record_id": quote.get("record_id"), "bar_record_id": momentum.get("record_id"),
+        "liquidity_record_id": liquidity.get("record_id"), "thesis_record_id": thesis.get("record_id"),
+        "classification_record_id": activation_id, "freshness_state": "CURRENT" if current and quote_current else "STALE" if stale else "UNAVAILABLE",
+        "quality_state": "PASS" if state.startswith("CONFIRMED") else state, "limitations": missing,
+        "next_confirmation_at": _iso(datetime.now(timezone.utc) + timedelta(hours=1)), "retry_count": 0,
     }
 
 
