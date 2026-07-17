@@ -7,6 +7,7 @@ LOG_DIR="${ROOT_DIR}/logs"
 STARTUP_LOG="${LOG_DIR}/astra_startup.log"
 
 BACKEND_SESSION="${ASTRA_BACKEND_TMUX_SESSION:-astra_backend}"
+WORKER_SESSION="${ASTRA_WORKER_TMUX_SESSION:-astra_worker}"
 FRONTEND_SESSION="${ASTRA_FRONTEND_TMUX_SESSION:-astra_frontend}"
 
 BACKEND_PORT="${ASTRA_BACKEND_PORT:-8000}"
@@ -24,6 +25,19 @@ fi
 
 mkdir -p "${STATE_DIR}" "${LOG_DIR}"
 exec > >(tee -a "${STARTUP_LOG}") 2>&1
+
+rotate_frontend_log() {
+  local path="${STATE_DIR}/frontend.log" limit="${ASTRA_RUNTIME_LOG_ROTATION_BYTES:-20971520}"
+  [[ -f "${path}" ]] || return 0
+  local size
+  size="$(stat -f%z "${path}" 2>/dev/null || echo 0)"
+  [[ "${size}" =~ ^[0-9]+$ && "${size}" -ge "${limit}" ]] || return 0
+  rm -f "${path}.3"
+  [[ -f "${path}.2" ]] && mv "${path}.2" "${path}.3"
+  [[ -f "${path}.1" ]] && mv "${path}.1" "${path}.2"
+  mv "${path}" "${path}.1"
+  : > "${path}"
+}
 
 log_info() {
   echo "[start_astra_persistent] $*"
@@ -139,8 +153,8 @@ if ! command -v tmux >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ "${START_COMPONENT}" != "all" && "${START_COMPONENT}" != "backend" && "${START_COMPONENT}" != "frontend" ]]; then
-  log_info "invalid ASTRA_START_COMPONENT=${START_COMPONENT}; expected all/backend/frontend"
+if [[ "${START_COMPONENT}" != "all" && "${START_COMPONENT}" != "backend" && "${START_COMPONENT}" != "worker" && "${START_COMPONENT}" != "frontend" ]]; then
+  log_info "invalid ASTRA_START_COMPONENT=${START_COMPONENT}; expected all/backend/worker/frontend"
   exit 1
 fi
 
@@ -165,6 +179,9 @@ if [[ "${START_COMPONENT}" == "backend" ]]; then
   stop_tmux_session "${BACKEND_SESSION}"
   kill_port_listeners "${BACKEND_PORT}"
   wait_for_port_release "${BACKEND_PORT}" 30 0.5
+fi
+if [[ "${START_COMPONENT}" == "worker" ]]; then
+  stop_tmux_session "${WORKER_SESSION}"
 fi
 if [[ "${START_COMPONENT}" == "frontend" ]]; then
   stop_tmux_session "${FRONTEND_SESSION}"
@@ -201,6 +218,32 @@ if [[ "${START_COMPONENT}" == "all" || "${START_COMPONENT}" == "backend" ]]; the
   fi
 fi
 
+if [[ "${START_COMPONENT}" == "all" || "${START_COMPONENT}" == "worker" ]]; then
+  if ! wait_for_http_200 "http://127.0.0.1:${BACKEND_PORT}/api/health" 24 0.5; then
+    log_info "worker requires a healthy API snapshot reader; backend health unavailable"
+    exit 1
+  fi
+  if tmux has-session -t "${WORKER_SESSION}" 2>/dev/null; then
+    log_info "worker already supervised in session ${WORKER_SESSION}; skipping duplicate launch"
+  else
+    tmux new-session -d -s "${WORKER_SESSION}" \
+      "cd '${ROOT_DIR}' && ASTRA_PROCESS_ROLE=worker '${ROOT_DIR}/venv/bin/python' -m engine.paper_autopilot_worker >> '${STATE_DIR}/worker.log' 2>&1"
+    log_info "dedicated worker session launched: ${WORKER_SESSION}"
+  fi
+  local_worker_attempt=0
+  while [[ "${local_worker_attempt}" -lt 24 ]]; do
+    if [[ -f "${STATE_DIR}/astra_worker_runtime_state_v1.json" ]] && grep -q 'PAPER_AUTOPILOT_WORKER' "${STATE_DIR}/astra_worker_runtime_state_v1.json" 2>/dev/null; then
+      break
+    fi
+    sleep 0.5
+    local_worker_attempt=$((local_worker_attempt + 1))
+  done
+  if [[ "${local_worker_attempt}" -ge 24 ]]; then
+    log_info "worker did not publish canonical runtime snapshot"
+    exit 1
+  fi
+fi
+
 if [[ "${START_COMPONENT}" == "all" || "${START_COMPONENT}" == "frontend" ]]; then
   FRONTEND_CMD="cd '${ROOT_DIR}/astra_dashboard/ui' && "
   FRONTEND_CMD+="ASTRA_VITE_API_TARGET='${VITE_PROXY_TARGET}' "
@@ -219,7 +262,8 @@ if [[ "${START_COMPONENT}" == "all" || "${START_COMPONENT}" == "frontend" ]]; th
   else
     stop_tmux_session "${FRONTEND_SESSION}"
     kill_port_listeners "${FRONTEND_PORT}"
-    tmux new-session -d -s "${FRONTEND_SESSION}" "${FRONTEND_CMD}"
+    rotate_frontend_log
+    tmux new-session -d -s "${FRONTEND_SESSION}" "${FRONTEND_CMD} >> '${STATE_DIR}/frontend.log' 2>&1"
     log_info "frontend session launched: ${FRONTEND_SESSION} (${FRONTEND_HOST}:${FRONTEND_PORT})"
   fi
   if wait_for_port "${FRONTEND_PORT}" 24 0.5; then
@@ -254,6 +298,9 @@ if [[ "${START_COMPONENT}" == "all" || "${START_COMPONENT}" == "backend" ]]; the
 fi
 if [[ "${START_COMPONENT}" == "all" || "${START_COMPONENT}" == "frontend" ]]; then
   log_info "  - ${FRONTEND_SESSION}"
+fi
+if [[ "${START_COMPONENT}" == "all" || "${START_COMPONENT}" == "worker" ]]; then
+  log_info "  - ${WORKER_SESSION}"
 fi
 LAN_IP="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"
 TAILSCALE_IP="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"

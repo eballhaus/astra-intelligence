@@ -1676,6 +1676,11 @@ class PaperAutopilotEngine:
             failures.append("CANARY_DISABLED_OR_KILL_SWITCH_ACTIVE")
         if not bool(safety.get("paper_mode_verified")) or bool(safety.get("live_endpoint_detected")):
             failures.append("PAPER_ONLY_BROKER_BOUNDARY_REQUIRED")
+        # Runtime isolation adds a system-health authorization independent of
+        # policy configuration.  Keep pre-existing broker-boundary failures
+        # first so diagnostics preserve their precise root cause.
+        if str(os.getenv("ASTRA_RUNTIME_CANARY_AUTHORIZED", "0")).strip().lower() not in {"1", "true", "yes", "on"}:
+            failures.append("CANARY_RUNTIME_BLOCKED_PREFLIGHT")
         if int(state.get("broker_rejections") or 0) >= int(cfg.get("rejection_limit") or 2):
             failures.append("REJECTION_LIMIT_FAIL_CLOSED")
         if len(active) >= int(cfg.get("max_active_exit_orders") or 1):

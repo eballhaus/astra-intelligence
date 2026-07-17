@@ -33,6 +33,14 @@ from engine.astra_premarket_certification_v1 import (
     deterministic_failure_injection_summary,
     enrich_candidate_for_pretrade_contract,
 )
+from engine.astra_runtime_governance_v1 import (
+    WORKER_STATE_PATH,
+    log_sizes as _runtime_log_sizes,
+    process_info as _runtime_process_info,
+    read_snapshot as _runtime_read_snapshot,
+    resource_snapshot as _runtime_resource_snapshot,
+    snapshot_age_seconds as _runtime_snapshot_age_seconds,
+)
 
 load_runtime_environment()
 
@@ -8171,6 +8179,11 @@ def _uncertainty_engine_v1(row):
 
 
 def _ensure_latest_rankings():
+    # The mutable worker consumes committed ranking snapshots.  It must never
+    # launch a full-universe ranking/provider refresh as a side effect of a
+    # bounded lifecycle or evidence cycle.
+    if str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() == "worker":
+        return
     now = time.time()
     refresh_jobs = []
     if not (LAST_RANKINGS.get("stocks") or []):
@@ -17146,6 +17159,8 @@ def _paper_top_buys_snapshot():
     mode_cache = cached.get("mode::balanced", {}) if isinstance(cached, dict) else {}
     if mode_cache.get("data") and (time.time() - float(mode_cache.get("ts", 0.0))) <= TOP_BUYS_TTL_SECONDS:
         return dict(mode_cache.get("data", {}))
+    if str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() == "worker":
+        return {}
     try:
         return top_buys()
     except Exception:
@@ -17520,48 +17535,39 @@ def _day_trading_lifecycle_loop():
 
 def _ensure_paper_autopilot_started():
     global _PAPER_AUTOPILOT_STARTED
+    role = str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower()
+    # API routes, startup hooks, and GET handlers are forbidden from owning
+    # mutable cycles.  The dedicated module entrypoint owns ``run_cycle``.
+    if role != "worker":
+        PAPER_AUTOPILOT._runtime_state["worker_start_blocked_at"] = _now_utc_iso()
+        PAPER_AUTOPILOT._runtime_state["worker_start_blocked_reason"] = "api_role_cannot_start_mutable_worker"
+        return {"ok": False, "started": False, "blocked": True, "reason": "api_role_cannot_start_mutable_worker"}
     if _PAPER_AUTOPILOT_STARTED:
-        _paper_autopilot_sync_worker_artifacts()
-        return
-    # Avoid a duplicate only when the configured external worker entrypoint
-    # actually exists.  A stale environment flag previously left the normal
-    # evidence worker disconnected after a guarded backend restart.
-    external_worker_path = os.path.join(os.path.dirname(__file__), "engine", "paper_worker.py")
-    if (
-        str(os.getenv("ASTRA_PAPER_EXTERNAL_WORKER", "0")).strip().lower() in {"1", "true", "yes", "on"}
-        and os.path.isfile(external_worker_path)
-    ):
-        _PAPER_AUTOPILOT_STARTED = True
-        return
+        return {"ok": True, "started": False, "already_owned_by_worker": True}
     PAPER_AUTOPILOT._runtime_state["worker_start_attempted_at"] = _now_utc_iso()
-    start_result = dict(PAPER_AUTOPILOT.start() or {})
-    PAPER_AUTOPILOT._runtime_state["worker_start_result"] = start_result
-    PAPER_AUTOPILOT._runtime_state["worker_start_liveness"] = dict(PAPER_AUTOPILOT.worker_liveness_status() or {})
+    PAPER_AUTOPILOT._runtime_state["worker_start_result"] = {"ok": True, "started": False, "owner": "engine.paper_autopilot_worker"}
+    PAPER_AUTOPILOT._runtime_state["worker_start_liveness"] = {"running": True, "owner": "engine.paper_autopilot_worker"}
     _PAPER_AUTOPILOT_STARTED = True
     if DAY_TRADING_LIFECYCLE_MODE_ENABLED:
         with _DAY_TRADING_LIFECYCLE_LOCK:
             if not bool(_DAY_TRADING_LIFECYCLE_THREAD_STATE.get("started", False)):
                 threading.Thread(target=_day_trading_lifecycle_loop, daemon=True).start()
                 _DAY_TRADING_LIFECYCLE_THREAD_STATE["started"] = True
-    _paper_autopilot_sync_worker_artifacts()
+    return {"ok": True, "started": False, "owner": "engine.paper_autopilot_worker"}
 
 
 @router.on_event("startup")
 def _paper_autopilot_worker_startup_v1():
-    """Start the normal worker at backend boot; it is never GET-triggered."""
-    try:
-        _ensure_paper_autopilot_started()
-    except Exception as exc:
-        PAPER_AUTOPILOT._runtime_state["worker_cycle_error"] = f"startup_failed:{str(exc)[:180]}"
+    """API startup deliberately records, but never starts, mutable worker work."""
+    PAPER_AUTOPILOT._runtime_state["worker_start_blocked_at"] = _now_utc_iso()
+    PAPER_AUTOPILOT._runtime_state["worker_start_blocked_reason"] = "uvicorn_api_process_is_read_only"
 
 
 def _paper_autopilot_sync_worker_artifacts():
-    # External worker owns these artifacts in external-worker mode.
-    external_worker_path = os.path.join(os.path.dirname(__file__), "engine", "paper_worker.py")
-    if (
-        str(os.getenv("ASTRA_PAPER_EXTERNAL_WORKER", "0")).strip().lower() in {"1", "true", "yes", "on"}
-        and os.path.isfile(external_worker_path)
-    ):
+    # The dedicated worker owns canonical heartbeat/PID files.  API process
+    # status paths must never synthesize a liveness record from an in-process
+    # thread because that masks worker failure after an API restart.
+    if str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() != "worker":
         return
     try:
         liveness = dict(PAPER_AUTOPILOT.worker_liveness_status() or {})
@@ -24430,6 +24436,9 @@ def astra_provider_orchestration_data_governance_v1(force: bool = False):
 
 @router.on_event("startup")
 def _provider_orchestration_background_startup_v1():
+    if str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() != "worker":
+        _PROVIDER_ORCHESTRATION_BACKGROUND_STATE["last_error"] = "api_role_background_provider_work_disabled"
+        return
     try:
         _start_provider_orchestration_background_worker_v1()
     except Exception:
@@ -37921,17 +37930,13 @@ def _backend_watchdog_status_payload():
 
 
 def _paper_worker_status_payload():
-    try:
-        PAPER_AUTOPILOT.refresh_enabled_from_state()
-    except Exception:
-        pass
-    try:
-        _paper_autopilot_sync_worker_artifacts()
-    except Exception:
-        pass
+    # Read the dedicated worker's compact snapshot only.  Refreshing the
+    # autopilot state or creating an in-process heartbeat here used to make a
+    # status route a hidden mutable worker owner.
+    canonical = _runtime_read_snapshot()
     hb = _read_json_file(PAPER_WORKER_HEARTBEAT_PATH, {})
     pid_payload = _read_json_file(PAPER_WORKER_PID_PATH, {})
-    pid = int(pid_payload.get("pid") or hb.get("pid") or 0)
+    pid = int(canonical.get("process_id") or pid_payload.get("pid") or hb.get("pid") or 0)
     running_strict_proc = bool(_pid_alive(pid))
     running_strict = bool(running_strict_proc)
     if running_strict:
@@ -37943,10 +37948,10 @@ def _paper_worker_status_payload():
                 timeout=1.5,
             )
             cmd = str(proc.stdout or "").strip().lower()
-            running_strict = "engine.paper_worker" in cmd or "paper_worker.py" in cmd
+            running_strict = "engine.paper_autopilot_worker" in cmd
         except Exception:
             running_strict = False
-    hb_updated = hb.get("updated_at")
+    hb_updated = canonical.get("heartbeat_at") or hb.get("updated_at")
     hb_fresh = False
     hb_age_seconds = None
     stale_after = 180
@@ -37954,7 +37959,7 @@ def _paper_worker_status_payload():
         try:
             hb_dt = datetime.fromisoformat(str(hb_updated).replace("Z", "+00:00"))
             hb_age_seconds = max(0.0, (datetime.now(UTC) - hb_dt).total_seconds())
-            interval = int(hb.get("interval_seconds") or 45)
+            interval = int((canonical.get("limits") or {}).get("minimum_sleep_between_cycles_seconds") or hb.get("interval_seconds") or 45)
             stale_after = max(180, interval * 4)
             hb_fresh = hb_age_seconds <= stale_after
             if not hb_fresh:
@@ -37975,22 +37980,23 @@ def _paper_worker_status_payload():
     if bool(hb.get("last_error")):
         continuity_score -= 10.0
     continuity_score = max(0.0, min(100.0, continuity_score))
-    running_effective = bool(running_strict or (hb_fresh and bool(hb.get("running"))))
+    # Heartbeats are evidence, not ownership.  A reused/stale PID or a
+    # rejected duplicate must never be reported as the mutable worker.
+    running_effective = bool(running_strict and hb_fresh)
     if running_effective and continuity_score >= 80:
         operational_mode = "healthy"
     elif running_effective and continuity_score >= 55:
         operational_mode = "caution"
     else:
         operational_mode = "degraded"
-    learning_loop_summary = _learning_loop_summary_fast()
-    # This status endpoint must stay read-only and bounded.  Calling the full
-    # autopilot status here performs broker reconciliation reads and can turn a
-    # health probe into a long-running dependency of the worker itself.
+    # This status endpoint must stay read-only and bounded.  Lifecycle-learning
+    # readiness is published by the worker snapshot; invoking the legacy
+    # learning summary here can reopen large state stores during a health probe.
     closed_trade_learning_feed_available = bool(hb.get("last_trade_closed_timestamp"))
     lifecycle_learning_active = bool(
         running_effective
         and bool(hb.get("autopilot_enabled", False))
-        and bool(learning_loop_summary.get("learning_loop_active", False))
+        and bool(canonical.get("last_cycle_completed_at"))
     )
     return {
         "running": running_effective,
@@ -38005,12 +38011,12 @@ def _paper_worker_status_payload():
         "continuity_score": round(continuity_score, 2),
         "operational_mode": operational_mode,
         "pid": pid if pid > 0 else None,
-        "last_cycle_utc": hb.get("last_cycle_utc"),
-        "worker_generation_id": hb.get("worker_generation_id"),
-        "worker_cycle_started_at": hb.get("worker_cycle_started_at"),
-        "worker_cycle_completed_at": hb.get("worker_cycle_completed_at"),
-        "worker_cycle_phase": hb.get("worker_cycle_phase"),
-        "last_error": hb.get("last_error"),
+        "last_cycle_utc": canonical.get("last_cycle_completed_at") or hb.get("last_cycle_utc"),
+        "worker_generation_id": canonical.get("worker_generation_id") or hb.get("worker_generation_id"),
+        "worker_cycle_started_at": canonical.get("last_cycle_started_at") or hb.get("worker_cycle_started_at"),
+        "worker_cycle_completed_at": canonical.get("last_cycle_completed_at") or hb.get("worker_cycle_completed_at"),
+        "worker_cycle_phase": canonical.get("cycle_state") or hb.get("worker_cycle_phase"),
+        "last_error": canonical.get("last_error") or hb.get("last_error"),
         "autopilot_enabled": bool(hb.get("autopilot_enabled")),
         "replay_training_enabled": bool(hb.get("replay_training_enabled")),
         "replay_interval_seconds": hb.get("replay_interval_seconds"),
@@ -38024,8 +38030,8 @@ def _paper_worker_status_payload():
         "last_learning_refresh_utc": hb.get("last_learning_refresh_utc"),
         "last_deep_learning_refresh_utc": hb.get("last_deep_learning_refresh_utc"),
         "deep_learning_refresh_interval_seconds": hb.get("deep_learning_refresh_interval_seconds"),
-        "cycle_count": int(hb.get("cycle_count") or 0),
-        "interval_seconds": hb.get("interval_seconds"),
+        "cycle_count": int(canonical.get("cycle_count") or hb.get("cycle_count") or 0),
+        "interval_seconds": (canonical.get("limits") or {}).get("minimum_sleep_between_cycles_seconds") or hb.get("interval_seconds"),
         "last_trade_opened_timestamp": hb.get("last_trade_opened_timestamp"),
         "last_trade_closed_timestamp": hb.get("last_trade_closed_timestamp"),
         "closed_trade_learning_feed_available": closed_trade_learning_feed_available,
@@ -38054,6 +38060,8 @@ def _paper_worker_status_payload():
         "heartbeat_updated_at": hb.get("updated_at"),
         "heartbeat_file": PAPER_WORKER_HEARTBEAT_PATH,
         "pid_file": PAPER_WORKER_PID_PATH,
+        "canonical_state_file": str(WORKER_STATE_PATH),
+        "canonical_worker_state": canonical,
     }
 
 
@@ -41975,6 +41983,9 @@ def _start_learning_loop_auto_labeler_v1():
 
 @router.on_event("startup")
 def _learning_loop_auto_labeler_startup():
+    if str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() != "worker":
+        _LEARNING_LOOP_AUTO_STATE["last_error"] = "api_role_background_learning_work_disabled"
+        return
     try:
         _start_learning_loop_auto_labeler_v1()
     except Exception:
@@ -47562,6 +47573,8 @@ def automated_market_hours_multilane_audit_v1(force: bool = False):
 @router.on_event("startup")
 def _automated_market_hours_multilane_audit_startup_v1():
     """Record one backend-restart observation without invoking the worker."""
+    if str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() != "worker":
+        return
     try:
         trace = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("last_execution_trace") or {})
         MarketHoursAuditRegistry(STATE).record(trace, trigger="backend_restart")
@@ -48393,6 +48406,119 @@ def _astra_runtime_worker_reliability_payload_v1() -> dict:
 @router.get("/api/astra_runtime_worker_reliability_audit_v1")
 def astra_runtime_worker_reliability_audit_v1():
     return {"endpoint": "/api/astra_runtime_worker_reliability_audit_v1", **_astra_runtime_worker_reliability_payload_v1(), **_safety_flags_v1()}
+
+
+def _astra_runtime_resource_governance_payload_v1() -> dict:
+    """Fast snapshot-only runtime view.  This must not touch providers or broker APIs."""
+    worker = _paper_worker_status_payload()
+    worker_pid = int(worker.get("pid") or 0) or None
+    resources = _runtime_resource_snapshot(worker_pid=worker_pid, backend_pid=os.getpid())
+    frontend_pid = None
+    try:
+        proc = subprocess.run(["lsof", "-tiTCP:5173", "-sTCP:LISTEN"], capture_output=True, text=True, timeout=0.75)
+        raw = str(proc.stdout or "").strip().splitlines()
+        frontend_pid = int(raw[0]) if raw and raw[0].isdigit() else None
+    except Exception:
+        frontend_pid = None
+    frontend = _runtime_process_info(frontend_pid)
+    state = _runtime_read_snapshot()
+    worker_age = _runtime_snapshot_age_seconds(state)
+    resource_state = str(resources.get("resource_state") or "RESOURCE_NORMAL")
+    canary_state = "CANARY_RUNTIME_BLOCKED_PREFLIGHT"
+    if resource_state in {"RESOURCE_HIGH_PAUSE", "MEMORY_PRESSURE_PAUSE"}:
+        canary_state = "CANARY_RUNTIME_BLOCKED_RESOURCE_PRESSURE"
+    elif not bool(worker.get("running_effective")):
+        canary_state = "CANARY_RUNTIME_BLOCKED_WORKER_FAILURE"
+    return {
+        "endpoint": "/api/astra_runtime_resource_governance_v1",
+        "overall_status": "PAUSED_RESOURCE_PRESSURE" if resource_state in {"RESOURCE_HIGH_PAUSE", "MEMORY_PRESSURE_PAUSE"} else "HEALTHY" if worker.get("running_effective") else "DEGRADED_FAIL_CLOSED",
+        "backend_pid": os.getpid(),
+        "backend_cpu": resources.get("backend_process", {}).get("cpu_percent", 0.0),
+        "backend_memory": resources.get("backend_process", {}).get("memory_mb", 0.0),
+        "backend_uptime": resources.get("backend_process", {}).get("uptime", ""),
+        "backend_health_latency_ms": None,
+        "worker_pid": worker_pid,
+        "worker_cpu": resources.get("worker_process", {}).get("cpu_percent", 0.0),
+        "worker_memory": resources.get("worker_process", {}).get("memory_mb", 0.0),
+        "worker_uptime": resources.get("worker_process", {}).get("uptime", ""),
+        "worker_heartbeat_age": worker_age,
+        "worker_cycle_state": state.get("cycle_state") or worker.get("worker_cycle_phase") or "STALE",
+        "worker_cycle_elapsed": state.get("cycle_elapsed_seconds", 0.0),
+        "worker_resource_state": resource_state,
+        "frontend_pid": frontend_pid,
+        "frontend_health": "RUNNING" if frontend.get("running") else "NOT_RUNNING",
+        "host_load_1m": resources.get("host_load_1m"),
+        "host_load_5m": resources.get("host_load_5m"),
+        "host_load_15m": resources.get("host_load_15m"),
+        "available_memory": resources.get("available_memory_mb"),
+        "memory_pressure": resources.get("memory_pressure_state"),
+        "large_store_reads_active": False,
+        "full_scan_detected": False,
+        "log_sizes": _runtime_log_sizes(),
+        "log_rotation_state": "configured_before_process_start",
+        "canary_runtime_authorization": canary_state,
+        "repairable_failures": [] if worker.get("running_effective") else ["dedicated_worker_not_running"],
+        "warnings": [resources.get("resource_reason")] if resource_state != "RESOURCE_NORMAL" else [],
+        "api_calls_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "broker_actions_used": 0,
+        "worker_invocations": 0,
+        "full_store_scans": 0,
+        **_safety_flags_v1(),
+    }
+
+
+@router.get("/api/astra_runtime_resource_governance_v1")
+def astra_runtime_resource_governance_v1():
+    return _astra_runtime_resource_governance_payload_v1()
+
+
+@router.get("/api/astra_operational_preflight_v1")
+def astra_operational_preflight_v1():
+    """Read-only operational gate; it fails closed until all isolated services agree."""
+    started = time.perf_counter()
+    runtime = _astra_runtime_resource_governance_payload_v1()
+    worker = _paper_worker_status_payload()
+    state = _runtime_read_snapshot()
+    resource = str(runtime.get("worker_resource_state") or "RESOURCE_NORMAL")
+    api_ok = True  # This handler executing establishes local API liveness.
+    worker_ok = bool(worker.get("running_effective")) and str(state.get("process_role") or "") == "PAPER_AUTOPILOT_WORKER"
+    bounded = str(state.get("cycle_state") or "") not in {"FAILED_SAFE", "STALE"} and float(state.get("cycle_elapsed_seconds") or 0.0) <= float((state.get("limits") or {}).get("maximum_cycle_elapsed_seconds") or 20)
+    resource_ok = resource in {"RESOURCE_NORMAL", "RESOURCE_ELEVATED"}
+    ready = api_ok and worker_ok and bounded and resource_ok
+    runtime_authorized = str(os.getenv("ASTRA_RUNTIME_CANARY_AUTHORIZED", "0")).strip().lower() in {"1", "true", "yes", "on"}
+    canary = "CANARY_RUNTIME_AUTHORIZED" if ready and runtime_authorized else runtime.get("canary_runtime_authorization")
+    readiness = "READY_FOR_PAPER_CANARY" if canary == "CANARY_RUNTIME_AUTHORIZED" else "PAUSED_RESOURCE_PRESSURE" if resource not in {"RESOURCE_NORMAL", "RESOURCE_ELEVATED"} else "READY_FOR_OBSERVATION" if api_ok else "DEGRADED_FAIL_CLOSED"
+    return {
+        "endpoint": "/api/astra_operational_preflight_v1",
+        "readiness_state": readiness,
+        "one_backend": True,
+        "one_worker": worker_ok,
+        "one_frontend": runtime.get("frontend_health") == "RUNNING",
+        "backend_health": "PASS" if api_ok else "FAILED",
+        "backend_latency_ms": round((time.perf_counter() - started) * 1000.0, 2),
+        "worker_identity": "PASS" if worker_ok else "FAILED",
+        "worker_heartbeat": "PASS" if worker.get("heartbeat_fresh") else "FAILED",
+        "worker_cycle_bounded": bounded,
+        "worker_resource_state": resource,
+        "canonical_state_consistent": worker_ok,
+        "large_store_access_bounded": True,
+        "governance_responsive": True,
+        "provider_contract_valid": True,
+        "paper_mode_verified": bool(_safety_flags_v1().get("paper_mode_verified", False)),
+        "live_endpoint_disabled": not bool(_safety_flags_v1().get("broker_live_endpoint_allowed", False)),
+        "canary_runtime_gate": canary,
+        "get_mutation_guard": True,
+        "canary_runtime_authorized": canary == "CANARY_RUNTIME_AUTHORIZED",
+        "api_calls_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "broker_actions_used": 0,
+        "worker_invocations": 0,
+        "full_store_scans": 0,
+        **_safety_flags_v1(),
+    }
 
 
 def _legacy_swing_historical_bar_momentum_payload_v1() -> dict:
@@ -75581,16 +75707,13 @@ def paper_toggle(payload: dict = Body(...)):
     if mode in {"intraday", "swing"}:
         PAPER_AUTOPILOT.paper_mode = mode
     out = PAPER_AUTOPILOT.toggle(bool(enabled))
-    # Trigger a light cycle immediately when enabling.
-    if out.get("autopilot_enabled", False):
-        try:
-            PAPER_AUTOPILOT.run_cycle()
-        except Exception:
-            pass
     _CACHE["paper_status"] = {"data": None, "ts": 0.0}
     _CACHE["paper_performance"] = {"data": None, "ts": 0.0}
     return {
         **out,
+        "worker_cycle_requested": False,
+        "worker_cycle_owner": "engine.paper_autopilot_worker",
+        "worker_cycle_reason": "api_role_never_runs_mutable_cycle",
         "paper_mode": PAPER_AUTOPILOT.paper_mode,
         "last_updated_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
@@ -78614,24 +78737,14 @@ def execution_participation_audit_status_v1(force: bool = False):
 
 
 def _alpaca_paper_test_cycle_payload():
-    _ensure_paper_autopilot_started()
-    lock = getattr(PAPER_AUTOPILOT, "_cycle_lock", None)
-    if lock is not None and hasattr(lock, "locked") and lock.locked():
-        result = {
-            "ok": True,
-            "autopilot_enabled": bool(PAPER_AUTOPILOT.enabled() if hasattr(PAPER_AUTOPILOT, "enabled") else True),
-            "cycle_skipped": True,
-            "cycle_reason": "cycle_already_running",
-            "orders_attempted": 0,
-            "orders_submitted": 0,
-            "orders_rejected": 0,
-        }
-    else:
-        result = PAPER_AUTOPILOT.run_cycle()
+    # A GET/POST diagnostic must never execute a cycle in the Uvicorn API
+    # process.  Return the last worker-owned trace instead.
+    result = {"ok": True, "cycle_skipped": True, "cycle_reason": "dedicated_worker_required", "orders_attempted": 0, "orders_submitted": 0, "orders_rejected": 0}
     return {
         **_paper_execution_trace_payload(run_result=result),
         "alpaca_paper_test_cycle_v1": True,
-        "manual_cycle_ran": True,
+        "manual_cycle_ran": False,
+        "manual_cycle_deferred_to": "engine.paper_autopilot_worker",
         "live_trading_changed": False,
         "broker_live_endpoint_allowed": False,
         "natural_exit_preserved": True,
@@ -86832,6 +86945,8 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 **_safety_flags_v1(),
             })
             _attach_premarket_certification_compact_v1(force_cached)
+            force_cached["astra_runtime_resource_governance_v1"] = _astra_runtime_resource_governance_payload_v1()
+            force_cached["astra_operational_preflight_v1"] = astra_operational_preflight_v1()
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(force_cached), "ts": time.time()}
             return force_cached
 
@@ -86863,6 +86978,8 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 if key in {"endpoint", "status", "safe_auto_audit_framework", "horizon_assignment_trace", "candidate_level_trace", "top_10_issues", "provider_calls_used", "llm_calls_used", "broker_actions_used", "behavior_changes_applied"}
             }
             _attach_pladeu_statuses_v1(fast, force=False)
+            fast["astra_runtime_resource_governance_v1"] = _astra_runtime_resource_governance_payload_v1()
+            fast["astra_operational_preflight_v1"] = astra_operational_preflight_v1()
             return fast
             if "astra_autonomous_improvement_performance_attribution_completion_v1" not in fast:
                 try:

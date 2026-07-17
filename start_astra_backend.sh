@@ -10,9 +10,7 @@ WATCHDOG_HEARTBEAT_FILE="${STATE_DIR}/backend_watchdog_heartbeat"
 WATCHDOG_LOG_FILE="${STATE_DIR}/watchdog.log"
 RUNTIME_HEALTH_LOG_FILE="${STATE_DIR}/runtime_health.log"
 UVICORN_PID_FILE="${STATE_DIR}/uvicorn.pid"
-PAPER_WORKER_PID_FILE="${STATE_DIR}/paper_worker.pid"
 BACKEND_LOG_FILE="${STATE_DIR}/backend.log"
-PAPER_WORKER_LOG_FILE="${STATE_DIR}/paper_worker.log"
 
 BACKEND_PORT="${ASTRA_BACKEND_PORT:-8000}"
 BACKEND_HOST="${ASTRA_BACKEND_HOST:-0.0.0.0}"
@@ -24,6 +22,27 @@ if [[ "${ASTRA_REMOTE_MODE:-0}" == "1" ]]; then
 fi
 
 mkdir -p "${STATE_DIR}"
+
+rotate_log_before_open() {
+  local path="$1" limit="${ASTRA_RUNTIME_LOG_ROTATION_BYTES:-20971520}" keep="${ASTRA_RUNTIME_LOG_ROTATION_GENERATIONS:-3}"
+  [[ -f "${path}" ]] || return 0
+  local size
+  size="$(stat -f%z "${path}" 2>/dev/null || echo 0)"
+  [[ "${size}" =~ ^[0-9]+$ ]] || return 0
+  [[ "${size}" -ge "${limit}" ]] || return 0
+  local i
+  for ((i=keep; i>=1; i--)); do
+    if [[ "${i}" -eq "${keep}" ]]; then rm -f "${path}.${i}"; fi
+    if [[ -f "${path}.$((i - 1))" ]]; then mv "${path}.$((i - 1))" "${path}.${i}"; fi
+  done
+  mv "${path}" "${path}.1"
+  : > "${path}"
+}
+
+# This script is invoked only before the API process opens its descriptors.
+rotate_log_before_open "${BACKEND_LOG_FILE}"
+rotate_log_before_open "${WATCHDOG_LOG_FILE}"
+rotate_log_before_open "${RUNTIME_HEALTH_LOG_FILE}"
 
 if [[ -x "${VENV_PY}" ]]; then
   PYTHON_BIN="${VENV_PY}"
@@ -43,14 +62,12 @@ log_watchdog() {
 }
 
 log_runtime_health() {
-  local now backend_pid backend_alive worker_pid worker_alive frontend_alive
+  local now backend_pid backend_alive frontend_alive
   now="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   backend_pid="$(read_pid_file "${UVICORN_PID_FILE}")"
-  worker_pid="$(read_pid_file "${PAPER_WORKER_PID_FILE}")"
   if is_pid_alive "${backend_pid}"; then backend_alive="up"; else backend_alive="down"; fi
-  if is_pid_alive "${worker_pid}"; then worker_alive="up"; else worker_alive="down"; fi
   if lsof -nP -iTCP:5173 -sTCP:LISTEN >/dev/null 2>&1; then frontend_alive="up"; else frontend_alive="down"; fi
-  echo "${now} backend=${backend_alive} backend_pid=${backend_pid:-none} frontend=${frontend_alive} worker=${worker_alive} worker_pid=${worker_pid:-none}" >> "${RUNTIME_HEALTH_LOG_FILE}"
+  echo "${now} backend=${backend_alive} backend_pid=${backend_pid:-none} frontend=${frontend_alive} worker=externally_supervised" >> "${RUNTIME_HEALTH_LOG_FILE}"
 }
 
 is_pid_alive() {
@@ -136,7 +153,7 @@ start_uvicorn() {
   )
   (
     cd "${ROOT_DIR}"
-    "${cmd[@]}" >> "${BACKEND_LOG_FILE}" 2>&1
+    ASTRA_PROCESS_ROLE=api "${cmd[@]}" >> "${BACKEND_LOG_FILE}" 2>&1
   ) &
   local launcher_pid="$!"
   echo "${launcher_pid}" > "${UVICORN_PID_FILE}"
@@ -152,27 +169,6 @@ start_uvicorn() {
   else
     log_watchdog "uvicorn started launcher_pid=${launcher_pid} listener_pid=unresolved cmd='${cmd[*]}'"
   fi
-}
-
-start_paper_worker_if_available() {
-  if [[ ! -f "${ROOT_DIR}/engine/paper_worker.py" ]]; then
-    return 0
-  fi
-
-  local old_pid
-  old_pid="$(read_pid_file "${PAPER_WORKER_PID_FILE}")"
-  if is_pid_alive "${old_pid}"; then
-    log_watchdog "paper_worker pid file detected running pid=${old_pid}; no restart"
-    return 0
-  fi
-
-  (
-    cd "${ROOT_DIR}"
-    "${PYTHON_BIN}" -m engine.paper_worker >> "${PAPER_WORKER_LOG_FILE}" 2>&1
-  ) &
-  local worker_pid="$!"
-  echo "${worker_pid}" > "${PAPER_WORKER_PID_FILE}"
-  log_watchdog "paper_worker started launcher_pid=${worker_pid}"
 }
 
 cleanup_on_exit() {
@@ -208,7 +204,6 @@ while true; do
     sleep "${WATCHDOG_RESTART_COOLDOWN_SECONDS}"
   fi
 
-  start_paper_worker_if_available
   log_runtime_health
   sleep "${WATCHDOG_SLEEP_SECONDS}"
 done

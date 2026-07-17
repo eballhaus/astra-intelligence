@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_DIR="${ROOT_DIR}/state"
 
 BACKEND_SESSION="${ASTRA_BACKEND_TMUX_SESSION:-astra_backend}"
+WORKER_SESSION="${ASTRA_WORKER_TMUX_SESSION:-astra_worker}"
 FRONTEND_SESSION="${ASTRA_FRONTEND_TMUX_SESSION:-astra_frontend}"
 
 WATCHDOG_PID_FILE="${STATE_DIR}/backend_watchdog.pid"
@@ -32,7 +33,7 @@ safe_kill_pid() {
   fi
   local command
   command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
-  if [[ "${command}" != *"uvicorn server:app"* && "${command}" != *"engine.paper_worker"* && "${command}" != *"paper_worker.py"* && "${command}" != *"backend_watchdog"* && "${command}" != *"start_astra_backend.sh"* && "${command}" != *"npm run dev"* && "${command}" != *"vite"* ]]; then
+  if [[ "${command}" != *"uvicorn server:app"* && "${command}" != *"engine.paper_autopilot_worker"* && "${command}" != *"backend_watchdog"* && "${command}" != *"start_astra_backend.sh"* && "${command}" != *"npm run dev"* && "${command}" != *"vite"* ]]; then
     log_info "skip kill: pid=${pid} is not a recognized Astra runtime process"
     return 0
   fi
@@ -96,6 +97,14 @@ PY
 }
 
 if command -v tmux >/dev/null 2>&1; then
+  # Stop mutable worker first, allowing its signal handler to checkpoint its
+  # compact state before API/frontend supervision is stopped.
+  if tmux has-session -t "${WORKER_SESSION}" 2>/dev/null; then
+    tmux kill-session -t "${WORKER_SESSION}" || true
+    log_info "tmux session killed: ${WORKER_SESSION}"
+  else
+    log_info "tmux session missing: ${WORKER_SESSION}"
+  fi
   if tmux has-session -t "${FRONTEND_SESSION}" 2>/dev/null; then
     tmux kill-session -t "${FRONTEND_SESSION}" || true
     log_info "tmux session killed: ${FRONTEND_SESSION}"
@@ -116,7 +125,7 @@ safe_kill_pid "$(read_pid "${PAPER_WORKER_PID_FILE}")"
 
 # Conservative fallback: target only canonical Astra runtime patterns.
 pkill -f "uvicorn server:app --host .* --port 8000" >/dev/null 2>&1 || true
-pkill -f "engine.paper_worker" >/dev/null 2>&1 || true
+pkill -f "engine.paper_autopilot_worker" >/dev/null 2>&1 || true
 pkill -f "npm run dev -- --host .* --port 5173" >/dev/null 2>&1 || true
 if command -v lsof >/dev/null 2>&1; then
   for port in 5173 5174 5175 8000; do

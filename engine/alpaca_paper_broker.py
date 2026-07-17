@@ -390,6 +390,9 @@ class AlpacaPaperBroker:
         adjustment: str = "raw",
         sort: str = "asc",
         max_pages: int = 2,
+        requested_completed_sessions: int | None = None,
+        requested_calendar_days: int | None = None,
+        current_session_complete: bool | None = None,
     ) -> dict[str, Any]:
         """Read bounded historical bars with explicit, secret-free request lineage.
 
