@@ -11,11 +11,9 @@ import os
 import signal
 import sys
 import time
-from pathlib import Path
 from typing import Any
 
 from engine.astra_runtime_governance_v1 import (
-    ROOT,
     STATE,
     WORKER_STATE_PATH,
     RuntimeLimits,
@@ -36,11 +34,13 @@ class PaperAutopilotWorker:
         self.lease = WorkerLease()
         self.stop_requested = False
         self.cycle_count = int(read_snapshot().get("cycle_count") or 0)
+        self.previous_cursor = str(read_snapshot().get("cursor") or "")
         self.cooldown_until = 0.0
 
     def _base_state(self) -> dict[str, Any]:
         return {
             "schema_version": "1.0.0",
+            "state_version": "1.1.0",
             "worker_instance_id": self.lease.instance_id,
             "worker_generation_id": self.lease.generation_id,
             "process_id": os.getpid(),
@@ -52,7 +52,7 @@ class PaperAutopilotWorker:
             "cycle_state": "IDLE",
             "cycle_elapsed_seconds": 0.0,
             "cycle_stop_reason": "",
-            "cursor": "",
+            "cursor": self.previous_cursor,
             "symbols_due": 0,
             "symbols_attempted": 0,
             "symbols_completed": 0,
@@ -61,6 +61,11 @@ class PaperAutopilotWorker:
             "pages_consumed": 0,
             "records_persisted": 0,
             "momentum_records_built": 0,
+            "daily_sufficient_count": 0,
+            "daily_insufficient_count": 0,
+            "daily_failed_count": 0,
+            "downstream_acknowledgements": {},
+            "recovered_daily_symbols": [],
             "resource_pause_state": "RESOURCE_NORMAL",
             "last_error": "",
             "last_error_at": "",
@@ -79,27 +84,47 @@ class PaperAutopilotWorker:
         state["heartbeat_at"] = utc_now()
         worker_pid = int(state.get("process_id") or os.getpid())
         state["resource"] = resource_snapshot(worker_pid=worker_pid)
+        state["resource_state"] = state["resource"].get("resource_state")
+        state["host_load_observed"] = state["resource"].get("host_load_1m")
+        state["worker_memory_observed"] = (state["resource"].get("worker_process") or {}).get("memory_mb")
         write_elapsed = write_snapshot(state)
         state["state_write_elapsed_seconds"] = round(write_elapsed, 4)
-        # Compatibility snapshots retained for current diagnostics; both are
-        # derived solely from this canonical record.
-        compatibility = {
-            "pid": worker_pid,
-            "running": not self.stop_requested,
-            "updated_at": state["heartbeat_at"],
-            "last_cycle_utc": state.get("last_cycle_completed_at") or "",
-            "worker_generation_id": self.lease.generation_id,
-            "worker_cycle_started_at": state.get("last_cycle_started_at") or "",
-            "worker_cycle_completed_at": state.get("last_cycle_completed_at") or "",
-            "worker_cycle_phase": state.get("cycle_state"),
-            "last_error": state.get("last_error") or "",
-            "interval_seconds": self.limits.minimum_sleep_between_cycles_seconds,
-            "autopilot_enabled": bool(getattr(self.autopilot, "_enabled", False)),
-            "process_role": "PAPER_AUTOPILOT_WORKER",
-        }
-        write_snapshot(compatibility, STATE / "paper_worker_heartbeat.json")
-        write_snapshot({"pid": worker_pid, "worker_generation_id": self.lease.generation_id, "process_role": "PAPER_AUTOPILOT_WORKER"}, STATE / "paper_worker.pid")
+        state["autopilot_enabled"] = bool(getattr(self.autopilot, "_enabled", False))
         return state
+
+    def _evidence_summary(self) -> dict[str, Any]:
+        """Summarize already-produced worker evidence without new reads or calls."""
+        runtime = dict(getattr(self.autopilot, "_runtime_state", {}).get("legacy_swing_canary") or {})
+        records = dict(runtime.get("market_records") or getattr(self.autopilot, "_runtime_state", {}).get("legacy_swing_market_evidence") or {})
+        reviews = dict(runtime.get("reviews") or {})
+        sufficient = insufficient = failed = momentum = 0
+        recovered: list[dict[str, Any]] = []
+        acknowledgements = {"direct_evidence": 0, "forward_value": 0, "profit_capture": 0, "direct_confirmation": 0, "lifecycle": 0}
+        for activation_id, review_raw in list(reviews.items())[: self.limits.maximum_downstream_symbols_per_cycle]:
+            review = dict(review_raw or {})
+            daily = dict((records.get(activation_id) or {}).get("HISTORICAL_BARS_DAILY") or {})
+            required = int(daily.get("required_completed_bars") or 15)
+            completed = int(daily.get("records_valid") or 0)
+            quality = str(daily.get("quality_state") or "")
+            evidence = dict((review.get("required_evidence") or {}).get("MOMENTUM") or {})
+            current = evidence.get("status") == "CURRENT"
+            if quality == "CURRENT_SUFFICIENT" and completed >= required:
+                sufficient += 1
+            elif str(daily.get("response_state") or "").upper() not in {"", "SUCCESS", "EMPTY_RESPONSE"}:
+                failed += 1
+            else:
+                insufficient += 1
+            if current:
+                momentum += 1
+                recovered.append({"symbol": daily.get("symbol") or review.get("symbol"), "canonical_series_id": daily.get("record_id"), "momentum_record_id": evidence.get("record_id"), "completed_sessions": completed, "provider": daily.get("provider"), "worker_cycle_id": "", "worker_generation_id": self.lease.generation_id})
+            coverage = dict(review.get("direct_evidence_coverage") or {})
+            acknowledgements["direct_evidence"] += int(bool(coverage.get("required_evidence_complete")))
+            acknowledgements["forward_value"] += int(bool(review.get("forward_value_review") or review.get("forward_value")))
+            acknowledgements["profit_capture"] += int(bool(review.get("profit_capture") or review.get("profit_capture_intelligence")))
+            acknowledgements["direct_confirmation"] += int(bool(review.get("direct_confirmation_state")))
+            acknowledgements["lifecycle"] += int(bool(review.get("lifecycle_decision") or review.get("lifecycle_status")))
+        acknowledgements["all_required_consumers_acknowledged"] = bool(momentum and all(value > 0 for value in acknowledgements.values()))
+        return {"daily_sufficient_count": sufficient, "daily_insufficient_count": insufficient, "daily_failed_count": failed, "momentum_records_built": momentum, "downstream_acknowledgements": acknowledgements, "recovered_daily_symbols": recovered}
 
     def _on_signal(self, _signum: int, _frame: Any) -> None:
         self.stop_requested = True
@@ -116,11 +141,30 @@ class PaperAutopilotWorker:
                 cycle_state="PAUSED_MEMORY_PRESSURE" if resource_state == "MEMORY_PRESSURE_PAUSE" else "PAUSED_HIGH_LOAD",
                 cycle_stop_reason=str(before.get("resource_reason") or "resource_pause"),
                 resource_pause_state=resource_state,
+                symbols_due=0,
+                symbols_attempted=0,
+                symbols_completed=0,
+                symbols_deferred=0,
+                provider_requests=0,
+                pages_consumed=0,
+                records_persisted=0,
                 next_cycle_at=utc_now(),
             )
             return
         if time.monotonic() < self.cooldown_until:
-            self._publish(cycle_id=cycle_id, cycle_state="CHECKPOINTED", cycle_stop_reason="RECOVERY_COOLDOWN", resource_pause_state="RECOVERY_COOLDOWN")
+            self._publish(
+                cycle_id=cycle_id,
+                cycle_state="CHECKPOINTED",
+                cycle_stop_reason="RECOVERY_COOLDOWN",
+                resource_pause_state="RECOVERY_COOLDOWN",
+                symbols_due=0,
+                symbols_attempted=0,
+                symbols_completed=0,
+                symbols_deferred=0,
+                provider_requests=0,
+                pages_consumed=0,
+                records_persisted=0,
+            )
             return
 
         original_max_stocks = getattr(self.autopilot, "max_stocks", self.limits.maximum_symbols_per_cycle)
@@ -157,7 +201,7 @@ class PaperAutopilotWorker:
                 provider_requests=min(self.limits.maximum_provider_requests_per_cycle, int((market.get("families") or {}).get("HISTORICAL_BARS", {}).get("request_count") or 0)),
                 pages_consumed=min(self.limits.maximum_pages_per_symbol * self.limits.maximum_symbols_per_cycle, int(market.get("pages_consumed") or 0)),
                 records_persisted=int(market.get("records_persisted") or 0),
-                momentum_records_built=int(market.get("momentum_records_built") or 0),
+                **self._evidence_summary(),
                 last_error=str(trace.get("worker_cycle_error") or "")[:240],
                 next_cycle_at=utc_now(),
             )

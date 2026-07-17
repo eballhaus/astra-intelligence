@@ -260,7 +260,7 @@ class AstraRecoveryCenterV1:
             "frontend_health": frontend_health,
             "tmux_backend_session": _tmux_has("astra_backend"),
             "tmux_frontend_session": _tmux_has("astra_frontend"),
-            "workers_detected": (STATE_DIR / "paper_worker_heartbeat.json").exists(),
+            "workers_detected": (STATE_DIR / "astra_worker_runtime_state_v1.json").exists(),
             "watchdog_running": (STATE_DIR / "backend_watchdog_heartbeat").exists() or _tmux_has("astra_backend"),
         }
         score = 100

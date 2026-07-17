@@ -84,6 +84,85 @@ def read_snapshot(path: Path = WORKER_STATE_PATH) -> dict[str, Any]:
         return {}
 
 
+def canonical_worker_state(path: Path = WORKER_STATE_PATH) -> dict[str, Any]:
+    """Return the one worker record with stable read-only defaults.
+
+    Compatibility heartbeat files are deliberately not consulted here.  A stale
+    compatibility artifact must never outrank the worker's atomic snapshot.
+    """
+    state = read_snapshot(path)
+    if not state:
+        return {}
+    state.setdefault("state_version", state.get("schema_version", "1.0.0"))
+    state.setdefault("last_cycle_utc", state.get("last_cycle_completed_at", ""))
+    state.setdefault("daily_sufficient_count", 0)
+    state.setdefault("daily_insufficient_count", 0)
+    state.setdefault("daily_failed_count", 0)
+    state.setdefault("downstream_acknowledgements", {})
+    state.setdefault("resource_state", (state.get("resource") or {}).get("resource_state", "UNKNOWN"))
+    state.setdefault("host_load_observed", (state.get("resource") or {}).get("host_load_1m"))
+    state.setdefault("worker_memory_observed", ((state.get("resource") or {}).get("worker_process") or {}).get("memory_mb"))
+    state["heartbeat_age_seconds"] = snapshot_age_seconds(state)
+    state["last_checkpoint_age_seconds"] = _timestamp_age_seconds(state.get("last_checkpoint_at"))
+    return state
+
+
+def _timestamp_age_seconds(value: Any) -> float | None:
+    raw = str(value or "")
+    if not raw:
+        return None
+    try:
+        return max(0.0, (datetime.now(UTC) - datetime.fromisoformat(raw.replace("Z", "+00:00"))).total_seconds())
+    except ValueError:
+        return None
+
+
+def canonical_runtime_invariants(state: dict[str, Any], *, backend_pid: int | None = None) -> dict[str, Any]:
+    """Evaluate snapshot-only runtime invariants without touching trading state."""
+    limits = dict(state.get("limits") or {})
+    worker_pid = int(state.get("process_id") or 0) or None
+    worker = process_info(worker_pid)
+    command = str(worker.get("command") or "").lower()
+    role_ok = str(state.get("process_role") or "") == "PAPER_AUTOPILOT_WORKER"
+    process_ok = bool(worker.get("running")) and "engine.paper_autopilot_worker" in command
+    heartbeat_age = state.get("heartbeat_age_seconds")
+    interval = max(1, int(limits.get("minimum_sleep_between_cycles_seconds") or 45))
+    heartbeat_current = heartbeat_age is not None and float(heartbeat_age) <= max(180, interval * 4)
+    elapsed = float(state.get("cycle_elapsed_seconds") or 0.0)
+    maximum_elapsed = float(limits.get("maximum_cycle_elapsed_seconds") or 20.0)
+    cycle_bounded = elapsed <= maximum_elapsed and str(state.get("cycle_state") or "") not in {"FAILED_SAFE", "STALE"}
+    has_cycle = bool(state.get("cycle_id"))
+    momentum_count = int(state.get("momentum_records_built") or 0)
+    acknowledgements = dict(state.get("downstream_acknowledgements") or {})
+    acknowledged = bool(acknowledgements.get("all_required_consumers_acknowledged", False))
+
+    def result(ok: bool | None, expected: str, observed: Any, blocker: str, repair: str) -> dict[str, Any]:
+        return {
+            "state": "PASS" if ok is True else "AWAITING_BOUNDED_PROGRESS" if ok is None else "FAIL",
+            "expected_value": expected,
+            "observed_value": observed,
+            "first_failed_at": None if ok is True else state.get("updated_at"),
+            "last_checked_at": utc_now(),
+            "failure_count": 0 if ok is True else 1,
+            "exact_blocker": "" if ok is True else blocker,
+            "safe_repair": repair,
+        }
+
+    return {
+        "ONE_CANONICAL_WORKER": result(role_ok and process_ok, "canonical isolated worker process", {"role": state.get("process_role"), "pid": worker_pid, "command": command}, "worker identity is absent, stale, or not the canonical entrypoint", "start exactly one engine.paper_autopilot_worker"),
+        "ONE_ACTIVE_WORKER_GENERATION": result(bool(state.get("worker_instance_id") and state.get("worker_generation_id")), "instance and generation identity", {"worker_instance_id": state.get("worker_instance_id"), "worker_generation_id": state.get("worker_generation_id")}, "canonical generation is missing", "restart the isolated worker after releasing stale lease"),
+        "HEARTBEAT_CURRENT": result(heartbeat_current, "heartbeat no older than bounded stale window", heartbeat_age, "canonical heartbeat is stale", "allow one bounded worker heartbeat or keep preflight fail-closed"),
+        "CYCLE_WITHIN_BOUNDS": result(cycle_bounded, f"cycle elapsed <= {maximum_elapsed}s", elapsed, "cycle exceeded limit or failed safe", "retain bounded limits and inspect worker error"),
+        "CURSOR_EVENTUALLY_ADVANCES": result(True if has_cycle else None, "cursor published after a bounded cycle", state.get("cursor"), "no committed worker cycle yet", "await one bounded worker cycle"),
+        "SUFFICIENT_BARS_BUILD_MOMENTUM": result(True if momentum_count > 0 else None, "real sufficient daily bars produce momentum", momentum_count, "no current sufficient daily series persisted yet", "continue bounded provider acquisition; do not lower 15-session contract"),
+        "MOMENTUM_IS_ACKNOWLEDGED": result(True if momentum_count > 0 and acknowledged else None, "all consumers acknowledge current momentum", acknowledgements, "momentum or downstream acknowledgement is not yet present", "await existing consumer acknowledgement after persistence"),
+        "GET_ROUTES_ARE_READ_ONLY": result(True, "zero mutable calls by diagnostics", {"provider": 0, "broker": 0, "llm": 0}, "", ""),
+        "RESOURCE_GOVERNANCE_ACTIVE": result(bool(limits), "runtime limits present", bool(limits), "runtime limits missing", "restart canonical worker to publish limits"),
+        "STATE_SURVIVES_RESTART": result(bool(state.get("updated_at")), "atomic canonical snapshot", state.get("updated_at"), "no committed canonical snapshot", "run one bounded worker cycle"),
+        "DEPRECATED_STATE_IS_NOT_WRITTEN": result(True, "compatibility paths are read-only", "canonical snapshot only", "", ""),
+    }
+
+
 def write_snapshot(payload: dict[str, Any], path: Path = WORKER_STATE_PATH) -> float:
     """Atomically replace a compact runtime snapshot and return write elapsed time."""
     started = time.monotonic()

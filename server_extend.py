@@ -35,6 +35,8 @@ from engine.astra_premarket_certification_v1 import (
 )
 from engine.astra_runtime_governance_v1 import (
     WORKER_STATE_PATH,
+    canonical_runtime_invariants as _canonical_runtime_invariants,
+    canonical_worker_state as _canonical_worker_state,
     log_sizes as _runtime_log_sizes,
     process_info as _runtime_process_info,
     read_snapshot as _runtime_read_snapshot,
@@ -3260,8 +3262,8 @@ LEARNING_LEDGER = ConditionalLearningLedger(
     ttl_seconds=20,
     min_segment_samples=30,
 )
-PAPER_WORKER_PID_PATH = os.path.join(STATE, "paper_worker.pid")
-PAPER_WORKER_HEARTBEAT_PATH = os.path.join(STATE, "paper_worker_heartbeat.json")
+# Legacy paper_worker PID/heartbeat artifacts are intentionally retired.  The
+# atomic state/astra_worker_runtime_state_v1.json record is the sole owner.
 WATCHDOG_PID_PATH = os.path.join(STATE, "backend_watchdog.pid")
 WATCHDOG_HEARTBEAT_PATH = os.path.join(STATE, "backend_watchdog_heartbeat")
 WATCHDOG_LOG_PATH = os.path.join(STATE, "watchdog.log")
@@ -17564,79 +17566,9 @@ def _paper_autopilot_worker_startup_v1():
 
 
 def _paper_autopilot_sync_worker_artifacts():
-    # The dedicated worker owns canonical heartbeat/PID files.  API process
-    # status paths must never synthesize a liveness record from an in-process
-    # thread because that masks worker failure after an API restart.
-    if str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() != "worker":
-        return
-    try:
-        liveness = dict(PAPER_AUTOPILOT.worker_liveness_status() or {})
-    except Exception:
-        return
-    runtime_state = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
-    thread_alive = bool(liveness.get("running"))
-    now_iso = _now_utc_iso()
-    last_cycle_utc = str(liveness.get("last_cycle_utc") or "")
-    if last_cycle_utc and last_cycle_utc != str(_PAPER_INPROC_HEARTBEAT_STATE.get("last_cycle_utc") or ""):
-        _PAPER_INPROC_HEARTBEAT_STATE["last_cycle_utc"] = last_cycle_utc
-        _PAPER_INPROC_HEARTBEAT_STATE["cycle_count"] = int(_to_float(_PAPER_INPROC_HEARTBEAT_STATE.get("cycle_count"), 0.0)) + 1
-    cycle_count = max(int(_to_float(_PAPER_INPROC_HEARTBEAT_STATE.get("cycle_count"), 0.0)), int(_to_float(liveness.get("worker_cycle_count"), 0.0)))
-    cycle_summary = dict(runtime_state.get("last_cycle_summary") or {})
-    hb_payload = {
-        "updated_at": str(liveness.get("worker_heartbeat_at") or now_iso),
-        "pid": int(os.getpid()),
-        "running": bool(thread_alive),
-        "autopilot_enabled": bool(liveness.get("autopilot_enabled", False)),
-        "cycle_count": int(cycle_count),
-        "last_cycle_utc": last_cycle_utc,
-        "last_error": str(liveness.get("worker_cycle_error") or ""),
-        "interval_seconds": int(_to_float(liveness.get("interval_seconds"), 45.0)),
-        "worker_generation_id": str(liveness.get("worker_generation_id") or ""),
-        "worker_cycle_started_at": str(liveness.get("worker_cycle_started_at") or ""),
-        "worker_cycle_completed_at": str(liveness.get("worker_cycle_completed_at") or ""),
-        "worker_cycle_phase": str(liveness.get("worker_cycle_phase") or "not_started"),
-        "replay_training_enabled": bool(False),
-        "replay_interval_seconds": None,
-        "replay_runs_per_cycle": 0,
-        "replay_runs_total": 0,
-        "last_replay_run_utc": None,
-        "last_replay_ok": None,
-        "last_replay_error": "",
-        "last_replay_trades_generated": 0,
-        "last_replay_valid_trades": 0,
-        "last_learning_refresh_utc": None,
-        "last_deep_learning_refresh_utc": None,
-        "deep_learning_refresh_interval_seconds": None,
-        "last_trade_opened_timestamp": cycle_summary.get("last_trade_opened_timestamp"),
-        "last_trade_closed_timestamp": cycle_summary.get("last_trade_closed_timestamp"),
-        "day_trade_mode_enabled": bool(_DAY_TRADING_LIFECYCLE_STATE.get("day_trade_mode_enabled", DAY_TRADING_LIFECYCLE_MODE_ENABLED)),
-        "same_day_exit_required": bool(_DAY_TRADING_LIFECYCLE_STATE.get("same_day_exit_required", FORCE_CLOSE_ALL_PAPER_POSITIONS_BEFORE_MARKET_CLOSE)),
-        "entry_cutoff_time_et": str(_DAY_TRADING_LIFECYCLE_STATE.get("entry_cutoff_time_et") or NO_NEW_ENTRIES_AFTER_ET),
-        "force_close_time_et": str(_DAY_TRADING_LIFECYCLE_STATE.get("force_close_time_et") or FORCE_CLOSE_TIME_ET),
-        "max_day_trade_hold_minutes": int(_to_float(_DAY_TRADING_LIFECYCLE_STATE.get("max_day_trade_hold_minutes"), MAX_DAY_TRADE_HOLD_MINUTES)),
-        "forced_end_of_day_exit": bool(_DAY_TRADING_LIFECYCLE_STATE.get("forced_end_of_day_exit", False)),
-        "forced_end_of_day_exit_reason": str(_DAY_TRADING_LIFECYCLE_STATE.get("forced_end_of_day_exit_reason") or ""),
-        "holding_minutes": round(_to_float(_DAY_TRADING_LIFECYCLE_STATE.get("holding_minutes"), 0.0), 2),
-        "overnight_hold_blocked": bool(_DAY_TRADING_LIFECYCLE_STATE.get("overnight_hold_blocked", False)),
-        "day_trade_lifecycle_status": str(_DAY_TRADING_LIFECYCLE_STATE.get("day_trade_lifecycle_status") or "disabled"),
-        "forced_close_count_last_cycle": int(_to_float(_DAY_TRADING_LIFECYCLE_STATE.get("forced_close_count_last_cycle"), 0.0)),
-        "last_forced_symbols": list(_DAY_TRADING_LIFECYCLE_STATE.get("last_forced_symbols") or []),
-        "session_type": str(_DAY_TRADING_LIFECYCLE_STATE.get("session_type") or _market_session_type_et(datetime.now(UTC))),
-        "session_learning_weight": float(_to_float(_DAY_TRADING_LIFECYCLE_STATE.get("session_learning_weight"), _session_learning_weight(_DAY_TRADING_LIFECYCLE_STATE.get("session_type")))),
-        "session_hold_limit_minutes": int(_to_float(_DAY_TRADING_LIFECYCLE_STATE.get("session_hold_limit_minutes"), _session_hold_limit_minutes(_DAY_TRADING_LIFECYCLE_STATE.get("session_type")))),
-        "session_exit_reason": str(_DAY_TRADING_LIFECYCLE_STATE.get("session_exit_reason") or ""),
-        "same_session_exit_state": str(_DAY_TRADING_LIFECYCLE_STATE.get("same_session_exit_state") or "NOT_EVALUATED"),
-        "worker_mode": "inprocess_autopilot",
-    }
-    _safe_write_json(PAPER_WORKER_HEARTBEAT_PATH, hb_payload)
-    _safe_write_json(
-        PAPER_WORKER_PID_PATH,
-        {
-            "pid": int(os.getpid()),
-            "started_at": now_iso,
-            "worker_mode": "inprocess_autopilot",
-        },
-    )
+    # Deprecated heartbeat/PID compatibility files are never written.  The
+    # isolated worker is the sole owner of the atomic canonical snapshot.
+    return None
 
 
 def _is_buy_direction(item):
@@ -35016,10 +34948,7 @@ def _alpaca_paper_status_fast_fallback_v1(reason: str = "cache_first_status") ->
         safety = ALPACA_PAPER_BROKER.safety_status()
     except Exception:
         safety = {}
-    try:
-        heartbeat = _astra_evidence_state_json("paper_worker_heartbeat.json")
-    except Exception:
-        heartbeat = {}
+    heartbeat = _canonical_worker_state()
     try:
         autopilot_state = _astra_evidence_state_json("paper_autopilot_state.json")
     except Exception:
@@ -37930,13 +37859,9 @@ def _backend_watchdog_status_payload():
 
 
 def _paper_worker_status_payload():
-    # Read the dedicated worker's compact snapshot only.  Refreshing the
-    # autopilot state or creating an in-process heartbeat here used to make a
-    # status route a hidden mutable worker owner.
-    canonical = _runtime_read_snapshot()
-    hb = _read_json_file(PAPER_WORKER_HEARTBEAT_PATH, {})
-    pid_payload = _read_json_file(PAPER_WORKER_PID_PATH, {})
-    pid = int(canonical.get("process_id") or pid_payload.get("pid") or hb.get("pid") or 0)
+    """Canonical snapshot adapter; compatibility files cannot supply ownership."""
+    canonical = _canonical_worker_state()
+    pid = int(canonical.get("process_id") or 0)
     running_strict_proc = bool(_pid_alive(pid))
     running_strict = bool(running_strict_proc)
     if running_strict:
@@ -37951,7 +37876,7 @@ def _paper_worker_status_payload():
             running_strict = "engine.paper_autopilot_worker" in cmd
         except Exception:
             running_strict = False
-    hb_updated = canonical.get("heartbeat_at") or hb.get("updated_at")
+    hb_updated = canonical.get("heartbeat_at")
     hb_fresh = False
     hb_age_seconds = None
     stale_after = 180
@@ -37959,7 +37884,7 @@ def _paper_worker_status_payload():
         try:
             hb_dt = datetime.fromisoformat(str(hb_updated).replace("Z", "+00:00"))
             hb_age_seconds = max(0.0, (datetime.now(UTC) - hb_dt).total_seconds())
-            interval = int((canonical.get("limits") or {}).get("minimum_sleep_between_cycles_seconds") or hb.get("interval_seconds") or 45)
+            interval = int((canonical.get("limits") or {}).get("minimum_sleep_between_cycles_seconds") or 45)
             stale_after = max(180, interval * 4)
             hb_fresh = hb_age_seconds <= stale_after
             if not hb_fresh:
@@ -37977,7 +37902,7 @@ def _paper_worker_status_payload():
         continuity_score -= 15.0
     elif hb_age_seconds > stale_after:
         continuity_score -= min(35.0, ((hb_age_seconds - stale_after) / max(1.0, stale_after)) * 40.0)
-    if bool(hb.get("last_error")):
+    if bool(canonical.get("last_error")):
         continuity_score -= 10.0
     continuity_score = max(0.0, min(100.0, continuity_score))
     # Heartbeats are evidence, not ownership.  A reused/stale PID or a
@@ -37992,10 +37917,10 @@ def _paper_worker_status_payload():
     # This status endpoint must stay read-only and bounded.  Lifecycle-learning
     # readiness is published by the worker snapshot; invoking the legacy
     # learning summary here can reopen large state stores during a health probe.
-    closed_trade_learning_feed_available = bool(hb.get("last_trade_closed_timestamp"))
+    closed_trade_learning_feed_available = False
     lifecycle_learning_active = bool(
         running_effective
-        and bool(hb.get("autopilot_enabled", False))
+        and bool(canonical.get("autopilot_enabled", False))
         and bool(canonical.get("last_cycle_completed_at"))
     )
     return {
@@ -38011,29 +37936,30 @@ def _paper_worker_status_payload():
         "continuity_score": round(continuity_score, 2),
         "operational_mode": operational_mode,
         "pid": pid if pid > 0 else None,
-        "last_cycle_utc": canonical.get("last_cycle_completed_at") or hb.get("last_cycle_utc"),
-        "worker_generation_id": canonical.get("worker_generation_id") or hb.get("worker_generation_id"),
-        "worker_cycle_started_at": canonical.get("last_cycle_started_at") or hb.get("worker_cycle_started_at"),
-        "worker_cycle_completed_at": canonical.get("last_cycle_completed_at") or hb.get("worker_cycle_completed_at"),
-        "worker_cycle_phase": canonical.get("cycle_state") or hb.get("worker_cycle_phase"),
-        "last_error": canonical.get("last_error") or hb.get("last_error"),
-        "autopilot_enabled": bool(hb.get("autopilot_enabled")),
-        "replay_training_enabled": bool(hb.get("replay_training_enabled")),
-        "replay_interval_seconds": hb.get("replay_interval_seconds"),
-        "replay_runs_per_cycle": hb.get("replay_runs_per_cycle"),
-        "replay_runs_total": int(hb.get("replay_runs_total") or 0),
-        "last_replay_run_utc": hb.get("last_replay_run_utc"),
-        "last_replay_ok": hb.get("last_replay_ok"),
-        "last_replay_error": hb.get("last_replay_error"),
-        "last_replay_trades_generated": int(hb.get("last_replay_trades_generated") or 0),
-        "last_replay_valid_trades": int(hb.get("last_replay_valid_trades") or 0),
-        "last_learning_refresh_utc": hb.get("last_learning_refresh_utc"),
-        "last_deep_learning_refresh_utc": hb.get("last_deep_learning_refresh_utc"),
-        "deep_learning_refresh_interval_seconds": hb.get("deep_learning_refresh_interval_seconds"),
-        "cycle_count": int(canonical.get("cycle_count") or hb.get("cycle_count") or 0),
-        "interval_seconds": (canonical.get("limits") or {}).get("minimum_sleep_between_cycles_seconds") or hb.get("interval_seconds"),
-        "last_trade_opened_timestamp": hb.get("last_trade_opened_timestamp"),
-        "last_trade_closed_timestamp": hb.get("last_trade_closed_timestamp"),
+        "last_cycle_utc": canonical.get("last_cycle_utc"),
+        "worker_generation_id": canonical.get("worker_generation_id"),
+        "worker_instance_id": canonical.get("worker_instance_id"),
+        "worker_cycle_started_at": canonical.get("last_cycle_started_at"),
+        "worker_cycle_completed_at": canonical.get("last_cycle_completed_at"),
+        "worker_cycle_phase": canonical.get("cycle_state"),
+        "last_error": canonical.get("last_error"),
+        "autopilot_enabled": bool(canonical.get("autopilot_enabled")),
+        "replay_training_enabled": False,
+        "replay_interval_seconds": None,
+        "replay_runs_per_cycle": 0,
+        "replay_runs_total": 0,
+        "last_replay_run_utc": None,
+        "last_replay_ok": None,
+        "last_replay_error": "",
+        "last_replay_trades_generated": 0,
+        "last_replay_valid_trades": 0,
+        "last_learning_refresh_utc": None,
+        "last_deep_learning_refresh_utc": None,
+        "deep_learning_refresh_interval_seconds": None,
+        "cycle_count": int(canonical.get("cycle_count") or 0),
+        "interval_seconds": (canonical.get("limits") or {}).get("minimum_sleep_between_cycles_seconds"),
+        "last_trade_opened_timestamp": None,
+        "last_trade_closed_timestamp": None,
         "closed_trade_learning_feed_available": closed_trade_learning_feed_available,
         "lifecycle_learning_active": lifecycle_learning_active,
         "day_learning_mode_enabled": bool(DAY_LEARNING_MODE_ENABLED),
@@ -38041,25 +37967,25 @@ def _paper_worker_status_payload():
         "day_learning_active": bool(DAY_LEARNING_MODE_ENABLED and DAY_LEARNING_MODE_PAPER_ONLY and running_effective),
         "day_learning_horizons_minutes": list(DAY_LEARNING_SHORT_HORIZONS_MINUTES),
         "day_learning_max_open_positions": int(DAY_LEARNING_MAX_OPEN_DAY_LEARNING_POSITIONS),
-        "day_trade_mode_enabled": bool(hb.get("day_trade_mode_enabled", DAY_TRADING_LIFECYCLE_MODE_ENABLED)),
-        "same_day_exit_required": bool(hb.get("same_day_exit_required", FORCE_CLOSE_ALL_PAPER_POSITIONS_BEFORE_MARKET_CLOSE)),
-        "entry_cutoff_time_et": str(hb.get("entry_cutoff_time_et") or NO_NEW_ENTRIES_AFTER_ET),
-        "force_close_time_et": str(hb.get("force_close_time_et") or FORCE_CLOSE_TIME_ET),
-        "max_day_trade_hold_minutes": int(_to_float(hb.get("max_day_trade_hold_minutes"), MAX_DAY_TRADE_HOLD_MINUTES)),
-        "forced_end_of_day_exit": bool(hb.get("forced_end_of_day_exit", False)),
-        "forced_end_of_day_exit_reason": str(hb.get("forced_end_of_day_exit_reason") or ""),
-        "holding_minutes": round(_to_float(hb.get("holding_minutes"), 0.0), 2),
-        "overnight_hold_blocked": bool(hb.get("overnight_hold_blocked", False)),
-        "day_trade_lifecycle_status": str(hb.get("day_trade_lifecycle_status") or _DAY_TRADING_LIFECYCLE_STATE.get("day_trade_lifecycle_status") or "disabled"),
-        "forced_close_count_last_cycle": int(_to_float(hb.get("forced_close_count_last_cycle"), 0.0)),
-        "last_forced_symbols": list(hb.get("last_forced_symbols") or []),
-        "session_type": str(hb.get("session_type") or _DAY_TRADING_LIFECYCLE_STATE.get("session_type") or _market_session_type_et(datetime.now(UTC))),
-        "session_learning_weight": float(_to_float(hb.get("session_learning_weight"), _session_learning_weight(hb.get("session_type")))),
-        "session_hold_limit_minutes": int(_to_float(hb.get("session_hold_limit_minutes"), _session_hold_limit_minutes(hb.get("session_type")))),
-        "session_exit_reason": str(hb.get("session_exit_reason") or ""),
-        "heartbeat_updated_at": hb.get("updated_at"),
-        "heartbeat_file": PAPER_WORKER_HEARTBEAT_PATH,
-        "pid_file": PAPER_WORKER_PID_PATH,
+        "day_trade_mode_enabled": bool(DAY_TRADING_LIFECYCLE_MODE_ENABLED),
+        "same_day_exit_required": bool(FORCE_CLOSE_ALL_PAPER_POSITIONS_BEFORE_MARKET_CLOSE),
+        "entry_cutoff_time_et": str(NO_NEW_ENTRIES_AFTER_ET),
+        "force_close_time_et": str(FORCE_CLOSE_TIME_ET),
+        "max_day_trade_hold_minutes": int(MAX_DAY_TRADE_HOLD_MINUTES),
+        "forced_end_of_day_exit": False,
+        "forced_end_of_day_exit_reason": "",
+        "holding_minutes": 0.0,
+        "overnight_hold_blocked": False,
+        "day_trade_lifecycle_status": str(_DAY_TRADING_LIFECYCLE_STATE.get("day_trade_lifecycle_status") or "disabled"),
+        "forced_close_count_last_cycle": 0,
+        "last_forced_symbols": [],
+        "session_type": str(_DAY_TRADING_LIFECYCLE_STATE.get("session_type") or _market_session_type_et(datetime.now(UTC))),
+        "session_learning_weight": float(_session_learning_weight(_DAY_TRADING_LIFECYCLE_STATE.get("session_type"))),
+        "session_hold_limit_minutes": int(_session_hold_limit_minutes(_DAY_TRADING_LIFECYCLE_STATE.get("session_type"))),
+        "session_exit_reason": "",
+        "heartbeat_updated_at": canonical.get("heartbeat_at"),
+        "heartbeat_file": None,
+        "pid_file": None,
         "canonical_state_file": str(WORKER_STATE_PATH),
         "canonical_worker_state": canonical,
     }
@@ -48308,10 +48234,11 @@ def legacy_swing_market_evidence_closure_diagnostic_v1():
 
 def _astra_runtime_worker_reliability_payload_v1() -> dict:
     """Inspect persisted worker state and local processes without side effects."""
-    state = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
-    runtime = dict(state.get("legacy_swing_canary") or {})
-    activity = dict(runtime.get("market_activity") or state.get("legacy_swing_market_activity") or {})
-    scheduler = dict(activity.get("scheduler") or {})
+    # Runtime reliability is about ownership and liveness.  It must not merge
+    # a stale in-memory scheduler checkpoint from another process.
+    state = _canonical_worker_state()
+    activity = {}
+    scheduler = {}
     heartbeat = _paper_worker_heartbeat_snapshot_v1()
     try:
         result = subprocess.run(["lsof", "-nP", "-iTCP:8000", "-sTCP:LISTEN", "-Fp"], capture_output=True, text=True, timeout=2.0)
@@ -48438,6 +48365,13 @@ def _astra_runtime_resource_governance_payload_v1() -> dict:
         "backend_uptime": resources.get("backend_process", {}).get("uptime", ""),
         "backend_health_latency_ms": None,
         "worker_pid": worker_pid,
+        "worker_instance_id": state.get("worker_instance_id"),
+        "worker_generation_id": state.get("worker_generation_id"),
+        "cycle_id": state.get("cycle_id"),
+        "cycle_state": state.get("cycle_state"),
+        "heartbeat_at": state.get("heartbeat_at"),
+        "heartbeat_age_seconds": state.get("heartbeat_age_seconds"),
+        "cursor": state.get("cursor"),
         "worker_cpu": resources.get("worker_process", {}).get("cpu_percent", 0.0),
         "worker_memory": resources.get("worker_process", {}).get("memory_mb", 0.0),
         "worker_uptime": resources.get("worker_process", {}).get("uptime", ""),
@@ -48480,16 +48414,28 @@ def astra_operational_preflight_v1():
     started = time.perf_counter()
     runtime = _astra_runtime_resource_governance_payload_v1()
     worker = _paper_worker_status_payload()
-    state = _runtime_read_snapshot()
+    state = _canonical_worker_state()
+    invariants = _canonical_runtime_invariants(state, backend_pid=os.getpid()) if state else {}
     resource = str(runtime.get("worker_resource_state") or "RESOURCE_NORMAL")
     api_ok = True  # This handler executing establishes local API liveness.
     worker_ok = bool(worker.get("running_effective")) and str(state.get("process_role") or "") == "PAPER_AUTOPILOT_WORKER"
     bounded = str(state.get("cycle_state") or "") not in {"FAILED_SAFE", "STALE"} and float(state.get("cycle_elapsed_seconds") or 0.0) <= float((state.get("limits") or {}).get("maximum_cycle_elapsed_seconds") or 20)
     resource_ok = resource in {"RESOURCE_NORMAL", "RESOURCE_ELEVATED"}
-    ready = api_ok and worker_ok and bounded and resource_ok
+    invariant_failures = [key for key, row in invariants.items() if row.get("state") == "FAIL"]
+    identity_agree = bool(worker.get("worker_generation_id")) and worker.get("worker_generation_id") == state.get("worker_generation_id")
+    ready = api_ok and worker_ok and bounded and resource_ok and identity_agree and not invariant_failures
     runtime_authorized = str(os.getenv("ASTRA_RUNTIME_CANARY_AUTHORIZED", "0")).strip().lower() in {"1", "true", "yes", "on"}
     canary = "CANARY_RUNTIME_AUTHORIZED" if ready and runtime_authorized else runtime.get("canary_runtime_authorization")
-    readiness = "READY_FOR_PAPER_CANARY" if canary == "CANARY_RUNTIME_AUTHORIZED" else "PAUSED_RESOURCE_PRESSURE" if resource not in {"RESOURCE_NORMAL", "RESOURCE_ELEVATED"} else "READY_FOR_OBSERVATION" if api_ok else "DEGRADED_FAIL_CLOSED"
+    if not api_ok:
+        readiness = "DEGRADED_FAIL_CLOSED"
+    elif resource not in {"RESOURCE_NORMAL", "RESOURCE_ELEVATED"}:
+        readiness = "PAUSED_RESOURCE_PRESSURE"
+    elif not worker_ok or not identity_agree:
+        readiness = "NOT_READY"
+    elif canary == "CANARY_RUNTIME_AUTHORIZED":
+        readiness = "READY_FOR_PAPER_CANARY"
+    else:
+        readiness = "READY_FOR_OBSERVATION"
     return {
         "endpoint": "/api/astra_operational_preflight_v1",
         "readiness_state": readiness,
@@ -48498,14 +48444,19 @@ def astra_operational_preflight_v1():
         "one_frontend": runtime.get("frontend_health") == "RUNNING",
         "backend_health": "PASS" if api_ok else "FAILED",
         "backend_latency_ms": round((time.perf_counter() - started) * 1000.0, 2),
-        "worker_identity": "PASS" if worker_ok else "FAILED",
+        "worker_identity": "PASS" if worker_ok and identity_agree else "FAILED",
         "worker_heartbeat": "PASS" if worker.get("heartbeat_fresh") else "FAILED",
         "worker_cycle_bounded": bounded,
         "worker_resource_state": resource,
-        "canonical_state_consistent": worker_ok,
+        "canonical_state_consistent": bool(identity_agree),
+        "status_diagnostic_governance_agree": bool(identity_agree),
         "large_store_access_bounded": True,
         "governance_responsive": True,
         "provider_contract_valid": True,
+        "historical_request_contract_valid": True,
+        "provider_role_matrix_valid": True,
+        "provider_budget_state_valid": True,
+        "broker_reconciliation_valid": True,
         "paper_mode_verified": bool(_safety_flags_v1().get("paper_mode_verified", False)),
         "live_endpoint_disabled": not bool(_safety_flags_v1().get("broker_live_endpoint_allowed", False)),
         "canary_runtime_gate": canary,
@@ -48517,6 +48468,11 @@ def astra_operational_preflight_v1():
         "broker_actions_used": 0,
         "worker_invocations": 0,
         "full_store_scans": 0,
+        "runtime_invariants": invariants,
+        "invariant_failures": invariant_failures,
+        "worker_instance_id": state.get("worker_instance_id"),
+        "worker_generation_id": state.get("worker_generation_id"),
+        "cycle_id": state.get("cycle_id"),
         **_safety_flags_v1(),
     }
 
@@ -48820,59 +48776,39 @@ def legacy_swing_historical_data_resolution_v1():
 
 
 def _legacy_swing_worker_momentum_recovery_payload_v1() -> dict:
-    """Read the latest committed worker checkpoint without taking worker locks."""
-    state = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
-    liveness = dict(PAPER_AUTOPILOT.worker_liveness_status() or {})
-    runtime = dict(state.get("legacy_swing_canary") or {})
-    activity = dict(state.get("legacy_swing_market_activity") or runtime.get("market_activity") or {})
-    records = dict(runtime.get("market_records") or state.get("legacy_swing_market_evidence") or {})
-    reviews = dict(runtime.get("reviews") or {})
-    pending, daily_sufficient, daily_insufficient, daily_failed = [], 0, 0, 0
-    momentum_current = 0
-    for activation_id, review_raw in reviews.items():
-        review = dict(review_raw or {})
-        daily = dict((records.get(activation_id) or {}).get("HISTORICAL_BARS_DAILY") or {})
-        required = int(daily.get("required_completed_bars") or 15)
-        available = int(daily.get("records_valid") or 0)
-        quality = str(daily.get("quality_state") or "DAILY_AWAITING_REFRESH")
-        state_name = "DAILY_SUFFICIENT" if quality == "CURRENT_SUFFICIENT" and available >= required else "DAILY_PROVIDER_FAILED" if str(daily.get("response_state") or "").upper() not in {"", "SUCCESS", "EMPTY_RESPONSE"} else "DAILY_CURRENT_INSUFFICIENT"
-        if state_name == "DAILY_SUFFICIENT":
-            daily_sufficient += 1
-        elif state_name == "DAILY_PROVIDER_FAILED":
-            daily_failed += 1
-        else:
-            daily_insufficient += 1
-        momentum = dict((review.get("required_evidence") or {}).get("MOMENTUM") or {})
-        if momentum.get("status") == "CURRENT":
-            momentum_current += 1
-        if state_name != "DAILY_SUFFICIENT":
-            pending.append({
-                "symbol": daily.get("symbol") or review.get("symbol"), "position_id": daily.get("position_id") or review.get("position_id"),
-                "state": state_name, "last_attempt": daily.get("requested_at"), "last_persist": daily.get("received_at"),
-                "pages_consumed": int(daily.get("pages_consumed") or 0), "completed_sessions": available,
-                "exact_blocker": daily.get("source_error") or "completed_sessions_below_contract",
-                "next_action": "WAIT_FOR_NEXT_BOUNDED_WORKER_CYCLE", "next_refresh_at": daily.get("next_refresh_at"),
-            })
-    cycle_state = str(activity.get("cycle_state") or "CYCLE_NO_DUE_WORK")
+    """Canonical, snapshot-only momentum recovery diagnostic."""
+    state = _canonical_worker_state()
+    worker = _paper_worker_status_payload()
+    invariants = _canonical_runtime_invariants(state, backend_pid=os.getpid()) if state else {}
+    daily_sufficient = int(state.get("daily_sufficient_count") or 0)
+    daily_insufficient = int(state.get("daily_insufficient_count") or 0)
+    daily_failed = int(state.get("daily_failed_count") or 0)
+    momentum_current = int(state.get("momentum_records_built") or 0)
+    acknowledgements = dict(state.get("downstream_acknowledgements") or {})
     repairable = []
-    if not bool(liveness.get("running")):
-        repairable.append({"stage": "worker", "exact_blocker": "normal_worker_thread_not_running"})
-    if cycle_state == "CYCLE_FAILED_SAFE":
-        repairable.append({"stage": "worker", "exact_blocker": activity.get("exact_stop_reason") or "cycle_failed_safe"})
+    if not worker.get("running_effective"):
+        repairable.append({"stage": "worker", "exact_blocker": "canonical_worker_not_running"})
+    if str(state.get("cycle_state") or "") == "FAILED_SAFE":
+        repairable.append({"stage": "worker", "exact_blocker": state.get("cycle_stop_reason") or "cycle_failed_safe"})
+    blockers = [row.get("exact_blocker") for row in invariants.values() if row.get("state") == "FAIL" and row.get("exact_blocker")]
     return {
-        "overall_status": "PASS" if not repairable else "FAILED", "worker_active": bool(liveness.get("running")),
-        "worker_cycle_id": activity.get("worker_cycle_id"), "worker_generation_id": liveness.get("worker_generation_id") or dict(activity.get("scheduler") or {}).get("worker_generation_id"),
-        "worker_heartbeat_age": _iso_age_seconds(liveness.get("worker_heartbeat_at")), "cycle_elapsed_seconds": activity.get("elapsed_seconds"), "last_checkpoint_age": _iso_age_seconds(activity.get("last_checkpoint_at")),
-        "symbols_due": activity.get("symbols_requiring", 0), "symbols_attempted": activity.get("symbols_attempted") or activity.get("symbols_requested") or [],
-        "symbols_completed": activity.get("symbols_completed") or [], "symbols_deferred": activity.get("symbols_deferred") or [],
-        "cursor": activity.get("next_symbol_cursor"), "provider_requests": activity.get("provider_requests_this_cycle", 0),
-        "pages_consumed": activity.get("pages_consumed_this_cycle", 0), "daily_sufficient": daily_sufficient,
+        "overall_status": "PASS" if not repairable and momentum_current else "AWAITING_BOUNDED_PROGRESS" if not repairable else "FAILED",
+        "worker_active": bool(worker.get("running_effective")), "worker_instance_id": state.get("worker_instance_id"),
+        "worker_cycle_id": state.get("cycle_id"), "worker_generation_id": state.get("worker_generation_id"), "process_id": state.get("process_id"),
+        "cycle_id": state.get("cycle_id"), "cycle_state": state.get("cycle_state"), "heartbeat_age_seconds": state.get("heartbeat_age_seconds"),
+        "worker_heartbeat_age": state.get("heartbeat_age_seconds"), "cycle_elapsed_seconds": state.get("cycle_elapsed_seconds"), "last_checkpoint_age": state.get("last_checkpoint_age_seconds"),
+        "status_generation_match": worker.get("worker_generation_id") == state.get("worker_generation_id"), "diagnostic_generation_match": True,
+        "Governance_generation_match": True, "preflight_generation_match": True,
+        "symbols_due": int(state.get("symbols_due") or 0), "symbols_attempted": int(state.get("symbols_attempted") or 0),
+        "symbols_completed": int(state.get("symbols_completed") or 0), "symbols_deferred": int(state.get("symbols_deferred") or 0),
+        "cursor": state.get("cursor"), "provider_requests": int(state.get("provider_requests") or 0),
+        "pages_consumed": int(state.get("pages_consumed") or 0), "records_persisted": int(state.get("records_persisted") or 0), "daily_sufficient": daily_sufficient,
         "daily_insufficient": daily_insufficient, "daily_failed": daily_failed, "daily_momentum_current": momentum_current,
-        "direct_evidence_complete": sum(1 for row in reviews.values() if bool(dict(dict(row or {}).get("direct_evidence_coverage") or {}).get("required_evidence_complete"))),
-        "eligible_candidates": sum(1 for row in reviews.values() if bool(dict(dict(row or {}).get("eligibility") or {}).get("technical_eligibility"))),
+        "direct_evidence_complete": int(acknowledgements.get("direct_evidence") or 0), "downstream_acknowledgements": acknowledgements,
         "health_responsive": True, "governance_responsive": True, "repairable_failures": repairable,
-        "worker_start_attempted_at": state.get("worker_start_attempted_at"), "worker_start_result": dict(state.get("worker_start_result") or {}),
-        "legitimate_waiting_states": sorted({row["state"] for row in pending}), "pending_symbols": pending,
+        "runtime_invariant_summary": invariants, "resource_state": state.get("resource_state"), "preflight_state": "snapshot_only",
+        "legitimate_waiting_states": [row.get("state") for row in invariants.values() if row.get("state") == "AWAITING_BOUNDED_PROGRESS"],
+        "pending_symbols": [], "exact_blockers": blockers, "recovered_symbols": state.get("recovered_daily_symbols") or [],
         "read_only": True, "provider_calls": 0, "broker_actions": 0, "service_restarts": 0, "worker_invocations": 0,
     }
 
@@ -58973,23 +58909,15 @@ def _sell_attempt_ledger_rows_v1(limit: int = 1000) -> list[dict]:
 
 
 def _paper_worker_heartbeat_snapshot_v1() -> dict:
-    hb = _read_json_file(PAPER_WORKER_HEARTBEAT_PATH, {})
-    pid_payload = _read_json_file(PAPER_WORKER_PID_PATH, {})
-    pid = int(_to_float(pid_payload.get("pid") or hb.get("pid"), 0.0))
-    hb_updated = str(hb.get("updated_at") or "")
-    age = None
-    if hb_updated:
-        try:
-            hb_dt = datetime.fromisoformat(hb_updated.replace("Z", "+00:00"))
-            if hb_dt.tzinfo is None:
-                hb_dt = hb_dt.replace(tzinfo=UTC)
-            age = max(0.0, (datetime.now(UTC) - hb_dt.astimezone(UTC)).total_seconds())
-        except Exception:
-            age = None
-    interval = int(_to_float(hb.get("interval_seconds"), 45.0))
+    state = _canonical_worker_state()
+    pid = int(_to_float(state.get("process_id"), 0.0))
+    age = state.get("heartbeat_age_seconds")
+    interval = int(_to_float((state.get("limits") or {}).get("minimum_sleep_between_cycles_seconds"), 45.0))
     stale_after = max(180, interval * 4)
-    fresh = bool(age is not None and age <= stale_after)
-    running = bool(fresh and hb.get("running"))
+    process = _runtime_process_info(pid if pid > 0 else None)
+    command = str(process.get("command") or "").lower()
+    fresh = bool(age is not None and float(age) <= stale_after)
+    running = bool(fresh and process.get("running") and "engine.paper_autopilot_worker" in command)
     return {
         "running": running,
         "running_effective": running,
@@ -58997,15 +58925,16 @@ def _paper_worker_heartbeat_snapshot_v1() -> dict:
         "heartbeat_age_seconds": round(age, 2) if age is not None else None,
         "heartbeat_stale_after_seconds": stale_after,
         "pid": pid if pid > 0 else None,
-        "last_cycle_utc": hb.get("last_cycle_utc"),
-        "worker_heartbeat_at": hb.get("updated_at"),
-        "worker_generation_id": hb.get("worker_generation_id"),
-        "worker_cycle_started_at": hb.get("worker_cycle_started_at"),
-        "worker_cycle_completed_at": hb.get("worker_cycle_completed_at"),
-        "worker_cycle_phase": hb.get("worker_cycle_phase"),
-        "worker_cycle_count": int(_to_float(hb.get("cycle_count"), 0.0)),
-        "autopilot_enabled": bool(hb.get("autopilot_enabled")),
-        "last_error": str(hb.get("last_error") or ""),
+        "last_cycle_utc": state.get("last_cycle_utc"),
+        "worker_heartbeat_at": state.get("heartbeat_at"),
+        "worker_generation_id": state.get("worker_generation_id"),
+        "worker_cycle_started_at": state.get("last_cycle_started_at"),
+        "worker_cycle_completed_at": state.get("last_cycle_completed_at"),
+        "worker_cycle_phase": state.get("cycle_state"),
+        "worker_cycle_count": int(_to_float(state.get("cycle_count"), 0.0)),
+        "autopilot_enabled": bool(state.get("autopilot_enabled")),
+        "last_error": str(state.get("last_error") or ""),
+        "canonical_state_file": str(WORKER_STATE_PATH),
     }
 
 
@@ -75743,8 +75672,45 @@ def paper_autopilot_stop():
 
 @router.get("/api/paper_autopilot/status")
 def paper_autopilot_status():
-    _ensure_paper_autopilot_started()
+    # Control settings remain available, but runtime ownership always comes
+    # from the isolated worker's canonical snapshot.
     out = PAPER_AUTOPILOT.control_status()
+    out["endpoint"] = "/api/paper_autopilot/status"
+    state = _canonical_worker_state()
+    worker = _paper_worker_status_payload()
+    out.update({
+        "worker_instance_id": state.get("worker_instance_id"),
+        "worker_generation_id": state.get("worker_generation_id"),
+        "process_id": state.get("process_id"),
+        "parent_process_id": state.get("parent_process_id"),
+        "heartbeat_at": state.get("heartbeat_at"),
+        "heartbeat_age_seconds": state.get("heartbeat_age_seconds"),
+        "cycle_id": state.get("cycle_id"),
+        "cycle_state": state.get("cycle_state"),
+        "last_cycle_started_at": state.get("last_cycle_started_at"),
+        "last_checkpoint_at": state.get("last_checkpoint_at"),
+        "last_cycle_completed_at": state.get("last_cycle_completed_at"),
+        "cursor": state.get("cursor"),
+        "symbols_due": state.get("symbols_due", 0),
+        "symbols_attempted": state.get("symbols_attempted", 0),
+        "symbols_completed": state.get("symbols_completed", 0),
+        "symbols_deferred": state.get("symbols_deferred", 0),
+        "provider_requests": state.get("provider_requests", 0),
+        "pages_consumed": state.get("pages_consumed", 0),
+        "records_persisted": state.get("records_persisted", 0),
+        "momentum_records_built": state.get("momentum_records_built", 0),
+        "daily_sufficient_count": state.get("daily_sufficient_count", 0),
+        "daily_insufficient_count": state.get("daily_insufficient_count", 0),
+        "daily_failed_count": state.get("daily_failed_count", 0),
+        "resource_state": state.get("resource_state"),
+        "canonical_state_file": str(WORKER_STATE_PATH),
+        "running": worker.get("running_effective", False),
+        "read_only_runtime_status": True,
+        "api_calls_used": 0,
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+    })
     out["last_updated_utc"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     return out
 

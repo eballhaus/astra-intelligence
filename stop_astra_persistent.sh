@@ -10,7 +10,9 @@ FRONTEND_SESSION="${ASTRA_FRONTEND_TMUX_SESSION:-astra_frontend}"
 
 WATCHDOG_PID_FILE="${STATE_DIR}/backend_watchdog.pid"
 UVICORN_PID_FILE="${STATE_DIR}/uvicorn.pid"
-PAPER_WORKER_PID_FILE="${STATE_DIR}/paper_worker.pid"
+PAPER_WORKER_PID_FILE="${STATE_DIR}/astra_worker_runtime_state_v1.json"
+DEPRECATED_WORKER_PID_FILE="${STATE_DIR}/paper_worker.pid"
+DEPRECATED_WORKER_HEARTBEAT_FILE="${STATE_DIR}/paper_worker_heartbeat.json"
 WATCHDOG_HEARTBEAT_FILE="${STATE_DIR}/backend_watchdog_heartbeat"
 
 log_info() {
@@ -64,7 +66,7 @@ import json,sys
 try:
     with open(sys.argv[1], "r", encoding="utf-8") as fh:
         obj = json.load(fh)
-    v = obj.get("pid")
+    v = obj.get("process_id") or obj.get("pid")
     print(int(v) if v is not None else "")
 except Exception:
     print("")
@@ -136,7 +138,7 @@ if command -v lsof >/dev/null 2>&1; then
 fi
 log_info "fallback pkill patterns applied (non-fatal)"
 
-rm -f "${WATCHDOG_PID_FILE}" "${UVICORN_PID_FILE}" "${PAPER_WORKER_PID_FILE}" "${WATCHDOG_HEARTBEAT_FILE}"
+rm -f "${WATCHDOG_PID_FILE}" "${UVICORN_PID_FILE}" "${WATCHDOG_HEARTBEAT_FILE}" "${DEPRECATED_WORKER_PID_FILE}" "${DEPRECATED_WORKER_HEARTBEAT_FILE}"
 
-log_info "removed canonical pid/heartbeat files"
+log_info "removed volatile PID/heartbeat artifacts; preserved canonical worker state"
 log_info "stopped canonical Astra tmux sessions/processes."
