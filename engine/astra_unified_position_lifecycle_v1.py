@@ -169,6 +169,7 @@ def build_legacy_swing_canary_pre_submit_v1(
     quantity = _num(gate.get("proposed_quantity")) or 0.0
     return {
         "schema_version": "legacy_swing_canary_pre_submit_v1",
+        "pre_submit_state": "LEGACY_SWING_CANARY_PRE_SUBMIT_READY",
         "policy_id": cfg.get("policy_id"), "pre_submit_id": f"pre-submit:{gate.get('action_id')}", "created_at": _iso(now),
         "position_id": position_id, "activation_id": decision.get("forward_baseline", {}).get("baseline_id"),
         "symbol": decision.get("symbol") or row.get("symbol"), "asset_class": row.get("asset_class") or row.get("asset_type"),
@@ -186,23 +187,25 @@ def build_legacy_swing_canary_pre_submit_v1(
         "governance_state": "PASS", "lineage_state": "COMPLETE", "technical_eligibility": True,
         "candidate_score": chosen.get("candidate_score"), "selected_state": "SELECTED",
         "canary_enabled": bool(cfg.get("enabled")), "kill_switch_state": bool(cfg.get("kill_switch")),
-        "execution_authorized": False, "writer_contract_status": "WRITER_ADAPTER_PENDING",
-        "writer_adapter_required": True, "blocker": "WRITER_ADAPTER_PENDING",
-        "limitations": ["disabled_canary_no_writer_invocation"], "evidence_sources": decision.get("evidence_rows") or [],
+        "execution_authorized": False, "writer_contract_status": "ADAPTER_MAPPING_VALID",
+        "writer_adapter_required": False, "blocker": "CANARY_DISABLED",
+        "limitations": ["disabled_canary_broker_submission_blocked"], "evidence_sources": decision.get("evidence_rows") or [],
     }
 
 
 def legacy_swing_writer_adapter_contract_v1() -> dict[str, Any]:
     """Machine-readable boundary for the deliberately excluded writer adapter."""
     return {
-        "status": "WRITER_ADAPTER_PENDING",
+        "status": "WRITER_PATH_CONNECTED",
         "existing_policy_owner": "PaperAutopilot.authorized_lane_exit_pending",
         "existing_writer": "PaperAutopilot._submit_authorized_lane_exit",
         "existing_writer_inputs": ["open_row", "broker_position", "exit_reason"],
         "current_lane_assumption": "existing authorization is DAY/CRYPTO-owned; legacy SWING requires a minimal adapter",
         "required_pre_submit_fields": ["position_id", "action_id", "client_order_id", "idempotency_key", "proposed_quantity", "proposed_notional", "classification", "lineage_state", "governance_state"],
         "required_validations": ["paper_mode", "live_endpoint_prohibited", "quote_spread_liquidity", "quantity_normalization", "duplicate_order", "idempotency", "canary_limits"],
-        "expected_return_states": ["WRITER_PATH_CONNECTED", "CANARY_DISABLED", "KILL_SWITCH_ACTIVE", "POLICY_BLOCKED"],
+        "swing_rejection_condition": "ordinary SWING rows without legacy_swing_canary_adapter_v1 remain lane_not_authorized_for_v2_exit",
+        "smallest_adapter_boundary": "legacy_swing_canary_writer_pre_submit maps a canonical pre-submit object to the existing lane writer",
+        "expected_return_states": ["ADAPTER_MAPPING_VALID", "WRITER_PATH_CONNECTED", "CANARY_DISABLED", "KILL_SWITCH_ACTIVE", "EXECUTION_NOT_AUTHORIZED", "BROKER_SUBMISSION_BLOCKED"],
         "future_adapter_tests": ["legacy_swing_pre_submit_contract", "disabled_no_broker_submission", "writer_quantity_idempotency"],
     }
 

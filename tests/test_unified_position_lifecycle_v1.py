@@ -131,7 +131,9 @@ class UnifiedPositionLifecycleTests(unittest.TestCase):
         pre_submit = build_legacy_swing_canary_pre_submit_v1(position=position, lifecycle_decision=decision, eligibility=eligibility, selection=first, configuration=config)
         self.assertIsNotNone(pre_submit)
         self.assertFalse(pre_submit["execution_authorized"])
-        self.assertTrue(pre_submit["writer_adapter_required"])
+        self.assertFalse(pre_submit["writer_adapter_required"])
+        self.assertEqual(pre_submit["pre_submit_state"], "LEGACY_SWING_CANARY_PRE_SUBMIT_READY")
+        self.assertEqual(pre_submit["writer_contract_status"], "ADAPTER_MAPPING_VALID")
         self.assertLessEqual(pre_submit["proposed_notional"], 100.0)
 
 

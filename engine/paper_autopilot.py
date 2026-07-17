@@ -1574,9 +1574,104 @@ class PaperAutopilotEngine:
     def _authorized_lane_exit_pending_map(self) -> dict[str, Any]:
         return dict(self._runtime_state.get("authorized_lane_exit_pending") or {})
 
+    def legacy_swing_canary_writer_pre_submit(self, pre_submit: dict[str, Any], broker_position: dict[str, Any]) -> dict[str, Any]:
+        """Map the canonical disabled-canary handoff into the existing writer.
+
+        This is intentionally a pre-submit adapter.  It always invokes the
+        existing writer boundary, but the writer stops before broker submission
+        while the canonical policy is disabled and its kill switch is active.
+        """
+        pre = dict(pre_submit or {})
+        broker = dict(broker_position or {})
+        config = legacy_swing_canary_configuration_v1()
+        required = (
+            "pre_submit_state", "policy_id", "position_id", "activation_id", "symbol", "lane",
+            "classification", "action_id", "client_order_id", "idempotency_key", "proposed_quantity",
+            "proposed_notional", "technical_eligibility", "governance_state", "lineage_state",
+        )
+        missing = [key for key in required if pre.get(key) in (None, "")]
+        if (
+            missing
+            or pre.get("pre_submit_state") != "LEGACY_SWING_CANARY_PRE_SUBMIT_READY"
+            or pre.get("policy_id") != config.get("policy_id")
+            or str(pre.get("lane") or "").upper() != "SWING"
+            or not bool(pre.get("technical_eligibility"))
+            or pre.get("governance_state") != "PASS"
+            or pre.get("lineage_state") != "COMPLETE"
+        ):
+            return {
+                "adapter_state": "ADAPTER_MAPPING_INVALID", "writer_state": "POLICY_BLOCKED",
+                "broker_submission_blocked": True, "broker_actions": 0,
+                "reason": "CANONICAL_PRE_SUBMIT_FIELDS_REQUIRED", "missing_fields": missing,
+            }
+        if pre.get("execution_authorized") is not False:
+            return {
+                "adapter_state": "ADAPTER_MAPPING_INVALID", "writer_state": "EXECUTION_NOT_AUTHORIZED",
+                "broker_submission_blocked": True, "broker_actions": 0,
+                "reason": "EXECUTION_AUTHORIZATION_MUST_REMAIN_FALSE",
+            }
+        price = _to_float(pre.get("quote_price"), 0.0)
+        available = _to_float(broker.get("qty_available"), _to_float(broker.get("qty"), _to_float(pre.get("quantity_available"), 0.0)))
+        requested = _to_float(pre.get("proposed_quantity"), 0.0)
+        normalized = _normalize_paper_sell_qty(requested, available, 6)
+        normalized_notional = round(_to_float(normalized.get("normalized_sell_qty"), 0.0) * price, 6)
+        legacy_book_notional = _to_float(pre.get("legacy_book_notional"), 0.0)
+        max_book_notional = round(legacy_book_notional * _to_float(config.get("max_legacy_book_percentage_per_cycle"), 0.0), 6)
+        cap_failures = []
+        if normalized_notional > _to_float(config.get("max_canary_notional_usd"), 0.0):
+            cap_failures.append("CANARY_NOTIONAL_LIMIT_EXCEEDED")
+        if legacy_book_notional <= 0.0 or normalized_notional > max_book_notional:
+            cap_failures.append("LEGACY_BOOK_PERCENTAGE_LIMIT_EXCEEDED")
+        if not bool(normalized.get("sell_safe_to_submit")):
+            cap_failures.append("DUST_OR_UNAVAILABLE_QUANTITY")
+        if cap_failures:
+            return {
+                "adapter_state": "ADAPTER_MAPPING_INVALID", "writer_state": "POLICY_BLOCKED",
+                "broker_submission_blocked": True, "broker_actions": 0, "reason": cap_failures[0],
+                "cap_failures": cap_failures, "normalized": normalized,
+            }
+        open_row = {
+            "legacy_swing_canary_adapter_v1": True,
+            "legacy_swing_canary_pre_submit": pre,
+            "lane_id": "SWING", "symbol": str(pre.get("symbol") or "").upper(),
+            "position_id": str(pre.get("position_id") or ""), "quantity": requested,
+            "client_order_id": str(pre.get("client_order_id") or ""),
+            "action_id": str(pre.get("action_id") or ""), "idempotency_key": str(pre.get("idempotency_key") or ""),
+            "paper_only": True, "execution_authorized": False,
+            "legacy_book_notional": legacy_book_notional, "max_canary_notional_usd": config.get("max_canary_notional_usd"),
+            "max_legacy_book_percentage_per_cycle": config.get("max_legacy_book_percentage_per_cycle"),
+        }
+        writer = self._submit_authorized_lane_exit(open_row, broker, str(pre.get("classification") or ""))
+        return {
+            "adapter_state": "ADAPTER_MAPPING_VALID", "writer_state": writer.get("writer_state") or "WRITER_PATH_CONNECTED",
+            "writer_result": writer, "normalized": normalized, "normalized_notional": normalized_notional,
+            "legacy_book_notional": legacy_book_notional, "max_legacy_book_notional": max_book_notional,
+            "execution_authorized": False, "canary_enabled": bool(config.get("enabled")),
+            "kill_switch_active": bool(config.get("kill_switch")), "broker_submission_blocked": True,
+            "broker_actions": 0,
+        }
+
     def _authorized_lane_exit_contract(self, open_row: dict[str, Any]) -> dict[str, Any]:
         """Authorize only explicit DAY/CRYPTO owners with a real entry fill."""
         lane = str(open_row.get("lane_id") or "").upper().strip()
+        if lane == "SWING" and bool(open_row.get("legacy_swing_canary_adapter_v1")):
+            pre = dict(open_row.get("legacy_swing_canary_pre_submit") or {})
+            canonical = (
+                pre.get("pre_submit_state") == "LEGACY_SWING_CANARY_PRE_SUBMIT_READY"
+                and pre.get("policy_id") == "LEGACY_SWING_CONTROLLED_PAPER_CANARY_V1"
+                and pre.get("execution_authorized") is False
+                and str(open_row.get("action_id") or "") == str(pre.get("action_id") or "")
+                and str(open_row.get("client_order_id") or "") == str(pre.get("client_order_id") or "")
+                and str(open_row.get("idempotency_key") or "") == str(pre.get("idempotency_key") or "")
+            )
+            if not canonical:
+                return {"authorized": False, "status": "UNRESOLVED", "reason": "LEGACY_CANARY_ADAPTER_CONTRACT_INVALID"}
+            return {
+                "authorized": False, "status": "WRITER_PATH_CONNECTED", "reason": "EXECUTION_NOT_AUTHORIZED",
+                "writer_path_connected": True, "canary_disabled": True, "kill_switch_active": True,
+                "broker_submission_blocked": True, "lane_id": "SWING", "paper_mode_verified": True,
+                "broker_live_endpoint_allowed": False,
+            }
         if lane not in {"DAY", "CRYPTO"}:
             return {"authorized": False, "status": "NOT_APPLICABLE", "reason": "lane_not_authorized_for_v2_exit"}
         owner = lane_owner_contract(open_row)
@@ -1660,6 +1755,15 @@ class PaperAutopilotEngine:
         """Submit an approved lane-owned paper exit and wait for its broker fill."""
         contract = self._authorized_lane_exit_contract(open_row)
         if not contract.get("authorized"):
+            if contract.get("writer_path_connected"):
+                available = _to_float(broker_position.get("qty_available"), _to_float(broker_position.get("qty"), _to_float(open_row.get("quantity"), 0.0)))
+                normalized = _normalize_paper_sell_qty(_to_float(open_row.get("quantity"), available), available, 6)
+                return {
+                    "ok": False, "submitted": False, "reason": "BROKER_SUBMISSION_BLOCKED",
+                    "writer_state": "WRITER_PATH_CONNECTED", "canary_state": "CANARY_DISABLED",
+                    "kill_switch_state": "KILL_SWITCH_ACTIVE", "execution_state": "EXECUTION_NOT_AUTHORIZED",
+                    "broker_submission_blocked": True, "broker_actions": 0, "contract": contract, **normalized,
+                }
             return {"ok": False, "submitted": False, "reason": contract.get("reason"), "contract": contract}
         symbol = str(open_row.get("symbol") or "").upper().strip()
         position_id = str(open_row.get("position_id") or "").strip()
