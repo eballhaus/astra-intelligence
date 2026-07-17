@@ -47902,6 +47902,55 @@ def legacy_swing_classification_distribution_audit_v1():
     return legacy_swing_classification_integrity_diagnostic_v1()
 
 
+def _legacy_swing_required_evidence_payload_v1() -> dict:
+    runtime = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("legacy_swing_canary") or {})
+    reviews = dict(runtime.get("reviews") or {})
+    rows, failures = [], []
+    totals = {key: {"available": 0, "missing": 0, "stale": 0, "consumed": 0, "influencing": 0} for key in ("MOMENTUM", "THESIS_STATE", "LIQUIDITY")}
+    for activation_id, raw in sorted(reviews.items()):
+        review = dict(raw or {})
+        evidence = dict(review.get("required_evidence") or {})
+        item = {"symbol": review.get("symbol"), "position_id": review.get("position_id"), "activation_id": review.get("activation_id") or activation_id,
+                "classification": review.get("current_classification"), "classification_confidence": review.get("classification_confidence"),
+                "next_refresh_at": review.get("next_review_at"), "remaining_blockers": review.get("required_next_evidence")}
+        for kind in totals:
+            record = dict(evidence.get(kind) or {})
+            status = str(record.get("status") or "NOT_PRODUCED")
+            totals[kind]["available"] += int(status == "CURRENT")
+            totals[kind]["missing"] += int(status == "UNAVAILABLE")
+            totals[kind]["stale"] += int(status == "STALE")
+            totals[kind]["consumed"] += int(record.get("acknowledgement_state") == "CONSUMED_BY_UNIFIED_DECISION")
+            totals[kind]["influencing"] += int(record.get("classification_influence") not in {None, ""})
+            item[kind.lower()] = record
+            if not record:
+                failure = {"symbol": item["symbol"], "position_id": item["position_id"], "activation_id": item["activation_id"], "evidence_type": kind,
+                           "stage": "production", "owner": "PaperAutopilot._refresh_legacy_swing_canary_pre_submit", "producer": "PaperAutopilot worker",
+                           "consumer": "build_unified_position_lifecycle_decision_v1", "store": "paper_autopilot_state.json", "join_key": activation_id,
+                           "expected_state": "RECORD_PRESENT", "actual_state": "NOT_PRODUCED", "exact_blocker": "WORKER_EVIDENCE_RECORD_MISSING",
+                           "blocker_category": "technical", "technical_or_legitimate": "technical", "safe_repair_allowed": True,
+                           "exact_safe_repair": "run worker evidence refresh"}
+                failures.append(failure)
+        rows.append(item)
+    return {"overall_status": "PASS" if not failures else "FAILED", "positions_processed": len(rows), "evidence_totals": totals,
+            "position_rows": rows, "repairable_failures": failures, "legitimate_external_blocks": sum(v["missing"] for v in totals.values()),
+            "read_only": True, "broker_actions": 0, "natural_orders": 0, "fixture_orders": 0}
+
+
+@router.get("/api/legacy_swing_required_evidence_consumption_audit_v1")
+def legacy_swing_required_evidence_consumption_audit_v1():
+    return _legacy_swing_required_evidence_payload_v1()
+
+
+@router.get("/api/legacy_swing_required_evidence_closure_diagnostic_v1")
+def legacy_swing_required_evidence_closure_diagnostic_v1():
+    audit = _legacy_swing_required_evidence_payload_v1()
+    totals = dict(audit.get("evidence_totals") or {})
+    return {"endpoint": "/api/legacy_swing_required_evidence_closure_diagnostic_v1", **audit,
+            "momentum_available": (totals.get("MOMENTUM") or {}).get("available", 0), "momentum_missing": (totals.get("MOMENTUM") or {}).get("missing", 0), "momentum_stale": (totals.get("MOMENTUM") or {}).get("stale", 0), "momentum_not_consumed": audit.get("positions_processed", 0) - (totals.get("MOMENTUM") or {}).get("consumed", 0),
+            "thesis_available": (totals.get("THESIS_STATE") or {}).get("available", 0), "thesis_missing": (totals.get("THESIS_STATE") or {}).get("missing", 0), "thesis_stale": (totals.get("THESIS_STATE") or {}).get("stale", 0), "thesis_not_consumed": audit.get("positions_processed", 0) - (totals.get("THESIS_STATE") or {}).get("consumed", 0),
+            "liquidity_available": (totals.get("LIQUIDITY") or {}).get("available", 0), "liquidity_missing": (totals.get("LIQUIDITY") or {}).get("missing", 0), "liquidity_stale": (totals.get("LIQUIDITY") or {}).get("stale", 0), "liquidity_not_consumed": audit.get("positions_processed", 0) - (totals.get("LIQUIDITY") or {}).get("consumed", 0)}
+
+
 @router.get("/api/astra_forward_performance_readiness_v1")
 def astra_forward_performance_readiness_v1(force: bool = False):
     certification = _astra_pre_market_trading_certification_payload_v1(force=bool(force))
@@ -63061,6 +63110,7 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
     lifecycle_closure = unified_position_lifecycle_exit_truth_closure_diagnostic_v1(force=False)
     canary_pre_submit = _legacy_swing_canary_pre_submit_audit_payload_v1()
     classification_integrity = legacy_swing_classification_integrity_diagnostic_v1()
+    required_evidence = _legacy_swing_required_evidence_payload_v1()
     review = dict(utilization.get("portfolio_review") or build_portfolio_release_review(rows))
     enrichment = _candidate_intelligence_enrichment_contract_diagnostic_v1(force=False)
     findings: list[dict] = []
@@ -63167,6 +63217,12 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "evidence": classification_integrity.get("repairable_failures"),
             "recommended_action": "repair evidence-backed lifecycle classification; do not change canary or writer safety state",
         })
+    if required_evidence.get("repairable_failures"):
+        findings.append({
+            "severity": "high", "classification": "legacy_required_evidence_connection_defect",
+            "issue": "legacy_swing_required_evidence_repairable_failure", "evidence": required_evidence.get("repairable_failures"),
+            "recommended_action": "repair worker production, acknowledgement, or influence; do not treat unavailable evidence as neutral",
+        })
     lineage_confidence = dict(lineage_detail.get("coverage_by_confidence_class") or {})
     excursion_coverage = dict(lineage_detail.get("coverage_by_excursion_class") or {})
     if int(_to_float(lineage_confidence.get("NOT_RECOVERABLE"), 0.0)) > 0:
@@ -63242,6 +63298,10 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
         "legacy_swing_classification_integrity_v1": {
             key: classification_integrity.get(key)
             for key in ("overall_status", "positions_processed", "classification_distribution", "default_hold_count", "repairable_failures")
+        },
+        "legacy_swing_required_evidence_v1": {
+            key: required_evidence.get(key)
+            for key in ("overall_status", "positions_processed", "evidence_totals", "repairable_failures", "legitimate_external_blocks")
         },
         "position_lineage_excursion_replacement_v1": {
             "coverage_by_confidence_class": lineage_confidence,

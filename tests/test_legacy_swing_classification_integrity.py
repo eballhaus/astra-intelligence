@@ -1,6 +1,6 @@
 import unittest
 
-from engine.astra_unified_position_lifecycle_v1 import classify_legacy_swing_lifecycle_v1
+from engine.astra_unified_position_lifecycle_v1 import build_legacy_swing_required_evidence_v1, classify_legacy_swing_lifecycle_v1
 
 
 def _classify(**overrides):
@@ -39,6 +39,17 @@ class LegacySwingClassificationIntegrityTests(unittest.TestCase):
         self.assertEqual(result["classification_reason"], "MONITORED_LIFECYCLE_RISK")
         self.assertIn("momentum", result["classification_components"])
         self.assertFalse(result["default_branch_used"])
+
+    def test_required_evidence_is_current_or_explicitly_unavailable(self):
+        baseline = {"baseline_id": "baseline", "activation_price": 10}
+        missing = build_legacy_swing_required_evidence_v1({"symbol": "FIX", "current_price": 10}, baseline)
+        self.assertEqual(missing["MOMENTUM"]["status"], "UNAVAILABLE")
+        self.assertEqual(missing["THESIS_STATE"]["thesis_state"], "UNKNOWN")
+        self.assertEqual(missing["LIQUIDITY"]["status"], "UNAVAILABLE")
+        current = build_legacy_swing_required_evidence_v1({"symbol": "FIX", "current_price": 11, "recent_price_path": [10, 11], "thesis_state": "INTACT", "bid": 10.9, "ask": 11.0, "tradable": True}, baseline)
+        self.assertEqual(current["MOMENTUM"]["status"], "CURRENT")
+        self.assertEqual(current["THESIS_STATE"]["status"], "CURRENT")
+        self.assertEqual(current["LIQUIDITY"]["liquidity_state"], "ACCEPTABLE")
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ from engine.astra_evidence_accumulation_capacity_v1 import (
 )
 from engine.astra_unified_position_lifecycle_v1 import (
     build_legacy_swing_canary_pre_submit_v1,
+    build_legacy_swing_required_evidence_v1,
     build_legacy_forward_baseline_v1,
     build_position_shadow_twin_v1,
     build_unified_position_lifecycle_decision_v1,
@@ -1897,10 +1898,26 @@ class PaperAutopilotEngine:
                 "paper_mode_verified": bool(safety.get("paper_mode_verified")),
                 "live_endpoint_allowed": bool(safety.get("live_endpoint_detected")),
             }
+            required_evidence = build_legacy_swing_required_evidence_v1(row, record)
+            for evidence_type, evidence_row in required_evidence.items():
+                if evidence_row.get("status") == "CURRENT":
+                    if evidence_type == "MOMENTUM":
+                        row["momentum_state"] = evidence_row.get("short_term_direction")
+                    elif evidence_type == "THESIS_STATE":
+                        row["thesis_state"] = evidence_row.get("thesis_state")
+                    elif evidence_type == "LIQUIDITY":
+                        row["liquidity_state"] = evidence_row.get("liquidity_state")
+            previous = str(record.get("current_classification") or "")
             decision = build_unified_position_lifecycle_decision_v1(
                 row, current_market_evidence=row, lifecycle_plan=record, evidence_context={"shadow_evidence": record.get("shadow_twin")}
             )
-            previous = str(record.get("current_classification") or "")
+            for evidence_row in required_evidence.values():
+                evidence_row["consumer_acknowledged"] = True
+                evidence_row["acknowledgement_state"] = "CONSUMED_BY_UNIFIED_DECISION"
+                evidence_row["classification_before"] = previous or None
+                evidence_row["classification_after"] = decision.get("classification")
+                evidence_row["classification_influence"] = "BLOCKING" if evidence_row.get("status") != "CURRENT" and decision.get("classification") == "INSUFFICIENT_EVIDENCE" else "NEUTRAL"
+                evidence_row["influence_reason"] = decision.get("classification_reason")
             current = str(decision.get("classification") or "INSUFFICIENT_EVIDENCE")
             is_exit_review = current == "EXIT_REVIEW"
             if is_exit_review:
@@ -1923,6 +1940,7 @@ class PaperAutopilotEngine:
                 "classification_reason": decision.get("classification_reason"),
                 "classification_components": dict(decision.get("classification_components") or {}),
                 "classification_transition_reason": "INITIAL_CLASSIFICATION" if not previous else "EVIDENCE_REAFFIRMED" if previous == current else f"{previous}_TO_{current}:{decision.get('classification_reason')}",
+                "required_evidence": required_evidence,
                 "decision": decision, "eligibility": eligibility,
                 "acknowledgements": {
                     "CANARY_CONFIGURATION_CONSUMED_BY_WORKER": True,

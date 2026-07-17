@@ -280,6 +280,47 @@ def build_position_shadow_twin_v1(position: Mapping[str, Any], baseline: Mapping
     }
 
 
+def build_legacy_swing_required_evidence_v1(position: Mapping[str, Any], baseline: Mapping[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
+    """Build bounded, honest evidence records from worker-owned direct inputs.
+
+    This adapter never fetches a provider.  Missing lookback, thesis, bid/ask,
+    or tradability is recorded as unavailable instead of inferred as neutral.
+    """
+    row = dict(position or {})
+    symbol = _text(row.get("symbol")).upper()
+    position_id = _text(row.get("asset_id") or row.get("position_id") or symbol)
+    as_of = _iso(now)
+    price = _num(row.get("current_price") or row.get("market_price"))
+    activation = _num(baseline.get("activation_price"))
+    bid, ask = _num(row.get("bid")), _num(row.get("ask"))
+    volume = _num(row.get("volume") or row.get("recent_volume"))
+    direct_thesis = _text(row.get("thesis_state") or row.get("thesis_health")).upper()
+    def record(kind: str, status: str, state: str, confidence: float, limitations: list[str], **extra: Any) -> dict[str, Any]:
+        return {"evidence_type": kind, "record_id": f"legacy-evidence:{kind.lower()}:{position_id}", "symbol": symbol,
+                "position_id": position_id, "activation_id": baseline.get("baseline_id"), "as_of": as_of,
+                "last_attempt_at": as_of, "last_success_at": as_of if status == "CURRENT" else None,
+                "next_refresh_at": as_of, "source": "PaperAutopilot.broker_position_snapshot", "status": status,
+                "freshness": status, "quality": status, "confidence": confidence, "limitations": limitations,
+                "consumer_acknowledged": True, "classification_influence": "NEUTRAL" if status == "CURRENT" else "UNAVAILABLE", **extra}
+    if price is not None and activation is not None and row.get("recent_price_path"):
+        change = (price / activation - 1.0) * 100.0 if activation else 0.0
+        momentum_state = "POSITIVE" if change > 0 else "NEGATIVE" if change < 0 else "STABLE"
+        momentum = record("MOMENTUM", "CURRENT", momentum_state, 0.55, [], short_term_direction=momentum_state, momentum_score=change, supporting_inputs=["activation_price", "current_price", "recent_price_path"])
+    else:
+        momentum = record("MOMENTUM", "UNAVAILABLE", "UNAVAILABLE", 0.0, ["recent_price_path_required"], short_term_direction="UNAVAILABLE", supporting_inputs=[])
+    if direct_thesis in {"INTACT", "WEAKENING", "MATERIALLY_DETERIORATED", "BROKEN", "CONFLICTING"}:
+        thesis = record("THESIS_STATE", "CURRENT", direct_thesis, 0.60, [], thesis_state=direct_thesis, direct_evidence=True)
+    else:
+        thesis = record("THESIS_STATE", "UNAVAILABLE", "UNKNOWN", 0.0, ["original_or_current_thesis_evidence_unavailable"], thesis_state="UNKNOWN", direct_evidence=False)
+    if bid is not None and ask is not None and bid > 0 and ask >= bid and bool(row.get("tradable", True)):
+        spread_pct = (ask - bid) / max((ask + bid) / 2.0, 1e-9) * 100.0
+        state = "ACCEPTABLE" if spread_pct <= 1.0 else "THIN"
+        liquidity = record("LIQUIDITY", "CURRENT", state, 0.65, [] if volume is not None else ["volume_unavailable"], bid=bid, ask=ask, spread_percentage=spread_pct, recent_volume=volume, tradable=True, liquidity_state=state)
+    else:
+        liquidity = record("LIQUIDITY", "UNAVAILABLE", "UNAVAILABLE", 0.0, ["bid_ask_and_tradability_required"], liquidity_state="UNAVAILABLE", tradable=row.get("tradable"))
+    return {"MOMENTUM": momentum, "THESIS_STATE": thesis, "LIQUIDITY": liquidity}
+
+
 def legacy_swing_canary_policy_v1(decision: Mapping[str, Any], *, governance_pass: bool = True) -> dict[str, Any]:
     """Fail closed until a separately configured PaperAutopilot legacy policy exists."""
     row = dict(decision or {})
