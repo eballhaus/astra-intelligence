@@ -17533,7 +17533,10 @@ def _ensure_paper_autopilot_started():
     ):
         _PAPER_AUTOPILOT_STARTED = True
         return
-    PAPER_AUTOPILOT.start()
+    PAPER_AUTOPILOT._runtime_state["worker_start_attempted_at"] = _now_utc_iso()
+    start_result = dict(PAPER_AUTOPILOT.start() or {})
+    PAPER_AUTOPILOT._runtime_state["worker_start_result"] = start_result
+    PAPER_AUTOPILOT._runtime_state["worker_start_liveness"] = dict(PAPER_AUTOPILOT.worker_liveness_status() or {})
     _PAPER_AUTOPILOT_STARTED = True
     if DAY_TRADING_LIFECYCLE_MODE_ENABLED:
         with _DAY_TRADING_LIFECYCLE_LOCK:
@@ -17548,8 +17551,8 @@ def _paper_autopilot_worker_startup_v1():
     """Start the normal worker at backend boot; it is never GET-triggered."""
     try:
         _ensure_paper_autopilot_started()
-    except Exception:
-        pass
+    except Exception as exc:
+        PAPER_AUTOPILOT._runtime_state["worker_cycle_error"] = f"startup_failed:{str(exc)[:180]}"
 
 
 def _paper_autopilot_sync_worker_artifacts():
@@ -48690,6 +48693,69 @@ def legacy_swing_historical_data_resolution_v1():
     return {"endpoint": "/api/legacy_swing_historical_data_resolution_v1", **_legacy_swing_historical_data_resolution_payload_v1(), **_safety_flags_v1()}
 
 
+def _legacy_swing_worker_momentum_recovery_payload_v1() -> dict:
+    """Read the latest committed worker checkpoint without taking worker locks."""
+    state = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
+    liveness = dict(PAPER_AUTOPILOT.worker_liveness_status() or {})
+    runtime = dict(state.get("legacy_swing_canary") or {})
+    activity = dict(state.get("legacy_swing_market_activity") or runtime.get("market_activity") or {})
+    records = dict(runtime.get("market_records") or state.get("legacy_swing_market_evidence") or {})
+    reviews = dict(runtime.get("reviews") or {})
+    pending, daily_sufficient, daily_insufficient, daily_failed = [], 0, 0, 0
+    momentum_current = 0
+    for activation_id, review_raw in reviews.items():
+        review = dict(review_raw or {})
+        daily = dict((records.get(activation_id) or {}).get("HISTORICAL_BARS_DAILY") or {})
+        required = int(daily.get("required_completed_bars") or 15)
+        available = int(daily.get("records_valid") or 0)
+        quality = str(daily.get("quality_state") or "DAILY_AWAITING_REFRESH")
+        state_name = "DAILY_SUFFICIENT" if quality == "CURRENT_SUFFICIENT" and available >= required else "DAILY_PROVIDER_FAILED" if str(daily.get("response_state") or "").upper() not in {"", "SUCCESS", "EMPTY_RESPONSE"} else "DAILY_CURRENT_INSUFFICIENT"
+        if state_name == "DAILY_SUFFICIENT":
+            daily_sufficient += 1
+        elif state_name == "DAILY_PROVIDER_FAILED":
+            daily_failed += 1
+        else:
+            daily_insufficient += 1
+        momentum = dict((review.get("required_evidence") or {}).get("MOMENTUM") or {})
+        if momentum.get("status") == "CURRENT":
+            momentum_current += 1
+        if state_name != "DAILY_SUFFICIENT":
+            pending.append({
+                "symbol": daily.get("symbol") or review.get("symbol"), "position_id": daily.get("position_id") or review.get("position_id"),
+                "state": state_name, "last_attempt": daily.get("requested_at"), "last_persist": daily.get("received_at"),
+                "pages_consumed": int(daily.get("pages_consumed") or 0), "completed_sessions": available,
+                "exact_blocker": daily.get("source_error") or "completed_sessions_below_contract",
+                "next_action": "WAIT_FOR_NEXT_BOUNDED_WORKER_CYCLE", "next_refresh_at": daily.get("next_refresh_at"),
+            })
+    cycle_state = str(activity.get("cycle_state") or "CYCLE_NO_DUE_WORK")
+    repairable = []
+    if not bool(liveness.get("running")):
+        repairable.append({"stage": "worker", "exact_blocker": "normal_worker_thread_not_running"})
+    if cycle_state == "CYCLE_FAILED_SAFE":
+        repairable.append({"stage": "worker", "exact_blocker": activity.get("exact_stop_reason") or "cycle_failed_safe"})
+    return {
+        "overall_status": "PASS" if not repairable else "FAILED", "worker_active": bool(liveness.get("running")),
+        "worker_cycle_id": activity.get("worker_cycle_id"), "worker_generation_id": liveness.get("worker_generation_id") or dict(activity.get("scheduler") or {}).get("worker_generation_id"),
+        "worker_heartbeat_age": _iso_age_seconds(liveness.get("worker_heartbeat_at")), "cycle_elapsed_seconds": activity.get("elapsed_seconds"), "last_checkpoint_age": _iso_age_seconds(activity.get("last_checkpoint_at")),
+        "symbols_due": activity.get("symbols_requiring", 0), "symbols_attempted": activity.get("symbols_attempted") or activity.get("symbols_requested") or [],
+        "symbols_completed": activity.get("symbols_completed") or [], "symbols_deferred": activity.get("symbols_deferred") or [],
+        "cursor": activity.get("next_symbol_cursor"), "provider_requests": activity.get("provider_requests_this_cycle", 0),
+        "pages_consumed": activity.get("pages_consumed_this_cycle", 0), "daily_sufficient": daily_sufficient,
+        "daily_insufficient": daily_insufficient, "daily_failed": daily_failed, "daily_momentum_current": momentum_current,
+        "direct_evidence_complete": sum(1 for row in reviews.values() if bool(dict(dict(row or {}).get("direct_evidence_coverage") or {}).get("required_evidence_complete"))),
+        "eligible_candidates": sum(1 for row in reviews.values() if bool(dict(dict(row or {}).get("eligibility") or {}).get("technical_eligibility"))),
+        "health_responsive": True, "governance_responsive": True, "repairable_failures": repairable,
+        "worker_start_attempted_at": state.get("worker_start_attempted_at"), "worker_start_result": dict(state.get("worker_start_result") or {}),
+        "legitimate_waiting_states": sorted({row["state"] for row in pending}), "pending_symbols": pending,
+        "read_only": True, "provider_calls": 0, "broker_actions": 0, "service_restarts": 0, "worker_invocations": 0,
+    }
+
+
+@router.get("/api/legacy_swing_worker_momentum_recovery_v1")
+def legacy_swing_worker_momentum_recovery_v1():
+    return {"endpoint": "/api/legacy_swing_worker_momentum_recovery_v1", **_legacy_swing_worker_momentum_recovery_payload_v1(), **_safety_flags_v1()}
+
+
 @router.get("/api/astra_api_role_historical_bar_momentum_closure_diagnostic_v1")
 def astra_api_role_historical_bar_momentum_closure_diagnostic_v1():
     audit = _api_role_historical_bar_contract_payload_v1()
@@ -63906,6 +63972,7 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
     historical_bar_reliability = _legacy_swing_historical_bar_momentum_payload_v1()
     multi_provider_bars = _legacy_swing_multi_provider_bar_payload_v1()
     historical_data_resolution = _legacy_swing_historical_data_resolution_payload_v1()
+    worker_momentum_recovery = _legacy_swing_worker_momentum_recovery_payload_v1()
     runtime_worker_reliability = _astra_runtime_worker_reliability_payload_v1()
     legacy_exit_truth = _legacy_swing_exit_truth_closure_payload_v1()
     legacy_canary_config = legacy_swing_canary_configuration_v1()
@@ -64057,6 +64124,13 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "evidence": historical_data_resolution.get("repairable_failures") or [],
             "recommended_action": "repair the existing bounded historical-bar request contract; do not lower the completed-session requirement",
         })
+    if worker_momentum_recovery.get("repairable_failures"):
+        findings.append({
+            "severity": "high", "classification": "legacy_worker_checkpoint_defect",
+            "issue": "legacy_swing_bounded_worker_checkpoint_failure",
+            "evidence": worker_momentum_recovery.get("repairable_failures") or [],
+            "recommended_action": "repair bounded worker checkpointing or progress persistence; do not weaken evidence requirements",
+        })
     if runtime_worker_reliability.get("overall_status") not in {"PASS", "PASS_WITH_WARNINGS"}:
         findings.append({
             "severity": "high", "classification": "legacy_runtime_worker_reliability_defect",
@@ -64181,6 +64255,10 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
         "legacy_swing_multi_provider_bars_v1": {
             key: multi_provider_bars.get(key)
             for key in ("overall_status", "alpaca_requests", "alpaca_usable", "fmp_fallback_requests", "fmp_usable", "material_conflicts", "momentum_current", "repairable_failures")
+        },
+        "legacy_swing_worker_momentum_recovery_v1": {
+            key: worker_momentum_recovery.get(key)
+            for key in ("overall_status", "worker_active", "worker_cycle_id", "symbols_attempted", "symbols_completed", "symbols_deferred", "daily_sufficient", "daily_momentum_current", "repairable_failures")
         },
         "astra_runtime_worker_reliability_v1": {
             key: runtime_worker_reliability.get(key)

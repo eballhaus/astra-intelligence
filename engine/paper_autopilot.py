@@ -2464,12 +2464,31 @@ class PaperAutopilotEngine:
                 records[activation_id] = valid
         prior = dict(self._runtime_state.get("legacy_swing_market_activity") or runtime_canary.get("market_activity") or {})
         prior_scheduler = dict(prior.get("scheduler") or {})
+        cycle_started_monotonic = time.monotonic()
         activity = {
             "schema_version": "legacy_swing_broker_market_activity_v2",
             "provider": "ALPACA_MARKET_DATA",
             "worker_owner": "PaperAutopilot._refresh_legacy_swing_broker_market_evidence",
             "worker_invoked": True,
             "max_symbols_per_cycle": 3,
+            "maximum_provider_requests_per_cycle": 12,
+            "maximum_pages_per_symbol": 2,
+            "maximum_cycle_elapsed_seconds": 20,
+            "maximum_retry_attempts_per_symbol_per_cycle": 1,
+            "maximum_downstream_rebuilds_per_cycle": 3,
+            "worker_cycle_id": f"legacy-market:{now.strftime('%Y%m%d%H%M%S')}",
+            "started_at": now_iso,
+            "last_checkpoint_at": now_iso,
+            "completed_at": None,
+            "elapsed_seconds": 0.0,
+            "cycle_state": "REQUEST_PENDING",
+            "exact_stop_reason": "",
+            "symbols_attempted": [],
+            "symbols_completed": [],
+            "symbols_deferred": [],
+            "provider_requests_this_cycle": 0,
+            "pages_consumed_this_cycle": 0,
+            "records_persisted_this_cycle": 0,
             "symbols_requiring": 0,
             "symbols_requested": [],
             "broker_order_actions": 0,
@@ -2530,12 +2549,30 @@ class PaperAutopilotEngine:
         last_processed_original_index: int | None = None
         processed_activation_ids: set[str] = set()
         for _sequence_index, (rotated_index, activation_id, raw) in enumerate(ordered_items):
+            if time.monotonic() - cycle_started_monotonic >= float(activity["maximum_cycle_elapsed_seconds"]):
+                activity["cycle_state"] = "CYCLE_PARTIAL_TIME_LIMIT"
+                activity["exact_stop_reason"] = "maximum_cycle_elapsed_seconds"
+                break
             record = dict(raw or {})
             symbol = str(record.get("symbol") or "").upper().strip()
             if not symbol:
                 continue
             bundle = dict(records.get(activation_id) or {})
             missing = [family for family, (_method, age) in config.items() if not self._legacy_swing_market_record_current(dict(bundle.get(family) or {}), now, age)]
+            # A few current hourly bars are useful short-term context, but
+            # they never satisfy the independent daily SWING contract.  Keep
+            # the hourly cache and refresh only the daily series when needed.
+            provisional = dict(record.get("provisional_horizon") or {})
+            daily_contract = legacy_swing_horizon_daily_contract_v1(provisional.get("provisional_horizon"))
+            daily_record = dict(bundle.get("HISTORICAL_BARS_DAILY") or {})
+            daily_current_sufficient = (
+                self._legacy_swing_market_record_current(daily_record, now, config["HISTORICAL_BARS"][1])
+                and daily_record.get("timeframe") == "1Day"
+                and int(daily_record.get("records_valid") or 0) >= int(daily_contract["minimum_completed_bars"])
+                and str(daily_record.get("quality_state") or "") == "CURRENT_SUFFICIENT"
+            )
+            if not daily_current_sufficient and "HISTORICAL_BARS" not in missing:
+                missing.insert(0, "HISTORICAL_BARS")
             if not missing:
                 activity["cache_hits"] += 1
                 activity["alpaca_requests_avoided"] += 1
@@ -2544,36 +2581,91 @@ class PaperAutopilotEngine:
             activity["cache_misses"] += 1
             activity["symbols_requiring"] += 1
             if requested_symbols >= int(activity["max_symbols_per_cycle"]):
+                activity["cycle_state"] = "CYCLE_PARTIAL_BUDGET"
+                activity["exact_stop_reason"] = "maximum_symbols_per_cycle"
+                activity["symbols_deferred"].append(symbol)
                 continue
             requested_symbols += 1
+            activity["symbols_attempted"].append(symbol)
             last_processed_original_index = (cursor + rotated_index) % len(registry_items)
             processed_activation_ids.add(activation_id)
             activity["symbols_requested"].append(symbol)
             for family in missing:
+                if activity["provider_requests_this_cycle"] >= int(activity["maximum_provider_requests_per_cycle"]):
+                    activity["cycle_state"] = "CYCLE_PARTIAL_PROVIDER_LIMIT"
+                    activity["exact_stop_reason"] = "maximum_provider_requests_per_cycle"
+                    activity["symbols_deferred"].append(symbol)
+                    break
                 method_name, _age = config[family]
                 self._note_worker_progress(f"market_data:{family}:{symbol}")
                 family_activity = activity["families"][family]
-                family_activity["request_count"] += 1
-                family_activity["last_attempt_at"] = now_iso
-                if broker is not None and callable(getattr(broker, method_name, None)):
-                    response = dict(getattr(broker, method_name)(symbol, timeframe="1Hour", limit=20) or {}) if family == "HISTORICAL_BARS" else dict(getattr(broker, method_name)(symbol) or {})
+                historical_daily_only = family == "HISTORICAL_BARS" and self._legacy_swing_market_record_current(dict(bundle.get("HISTORICAL_BARS") or {}), now, config[family][1])
+                if not historical_daily_only:
+                    family_activity["request_count"] += 1
+                    activity["provider_requests_this_cycle"] += 1
+                    family_activity["last_attempt_at"] = now_iso
+                    if broker is not None and callable(getattr(broker, method_name, None)):
+                        response = dict(getattr(broker, method_name)(symbol, timeframe="1Hour", limit=20) or {}) if family == "HISTORICAL_BARS" else dict(getattr(broker, method_name)(symbol) or {})
+                    else:
+                        response = {"response_state": "UNSUPPORTED_ENDPOINT", "error": "broker_market_data_method_unavailable"}
                 else:
-                    response = {"response_state": "UNSUPPORTED_ENDPOINT", "error": "broker_market_data_method_unavailable"}
+                    response = {}
                 if family == "HISTORICAL_BARS":
                     previous = dict(bundle.get("HISTORICAL_BARS") or {})
-                    alpaca = self._normalize_legacy_swing_bar_response(
-                        response, provider="ALPACA_MARKET_DATA", family="HISTORICAL_BARS",
-                        activation_id=activation_id, position_id=record.get("position_id"), symbol=symbol, now=now,
-                    )
-                    alpaca["retry_count"] = int(dict(bundle.get("HISTORICAL_BARS_ALPACA") or {}).get("retry_count") or 0) + (0 if alpaca.get("quality_state") == "CURRENT_SUFFICIENT" else 1)
-                    bundle["HISTORICAL_BARS_ALPACA"] = alpaca
-                    fallback_required = alpaca.get("quality_state") != "CURRENT_SUFFICIENT"
+                    if historical_daily_only:
+                        alpaca = dict(bundle.get("HISTORICAL_BARS_ALPACA") or previous)
+                        fallback_required = True
+                    else:
+                        alpaca = self._normalize_legacy_swing_bar_response(
+                            response, provider="ALPACA_MARKET_DATA", family="HISTORICAL_BARS",
+                            activation_id=activation_id, position_id=record.get("position_id"), symbol=symbol, now=now,
+                        )
+                        alpaca["retry_count"] = int(dict(bundle.get("HISTORICAL_BARS_ALPACA") or {}).get("retry_count") or 0) + (0 if alpaca.get("quality_state") == "CURRENT_SUFFICIENT" else 1)
+                        bundle["HISTORICAL_BARS_ALPACA"] = alpaca
+                        fallback_required = alpaca.get("quality_state") != "CURRENT_SUFFICIENT"
                     fmp: dict[str, Any] = {}
                     daily: dict[str, Any] = {}
                     comparison: dict[str, Any] = {}
-                    if fallback_required:
+                    # The daily contract is the certified recovery path for
+                    # provisional legacy-SWING horizons.  Persist it before
+                    # attempting an optional FMP hourly fallback, whose
+                    # provider latency must not delay canonical progress.
+                    if (
+                        fallback_required
+                        and activity["provider_requests_this_cycle"] < int(activity["maximum_provider_requests_per_cycle"])
+                        and broker is not None
+                        and callable(getattr(broker, "historical_bars", None))
+                    ):
+                        self._note_worker_progress(f"market_data:HISTORICAL_BARS_DAILY:{symbol}")
+                        provisional = dict(record.get("provisional_horizon") or {})
+                        daily_contract = legacy_swing_horizon_daily_contract_v1(provisional.get("provisional_horizon"))
+                        daily_request = self._legacy_swing_daily_request_contract(now, daily_contract)
+                        family_activity["request_count"] += 1
+                        family_activity["last_attempt_at"] = now_iso
+                        daily_response = dict(broker.historical_bars(symbol, timeframe="1Day", **daily_request) or {})
+                        activity["provider_requests_this_cycle"] += 1
+                        daily = self._normalize_legacy_swing_bar_response(
+                            daily_response, provider="ALPACA_MARKET_DATA", family="HISTORICAL_BARS",
+                            activation_id=activation_id, position_id=record.get("position_id"), symbol=symbol, now=now, timeframe="1Day",
+                        )
+                        daily["horizon_contract"] = daily_contract
+                        daily["required_completed_bars"] = daily_contract["minimum_completed_bars"]
+                        daily["requested_completed_sessions"] = daily_request["requested_completed_sessions"]
+                        daily["requested_calendar_days"] = daily_request["requested_calendar_days"]
+                        daily["requested_session_scope"] = "REGULAR_SESSION_COMPLETED_ONLY"
+                        if int(daily.get("records_valid") or 0) < int(daily_contract["minimum_completed_bars"]):
+                            daily["quality_state"] = "CURRENT_INSUFFICIENT" if daily.get("freshness_state") == "CURRENT" else "STALE_INSUFFICIENT"
+                        daily["momentum_contract"] = "LEGACY_SWING_DAILY"
+                        bundle["HISTORICAL_BARS_DAILY"] = daily
+                        activity["pages_consumed_this_cycle"] += int(daily.get("pages_consumed") or 0)
+                    if (
+                        fallback_required
+                        and daily.get("quality_state") != "CURRENT_SUFFICIENT"
+                        and activity["provider_requests_this_cycle"] < int(activity["maximum_provider_requests_per_cycle"])
+                    ):
                         fallback_activity = activity["families"]["FMP_HISTORICAL_BARS"]
                         fallback_activity["request_count"] += 1
+                        activity["provider_requests_this_cycle"] += 1
                         fallback_activity["last_attempt_at"] = now_iso
                         self._note_worker_progress(f"market_data:FMP_HISTORICAL_BARS:{symbol}")
                         fmp_response = (
@@ -2598,25 +2690,6 @@ class PaperAutopilotEngine:
                             activity["budget_deferred_symbols"] = sorted(set(activity["budget_deferred_symbols"] + [symbol]))
                         if alpaca.get("records_valid") and fmp.get("records_valid"):
                             comparison = self._compare_legacy_swing_bar_batches(alpaca, fmp)
-                    if fallback_required and fmp.get("quality_state") != "CURRENT_SUFFICIENT" and broker is not None and callable(getattr(broker, "historical_bars", None)):
-                        self._note_worker_progress(f"market_data:HISTORICAL_BARS_DAILY:{symbol}")
-                        provisional = dict(record.get("provisional_horizon") or {})
-                        daily_contract = legacy_swing_horizon_daily_contract_v1(provisional.get("provisional_horizon"))
-                        daily_request = self._legacy_swing_daily_request_contract(now, daily_contract)
-                        daily_response = dict(broker.historical_bars(symbol, timeframe="1Day", **daily_request) or {})
-                        daily = self._normalize_legacy_swing_bar_response(
-                            daily_response, provider="ALPACA_MARKET_DATA", family="HISTORICAL_BARS",
-                            activation_id=activation_id, position_id=record.get("position_id"), symbol=symbol, now=now, timeframe="1Day",
-                        )
-                        daily["horizon_contract"] = daily_contract
-                        daily["required_completed_bars"] = daily_contract["minimum_completed_bars"]
-                        daily["requested_completed_sessions"] = daily_request["requested_completed_sessions"]
-                        daily["requested_calendar_days"] = daily_request["requested_calendar_days"]
-                        daily["requested_session_scope"] = "REGULAR_SESSION_COMPLETED_ONLY"
-                        if int(daily.get("records_valid") or 0) < int(daily_contract["minimum_completed_bars"]):
-                            daily["quality_state"] = "CURRENT_INSUFFICIENT" if daily.get("freshness_state") == "CURRENT" else "STALE_INSUFFICIENT"
-                        daily["momentum_contract"] = "LEGACY_SWING_DAILY"
-                        bundle["HISTORICAL_BARS_DAILY"] = daily
                     selected = alpaca
                     routing_state = "ALPACA_PRIMARY_ACCEPTED"
                     if fallback_required:
@@ -2624,12 +2697,12 @@ class PaperAutopilotEngine:
                             selected = dict(alpaca)
                             selected.update({"quality_state": "CONFLICT_BLOCKED", "freshness_state": "UNAVAILABLE", "response_state": "CONFLICT_BLOCKED", "source_error": "material_provider_conflict"})
                             routing_state = "PROVIDER_CONFLICT_BLOCKED"
-                        elif fmp.get("quality_state") == "CURRENT_SUFFICIENT":
-                            selected = dict(fmp)
-                            routing_state = "FMP_FALLBACK_ACCEPTED"
                         elif daily.get("quality_state") == "CURRENT_SUFFICIENT":
                             selected = dict(daily)
                             routing_state = "ALPACA_DAILY_FALLBACK_ACCEPTED"
+                        elif fmp.get("quality_state") == "CURRENT_SUFFICIENT":
+                            selected = dict(fmp)
+                            routing_state = "FMP_FALLBACK_ACCEPTED"
                         elif daily.get("quality_state") == "CURRENT_INSUFFICIENT":
                             selected = dict(daily)
                             routing_state = "ALPACA_DAILY_FALLBACK_INSUFFICIENT"
@@ -2644,7 +2717,7 @@ class PaperAutopilotEngine:
                     selected = dict(selected)
                     selected.update({
                         "record_id": f"legacy-market:historical_bars:{activation_id}", "canonical_owner": True,
-                        "canonical_provider": selected.get("provider"), "candidate_record_ids": [value.get("record_id") for value in (alpaca, fmp) if value.get("record_id")],
+                        "canonical_provider": selected.get("provider"), "candidate_record_ids": [value.get("record_id") for value in (alpaca, daily, fmp) if value.get("record_id")],
                         "provider_comparison": comparison, "provider_comparison_state": comparison.get("comparison_state") or ("PRIMARY_INSUFFICIENT_FALLBACK_ACCEPTED" if selected.get("provider") == "FMP_HISTORICAL_PRICES" else "NOT_REQUIRED"),
                         "fallback_used": bool(selected.get("provider") == "FMP_HISTORICAL_PRICES"), "routing_state": routing_state,
                         "momentum_contract": "LEGACY_SWING_DAILY" if selected.get("timeframe") == "1Day" else "LEGACY_SWING_HOURLY",
@@ -2739,8 +2812,14 @@ class PaperAutopilotEngine:
             # or restart cannot discard an already validated bar batch.
             self._runtime_state["legacy_swing_market_evidence"] = records
             self._runtime_state["legacy_swing_market_activity"] = activity
+            activity["symbols_completed"].append(symbol)
+            activity["records_persisted_this_cycle"] += 1
+            activity["last_checkpoint_at"] = _now_iso()
+            activity["elapsed_seconds"] = round(time.monotonic() - cycle_started_monotonic, 3)
             if getattr(self, "state_path", None):
                 self._save_state_file()
+            if activity["cycle_state"] == "CYCLE_PARTIAL_PROVIDER_LIMIT":
+                break
         for activation_id, raw in registry_items:
             if activation_id in processed_activation_ids:
                 continue
@@ -2759,6 +2838,14 @@ class PaperAutopilotEngine:
             activity["scheduler"]["last_processed_symbol"] = str(registry_items[last_processed_original_index][1].get("symbol") or "").upper()
         self._runtime_state["legacy_swing_market_evidence"] = records
         self._runtime_state["legacy_swing_market_activity"] = activity
+        activity["elapsed_seconds"] = round(time.monotonic() - cycle_started_monotonic, 3)
+        activity["completed_at"] = _now_iso()
+        if not activity["cycle_state"] or activity["cycle_state"] == "REQUEST_PENDING":
+            activity["cycle_state"] = "CYCLE_COMPLETE" if requested_symbols else "CYCLE_NO_DUE_WORK"
+        # Cursor and deferred state must survive even a partial cycle that
+        # finished immediately after its last checkpoint.
+        if getattr(self, "state_path", None):
+            self._save_state_file()
         return records, activity
 
     def _refresh_legacy_swing_canary_pre_submit(self, broker_positions: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -2773,8 +2860,22 @@ class PaperAutopilotEngine:
         registry = dict(self._runtime_state.get("legacy_forward_activations") or {})
         legacy_symbols = {str((dict(record or {})).get("symbol") or "").upper() for record in registry.values()}
         legacy_book_notional = sum(abs(_to_float(dict(position or {}).get("market_value"), 0.0)) for symbol, position in broker_positions.items() if str(symbol or "").upper() in legacy_symbols)
-        fmp_records, fmp_activity = self._refresh_legacy_swing_fmp_evidence(registry)
+        # Market evidence persists one bounded symbol at a time.  Refresh it
+        # before contextual FMP work so slow profile calls cannot delay the
+        # direct historical evidence required for momentum.
         market_records, market_activity = self._refresh_legacy_swing_broker_market_evidence(registry)
+        # A partial market cycle is a deliberate cooperative yield point.
+        # Reuse committed FMP context rather than serializing another bounded
+        # provider loop behind a due daily-bar request.
+        if str(market_activity.get("cycle_state") or "").startswith("CYCLE_PARTIAL"):
+            fmp_records = {
+                key: dict(value or {})
+                for key, value in dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {}).items()
+                if isinstance(value, dict)
+            }
+            fmp_activity = dict(self._runtime_state.get("legacy_swing_fmp_activity") or {})
+        else:
+            fmp_records, fmp_activity = self._refresh_legacy_swing_fmp_evidence(registry)
         reviews: dict[str, dict[str, Any]] = {}
         candidates: list[dict[str, Any]] = []
         reviewed = exit_reviews = 0
@@ -2962,6 +3063,7 @@ class PaperAutopilotEngine:
             "CANARY_CONFIGURATION_CONSUMED_BY_WORKER": True, "reviewed": reviewed,
             "exit_reviews": exit_reviews, "technically_eligible": len(selection.get("technically_eligible_candidates") or []),
             "selected": bool(selected), "execution_authorized": False, "broker_actions": 0,
+            "market_activity": market_activity,
         }
 
     def _lane_forced_exit_reason(self, open_row: dict[str, Any]) -> str:
@@ -6127,6 +6229,29 @@ class PaperAutopilotEngine:
                 self._save_state_file()
             except Exception as exc:
                 legacy_canary_refresh = {"observation_state": "FAILED", "error": str(exc)[:180]}
+            market_cycle = dict(legacy_canary_refresh.get("market_activity") or {})
+            if str(market_cycle.get("cycle_state") or "").startswith("CYCLE_PARTIAL"):
+                # Do not let the full order/reconciliation/ranking pass run
+                # behind a bounded acquisition checkpoint.  The next normal
+                # worker tick resumes from the durable cursor; no submission
+                # path is reached by this observation-only return.
+                self._runtime_state["last_cycle_utc"] = _now_iso()
+                self._runtime_state["last_cycle_summary"] = {
+                    "ok": True, "orders_submitted": 0, "positions_closed": 0,
+                    "cycle_reason": "legacy_market_evidence_bounded",
+                    "legacy_swing_observation": legacy_canary_refresh,
+                }
+                self._runtime_state["last_execution_trace"] = {
+                    "paper_worker_running": bool(self._thread and self._thread.is_alive()),
+                    "candidates_seen": 0, "eligible_candidates": 0, "selected_candidates": 0,
+                    "orders_attempted": 0, "orders_submitted": 0, "orders_rejected": 0,
+                    "final_blocker_reason": "legacy_market_evidence_bounded",
+                    "per_candidate_decision_trace": [], "legacy_swing_observation": legacy_canary_refresh,
+                    "live_trading_changed": False, "secrets_exposed": False,
+                }
+                self._note_worker_progress("legacy_market_evidence_checkpoint")
+                self._save_state_file()
+                return dict(self._runtime_state["last_cycle_summary"])
             self._note_worker_progress("safety_preflight")
             opened = 0
             closed = 0

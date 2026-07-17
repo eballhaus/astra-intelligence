@@ -1,5 +1,5 @@
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import engine.provider_router as provider_router_module
 from engine.alpaca_paper_broker import AlpacaPaperBroker
@@ -203,6 +203,69 @@ class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
         self.assertEqual(daily["quality_state"], "CURRENT_SUFFICIENT")
         self.assertEqual(records["activation-a"]["HISTORICAL_BARS"]["momentum_contract"], "LEGACY_SWING_DAILY")
 
+    def test_daily_sufficient_checkpoint_skips_fmp_and_builds_current_momentum(self):
+        class _DailyHistory(_EmptyBars):
+            def historical_bars(self, symbol, **kwargs):
+                if kwargs.get("timeframe") != "1Day":
+                    return super().historical_bars(symbol, **kwargs)
+                start = datetime(2026, 6, 1, tzinfo=UTC)
+                bars = []
+                for offset in range(28):
+                    session = start + timedelta(days=offset)
+                    if session.weekday() < 5:
+                        close = 10.0 + offset / 100.0
+                        bars.append({"t": session.isoformat().replace("+00:00", "Z"), "o": close - .1, "h": close + .2, "l": close - .2, "c": close, "v": 1000})
+                return {"response_state": "SUCCESS", "http_status": 200, "bars": bars, "pages_consumed": 2, "pagination_state": "MULTI_PAGE_COMPLETE"}
+
+        engine = _engine(_DailyHistory())
+        fmp_calls = []
+        engine._legacy_swing_fmp_historical_fetcher = lambda symbol, **_kwargs: fmp_calls.append(symbol) or {"response_state": "EMPTY_RESPONSE", "bars": []}
+        records, activity = engine._refresh_legacy_swing_broker_market_evidence(_registry())
+        canonical = records["activation-a"]["HISTORICAL_BARS"]
+        self.assertEqual(canonical["quality_state"], "CURRENT_SUFFICIENT")
+        self.assertEqual(canonical["timeframe"], "1Day")
+        self.assertEqual(fmp_calls, [])
+        self.assertEqual(activity["cycle_state"], "CYCLE_COMPLETE")
+        self.assertEqual(activity["symbols_completed"], ["AAA"])
+        self.assertEqual(activity["pages_consumed_this_cycle"], 2)
+        self.assertIn("activation-a", engine._runtime_state["legacy_swing_market_evidence"])
+        evidence = build_legacy_swing_required_evidence_v1({"symbol": "AAA", "broker_bar_record": canonical}, _registry()["activation-a"])
+        self.assertEqual(evidence["MOMENTUM"]["status"], "CURRENT")
+
+    def test_daily_contract_refreshes_when_hourly_cache_is_current(self):
+        class _DailyHistory(_MarketDataFixture):
+            def historical_bars(self, symbol, **kwargs):
+                if kwargs.get("timeframe") != "1Day":
+                    return super().historical_bars(symbol, **kwargs)
+                start = datetime(2026, 6, 1, tzinfo=UTC)
+                return {"response_state": "SUCCESS", "http_status": 200, "bars": [
+                    {"t": (start + timedelta(days=offset)).isoformat().replace("+00:00", "Z"), "o": 10, "h": 11, "l": 9, "c": 10 + offset / 100, "v": 1000}
+                    for offset in range(24) if (start + timedelta(days=offset)).weekday() < 5
+                ]}
+
+        engine = _engine(_DailyHistory())
+        records, _activity = engine._refresh_legacy_swing_broker_market_evidence(_registry())
+        # Reproduce a persisted one-session daily record next to a current
+        # hourly cache, which is the production recovery condition.
+        records["activation-a"]["HISTORICAL_BARS_DAILY"] = {
+            **records["activation-a"]["HISTORICAL_BARS"], "record_id": "daily:activation-a",
+            "timeframe": "1Day", "records_valid": 1, "quality_state": "CURRENT_INSUFFICIENT",
+        }
+        engine._runtime_state["legacy_swing_market_evidence"] = records
+        refreshed, activity = engine._refresh_legacy_swing_broker_market_evidence(_registry())
+        self.assertEqual(refreshed["activation-a"]["HISTORICAL_BARS_DAILY"]["quality_state"], "CURRENT_SUFFICIENT")
+        self.assertEqual(refreshed["activation-a"]["HISTORICAL_BARS"]["timeframe"], "1Day")
+        self.assertGreaterEqual(activity["provider_requests_this_cycle"], 1)
+
+    def test_partial_market_cycle_defers_fmp_context_refresh(self):
+        engine = _engine(_EmptyBars())
+        engine._runtime_state["legacy_forward_activations"] = _registry_with_backlog()
+        fmp_calls = []
+        engine._legacy_swing_fmp_fetcher = lambda symbol: fmp_calls.append(symbol) or _fmp_success(symbol)
+        result = engine._refresh_legacy_swing_canary_pre_submit({})
+        self.assertTrue(str(result["market_activity"]["cycle_state"]).startswith("CYCLE_PARTIAL"))
+        self.assertEqual(fmp_calls, [])
+
     def test_worker_normalizes_and_reuses_fresh_market_records(self):
         market = _MarketDataFixture()
         engine = _engine(market)
@@ -215,7 +278,7 @@ class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
         self.assertTrue(bundle["ASSET_METADATA"]["tradable"])
         self.assertEqual(activity["broker_order_actions"], 0)
         engine._refresh_legacy_swing_broker_market_evidence(_registry())
-        self.assertEqual(market.bar_calls, ["AAA"])
+        self.assertEqual(market.bar_calls, ["AAA", "AAA"])
         self.assertEqual(market.quote_calls, ["AAA"])
         self.assertEqual(market.asset_calls, ["AAA"])
 
@@ -247,7 +310,7 @@ class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
         restarted._runtime_state["legacy_swing_canary"] = {"market_records": records, "market_activity": first._runtime_state["legacy_swing_market_activity"]}
         restored, _activity = restarted._refresh_legacy_swing_broker_market_evidence(_registry())
         self.assertIn("activation-a", restored)
-        self.assertEqual(market.bar_calls, ["AAA"])
+        self.assertEqual(market.bar_calls, ["AAA", "AAA"])
 
     def test_malformed_bars_fail_closed_without_overwriting_evidence(self):
         market = _MalformedBars()

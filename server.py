@@ -86,7 +86,7 @@ def health(): return read_json("system_health.json")
 def learning(): return read_json("learning_state.json")
 @app.get("/api/persona")
 def persona(): return read_json("persona.json")
-from server_extend import router as router_extend
+from server_extend import PAPER_AUTOPILOT, router as router_extend
 from server_extend import _ensure_paper_autopilot_started as _ensure_paper_autopilot_started_runtime
 app.include_router(router_extend)
 
@@ -95,5 +95,8 @@ app.include_router(router_extend)
 def _astra_startup_background():
     try:
         _ensure_paper_autopilot_started_runtime()
-    except Exception:
-        pass
+    except Exception as exc:
+        # Startup owns the normal worker.  Retain the failure for the
+        # read-only liveness diagnostic rather than silently reporting an
+        # old persisted heartbeat as a running generation.
+        PAPER_AUTOPILOT._runtime_state["worker_cycle_error"] = f"startup_failed:{str(exc)[:180]}"
