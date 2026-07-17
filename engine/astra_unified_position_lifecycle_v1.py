@@ -6,8 +6,13 @@ cohort, lifecycle classification, and policy blocker explicit.
 """
 from __future__ import annotations
 
+import json
+import os
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
+
+
+_LEGACY_SWING_CANARY_CONTROL_PATH = os.path.join("state", "legacy_swing_canary_control_v1.json")
 
 
 def _text(value: Any) -> str:
@@ -27,12 +32,43 @@ def _iso(now: datetime | None = None) -> str:
     return value.isoformat().replace("+00:00", "Z")
 
 
-def legacy_swing_canary_configuration_v1() -> dict[str, Any]:
-    """The disabled-only canary contract. It cannot authorize execution."""
+def _legacy_swing_canary_control_v1() -> dict[str, Any]:
+    """Read an explicit local control record; malformed state always fails closed."""
+    try:
+        with open(_LEGACY_SWING_CANARY_CONTROL_PATH, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return dict(payload) if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def set_legacy_swing_canary_control_v1(*, enabled: bool, kill_switch: bool, readiness_state: str) -> dict[str, Any]:
+    """Persist a human-authorized control only after the read-only readiness gate."""
+    ready = str(readiness_state or "").upper() in {"READY", "READY_WITH_BACKLOG"}
+    if enabled and (kill_switch or not ready):
+        raise ValueError("legacy_swing_canary_activation_requires_ready_state_and_clear_kill_switch")
+    payload = {
+        "schema_version": "legacy_swing_canary_control_v1",
+        "activation_state": "ACTIVATED_AFTER_READINESS_V1" if enabled and not kill_switch else "DISABLED_FAIL_CLOSED",
+        "enabled": bool(enabled), "kill_switch": bool(kill_switch),
+        "readiness_state": str(readiness_state or ""), "updated_at": _iso(),
+    }
+    os.makedirs(os.path.dirname(_LEGACY_SWING_CANARY_CONTROL_PATH) or ".", exist_ok=True)
+    temporary = _LEGACY_SWING_CANARY_CONTROL_PATH + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+    os.replace(temporary, _LEGACY_SWING_CANARY_CONTROL_PATH)
+    return payload
+
+
+def legacy_swing_canary_configuration_v1(control: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Canonical paper-only canary configuration with a fail-closed control record."""
+    runtime_control = dict(control) if control is not None else _legacy_swing_canary_control_v1()
+    active = bool(runtime_control.get("enabled")) and not bool(runtime_control.get("kill_switch")) and runtime_control.get("activation_state") == "ACTIVATED_AFTER_READINESS_V1"
     return {
         "policy_id": "LEGACY_SWING_CONTROLLED_PAPER_CANARY_V1",
-        "enabled": False,
-        "kill_switch": True,
+        "enabled": active,
+        "kill_switch": not active,
         "paper_only": True,
         "max_active_exit_orders": 1,
         "max_exit_submissions_per_cycle": 1,
@@ -64,6 +100,8 @@ def legacy_swing_canary_configuration_v1() -> dict[str, Any]:
             "HOLD_AS_PLANNED", "HOLD_WITH_WATCH", "EXIT_REVIEW",
             "INSUFFICIENT_EVIDENCE", "CONFLICTING_EVIDENCE", "LOW_CONFIDENCE",
         ],
+        "activation_control_state": runtime_control.get("activation_state") or "DISABLED_FAIL_CLOSED",
+        "activation_readiness_state": runtime_control.get("readiness_state") or "NOT_READY",
     }
 
 
@@ -74,6 +112,17 @@ def evaluate_legacy_swing_canary_eligibility_v1(position: Mapping[str, Any], dec
     direct = bool(d.get("current_direct_confirmation"))
     direct_confidence = float(d.get("direct_confirmation_confidence") or (confidence if direct else 0.0))
     classification = str(d.get("classification") or "")
+    evidence = dict(d.get("required_evidence") or {})
+    momentum, thesis, liquidity_evidence = (dict(evidence.get("MOMENTUM") or {}), dict(evidence.get("THESIS_STATE") or {}), dict(evidence.get("LIQUIDITY") or {}))
+    quote, asset = dict(row.get("broker_quote_record") or {}), dict(row.get("broker_asset_record") or {})
+    quote_current = str(quote.get("response_state") or "").upper() == "SUCCESS" and str(quote.get("freshness_state") or "").upper() == "CURRENT"
+    asset_current = str(asset.get("response_state") or "").upper() == "SUCCESS" and str(asset.get("freshness_state") or "").upper() == "CURRENT"
+    bid, ask = _num(quote.get("bid")), _num(quote.get("ask"))
+    fresh_quote = quote_current and bid is not None and ask is not None and bid > 0 and ask >= bid
+    spread_ok = fresh_quote and ((ask - bid) / max((ask + bid) / 2.0, 1e-9) * 100.0) <= 1.0
+    current_momentum = str(momentum.get("status") or "").upper() == "CURRENT"
+    current_thesis = str(thesis.get("status") or "").upper() == "CURRENT"
+    current_liquidity = str(liquidity_evidence.get("status") or "").upper() == "CURRENT" and str(liquidity_evidence.get("liquidity_state") or "").upper() == "ACCEPTABLE"
     checks: dict[str, bool] = {
         "persisted_activation": bool(d.get("forward_baseline", {}).get("legacy_activation_timestamp")),
         "active_shadow_twin": d.get("shadow_twin", {}).get("state") == "POSITION_SHADOW_TWIN_ACTIVE",
@@ -82,22 +131,26 @@ def evaluate_legacy_swing_canary_eligibility_v1(position: Mapping[str, Any], dec
         "decision_confidence": confidence >= float(cfg.get("minimum_decision_confidence") or 0.8),
         "direct_confirmation": direct,
         "direct_confirmation_confidence": direct_confidence >= float(cfg.get("minimum_direct_confirmation_confidence") or 0.8),
-        "fresh_quote": bool(row.get("current_price") or row.get("market_price")),
-        "acceptable_spread": not bool(row.get("spread_unacceptable") or row.get("wide_spread")),
-        "liquidity": not bool(row.get("liquidity_unacceptable") or row.get("illiquid")),
-        "reconciled_quantity": bool(row.get("qty") or row.get("quantity")),
+        "current_momentum": current_momentum,
+        "current_thesis": current_thesis,
+        "current_liquidity": current_liquidity,
+        "fresh_quote": fresh_quote,
+        "acceptable_spread": spread_ok,
+        "liquidity": current_liquidity and asset_current and bool(asset.get("tradable")),
+        "reconciled_quantity": bool(row.get("qty_available") or row.get("qty") or row.get("quantity")),
         "complete_lineage": bool(d.get("position_id") and d.get("forward_baseline", {}).get("baseline_id")),
         "governance_pass": not bool(row.get("governance_high_or_critical") or row.get("governance_blocked")),
         "paper_mode": bool(row.get("paper_mode_verified", True)),
         "live_endpoint_prohibited": not bool(row.get("live_endpoint_allowed", False)),
         "no_duplicate_pending_exit": not bool(row.get("duplicate_pending_exit") or row.get("pending_exit")),
-        "idempotency": bool(d.get("position_id")),
+        "idempotency": bool(d.get("position_id") and classification),
     }
     names = {
         "persisted_activation": "PERSISTED_ACTIVATION_REQUIRED", "active_shadow_twin": "ACTIVE_SHADOW_TWIN_REQUIRED",
         "provisional_horizon": "PROVISIONAL_HORIZON_REQUIRED", "eligible_classification": "ADVISORY_CLASSIFICATION",
         "decision_confidence": "DECISION_CONFIDENCE_BELOW_MINIMUM", "direct_confirmation": "DIRECT_CONFIRMATION_REQUIRED",
-        "direct_confirmation_confidence": "DIRECT_CONFIRMATION_CONFIDENCE_BELOW_MINIMUM", "fresh_quote": "FRESH_QUOTE_REQUIRED",
+        "direct_confirmation_confidence": "DIRECT_CONFIRMATION_CONFIDENCE_BELOW_MINIMUM", "current_momentum": "CURRENT_MOMENTUM_REQUIRED",
+        "current_thesis": "CURRENT_THESIS_REQUIRED", "current_liquidity": "CURRENT_LIQUIDITY_REQUIRED", "fresh_quote": "FRESH_QUOTE_REQUIRED",
         "acceptable_spread": "ACCEPTABLE_SPREAD_REQUIRED", "liquidity": "LIQUIDITY_REQUIRED",
         "reconciled_quantity": "RECONCILED_QUANTITY_REQUIRED", "complete_lineage": "COMPLETE_LINEAGE_REQUIRED",
         "governance_pass": "GOVERNANCE_PASS_REQUIRED", "paper_mode": "PAPER_MODE_REQUIRED",
@@ -109,7 +162,11 @@ def evaluate_legacy_swing_canary_eligibility_v1(position: Mapping[str, Any], dec
     action_id = f"legacy-canary:{position_id}:{classification}"
     quantity = _num(row.get("qty") or row.get("quantity")) or 0.0
     price = _num(row.get("current_price") or row.get("market_price")) or 0.0
-    proposed = min(quantity, float(cfg.get("max_canary_notional_usd") or 0.0) / price) if price > 0 else 0.0
+    legacy_book_notional = _num(row.get("legacy_book_notional")) or 0.0
+    notional_cap = min(float(cfg.get("max_canary_notional_usd") or 0.0), legacy_book_notional * float(cfg.get("max_legacy_book_percentage_per_cycle") or 0.0))
+    proposed = min(quantity, notional_cap / price) if price > 0 and notional_cap > 0 else 0.0
+    if proposed <= 0:
+        failures.append("CANARY_NOTIONAL_OR_LEGACY_BOOK_REQUIRED")
     return {
         "technical_eligibility": not failures,
         "eligibility_checks": checks,
@@ -122,7 +179,7 @@ def evaluate_legacy_swing_canary_eligibility_v1(position: Mapping[str, Any], dec
         "proposed_notional": round(proposed * price, 6),
         "decision_confidence": confidence,
         "direct_confirmation_confidence": direct_confidence,
-        "execution_authorized": False,
+        "execution_authorized": bool(not failures and cfg.get("enabled") and not cfg.get("kill_switch")),
         "final_state": "KILL_SWITCH_ACTIVE" if cfg.get("kill_switch") else "CANARY_DISABLED" if not cfg.get("enabled") else "TECHNICALLY_ELIGIBLE",
     }
 
@@ -187,26 +244,26 @@ def build_legacy_swing_canary_pre_submit_v1(
         "governance_state": "PASS", "lineage_state": "COMPLETE", "technical_eligibility": True,
         "candidate_score": chosen.get("candidate_score"), "selected_state": "SELECTED",
         "canary_enabled": bool(cfg.get("enabled")), "kill_switch_state": bool(cfg.get("kill_switch")),
-        "execution_authorized": False, "writer_contract_status": "ADAPTER_MAPPING_VALID",
-        "writer_adapter_required": False, "blocker": "CANARY_DISABLED",
-        "limitations": ["disabled_canary_broker_submission_blocked"], "evidence_sources": decision.get("evidence_rows") or [],
+        "execution_authorized": bool(gate.get("execution_authorized")), "writer_contract_status": "ADAPTER_MAPPING_VALID",
+        "writer_adapter_required": False, "blocker": None if gate.get("execution_authorized") else "CANARY_DISABLED",
+        "limitations": [] if gate.get("execution_authorized") else ["canary_execution_not_authorized"], "evidence_sources": decision.get("evidence_rows") or [],
     }
 
 
 def legacy_swing_writer_adapter_contract_v1() -> dict[str, Any]:
-    """Machine-readable boundary for the deliberately excluded writer adapter."""
+    """Machine-readable boundary for the canonical legacy SWING writer adapter."""
     return {
         "status": "WRITER_PATH_CONNECTED",
         "existing_policy_owner": "PaperAutopilot.authorized_lane_exit_pending",
         "existing_writer": "PaperAutopilot._submit_authorized_lane_exit",
         "existing_writer_inputs": ["open_row", "broker_position", "exit_reason"],
-        "current_lane_assumption": "existing authorization is DAY/CRYPTO-owned; legacy SWING requires a minimal adapter",
+        "current_lane_assumption": "DAY/CRYPTO ownership is unchanged; the legacy SWING adapter is admitted only by the canary control and writer guard",
         "required_pre_submit_fields": ["position_id", "action_id", "client_order_id", "idempotency_key", "proposed_quantity", "proposed_notional", "classification", "lineage_state", "governance_state"],
         "required_validations": ["paper_mode", "live_endpoint_prohibited", "quote_spread_liquidity", "quantity_normalization", "duplicate_order", "idempotency", "canary_limits"],
         "swing_rejection_condition": "ordinary SWING rows without legacy_swing_canary_adapter_v1 remain lane_not_authorized_for_v2_exit",
         "smallest_adapter_boundary": "legacy_swing_canary_writer_pre_submit maps a canonical pre-submit object to the existing lane writer",
         "expected_return_states": ["ADAPTER_MAPPING_VALID", "WRITER_PATH_CONNECTED", "CANARY_DISABLED", "KILL_SWITCH_ACTIVE", "EXECUTION_NOT_AUTHORIZED", "BROKER_SUBMISSION_BLOCKED"],
-        "future_adapter_tests": ["legacy_swing_pre_submit_contract", "disabled_no_broker_submission", "writer_quantity_idempotency"],
+        "future_adapter_tests": ["legacy_swing_pre_submit_contract", "disabled_no_broker_submission", "writer_quantity_idempotency", "active_canary_guard_fail_closed"],
     }
 
 
@@ -575,11 +632,11 @@ def classify_legacy_swing_lifecycle_v1(
         state, reason = "REPLACE_CANDIDATE", "QUALIFIED_REPLACEMENT_FORWARD_VALUE_ADVANTAGE"
     elif ret is not None and ret > 0 and giveback is not None and giveback >= 2.0:
         state, reason = "PROTECT_PROFIT", "MATERIAL_PROFIT_GIVEBACK"
-    elif liquidity in {"POOR", "DETERIORATING"} or momentum in {"COLLAPSE", "NEGATIVE"} or thesis == "DETERIORATING":
+    elif sum((liquidity in {"POOR", "DETERIORATING"}, momentum in {"COLLAPSE", "NEGATIVE"}, thesis == "DETERIORATING", bool(row.get("portfolio_risk_elevated") or row.get("concentration_risk")))) >= 2:
         state, reason = "REDUCE_RISK", "DIRECT_RISK_DETERIORATION"
     elif bool(row.get("exit_concern") or row.get("recovery_stalled")):
         state, reason = "EXIT_REVIEW", "EXIT_EVIDENCE_REQUIRES_CONFIRMATION"
-    elif momentum in {"WEAK", "DETERIORATING"} or giveback not in (None, 0.0) or (return_per_day is not None and return_per_day < 0):
+    elif momentum in {"WEAK", "DETERIORATING", "COLLAPSE", "NEGATIVE"} or liquidity in {"POOR", "DETERIORATING"} or giveback not in (None, 0.0) or (return_per_day is not None and return_per_day < 0):
         state, reason = "HOLD_WITH_WATCH", "MONITORED_LIFECYCLE_RISK"
     elif thesis in {"INTACT", "HEALTHY"} and momentum in {"HEALTHY", "POSITIVE", "STABLE"} and liquidity in {"ADEQUATE", "HEALTHY", "LIQUID"}:
         state, reason = "HOLD_AS_PLANNED", "AFFIRMATIVE_CURRENT_EVIDENCE_SUPPORTS_CONTINUATION"

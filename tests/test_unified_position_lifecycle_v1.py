@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from unittest.mock import patch
 
 from engine.astra_unified_position_lifecycle_v1 import (
     build_legacy_forward_baseline_v1,
@@ -9,6 +11,7 @@ from engine.astra_unified_position_lifecycle_v1 import (
     estimate_legacy_provisional_horizon_v1,
     evaluate_legacy_swing_canary_eligibility_v1,
     legacy_swing_canary_configuration_v1,
+    set_legacy_swing_canary_control_v1,
     retrieve_position_lifecycle_evidence_v1,
     select_legacy_swing_canary_candidate_v1,
 )
@@ -74,28 +77,31 @@ class UnifiedPositionLifecycleTests(unittest.TestCase):
         self.assertTrue(all(not row["broker_mutation"] for row in twin["scenarios"]))
 
     def test_legacy_canary_is_fail_closed_without_runtime_switch(self):
-        decision = build_unified_position_lifecycle_decision_v1(
-            {"symbol": "ABC", "qty": 1, "market_value": 10, "current_price": 10, "days_held": 31, "unrealized_return_pct": -1},
-        )
+        with patch("engine.astra_unified_position_lifecycle_v1.legacy_swing_canary_configuration_v1", return_value=legacy_swing_canary_configuration_v1({})):
+            decision = build_unified_position_lifecycle_decision_v1(
+                {"symbol": "ABC", "qty": 1, "market_value": 10, "current_price": 10, "days_held": 31, "unrealized_return_pct": -1},
+            )
         self.assertEqual(decision["legacy_canary_policy"]["state"], "LEGACY_CANARY_ADVISORY_ONLY")
         self.assertFalse(decision["legacy_canary_policy"]["paper_action_ready"])
 
     def test_disabled_canary_configuration_is_exact_and_fail_closed(self):
-        config = legacy_swing_canary_configuration_v1()
+        config = legacy_swing_canary_configuration_v1({})
         self.assertEqual(config["policy_id"], "LEGACY_SWING_CONTROLLED_PAPER_CANARY_V1")
         self.assertFalse(config["enabled"])
         self.assertTrue(config["kill_switch"])
         self.assertEqual(config["max_canary_notional_usd"], 100.0)
 
     def test_technical_eligibility_runs_while_execution_is_disabled(self):
-        config = legacy_swing_canary_configuration_v1()
-        position = {"symbol": "ABC", "asset_id": "asset-abc", "qty": 5, "current_price": 10, "paper_mode_verified": True}
+        config = legacy_swing_canary_configuration_v1({})
+        position = {"symbol": "ABC", "asset_id": "asset-abc", "qty": 5, "qty_available": 5, "current_price": 10, "paper_mode_verified": True, "legacy_book_notional": 10_000,
+                    "broker_quote_record": {"response_state": "SUCCESS", "freshness_state": "CURRENT", "bid": 9.99, "ask": 10}, "broker_asset_record": {"response_state": "SUCCESS", "freshness_state": "CURRENT", "tradable": True}}
         decision = {
             "position_id": "asset-abc", "classification": "THESIS_BROKEN", "forecast_confidence": 0.9,
             "current_direct_confirmation": True, "direct_confirmation_confidence": 0.9,
             "forward_baseline": {"baseline_id": "legacy-forward:asset-abc", "legacy_activation_timestamp": "2026-07-16T00:00:00Z"},
             "shadow_twin": {"state": "POSITION_SHADOW_TWIN_ACTIVE"},
             "provisional_horizon": {"provisional_horizon": "SWING_MULTI_WEEK"},
+            "required_evidence": {"MOMENTUM": {"status": "CURRENT"}, "THESIS_STATE": {"status": "CURRENT"}, "LIQUIDITY": {"status": "CURRENT", "liquidity_state": "ACCEPTABLE"}},
         }
         result = evaluate_legacy_swing_canary_eligibility_v1(position, decision, config)
         self.assertTrue(result["technical_eligibility"])
@@ -103,7 +109,7 @@ class UnifiedPositionLifecycleTests(unittest.TestCase):
         self.assertEqual(result["final_state"], "KILL_SWITCH_ACTIVE")
 
     def test_advisory_state_is_not_technically_eligible(self):
-        config = legacy_swing_canary_configuration_v1()
+        config = legacy_swing_canary_configuration_v1({})
         decision = {
             "position_id": "asset", "classification": "EXIT_REVIEW", "forecast_confidence": 0.99,
             "current_direct_confirmation": True, "forward_baseline": {"baseline_id": "b", "legacy_activation_timestamp": "x"},
@@ -113,16 +119,54 @@ class UnifiedPositionLifecycleTests(unittest.TestCase):
         self.assertFalse(result["technical_eligibility"])
         self.assertIn("ADVISORY_CLASSIFICATION", result["eligibility_failures"])
 
+    def test_complete_evidence_is_required_for_legacy_canary_eligibility(self):
+        config = legacy_swing_canary_configuration_v1({})
+        position = {"symbol": "ABC", "asset_id": "asset", "qty": 10, "qty_available": 10, "current_price": 10, "legacy_book_notional": 10_000, "paper_mode_verified": True,
+                    "broker_quote_record": {"response_state": "SUCCESS", "freshness_state": "CURRENT", "bid": 9.99, "ask": 10}, "broker_asset_record": {"response_state": "SUCCESS", "freshness_state": "CURRENT", "tradable": True}}
+        decision = {"position_id": "asset", "classification": "REDUCE_RISK", "forecast_confidence": 0.9, "current_direct_confirmation": True, "direct_confirmation_confidence": 0.9,
+                    "forward_baseline": {"baseline_id": "b", "legacy_activation_timestamp": "x"}, "shadow_twin": {"state": "POSITION_SHADOW_TWIN_ACTIVE"}, "provisional_horizon": {"provisional_horizon": "SWING_MULTI_WEEK"},
+                    "required_evidence": {"MOMENTUM": {"status": "CURRENT"}, "THESIS_STATE": {"status": "CURRENT"}, "LIQUIDITY": {"status": "CURRENT", "liquidity_state": "ACCEPTABLE"}}}
+        self.assertTrue(evaluate_legacy_swing_canary_eligibility_v1(position, decision, config)["technical_eligibility"])
+        incomplete = {**decision, "required_evidence": {**decision["required_evidence"], "MOMENTUM": {"status": "UNAVAILABLE"}}}
+        result = evaluate_legacy_swing_canary_eligibility_v1(position, incomplete, config)
+        self.assertFalse(result["technical_eligibility"])
+        self.assertIn("CURRENT_MOMENTUM_REQUIRED", result["eligibility_failures"])
+
+    def test_active_control_authorizes_only_a_complete_candidate(self):
+        config = legacy_swing_canary_configuration_v1({"activation_state": "ACTIVATED_AFTER_READINESS_V1", "enabled": True, "kill_switch": False, "readiness_state": "READY"})
+        position = {"symbol": "ABC", "asset_id": "asset", "qty": 10, "qty_available": 10, "current_price": 10, "legacy_book_notional": 10_000, "paper_mode_verified": True,
+                    "broker_quote_record": {"response_state": "SUCCESS", "freshness_state": "CURRENT", "bid": 9.99, "ask": 10}, "broker_asset_record": {"response_state": "SUCCESS", "freshness_state": "CURRENT", "tradable": True}}
+        decision = {"position_id": "asset", "classification": "THESIS_BROKEN", "forecast_confidence": 0.9, "current_direct_confirmation": True, "direct_confirmation_confidence": 0.9,
+                    "forward_baseline": {"baseline_id": "b", "legacy_activation_timestamp": "x"}, "shadow_twin": {"state": "POSITION_SHADOW_TWIN_ACTIVE"}, "provisional_horizon": {"provisional_horizon": "SWING_MULTI_WEEK"},
+                    "required_evidence": {"MOMENTUM": {"status": "CURRENT"}, "THESIS_STATE": {"status": "CURRENT"}, "LIQUIDITY": {"status": "CURRENT", "liquidity_state": "ACCEPTABLE"}}}
+        result = evaluate_legacy_swing_canary_eligibility_v1(position, decision, config)
+        self.assertTrue(result["technical_eligibility"])
+        self.assertTrue(result["execution_authorized"])
+
+    def test_runtime_activation_control_requires_readiness_and_is_restart_readable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            control_path = f"{directory}/legacy_swing_canary_control_v1.json"
+            with patch("engine.astra_unified_position_lifecycle_v1._LEGACY_SWING_CANARY_CONTROL_PATH", control_path):
+                with self.assertRaises(ValueError):
+                    set_legacy_swing_canary_control_v1(enabled=True, kill_switch=False, readiness_state="NOT_READY")
+                control = set_legacy_swing_canary_control_v1(enabled=True, kill_switch=False, readiness_state="READY_WITH_BACKLOG")
+                self.assertEqual(control["activation_state"], "ACTIVATED_AFTER_READINESS_V1")
+                restarted = legacy_swing_canary_configuration_v1()
+                self.assertTrue(restarted["enabled"])
+                self.assertFalse(restarted["kill_switch"])
+
     def test_selection_is_stable_across_input_order_and_pre_submit_is_non_executing(self):
-        config = legacy_swing_canary_configuration_v1()
+        config = legacy_swing_canary_configuration_v1({})
         decision = {
             "position_id": "asset-a", "symbol": "AAA", "classification": "THESIS_BROKEN", "forecast_confidence": 0.95,
             "current_direct_confirmation": True, "direct_confirmation_confidence": 0.95,
             "forward_baseline": {"baseline_id": "baseline-a", "legacy_activation_timestamp": "2026-07-16T00:00:00Z"},
             "shadow_twin": {"state": "POSITION_SHADOW_TWIN_ACTIVE"}, "provisional_horizon": {"provisional_horizon": "SWING_MULTI_WEEK"},
             "evidence_rows": [], "lane": "SWING", "cohort": "LEGACY_PRE_CONTRACT_POSITION",
+            "required_evidence": {"MOMENTUM": {"status": "CURRENT"}, "THESIS_STATE": {"status": "CURRENT"}, "LIQUIDITY": {"status": "CURRENT", "liquidity_state": "ACCEPTABLE"}},
         }
-        position = {"symbol": "AAA", "asset_id": "asset-a", "qty": 20, "current_price": 10, "paper_mode_verified": True}
+        position = {"symbol": "AAA", "asset_id": "asset-a", "qty": 20, "qty_available": 20, "current_price": 10, "paper_mode_verified": True, "legacy_book_notional": 10_000,
+                    "broker_quote_record": {"response_state": "SUCCESS", "freshness_state": "CURRENT", "bid": 9.99, "ask": 10}, "broker_asset_record": {"response_state": "SUCCESS", "freshness_state": "CURRENT", "tradable": True}}
         eligibility = evaluate_legacy_swing_canary_eligibility_v1(position, decision, config)
         row_a = {"position_id": "asset-a", "symbol": "AAA", "technical_eligibility": True, "decision": decision, "eligibility": eligibility}
         row_b = {"position_id": "asset-b", "symbol": "BBB", "technical_eligibility": True, "decision": {**decision, "position_id": "asset-b", "symbol": "BBB", "forecast_confidence": 0.85}, "eligibility": {**eligibility, "decision_confidence": 0.85}}

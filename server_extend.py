@@ -13,7 +13,7 @@ from engine.astra_multilane_activation_v2 import (
 )
 from engine.astra_multilane_market_hours_audit_v1 import MarketHoursAuditRegistry, build_audit
 from engine.astra_trade_lane_registry_v1 import apply_trade_lane_contract
-from engine.astra_unified_position_lifecycle_v1 import build_unified_position_lifecycle_decision_v1
+from engine.astra_unified_position_lifecycle_v1 import build_unified_position_lifecycle_decision_v1, legacy_swing_canary_configuration_v1
 from engine.learning_return_integrity_v1 import audit_learning_return_rows
 from engine.astra_evidence_accumulation_capacity_v1 import build_capacity_snapshot
 from engine.astra_portfolio_capacity_release_review_v1 import (
@@ -47756,6 +47756,7 @@ def _legacy_swing_canary_pre_submit_audit_payload_v1() -> dict:
     repairable = []
     config_ok = bool(config.get("policy_id") == "LEGACY_SWING_CONTROLLED_PAPER_CANARY_V1")
     worker_ok = bool(runtime.get("worker_acknowledgement") == "CANARY_CONFIGURATION_CONSUMED_BY_WORKER")
+    canary_active = bool(config.get("enabled")) and not bool(config.get("kill_switch"))
     for activation_id, record in sorted(activations.items()):
         row = dict(record or {})
         if str(row.get("cohort") or "").startswith("DUST"):
@@ -47783,10 +47784,23 @@ def _legacy_swing_canary_pre_submit_audit_payload_v1() -> dict:
             if repair:
                 repairable.append(result)
         eligibility = dict(review.get("eligibility") or {})
-        stage_rows.append({**base, "stage": "execution_enforcement", "expected_state": "KILL_SWITCH_ACTIVE",
-                           "actual_state": eligibility.get("final_state") or "CANARY_DISABLED",
-                           "acknowledgement": "EXECUTION_BLOCKED_BY_DISABLED_POLICY", "blocker": "disabled_by_design",
-                           "blocker_type": "legitimate safety block", "safe_repair_allowed": False, "exact_repair": None})
+        if canary_active:
+            authorized = bool(eligibility.get("execution_authorized"))
+            stage_rows.append({
+                **base, "stage": "execution_enforcement", "expected_state": "CANDIDATE_GATE_EVALUATED",
+                "actual_state": "EXECUTION_AUTHORIZED" if authorized else "BROKER_SUBMISSION_BLOCKED_BY_CANDIDATE_GATE",
+                "acknowledgement": "CANARY_ACTIVE_NATURAL_ELIGIBILITY_ONLY",
+                "blocker": None if authorized else eligibility.get("exact_blocker"),
+                "blocker_type": None if authorized else "legitimate evidence/policy block",
+                "safe_repair_allowed": False, "exact_repair": None,
+            })
+        else:
+            stage_rows.append({
+                **base, "stage": "execution_enforcement", "expected_state": "KILL_SWITCH_ACTIVE",
+                "actual_state": eligibility.get("final_state") or "CANARY_DISABLED",
+                "acknowledgement": "EXECUTION_BLOCKED_BY_DISABLED_POLICY", "blocker": "disabled_by_design",
+                "blocker_type": "legitimate safety block", "safe_repair_allowed": False, "exact_repair": None,
+            })
     global_rows = [
         {"stage": "configuration", "owner": "engine.astra_unified_position_lifecycle_v1.legacy_swing_canary_configuration_v1",
          "producer": "canonical configuration", "consumer": "PaperAutopilot worker", "store": "paper_autopilot_state.json",
@@ -47844,6 +47858,56 @@ def legacy_swing_canary_pre_submit_closure_diagnostic_v1():
 def legacy_swing_canary_pre_submit_audit_v1():
     """Alias for the canonical pre-submit runtime audit."""
     return _legacy_swing_canary_pre_submit_audit_payload_v1()
+
+
+def _legacy_swing_canary_activation_readiness_payload_v1() -> dict:
+    """Read-only activation certification. It never changes canary control state."""
+    runtime = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("legacy_swing_canary") or {})
+    reviews = dict(runtime.get("reviews") or {})
+    config = legacy_swing_canary_configuration_v1()
+    pre_submit = _legacy_swing_canary_pre_submit_audit_payload_v1()
+    classification = legacy_swing_classification_integrity_diagnostic_v1()
+    required = _legacy_swing_required_evidence_payload_v1()
+    market = _broker_market_evidence_payload_v1()
+    fmp = _fmp_production_consumption_payload_v1()
+    governance = _astra_governance_oversight_v1_fast_audit_payload()
+    safety = dict(getattr(PAPER_AUTOPILOT, "_alpaca_safety_snapshot", lambda: {})() or {})
+    candidate_rows, quality_rows = [], []
+    for activation_id, raw in sorted(reviews.items()):
+        review, decision, eligibility = dict(raw or {}), dict((raw or {}).get("decision") or {}), dict((raw or {}).get("eligibility") or {})
+        evidence = dict(review.get("required_evidence") or {})
+        actionable = str(review.get("current_classification") or "") in set(config.get("eligible_classifications") or [])
+        if actionable:
+            components = dict(decision.get("classification_components") or {})
+            supported = bool(components.get("evidence_complete")) and not bool(decision.get("evidence_stale") or decision.get("evidence_conflicting")) and bool(review.get("classification_reason"))
+            quality_rows.append({"symbol": review.get("symbol"), "activation_id": review.get("activation_id") or activation_id, "classification": review.get("current_classification"), "confidence": review.get("classification_confidence"), "reason": review.get("classification_reason"), "supported": supported, "components": components, "missing_evidence": decision.get("evidence_missing") or [], "suppressed_classifications": decision.get("suppressed_classifications") or []})
+        candidate_rows.append({"symbol": review.get("symbol"), "position_id": review.get("position_id"), "activation_id": review.get("activation_id") or activation_id, "classification": review.get("current_classification"), "technical_eligibility": bool(eligibility.get("technical_eligibility")), "eligibility_failures": eligibility.get("eligibility_failures") or [], "exact_blocker": eligibility.get("exact_blocker"), "decision_confidence": eligibility.get("decision_confidence"), "direct_confirmation": review.get("direct_confirmation_state"), "direct_confirmation_confidence": review.get("direct_confirmation_confidence"), "momentum_state": (evidence.get("MOMENTUM") or {}).get("status"), "thesis_state": (evidence.get("THESIS_STATE") or {}).get("status"), "liquidity_state": (evidence.get("LIQUIDITY") or {}).get("status"), "candidate_evidence_complete": bool(eligibility.get("technical_eligibility"))})
+    eligible = [row for row in candidate_rows if row.get("technical_eligibility")]
+    unsupported = [row for row in quality_rows if not row.get("supported")]
+    provider_starved = any(str((family or {}).get("starvation_state") or "") == "PROVIDER_STARVED" for family in (market.get("families") or {}).values())
+    system_blockers = []
+    if not bool(safety.get("paper_mode_verified")) or bool(safety.get("live_endpoint_detected")):
+        system_blockers.append("PAPER_ONLY_BROKER_BOUNDARY_REQUIRED")
+    if int(governance.get("critical_findings_count") or 0) or int(governance.get("high_findings_count") or 0):
+        system_blockers.append("GOVERNANCE_HIGH_OR_CRITICAL")
+    for name, payload in (("CLASSIFICATION", classification), ("REQUIRED_EVIDENCE", required), ("MARKET_EVIDENCE", market), ("FMP", fmp), ("WRITER", pre_submit)):
+        if payload.get("repairable_failures"):
+            system_blockers.append(f"{name}_REPAIRABLE_FAILURE")
+    if provider_starved:
+        system_blockers.append("PROVIDER_STARVED")
+    if unsupported:
+        system_blockers.append("UNSUPPORTED_ACTIONABLE_CLASSIFICATION")
+    writer_ready = pre_submit.get("status") == "PASS" and (pre_submit.get("writer_adapter_contract") or {}).get("status") == "WRITER_PATH_CONNECTED"
+    if not writer_ready:
+        system_blockers.append("WRITER_BLOCKED")
+    backlog = int(market.get("bounded_backlog") or 0)
+    readiness = "NOT_READY" if system_blockers else "READY_WITH_BACKLOG" if backlog else "READY"
+    return {"endpoint": "/api/legacy_swing_canary_activation_readiness_v1", "read_only": True, "configuration_ready": bool(config.get("paper_only") and config.get("policy_id")), "classification_quality_ready": not unsupported and not classification.get("repairable_failures"), "evidence_pipeline_ready": not required.get("repairable_failures") and not market.get("repairable_failures") and not fmp.get("repairable_failures"), "candidate_evidence_ready": bool(eligible), "direct_confirmation_ready": bool(eligible), "quantity_ready": True, "idempotency_ready": True, "writer_ready": writer_ready, "broker_safety_ready": not bool(safety.get("live_endpoint_detected")) and bool(safety.get("paper_mode_verified")), "governance_ready": not (int(governance.get("critical_findings_count") or 0) or int(governance.get("high_findings_count") or 0)), "reconciliation_ready": all(not bool((review.get("eligibility") or {}).get("eligibility_checks", {}).get("no_duplicate_pending_exit") is False) for review in reviews.values()), "provider_starvation_state": "PROVIDER_STARVED" if provider_starved else "ACTIVE", "market_data_backlog_state": "BACKLOG" if backlog else "CLEAR", "eligible_candidates": eligible, "selected_candidate": (runtime.get("selection") or {}).get("selected_candidate"), "selected_candidate_blockers": [] if eligible else [row for row in candidate_rows if row.get("classification") in set(config.get("eligible_classifications") or [])], "activation_recommended": readiness in {"READY", "READY_WITH_BACKLOG"}, "activation_blockers": system_blockers, "readiness_state": readiness, "configuration": config, "classification_quality_rows": quality_rows, "candidate_rows": candidate_rows, "broker_actions": 0, "provider_calls": 0, "fixture_orders": 0, "natural_orders": int(runtime.get("natural_orders") or 0)}
+
+
+@router.get("/api/legacy_swing_canary_activation_readiness_v1")
+def legacy_swing_canary_activation_readiness_v1():
+    return {**_legacy_swing_canary_activation_readiness_payload_v1(), **_safety_flags_v1()}
 
 
 @router.get("/api/legacy_swing_classification_integrity_diagnostic_v1")
@@ -63271,6 +63335,8 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
     required_evidence = _legacy_swing_required_evidence_payload_v1()
     fmp_consumption = _fmp_production_consumption_payload_v1()
     market_evidence = _broker_market_evidence_payload_v1()
+    legacy_canary_config = legacy_swing_canary_configuration_v1()
+    legacy_canary_runtime = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("legacy_swing_canary") or {})
     review = dict(utilization.get("portfolio_review") or build_portfolio_release_review(rows))
     enrichment = _candidate_intelligence_enrichment_contract_diagnostic_v1(force=False)
     findings: list[dict] = []
@@ -63397,6 +63463,17 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
             "evidence": market_evidence.get("repairable_failures"),
             "recommended_action": "repair bounded read-only broker market-data production, storage, acknowledgement, or influence; do not submit an order",
         })
+    if bool(legacy_canary_config.get("enabled")) and (
+        bool(legacy_canary_config.get("kill_switch"))
+        or str(legacy_canary_config.get("activation_readiness_state") or "") not in {"READY", "READY_WITH_BACKLOG"}
+        or not bool(legacy_canary_runtime.get("worker_acknowledgement"))
+    ):
+        findings.append({
+            "severity": "high", "classification": "legacy_swing_canary_activation_safety_defect",
+            "issue": "legacy_swing_canary_enabled_without_current_readiness",
+            "evidence": {"configuration": legacy_canary_config, "worker_acknowledgement": legacy_canary_runtime.get("worker_acknowledgement")},
+            "recommended_action": "reactivate the legacy SWING kill switch and rerun read-only readiness; do not submit an order",
+        })
     lineage_confidence = dict(lineage_detail.get("coverage_by_confidence_class") or {})
     excursion_coverage = dict(lineage_detail.get("coverage_by_excursion_class") or {})
     if int(_to_float(lineage_confidence.get("NOT_RECOVERABLE"), 0.0)) > 0:
@@ -63484,6 +63561,10 @@ def _astra_governance_oversight_v1_fast_audit_payload(statuses: dict | None = No
         "legacy_swing_broker_market_evidence_v1": {
             key: market_evidence.get(key)
             for key in ("overall_status", "positions_processed", "families", "bounded_backlog", "repairable_failures")
+        },
+        "legacy_swing_canary_activation_control_v1": {
+            key: legacy_canary_config.get(key)
+            for key in ("enabled", "kill_switch", "activation_control_state", "activation_readiness_state")
         },
         "position_lineage_excursion_replacement_v1": {
             "coverage_by_confidence_class": lineage_confidence,

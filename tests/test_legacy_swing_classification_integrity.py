@@ -20,7 +20,7 @@ class LegacySwingClassificationIntegrityTests(unittest.TestCase):
             ({"evidence_conflicting": True}, "CONFLICTING_EVIDENCE"),
             ({"_confidence": 0.4}, "LOW_CONFIDENCE"),
             ({"unrealized_return_pct": 5, "profit_giveback_pct": 3}, "PROTECT_PROFIT"),
-            ({"momentum_state": "COLLAPSE"}, "REDUCE_RISK"),
+            ({"momentum_state": "COLLAPSE", "thesis_state": "DETERIORATING"}, "REDUCE_RISK"),
             ({"thesis_state": "BROKEN", "direct_thesis_invalidation": True}, "THESIS_BROKEN"),
             ({"thesis_state": "BROKEN", "unrealized_return_pct": -5, "controlled_loss_preferred": True}, "CONTROLLED_LOSS_ACCEPTABLE"),
             ({"replacement_qualified": True, "opportunity_cost_state": "HIGH"}, "REPLACE_CANDIDATE"),
@@ -33,6 +33,11 @@ class LegacySwingClassificationIntegrityTests(unittest.TestCase):
     def test_missing_or_stale_never_defaults_to_hold(self):
         self.assertEqual(_classify(momentum_state="")["classification"], "INSUFFICIENT_EVIDENCE")
         self.assertEqual(_classify(quote_stale=True)["classification"], "INSUFFICIENT_EVIDENCE")
+
+    def test_reduce_risk_requires_current_risk_evidence_not_missing_or_liquidity_alone(self):
+        self.assertEqual(_classify(liquidity_state="POOR")["classification"], "HOLD_WITH_WATCH")
+        self.assertEqual(_classify(liquidity_state="POOR", momentum_state="NEGATIVE")["classification"], "REDUCE_RISK")
+        self.assertEqual(_classify(liquidity_state="", momentum_state="") ["classification"], "INSUFFICIENT_EVIDENCE")
 
     def test_reason_and_components_are_explicit(self):
         result = _classify(momentum_state="WEAK")

@@ -1583,6 +1583,33 @@ class PaperAutopilotEngine:
     def _authorized_lane_exit_pending_map(self) -> dict[str, Any]:
         return dict(self._runtime_state.get("authorized_lane_exit_pending") or {})
 
+    def _legacy_swing_canary_execution_guard(self, pre_submit: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+        """Fail closed before the shared writer can see an active SWING canary."""
+        pre = dict(pre_submit or {})
+        cfg = dict(config or {})
+        safety = self._alpaca_safety_snapshot()
+        state = dict(getattr(self, "_runtime_state", {}).get("legacy_swing_canary_execution") or {})
+        today = datetime.now(UTC).date().isoformat()
+        pending = self._authorized_lane_exit_pending_map()
+        active = [row for row in pending.values() if isinstance(row, dict) and bool(row.get("legacy_swing_canary_adapter_v1"))]
+        submissions = dict(state.get("submissions_by_day") or {})
+        actions = set(state.get("action_ids") or [])
+        clients = set(state.get("client_order_ids") or [])
+        failures = []
+        if not bool(cfg.get("enabled")) or bool(cfg.get("kill_switch")):
+            failures.append("CANARY_DISABLED_OR_KILL_SWITCH_ACTIVE")
+        if not bool(safety.get("paper_mode_verified")) or bool(safety.get("live_endpoint_detected")):
+            failures.append("PAPER_ONLY_BROKER_BOUNDARY_REQUIRED")
+        if int(state.get("broker_rejections") or 0) >= int(cfg.get("rejection_limit") or 2):
+            failures.append("REJECTION_LIMIT_FAIL_CLOSED")
+        if len(active) >= int(cfg.get("max_active_exit_orders") or 1):
+            failures.append("MAX_ACTIVE_EXIT_ORDERS_REACHED")
+        if int(submissions.get(today) or 0) >= int(cfg.get("max_exit_submissions_per_day") or 1):
+            failures.append("MAX_EXIT_SUBMISSIONS_PER_DAY_REACHED")
+        if str(pre.get("action_id") or "") in actions or str(pre.get("client_order_id") or "") in clients:
+            failures.append("DUPLICATE_IDEMPOTENCY_KEY")
+        return {"approved": not failures, "failures": failures, "today": today, "active_orders": len(active), "submissions_today": int(submissions.get(today) or 0), "broker_actions": 0}
+
     def legacy_swing_canary_writer_pre_submit(self, pre_submit: dict[str, Any], broker_position: dict[str, Any]) -> dict[str, Any]:
         """Map the canonical disabled-canary handoff into the existing writer.
 
@@ -1613,11 +1640,12 @@ class PaperAutopilotEngine:
                 "broker_submission_blocked": True, "broker_actions": 0,
                 "reason": "CANONICAL_PRE_SUBMIT_FIELDS_REQUIRED", "missing_fields": missing,
             }
-        if pre.get("execution_authorized") is not False:
+        expected_execution_authorization = bool(config.get("enabled")) and not bool(config.get("kill_switch"))
+        if bool(pre.get("execution_authorized")) != expected_execution_authorization:
             return {
                 "adapter_state": "ADAPTER_MAPPING_INVALID", "writer_state": "EXECUTION_NOT_AUTHORIZED",
                 "broker_submission_blocked": True, "broker_actions": 0,
-                "reason": "EXECUTION_AUTHORIZATION_MUST_REMAIN_FALSE",
+                "reason": "EXECUTION_AUTHORIZATION_DOES_NOT_MATCH_CANARY_STATE",
             }
         price = _to_float(pre.get("quote_price"), 0.0)
         available = _to_float(broker.get("qty_available"), _to_float(broker.get("qty"), _to_float(pre.get("quantity_available"), 0.0)))
@@ -1639,6 +1667,14 @@ class PaperAutopilotEngine:
                 "broker_submission_blocked": True, "broker_actions": 0, "reason": cap_failures[0],
                 "cap_failures": cap_failures, "normalized": normalized,
             }
+        guard = self._legacy_swing_canary_execution_guard(pre, config)
+        if bool(config.get("enabled")) and not bool(config.get("kill_switch")) and not guard.get("approved"):
+            return {
+                "adapter_state": "ADAPTER_MAPPING_VALID", "writer_state": "POLICY_BLOCKED",
+                "broker_submission_blocked": True, "broker_actions": 0,
+                "reason": (guard.get("failures") or ["CANARY_GUARD_BLOCKED"])[0], "guard": guard,
+                "normalized": normalized,
+            }
         open_row = {
             "legacy_swing_canary_adapter_v1": True,
             "legacy_swing_canary_pre_submit": pre,
@@ -1646,18 +1682,25 @@ class PaperAutopilotEngine:
             "position_id": str(pre.get("position_id") or ""), "quantity": requested,
             "client_order_id": str(pre.get("client_order_id") or ""),
             "action_id": str(pre.get("action_id") or ""), "idempotency_key": str(pre.get("idempotency_key") or ""),
-            "paper_only": True, "execution_authorized": False,
+            "paper_only": True, "execution_authorized": bool(pre.get("execution_authorized")),
+            "legacy_swing_canary_guard_approved": True,
             "legacy_book_notional": legacy_book_notional, "max_canary_notional_usd": config.get("max_canary_notional_usd"),
             "max_legacy_book_percentage_per_cycle": config.get("max_legacy_book_percentage_per_cycle"),
         }
         writer = self._submit_authorized_lane_exit(open_row, broker, str(pre.get("classification") or ""))
+        if writer.get("submitted"):
+            state = dict(getattr(self, "_runtime_state", {}).get("legacy_swing_canary_execution") or {})
+            submissions = dict(state.get("submissions_by_day") or {})
+            submissions[guard["today"]] = int(submissions.get(guard["today"]) or 0) + 1
+            state.update({"submissions_by_day": submissions, "action_ids": sorted(set(state.get("action_ids") or []) | {str(pre.get("action_id") or "")}), "client_order_ids": sorted(set(state.get("client_order_ids") or []) | {str(pre.get("client_order_id") or "")})})
+            self._runtime_state["legacy_swing_canary_execution"] = state
         return {
             "adapter_state": "ADAPTER_MAPPING_VALID", "writer_state": writer.get("writer_state") or "WRITER_PATH_CONNECTED",
             "writer_result": writer, "normalized": normalized, "normalized_notional": normalized_notional,
             "legacy_book_notional": legacy_book_notional, "max_legacy_book_notional": max_book_notional,
-            "execution_authorized": False, "canary_enabled": bool(config.get("enabled")),
-            "kill_switch_active": bool(config.get("kill_switch")), "broker_submission_blocked": True,
-            "broker_actions": 0,
+            "execution_authorized": bool(pre.get("execution_authorized")), "canary_enabled": bool(config.get("enabled")),
+            "kill_switch_active": bool(config.get("kill_switch")), "broker_submission_blocked": not bool(writer.get("submitted")),
+            "broker_actions": 1 if writer.get("submitted") else 0, "guard": guard,
         }
 
     def _authorized_lane_exit_contract(self, open_row: dict[str, Any]) -> dict[str, Any]:
@@ -1665,16 +1708,24 @@ class PaperAutopilotEngine:
         lane = str(open_row.get("lane_id") or "").upper().strip()
         if lane == "SWING" and bool(open_row.get("legacy_swing_canary_adapter_v1")):
             pre = dict(open_row.get("legacy_swing_canary_pre_submit") or {})
+            config = legacy_swing_canary_configuration_v1()
             canonical = (
                 pre.get("pre_submit_state") == "LEGACY_SWING_CANARY_PRE_SUBMIT_READY"
                 and pre.get("policy_id") == "LEGACY_SWING_CONTROLLED_PAPER_CANARY_V1"
-                and pre.get("execution_authorized") is False
+                and bool(pre.get("execution_authorized")) == (bool(config.get("enabled")) and not bool(config.get("kill_switch")))
                 and str(open_row.get("action_id") or "") == str(pre.get("action_id") or "")
                 and str(open_row.get("client_order_id") or "") == str(pre.get("client_order_id") or "")
                 and str(open_row.get("idempotency_key") or "") == str(pre.get("idempotency_key") or "")
             )
             if not canonical:
                 return {"authorized": False, "status": "UNRESOLVED", "reason": "LEGACY_CANARY_ADAPTER_CONTRACT_INVALID"}
+            if bool(config.get("enabled")) and not bool(config.get("kill_switch")) and bool(open_row.get("legacy_swing_canary_guard_approved")):
+                safety = self._alpaca_safety_snapshot()
+                if not bool(safety.get("paper_mode_verified")) or bool(safety.get("live_endpoint_detected")):
+                    return {"authorized": False, "status": "UNRESOLVED", "reason": "PAPER_ONLY_BROKER_BOUNDARY_REQUIRED"}
+                if self.alpaca_paper_broker is None or not hasattr(self.alpaca_paper_broker, "submit_paper_order"):
+                    return {"authorized": False, "status": "WORKER_UNAVAILABLE", "reason": "ALPACA_PAPER_BROKER_UNAVAILABLE"}
+                return {"authorized": True, "status": "LEGACY_CANARY_AUTHORIZED", "lane_id": "SWING", "paper_mode_verified": True, "broker_live_endpoint_allowed": False, "position_owner": "LEGACY_SWING_CANARY", "exit_policy_owner": "LEGACY_SWING_CONTROLLED_PAPER_CANARY_V1"}
             return {
                 "authorized": False, "status": "WRITER_PATH_CONNECTED", "reason": "EXECUTION_NOT_AUTHORIZED",
                 "writer_path_connected": True, "canary_disabled": True, "kill_switch_active": True,
@@ -1785,7 +1836,7 @@ class PaperAutopilotEngine:
         if qty <= 0 or not bool(normalized.get("sell_safe_to_submit")):
             return {"ok": False, "submitted": False, "reason": "DUST_OR_UNAVAILABLE_QUANTITY", "contract": contract, **normalized}
         lane = str(contract.get("lane_id") or "")
-        client_order_id = f"astra-{lane.lower()}-exit-{position_id[:18] or symbol[:16]}"[:48]
+        client_order_id = str(open_row.get("client_order_id") or f"astra-{lane.lower()}-exit-{position_id[:18] or symbol[:16]}")[:48]
         order = {
             "symbol": symbol, "side": "sell", "type": "market",
             "time_in_force": "gtc" if lane == "CRYPTO" else "day", "qty": qty,
@@ -1808,7 +1859,7 @@ class PaperAutopilotEngine:
             "position_id": position_id, "symbol": symbol, "lane_id": lane,
             "exit_reason": str(exit_reason or ""), "order_id": str(broker_order.get("id") or ""),
             "client_order_id": str(broker_order.get("client_order_id") or client_order_id),
-            "submitted_at": _now_iso(), "contract": contract, **normalized,
+            "submitted_at": _now_iso(), "contract": contract, "legacy_swing_canary_adapter_v1": bool(open_row.get("legacy_swing_canary_adapter_v1")), **normalized,
         }
         self._runtime_state["authorized_lane_exit_pending"] = pending_map
         return {"ok": True, "submitted": True, "pending_order_id": pending_id, "contract": contract, **normalized}
@@ -2161,6 +2212,8 @@ class PaperAutopilotEngine:
         config = legacy_swing_canary_configuration_v1()
         safety = self._alpaca_safety_snapshot()
         registry = dict(self._runtime_state.get("legacy_forward_activations") or {})
+        legacy_symbols = {str((dict(record or {})).get("symbol") or "").upper() for record in registry.values()}
+        legacy_book_notional = sum(abs(_to_float(dict(position or {}).get("market_value"), 0.0)) for symbol, position in broker_positions.items() if str(symbol or "").upper() in legacy_symbols)
         fmp_records, fmp_activity = self._refresh_legacy_swing_fmp_evidence(registry)
         market_records, market_activity = self._refresh_legacy_swing_broker_market_evidence(registry)
         reviews: dict[str, dict[str, Any]] = {}
@@ -2186,6 +2239,7 @@ class PaperAutopilotEngine:
                 "broker_bar_record": dict((market_records.get(activation_id) or {}).get("HISTORICAL_BARS") or {}),
                 "broker_quote_record": dict((market_records.get(activation_id) or {}).get("LATEST_QUOTE") or {}),
                 "broker_asset_record": dict((market_records.get(activation_id) or {}).get("ASSET_METADATA") or {}),
+                "legacy_book_notional": legacy_book_notional,
             }
             if row["broker_bar_record"].get("freshness_state") == "CURRENT":
                 row["recent_price_path"] = [item.get("close") for item in list(row["broker_bar_record"].get("bars") or [])]
@@ -2206,6 +2260,7 @@ class PaperAutopilotEngine:
             decision = build_unified_position_lifecycle_decision_v1(
                 row, current_market_evidence=row, lifecycle_plan=record, evidence_context={"shadow_evidence": record.get("shadow_twin")}
             )
+            decision["required_evidence"] = required_evidence
             for evidence_row in required_evidence.values():
                 evidence_row["consumer_acknowledged"] = True
                 evidence_row["acknowledgement_state"] = "CONSUMED_BY_UNIFIED_DECISION"
@@ -2281,6 +2336,7 @@ class PaperAutopilotEngine:
         selection = select_legacy_swing_canary_candidate_v1(candidates)
         selected = dict(selection.get("selected_candidate") or {})
         pre_submit = None
+        adapter_result = None
         if selected:
             activation_id = next((key for key, value in reviews.items() if str(value.get("position_id") or "") == str(selected.get("position_id") or "")), "")
             review = dict(reviews.get(activation_id) or {})
@@ -2289,11 +2345,14 @@ class PaperAutopilotEngine:
                 position=broker, lifecycle_decision=dict(review.get("decision") or {}),
                 eligibility=dict(review.get("eligibility") or {}), selection=selection, configuration=config,
             )
+            if pre_submit and bool(config.get("enabled")) and not bool(config.get("kill_switch")):
+                adapter_result = self.legacy_swing_canary_writer_pre_submit(pre_submit, broker)
         self._runtime_state["legacy_forward_activations"] = registry
         self._runtime_state["legacy_swing_market_evidence"] = market_records
         self._runtime_state["legacy_swing_canary"] = {
             "configuration": config, "reviews": reviews, "selection": selection,
             "pre_submit": pre_submit, "writer_adapter_contract": legacy_swing_writer_adapter_contract_v1(),
+            "writer_adapter_result": adapter_result,
             "last_refresh_at": _now_iso(), "broker_actions": 0, "natural_orders": 0, "fixture_orders": 0,
             "worker_acknowledgement": "CANARY_CONFIGURATION_CONSUMED_BY_WORKER",
             "fmp_activity": fmp_activity,
