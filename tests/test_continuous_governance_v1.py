@@ -163,6 +163,22 @@ class ContinuousGovernanceTests(unittest.TestCase):
         failed = [row for row in result["invariants"] if row.get("invariant_id") == "NO_CONTRACT_INCOMPLETE_WITHOUT_FIELD_ATTRIBUTION"]
         self.assertEqual(failed[0]["state"], "FAIL")
 
+    def test_swing_capacity_uses_active_slots_while_entry_velocity_stays_bounded(self):
+        runtime_state = runtime(review=False)
+        runtime_state["last_evidence_capacity_snapshot"] = {
+            "active_strategy_slot_capacity_remaining": 17,
+            "lanes": {"swing": {"capacity_decision": "AVAILABLE"}},
+        }
+        state = worker_state()
+        state["limits"] = {"max_new_positions_per_cycle": 2}
+        with tempfile.TemporaryDirectory() as directory:
+            result = ContinuousGovernanceV1(directory).run_worker_cycle(
+                worker_state=state, runtime_state=runtime_state, safety=SAFETY,
+            )
+        rows = {row["invariant_id"]: row for row in result["invariants"]}
+        self.assertEqual(rows["SWING_CAPACITY_MATCHES_APPROVED_ACTIVE_SLOTS"]["state"], "PASS")
+        self.assertEqual(rows["SWING_ENTRY_VELOCITY_BOUNDED"]["state"], "PASS")
+
 
 if __name__ == "__main__":
     unittest.main()

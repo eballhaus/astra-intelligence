@@ -18,7 +18,6 @@ VERSION = "1.0.0"
 LANES = ("SWING", "DAY", "CRYPTO")
 APPROVED_CEILINGS = {"DAY": 15000.0, "CRYPTO": 10000.0}
 APPROVED_CONCURRENT_POSITION_LIMITS = {"DAY": 3, "CRYPTO": 4}
-DEFAULT_NEW_SWING_CONCURRENCY_LIMIT = 4
 DEFAULT_GLOBAL_POSITION_LIMIT = 10
 DEFAULT_BROKER_STATE_MAX_AGE_SECONDS = 120.0
 
@@ -272,10 +271,6 @@ def build_capacity_snapshot(
         active_strategy_status = "BROKER_STATE_STALE"
     elif active_strategy_open is None:
         active_strategy_status = "BROKER_POSITION_DETAILS_UNAVAILABLE"
-    configured_new_swing_limit = max(1, min(
-        6,
-        _integer(values.get("ASTRA_NEW_SWING_CONCURRENCY_LIMIT", DEFAULT_NEW_SWING_CONCURRENCY_LIMIT), DEFAULT_NEW_SWING_CONCURRENCY_LIMIT),
-    ))
     lane_rows: dict[str, list[dict[str, Any]]] = {lane: [] for lane in LANES}
     lane_pending: dict[str, list[dict[str, Any]]] = {lane: [] for lane in LANES}
     lane_commitments: dict[str, list[dict[str, Any]]] = {lane: [] for lane in LANES}
@@ -330,11 +325,10 @@ def build_capacity_snapshot(
             blockers.append(_text(global_risk_reason) or "GLOBAL_RISK_BLOCKED")
         reserve_available = not blockers
         if lane == "SWING":
-            managed_swing_count = len(active_lane_rows)
-            swing_concurrency_remaining = max(0, configured_new_swing_limit - managed_swing_count)
             slot_available = active_strategy_remaining is not None and active_strategy_remaining > 0
-            decision = "AVAILABLE" if reserve_available and slot_available and swing_concurrency_remaining > 0 else (
-                "SWING_CONCURRENCY_LIMIT_REACHED" if state_fresh and swing_concurrency_remaining <= 0 else
+            # SWING capacity is the approved active-slot authority.  Entry
+            # velocity is separately bounded by PaperAutopilot per-cycle gates.
+            decision = "AVAILABLE" if reserve_available and slot_available else (
                 "ACTIVE_STRATEGY_SLOT_CAPACITY_EXHAUSTED" if state_fresh else "BROKER_STATE_STALE"
             )
         else:
@@ -411,11 +405,6 @@ def build_capacity_snapshot(
             "historical_entry_counts_advisory_only": True,
             "max_loss": config.get("max_loss"),
         }
-        if lane == "SWING":
-            lanes[lane.lower()].update({
-                "new_swing_concurrency_ceiling": configured_new_swing_limit,
-                "new_swing_concurrency_remaining": swing_concurrency_remaining,
-            })
     snapshot_basis = "|".join([
         generated_at, str(total_occupancy), str(global_limit), str(buying_power),
         str(active_strategy_occupancy), str(len(excluded_legacy_symbols)),
@@ -464,8 +453,8 @@ def build_capacity_snapshot(
         "swing_core_capital_used": lanes["swing"]["capital_used"],
         "swing_core_position_count": lanes["swing"]["positions_used"],
         "swing_core_capacity_remaining": active_strategy_remaining if excluded_legacy_symbols else global_remaining,
-        "new_swing_concurrency_ceiling": configured_new_swing_limit,
-        "new_swing_concurrency_remaining": lanes["swing"].get("new_swing_concurrency_remaining"),
+        "swing_capacity_authority": "ACTIVE_STRATEGY_SLOT_CAPACITY",
+        "swing_entry_velocity_owner": "PaperAutopilot.max_new_positions_per_cycle",
         "reserve_capital_excluded_from_swing": True,
         "lane_entry_counts": entry_counts,
         "historical_entry_counts_advisory_only": True,

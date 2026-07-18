@@ -436,7 +436,52 @@ class ContinuousGovernanceV1:
                 or bool(_text(management.get("day_hard_deadline_at"))),
                 "day_overnight_exception_or_drift_has_no_expiration",
             )
+            management_invariant(
+                "DAY_DEADLINE_CANNOT_SILENTLY_ROLL",
+                not bool(management.get("day_deadline_expired"))
+                or _text(management.get("day_horizon_drift_decision")) == "INSUFFICIENT_EVIDENCE_WITH_FINAL_ESCALATION",
+                "expired_day_deadline_requires_final_escalation",
+            )
         capacity = _dict(runtime_state.get("last_evidence_capacity_snapshot"))
+        swing_capacity = _dict(_dict(capacity.get("lanes")).get("swing"))
+        if swing_capacity:
+            active_remaining = _integer(capacity.get("active_strategy_slot_capacity_remaining"), -1)
+            swing_decision = _text(swing_capacity.get("capacity_decision"))
+            capacity_matches_slots = (
+                "SWING_CONCURRENCY_LIMIT" not in swing_decision
+                and (active_remaining <= 0 or swing_decision == "AVAILABLE")
+            )
+            invariants.append({
+                "invariant_id": "SWING_CAPACITY_MATCHES_APPROVED_ACTIVE_SLOTS",
+                "owner": "astra_evidence_accumulation_capacity_v1",
+                "dependencies": ["SWING"],
+                "state": "PASS" if capacity_matches_slots else "FAIL",
+                "observed_value": {"active_slots_remaining": active_remaining, "swing_capacity_decision": swing_decision},
+                "expected_value": "swing_admission_uses_active_strategy_slot_authority_only",
+                "first_failed_at": None if capacity_matches_slots else _now(),
+                "last_checked_at": _now(),
+                "failure_count": 0 if capacity_matches_slots else 1,
+                "severity": "INFO" if capacity_matches_slots else "HIGH",
+                "repairability": "DIAGNOSTIC",
+                "exact_blocker": None if capacity_matches_slots else "STALE_SWING_CONCURRENCY_CEILING",
+                "allowed_remediations": ["RESTORE_APPROVED_SWING_CAPACITY"],
+            })
+        velocity_limit = _integer(_dict(worker_state.get("limits")).get("max_new_positions_per_cycle"), 2)
+        invariants.append({
+            "invariant_id": "SWING_ENTRY_VELOCITY_BOUNDED",
+            "owner": "PaperAutopilot.max_new_positions_per_cycle",
+            "dependencies": ["SWING"],
+            "state": "PASS" if velocity_limit == 2 else "FAIL",
+            "observed_value": velocity_limit,
+            "expected_value": 2,
+            "first_failed_at": None if velocity_limit == 2 else _now(),
+            "last_checked_at": _now(),
+            "failure_count": 0 if velocity_limit == 2 else 1,
+            "severity": "INFO" if velocity_limit == 2 else "HIGH",
+            "repairability": "DIAGNOSTIC",
+            "exact_blocker": None if velocity_limit == 2 else "SWING_ENTRY_VELOCITY_CONFIGURATION_MISMATCH",
+            "allowed_remediations": [],
+        })
         day_capacity = _dict(_dict(capacity.get("lanes")).get("day"))
         if day_capacity:
             position_limit = _integer(day_capacity.get("configured_position_limit"), 0)

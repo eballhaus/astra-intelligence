@@ -85,6 +85,18 @@ class LegacyPositionResolutionTests(unittest.TestCase):
         }, prior_review={"day_horizon_drift_decision": "INSUFFICIENT_EVIDENCE_FAIL_CLOSED"})
         self.assertEqual(overlay["day_horizon_drift_decision"], "INSUFFICIENT_EVIDENCE_WITH_HARD_DEADLINE")
 
+    def test_expired_day_deadline_requires_final_escalation_without_rolling(self):
+        now = datetime(2026, 7, 18, 16, tzinfo=UTC)
+        deadline = now - timedelta(minutes=1)
+        overlay = build_position_management_overlay_v1({
+            "symbol": "SPY", "lane_id": "DAY", "original_lane": "DAY",
+            "entry_timestamp": (now - timedelta(days=2)).isoformat(),
+        }, prior_review={"day_hard_deadline_at": deadline.isoformat()}, now=now)
+        self.assertEqual(overlay["day_horizon_drift_decision"], "INSUFFICIENT_EVIDENCE_WITH_FINAL_ESCALATION")
+        self.assertEqual(overlay["day_hard_deadline_at"], deadline.isoformat().replace("+00:00", "Z"))
+        self.assertEqual(overlay["day_exit_or_conversion_state"], "FINAL_ESCALATION_REQUIRED")
+        self.assertIn("entry_fill_id", overlay["day_contract_failure_attribution_v1"]["missing_fields"])
+
     def test_one_time_manifest_is_stable_and_excludes_later_positions(self):
         rows = [
             build_position_management_overlay_v1({"asset_id": "asset-a", "symbol": "AAPL", "qty": 2, "avg_entry_price": 100, "market_value": 200}),

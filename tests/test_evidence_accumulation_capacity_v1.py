@@ -110,19 +110,20 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
         self.assertEqual(capacity["lanes"]["day"]["configured_capital_limit"], 15000.0)
         self.assertEqual(capacity["lanes"]["day"]["positions_remaining"], 1)
 
-    def test_swing_new_concurrency_cap_is_separate_from_global_active_slots(self):
-        env = {**BASE_ENV, "ASTRA_NEW_SWING_CONCURRENCY_LIMIT": "2"}
+    def test_swing_uses_approved_active_slot_capacity_without_separate_concurrency_cap(self):
         capacity = build_capacity_snapshot(
             broker_snapshot={"broker_reconciliation_active": True, "broker_positions_fetch_ok": True, "broker_state_age_seconds": 0},
             account_snapshot={"buying_power": 50000},
             open_positions=[
                 {"symbol": "S1", "lane_id": "SWING", "market_value": 100},
                 {"symbol": "S2", "lane_id": "SWING", "market_value": 100},
-            ], env=env, global_position_limit=10,
+            ], env=BASE_ENV, global_position_limit=10,
         )
         result = candidate_capacity_decision(capacity, lane_id="SWING", symbol="S3", open_symbols=[])
-        self.assertFalse(result["allowed"])
-        self.assertEqual(result["capacity_decision"], "SWING_CONCURRENCY_LIMIT_REACHED")
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["capacity_decision"], "AVAILABLE")
+        self.assertEqual(capacity["active_strategy_slot_capacity_remaining"], 8)
+        self.assertEqual(capacity["swing_capacity_authority"], "ACTIVE_STRATEGY_SLOT_CAPACITY")
 
     def test_global_risk_overrides_reserve(self):
         result = candidate_capacity_decision(

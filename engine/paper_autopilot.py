@@ -4600,7 +4600,8 @@ class PaperAutopilotEngine:
             "legacy_migration_approved", "legacy_migration_approval_id",
             "legacy_migration_manifest_id", "legacy_migration_state", "active_slot_exclusion",
             "day_horizon_drift_decision", "day_horizon_drift_reason", "day_close_root_cause",
-            "day_pre_close_review_state", "day_hard_deadline_at", "day_exit_or_conversion_state",
+            "day_contract_failure_attribution_v1", "day_deadline_expired", "day_pre_close_review_state",
+            "day_hard_deadline_at", "day_exit_or_conversion_state",
             "exit_readiness_state", "position_age_days", "last_review_at", "next_review_at",
             "review_state", "hold_exception_state",
         )

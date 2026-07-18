@@ -828,11 +828,32 @@ def build_position_management_overlay_v1(
     prior_day_drift_decision = _text(
         row.get("day_horizon_drift_decision") or prior.get("day_horizon_drift_decision")
     )
+    prior_day_deadline = _parse_iso(
+        row.get("day_hard_deadline_at") or prior.get("day_hard_deadline_at")
+    )
+    day_deadline = prior_day_deadline or next_review
+    day_deadline_expired = bool(
+        classification == "DAY_HORIZON_DRIFT_POSITION" and prior_day_deadline and prior_day_deadline < current
+    )
     day_drift_decision = (
+        "INSUFFICIENT_EVIDENCE_WITH_FINAL_ESCALATION"
+        if day_deadline_expired else
         "INSUFFICIENT_EVIDENCE_WITH_HARD_DEADLINE"
         if prior_day_drift_decision in {"", "INSUFFICIENT_EVIDENCE_FAIL_CLOSED"}
         else prior_day_drift_decision
     ) if classification == "DAY_HORIZON_DRIFT_POSITION" else None
+    if classification == "DAY_HORIZON_DRIFT_POSITION" and prior_day_deadline:
+        # A deadline may become a final escalation, but cannot be rolled
+        # forward merely because no new evidence or approval was recorded.
+        next_review = prior_day_deadline
+    day_missing_contract_fields = [
+        field for field, value in {
+            "entry_order_id": row.get("entry_order_id") or row.get("source_broker_order_id"),
+            "entry_fill_id": row.get("entry_fill_id"),
+            "candidate_id": candidate_id,
+            "pretrade_decision_contract_id": contract_id,
+        }.items() if not _text(value)
+    ]
     return {
         "schema_version": "astra_position_management_overlay_v1",
         "position_id": position_id,
@@ -866,14 +887,23 @@ def build_position_management_overlay_v1(
         "position_age_days": round(age, 4) if age is not None else None,
         "last_review_at": _iso(prior_last_review or current),
         "next_review_at": _iso(next_review),
-        "review_state": "OVERDUE_REVIEW" if stale_active else "SCHEDULED_REVIEW",
+        "review_state": "OVERDUE_REVIEW" if stale_active or day_deadline_expired else "SCHEDULED_REVIEW",
         "hold_exception_state": "HOLD_EXCEPTION_APPROVED" if bool(row.get("hold_exception_approved")) else "THESIS_REVALIDATION_REQUIRED" if classification in {"DAY_HORIZON_DRIFT_POSITION", "STALE_ACTIVE_POSITION"} else "NOT_REQUIRED",
         "day_horizon_drift_decision": day_drift_decision,
         "day_horizon_drift_reason": "DAY_POSITION_EXCEEDED_SAME_SESSION_HORIZON" if classification == "DAY_HORIZON_DRIFT_POSITION" else None,
         "day_close_root_cause": day_close_root_cause,
+        "day_contract_failure_attribution_v1": {
+            "missing_fields": day_missing_contract_fields,
+            "producer": "canonical broker position projection and entry lifecycle ingestion",
+            "store": "PaperAutopilot._evidence_capacity_snapshot_v1.position_rows_for_read_only_consumers",
+            "consumer": "build_unified_position_lifecycle_decision_v1",
+            "repair_owner": "existing broker reconciliation and lifecycle lineage owners",
+            "automatic_repair_available": False,
+        } if classification == "DAY_HORIZON_DRIFT_POSITION" else None,
+        "day_deadline_expired": day_deadline_expired if classification == "DAY_HORIZON_DRIFT_POSITION" else False,
         "day_pre_close_review_state": "FINAL_PRE_CLOSE_DECISION_REQUIRED" if classification == "DAY_HORIZON_DRIFT_POSITION" else "NOT_APPLICABLE",
-        "day_hard_deadline_at": _iso(next_review) if classification == "DAY_HORIZON_DRIFT_POSITION" else None,
-        "day_exit_or_conversion_state": "EXIT_REVIEW_REQUIRED" if classification == "DAY_HORIZON_DRIFT_POSITION" else "NOT_APPLICABLE",
+        "day_hard_deadline_at": _iso(day_deadline) if classification == "DAY_HORIZON_DRIFT_POSITION" else None,
+        "day_exit_or_conversion_state": "FINAL_ESCALATION_REQUIRED" if day_deadline_expired else "EXIT_REVIEW_REQUIRED" if classification == "DAY_HORIZON_DRIFT_POSITION" else "NOT_APPLICABLE",
         "authoritative_broker_truth": False,
         "reconstruction_is_context_only": reconstructable,
         "automatic_exit_authorized": False,
