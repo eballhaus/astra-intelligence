@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from engine.candidate_execution_integrity_v1 import candidate_execution_integrity
+from engine.runtime_environment import load_runtime_environment
 
 VERSION = "1.0.0"
 PAPER_BASE = "https://paper-api.alpaca.markets"
@@ -145,6 +146,11 @@ class AlpacaPaperBroker:
             pass
 
     def _env(self) -> dict[str, str]:
+        # The isolated worker can construct the broker before another provider
+        # module imports ``api_keys``.  Load the shared, idempotent repository
+        # environment here so backend and worker evaluate the same paper-only
+        # safety contract without copying secrets into process scripts.
+        load_runtime_environment()
         base = _safe_text(os.getenv("APCA_API_BASE_URL") or os.getenv("ALPACA_BASE_URL") or PAPER_BASE).rstrip("/")
         credential_pairs = (
             ("APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "apca_official_pair"),
@@ -384,6 +390,7 @@ class AlpacaPaperBroker:
         timeframe: str = "1Day",
         limit: int = 20,
         *,
+        asset_class: str = "stock",
         start: str | None = None,
         end: str | None = None,
         feed: str = "iex",
@@ -401,14 +408,18 @@ class AlpacaPaperBroker:
         generic method remains compatible for existing quote-free read callers.
         """
         sym = _safe_text(symbol).upper()
+        is_crypto = _safe_text(asset_class).lower() in {"crypto", "cryptocurrency"}
         requested_limit = max(5, min(60, _to_int(limit, 20)))
         params: dict[str, Any] = {
             "timeframe": str(timeframe or "1Day"),
             "limit": requested_limit,
-            "feed": _safe_text(feed, "iex").lower() or "iex",
-            "adjustment": _safe_text(adjustment, "raw").lower() or "raw",
             "sort": "asc" if _safe_text(sort, "asc").lower() != "desc" else "desc",
         }
+        if is_crypto:
+            params["symbols"] = sym.replace("-", "/") if "/" in sym or "-" in sym else f"{sym}/USD"
+        else:
+            params["feed"] = _safe_text(feed, "iex").lower() or "iex"
+            params["adjustment"] = _safe_text(adjustment, "raw").lower() or "raw"
         if _safe_text(start):
             params["start"] = _safe_text(start)
         if _safe_text(end):
@@ -422,7 +433,8 @@ class AlpacaPaperBroker:
             if next_page_token:
                 page_params["page_token"] = next_page_token
             query = urllib.parse.urlencode(page_params)
-            ok, data, error, status = self._market_data_request(f"/v2/stocks/{urllib.parse.quote(sym)}/bars?{query}")
+            path = "/v1beta3/crypto/us/bars" if is_crypto else f"/v2/stocks/{urllib.parse.quote(sym)}/bars"
+            ok, data, error, status = self._market_data_request(f"{path}?{query}")
             pages += 1
             if not ok:
                 return {
@@ -430,12 +442,15 @@ class AlpacaPaperBroker:
                     "http_status": status, "error": error, "bars": all_bars, "broker_actions": 0,
                     "requested_timeframe": params["timeframe"], "requested_start": params.get("start"),
                     "requested_end": params.get("end"), "requested_limit": requested_limit,
-                    "requested_feed": params["feed"], "requested_adjustment": params["adjustment"],
+                    "requested_feed": params.get("feed"), "requested_adjustment": params.get("adjustment"),
                     "requested_sort": params["sort"], "pages_consumed": pages,
                     "pagination_state": "PROVIDER_ERROR" if not next_page_token else "MULTI_PAGE_PARTIAL",
                 }
             payload = dict(data or {}) if isinstance(data, dict) else {}
-            all_bars.extend(item for item in list(payload.get("bars") or []) if isinstance(item, dict))
+            raw_bars = payload.get("bars") or []
+            if is_crypto and isinstance(raw_bars, dict):
+                raw_bars = raw_bars.get(params["symbols"]) or raw_bars.get(sym) or []
+            all_bars.extend(item for item in list(raw_bars or []) if isinstance(item, dict))
             token = _safe_text(payload.get("next_page_token"))
             if not token:
                 next_page_token = ""
@@ -455,7 +470,7 @@ class AlpacaPaperBroker:
             "http_status": status, "bars": bars, "broker_actions": 0,
             "requested_timeframe": params["timeframe"], "requested_start": params.get("start"),
             "requested_end": params.get("end"), "requested_limit": requested_limit,
-            "requested_feed": params["feed"], "requested_adjustment": params["adjustment"],
+            "requested_feed": params.get("feed"), "requested_adjustment": params.get("adjustment"),
             "requested_sort": params["sort"], "pages_consumed": pages,
             "next_page_token_present": bool(next_page_token), "next_page_token": next_page_token or None,
             "pagination_state": "PAGE_LIMIT_REACHED" if next_page_token else "MULTI_PAGE_COMPLETE" if pages > 1 else "PAGE_COMPLETE",

@@ -8204,11 +8204,6 @@ def _ensure_latest_rankings():
         if (now - last_try) >= _RANKING_REFRESH_COOLDOWN_SECONDS:
             _RANKING_REFRESH_LAST_ATTEMPT["stocks"] = now
             refresh_jobs.append(("stocks", rankings))
-    if not (LAST_RANKINGS.get("crypto") or []):
-        last_try = float(_RANKING_REFRESH_LAST_ATTEMPT.get("crypto", 0.0))
-        if (now - last_try) >= _RANKING_REFRESH_COOLDOWN_SECONDS:
-            _RANKING_REFRESH_LAST_ATTEMPT["crypto"] = now
-            refresh_jobs.append(("crypto", crypto_rankings))
     # Fire-and-forget refresh in API paths; avoid blocking endpoints on ranking rebuild.
     for _, fn in refresh_jobs:
         try:
@@ -17311,6 +17306,7 @@ PAPER_AUTOPILOT = PaperAutopilotEngine(
     # Resolve at worker-cycle time: the bounded cache adapter is declared
     # later in this module and must not trigger a provider refresh.
     get_crypto_candidate_rows_fn=lambda: _crypto_operational_candidate_rows_v3(),
+    refresh_crypto_rankings_fn=lambda: _refresh_crypto_rankings_snapshot_v1(),
 )
 _PAPER_AUTOPILOT_STARTED = False
 _PAPER_INPROC_HEARTBEAT_STATE = {"last_cycle_utc": "", "cycle_count": 0}
@@ -21301,67 +21297,112 @@ def rankings():
 
 @router.get("/api/crypto_rankings")
 def crypto_rankings():
-    cached = RANKINGS_ENDPOINT_CACHE.get("crypto", {})
-    if cached.get("payload") and (time.time() - float(cached.get("ts", 0.0))) <= RANKINGS_ENDPOINT_TTL_SECONDS:
+    """Return the worker-persisted ranking snapshot without provider activity."""
+    rows = _crypto_ranking_rows_cached_v1()
+    if rows:
         _PERF_COUNTERS["rankings_cache_hit_count"] = int(_PERF_COUNTERS.get("rankings_cache_hit_count", 0)) + 1
-        return list(cached.get("payload", []))
-    build_lock = _RANKINGS_BUILD_LOCK["crypto"]
-    have_lock = build_lock.acquire(blocking=False)
-    if not have_lock:
-        if cached.get("payload") and (time.time() - float(cached.get("ts", 0.0))) <= _RANKINGS_STALE_TTL_SECONDS:
-            _PERF_COUNTERS["rankings_cache_hit_count"] = int(_PERF_COUNTERS.get("rankings_cache_hit_count", 0)) + 1
-            return list(cached.get("payload", []))
-        last_rows = LAST_RANKINGS.get("crypto", []) or []
-        if last_rows:
-            return [dict(r) for r in last_rows if isinstance(r, dict)]
-        waited = _wait_for_rank_rows("crypto", timeout_seconds=8.0, poll_seconds=0.2)
-        if waited:
-            return waited
-        have_lock = build_lock.acquire(timeout=10.0)
-        if not have_lock:
-            last_rows = LAST_RANKINGS.get("crypto", []) or []
-            if last_rows:
-                return [dict(r) for r in last_rows if isinstance(r, dict)]
-            return []
-    cached = RANKINGS_ENDPOINT_CACHE.get("crypto", {})
-    if cached.get("payload") and (time.time() - float(cached.get("ts", 0.0))) <= RANKINGS_ENDPOINT_TTL_SECONDS:
-        if have_lock:
-            build_lock.release()
-        _PERF_COUNTERS["rankings_cache_hit_count"] = int(_PERF_COUNTERS.get("rankings_cache_hit_count", 0)) + 1
-        return list(cached.get("payload", []))
-    try:
-        learning_snapshot = _get_enriched_learning_insights_cached()
-        crypto_symbols = ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB"]
-        data = fetch_live_data(symbols=crypto_symbols)
-        if not isinstance(data, list):
-            _update_last_rankings("crypto", [])
-            return []
-        ranked = _prioritize_rankings([d for d in data if d.get("symbol")], learning_snapshot=learning_snapshot)
-        ranked = PORTFOLIO_INTEL.apply(ranked, asset_type="crypto")
-        ranked = _prioritize_rankings(ranked, learning_snapshot=learning_snapshot)
-        output = []
-        for item in ranked[:6]:
-            enriched = dict(item)
-            enriched["action"] = item.get("action") or item.get("prediction")
-            enriched = _ensure_persona_fields(enriched)
-            output.append(enriched)
-        output = PORTFOLIO_RISK_ENGINE.enrich(
-            output,
-            asset_type="crypto",
-            companion_rows=LAST_RANKINGS.get("stocks", []),
-        )
-        output = PREDICTIVE_MODEL.annotate_rows(output)
-        output = REGIME_ENGINE.annotate_rows(output)
+    return [dict(row) for row in rows if isinstance(row, dict)]
 
-        _update_signal_performance(output)
-        if output:
-            _update_last_rankings("crypto", output)
-            RANKINGS_ENDPOINT_CACHE["crypto"] = {"ts": time.time(), "payload": list(output)}
-        _PERF_COUNTERS["rankings_build_count"] = int(_PERF_COUNTERS.get("rankings_build_count", 0)) + 1
-        return output
-    finally:
-        if have_lock:
-            build_lock.release()
+
+def _refresh_crypto_rankings_snapshot_v1() -> dict:
+    """Produce one bounded BTC/USD snapshot from existing worker providers."""
+    if str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() != "worker":
+        return {"status": "REJECTED_NOT_WORKER_OWNER", "provider_calls_used": 0, "broker_actions_used": 0}
+    now = time.time()
+    previous = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("crypto_rankings_snapshot_v1") or {})
+    if previous.get("rows") and previous.get("quote_provider") not in {"", "local_snapshot", None} and now - float(previous.get("generated_at_epoch") or 0.0) <= max(30.0, float(RANKINGS_ENDPOINT_TTL_SECONDS)):
+        return {"status": "CURRENT_CACHE_REUSED", "generated_at": previous.get("generated_at"), "rows": len(previous.get("rows") or []), "provider_calls_used": 0, "broker_actions_used": 0}
+    if previous.get("status") == "FAILED_FAIL_CLOSED" and now - float(previous.get("generated_at_epoch") or 0.0) <= 120.0:
+        return {"status": "RECENT_FAILURE_COOLDOWN", "exact_blocker": previous.get("exact_blocker"), "provider_calls_used": 0, "broker_actions_used": 0}
+
+    def fail_closed(blocker: str, *, bar_payload: dict | None = None) -> dict:
+        snapshot = {
+            "rows": [], "status": "FAILED_FAIL_CLOSED", "exact_blocker": blocker,
+            "generated_at": _now_utc_iso(), "generated_at_epoch": now,
+            "bar_source": str((bar_payload or {}).get("response_state") or ""),
+        }
+        PAPER_AUTOPILOT._runtime_state["crypto_rankings_snapshot_v1"] = snapshot
+        PAPER_AUTOPILOT._save_state_file()
+        return {"status": "FAILED_FAIL_CLOSED", "exact_blocker": blocker, "provider_calls_used": 2, "broker_actions_used": 0}
+
+    # BTC/USD is the bounded initial proof. Additional pairs stay deferred
+    # until this canonical quote -> bar -> ranking path is current.
+    symbol = "BTC/USD"
+    try:
+        from engine import data_orchestrator as active_data_orchestrator
+
+        quote = dict(active_data_orchestrator._router.get_quote(
+            symbol,
+            asset_type="crypto",
+            batch_id=f"crypto-worker:{int(now)}",
+            bypass_cache=True,
+            use_selective_backups=False,
+        ) or {})
+        quote_row, quote_meta = active_data_orchestrator._quote_to_rank_row(
+            symbol,
+            quote,
+            "crypto",
+            _now_utc_iso(),
+        )
+    except Exception:
+        quote_row, quote_meta, quote = None, {}, {}
+    quote_provider = str((quote_meta or {}).get("provider_used") or quote.get("provider_used") or "").lower()
+    if not quote_row or quote_provider in {"", "none", "local_snapshot"}:
+        return fail_closed("BTC_USD_FRESH_QUOTE_UNAVAILABLE")
+    quote_rows = [dict(quote_row)]
+    end = datetime.now(UTC)
+    start = end - timedelta(hours=6)
+    bar_payload = dict(ALPACA_PAPER_BROKER.historical_bars(
+        symbol,
+        asset_class="crypto",
+        timeframe="15Min",
+        limit=24,
+        start=start.isoformat().replace("+00:00", "Z"),
+        end=end.isoformat().replace("+00:00", "Z"),
+    ) or {})
+    bars = [dict(row) for row in (bar_payload.get("bars") or []) if isinstance(row, dict)]
+    if len(bars) < 2:
+        return fail_closed("BTC_USD_FRESH_BARS_UNAVAILABLE", bar_payload=bar_payload)
+    latest_bar = dict(bars[-1])
+    try:
+        high, low, close = float(latest_bar.get("h")), float(latest_bar.get("l")), float(latest_bar.get("c"))
+        risk_pct = round(((high - low) / close) * 100.0, 4) if close > 0 and high >= low else None
+    except (TypeError, ValueError):
+        risk_pct = None
+    if risk_pct is None or risk_pct <= 0:
+        return fail_closed("BTC_USD_BAR_RISK_ENVELOPE_UNAVAILABLE", bar_payload=bar_payload)
+
+    ranked = _prioritize_rankings(quote_rows, learning_snapshot=_get_enriched_learning_insights_cached())
+    ranked = PORTFOLIO_INTEL.apply(ranked, asset_type="crypto")
+    ranked = _prioritize_rankings(ranked, learning_snapshot=_get_enriched_learning_insights_cached())
+    if not ranked:
+        return fail_closed("BTC_USD_RANKING_EMPTY", bar_payload=bar_payload)
+    quote_timestamp = str(quote_rows[0].get("quote_timestamp") or quote_rows[0].get("timestamp") or "")
+    output = [_ensure_persona_fields({
+        **dict(ranked[0]),
+        "symbol": symbol, "asset_class": "crypto", "asset_type": "crypto", "lane_id": "CRYPTO",
+        "rank_position": 1, "ranking_run_id": f"crypto-worker:{int(now)}",
+        "generated_at": _now_utc_iso(), "candidate_generated_at": _now_utc_iso(),
+        "quote_timestamp": quote_timestamp, "bar_timestamp": latest_bar.get("t"),
+        "bar_evidence": {"source": "AlpacaPaperBroker.historical_bars", "resolution": "15Min", "count": len(bars)},
+        "crypto_risk_pct": risk_pct, "freshness_state": "CURRENT",
+    })]
+    output = PORTFOLIO_RISK_ENGINE.enrich(output, asset_type="crypto", companion_rows=LAST_RANKINGS.get("stocks", []))
+    output = PREDICTIVE_MODEL.annotate_rows(output)
+    output = REGIME_ENGINE.annotate_rows(output)
+    generated_at = _now_utc_iso()
+    snapshot = {
+        "rows": output, "generated_at": generated_at, "generated_at_epoch": now,
+        "quote_timestamp": quote_timestamp, "bar_timestamp": latest_bar.get("t"),
+        "quote_provider": quote_provider,
+        "provider_owner": "data_orchestrator.ProviderRouter + AlpacaPaperBroker.historical_bars",
+    }
+    PAPER_AUTOPILOT._runtime_state["crypto_rankings_snapshot_v1"] = snapshot
+    _update_last_rankings("crypto", output)
+    RANKINGS_ENDPOINT_CACHE["crypto"] = {"ts": now, "payload": list(output)}
+    PAPER_AUTOPILOT._save_state_file()
+    _PERF_COUNTERS["rankings_build_count"] = int(_PERF_COUNTERS.get("rankings_build_count", 0)) + 1
+    return {"status": "CURRENT", "generated_at": generated_at, "rows": len(output), "provider_calls_used": 2, "broker_actions_used": 0}
 
 
 def _provider_role_policy_v1(provider_name):
@@ -46434,7 +46475,7 @@ def _pladeu_open_positions_from_cached_status_v1(statuses: dict) -> list[dict]:
 
 def _paper_autopilot_persisted_trace_v1() -> tuple[dict, str]:
     trace = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("last_execution_trace") or {})
-    if trace.get("broker_position_review_rows"):
+    if trace.get("broker_position_review_rows") or trace.get("evidence_accumulation_capacity_v1"):
         return trace, "paper_autopilot_runtime"
     try:
         with open(os.path.join(STATE, "paper_autopilot_state.json"), "r", encoding="utf-8") as handle:
@@ -69335,9 +69376,17 @@ def _known_equity_symbols_v1() -> set[str]:
 
 def _crypto_ranking_rows_cached_v1() -> list[dict]:
     rows: list[dict] = []
+    persisted_rows: list[dict] = []
+    try:
+        with open(os.path.join(STATE, "paper_autopilot_state.json"), "r", encoding="utf-8") as handle:
+            persisted = json.load(handle)
+        persisted_rows = list(dict(persisted.get("crypto_rankings_snapshot_v1") or {}).get("rows") or [])
+    except Exception:
+        persisted_rows = []
     for source in (
         ((RANKINGS_ENDPOINT_CACHE.get("crypto") or {}).get("payload") or []),
         (LAST_RANKINGS.get("crypto") or []),
+        persisted_rows,
     ):
         if isinstance(source, list):
             for row in source:

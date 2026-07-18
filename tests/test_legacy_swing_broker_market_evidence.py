@@ -1,5 +1,7 @@
 import unittest
+import tempfile
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import engine.provider_router as provider_router_module
 from engine.alpaca_paper_broker import AlpacaPaperBroker
@@ -76,6 +78,40 @@ def _engine(market):
 
 
 class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
+    def test_broker_environment_uses_canonical_runtime_loader(self):
+        broker = AlpacaPaperBroker()
+        with patch("engine.alpaca_paper_broker.load_runtime_environment") as load_environment:
+            broker._env()
+        load_environment.assert_called_once()
+
+    def test_worker_persists_capacity_and_crypto_snapshots_across_restart(self):
+        with tempfile.TemporaryDirectory() as state_dir:
+            state_path = f"{state_dir}/paper_autopilot_state.json"
+            engine = PaperAutopilotEngine(state_path=state_path)
+            engine._runtime_state["last_evidence_capacity_snapshot"] = {"capacity_authority_state": "CURRENT"}
+            engine._runtime_state["crypto_rankings_snapshot_v1"] = {"generated_at": "2026-07-18T00:00:00Z", "rows": [{"symbol": "BTC/USD"}]}
+            engine._save_state_file()
+            restarted = PaperAutopilotEngine(state_path=state_path)
+            self.assertEqual(restarted._runtime_state["last_evidence_capacity_snapshot"]["capacity_authority_state"], "CURRENT")
+            self.assertEqual(restarted._runtime_state["crypto_rankings_snapshot_v1"]["rows"][0]["symbol"], "BTC/USD")
+
+    def test_partial_legacy_cycle_publishes_read_only_capacity_and_refreshes_crypto(self):
+        with tempfile.TemporaryDirectory() as state_dir:
+            engine = PaperAutopilotEngine(state_path=f"{state_dir}/paper_autopilot_state.json", enabled=True)
+            engine._refresh_legacy_swing_canary_pre_submit = lambda _positions: {"market_activity": {"cycle_state": "CYCLE_PARTIAL_BUDGET"}}  # type: ignore[method-assign]
+            engine._alpaca_safety_snapshot = lambda: {"broker_execution_enabled": True}  # type: ignore[method-assign]
+            engine._broker_open_symbols_snapshot = lambda: {"broker_reconciliation_active": True, "broker_positions_fetch_ok": True, "broker_open_positions_count": 2}  # type: ignore[method-assign]
+            engine._fetch_open_positions = lambda: []  # type: ignore[method-assign]
+            engine._evidence_capacity_snapshot_v1 = lambda *_args: {"capacity_authority_state": "CURRENT"}  # type: ignore[method-assign]
+            refreshes = []
+            engine.refresh_crypto_rankings_fn = lambda: refreshes.append("called") or {"status": "CURRENT"}
+            result = engine.run_cycle()
+            trace = engine._runtime_state["last_execution_trace"]
+            self.assertEqual(result["orders_submitted"], 0)
+            self.assertEqual(refreshes, ["called"])
+            self.assertTrue(trace["broker_positions_fetch_ok"])
+            self.assertEqual(trace["evidence_accumulation_capacity_v1"]["capacity_authority_state"], "CURRENT")
+
     def test_runtime_reduced_batch_bounds_existing_legacy_loop(self):
         engine = _engine(_MarketDataFixture())
         engine.max_stocks = 1
@@ -186,6 +222,22 @@ class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
         self.assertEqual(bars["pages_consumed"], 2)
         self.assertIn("start=2026-06-01T00%3A00%3A00Z", paths[0])
         self.assertEqual(bars["broker_actions"], 0)
+
+    def test_existing_client_reads_crypto_bars_with_canonical_pair_and_no_broker_action(self):
+        broker = AlpacaPaperBroker()
+        paths = []
+        broker._market_data_request = lambda path: paths.append(path) or (
+            True,
+            {"bars": {"BTC/USD": [{"t": "2026-07-18T00:00:00Z", "o": 1, "h": 2, "l": 1, "c": 1.5, "v": 10}]}},
+            "",
+            200,
+        )  # type: ignore[method-assign]
+        result = broker.historical_bars("BTC/USD", asset_class="crypto", timeframe="15Min", limit=5)
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(result["bars"]), 1)
+        self.assertIn("/v1beta3/crypto/us/bars?", paths[0])
+        self.assertIn("symbols=BTC%2FUSD", paths[0])
+        self.assertEqual(result["broker_actions"], 0)
 
     def test_daily_fallback_uses_explicit_completed_session_contract(self):
         class _DailyHistory(_EmptyBars):

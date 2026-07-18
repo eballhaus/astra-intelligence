@@ -1167,6 +1167,9 @@ class PaperAutopilotEngine:
         self.db_path = str(db_path or "state/ai_trading_memory.db")
         self.state_path = str(kwargs.get("state_path") or "state/paper_autopilot_state.json")
         self.get_crypto_candidate_rows_fn = kwargs.get("get_crypto_candidate_rows_fn")
+        # Snapshot refresh is worker-owned; API readers only consume the
+        # persisted output through the existing candidate adapter.
+        self.refresh_crypto_rankings_fn = kwargs.get("refresh_crypto_rankings_fn")
         self.execution_trace_ledger = (
             LaneExecutionTraceLedgerV1(os.path.dirname(self.state_path) or "state")
             if LaneExecutionTraceLedgerV1 is not None else None
@@ -1544,6 +1547,10 @@ class PaperAutopilotEngine:
                     self._adaptive_learning_capacity_policy = persisted_policy
                 if isinstance(payload.get("last_execution_trace"), dict):
                     self._runtime_state["last_execution_trace"] = dict(payload.get("last_execution_trace") or {})
+                if isinstance(payload.get("last_evidence_capacity_snapshot"), dict):
+                    self._runtime_state["last_evidence_capacity_snapshot"] = dict(payload.get("last_evidence_capacity_snapshot") or {})
+                if isinstance(payload.get("crypto_rankings_snapshot_v1"), dict):
+                    self._runtime_state["crypto_rankings_snapshot_v1"] = dict(payload.get("crypto_rankings_snapshot_v1") or {})
                 if payload.get("last_cycle_utc"):
                     self._runtime_state["last_cycle_utc"] = str(payload.get("last_cycle_utc") or "")
                 for key in (
@@ -1587,6 +1594,8 @@ class PaperAutopilotEngine:
             },
             "lane_reserve_commitment_stats": dict(self._runtime_state.get("lane_reserve_commitment_stats") or {}),
             "adaptive_learning_capacity_policy": dict(self._adaptive_learning_capacity_policy or {}),
+            "last_evidence_capacity_snapshot": dict(self._runtime_state.get("last_evidence_capacity_snapshot") or {}),
+            "crypto_rankings_snapshot_v1": dict(self._runtime_state.get("crypto_rankings_snapshot_v1") or {}),
             "last_execution_trace": {
                 **dict(self._runtime_state.get("last_execution_trace") or {}),
                 "per_candidate_decision_trace": list(
@@ -6405,15 +6414,35 @@ class PaperAutopilotEngine:
                 legacy_canary_refresh = {"observation_state": "FAILED", "error": str(exc)[:180]}
             market_cycle = dict(legacy_canary_refresh.get("market_activity") or {})
             if str(market_cycle.get("cycle_state") or "").startswith("CYCLE_PARTIAL"):
-                # Do not let the full order/reconciliation/ranking pass run
-                # behind a bounded acquisition checkpoint.  The next normal
-                # worker tick resumes from the durable cursor; no submission
-                # path is reached by this observation-only return.
+                # Keep the bounded cursor cooperative while still publishing
+                # the read-only broker truth that capacity diagnostics need.
+                # No entry, exit, or order path is reached from this branch.
+                self._note_worker_progress("bounded_broker_reconciliation")
+                safety = self._alpaca_safety_snapshot()
+                broker_snapshot = self._broker_open_symbols_snapshot()
+                evidence_capacity_snapshot = self._evidence_capacity_snapshot_v1(
+                    broker_snapshot,
+                    self._fetch_open_positions(),
+                    safety,
+                )
+                crypto_refresh: dict[str, Any] = {}
+                if callable(self.refresh_crypto_rankings_fn):
+                    try:
+                        self._note_worker_progress("crypto_ranking_refresh")
+                        crypto_refresh = dict(self.refresh_crypto_rankings_fn() or {})
+                    except Exception as exc:
+                        crypto_refresh = {
+                            "status": "FAILED_FAIL_CLOSED",
+                            "exact_blocker": f"crypto_ranking_refresh_exception:{str(exc)[:120]}",
+                        }
                 self._runtime_state["last_cycle_utc"] = _now_iso()
                 self._runtime_state["last_cycle_summary"] = {
                     "ok": True, "orders_submitted": 0, "positions_closed": 0,
                     "cycle_reason": "legacy_market_evidence_bounded",
                     "legacy_swing_observation": legacy_canary_refresh,
+                    "broker_reconciliation_active": bool(broker_snapshot.get("broker_reconciliation_active")),
+                    "broker_positions_fetch_ok": bool(broker_snapshot.get("broker_positions_fetch_ok")),
+                    "crypto_ranking_refresh": crypto_refresh,
                 }
                 self._runtime_state["last_execution_trace"] = {
                     "paper_worker_running": bool(self._thread and self._thread.is_alive()),
@@ -6421,6 +6450,11 @@ class PaperAutopilotEngine:
                     "orders_attempted": 0, "orders_submitted": 0, "orders_rejected": 0,
                     "final_blocker_reason": "legacy_market_evidence_bounded",
                     "per_candidate_decision_trace": [], "legacy_swing_observation": legacy_canary_refresh,
+                    "broker_reconciliation_active": bool(broker_snapshot.get("broker_reconciliation_active")),
+                    "broker_positions_fetch_ok": bool(broker_snapshot.get("broker_positions_fetch_ok")),
+                    "broker_open_positions_count": int(_to_int(broker_snapshot.get("broker_open_positions_count"), 0)),
+                    "evidence_accumulation_capacity_v1": evidence_capacity_snapshot,
+                    "crypto_ranking_refresh": crypto_refresh,
                     "live_trading_changed": False, "secrets_exposed": False,
                 }
                 self._note_worker_progress("legacy_market_evidence_checkpoint")
