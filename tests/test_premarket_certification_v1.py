@@ -48,7 +48,7 @@ class PreMarketCertificationContractTests(unittest.TestCase):
             "expected_return_low_pct": 2.0, "expected_return_high_pct": 6.0,
             "expected_return_pct": 4.0, "price": 100.0, "stop_loss": 96.0,
             "expected_target_low": 102.0, "expected_target_high": 106.0,
-            "drawdown_risk_score": 25.0, "recommended_entry_mode": "wait_for_confirmation",
+            "drawdown_risk_score": 25.0, "atr_pct": 1.5, "recommended_entry_mode": "wait_for_confirmation",
             "sell_reason": "no_confirmed_exit_signal", "candidate_generated_at": future,
             "expires_at": future, "certification_snapshot_id": "premarket-test",
         })

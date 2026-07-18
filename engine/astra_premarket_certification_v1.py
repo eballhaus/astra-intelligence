@@ -56,6 +56,7 @@ EVIDENCE_SOURCE_REGISTRY = {
     "candidate_ranking_attribution_promotion_intelligence_v1": "CURRENT_SYMBOL_DIRECT",
     "current_ranking_market_snapshot_v1": "CURRENT_BROKER_QUOTE",
     "current_crypto_market_snapshot_v1": "CURRENT_BROKER_QUOTE",
+    "equity_worker_risk_evidence_v1": "CURRENT_SYMBOL_RISK",
     "opportunity_discovery_expansion_v1": "AGGREGATE_ADVISORY",
     "paper_opportunity_allocation_engine_v1": "AGGREGATE_ADVISORY",
     "edge_development_suite_v1": "SHADOW_SUPPORTED",
@@ -303,6 +304,36 @@ def _signed_range(value: Any, *, negative: bool, label: str) -> dict[str, Any] |
     return result
 
 
+def _positive_return_range(value: Any, *, label: str) -> dict[str, Any] | None:
+    """Accept only a positive candidate forecast, never a placeholder zero."""
+    if isinstance(value, Mapping):
+        result = _range(value.get("low_pct", value.get("low")), value.get("high_pct", value.get("high")), label=label)
+    else:
+        result = _range(value, value, label=label)
+    if result is None or float(result.get("high_pct", 0.0)) <= 0.0:
+        return None
+    return result
+
+
+def _drawdown_forecast_range(value: Any, *, source_field: str, label: str) -> dict[str, Any] | None:
+    """Keep 0-100 risk scores out of the percentage-drawdown contract."""
+    if str(source_field or "") == "drawdown_risk_score":
+        return None
+    if isinstance(value, Mapping):
+        low = _number(value.get("low_pct", value.get("low")))
+        high = _number(value.get("high_pct", value.get("high")))
+    else:
+        low = high = _number(value)
+    if low is None and high is None:
+        return None
+    # A percentage drawdown beyond 100 is structurally invalid.  Values in
+    # 0-100 are valid only when they are explicitly supplied as a drawdown,
+    # never when they originated from the ranking risk-score alias above.
+    if max(abs(v) for v in (low, high) if v is not None) > 100.0:
+        return None
+    return _range(-abs(low) if low is not None else None, -abs(high) if high is not None else None, label=label)
+
+
 def build_candidate_risk_envelope_v1(
     candidate: Mapping[str, Any],
     *,
@@ -381,16 +412,17 @@ def build_candidate_risk_envelope_v1(
                                                                evidence_class="CURRENT_SYMBOL_RISK", now=now, candidate_specific=True,
                                                                symbol_specific=True, derived=True)
     drawdown_raw = resolve("expected_drawdown", FIELD_ALIASES["expected_drawdown"])
-    # Existing drawdown fields are commonly stored as a positive loss
-    # magnitude. Normalize that explicitly to the signed return convention;
-    # unlike downside, it is not an invalidation price or a stop percentage.
-    if isinstance(drawdown_raw, Mapping):
-        dd_low = _number(drawdown_raw.get("low_pct", drawdown_raw.get("low")))
-        dd_high = _number(drawdown_raw.get("high_pct", drawdown_raw.get("high")))
-        drawdown = _range(-abs(dd_low) if dd_low is not None else None, -abs(dd_high) if dd_high is not None else None, label="SUPPORTED_DRAWDOWN")
-    else:
-        dd_value = _number(drawdown_raw)
-        drawdown = _range(-abs(dd_value) if dd_value is not None else None, -abs(dd_value) if dd_value is not None else None, label="SUPPORTED_DRAWDOWN")
+    drawdown_source = str((provenance.get("expected_drawdown") or {}).get("source_field") or "")
+    # Ranking drawdown scores are unitless 0-100 diagnostics, not percentage
+    # forecasts.  They previously leaked through this alias and made a score
+    # such as 42 look like a -42% expected loss.
+    drawdown = _drawdown_forecast_range(
+        drawdown_raw,
+        source_field=drawdown_source,
+        label="SUPPORTED_DRAWDOWN",
+    )
+    if drawdown is None and drawdown_source == "drawdown_risk_score":
+        provenance.pop("expected_drawdown", None)
     if drawdown is None and volatility and volatility > 0:
         # A volatility-supported adverse-movement band is distinct from the
         # downside threshold: one to two current volatility units, not a stop.
@@ -398,18 +430,55 @@ def build_candidate_risk_envelope_v1(
         provenance["expected_drawdown"] = _provenance(drawdown, source_system="current_volatility_risk", source_field="atr_pct/volatility_pct", source_row=row,
                                                         evidence_class="CURRENT_SYMBOL_RISK", now=now, candidate_specific=True,
                                                         symbol_specific=True, derived=True)
-    upside = resolve("expected_upside_range", ("expected_return_range", "expected_return_pct", "expected_return_percent", "expected_move_percent", "predicted_profit_percent", "profit_prediction_pct"))
-    upside_range = (
-        _range(upside.get("low_pct", upside.get("low")), upside.get("high_pct", upside.get("high")), label="CANDIDATE_EXPECTED_RETURN")
-        if isinstance(upside, Mapping)
-        else _range(_first(row, "expected_return_low_pct", "expected_move_low"), _first(row, "expected_return_high_pct", "expected_move_high"), upside, label="CANDIDATE_EXPECTED_RETURN")
+    return_aliases = (
+        "expected_return_range", "expected_return_pct", "expected_return_percent",
+        "expected_move_percent", "predicted_profit_percent", "profit_prediction_pct",
     )
-    if upside_range is not None and float(upside_range["high_pct"]) <= 0:
-        upside_range = None
-    if upside_range is not None and "expected_upside_range" not in provenance:
-        provenance["expected_upside_range"] = _provenance(upside_range, source_system="candidate_expected_return", source_field="expected_return/expected_move", source_row=row,
-                                                            evidence_class="CURRENT_CANDIDATE_DIRECT", now=now, candidate_specific=True,
-                                                            symbol_specific=True, derived=True)
+    upside_range = None
+    # A zero-filled expected_return_range is an unavailable forecast, not a
+    # forecast of zero. Continue to the next already-produced alias instead of
+    # masking a valid predicted_profit_percent on the same candidate.
+    for source, evidence_class, context in contexts:
+        pair = _positive_return_range(
+            {"low_pct": context.get("expected_return_low_pct", context.get("expected_move_low")),
+             "high_pct": context.get("expected_return_high_pct", context.get("expected_move_high"))},
+            label="CANDIDATE_EXPECTED_RETURN",
+        )
+        if pair is not None:
+            upside_range = pair
+            provenance["expected_upside_range"] = _provenance(
+                pair, source_system=source, source_field="expected_return_low_pct/expected_return_high_pct",
+                source_row=context, evidence_class=evidence_class,
+                confidence=_first(context, "confidence", "risk_confidence"), now=now,
+                candidate_specific=source == "candidate_row", symbol_specific=True, derived=True,
+            )
+            break
+        for key in return_aliases:
+            value = context.get(key)
+            if value in (None, "", [], {}):
+                continue
+            if isinstance(value, Mapping):
+                parsed = _positive_return_range(value, label="CANDIDATE_EXPECTED_RETURN")
+            else:
+                parsed = _range(
+                    context.get("expected_return_low_pct", context.get("expected_move_low")),
+                    context.get("expected_return_high_pct", context.get("expected_move_high")),
+                    value,
+                    label="CANDIDATE_EXPECTED_RETURN",
+                )
+                if parsed is not None and float(parsed.get("high_pct", 0.0)) <= 0.0:
+                    parsed = None
+            if parsed is None:
+                continue
+            upside_range = parsed
+            provenance["expected_upside_range"] = _provenance(
+                parsed, source_system=source, source_field=key, source_row=context,
+                evidence_class=evidence_class, confidence=_first(context, "confidence", "risk_confidence"),
+                now=now, candidate_specific=source == "candidate_row", symbol_specific=True, derived=True,
+            )
+            break
+        if upside_range is not None:
+            break
     reward_to_risk = None
     if upside_range and downside and float(downside["low_pct"]) < 0:
         reward_to_risk = _range(float(upside_range["low_pct"]) / abs(float(downside["low_pct"])), float(upside_range["high_pct"]) / abs(float(downside["high_pct"])), label="EXPECTED_REWARD_TO_RISK")
@@ -422,16 +491,47 @@ def build_candidate_risk_envelope_v1(
     stale = bool(quote_timestamp and quote_freshness == "STALE")
     state = "RISK_ENVELOPE_STALE" if stale else "RISK_ENVELOPE_INCOMPLETE" if missing else "RISK_ENVELOPE_COMPLETE_WITH_WARNINGS" if not price or quote_freshness == "UNKNOWN" else "RISK_ENVELOPE_COMPLETE"
     envelope_id = "risk-" + hashlib.sha256(f"{_text(row.get('candidate_id'))}|{symbol}|{quote_timestamp}|{state}".encode("utf-8")).hexdigest()[:20]
+    generated_at = _iso(now)
+    valid_until = _iso(_now(now) + timedelta(minutes=5)) if quote_freshness == "CURRENT" else ""
+    expected_median = round((float(upside_range["low_pct"]) + float(upside_range["high_pct"])) / 2.0, 4) if upside_range else None
+    downside_median = round((float(downside["low_pct"]) + float(downside["high_pct"])) / 2.0, 4) if downside else None
     return {
         "risk_envelope_id": envelope_id, "candidate_id": _text(row.get("candidate_id")), "symbol": symbol, "lane": lane,
-        "asset_type": asset, "strategy": _text(row.get("strategy_archetype")), "horizon": horizon,
+        "asset_type": asset, "asset_class": _text(_first(row, "asset_class", "asset_type")).lower() or "equity",
+        "instrument_type": asset, "etf_cohort": bool(asset == "ETF"),
+        "strategy": _text(row.get("strategy_archetype")), "horizon": horizon,
+        "regime": _text(_first(row, "regime_context", "regime")), "sector": _text(_first(row, "sector", "sector_context")),
+        "generated_at": generated_at, "valid_until": valid_until,
         "current_price": price, "price_timestamp": quote_timestamp, "quote_freshness": quote_freshness,
         "bid": bid, "ask": ask, "spread_pct": spread_pct, "liquidity_state": "AVAILABLE" if volume and volume > 0 else "UNAVAILABLE",
         "volume": volume, "volatility_pct": volatility, "volatility_method": str((provenance.get("volatility_pct") or {}).get("source_field") or "UNAVAILABLE"),
         "invalidation_level": stop, "expected_downside_range": downside, "expected_drawdown": drawdown,
-        "expected_upside_range": upside_range, "reward_to_risk_range": reward_to_risk, "expected_return_per_day_range": per_day,
+        "expected_drawdown_range": drawdown, "maximum_acceptable_drawdown": drawdown,
+        "expected_upside_range": upside_range, "expected_return_range": upside_range,
+        "expected_return_median": expected_median,
+        "expected_downside_median": downside_median,
+        "reward_to_risk_range": reward_to_risk, "expected_return_per_day_range": per_day,
+        "expected_return_per_day_median": round((float(per_day["low_pct_per_day"]) + float(per_day["high_pct_per_day"])) / 2.0, 4) if per_day else None,
+        "expected_MFE_range": upside_range, "expected_MAE_range": drawdown,
+        "predicted_time_to_peak_range": {"minimum_minutes": 15 if horizon == "day_trade" else 1_440, "maximum_minutes": 390 if horizon == "day_trade" else 7_200, "evidence_label": "EXISTING_HORIZON_PLAN"} if horizon in {"day_trade", "swing_trade"} else None,
+        "expected_hold_window": "same session" if horizon == "day_trade" else "1-5 trading days" if horizon == "swing_trade" else "",
+        "likely_exit_window": "before regular-session close" if horizon == "day_trade" else "review at the existing swing horizon" if horizon == "swing_trade" else "",
+        "profit_protection_trigger": _as_plan_list(_first(row, "profit_protection_conditions", "profit_lock_conditions")),
+        "thesis_invalidation_condition": _as_plan_list(_first(row, "thesis_invalidation_conditions", "invalidation_conditions")),
+        "controlled_loss_condition": _as_plan_list(_first(row, "controlled_loss_conditions", "loss_acceptance_conditions")),
+        "opportunity_cost_review_point": _as_plan_list(_first(row, "replacement_review_conditions", "replacement_conditions")),
+        "gap_risk_state": "REQUIRES_OVERNIGHT_REVIEW" if horizon == "swing_trade" else "DAY_SESSION_LIMITED" if horizon == "day_trade" else "UNKNOWN",
+        "overnight_risk_state": "APPLICABLE" if horizon == "swing_trade" else "PROHIBITED_UNLESS_EXISTING_STRATEGY_ALLOWS" if horizon == "day_trade" else "UNKNOWN",
+        "liquidity_risk_state": "AVAILABLE" if volume and volume > 0 else "UNAVAILABLE",
+        "spread_risk_state": "AVAILABLE" if spread_pct is not None else "UNAVAILABLE",
+        "volatility_risk_state": "SUPPORTED" if volatility and volatility > 0 else "UNSUPPORTED",
+        "catalyst_risk_state": _text(_first(row, "catalyst_state", "catalyst_context")) or "UNKNOWN",
         "confidence": _number(_first(row, "risk_confidence", "confidence")), "evidence_class": str((provenance.get("expected_downside_range") or {}).get("evidence_class") or "UNAVAILABLE"),
-        "freshness_state": quote_freshness, "limitations": missing, "conflicting_evidence": [], "field_provenance_v1": provenance,
+        "freshness_state": quote_freshness, "input_freshness": quote_freshness,
+        "input_completeness": round((4 - len(missing)) / 4.0, 4), "forecast_reliability": "BOUNDED" if not missing and quote_freshness == "CURRENT" else "LIMITED" if not missing else "UNSUPPORTED",
+        "sample_size": _number(_first(row, "forecast_sample_size", "evidence_count")), "evidence_strength": str((provenance.get("expected_upside_range") or {}).get("evidence_class") or "UNAVAILABLE"),
+        "bounded_uncertainty": bool(upside_range and float(upside_range["low_pct"]) != float(upside_range["high_pct"])),
+        "limitations": missing, "missing_inputs": missing, "degradation_flags": ["stale_quote" for _ in [0] if stale], "conflicting_evidence": [], "field_provenance_v1": provenance,
         "risk_envelope_state": state, "consumer_acknowledgements": {"CONSUMED_BY_ENRICHMENT": False, "CONSUMED_BY_CONTRACT": False, "CONSUMED_BY_QUALIFICATION": False, "CONSUMED_BY_RISK_GATE": False, "CONSUMED_BY_ORDER_READY": False, "PERSISTED_FOR_LIFECYCLE": False, "PERSISTED_FOR_TRUTH_ATTRIBUTION": False},
     }
 
@@ -463,11 +563,10 @@ def enrich_candidate_for_pretrade_contract(
     may fill a missing field but cannot overwrite stronger evidence.
     """
     row = dict(candidate or {})
-    if (
-        dict(row.get("pretrade_enrichment_v1") or {}).get("enrichment_owner") == "astra_premarket_certification_v1"
-        and isinstance(row.get("candidate_risk_envelope_v1"), Mapping)
-    ):
-        return row
+    # A previous enrichment can contain a stale envelope after a restart or a
+    # new market snapshot. Rebuild from the supplied bounded evidence instead
+    # of treating the presence of any old envelope as an idempotency proof.
+    # This remains read-only and never refreshes a provider or broker.
     symbol = _candidate_symbol(row)
     statuses = dict(statuses or {})
     current_rows = [dict(item) for item in (current_candidates or []) if isinstance(item, Mapping)]
@@ -599,7 +698,25 @@ def enrich_candidate_for_pretrade_contract(
         return_low = ((target_low - price) / price) * 100.0
     if return_high is None and price and target_high:
         return_high = ((target_high - price) / price) * 100.0
-    expected_return_range = expected_return if isinstance(expected_return, Mapping) else _range(return_low, return_high, expected_return, label="CANDIDATE_SUPPORTED")
+    expected_return_range = _positive_return_range(expected_return, label="CANDIDATE_SUPPORTED")
+    if expected_return_range is None:
+        expected_return_range = _positive_return_range(
+            {"low_pct": return_low, "high_pct": return_high}, label="CANDIDATE_SUPPORTED"
+        )
+    if expected_return_range is None:
+        # A zero-valued legacy range is not a forecast. Check the remaining
+        # existing point forecast aliases before declaring the candidate
+        # unsupported; this does not generate a return estimate.
+        for alias in ("expected_return_pct", "expected_return_percent", "expected_move_percent", "predicted_profit_percent", "profit_prediction_pct"):
+            value = contextual((alias,))
+            expected_return_range = _positive_return_range(value, label="CANDIDATE_SUPPORTED")
+            if expected_return_range is not None:
+                provenance["expected_return_range"] = _provenance(
+                    expected_return_range, source_system="candidate_existing_forecast", source_field=alias,
+                    source_row=row, evidence_class="CURRENT_CANDIDATE_DIRECT", confidence=confidence,
+                    now=now, candidate_specific=True, symbol_specific=True, derived=True,
+                )
+                break
     if expected_return_range is not None and "expected_return_range" not in provenance:
         provenance["expected_return_range"] = _provenance(
             expected_return_range, source_system="candidate_target_or_prediction", source_field="expected_return/target", source_row=row,
@@ -634,6 +751,12 @@ def enrich_candidate_for_pretrade_contract(
             candidate_specific=True, symbol_specific=True, derived=True,
         )
     drawdown = choose("expected_drawdown", FIELD_ALIASES["expected_drawdown"])
+    drawdown_source = str((provenance.get("expected_drawdown") or {}).get("source_field") or "")
+    if drawdown_source == "drawdown_risk_score":
+        # The score remains available to the ranking and risk systems, but it
+        # is not a percentage loss forecast for the pretrade contract.
+        drawdown = None
+        provenance.pop("expected_drawdown", None)
     hold_window = _text(_first(row, "expected_hold_window", "hold_window"))
     if not hold_window and horizon:
         hold_window = "same session" if str(horizon) == "day_trade" else "1-5 trading days" if str(horizon) == "swing_trade" else "bounded existing horizon"

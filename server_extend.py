@@ -17307,6 +17307,7 @@ PAPER_AUTOPILOT = PaperAutopilotEngine(
     # later in this module and must not trigger a provider refresh.
     get_crypto_candidate_rows_fn=lambda: _crypto_operational_candidate_rows_v3(),
     refresh_crypto_rankings_fn=lambda: _refresh_crypto_rankings_snapshot_v1(),
+    refresh_equity_risk_envelopes_fn=lambda: _refresh_equity_risk_envelopes_snapshot_v1(),
 )
 _PAPER_AUTOPILOT_STARTED = False
 _PAPER_INPROC_HEARTBEAT_STATE = {"last_cycle_utc": "", "cycle_count": 0}
@@ -21403,6 +21404,137 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
     PAPER_AUTOPILOT._save_state_file()
     _PERF_COUNTERS["rankings_build_count"] = int(_PERF_COUNTERS.get("rankings_build_count", 0)) + 1
     return {"status": "CURRENT", "generated_at": generated_at, "rows": len(output), "provider_calls_used": 2, "broker_actions_used": 0}
+
+
+def _bounded_current_equity_candidate_rows_v1(max_rows: int = 8) -> list[dict]:
+    """Read only a small tail of the canonical ledger for worker observations.
+
+    This is intentionally not a ranking reader or a candidate producer.  It
+    merely selects the latest natural equity candidates whose risk evidence is
+    worth refreshing during regular hours.  Reading a bounded byte tail keeps
+    the worker from rescanning the large decision ledger every cycle.
+    """
+    limit = max(1, min(12, int(max_rows or 8)))
+    try:
+        with open(CANDIDATE_DECISION_LEDGER_PATH, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - 512_000), os.SEEK_SET)
+            payload = handle.read().decode("utf-8", "ignore")
+    except Exception:
+        return []
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for line in reversed(payload.splitlines()):
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or row.get("ticker") or "").upper().strip()
+        asset_class = str(row.get("asset_class") or row.get("asset_type") or "equity").lower()
+        action = str(row.get("final_action") or row.get("action") or row.get("prediction") or "").lower()
+        if not symbol or "/" in symbol or asset_class not in {"equity", "stock", "stocks", "etf"}:
+            continue
+        # Preserve natural selection: an observer only refreshes candidates
+        # already carrying a buy/paper-ready intent in the canonical ledger.
+        if action not in {"buy", "buy now", "paper_ready", "paper-ready"} and not bool(row.get("was_paper_ready")):
+            continue
+        if symbol in seen:
+            continue
+        seen.add(symbol)
+        rows.append(dict(row))
+        if len(rows) >= limit:
+            break
+    return list(reversed(rows))
+
+
+def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
+    """Persist bounded, worker-owned equity quote/bar observations.
+
+    The canonical pretrade owner derives the actual envelope.  This worker
+    callback only supplies fresh quote and realized-bar volatility evidence;
+    it never ranks, changes candidate fields, submits orders, or relaxes a
+    gate.  API routes consume the persisted snapshot without network work.
+    """
+    if str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() != "worker":
+        return {"status": "REJECTED_NOT_WORKER_OWNER", "provider_calls_used": 0, "broker_actions_used": 0}
+    now_epoch = time.time()
+    now_utc = datetime.now(UTC)
+    now_et = now_utc.astimezone(_ET_TZ)
+    session = _market_session_type_et(now_utc)
+    previous = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("equity_risk_envelopes_snapshot_v1") or {})
+    if now_et.weekday() >= 5 or session != "regular_hours":
+        snapshot = dict(previous)
+        snapshot.update({
+            "status": "WAITING_FOR_MARKET_OPEN", "market_session": session,
+            "generated_at": _now_utc_iso(), "generated_at_epoch": now_epoch,
+            "provider_owner": "worker_only_pending_regular_session",
+        })
+        PAPER_AUTOPILOT._runtime_state["equity_risk_envelopes_snapshot_v1"] = snapshot
+        PAPER_AUTOPILOT._save_state_file()
+        return {"status": "WAITING_FOR_MARKET_OPEN", "market_session": session, "rows": len(snapshot.get("rows") or []), "provider_calls_used": 0, "broker_actions_used": 0}
+    refresh_seconds = max(60.0, min(900.0, float(os.getenv("ASTRA_EQUITY_RISK_ENVELOPE_REFRESH_SECONDS", "300") or 300)))
+    if previous.get("status") == "CURRENT" and previous.get("rows") and now_epoch - float(previous.get("generated_at_epoch") or 0.0) < refresh_seconds:
+        return {"status": "CURRENT_CACHE_REUSED", "rows": len(previous.get("rows") or []), "provider_calls_used": 0, "broker_actions_used": 0}
+    candidates = _bounded_current_equity_candidate_rows_v1()
+    if not candidates:
+        snapshot = {
+            "rows": [], "status": "READY_BUT_NO_CURRENT_CANDIDATE", "market_session": session,
+            "generated_at": _now_utc_iso(), "generated_at_epoch": now_epoch,
+            "provider_owner": "worker_only_equity_risk_observer",
+        }
+        PAPER_AUTOPILOT._runtime_state["equity_risk_envelopes_snapshot_v1"] = snapshot
+        PAPER_AUTOPILOT._save_state_file()
+        return {"status": "READY_BUT_NO_CURRENT_CANDIDATE", "rows": 0, "provider_calls_used": 0, "broker_actions_used": 0}
+
+    observations: list[dict] = []
+    failures: list[dict] = []
+    end = now_utc
+    start = end - timedelta(hours=6)
+    for candidate in candidates:
+        symbol = str(candidate.get("symbol") or candidate.get("ticker") or "").upper().strip()
+        quote_payload = dict(ALPACA_PAPER_BROKER.latest_quote(symbol) or {})
+        quote = dict(quote_payload.get("quote") or {})
+        price = _to_float(quote.get("ap"), _to_float(quote.get("bp"), 0.0))
+        if not quote_payload.get("ok") or price <= 0:
+            failures.append({"symbol": symbol, "blocker": str(quote_payload.get("response_state") or "FRESH_QUOTE_UNAVAILABLE")})
+            continue
+        bars_payload = dict(ALPACA_PAPER_BROKER.historical_bars(
+            symbol, asset_class="stock", timeframe="15Min", limit=24,
+            start=start.isoformat().replace("+00:00", "Z"), end=end.isoformat().replace("+00:00", "Z"),
+        ) or {})
+        bars = [dict(row) for row in (bars_payload.get("bars") or []) if isinstance(row, dict)]
+        ranges = []
+        for bar in bars:
+            high, low, close = _to_float(bar.get("h"), 0.0), _to_float(bar.get("l"), 0.0), _to_float(bar.get("c"), 0.0)
+            if close > 0 and high >= low:
+                ranges.append(((high - low) / close) * 100.0)
+        if len(ranges) < 2:
+            failures.append({"symbol": symbol, "blocker": str(bars_payload.get("response_state") or "FRESH_BARS_UNAVAILABLE")})
+            continue
+        quote_time = str(quote.get("t") or _now_utc_iso())
+        observations.append({
+            "symbol": symbol, "candidate_id": candidate.get("candidate_id") or candidate.get("ledger_id"),
+            "asset_class": "equity", "current_price": round(price, 6), "price": round(price, 6),
+            "bid": _to_float(quote.get("bp"), 0.0), "ask": _to_float(quote.get("ap"), 0.0),
+            "quote_timestamp": quote_time, "atr_pct": round(sum(ranges) / len(ranges), 4),
+            "risk_evidence_generated_at": _now_utc_iso(),
+            "risk_evidence_valid_until": (now_utc + timedelta(seconds=refresh_seconds)).isoformat().replace("+00:00", "Z"),
+            "bar_evidence": {"source": "AlpacaPaperBroker.historical_bars", "resolution": "15Min", "count": len(bars)},
+            "risk_evidence_source": "AlpacaPaperBroker.latest_quote+hbars",
+            "freshness_state": "CURRENT",
+        })
+    snapshot = {
+        "rows": observations, "status": "CURRENT" if observations and not failures else "PARTIAL_FAIL_CLOSED" if observations else "FAILED_FAIL_CLOSED",
+        "market_session": session, "generated_at": _now_utc_iso(), "generated_at_epoch": now_epoch,
+        "valid_until_epoch": now_epoch + refresh_seconds, "failures": failures[:8],
+        "provider_owner": "AlpacaPaperBroker worker-only equity risk observer",
+    }
+    PAPER_AUTOPILOT._runtime_state["equity_risk_envelopes_snapshot_v1"] = snapshot
+    PAPER_AUTOPILOT._save_state_file()
+    return {"status": snapshot["status"], "rows": len(observations), "failed_symbols": len(failures), "provider_calls_used": len(candidates) * 2, "broker_actions_used": 0}
 
 
 def _provider_role_policy_v1(provider_name):
@@ -49870,6 +50002,21 @@ def _candidate_enrichment_context_v1(rows: list[dict]) -> dict:
     return context
 
 
+def _equity_risk_evidence_rows_cached_v1() -> list[dict]:
+    """Return only fresh worker-persisted risk observations for GET consumers."""
+    try:
+        with open(os.path.join(STATE, "paper_autopilot_state.json"), "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        snapshot = dict(payload.get("equity_risk_envelopes_snapshot_v1") or {})
+    except Exception:
+        return []
+    if str(snapshot.get("status") or "") not in {"CURRENT", "PARTIAL_FAIL_CLOSED"}:
+        return []
+    if time.time() > float(snapshot.get("valid_until_epoch") or 0.0):
+        return []
+    return [dict(row) for row in list(snapshot.get("rows") or [])[:12] if isinstance(row, dict)]
+
+
 def _enriched_contract_candidates_v1(
     rows: list[dict],
     *,
@@ -49878,7 +50025,28 @@ def _enriched_contract_candidates_v1(
 ) -> list[dict]:
     """Use the same normalized/enriched contract path for every reader."""
     raw = [dict(row) for row in rows[:100] if isinstance(row, dict)]
+    # Fresh worker evidence is a bounded cache overlay.  It never changes the
+    # candidate's ranking, forecast, action, or identity, and it expires before
+    # a GET reader can consume it as current market data.
+    risk_by_symbol = {
+        str(row.get("symbol") or "").upper(): row
+        for row in _equity_risk_evidence_rows_cached_v1()
+        if str(row.get("symbol") or "").strip()
+    }
+    quote_fields = {
+        "current_price", "price", "bid", "ask", "quote_timestamp", "atr_pct",
+        "risk_evidence_generated_at", "risk_evidence_valid_until", "bar_evidence",
+        "risk_evidence_source", "freshness_state",
+    }
+    if risk_by_symbol:
+        overlaid = []
+        for row in raw:
+            evidence = risk_by_symbol.get(str(row.get("symbol") or row.get("ticker") or "").upper())
+            overlaid.append({**row, **({key: value for key, value in evidence.items() if key in quote_fields} if evidence else {})})
+        raw = overlaid
     context = _candidate_enrichment_context_v1(raw)
+    if risk_by_symbol:
+        context["equity_worker_risk_evidence_v1"] = list(risk_by_symbol.values())
     normalized = [
         normalize_operational_candidate(
             {**row, "certification_snapshot_id": snapshot_id, "expires_at": expires_at}

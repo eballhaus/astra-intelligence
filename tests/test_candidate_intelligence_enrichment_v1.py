@@ -21,7 +21,7 @@ def source_row(**overrides):
         "lane_id": "SWING", "setup_type": "breakout", "summary": "Breakout has current momentum support.",
         "ranking_score": 82.0, "confidence": 78.0, "expected_return_low_pct": 2.0,
         "expected_return_high_pct": 5.0, "price": 100.0, "stop_loss": 96.0,
-        "expected_target_high": 105.0, "drawdown_risk_score": 4.0,
+        "expected_target_high": 105.0, "drawdown_risk_score": 4.0, "atr_pct": 2.0,
         "ranked_reason": "current ranking and liquidity evidence", "trend_state": "supportive",
         "generated_at": future_iso(), "expires_at": future_iso(),
     }
@@ -30,12 +30,12 @@ def source_row(**overrides):
 
 
 class CandidateIntelligenceEnrichmentTests(unittest.TestCase):
-    def test_stop_and_drawdown_produce_distinct_supported_risk_ranges(self):
-        envelope = build_candidate_risk_envelope_v1(source_row())
-        self.assertIn(envelope["risk_envelope_state"], {"RISK_ENVELOPE_COMPLETE", "RISK_ENVELOPE_COMPLETE_WITH_WARNINGS"})
+    def test_ranking_drawdown_score_is_not_relabelled_as_a_drawdown_forecast(self):
+        envelope = build_candidate_risk_envelope_v1(source_row(atr_pct=""))
+        self.assertEqual(envelope["risk_envelope_state"], "RISK_ENVELOPE_INCOMPLETE")
         self.assertEqual(envelope["expected_downside_range"]["high_pct"], -4.0)
-        self.assertEqual(envelope["expected_drawdown"]["high_pct"], -4.0)
-        self.assertEqual(envelope["field_provenance_v1"]["expected_drawdown"]["source_field"], "drawdown_risk_score")
+        self.assertIsNone(envelope["expected_drawdown"])
+        self.assertIn("expected_drawdown", envelope["missing_inputs"])
 
     def test_volatility_derives_distinct_downside_and_drawdown_ranges(self):
         row = source_row(stop_loss="", drawdown_risk_score="", atr_pct=2.0)
@@ -44,12 +44,31 @@ class CandidateIntelligenceEnrichmentTests(unittest.TestCase):
         self.assertEqual(envelope["expected_drawdown"]["low_pct"], -4.0)
         self.assertEqual(envelope["field_provenance_v1"]["expected_downside_range"]["evidence_class"], "CURRENT_SYMBOL_RISK")
 
+    def test_zero_legacy_range_does_not_mask_existing_point_forecast(self):
+        envelope = build_candidate_risk_envelope_v1(source_row(
+            expected_return_range={"low_pct": 0.0, "high_pct": 0.0},
+            expected_return_low_pct="", expected_return_high_pct="",
+            predicted_profit_percent=4.5,
+            atr_pct=1.5,
+            drawdown_risk_score="",
+        ))
+        self.assertEqual(envelope["expected_return_range"]["high_pct"], 4.5)
+        self.assertEqual(envelope["expected_drawdown"]["low_pct"], -3.0)
+
+    def test_etf_identity_is_preserved_in_the_canonical_envelope(self):
+        envelope = build_candidate_risk_envelope_v1(source_row(
+            symbol="XLK", instrument_type="ETF", asset_class="equity", lane_id="DAY",
+            atr_pct=1.0, drawdown_risk_score="",
+        ))
+        self.assertTrue(envelope["etf_cohort"])
+        self.assertEqual(envelope["asset_type"], "ETF")
+
     def test_etf_and_crypto_use_same_attributable_risk_owner(self):
         etf = build_candidate_risk_envelope_v1(source_row(symbol="XLB", instrument_type="ETF", lane_id="DAY", atr_pct=1.5, stop_loss="", drawdown_risk_score=""))
         crypto = build_candidate_risk_envelope_v1(source_row(symbol="BTC/USD", asset_class="crypto", lane_id="CRYPTO", crypto_risk_pct=3.0, stop_loss="", drawdown_risk_score=""))
         self.assertEqual(etf["asset_type"], "ETF")
         self.assertEqual(crypto["lane"], "CRYPTO")
-        self.assertEqual(crypto["expected_downside_range"]["high_pct"], -3.0)
+        self.assertEqual(crypto["expected_downside_range"]["high_pct"], -2.0)
 
     def test_unsupported_candidate_has_no_generic_risk_fallback(self):
         envelope = build_candidate_risk_envelope_v1({"symbol": "NONE", "candidate_id": "none", "lane_id": "SWING", "expected_return_pct": 3.0})

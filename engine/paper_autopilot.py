@@ -799,6 +799,11 @@ def _forward_contract_plan_from_existing_evidence(row: dict[str, Any]) -> dict[s
     if return_high is None and price and target_high:
         return_high = ((target_high - price) / price) * 100.0
     expected_return = _format_percent_range(return_low, return_high, return_mid)
+    if expected_return and _to_float(expected_return.get("high_pct"), 0.0) <= 0.0:
+        # A zero-filled legacy output is absence of a forecast, not a valid
+        # zero-return prediction. Leave it for the canonical risk-envelope
+        # owner to fail closed or consume another existing forecast alias.
+        expected_return = None
     downside_pct = ((stop - price) / price) * 100.0 if price and stop else None
     expected_downside = _format_percent_range(downside_pct, downside_pct)
     hold_days = max(1.0 / 24.0, _expected_hold_minutes(horizon) / 1440.0)
@@ -862,7 +867,9 @@ def _forward_contract_plan_from_existing_evidence(row: dict[str, Any]) -> dict[s
         "thesis_invalidation_conditions": invalidation,
         "expected_return_range": expected_return,
         "expected_downside_range": expected_downside,
-        "expected_drawdown": _pick_first_number(r.get("expected_drawdown"), r.get("drawdown_risk_score")),
+        # drawdown_risk_score is a unitless ranking diagnostic. It must not be
+        # relabeled as an expected percentage drawdown in the order contract.
+        "expected_drawdown": _pick_first_number(r.get("expected_drawdown")),
         "expected_return_per_day_range": per_day,
         "entry_conditions": entry_conditions,
         "hold_conditions": hold_conditions,
@@ -1170,6 +1177,7 @@ class PaperAutopilotEngine:
         # Snapshot refresh is worker-owned; API readers only consume the
         # persisted output through the existing candidate adapter.
         self.refresh_crypto_rankings_fn = kwargs.get("refresh_crypto_rankings_fn")
+        self.refresh_equity_risk_envelopes_fn = kwargs.get("refresh_equity_risk_envelopes_fn")
         self.execution_trace_ledger = (
             LaneExecutionTraceLedgerV1(os.path.dirname(self.state_path) or "state")
             if LaneExecutionTraceLedgerV1 is not None else None
@@ -1551,6 +1559,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["last_evidence_capacity_snapshot"] = dict(payload.get("last_evidence_capacity_snapshot") or {})
                 if isinstance(payload.get("crypto_rankings_snapshot_v1"), dict):
                     self._runtime_state["crypto_rankings_snapshot_v1"] = dict(payload.get("crypto_rankings_snapshot_v1") or {})
+                if isinstance(payload.get("equity_risk_envelopes_snapshot_v1"), dict):
+                    self._runtime_state["equity_risk_envelopes_snapshot_v1"] = dict(payload.get("equity_risk_envelopes_snapshot_v1") or {})
                 if payload.get("last_cycle_utc"):
                     self._runtime_state["last_cycle_utc"] = str(payload.get("last_cycle_utc") or "")
                 for key in (
@@ -1596,6 +1606,7 @@ class PaperAutopilotEngine:
             "adaptive_learning_capacity_policy": dict(self._adaptive_learning_capacity_policy or {}),
             "last_evidence_capacity_snapshot": dict(self._runtime_state.get("last_evidence_capacity_snapshot") or {}),
             "crypto_rankings_snapshot_v1": dict(self._runtime_state.get("crypto_rankings_snapshot_v1") or {}),
+            "equity_risk_envelopes_snapshot_v1": dict(self._runtime_state.get("equity_risk_envelopes_snapshot_v1") or {}),
             "last_execution_trace": {
                 **dict(self._runtime_state.get("last_execution_trace") or {}),
                 "per_candidate_decision_trace": list(
@@ -6435,6 +6446,16 @@ class PaperAutopilotEngine:
                             "status": "FAILED_FAIL_CLOSED",
                             "exact_blocker": f"crypto_ranking_refresh_exception:{str(exc)[:120]}",
                         }
+                equity_risk_refresh: dict[str, Any] = {}
+                if callable(self.refresh_equity_risk_envelopes_fn):
+                    try:
+                        self._note_worker_progress("equity_risk_envelope_refresh")
+                        equity_risk_refresh = dict(self.refresh_equity_risk_envelopes_fn() or {})
+                    except Exception as exc:
+                        equity_risk_refresh = {
+                            "status": "FAILED_FAIL_CLOSED",
+                            "exact_blocker": f"equity_risk_envelope_refresh_exception:{str(exc)[:120]}",
+                        }
                 self._runtime_state["last_cycle_utc"] = _now_iso()
                 self._runtime_state["last_cycle_summary"] = {
                     "ok": True, "orders_submitted": 0, "positions_closed": 0,
@@ -6443,6 +6464,7 @@ class PaperAutopilotEngine:
                     "broker_reconciliation_active": bool(broker_snapshot.get("broker_reconciliation_active")),
                     "broker_positions_fetch_ok": bool(broker_snapshot.get("broker_positions_fetch_ok")),
                     "crypto_ranking_refresh": crypto_refresh,
+                    "equity_risk_envelope_refresh": equity_risk_refresh,
                 }
                 self._runtime_state["last_execution_trace"] = {
                     "paper_worker_running": bool(self._thread and self._thread.is_alive()),
@@ -6455,6 +6477,7 @@ class PaperAutopilotEngine:
                     "broker_open_positions_count": int(_to_int(broker_snapshot.get("broker_open_positions_count"), 0)),
                     "evidence_accumulation_capacity_v1": evidence_capacity_snapshot,
                     "crypto_ranking_refresh": crypto_refresh,
+                    "equity_risk_envelope_refresh": equity_risk_refresh,
                     "live_trading_changed": False, "secrets_exposed": False,
                 }
                 self._note_worker_progress("legacy_market_evidence_checkpoint")
