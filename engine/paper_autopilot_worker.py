@@ -26,6 +26,7 @@ from engine.astra_runtime_governance_v1 import (
     utc_now,
     write_snapshot,
 )
+from engine.astra_continuous_governance_v1 import ContinuousGovernanceV1
 
 
 class PaperAutopilotWorker:
@@ -38,6 +39,7 @@ class PaperAutopilotWorker:
         self.cycle_count = int(read_snapshot().get("cycle_count") or 0)
         self.previous_cursor = str(read_snapshot().get("cursor") or "")
         self.resource_policy = dict(read_snapshot().get("resource_policy") or {})
+        self.continuous_governance = ContinuousGovernanceV1(STATE)
 
     def _base_state(self) -> dict[str, Any]:
         previous = read_snapshot()
@@ -182,6 +184,34 @@ class PaperAutopilotWorker:
     def _on_signal(self, _signum: int, _frame: Any) -> None:
         self.stop_requested = True
 
+    def _run_continuous_governance(self) -> dict[str, Any]:
+        """Run the bounded remediation scanner after worker-owned state exists.
+
+        The scanner cannot contact providers or brokers.  If it queues a
+        derived scheduler repair, persist the existing autopilot state through
+        its atomic writer so the next normal bounded cycle can consume it.
+        """
+        worker_state = read_snapshot()
+        safety = dict(getattr(self.autopilot, "_alpaca_safety_snapshot", lambda: {})() or {})
+        result = self.continuous_governance.run_worker_cycle(
+            worker_state=worker_state,
+            runtime_state=getattr(self.autopilot, "_runtime_state", {}),
+            safety=safety,
+        )
+        if int(result.get("repairs_executed") or 0) > 0:
+            save = getattr(self.autopilot, "_save_state_file", None)
+            if callable(save):
+                save()
+        self._publish(continuous_governance={
+            "status": result.get("status"),
+            "authorization": result.get("authorization"),
+            "current_campaign_id": dict(result.get("current_campaign") or {}).get("campaign_id"),
+            "first_causal_blocker": dict(result.get("current_campaign") or {}).get("first_causal_blocker"),
+            "repairs_executed": result.get("repairs_executed"),
+            "repairs_verified": result.get("repairs_verified"),
+        })
+        return result
+
     def _bounded_cycle(self) -> None:
         started = time.monotonic()
         cycle_id = f"cycle-{self.cycle_count + 1}-{int(time.time())}"
@@ -204,6 +234,7 @@ class PaperAutopilotWorker:
                 records_persisted=0,
                 next_cycle_at=utc_now(),
             )
+            self._run_continuous_governance()
             return
         if resource_state == "RESOURCE_RECOVERY_COOLDOWN":
             self._publish(
@@ -221,6 +252,7 @@ class PaperAutopilotWorker:
                 pages_consumed=0,
                 records_persisted=0,
             )
+            self._run_continuous_governance()
             return
 
         original_max_stocks = getattr(self.autopilot, "max_stocks", self.limits.maximum_symbols_per_cycle)
@@ -266,8 +298,10 @@ class PaperAutopilotWorker:
                 last_error=str(trace.get("worker_cycle_error") or "")[:240],
                 next_cycle_at=utc_now(),
             )
+            self._run_continuous_governance()
         except Exception as exc:  # Fail closed and leave the API unaffected.
             self._publish(resource=before, resource_policy=policy, cycle_id=cycle_id, cycle_state="FAILED_SAFE", cycle_stop_reason="worker_cycle_exception", last_error=str(exc)[:240], last_error_at=utc_now())
+            self._run_continuous_governance()
         finally:
             self.autopilot.max_stocks = original_max_stocks
 
@@ -282,6 +316,7 @@ class PaperAutopilotWorker:
             signal.signal(signal.SIGHUP, self._on_signal)
         initial_resource, initial_policy = self._sample_resource()
         self._publish(resource=initial_resource, resource_policy=initial_policy, cycle_state="IDLE", ownership_state="SINGLE_WORKER_ACTIVE")
+        self._run_continuous_governance()
         try:
             while not self.stop_requested:
                 self._bounded_cycle()

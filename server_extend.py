@@ -2609,6 +2609,10 @@ except Exception:
     AstraGovernanceOversightV2 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
     BuildKFinalValidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
+    from engine.astra_continuous_governance_v1 import ContinuousGovernanceV1
+except Exception:
+    ContinuousGovernanceV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+try:
     from engine.astra_build_l_research_maturation_v1 import (
         BuildLFinalValidationV1,
         CryptoIntelligenceSeparateEvidenceV2,
@@ -3372,6 +3376,7 @@ ASTRA_BUILD_J_FINAL_VALIDATION = BuildJFinalValidationV1(state_dir=STATE)
 ASTRA_AUTONOMOUS_SAFE_REPAIR = AstraAutonomousSafeRepairV1(state_dir=STATE)
 ASTRA_GOVERNANCE_OVERSIGHT_V2 = AstraGovernanceOversightV2(state_dir=STATE)
 ASTRA_BUILD_K_FINAL_VALIDATION = BuildKFinalValidationV1(state_dir=STATE)
+ASTRA_CONTINUOUS_GOVERNANCE = ContinuousGovernanceV1(state_dir=STATE)
 ASTRA_MOMENTUM_EXIT_READINESS_LOSS_ACCEPTANCE = MomentumExitReadinessLossAcceptanceV1(state_dir=STATE)
 ASTRA_HORIZON_CAPACITY_TURNOVER_RESEARCH = HorizonCapacityTurnoverResearchV1(state_dir=STATE)
 ASTRA_HISTORICAL_REPLAY_MULTI_HORIZON_VALIDATION = HistoricalReplayMultiHorizonValidationV1(state_dir=STATE)
@@ -46188,6 +46193,54 @@ def astra_autonomous_safe_repair_v1(force: bool = False):
         return {"endpoint": "/api/astra_autonomous_safe_repair_v1", "status": "insufficient_evidence", "degraded_reason": f"safe_repair_unavailable:{str(exc)[:140]}", "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False, "paper_only_preserved": True}
 
 
+def _astra_continuous_governance_snapshot_v1() -> dict:
+    """Read a worker-committed remediation summary.  Never triggers a scan."""
+    try:
+        return dict(ASTRA_CONTINUOUS_GOVERNANCE.snapshot() or {})
+    except Exception as exc:
+        return {
+            "endpoint": "/api/astra_continuous_governance_v1",
+            "status": "FAIL_CLOSED_GOVERNANCE_SNAPSHOT_UNAVAILABLE",
+            "degraded_reason": f"continuous_governance_snapshot_unavailable:{str(exc)[:140]}",
+            "get_route_read_only": True,
+            "provider_calls_used": 0,
+            "broker_actions_used": 0,
+            "llm_calls_used": 0,
+            "behavior_safe_to_apply": False,
+            "paper_only_preserved": True,
+        }
+
+
+@router.get("/api/astra_continuous_governance_v1")
+def astra_continuous_governance_v1():
+    return _astra_continuous_governance_snapshot_v1()
+
+
+@router.get("/api/astra_remediation_campaigns_v1")
+def astra_remediation_campaigns_v1():
+    payload = _astra_continuous_governance_snapshot_v1()
+    return {"endpoint": "/api/astra_remediation_campaigns_v1", **{key: payload.get(key) for key in ("status", "campaigns", "campaign_count", "current_campaign", "authorization", "get_route_read_only", "worker_owned_mutations_only", "provider_calls_used", "broker_actions_used", "llm_calls_used", "behavior_safe_to_apply", "paper_only_preserved")}}
+
+
+@router.get("/api/astra_remediation_registry_v1")
+def astra_remediation_registry_v1():
+    payload = _astra_continuous_governance_snapshot_v1()
+    return {"endpoint": "/api/astra_remediation_registry_v1", "remediation_registry": payload.get("remediation_registry", {}), "get_route_read_only": True, "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False, "paper_only_preserved": True}
+
+
+@router.get("/api/astra_dependency_invariants_v1")
+def astra_dependency_invariants_v1():
+    payload = _astra_continuous_governance_snapshot_v1()
+    return {"endpoint": "/api/astra_dependency_invariants_v1", "dependency_graph": payload.get("dependency_graph", []), "invariants": payload.get("invariants", []), "invariants_passed": payload.get("invariants_passed", 0), "invariants_warned": payload.get("invariants_warned", 0), "invariants_failed": payload.get("invariants_failed", 0), "get_route_read_only": True, "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False, "paper_only_preserved": True}
+
+
+@router.get("/api/astra_autonomous_repair_summary_v1")
+def astra_autonomous_repair_summary_v1():
+    payload = _astra_continuous_governance_snapshot_v1()
+    keys = ("status", "scan_time", "authorization", "active_campaigns", "campaigns_repaired", "campaigns_waiting", "campaigns_failed_closed", "repairs_executed", "repairs_verified", "repairs_rolled_back", "unknown_defects_packaged", "current_campaign", "cortex_operational_diagnosis", "canary_runtime_authorization", "proactive_scan_triggers")
+    return {"endpoint": "/api/astra_autonomous_repair_summary_v1", **{key: payload.get(key) for key in keys}, "get_route_read_only": True, "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False, "paper_only_preserved": True}
+
+
 @router.get("/api/astra_governance_oversight_v2")
 def astra_governance_oversight_v2(force: bool = False):
     try:
@@ -86935,6 +86988,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 **_safety_flags_v1(),
             })
             _attach_premarket_certification_compact_v1(force_cached)
+            force_cached["astra_continuous_governance_v1"] = _astra_continuous_governance_snapshot_v1()
             force_cached["astra_runtime_resource_governance_v1"] = _astra_runtime_resource_governance_payload_v1()
             force_cached["astra_operational_preflight_v1"] = astra_operational_preflight_v1()
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(force_cached), "ts": time.time()}
@@ -86968,6 +87022,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 if key in {"endpoint", "status", "safe_auto_audit_framework", "horizon_assignment_trace", "candidate_level_trace", "top_10_issues", "provider_calls_used", "llm_calls_used", "broker_actions_used", "behavior_changes_applied"}
             }
             _attach_pladeu_statuses_v1(fast, force=False)
+            fast["astra_continuous_governance_v1"] = _astra_continuous_governance_snapshot_v1()
             fast["astra_runtime_resource_governance_v1"] = _astra_runtime_resource_governance_payload_v1()
             fast["astra_operational_preflight_v1"] = astra_operational_preflight_v1()
             return fast
