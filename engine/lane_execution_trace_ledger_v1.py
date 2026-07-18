@@ -15,6 +15,8 @@ from typing import Any, Iterable, Mapping
 
 LANES = ("SWING", "DAY", "CRYPTO")
 MAX_RECENT_IDS = 500
+MAX_DAILY_BUCKETS = 31
+COHORTS = ("SWING_EQUITY", "DAY_EQUITY", "DAY_ETF", "SWING_ETF", "CRYPTO")
 
 
 def _now() -> str:
@@ -28,6 +30,15 @@ def _text(value: Any) -> str:
 def _fingerprint(parts: Iterable[Any]) -> str:
     payload = "|".join(_text(part) for part in parts)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+def _cohort_id(lane: str, asset_class: Any, instrument_type: Any) -> str:
+    """Keep ETFs as a cohort inside the existing equity lanes."""
+    lane = _text(lane).upper()
+    if lane == "CRYPTO" or _text(asset_class).lower() == "crypto":
+        return "CRYPTO"
+    suffix = "ETF" if _text(instrument_type).upper() == "ETF" else "EQUITY"
+    return f"{lane}_{suffix}" if lane in {"DAY", "SWING"} else "SWING_EQUITY"
 
 
 class LaneExecutionTraceLedgerV1:
@@ -46,6 +57,10 @@ class LaneExecutionTraceLedgerV1:
             "duplicate_trace_rows_suppressed": 0,
             "recent_trace_ids": [],
             "lanes": {lane: self._empty_lane() for lane in LANES},
+            "cohorts": {cohort: self._empty_lane() for cohort in COHORTS},
+            # Bounded worker-maintained counters make throughput windows
+            # observable without scanning the append-only trace file on GET.
+            "daily_buckets": {},
         }
 
     @staticmethod
@@ -72,6 +87,7 @@ class LaneExecutionTraceLedgerV1:
                 data = json.load(handle)
             if isinstance(data, dict):
                 data.setdefault("lanes", {})
+                data.setdefault("cohorts", {})
                 for lane in LANES:
                     lane_data = data["lanes"].get(lane)
                     if not isinstance(lane_data, dict):
@@ -81,11 +97,97 @@ class LaneExecutionTraceLedgerV1:
                     for key, default in self._empty_lane().items():
                         lane_data.setdefault(key, default)
                     data["lanes"][lane] = lane_data
+                for cohort in COHORTS:
+                    cohort_data = data["cohorts"].get(cohort)
+                    if not isinstance(cohort_data, dict):
+                        cohort_data = {}
+                    for key, default in self._empty_lane().items():
+                        cohort_data.setdefault(key, default)
+                    data["cohorts"][cohort] = cohort_data
+                buckets = data.get("daily_buckets")
+                if not isinstance(buckets, dict):
+                    buckets = {}
+                normalized_buckets: dict[str, dict[str, Any]] = {}
+                for day, bucket in sorted(buckets.items())[-MAX_DAILY_BUCKETS:]:
+                    if not isinstance(bucket, dict):
+                        continue
+                    normalized_buckets[str(day)] = self._normalize_bucket(bucket)
+                data["daily_buckets"] = normalized_buckets
                 data.setdefault("recent_trace_ids", [])
                 return data
         except Exception:
             pass
         return self._empty_summary()
+
+    def _empty_bucket(self) -> dict[str, Any]:
+        return {
+            "lanes": {lane: self._empty_lane() for lane in LANES},
+            "cohorts": {cohort: self._empty_lane() for cohort in COHORTS},
+        }
+
+    def _normalize_bucket(self, bucket: Mapping[str, Any]) -> dict[str, Any]:
+        result = self._empty_bucket()
+        for group in ("lanes", "cohorts"):
+            source = bucket.get(group)
+            if not isinstance(source, Mapping):
+                continue
+            for key, defaults in result[group].items():
+                values = source.get(key)
+                if not isinstance(values, Mapping):
+                    continue
+                merged = dict(defaults)
+                for metric, default in defaults.items():
+                    value = values.get(metric, default)
+                    merged[metric] = dict(value) if metric == "top_blockers" and isinstance(value, Mapping) else value
+                result[group][key] = merged
+        return result
+
+    @staticmethod
+    def _increment(summary: dict[str, Any], record: Mapping[str, Any]) -> None:
+        """Increment one bounded aggregate from a canonical worker trace."""
+        summary["candidates_seen"] += 1
+        summary["fresh_candidates"] += int(_text(record.get("freshness_result")).upper() in {"CURRENT", "FRESH"})
+        summary["stale_candidates"] += int(_text(record.get("freshness_result")).upper() == "STALE")
+        summary["eligible"] += int(record.get("eligibility_result") == "PASS")
+        summary["selected"] += int(record.get("selection_result") == "SELECTED")
+        summary["order_ready"] += int(record.get("order_readiness_result") == "ORDER_READY")
+        summary["submission_attempted"] += int(bool(record.get("submission_attempted")))
+        summary["submitted"] += int(_text(record.get("submission_result")).lower() in {"submitted", "accepted"})
+        summary["rejected_by_broker"] += int(_text(record.get("submission_result")).lower() == "rejected")
+        summary["filled_entries"] += int(bool(_text(record.get("entry_fill_id"))))
+        summary["open_lane_positions"] += int(bool(_text(record.get("position_id"))))
+        summary["exit_orders"] += int(bool(_text(record.get("exit_order_id"))))
+        summary["filled_exits"] += int(bool(_text(record.get("exit_fill_id"))))
+        summary["completed_lifecycles"] += int(bool(_text(record.get("entry_fill_id")) and _text(record.get("exit_fill_id"))))
+        summary["strict_broker_truths"] += int(_text(record.get("truth_status")).upper() == "BROKER_CONFIRMED_COMPLETE")
+        summary["learning_deliveries"] += int(_text(record.get("learning_delivery_status")).upper() in {"DELIVERED", "ACKNOWLEDGED"})
+        summary["duplicate_attempts"] += int(record.get("duplicate_exposure_result") == "BLOCKED")
+        capacity_decision = _text(record.get("capacity_decision"))
+        summary["blocked_by_global_capacity"] += int(capacity_decision == "GLOBAL_CAPACITY_EXHAUSTED")
+        summary["allowed_by_lane_reserve"] += int(capacity_decision == "AVAILABLE_FROM_LANE_RESERVE")
+        summary["blocked_by_lane_reserve"] += int(capacity_decision in {"LANE_RESERVE_EXHAUSTED", "CAPITAL_NOT_CONFIGURED"})
+        summary["blocked_by_buying_power"] += int(capacity_decision in {"BUYING_POWER_INSUFFICIENT", "BUYING_POWER_UNAVAILABLE"})
+        summary["blocked_by_global_risk"] += int(capacity_decision == "GLOBAL_RISK_BLOCKED")
+        summary["blocked_by_duplicate_exposure"] += int(capacity_decision == "DUPLICATE_EXPOSURE_BLOCKED")
+        summary["reserve_order_ready_count"] += int(record.get("order_readiness_result") == "ORDER_READY" and capacity_decision == "AVAILABLE_FROM_LANE_RESERVE")
+        summary["reserve_submission_attempt_count"] += int(bool(record.get("submission_attempted")) and capacity_decision == "AVAILABLE_FROM_LANE_RESERVE")
+        summary["reserve_commitments_requested"] += int(bool(_text(record.get("commitment_id"))))
+        summary["reserve_commitments_released"] += int(_text(record.get("commitment_state")) == "RELEASED" or _text(record.get("commitment_final_state")) == "RELEASED")
+        summary["reserve_commitments_pending"] += int(_text(record.get("commitment_state")) == "CONVERTED_TO_PENDING_ORDER")
+        summary["false_reserve_exhaustion_contradictions"] += int(
+            capacity_decision == "LANE_RESERVE_EXHAUSTED"
+            and bool(record.get("lane_reserve_enabled"))
+            and (record.get("lane_capital_remaining") or 0) > 0
+            and (record.get("lane_positions_remaining") or 0) > 0
+            and (record.get("lane_open_position_count") or 0) == 0
+            and (record.get("lane_pending_order_count") or 0) == 0
+            and (record.get("lane_active_commitment_count") or 0) == 0
+        )
+        summary["metadata_failures"] += int(not _text(record.get("candidate_id")) or not _text(record.get("recommendation_id")))
+        blocker = _text(record.get("exact_blocker"))
+        if blocker:
+            blockers = summary.setdefault("top_blockers", {})
+            blockers[blocker] = int(blockers.get(blocker, 0)) + 1
 
     def _write_summary(self, summary: Mapping[str, Any]) -> None:
         os.makedirs(self.state_dir, exist_ok=True)
@@ -121,6 +223,7 @@ class LaneExecutionTraceLedgerV1:
                 "lane_id": lane, "candidate_id": candidate_id, "recommendation_id": recommendation_id,
                 "symbol": symbol, "canonical_symbol": _text(source.get("canonical_symbol") or symbol).upper(),
                 "asset_class": _text(source.get("asset_class") or source.get("asset_type")),
+                "instrument_type": _text(source.get("instrument_type")),
                 "candidate_source": _text(source.get("candidate_source")), "candidate_seen": True,
                 "freshness_result": _text(source.get("candidate_snapshot_freshness") or source.get("freshness_result")),
                 "eligibility_result": "PASS" if source.get("eligible") else "BLOCKED",
@@ -172,48 +275,14 @@ class LaneExecutionTraceLedgerV1:
             known.add(trace_id)
             recent.append(trace_id)
             lane_summary = summary["lanes"].setdefault(lane, self._empty_lane())
-            lane_summary["candidates_seen"] += 1
-            lane_summary["fresh_candidates"] += int(record["freshness_result"].upper() in {"CURRENT", "FRESH"})
-            lane_summary["stale_candidates"] += int(record["freshness_result"].upper() == "STALE")
-            lane_summary["eligible"] += int(record["eligibility_result"] == "PASS")
-            lane_summary["selected"] += int(record["selection_result"] == "SELECTED")
-            lane_summary["order_ready"] += int(record["order_readiness_result"] == "ORDER_READY")
-            lane_summary["submission_attempted"] += int(record["submission_attempted"])
-            lane_summary["submitted"] += int(record["submission_result"].lower() in {"submitted", "accepted"})
-            lane_summary["rejected_by_broker"] += int(record["submission_result"].lower() == "rejected")
-            lane_summary["filled_entries"] += int(bool(record["entry_fill_id"]))
-            lane_summary["open_lane_positions"] += int(bool(record["position_id"]))
-            lane_summary["exit_orders"] += int(bool(record["exit_order_id"]))
-            lane_summary["filled_exits"] += int(bool(record["exit_fill_id"]))
-            lane_summary["completed_lifecycles"] += int(bool(record["entry_fill_id"] and record["exit_fill_id"]))
-            lane_summary["strict_broker_truths"] += int(record["truth_status"].upper() == "BROKER_CONFIRMED_COMPLETE")
-            lane_summary["learning_deliveries"] += int(record["learning_delivery_status"].upper() in {"DELIVERED", "ACKNOWLEDGED"})
-            lane_summary["duplicate_attempts"] += int(record["duplicate_exposure_result"] == "BLOCKED")
-            capacity_decision = record["capacity_decision"]
-            lane_summary["blocked_by_global_capacity"] += int(capacity_decision == "GLOBAL_CAPACITY_EXHAUSTED")
-            lane_summary["allowed_by_lane_reserve"] += int(capacity_decision == "AVAILABLE_FROM_LANE_RESERVE")
-            lane_summary["blocked_by_lane_reserve"] += int(capacity_decision in {"LANE_RESERVE_EXHAUSTED", "CAPITAL_NOT_CONFIGURED"})
-            lane_summary["blocked_by_buying_power"] += int(capacity_decision in {"BUYING_POWER_INSUFFICIENT", "BUYING_POWER_UNAVAILABLE"})
-            lane_summary["blocked_by_global_risk"] += int(capacity_decision == "GLOBAL_RISK_BLOCKED")
-            lane_summary["blocked_by_duplicate_exposure"] += int(capacity_decision == "DUPLICATE_EXPOSURE_BLOCKED")
-            lane_summary["reserve_order_ready_count"] += int(record["order_readiness_result"] == "ORDER_READY" and capacity_decision == "AVAILABLE_FROM_LANE_RESERVE")
-            lane_summary["reserve_submission_attempt_count"] += int(record["submission_attempted"] and capacity_decision == "AVAILABLE_FROM_LANE_RESERVE")
-            lane_summary["reserve_commitments_requested"] += int(bool(record["commitment_id"]))
-            lane_summary["reserve_commitments_released"] += int(record["commitment_state"] == "RELEASED" or record["commitment_final_state"] == "RELEASED")
-            lane_summary["reserve_commitments_pending"] += int(record["commitment_state"] == "CONVERTED_TO_PENDING_ORDER")
-            lane_summary["false_reserve_exhaustion_contradictions"] += int(
-                capacity_decision == "LANE_RESERVE_EXHAUSTED"
-                and bool(record["lane_reserve_enabled"])
-                and (record["lane_capital_remaining"] or 0) > 0
-                and (record["lane_positions_remaining"] or 0) > 0
-                and (record["lane_open_position_count"] or 0) == 0
-                and (record["lane_pending_order_count"] or 0) == 0
-                and (record["lane_active_commitment_count"] or 0) == 0
-            )
-            lane_summary["metadata_failures"] += int(not candidate_id or not recommendation_id)
-            if blocker:
-                blockers = lane_summary.setdefault("top_blockers", {})
-                blockers[blocker] = int(blockers.get(blocker, 0)) + 1
+            self._increment(lane_summary, record)
+            cohort = _cohort_id(lane, record["asset_class"], record["instrument_type"])
+            cohort_summary = summary["cohorts"].setdefault(cohort, self._empty_lane())
+            self._increment(cohort_summary, record)
+            day = _text(record["timestamp_utc"])[:10]
+            bucket = summary.setdefault("daily_buckets", {}).setdefault(day, self._empty_bucket())
+            self._increment(bucket["lanes"].setdefault(lane, self._empty_lane()), record)
+            self._increment(bucket["cohorts"].setdefault(cohort, self._empty_lane()), record)
             appended += 1
         if records:
             os.makedirs(self.state_dir, exist_ok=True)
@@ -223,6 +292,10 @@ class LaneExecutionTraceLedgerV1:
         summary["total_trace_rows"] = int(summary.get("total_trace_rows", 0)) + appended
         summary["duplicate_trace_rows_suppressed"] = int(summary.get("duplicate_trace_rows_suppressed", 0)) + suppressed
         summary["recent_trace_ids"] = recent[-MAX_RECENT_IDS:]
+        summary["daily_buckets"] = {
+            day: summary["daily_buckets"][day]
+            for day in sorted(summary.get("daily_buckets", {}))[-MAX_DAILY_BUCKETS:]
+        }
         summary["generated_at"] = _now()
         self._write_summary(summary)
         return {"appended": appended, "suppressed": suppressed}
@@ -232,3 +305,32 @@ class LaneExecutionTraceLedgerV1:
         result["ledger_path"] = self.path
         result["bounded_summary_read"] = True
         return result
+
+    def window_summary(self, *, days: int = 7, now: datetime | None = None) -> dict[str, Any]:
+        """Return today and rolling aggregates from the compact worker index."""
+        result = self._read_summary()
+        today = (now or datetime.now(timezone.utc)).date().isoformat()
+        keys = [key for key in sorted(result.get("daily_buckets", {})) if key <= today][-max(1, int(days)):]
+
+        def aggregate(group: str, identifier: str) -> dict[str, Any]:
+            values = self._empty_lane()
+            for day in keys:
+                bucket = result.get("daily_buckets", {}).get(day, {})
+                row = bucket.get(group, {}).get(identifier, {}) if isinstance(bucket, Mapping) else {}
+                for metric, default in self._empty_lane().items():
+                    if metric == "top_blockers":
+                        for blocker, count in (row.get(metric, {}) or {}).items():
+                            values[metric][blocker] = int(values[metric].get(blocker, 0)) + int(count or 0)
+                    else:
+                        values[metric] += int(row.get(metric, 0) or 0)
+            return values
+
+        return {
+            "today": today,
+            "window_days": len(keys),
+            "history_status": "WARMING_UP" if not keys else "AVAILABLE",
+            "lanes": {lane: aggregate("lanes", lane) for lane in LANES},
+            "cohorts": {cohort: aggregate("cohorts", cohort) for cohort in COHORTS},
+            "bounded_summary_read": True,
+            "full_history_scan_count": 0,
+        }

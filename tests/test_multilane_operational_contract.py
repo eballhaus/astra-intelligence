@@ -25,6 +25,26 @@ class MultilaneOperationalContractTests(unittest.TestCase):
         self.assertEqual(payload["lanes"]["day"]["order_ready_candidates"], 1)
         self.assertTrue(payload["day_selection_semantics"]["diagnostic_selection_is_not_actual_selection"])
 
+    def test_etf_is_a_cohort_not_a_separate_execution_lane(self):
+        payload = build_multilane_operational_status(
+            candidates=[{"symbol": "XLK", "instrument_type": "ETF", "paper_entry_horizon_style": "day_trade", "candidate_id": "etf-1"}],
+            open_positions=[], broker_truth_records=[],
+            source_metadata={"candidate_freshness_status": "CURRENT"},
+            day_config={"capital_configured": True, "day_lane_pilot_enabled": True},
+        )
+        self.assertIn("day_etf", payload["cohorts"])
+        self.assertEqual(payload["cohorts"]["day_etf"]["canonical_lane"], "DAY")
+        self.assertTrue(payload["cohorts"]["day_etf"]["lane_contract"]["etf_is_cohort_not_execution_lane"])
+
+    def test_crypto_freshness_is_the_first_blocker_when_no_current_candidate_exists(self):
+        payload = build_multilane_operational_status(
+            candidates=[], open_positions=[], broker_truth_records=[],
+            source_metadata={"candidate_freshness_status": "MISSING"},
+        )
+        blocker = payload["lanes"]["crypto"]["first_causal_blocker"]
+        self.assertEqual(blocker["code"], "CANDIDATE_FRESHNESS_NOT_READY")
+        self.assertEqual(payload["lanes"]["crypto"]["lifecycle_funnel"]["orders_submitted"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

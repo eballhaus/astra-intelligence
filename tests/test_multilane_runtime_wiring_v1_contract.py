@@ -48,6 +48,19 @@ class MultiLaneRuntimeWiringContractTests(unittest.TestCase):
             result = LaneExecutionTraceLedgerV1(directory).record([trace], cycle_id="cycle-1")
             self.assertEqual(result["appended"], 1)
 
+    def test_ledger_tracks_bounded_day_and_cohort_windows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = LaneExecutionTraceLedgerV1(directory)
+            ledger.record([{
+                "lane_id": "DAY", "symbol": "XLK", "asset_class": "equity", "instrument_type": "ETF",
+                "candidate_id": "candidate-etf", "recommendation_id": "recommendation-etf",
+                "candidate_snapshot_freshness": "CURRENT", "eligible": True, "selected": True, "order_ready": True,
+            }], cycle_id="cycle-etf")
+            window = ledger.window_summary(days=7)
+            self.assertEqual(window["history_status"], "AVAILABLE")
+            self.assertEqual(window["cohorts"]["DAY_ETF"]["candidates_seen"], 1)
+            self.assertEqual(window["cohorts"]["DAY_ETF"]["order_ready"], 1)
+
     def test_session_contract_never_returns_null(self):
         contract = canonical_lane_activation_contract("DAY", env={"ASTRA_DAY_LANE_PILOT_ENABLED": "1", "ASTRA_DAY_LANE_CAPITAL_LIMIT": "100"})
         self.assertEqual(contract["session_state"], "CANDIDATE_DEPENDENT")

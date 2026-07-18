@@ -47242,6 +47242,7 @@ def _attach_pladeu_statuses_v1(statuses: dict, force: bool = False) -> dict:
     )
     statuses["day_lane_pilot_readiness_v1"] = _day_lane_pilot_readiness_payload_v1(statuses)
     statuses["multilane_paper_operational_status_v1"] = _multilane_paper_operational_status_v1_payload(statuses)
+    statuses["astra_broker_truth_throughput_v1"] = _broker_truth_throughput_v1_payload(statuses)
     statuses["lane_execution_daily_report_v1"] = _lane_execution_daily_report_v1_payload(statuses)
     statuses["learning_return_integrity_v1"] = _learning_return_integrity_v1_payload()
     for public_key, internal_key, builder in builders:
@@ -47408,6 +47409,81 @@ def multilane_paper_operational_status_v1(force: bool = False):
     """Read-only, cache-first operational truth for the existing paper lanes."""
     base = _pladeu_direct_statuses_v1(force=bool(force))
     return dict(base.get("multilane_paper_operational_status_v1") or _multilane_paper_operational_status_v1_payload(base))
+
+
+def _broker_truth_throughput_v1_payload(statuses: dict | None = None) -> dict:
+    """Bounded read-only scorecard over the canonical multi-lane payload."""
+    canonical = dict((statuses or {}).get("multilane_paper_operational_status_v1") or _multilane_paper_operational_status_v1_payload(statuses))
+    return {
+        "endpoint": "/api/astra_broker_truth_throughput_v1",
+        "suite": "Astra Broker-Truth Throughput Consolidation V1",
+        "status": "THROUGHPUT_OBSERVATION_ACTIVE",
+        "canonical_endpoint": "/api/multilane_paper_operational_status_v1",
+        "lanes": canonical.get("lanes") or {},
+        "cohorts": canonical.get("cohorts") or {},
+        "throughput_windows": canonical.get("throughput_windows") or {},
+        "lifecycle_lineage_integrity": canonical.get("lifecycle_lineage_integrity") or {},
+        "truth_production_scoreboard": canonical.get("truth_production_scoreboard") or {},
+        "first_causal_blockers": {
+            name: dict(value.get("first_causal_blocker") or {})
+            for name, value in (canonical.get("lanes") or {}).items() if isinstance(value, dict)
+        },
+        "provider_calls_used": 0, "broker_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
+        "worker_actions_used": 0, "get_route_mutations": 0,
+        **_safety_flags_v1(),
+    }
+
+
+@router.get("/api/astra_broker_truth_throughput_v1")
+def astra_broker_truth_throughput_v1(force: bool = False):
+    base = _pladeu_direct_statuses_v1(force=bool(force))
+    return _broker_truth_throughput_v1_payload(base)
+
+
+@router.get("/api/astra_lane_end_to_end_readiness_v1")
+def astra_lane_end_to_end_readiness_v1(force: bool = False):
+    base = _pladeu_direct_statuses_v1(force=bool(force))
+    payload = _broker_truth_throughput_v1_payload(base)
+    return {
+        **payload,
+        "endpoint": "/api/astra_lane_end_to_end_readiness_v1",
+        "lane_contracts": {
+            name: dict(value.get("lane_contract") or {})
+            for name, value in (payload.get("lanes") or {}).items() if isinstance(value, dict)
+        },
+        "readiness_by_lane": {
+            name: {"operational_status": value.get("operational_status"), "first_causal_blocker": value.get("first_causal_blocker"), "lifecycle_funnel": value.get("lifecycle_funnel")}
+            for name, value in (payload.get("lanes") or {}).items() if isinstance(value, dict)
+        },
+    }
+
+
+@router.get("/api/astra_lane_capacity_integrity_v1")
+def astra_lane_capacity_integrity_v1(force: bool = False):
+    base = _pladeu_direct_statuses_v1(force=bool(force))
+    payload = _broker_truth_throughput_v1_payload(base)
+    canonical = dict(base.get("multilane_paper_operational_status_v1") or {})
+    return {
+        **payload,
+        "endpoint": "/api/astra_lane_capacity_integrity_v1",
+        "capacity_integrity": canonical.get("capacity_integrity") or {},
+        "capacity_snapshot": canonical.get("capacity_snapshot") or {},
+        "capacity_repair_authority": "existing PaperAutopilot reconciliation only",
+        "automatic_capacity_mutation_enabled": False,
+    }
+
+
+@router.get("/api/astra_truth_production_scoreboard_v1")
+def astra_truth_production_scoreboard_v1(force: bool = False):
+    base = _pladeu_direct_statuses_v1(force=bool(force))
+    payload = _broker_truth_throughput_v1_payload(base)
+    return {
+        **payload,
+        "endpoint": "/api/astra_truth_production_scoreboard_v1",
+        "scoreboard": payload.get("truth_production_scoreboard") or {},
+        "official_performance_source": "strict paired broker fills only",
+        "unpaired_or_reconstructed_rows_excluded": True,
+    }
 
 
 @router.get("/api/astra_multilane_operational_completion_v1")
@@ -50419,8 +50495,10 @@ def _multilane_paper_operational_status_v1_payload(statuses: dict | None = None)
     # Include their bounded operational adapter; a missing cache is explicitly
     # marked as a non-tradable source probe rather than a false candidate.
     try:
-        if not trace_candidates:
-            candidates.extend(_crypto_operational_candidate_rows_v3())
+        # Equity and crypto are stored in separate bounded caches.  A valid
+        # equity trace must never hide the crypto lane's current freshness
+        # state from the consolidated operational view.
+        candidates.extend(_crypto_operational_candidate_rows_v3())
     except Exception:
         pass
     seen: set[tuple[str, str]] = set()
@@ -50469,6 +50547,20 @@ def _multilane_paper_operational_status_v1_payload(statuses: dict | None = None)
     )
     if isinstance(crypto_lane.get("activation_contract"), dict):
         activation_contracts["CRYPTO"] = dict(crypto_lane["activation_contract"])
+    capacity_snapshot = dict(
+        statuses.get("evidence_accumulation_capacity_v1") or _evidence_accumulation_capacity_payload_v1(statuses)
+    )
+    release_review = dict(
+        statuses.get("portfolio_capacity_release_review_v1") or _portfolio_capacity_release_review_payload_v1(statuses)
+    )
+    execution_ledger = {}
+    try:
+        ledger = getattr(PAPER_AUTOPILOT, "execution_trace_ledger", None)
+        if ledger is not None:
+            execution_ledger = {"summary": dict(ledger.summary() or {}), "window": dict(ledger.window_summary(days=7) or {})}
+    except Exception:
+        execution_ledger = {"status": "UNAVAILABLE_FAIL_CLOSED"}
+    position_reviews = [dict(row) for row in (release_review.get("position_reviews") or release_review.get("review_rows") or []) if isinstance(row, dict)]
     operational = build_multilane_operational_status(
         candidates=unique_candidates[:300],
         open_positions=[dict(row) for row in (statuses.get("pladeu_open_positions") or []) if isinstance(row, dict)],
@@ -50478,13 +50570,13 @@ def _multilane_paper_operational_status_v1_payload(statuses: dict | None = None)
         day_config=statuses.get("day_lane_pilot_config") or _day_lane_pilot_config_v1(),
         crypto_lane=crypto_lane,
         activation_contracts=activation_contracts,
+        execution_ledger=execution_ledger,
+        capacity_snapshot=capacity_snapshot,
+        position_review_rows=position_reviews,
     )
-    operational["evidence_accumulation_capacity_v1"] = dict(
-        statuses.get("evidence_accumulation_capacity_v1") or _evidence_accumulation_capacity_payload_v1(statuses)
-    )
-    operational["portfolio_capacity_release_review_v1"] = dict(
-        statuses.get("portfolio_capacity_release_review_v1") or _portfolio_capacity_release_review_payload_v1(statuses)
-    )
+    operational["evidence_accumulation_capacity_v1"] = capacity_snapshot
+    operational["portfolio_capacity_release_review_v1"] = release_review
+    operational["execution_trace_ledger_v1"] = execution_ledger
     return operational
 
 
@@ -87102,6 +87194,20 @@ def unified_learning_diagnostics_v1(force: bool = False):
             force_cached["astra_governance_coverage_consolidation_v1"] = _astra_governance_coverage_snapshot_v1()
             force_cached["astra_runtime_resource_governance_v1"] = _astra_runtime_resource_governance_payload_v1()
             force_cached["astra_operational_preflight_v1"] = astra_operational_preflight_v1()
+            # Keep the force-safe disk-cache path aligned with the normal
+            # Learning Center payload.  This uses the existing bounded,
+            # cache-only lane adapter and never refreshes a provider/broker.
+            try:
+                throughput_statuses = _pladeu_direct_statuses_v1(force=False)
+                force_cached["astra_broker_truth_throughput_v1"] = _broker_truth_throughput_v1_payload(throughput_statuses)
+            except Exception:
+                force_cached["astra_broker_truth_throughput_v1"] = {
+                    "endpoint": "/api/astra_broker_truth_throughput_v1",
+                    "status": "UNAVAILABLE_FAIL_CLOSED",
+                    "provider_calls_used": 0, "broker_calls_used": 0,
+                    "broker_actions_used": 0, "llm_calls_used": 0,
+                    **_safety_flags_v1(),
+                }
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(force_cached), "ts": time.time()}
             return force_cached
 
@@ -87601,6 +87707,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_trading_intelligence_foundation_v1"] = dict(statuses.get("astra_trading_intelligence_foundation_v1") or {})
             out["astra_adaptive_learning_v1"] = dict(statuses.get("astra_adaptive_learning_v1") or {})
             out["astra_learning_preservation_capacity_v1"] = dict(statuses.get("astra_learning_preservation_capacity_v1") or {})
+            out["astra_broker_truth_throughput_v1"] = dict(statuses.get("astra_broker_truth_throughput_v1") or {})
             out["astra_performance_optimization_suite_v1"] = dict(statuses.get("astra_performance_optimization_suite_v1") or {})
             out["astra_intelligence_maturation_suite_v1"] = dict(statuses.get("astra_intelligence_maturation_suite_v1") or {})
             out["astra_adaptive_occupancy_evolution_suite_v1"] = dict(statuses.get("astra_adaptive_occupancy_evolution_suite_v1") or {})

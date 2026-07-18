@@ -200,6 +200,7 @@ class PaperAutopilotWorker:
         safety = dict(getattr(self.autopilot, "_alpaca_safety_snapshot", lambda: {})() or {})
         crypto_activation = {}
         crypto_rows: list[dict[str, Any]] = []
+        throughput_snapshot: dict[str, Any] = {}
         try:
             activation_builder = getattr(self.autopilot, "_crypto_paper_activation_status", None)
             crypto_activation = dict(activation_builder() or {}) if callable(activation_builder) else {}
@@ -209,6 +210,18 @@ class PaperAutopilotWorker:
             # The crypto lane remains independently fail-closed.  A missing
             # cached source cannot affect equity work or create a candidate.
             crypto_rows = []
+        try:
+            ledger = getattr(self.autopilot, "execution_trace_ledger", None)
+            if ledger is not None:
+                throughput_snapshot = {
+                    "summary": dict(ledger.summary() or {}),
+                    "window": dict(ledger.window_summary(days=7) or {}),
+                    "owner": "existing_lane_execution_trace_ledger_v1",
+                }
+        except Exception:
+            # Governance remains available even if an optional diagnostic
+            # index has not yet been created by the worker.
+            throughput_snapshot = {"status": "UNAVAILABLE_FAIL_CLOSED"}
         if not self.governance_coverage.component_enabled(COMPONENT_ID):
             # A certification rollback can isolate this optional diagnostic
             # hook without touching the execution engine or canonical truth.
@@ -228,7 +241,7 @@ class PaperAutopilotWorker:
         # call a provider, broker, or alter the autopilot decision policy.
         coverage = self.governance_coverage.run_worker_cycle(
             continuous=result,
-            runtime=worker_state,
+            runtime={**worker_state, "broker_truth_throughput": throughput_snapshot},
             preflight={
                 "paper_mode_verified": bool(safety.get("paper_mode_verified")),
                 "broker_live_endpoint_allowed": bool(safety.get("broker_live_endpoint_allowed")),

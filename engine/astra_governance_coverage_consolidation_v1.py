@@ -120,6 +120,7 @@ def component_registry() -> list[dict[str, Any]]:
         ("EVIDENCE", "canonical_market_evidence", "engine/paper_autopilot.py", "/api/legacy_swing_market_evidence_acquisition_audit_v1", "state/paper_autopilot_state.json", "EQUITY", "SWING"),
         ("RETRIEVAL", "astra_tier2a_librarian_executive_truth_layer_v1", "engine/astra_tier2a_librarian_executive_truth_layer_v1.py", "/api/astra_tier2a_librarian_executive_truth_layer_v1", "state/knowledge_*", "ALL", "ALL"),
         ("LANES", "astra_trade_lane_registry_v1", "engine/astra_trade_lane_registry_v1.py", "/api/trade_lane_registry_v1", "state/trade_lane_registry_v1.json", "ALL", "ALL"),
+        ("THROUGHPUT", "astra_multilane_operational_completion_v1", "engine/astra_multilane_operational_completion_v1.py", "/api/astra_broker_truth_throughput_v1", "state/lane_execution_trace_v1.summary.json", "ALL", "ALL"),
         ("HORIZONS", "astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1", "engine/astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1.py", "/api/astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1", "state/horizon_*", "EQUITY", "ALL"),
         ("LIFECYCLES", "astra_unified_position_lifecycle_v1", "engine/astra_unified_position_lifecycle_v1.py", "/api/unified_position_lifecycle_exit_truth_closure_diagnostic_v1", "state/canonical_lifecycle_*", "EQUITY", "ALL"),
         ("CORTEX", "cortex_lifecycle_evidence_master_truth_v1", "engine/cortex_lifecycle_evidence_master_truth_v1.py", "/api/cortex_lifecycle_evidence_master_truth_v1", "state/cortex_*", "ALL", "ALL"),
@@ -378,6 +379,8 @@ class AstraGovernanceCoverageConsolidationV1:
     def run_worker_cycle(self, *, continuous: dict[str, Any], runtime: dict[str, Any], preflight: dict[str, Any], crypto: dict[str, Any] | None = None) -> dict[str, Any]:
         """Commit coverage/certification after existing worker-owned governance runs."""
         market = _market_state()
+        throughput = _dict(runtime.get("broker_truth_throughput"))
+        throughput_window = _dict(throughput.get("window"))
         baseline = {"baseline_timestamp": _now(), "starting_commit": "b61a019", "current_commit": os.getenv("ASTRA_GIT_COMMIT", "runtime_commit_unknown"),
                     "governance_status": continuous.get("status"), "invariants_failed": continuous.get("invariants_failed", 0),
                     "active_warnings": continuous.get("invariants_warned", 0), "active_campaigns": continuous.get("active_campaigns", 0),
@@ -387,6 +390,13 @@ class AstraGovernanceCoverageConsolidationV1:
                     "rollback_reference": "disable component worker hook only; preserve canonical truth",
                     "baseline_state": "BASELINE_CERTIFIED_WITH_EXPECTED_WAITING" if int(continuous.get("invariants_failed") or 0) == 0 else "BASELINE_BLOCKED_CRITICAL_FAILURE",
                     "paper_mode_verified": bool(preflight.get("paper_mode_verified", True)), "broker_live_endpoint_allowed": bool(preflight.get("broker_live_endpoint_allowed", False))}
+        baseline["broker_truth_throughput_admission"] = {
+            "component_id": "throughput", "canonical_owner": "astra_multilane_operational_completion_v1",
+            "trace_window_status": throughput_window.get("history_status", "WARMING_UP"),
+            "trace_window_days": throughput_window.get("window_days", 0),
+            "admission_state": "ADMITTED_READ_ONLY_OBSERVATION",
+            "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
+        }
         coverage = self._coverage(continuous, runtime, preflight)
         warnings = self._warnings(continuous, market)
         contract = continuous_governance_contract()
@@ -446,7 +456,8 @@ class AstraGovernanceCoverageConsolidationV1:
                   "what_remains_fail_closed": unique([item["exact_blocker"] for item in warnings if item["classification"] in {"CRITICAL_FAILURE", "REPAIRABLE_DEFECT"}]),
                   "future_upgrades_admitted": ([COMPONENT_ID] if admission["admission_state"].startswith("ADMISSION_APPROVED") else []) + ([CRYPTO_COMPONENT_ID] if crypto_admissions and crypto_admissions[0]["admission_state"].startswith("ADMISSION_APPROVED") else []),
                   "upgrades_suspended_or_awaiting_certification": ([] if certification["certification_state"].startswith("CERTIFIED") else [COMPONENT_ID]) + ([CRYPTO_COMPONENT_ID] if crypto_certifications and not crypto_certifications[0]["certification_state"].startswith("CERTIFIED") else []),
-                  "action_label": "LEGITIMATE_WAITING" if warnings else "NO_ACTION_REQUIRED", "market_state": market}
+                  "action_label": "LEGITIMATE_WAITING" if warnings else "NO_ACTION_REQUIRED", "market_state": market,
+                  "broker_truth_throughput": baseline["broker_truth_throughput_admission"]}
         payload = {"schema_version": VERSION, "status": status, "updated_at": _now(), "market_state": market, "capability_inventory": self._inventory(coverage),
                    "coverage_map": coverage, "owner_registry": coverage, "consolidation_table": self._consolidation_table(), "warning_classification": warnings,
                    "warning_categories": categories, "baseline_certification": baseline, "upgrade_contracts": [contract, *crypto_contracts], "admission_results": [admission, *crypto_admissions],
