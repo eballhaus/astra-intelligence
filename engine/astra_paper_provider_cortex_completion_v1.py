@@ -24,6 +24,25 @@ FMP_CACHE = "fmp_cache_index.json"
 FMP_MANIFEST = "fmp_efficiency_manifest_v1.json"
 FMP_LEDGER = "fmp_efficiency_ledger_v1.jsonl"
 
+# These are scheduling and observation controls only.  They deliberately do
+# not include execution thresholds, risk limits, sizing, provider budgets, or
+# any broker setting.  A caller must still route a proposal through Governance
+# before changing a runtime owner.
+TRUTH_ACCELERATION_ADAPTIVE_ENVELOPE = {
+    "worker_cadence_seconds": {"minimum": 5, "maximum": 300, "owner": "PaperAutopilot"},
+    "candidate_scan_breadth": {"minimum": 1, "maximum": 300, "owner": "existing ranking cache consumer"},
+    "lane_processing_priority": {"minimum": 0, "maximum": 100, "owner": "PaperAutopilot"},
+    "nonessential_diagnostic_cadence_seconds": {"minimum": 30, "maximum": 3600, "owner": "diagnostic scheduler"},
+}
+
+PROHIBITED_TRUTH_ACCELERATION_MUTATIONS = (
+    "live_trading_state", "broker_endpoint", "confidence_threshold", "ranking_threshold",
+    "freshness_threshold", "liquidity_minimum", "spread_maximum", "risk_limit",
+    "position_sizing", "account_notional", "lane_capacity_above_approved_maximum",
+    "total_crypto_exposure", "strategy_eligibility", "learned_exit_policy",
+    "strategy_promotion", "truth_classification",
+)
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -98,6 +117,105 @@ def broker_truth_maturity_label(count: int) -> str:
 
 def broker_metrics_status(count: int) -> str:
     return "AVAILABLE" if to_int(count, 0) >= 50 else "INSUFFICIENT_BROKER_TRUTH_EVIDENCE"
+
+
+def build_truth_acceleration_oversight(
+    *,
+    lanes: dict[str, Any] | None = None,
+    scoreboard: dict[str, Any] | None = None,
+    capacity_integrity: dict[str, Any] | None = None,
+    governance_findings: list[dict[str, Any]] | None = None,
+    information_utilization: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return Cortex proposals inside the approved operational envelope.
+
+    This is intentionally a pure, cache-only controller extension.  It never
+    calls a worker, provider, broker, or state writer.  The existing worker is
+    the sole execution owner, and every proposed adjustment remains unapplied
+    until Governance admits it.
+    """
+    lane_rows = {str(key).lower(): dict(value or {}) for key, value in (lanes or {}).items()}
+    capacity_rows = {str(key).lower(): dict(value or {}) for key, value in (capacity_integrity or {}).items()}
+    findings = [dict(row) for row in (governance_findings or []) if isinstance(row, dict)]
+    critical = any(str(row.get("severity") or "").upper() in {"CRITICAL", "HIGH"} for row in findings)
+    proposals: list[dict[str, Any]] = []
+    for lane_name, lane in sorted(lane_rows.items()):
+        eligible = int(to_int(lane.get("eligible_candidates"), 0))
+        selected = int(to_int(lane.get("actual_selected_candidates"), 0))
+        operational = str(lane.get("operational_status") or "").upper()
+        capacity_state = str((capacity_rows.get(lane_name) or {}).get("state") or "").upper()
+        if eligible > selected and capacity_state == "PASS" and not critical:
+            proposals.append({
+                "proposal_id": f"truth-acceleration-priority-{lane_name}",
+                "objective": "prioritize_existing_eligible_candidate_evaluation",
+                "lane": lane_name.upper(),
+                "current_state": operational or "UNKNOWN",
+                "proposed_setting": {"lane_processing_priority": 100},
+                "approved_range": dict(TRUTH_ACCELERATION_ADAPTIVE_ENVELOPE["lane_processing_priority"]),
+                "expected_benefit": "reduce_stage_aging_without_changing_candidate_quality",
+                "safety_impact": "none_execution_unchanged",
+                "quality_impact": "existing_gates_unchanged",
+                "learning_speed_impact": "candidate_to_truth_latency_only",
+                "resource_impact": "bounded_existing_cycle",
+                "rollback_plan": "restore_previous_scheduler_priority",
+                "governance_state": "PENDING_GOVERNANCE_ADMISSION",
+                "applied": False,
+            })
+    release_defect = any(
+        str(row.get("code") or "") == "REPAIRABLE_CAPACITY_DEFECT"
+        for row in findings
+    )
+    if release_defect:
+        proposals.append({
+            "proposal_id": "truth-acceleration-capacity-reconciliation",
+            "objective": "prioritize_existing_capacity_reconciliation",
+            "current_state": "confirmed_closure_capacity_not_released",
+            "proposed_setting": {"lane_processing_priority": 100},
+            "approved_range": dict(TRUTH_ACCELERATION_ADAPTIVE_ENVELOPE["lane_processing_priority"]),
+            "expected_benefit": "restore_authoritative_capacity_visibility",
+            "safety_impact": "no_order_or_exit_mutation",
+            "quality_impact": "broker_closure_remains_required",
+            "learning_speed_impact": "removes_stale_capacity_blocker_only",
+            "resource_impact": "bounded_reconciliation_priority",
+            "rollback_plan": "restore_previous_scheduler_priority",
+            "governance_state": "PENDING_GOVERNANCE_ADMISSION",
+            "applied": False,
+        })
+    utilization = dict(information_utilization or {})
+    unused = int(to_int(utilization.get("available_not_consumed"), 0))
+    if unused and not critical:
+        proposals.append({
+            "proposal_id": "truth-acceleration-consumer-priority",
+            "objective": "prioritize_existing_evidence_consumer_acknowledgement",
+            "current_state": "evidence_available_not_consumed",
+            "proposed_setting": {"lane_processing_priority": 75},
+            "approved_range": dict(TRUTH_ACCELERATION_ADAPTIVE_ENVELOPE["lane_processing_priority"]),
+            "expected_benefit": "reduce_evidence_to_decision_latency",
+            "safety_impact": "context_only_no_execution_authority",
+            "quality_impact": "evidence_requirements_unchanged",
+            "learning_speed_impact": "improves_acknowledgement_coverage_only",
+            "resource_impact": "bounded_existing_consumer_work",
+            "rollback_plan": "restore_previous_scheduler_priority",
+            "governance_state": "PENDING_GOVERNANCE_ADMISSION",
+            "applied": False,
+        })
+    return {
+        "controller_owner": "AstraPaperProviderCortexCompletionV1.build_truth_acceleration_oversight",
+        "controller_state": "PAUSED_FAIL_CLOSED" if critical else "ACTIVE_OBSERVE_AND_GOVERN",
+        "objective": "quality_adjusted_independent_broker_truth_velocity",
+        "approved_adaptive_envelope": TRUTH_ACCELERATION_ADAPTIVE_ENVELOPE,
+        "prohibited_automatic_changes": list(PROHIBITED_TRUTH_ACCELERATION_MUTATIONS),
+        "proposals": proposals,
+        "governance_approvals": 0,
+        "governance_rejections": len(proposals) if critical else 0,
+        "applied_adjustments": [],
+        "rollbacks": [],
+        "direct_uncontrolled_mutation": False,
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "worker_invocations": 0,
+        **safe_flags(),
+    }
 
 
 def issue_id(name: str) -> str:

@@ -1,5 +1,11 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
+import server_extend
 from server_extend import _day_lane_pilot_readiness_payload_v1
 
 
@@ -25,6 +31,21 @@ class DayLaneSelectionHandoffContractTests(unittest.TestCase):
         self.assertEqual(payload["eligible_day_candidates"], 1)
         self.assertEqual(payload["selected_day_candidates"], 0)
         self.assertEqual(payload["candidate_stage_trace"][0]["exact_blocker"], "day_lane_pilot_disabled_pending_human_activation")
+
+    def test_persisted_canonical_worker_checkpoint_beats_stale_api_facade(self):
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "paper_autopilot_state.json").write_text(json.dumps({
+                "last_execution_trace": {
+                    "evidence_accumulation_capacity_v1": {
+                        "position_rows_for_read_only_consumers": [{"symbol": "DAYTEST"}],
+                    },
+                },
+            }), encoding="utf-8")
+            facade = SimpleNamespace(_runtime_state={"last_execution_trace": {"evidence_accumulation_capacity_v1": {}}})
+            with patch.object(server_extend, "STATE", directory), patch.object(server_extend, "PAPER_AUTOPILOT", facade):
+                trace, source = server_extend._paper_autopilot_persisted_trace_v1()
+        self.assertEqual(source, "paper_autopilot_persisted_state")
+        self.assertEqual(trace["evidence_accumulation_capacity_v1"]["position_rows_for_read_only_consumers"][0]["symbol"], "DAYTEST")
 
 
 if __name__ == "__main__":

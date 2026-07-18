@@ -46606,18 +46606,21 @@ def _pladeu_open_positions_from_cached_status_v1(statuses: dict) -> list[dict]:
 
 
 def _paper_autopilot_persisted_trace_v1() -> tuple[dict, str]:
-    trace = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("last_execution_trace") or {})
-    if trace.get("broker_position_review_rows") or trace.get("evidence_accumulation_capacity_v1"):
-        return trace, "paper_autopilot_runtime"
+    # The dedicated canonical worker runs out of process. Prefer its durable
+    # checkpoint over an older API-process facade snapshot so read-only lane,
+    # capacity, and lifecycle consumers agree on the same broker observation.
     try:
         with open(os.path.join(STATE, "paper_autopilot_state.json"), "r", encoding="utf-8") as handle:
             payload = json.load(handle)
         persisted_trace = dict(payload.get("last_execution_trace") or {}) if isinstance(payload, dict) else {}
-        if persisted_trace:
+        if persisted_trace.get("broker_position_review_rows") or persisted_trace.get("evidence_accumulation_capacity_v1"):
             return persisted_trace, "paper_autopilot_persisted_state"
-        return trace, "paper_autopilot_runtime"
     except Exception:
-        return {}, "paper_autopilot_unavailable"
+        pass
+    trace = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("last_execution_trace") or {})
+    if trace:
+        return trace, "paper_autopilot_runtime"
+    return {}, "paper_autopilot_unavailable"
 
 
 def _evidence_accumulation_capacity_payload_v1(statuses: dict | None = None) -> dict:
@@ -46710,8 +46713,13 @@ def _portfolio_capacity_release_review_payload_v1(statuses: dict | None = None) 
             dict(row) for row in (worker_trace.get("broker_position_review_rows") or [])
             if isinstance(row, dict)
         ][:100]
-    review = build_portfolio_release_review(positions)
     snapshot = _evidence_accumulation_capacity_payload_v1(current)
+    if not positions:
+        positions = [
+            dict(row) for row in (snapshot.get("position_rows_for_read_only_consumers") or [])
+            if isinstance(row, dict)
+        ][:100]
+    review = build_portfolio_release_review(positions)
     if snapshot.get("broker_reconciliation_status") != "FRESH" or (
         int(_to_float(snapshot.get("total_open_positions"), 0.0)) > 0 and not positions
     ):
@@ -47673,6 +47681,33 @@ def astra_truth_production_scoreboard_v1(force: bool = False):
         "scoreboard": payload.get("truth_production_scoreboard") or {},
         "official_performance_source": "strict paired broker fills only",
         "unpaired_or_reconstructed_rows_excluded": True,
+    }
+
+
+@router.get("/api/astra_truth_acceleration_oversight_v1")
+def astra_truth_acceleration_oversight_v1(force: bool = False):
+    """Read the canonical Cortex/Governance acceleration snapshot only.
+
+    This route deliberately consumes a committed worker snapshot; it never
+    starts a worker, refreshes a provider, or invokes a broker mutation.
+    """
+    base = _pladeu_direct_statuses_v1(force=bool(force))
+    canonical = dict(base.get("multilane_paper_operational_status_v1") or _multilane_paper_operational_status_v1_payload(base))
+    return {
+        "endpoint": "/api/astra_truth_acceleration_oversight_v1",
+        "status": (canonical.get("cortex_truth_acceleration_oversight") or {}).get("controller_state", "PAUSED_FAIL_CLOSED"),
+        "parallel_lane_readiness": canonical.get("parallel_lane_readiness") or {},
+        "capacity_recycling_integrity": canonical.get("capacity_recycling_integrity") or {},
+        "truth_independence": canonical.get("truth_independence") or {},
+        "information_utilization": canonical.get("information_utilization") or {},
+        "cortex": canonical.get("cortex_truth_acceleration_oversight") or {},
+        "governance_findings": canonical.get("governance_truth_acceleration_findings") or [],
+        "provider_calls_used": 0,
+        "broker_calls_used": 0,
+        "broker_actions_used": 0,
+        "worker_actions_used": 0,
+        "get_route_mutations": 0,
+        **_safety_flags_v1(),
     }
 
 
@@ -50787,9 +50822,18 @@ def _multilane_paper_operational_status_v1_payload(statuses: dict | None = None)
     except Exception:
         execution_ledger = {"status": "UNAVAILABLE_FAIL_CLOSED"}
     position_reviews = [dict(row) for row in (release_review.get("position_reviews") or release_review.get("review_rows") or []) if isinstance(row, dict)]
+    open_positions = [dict(row) for row in (statuses.get("pladeu_open_positions") or []) if isinstance(row, dict)]
+    if not open_positions:
+        # The worker already reconciled these rows while producing the
+        # capacity snapshot. Reuse that committed, secret-free projection
+        # rather than issuing a second broker read from this GET path.
+        open_positions = [
+            dict(row) for row in (capacity_snapshot.get("position_rows_for_read_only_consumers") or [])
+            if isinstance(row, dict)
+        ]
     operational = build_multilane_operational_status(
         candidates=unique_candidates[:300],
-        open_positions=[dict(row) for row in (statuses.get("pladeu_open_positions") or []) if isinstance(row, dict)],
+        open_positions=open_positions,
         broker_truth_records=records[:500],
         autopilot_trace=authoritative_trace,
         source_metadata=source,

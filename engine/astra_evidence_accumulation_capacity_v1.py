@@ -329,7 +329,9 @@ def build_capacity_snapshot(
             "broker_buying_power_sufficient": buying_power is not None and buying_power > 0,
             "global_account_risk_allowed": bool(global_risk_allowed),
             "lane_risk_allowed": bool(state_fresh),
-            "duplicate_exposure_allowed": True,
+            # Candidate admission separately enforces this same invariant;
+            # capacity telemetry must not advertise a contradictory policy.
+            "duplicate_exposure_allowed": False,
             "capacity_decision": decision,
             "exact_blockers": list(dict.fromkeys(blockers)),
             # Only the worker may refresh this snapshot.  Readers can inspect

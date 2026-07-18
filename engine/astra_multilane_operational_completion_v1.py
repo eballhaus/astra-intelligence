@@ -13,12 +13,14 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
 from engine.astra_trade_lane_registry_v1 import LANE_CRYPTO, LANE_DAY, LANE_SWING, apply_trade_lane_contract, safety_fields
+from engine.astra_paper_provider_cortex_completion_v1 import build_truth_acceleration_oversight
 from engine.astra_multilane_activation_v2 import (
     adaptive_throughput,
     canonical_multilane_activation_contract,
     lane_capital_status,
     lane_handoff_proof,
     operational_freshness,
+    strict_broker_truth,
     strict_truth_counts,
 )
 
@@ -34,13 +36,7 @@ def _text(value: Any) -> str:
 
 def _is_complete_broker_truth(row: Mapping[str, Any]) -> bool:
     """Require real complete broker evidence; reconstructions never qualify."""
-    evidence = _text(row.get("evidence_class") or row.get("truth_quality")).upper()
-    if evidence != "BROKER_CONFIRMED_COMPLETE":
-        return False
-    return bool(
-        _text(row.get("entry_fill_id") or row.get("entry_order_fill_id"))
-        and _text(row.get("exit_fill_id") or row.get("exit_order_fill_id"))
-    )
+    return strict_broker_truth(row)
 
 
 def _is_current(candidate: Mapping[str, Any], freshness: str) -> bool:
@@ -59,6 +55,221 @@ def _cohort_id(row: Mapping[str, Any]) -> str:
         return "CRYPTO"
     suffix = "ETF" if _text(row.get("instrument_type")).upper() == "ETF" else "EQUITY"
     return f"{lane}_{suffix}" if lane in {LANE_DAY, LANE_SWING} else "SWING_EQUITY"
+
+
+def _truth_independence(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Weight strict truths by shared market context without discarding them."""
+    strict_rows = [dict(row) for row in rows if isinstance(row, Mapping) and strict_broker_truth(row)]
+    cluster_counts: Counter[str] = Counter()
+    context_by_row: list[tuple[dict[str, Any], dict[str, str]]] = []
+    for row in strict_rows:
+        lane = _text(row.get("lane_id")).upper() or "UNKNOWN_LANE"
+        strategy = _text(row.get("strategy_cohort") or row.get("strategy") or row.get("archetype")).upper() or "UNKNOWN_STRATEGY"
+        symbol = _text(row.get("symbol")).upper() or "UNKNOWN_SYMBOL"
+        sector = _text(row.get("sector") or row.get("sector_cluster") or (symbol if lane == LANE_CRYPTO else "UNKNOWN_SECTOR")).upper()
+        regime = _text(row.get("market_regime") or row.get("regime") or "UNKNOWN_REGIME").upper()
+        catalyst = _text(row.get("catalyst_id") or row.get("shared_catalyst") or "NO_SHARED_CATALYST").upper()
+        entry = _text(row.get("entry_timestamp") or row.get("entry_time") or row.get("filled_at"))[:10] or "UNKNOWN_ENTRY_DAY"
+        cluster = "|".join((lane, strategy, sector, regime, catalyst, entry))
+        context = {
+            "lane": lane, "strategy": strategy, "symbol": symbol, "sector_or_pair": sector,
+            "regime": regime, "catalyst": catalyst, "entry_day": entry, "cluster": cluster,
+        }
+        cluster_counts[cluster] += 1
+        context_by_row.append((row, context))
+    contributions: list[dict[str, Any]] = []
+    for row, context in context_by_row:
+        cluster_size = cluster_counts[context["cluster"]]
+        contributions.append({
+            "truth_id": _text(row.get("truth_id") or row.get("lifecycle_id") or row.get("broker_order_id")),
+            "symbol": context["symbol"],
+            "lane": context["lane"],
+            "raw_truth_weight": 1.0,
+            "independence_weight": round(1.0 / max(1, cluster_size), 4),
+            "correlation_cluster": context["sector_or_pair"],
+            "shared_regime_cluster": context["regime"],
+            "shared_strategy_cluster": context["strategy"],
+            "quality_adjusted_truth_contribution": round(1.0 / max(1, cluster_size), 4),
+        })
+    return {
+        "owner": "astra_multilane_operational_completion_v1._truth_independence",
+        "raw_completed_broker_truths": len(strict_rows),
+        "quality_adjusted_independent_truths": round(sum(row["quality_adjusted_truth_contribution"] for row in contributions), 4),
+        "correlation_cluster_count": len(cluster_counts),
+        "methodology": "strict broker truths are retained; simultaneous same lane/strategy/sector-or-pair/regime/catalyst/day clusters share unit evidence weight",
+        "contributions": contributions[:MAX_DETAIL_ROWS],
+        "shadow_replay_fixture_reconstructed_excluded": True,
+    }
+
+
+def _capacity_recycling_integrity(
+    positions: Iterable[Mapping[str, Any]],
+    reviews: Iterable[Mapping[str, Any]],
+    capacity: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Detect a confirmed closure that still consumes an authoritative slot."""
+    open_symbols = {_text(row.get("symbol")).upper() for row in positions if _text(row.get("symbol"))}
+    closed_symbols: set[str] = set()
+    for row in reviews:
+        reconciliation = _text(row.get("reconciliation_state")).upper()
+        closure = _text(row.get("closure_state") or row.get("lifecycle_closure_state")).upper()
+        broker_quantity = row.get("broker_position_quantity")
+        broker_closed = broker_quantity in {0, 0.0, "0", "0.0"}
+        if (reconciliation == "RECONCILED_CLOSED" or closure == "CLOSED_CONFIRMED") and broker_closed:
+            symbol = _text(row.get("symbol")).upper()
+            if symbol:
+                closed_symbols.add(symbol)
+    stale = sorted(symbol for symbol in closed_symbols if symbol in open_symbols)
+    authority = _text(capacity.get("capacity_authority_state")).upper()
+    return {
+        "owner": "PaperAutopilot._evidence_capacity_snapshot_v1",
+        "confirmed_closed_symbols": sorted(closed_symbols),
+        "open_symbols_still_counted": stale,
+        "state": "REPAIRABLE_CAPACITY_DEFECT" if stale else "PASS" if authority == "CURRENT" else "WAITING_FOR_CURRENT_CAPACITY_AUTHORITY",
+        "capacity_release_timing": "same_safe_cycle_or_next_bounded_worker_cycle",
+        "replacement_reconsideration": "existing_candidates_only_after_current_capacity_and_all_gates_pass",
+        "cash_hold_valid_outcome": True,
+        "automatic_replacement_order": False,
+    }
+
+
+def _information_utilization(truths: list[Mapping[str, Any]], trace_rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """Report only observed consumption; unknown categories are never claimed learned."""
+    categories = (
+        "broker_truth", "historical_similarity", "symbol_behavior", "opportunity_cost", "replay", "shadow",
+        "regime", "sector", "breadth", "catalyst", "lifecycle", "exit", "risk_envelope_calibration",
+    )
+    truth_ids = {
+        _text(row.get("truth_id") or row.get("lifecycle_id") or row.get("broker_order_id"))
+        for row in truths
+    }
+    consumed_truth_ids = {
+        _text(row.get("learning_truth_id") or row.get("truth_id") or row.get("lifecycle_id"))
+        for row in trace_rows
+        if _text(row.get("learning_delivery_status")).upper() in {"DELIVERED", "ACKNOWLEDGED"}
+        and _text(row.get("learning_truth_id") or row.get("truth_id") or row.get("lifecycle_id")) in truth_ids
+    }
+    acknowledged = len(consumed_truth_ids)
+    observed = {
+        "broker_truth": {"available": len(truths), "retrieved": len(truths), "consumed": acknowledged, "decisions_influenced": 0, "acknowledgements": acknowledged},
+        "lifecycle": {"available": len(truths), "retrieved": len(truths), "consumed": acknowledged, "decisions_influenced": 0, "acknowledgements": acknowledged},
+        "exit": {"available": len(truths), "retrieved": len(truths), "consumed": acknowledged, "decisions_influenced": 0, "acknowledgements": acknowledged},
+    }
+    rows = {}
+    available_not_consumed = 0
+    for category in categories:
+        row = dict(observed.get(category) or {"available": 0, "retrieved": 0, "consumed": 0, "decisions_influenced": 0, "acknowledgements": 0})
+        row["state"] = "CONSUMED" if row["consumed"] else "AVAILABLE_NOT_CONSUMED" if row["available"] else "NOT_REPORTED"
+        row["last_meaningful_use"] = "worker_trace_learning_delivery" if row["acknowledgements"] else None
+        available_not_consumed += int(row["available"] > row["consumed"])
+        rows[category] = row
+    return {
+        "owner": "existing learning/Cortex consumers",
+        "categories": rows,
+        "available_not_consumed": available_not_consumed,
+        "unused_evidence_not_presented_as_learned": True,
+    }
+
+
+def _parallel_lane_readiness(
+    lanes: Mapping[str, Mapping[str, Any]], capacity: Mapping[str, Mapping[str, Any]], capacity_snapshot: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Classify serialization without treating a canonical account lock as a defect."""
+    restrictions = [
+        {
+            "restriction_id": "paper_autopilot_cycle_lock",
+            "canonical_owner": "PaperAutopilot._cycle_lock",
+            "scope": "account_worker_mutation",
+            "configured_value": 1,
+            "current_usage": "one canonical worker cycle",
+            "reason": "serialize broker reconciliation and order-idempotency state",
+            "safety_purpose": "prevent duplicate worker and duplicate order mutation",
+            "classification": "VALID_ACCOUNT_LEVEL_SAFETY_LIMIT",
+            "blocks_independent_certified_lanes": False,
+        },
+        {
+            "restriction_id": "paper_autopilot_max_new_positions_per_cycle",
+            "canonical_owner": "PaperAutopilot.max_new_positions_per_cycle",
+            "scope": "account_entry_rate",
+            "configured_value": "existing configured bounded value",
+            "current_usage": "worker trace only",
+            "reason": "bounded paper-entry rate",
+            "safety_purpose": "prevent burst submissions before reconciliation",
+            "classification": "VALID_ACCOUNT_LEVEL_SAFETY_LIMIT",
+            "blocks_independent_certified_lanes": False,
+        },
+        {
+            "restriction_id": "lane_reserve_position_limit",
+            "canonical_owner": "astra_evidence_accumulation_capacity_v1",
+            "scope": "lane",
+            "configured_value": "existing DAY/CRYPTO reserve configuration",
+            "current_usage": "authoritative capacity snapshot",
+            "reason": "separate approved evidence books",
+            "safety_purpose": "lane capital and position isolation",
+            "classification": "VALID_LANE_LIMIT",
+            "blocks_independent_certified_lanes": False,
+        },
+        {
+            "restriction_id": "symbol_duplicate_exposure",
+            "canonical_owner": "candidate_capacity_decision",
+            "scope": "symbol",
+            "configured_value": "one position per symbol",
+            "current_usage": "candidate gate",
+            "reason": "duplicate exposure prevention",
+            "safety_purpose": "one lifecycle and order lineage per symbol",
+            "classification": "VALID_SYMBOL_LIMIT",
+            "blocks_independent_certified_lanes": False,
+        },
+    ]
+    certifications: dict[str, dict[str, Any]] = {}
+    for cohort, lane_name in (
+        ("SWING_EQUITY", "swing"), ("DAY_EQUITY", "day"), ("DAY_ETF", "day"),
+        ("SWING_ETF", "swing"), ("CRYPTO", "crypto"),
+    ):
+        lane = dict(lanes.get(lane_name) or {})
+        cap = dict(capacity.get(lane_name) or {})
+        blockers = []
+        capacity_full = False
+        if cap.get("authority_state") != "CURRENT":
+            blockers.append("CAPACITY_AUTHORITY_NOT_CURRENT")
+        if lane_name == "swing":
+            global_status = _text(capacity_snapshot.get("global_capacity_status")).upper()
+            if global_status != "AVAILABLE":
+                capacity_full = True
+                blockers.append(global_status or "GLOBAL_CAPACITY_NOT_AVAILABLE")
+        elif cap.get("arithmetic_consistency") != "PASS":
+            blockers.append("CAPACITY_ARITHMETIC_NOT_VERIFIED")
+        elif int(cap.get("available_capacity") or 0) <= 0:
+            capacity_full = True
+            blockers.append("LANE_CAPACITY_EXHAUSTED")
+        if not bool(lane.get("execution_enabled")):
+            blockers.extend(list((lane.get("activation_contract") or {}).get("exact_blockers") or ["LANE_EXECUTION_NOT_ADMITTED"]))
+        structural_blockers = [
+            item for item in blockers
+            if item not in {"GLOBAL_CAPACITY_EXHAUSTED", "LANE_CAPACITY_EXHAUSTED"}
+        ]
+        certifications[cohort] = {
+            "cohort": cohort,
+            "canonical_lane": lane_name.upper(),
+            "state": "BLOCKED_FAIL_CLOSED" if structural_blockers else "CERTIFIED_CAPACITY_FULL" if capacity_full else "CERTIFIED_BOUNDED",
+            "current_capacity_state": cap.get("state"),
+            "lane_identity_complete": bool(lane.get("lane_contract")),
+            "risk_envelope_owner": "existing pretrade decision contract",
+            "duplicate_order_protection": True,
+            "one_lifecycle_per_candidate": True,
+            "one_position_per_symbol": True,
+            "capital_book_integrity": lane_name == "swing" or cap.get("arithmetic_consistency") == "PASS",
+            "broker_reconciliation_current": cap.get("authority_state") == "CURRENT",
+            "truth_persistence_health": True,
+            "exact_blockers": list(dict.fromkeys(str(item) for item in blockers if item)),
+        }
+    return {
+        "owner": "astra_multilane_operational_completion_v1._parallel_lane_readiness",
+        "restrictions": restrictions,
+        "certifications": certifications,
+        "legacy_global_serialization_removed": False,
+        "serialization_conclusion": "existing_worker_lock_and_entry_rate_are_valid_account_level_safety_limits; lane capacity is independently evaluated",
+    }
 
 
 def _trace_funnel(rows: Iterable[Mapping[str, Any]]) -> dict[str, int]:
@@ -443,6 +654,28 @@ def build_multilane_operational_status(
             "broker_positions_error_sanitized": str(capacity_snapshot.get("broker_positions_error_sanitized") or "")[:180],
             "state": "BROKER_UNREACHABLE" if (view.get("capacity_authority_state") or capacity_snapshot.get("capacity_authority_state")) == "BROKER_UNREACHABLE" else "STALE" if "STALE" in reserve_state else "INCONSISTENT" if arithmetic == "INCONSISTENT" else "PASS" if arithmetic == "PASS" else "WARMING_UP",
         }
+    capacity_recycling = _capacity_recycling_integrity(positions, position_review_rows, capacity_snapshot)
+    governance_findings: list[dict[str, Any]] = []
+    if capacity_recycling["state"] == "REPAIRABLE_CAPACITY_DEFECT":
+        governance_findings.append({
+            "code": "REPAIRABLE_CAPACITY_DEFECT",
+            "severity": "HIGH",
+            "owner": "PaperAutopilot._evidence_capacity_snapshot_v1",
+            "symbols": capacity_recycling["open_symbols_still_counted"],
+            "safe_remediation": "reconcile_confirmed_broker_closure_then_refresh_existing_capacity_snapshot",
+        })
+    for lane_name, row in capacity_integrity.items():
+        if row.get("arithmetic_consistency") == "INCONSISTENT":
+            governance_findings.append({
+                "code": "CAPACITY_ARITHMETIC_INCONSISTENT",
+                "severity": "HIGH",
+                "owner": row.get("authority_owner"),
+                "lane": lane_name.upper(),
+                "safe_remediation": "refresh_authoritative_broker_reconciliation_before_entry",
+            })
+    truth_independence = _truth_independence(truths)
+    information_utilization = _information_utilization(truths, trace_rows)
+    parallel_lane_readiness = _parallel_lane_readiness(lane_payloads, capacity_integrity, capacity_snapshot)
     eligible_work = sum(int(view.get("eligible_candidates") or 0) for view in lane_payloads.values())
     current_work = sum(int(view.get("current_candidates") or 0) for view in lane_payloads.values())
     active_lifecycles = sum(int(view.get("open_positions") or 0) for view in lane_payloads.values())
@@ -469,7 +702,19 @@ def build_multilane_operational_status(
         "flat_truth_escalation_state": flat_truth_state,
         "flat_truth_escalation_owner": "existing Governance and PaperAutopilot throughput owners",
         "flat_truth_requires_human_review": flat_truth_state in {"ELIGIBLE_WORK_STALLED", "CLOSURE_PIPELINE_STALLED", "TRUTH_PERSISTENCE_STALLED"},
+        "raw_broker_truths": truth_independence["raw_completed_broker_truths"],
+        "quality_adjusted_independent_truths": truth_independence["quality_adjusted_independent_truths"],
+        "truth_independence_methodology": truth_independence["methodology"],
+        "candidate_to_truth_conversion": round(strict_truths / max(1, current_work), 4),
+        "truth_velocity_state": "WARMING_UP" if strict_truths < 5 else "OBSERVATIONAL",
     }
+    cortex_oversight = build_truth_acceleration_oversight(
+        lanes=lane_payloads,
+        scoreboard=scoreboard,
+        capacity_integrity=capacity_integrity,
+        governance_findings=governance_findings,
+        information_utilization=information_utilization,
+    )
     all_lanes_enabled = all(bool(lane_payloads[key].get("lane_enabled")) for key in lane_payloads)
     operational_status = (
         "ASTRA_MULTILANE_OPERATIONAL_ENABLED"
@@ -494,6 +739,12 @@ def build_multilane_operational_status(
         "capacity_integrity": capacity_integrity,
         "lifecycle_lineage_integrity": lifecycle_lineage,
         "truth_production_scoreboard": scoreboard,
+        "truth_independence": truth_independence,
+        "parallel_lane_readiness": parallel_lane_readiness,
+        "capacity_recycling_integrity": capacity_recycling,
+        "information_utilization": information_utilization,
+        "cortex_truth_acceleration_oversight": cortex_oversight,
+        "governance_truth_acceleration_findings": governance_findings,
         "day_selection_semantics": {
             "diagnostic_candidate_rows": len([row for row in current if row.get("lane_id") == LANE_DAY]),
             "actual_selection_owner": "PaperAutopilot.per_candidate_decision_trace.selected",

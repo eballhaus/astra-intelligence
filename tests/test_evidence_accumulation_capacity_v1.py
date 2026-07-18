@@ -202,6 +202,40 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
         self.assertFalse(result["allowed"])
         self.assertEqual(result["capacity_decision"], "DUPLICATE_EXPOSURE_BLOCKED")
 
+    def test_capacity_snapshot_never_advertises_duplicate_exposure_as_allowed(self):
+        result = snapshot()
+        self.assertFalse(result["lanes"]["day"]["duplicate_exposure_allowed"])
+        self.assertFalse(result["lanes"]["crypto"]["duplicate_exposure_allowed"])
+
+    def test_worker_capacity_snapshot_persists_secret_free_position_projection(self):
+        class _Broker:
+            def account(self):
+                return {"buying_power": 1000}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = PaperAutopilotEngine(
+                db_path=str(pathlib.Path(tmp) / "paper.db"),
+                state_path=str(pathlib.Path(tmp) / "state.json"),
+                alpaca_paper_broker=_Broker(),
+            )
+            result = engine._evidence_capacity_snapshot_v1(
+                {
+                    "broker_reconciliation_active": True,
+                    "broker_positions_fetch_ok": True,
+                    "broker_position_by_symbol": {
+                        "DAYTEST": {
+                            "symbol": "DAYTEST", "qty": "2", "market_value": "100",
+                            "lane_id": "DAY", "asset_id": "must_not_persist",
+                        },
+                    },
+                },
+                [],
+                {"broker_execution_enabled": True},
+            )
+        self.assertTrue(result["position_rows_secret_free"])
+        self.assertEqual(result["position_rows_for_read_only_consumers"][0]["symbol"], "DAYTEST")
+        self.assertNotIn("asset_id", result["position_rows_for_read_only_consumers"][0])
+
     def test_portfolio_review_is_advisory_and_complete(self):
         result = build_portfolio_release_review([
             {"symbol": "KEEP", "entry_price": 10, "current_price": 10.1},

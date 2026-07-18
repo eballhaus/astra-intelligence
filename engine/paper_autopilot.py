@@ -4383,6 +4383,22 @@ class PaperAutopilotEngine:
         snapshot["broker_positions_fetch_ok"] = bool(broker_payload.get("broker_positions_fetch_ok"))
         snapshot["broker_positions_error_sanitized"] = str(broker_payload.get("broker_positions_error_sanitized") or "")[:180]
         snapshot["broker_orders_fetch_ok"] = bool(broker_payload.get("broker_orders_fetch_ok"))
+        # Read-only lane and lifecycle diagnostics need the same committed
+        # broker position view that capacity used.  Keep only non-secret,
+        # execution-relevant fields so a GET route can reconcile its display
+        # without performing another broker read.
+        safe_position_fields = (
+            "symbol", "qty", "quantity", "market_value", "current_price", "lastday_price",
+            "avg_entry_price", "asset_class", "asset_type", "lane_id", "position_owner",
+            "lifecycle_id", "candidate_id", "recommendation_id", "entry_fill_id",
+            "entry_order_fill_id", "entry_timestamp", "unrealized_plpc",
+        )
+        snapshot["position_rows_for_read_only_consumers"] = [
+            {key: row.get(key) for key in safe_position_fields if row.get(key) not in (None, "")}
+            for row in positions[:100]
+        ]
+        snapshot["position_rows_source"] = "worker_broker_reconciliation"
+        snapshot["position_rows_secret_free"] = True
         self._runtime_state["last_evidence_capacity_snapshot"] = dict(snapshot)
         return snapshot
 
