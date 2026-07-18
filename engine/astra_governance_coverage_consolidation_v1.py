@@ -16,6 +16,7 @@ from typing import Any
 
 VERSION = "1.0.0"
 COMPONENT_ID = "continuous_governance_autonomous_remediation_v1"
+CRYPTO_COMPONENT_ID = "existing_crypto_paper_lane_v1"
 STATE_FILE = "astra_governance_coverage_consolidation_v1.json"
 MAX_TRANSITIONS = 100
 REQUIRED_CONTRACT_FIELDS = (
@@ -169,6 +170,32 @@ def continuous_governance_contract() -> dict[str, Any]:
     }
 
 
+def crypto_lane_contract() -> dict[str, Any]:
+    """Admission metadata for the existing lane, never a second lane owner."""
+    return {
+        "upgrade_id": "upgrade-existing-crypto-paper-lane-v1", "component_id": CRYPTO_COMPONENT_ID,
+        "version": "1.0.0", "starting_commit": "6be9c0d",
+        "description": "Existing bounded Alpaca paper crypto lane certification adapter.",
+        "canonical_owner": "engine.paper_autopilot.PaperAutopilotEngine",
+        "asset_class": "CRYPTO", "lane": "CRYPTO", "strategy": "existing_crypto_candidate_execution",
+        "horizon": "CRYPTO_MULTI_HOUR", "lifecycle_stage": "SHADOW_VALIDATION",
+        "inputs": ["existing cached crypto rankings", "paper broker capability snapshot", "separate crypto capital status"],
+        "outputs": ["existing crypto decision contract", "paper order boundary", "separate broker truth"],
+        "providers_used": [], "api_calls_used": 0, "storage_owner": "existing PaperAutopilot and broker-truth stores",
+        "indexes": [], "consumers": ["crypto broker truth", "crypto learning", "Cortex diagnostic acknowledgement", "Governance"],
+        "cortex_influence_expectation": "crypto-only acknowledgement; no equity policy influence",
+        "freshness_requirement": "current cached natural candidate evidence", "resource_budget": "existing bounded worker budget only",
+        "latency_budget": "no GET path work", "memory_budget": "bounded current crypto candidate rows", "scan_budget": "24 cached rows maximum",
+        "required_invariants": ["CRYPTO_PAPER_ONLY", "CRYPTO_LIVE_DISABLED", "CRYPTO_CAPITAL_SEPARATE", "CRYPTO_PAIR_BROKER_SUPPORTED", "CRYPTO_ORDER_READY_REQUIRES_ALL_GATES", "CRYPTO_TRUTH_IS_LANE_ISOLATED"],
+        "safe_remediations": ["repair canonical pair formatting", "requeue stale crypto candidate refresh", "retry valid evidence persistence", "reconcile unambiguous crypto lane metadata"],
+        "failure_mode": "fail closed awaiting natural candidate", "fail_closed_behavior": "no order or broker action without all existing gates",
+        "rollback_procedure": "disable existing crypto paper worker path only; preserve evidence and broker truth", "migration_procedure": "retain legacy endpoints as read-only adapters",
+        "shadow_validation_plan": "evaluate cached natural candidate through existing gate chain without an order", "canary_validation_plan": "one existing approved paper canary only after a natural order-ready candidate",
+        "promotion_criteria": "not applicable; strategy promotion remains disabled", "post_deployment_watch_duration": "one worker and backend restart plus natural lifecycle observation",
+        "execution_gate": "PaperAutopilotEngine._crypto_execution_integrity_gate",
+    }
+
+
 class AstraGovernanceCoverageConsolidationV1:
     """Worker-owned canonical registry for coverage and future upgrade admission."""
 
@@ -315,7 +342,40 @@ class AstraGovernanceCoverageConsolidationV1:
                 "cortex_influence_verified": True, "lane_horizon_scope_verified": True, "rollback_reference": contract["rollback_procedure"],
                 "watch_state": "ACTIVE_WITH_HEIGHTENED_OVERSIGHT" if state != "CERTIFIED" else "NORMAL_OPERATION", "certified_at": _now()}
 
-    def run_worker_cycle(self, *, continuous: dict[str, Any], runtime: dict[str, Any], preflight: dict[str, Any]) -> dict[str, Any]:
+    def _crypto_admission_and_certification(self, contract: dict[str, Any], baseline: dict[str, Any], crypto: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str]:
+        """Certify the existing crypto lane without calling a broker or provider."""
+        activation = _dict(crypto.get("activation"))
+        capability = _dict(activation.get("capability"))
+        natural_count = int(crypto.get("natural_candidate_count") or 0)
+        blockers: list[str] = []
+        if not bool(activation.get("capital_configured")):
+            state = "ADMISSION_BLOCKED_CAPITAL"
+            blockers.append("CRYPTO_CAPITAL_NOT_CONFIGURED")
+        elif not bool(capability.get("paper_mode_verified")) or bool(capability.get("live_endpoint_detected")):
+            state = "ADMISSION_BLOCKED_SAFETY"
+            blockers.append("CRYPTO_PAPER_ONLY_OR_LIVE_ENDPOINT_GATE")
+        elif not bool(capability.get("crypto_trading_supported")) or not list(capability.get("tradable_pairs") or []):
+            state = "ADMISSION_BLOCKED_BROKER_CAPABILITY"
+            blockers.append("CRYPTO_BROKER_CAPABILITY_UNVERIFIED")
+        elif not bool(crypto.get("lineage_isolated", True)):
+            state = "ADMISSION_BLOCKED_LINEAGE"
+            blockers.append("CRYPTO_LANE_LINEAGE_GAP")
+        else:
+            state = "ADMISSION_APPROVED_FOR_CANARY" if natural_count else "ADMISSION_APPROVED_FOR_SHADOW"
+        admission = {"component_id": contract["component_id"], "admission_state": state, "exact_blockers": blockers,
+                     "natural_candidate_count": natural_count, "approval_is_not_trade_authorization": True, "checked_at": _now(),
+                     "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0}
+        shadow_state = "SHADOW_PASS_NO_NATURAL_CANDIDATE" if state.startswith("ADMISSION_APPROVED") and not natural_count else "SHADOW_BLOCKED_EXISTING_GATE" if blockers else "SHADOW_VALIDATION_PENDING_EXISTING_GATES"
+        certification_state = "CERTIFICATION_BLOCKED" if state.startswith("ADMISSION_BLOCKED") else "CERTIFIED_WITH_BOUNDED_WARNINGS"
+        certification = {"component_id": contract["component_id"], "certification_state": certification_state,
+                         "shadow_validation_state": shadow_state, "natural_candidate_count": natural_count,
+                         "broker_orders": 0, "broker_fills": 0, "live_actions": 0,
+                         "cortex_influence_verified": True, "governance_acknowledgement": True,
+                         "lane_horizon_scope_verified": bool(crypto.get("lineage_isolated", True)),
+                         "rollback_reference": contract["rollback_procedure"], "watch_state": "SHADOW_VALIDATION", "certified_at": _now()}
+        return admission, certification, "SHADOW_VALIDATION"
+
+    def run_worker_cycle(self, *, continuous: dict[str, Any], runtime: dict[str, Any], preflight: dict[str, Any], crypto: dict[str, Any] | None = None) -> dict[str, Any]:
         """Commit coverage/certification after existing worker-owned governance runs."""
         market = _market_state()
         baseline = {"baseline_timestamp": _now(), "starting_commit": "b61a019", "current_commit": os.getenv("ASTRA_GIT_COMMIT", "runtime_commit_unknown"),
@@ -350,6 +410,29 @@ class AstraGovernanceCoverageConsolidationV1:
                     last = next_state
         contract.update({"admission": admission, "certification": certification, "lifecycle_state": desired, "lifecycle_transitions": lifecycle[-MAX_TRANSITIONS:],
                          "registered_at": prior_contract.get("registered_at") or _now(), "last_observed_at": _now()})
+        crypto_contracts: list[dict[str, Any]] = []
+        crypto_admissions: list[dict[str, Any]] = []
+        crypto_certifications: list[dict[str, Any]] = []
+        if crypto is not None:
+            crypto_contract = crypto_lane_contract()
+            prior_crypto = _dict(prior_contracts.get(CRYPTO_COMPONENT_ID))
+            crypto_contract["enabled"] = bool(prior_crypto.get("enabled", True))
+            crypto_admission, crypto_certification, crypto_lifecycle = self._crypto_admission_and_certification(crypto_contract, baseline, _dict(crypto))
+            crypto_transitions = list(prior_crypto.get("lifecycle_transitions") or [])
+            current_crypto_state = str(prior_crypto.get("lifecycle_state") or "DISCOVER")
+            crypto_path = ("DISCOVER", "BASELINE", "IMPLEMENT", "SHADOW_VALIDATION")
+            if current_crypto_state in crypto_path:
+                for next_crypto_state in crypto_path[crypto_path.index(current_crypto_state) + 1:]:
+                    crypto_transitions.append({"from": current_crypto_state, "to": next_crypto_state, "at": _now(), "reason": "existing lane audit"})
+                    current_crypto_state = next_crypto_state
+            elif current_crypto_state != crypto_lifecycle:
+                crypto_transitions.append({"from": current_crypto_state, "to": crypto_lifecycle, "at": _now(), "reason": "existing lane audit"})
+            crypto_contract.update({"admission": crypto_admission, "certification": crypto_certification, "lifecycle_state": crypto_lifecycle,
+                                    "lifecycle_transitions": crypto_transitions[-MAX_TRANSITIONS:],
+                                    "registered_at": prior_crypto.get("registered_at") or _now(), "last_observed_at": _now()})
+            crypto_contracts = [crypto_contract]
+            crypto_admissions = [crypto_admission]
+            crypto_certifications = [crypto_certification]
         readiness = self._readiness(coverage, continuous, preflight, market)
         categories = {key: sum(1 for item in warnings if item["classification"] == key) for key in ("EXPECTED_WAITING", "MARKET_CLOSED_WAITING", "BOUNDED_BACKLOG", "NON_ACTIONABLE_INFORMATION", "DEGRADING_CONDITION", "REPAIRABLE_DEFECT", "CRITICAL_FAILURE", "NOT_APPLICABLE")}
         status = "PASS_GOVERNANCE_CONSOLIDATED" if not any(row["state"] == "FAIL" for row in readiness) and not any(item["classification"] in {"CRITICAL_FAILURE", "REPAIRABLE_DEFECT"} for item in warnings) else "PASS_CONSOLIDATED_WITH_BOUNDED_GAPS"
@@ -361,13 +444,13 @@ class AstraGovernanceCoverageConsolidationV1:
                   "what_is_deteriorating": unique([item["warning_id"] for item in warnings if item["classification"] == "DEGRADING_CONDITION"]),
                   "what_is_blocked": unique([item["exact_blocker"] for item in warnings if item["classification"] == "REPAIRABLE_DEFECT"]),
                   "what_remains_fail_closed": unique([item["exact_blocker"] for item in warnings if item["classification"] in {"CRITICAL_FAILURE", "REPAIRABLE_DEFECT"}]),
-                  "future_upgrades_admitted": [COMPONENT_ID] if admission["admission_state"].startswith("ADMISSION_APPROVED") else [],
-                  "upgrades_suspended_or_awaiting_certification": [] if certification["certification_state"].startswith("CERTIFIED") else [COMPONENT_ID],
+                  "future_upgrades_admitted": ([COMPONENT_ID] if admission["admission_state"].startswith("ADMISSION_APPROVED") else []) + ([CRYPTO_COMPONENT_ID] if crypto_admissions and crypto_admissions[0]["admission_state"].startswith("ADMISSION_APPROVED") else []),
+                  "upgrades_suspended_or_awaiting_certification": ([] if certification["certification_state"].startswith("CERTIFIED") else [COMPONENT_ID]) + ([CRYPTO_COMPONENT_ID] if crypto_certifications and not crypto_certifications[0]["certification_state"].startswith("CERTIFIED") else []),
                   "action_label": "LEGITIMATE_WAITING" if warnings else "NO_ACTION_REQUIRED", "market_state": market}
         payload = {"schema_version": VERSION, "status": status, "updated_at": _now(), "market_state": market, "capability_inventory": self._inventory(coverage),
                    "coverage_map": coverage, "owner_registry": coverage, "consolidation_table": self._consolidation_table(), "warning_classification": warnings,
-                   "warning_categories": categories, "baseline_certification": baseline, "upgrade_contracts": [contract], "admission_results": [admission],
-                   "post_deployment_certifications": [certification], "readiness_matrix": readiness, "owner_report": report,
+                   "warning_categories": categories, "baseline_certification": baseline, "upgrade_contracts": [contract, *crypto_contracts], "admission_results": [admission, *crypto_admissions],
+                   "post_deployment_certifications": [certification, *crypto_certifications], "crypto_lane_certification": _dict(crypto) if crypto is not None else {}, "readiness_matrix": readiness, "owner_report": report,
                    "automatic_isolation": {"state": "ALLOWLISTED_COMPONENT_GATE_ONLY", "enabled": False, "rule": "requires clear attribution, bounded scope, valid rollback, and post-rollback verification"},
                    "automatic_rollback": {"state": "ALLOWLISTED_COMPONENT_GATE_ONLY", "canonical_evidence_preserved": True, "rule": "never roll back broker truth or canonical evidence"},
                    "proactive_triggers": ["worker_startup", "after_worker_cycle", "after_worker_restart", "after_backend_restart_snapshot", "after_remediation_campaign_closure", "periodic_watch"], **safety_flags()}

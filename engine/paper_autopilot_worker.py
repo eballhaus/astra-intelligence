@@ -198,6 +198,17 @@ class PaperAutopilotWorker:
         """
         worker_state = read_snapshot()
         safety = dict(getattr(self.autopilot, "_alpaca_safety_snapshot", lambda: {})() or {})
+        crypto_activation = {}
+        crypto_rows: list[dict[str, Any]] = []
+        try:
+            activation_builder = getattr(self.autopilot, "_crypto_paper_activation_status", None)
+            crypto_activation = dict(activation_builder() or {}) if callable(activation_builder) else {}
+            candidate_source = getattr(self.autopilot, "get_crypto_candidate_rows_fn", None)
+            crypto_rows = [dict(row) for row in (candidate_source() or []) if isinstance(row, dict)] if callable(candidate_source) else []
+        except Exception:
+            # The crypto lane remains independently fail-closed.  A missing
+            # cached source cannot affect equity work or create a candidate.
+            crypto_rows = []
         if not self.governance_coverage.component_enabled(COMPONENT_ID):
             # A certification rollback can isolate this optional diagnostic
             # hook without touching the execution engine or canonical truth.
@@ -221,6 +232,12 @@ class PaperAutopilotWorker:
             preflight={
                 "paper_mode_verified": bool(safety.get("paper_mode_verified")),
                 "broker_live_endpoint_allowed": bool(safety.get("broker_live_endpoint_allowed")),
+            },
+            crypto={
+                "activation": crypto_activation,
+                "natural_candidate_count": sum(1 for row in crypto_rows if not bool(row.get("operational_probe_only"))),
+                "cached_candidate_count": len(crypto_rows),
+                "lineage_isolated": all(str(row.get("asset_class") or "crypto").lower() == "crypto" for row in crypto_rows),
             },
         )
         self._publish(continuous_governance={

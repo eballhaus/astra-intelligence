@@ -4,10 +4,12 @@ from pathlib import Path
 
 from engine.astra_governance_coverage_consolidation_v1 import (
     COMPONENT_ID,
+    CRYPTO_COMPONENT_ID,
     REQUIRED_CONTRACT_FIELDS,
     AstraGovernanceCoverageConsolidationV1,
     component_registry,
     continuous_governance_contract,
+    crypto_lane_contract,
 )
 
 
@@ -91,6 +93,30 @@ class GovernanceCoverageConsolidationTests(unittest.TestCase):
     def test_contract_schema_is_complete(self):
         contract = continuous_governance_contract()
         self.assertEqual([key for key in REQUIRED_CONTRACT_FIELDS if key not in contract or contract.get(key) in (None, "")], [])
+
+    def test_existing_crypto_lane_is_admitted_for_shadow_without_forcing_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = AstraGovernanceCoverageConsolidationV1(directory).run_worker_cycle(
+                continuous=continuous_snapshot(), runtime={},
+                preflight={"paper_mode_verified": True, "broker_live_endpoint_allowed": False},
+                crypto={"activation": {"capital_configured": True, "capability": {"paper_mode_verified": True, "live_endpoint_detected": False, "crypto_trading_supported": True, "tradable_pairs": ["BTC/USD"]}},
+                        "natural_candidate_count": 0, "cached_candidate_count": 1, "lineage_isolated": True},
+            )
+            contract = next(row for row in result["upgrade_contracts"] if row["component_id"] == CRYPTO_COMPONENT_ID)
+            self.assertEqual(contract["admission"]["admission_state"], "ADMISSION_APPROVED_FOR_SHADOW")
+            self.assertEqual(contract["certification"]["shadow_validation_state"], "SHADOW_PASS_NO_NATURAL_CANDIDATE")
+            self.assertEqual(contract["lifecycle_state"], "SHADOW_VALIDATION")
+            self.assertEqual(contract["certification"]["broker_orders"], 0)
+
+    def test_crypto_contract_blocks_missing_separate_capital(self):
+        contract = crypto_lane_contract()
+        with tempfile.TemporaryDirectory() as directory:
+            governance = AstraGovernanceCoverageConsolidationV1(directory)
+            admission, certification, _state = governance._crypto_admission_and_certification(
+                contract, {}, {"activation": {"capital_configured": False, "capability": {}}, "natural_candidate_count": 0, "lineage_isolated": True}
+            )
+        self.assertEqual(admission["admission_state"], "ADMISSION_BLOCKED_CAPITAL")
+        self.assertEqual(certification["certification_state"], "CERTIFICATION_BLOCKED")
 
 
 if __name__ == "__main__":

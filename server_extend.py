@@ -69596,9 +69596,10 @@ def _crypto_paper_execution_readiness_v1_payload(statuses: dict | None = None) -
         blockers.append("crypto_paper_activation_not_requested")
 
     infrastructure_ready = not blockers
+    lane_execution_enabled = bool(lane.get("paper_crypto_enabled"))
     if not infrastructure_ready:
         readiness_state = "CRYPTO_PAPER_BLOCKED"
-    elif active_positions > 0:
+    elif active_positions > 0 and lane_execution_enabled:
         readiness_state = "CRYPTO_PAPER_ACTIVE"
     elif qualified_count > 0:
         readiness_state = "CRYPTO_PAPER_READY"
@@ -69624,6 +69625,9 @@ def _crypto_paper_execution_readiness_v1_payload(statuses: dict | None = None) -
         "qualified_candidate_count": qualified_count,
         "paper_eligible_candidate_count": int(_to_float(funnel.get("paper_eligible_candidates"), 0.0)),
         "paper_autopilot_crypto_open_rows": active_positions,
+        "broker_confirmed_crypto_positions": None,
+        "internal_open_rows_do_not_prove_broker_position": True,
+        "lane_execution_enabled": lane_execution_enabled,
         "crypto_truth_records_total": int(_to_float(truth.get("crypto_truth_records_total"), 0.0)),
         "crypto_complete_truths": int(_to_float(truth.get("crypto_complete_truths"), 0.0)),
         "equity_crypto_truth_separation": separation.get("contamination_guard") == "PASS",
@@ -73400,6 +73404,57 @@ def horizon_assignment_tiebreak_runner_validation_v1(force: bool = False):
 def crypto_paper_lane_validation_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
     return _crypto_paper_lane_validation_v1_payload(dict(cached_unified or {}))
+
+
+@router.get("/api/astra_crypto_lane_status_v1")
+def astra_crypto_lane_status_v1():
+    """Canonical read-only adapter for the existing crypto lane contract."""
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    lane = _crypto_paper_lane_validation_v1_payload(dict(cached_unified or {}))
+    return {"endpoint": "/api/astra_crypto_lane_status_v1", "canonical_owner": "PaperAutopilotEngine", "lane_id": "CRYPTO",
+            "strategy": "existing_crypto_candidate_execution", "horizon_scope": ["CRYPTO_SHORT_DURATION", "CRYPTO_INTRADAY", "CRYPTO_MULTI_HOUR", "CRYPTO_SWING"],
+            "paper_execution_state": lane.get("lane_state"), "live_execution_state": "DISABLED", "lane_status": lane,
+            "get_route_read_only": True, "worker_invocations": 0, "mutations": 0, "full_store_scans": 0,
+            "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, **_safety_flags_v1()}
+
+
+@router.get("/api/astra_crypto_broker_capability_v1")
+def astra_crypto_broker_capability_v1():
+    capability = ALPACA_PAPER_BROKER.crypto_capability_status(False) if hasattr(ALPACA_PAPER_BROKER, "crypto_capability_status") else {}
+    selected = [pair for pair in _ASTRA_CRYPTO_APPROVED_CORE_UNIVERSE_V1 if pair in set(capability.get("tradable_pairs") or [])][:1]
+    return {"endpoint": "/api/astra_crypto_broker_capability_v1", "canonical_owner": "ALPACA_PAPER_BROKER", "capability": capability,
+            "approved_minimal_pair_registry": selected, "pair_states": {pair: "BROKER_SUPPORTED" for pair in selected},
+            "get_route_read_only": True, "worker_invocations": 0, "mutations": 0, "full_store_scans": 0,
+            "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, **_safety_flags_v1()}
+
+
+@router.get("/api/astra_crypto_paper_readiness_v1")
+def astra_crypto_paper_readiness_v1():
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    readiness = _crypto_paper_execution_readiness_v1_payload(dict(cached_unified or {}))
+    return {"endpoint": "/api/astra_crypto_paper_readiness_v1", **readiness, "get_route_read_only": True,
+            "worker_invocations": 0, "mutations": 0, "full_store_scans": 0}
+
+
+@router.get("/api/astra_crypto_broker_truth_v1")
+def astra_crypto_broker_truth_v1():
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    truth = _crypto_broker_truth_accumulation_v1_payload(dict(cached_unified or {}))
+    return {"endpoint": "/api/astra_crypto_broker_truth_v1", **truth, "canonical_owner": "broker_truth_records_v1",
+            "historical_shadow_replay_excluded": True, "get_route_read_only": True, "worker_invocations": 0, "mutations": 0, "full_store_scans": 0}
+
+
+@router.get("/api/astra_crypto_performance_attribution_v1")
+def astra_crypto_performance_attribution_v1():
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    truth = _crypto_broker_truth_accumulation_v1_payload(dict(cached_unified or {}))
+    completed = int(_to_float(truth.get("crypto_complete_truths"), 0.0))
+    return {"endpoint": "/api/astra_crypto_performance_attribution_v1", "status": "INSUFFICIENT_EVIDENCE" if not completed else "WARMING",
+            "asset_class": "CRYPTO", "lane": "CRYPTO", "completed_lifecycles": completed, "orders_submitted": 0,
+            "fills": 0, "open_positions": 0, "profit_factor": None, "win_rate": None, "average_return": None,
+            "cross_lane_performance_contamination": False, "certification_closes_excluded_from_profitability": True,
+            "get_route_read_only": True, "worker_invocations": 0, "mutations": 0, "full_store_scans": 0,
+            "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, **_safety_flags_v1()}
 
 
 @router.get("/api/crypto_paper_execution_readiness_v1")
