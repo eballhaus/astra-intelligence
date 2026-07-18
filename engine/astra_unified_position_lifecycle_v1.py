@@ -7,6 +7,7 @@ cohort, lifecycle classification, and policy blocker explicit.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Sequence
@@ -627,6 +628,109 @@ def _parse_iso(value: Any) -> datetime | None:
         return None
 
 
+def legacy_migration_position_identifier_v1(position: Mapping[str, Any]) -> dict[str, Any]:
+    """Build a stable, secret-free identity for the one-time legacy manifest."""
+    row = dict(position or {})
+    symbol = _text(row.get("symbol")).upper()
+    position_id = _text(row.get("asset_id") or row.get("position_id") or symbol)
+    quantity = _num(row.get("qty") or row.get("quantity")) or 0.0
+    cost_basis = _num(row.get("cost_basis") or row.get("avg_entry_price")) or 0.0
+    identity = {
+        "position_id": position_id,
+        "symbol": symbol,
+        "quantity_snapshot": round(abs(quantity), 10),
+        "cost_basis_snapshot": round(cost_basis, 10),
+    }
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {**identity, "broker_position_fingerprint": hashlib.sha256(encoded).hexdigest()}
+
+
+def build_legacy_migration_manifest_v1(
+    review_rows: Sequence[Mapping[str, Any]],
+    *,
+    source_commit: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Freeze only the currently audited unlinked legacy population.
+
+    This is a data contract for the existing lifecycle overlay, not a second
+    position store.  IDs are derived from stable broker attributes rather than
+    list order so positions opened later cannot join the manifest.
+    """
+    current = now or datetime.now(timezone.utc)
+    identifiers = []
+    for row in review_rows:
+        data = dict(row or {})
+        if _text(data.get("classification")) != "LEGACY_UNLINKED_POSITION":
+            continue
+        identifier = legacy_migration_position_identifier_v1(data)
+        identifiers.append({
+            **identifier,
+            "classification": "LEGACY_UNLINKED_POSITION",
+            "classification_reason": _text(data.get("classification_reason")),
+            "classification_confidence": data.get("classification_confidence"),
+            "original_lane": _text(data.get("original_lane") or "UNKNOWN"),
+            "original_strategy": _text(data.get("original_strategy") or "UNKNOWN"),
+            "lifecycle_linkage_state": "UNLINKED",
+        })
+    identifiers.sort(key=lambda item: (item["position_id"], item["symbol"]))
+    digest_input = {
+        "source_commit": _text(source_commit),
+        "position_identifiers": identifiers,
+        "approval_scope": "one-time migration of the audited historical inventory only",
+    }
+    manifest_hash = hashlib.sha256(
+        json.dumps(digest_input, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "schema_version": "astra_legacy_migration_manifest_v1",
+        "migration_manifest_id": f"legacy-migration-{manifest_hash[:16]}",
+        "created_at": _iso(current),
+        "source_commit": _text(source_commit),
+        "position_count": len(identifiers),
+        "position_identifiers": identifiers,
+        "classification_evidence": "LEGACY_UNLINKED_POSITION audited by unified lifecycle overlay",
+        "approval_scope": "one-time migration of the audited historical inventory only",
+        "approval_status": "PENDING_HUMAN_APPROVAL",
+        "manifest_hash": manifest_hash,
+        "immutable": True,
+    }
+
+
+def build_legacy_migration_approval_v1(
+    manifest: Mapping[str, Any],
+    *,
+    approved_by: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Represent the explicit one-time human authorization without reuse."""
+    current = now or datetime.now(timezone.utc)
+    source = dict(manifest or {})
+    manifest_id = _text(source.get("migration_manifest_id"))
+    identifiers = list(source.get("position_identifiers") or [])
+    approval_seed = f"{manifest_id}:{source.get('manifest_hash')}:LEGACY_ACTIVE_SLOT_EXCLUSION"
+    approval_id = f"legacy-slot-approval-{hashlib.sha256(approval_seed.encode('utf-8')).hexdigest()[:16]}"
+    return {
+        "schema_version": "astra_legacy_migration_approval_v1",
+        "approval_id": approval_id,
+        "migration_manifest_id": manifest_id,
+        "approval_type": "LEGACY_ACTIVE_SLOT_EXCLUSION",
+        "approved_position_count": len(identifiers),
+        "approved_position_identifiers": identifiers,
+        "full_risk_inclusion_required": True,
+        "active_slot_exclusion_allowed": True,
+        "decreasing_only_required": True,
+        "new_entries_allowed": False,
+        "averaging_down_allowed": False,
+        "replacement_inside_cohort_allowed": False,
+        "expires_after_application": True,
+        "approved_by": _text(approved_by),
+        "approved_at": _iso(current),
+        "approval_status": "APPROVED_PENDING_APPLICATION",
+        "consumed_once": False,
+    }
+
+
 def build_position_management_overlay_v1(
     position: Mapping[str, Any],
     *,
@@ -684,12 +788,28 @@ def build_position_management_overlay_v1(
     else:
         classification, reason = "BROKER_ONLY_POSITION", "BROKER_POSITION_IDENTIFIER_INCOMPLETE"
     management_cohort = "LEGACY_POSITION_RESOLUTION" if classification.startswith("LEGACY_") else _text(row.get("management_cohort") or "CURRENT_MANAGED")
-    approval_id = _text(row.get("legacy_resolution_approval_id") or prior.get("legacy_resolution_approval_id"))
-    approved = bool(row.get("legacy_resolution_approved") or prior.get("legacy_resolution_approved")) and bool(approval_id)
+    approval_id = _text(
+        row.get("legacy_migration_approval_id")
+        or prior.get("legacy_migration_approval_id")
+        or row.get("legacy_resolution_approval_id")
+        or prior.get("legacy_resolution_approval_id")
+    )
+    manifest_id = _text(row.get("legacy_migration_manifest_id") or prior.get("legacy_migration_manifest_id"))
+    approved = bool(
+        row.get("legacy_migration_approved")
+        or prior.get("legacy_migration_approved")
+        or row.get("legacy_resolution_approved")
+        or prior.get("legacy_resolution_approved")
+    ) and bool(approval_id)
     slot_exclusion = bool(
         management_cohort == "LEGACY_POSITION_RESOLUTION"
         and approved
-        and bool(row.get("legacy_slot_exclusion_approved") or prior.get("legacy_slot_exclusion_approved"))
+        and bool(
+            row.get("active_slot_exclusion")
+            or prior.get("active_slot_exclusion")
+            or row.get("legacy_slot_exclusion_approved")
+            or prior.get("legacy_slot_exclusion_approved")
+        )
     )
     current_thesis = _text(decision.get("classification") or row.get("thesis_state") or prior.get("current_thesis") or "THESIS_REVALIDATION_REQUIRED").upper()
     exit_readiness = _text(decision.get("classification") or row.get("exit_readiness_state") or prior.get("exit_readiness_state") or "INSUFFICIENT_EVIDENCE").upper()
@@ -717,8 +837,13 @@ def build_position_management_overlay_v1(
         "legacy_resolution_approval_required": management_cohort == "LEGACY_POSITION_RESOLUTION",
         "legacy_resolution_approved": approved,
         "legacy_resolution_approval_id": approval_id or None,
+        "legacy_migration_approved": approved,
+        "legacy_migration_approval_id": approval_id or None,
+        "legacy_migration_manifest_id": manifest_id or None,
+        "legacy_migration_state": _text(row.get("legacy_migration_state") or prior.get("legacy_migration_state")) or None,
         "active_slot_exclusion_eligible": management_cohort == "LEGACY_POSITION_RESOLUTION",
         "active_slot_exclusion_approved": slot_exclusion,
+        "active_slot_exclusion": slot_exclusion,
         "full_risk_included": True,
         "current_thesis": current_thesis,
         "exit_readiness_state": exit_readiness,
@@ -727,6 +852,11 @@ def build_position_management_overlay_v1(
         "next_review_at": _iso(next_review),
         "review_state": "OVERDUE_REVIEW" if stale_active else "SCHEDULED_REVIEW",
         "hold_exception_state": "HOLD_EXCEPTION_APPROVED" if bool(row.get("hold_exception_approved")) else "THESIS_REVALIDATION_REQUIRED" if classification in {"DAY_HORIZON_DRIFT_POSITION", "STALE_ACTIVE_POSITION"} else "NOT_REQUIRED",
+        "day_horizon_drift_decision": (
+            _text(row.get("day_horizon_drift_decision") or prior.get("day_horizon_drift_decision"))
+            or "INSUFFICIENT_EVIDENCE_FAIL_CLOSED"
+        ) if classification == "DAY_HORIZON_DRIFT_POSITION" else None,
+        "day_horizon_drift_reason": "DAY_POSITION_EXCEEDED_SAME_SESSION_HORIZON" if classification == "DAY_HORIZON_DRIFT_POSITION" else None,
         "authoritative_broker_truth": False,
         "reconstruction_is_context_only": reconstructable,
         "automatic_exit_authorized": False,

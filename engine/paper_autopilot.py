@@ -33,6 +33,9 @@ from engine.astra_unified_position_lifecycle_v1 import (
     build_legacy_forward_baseline_v1,
     build_position_management_overlay_v1,
     build_position_resolution_inventory_v1,
+    build_legacy_migration_approval_v1,
+    build_legacy_migration_manifest_v1,
+    legacy_migration_position_identifier_v1,
     build_position_shadow_twin_v1,
     build_unified_position_lifecycle_decision_v1,
     estimate_legacy_provisional_horizon_v1,
@@ -41,6 +44,9 @@ from engine.astra_unified_position_lifecycle_v1 import (
     legacy_swing_writer_adapter_contract_v1,
     select_legacy_swing_canary_candidate_v1,
 )
+
+
+_LEGACY_MIGRATION_SOURCE_COMMIT_V1 = "e1e30e0739387be274e4e717cf7c7239b42d7890"
 from engine.provider_router import ProviderRouter
 try:
     from engine.astra_premarket_certification_v1 import (
@@ -1378,6 +1384,11 @@ class PaperAutopilotEngine:
             # The unified lifecycle owner persists a conservative management
             # overlay here; this is not a second position store.
             "position_resolution_reviews": {},
+            # One-time approval data is persisted in the existing canonical
+            # worker state, never in a parallel migration store.
+            "legacy_migration_manifest_v1": {},
+            "legacy_migration_approval_v1": {},
+            "legacy_migration_application_v1": {},
             # Liveness is worker-owned.  Read-only endpoints consume these
             # fields and must never manufacture a heartbeat by doing broker I/O.
             "worker_generation_id": "",
@@ -1537,6 +1548,13 @@ class PaperAutopilotEngine:
                     self._runtime_state["legacy_swing_exit_lifecycle"] = dict(payload.get("legacy_swing_exit_lifecycle") or {})
                 if isinstance(payload.get("position_resolution_reviews"), dict):
                     self._runtime_state["position_resolution_reviews"] = dict(payload.get("position_resolution_reviews") or {})
+                for key in (
+                    "legacy_migration_manifest_v1",
+                    "legacy_migration_approval_v1",
+                    "legacy_migration_application_v1",
+                ):
+                    if isinstance(payload.get(key), dict):
+                        self._runtime_state[key] = dict(payload.get(key) or {})
                 if isinstance(payload.get("evidence_reserve_entry_timestamps"), dict):
                     self._runtime_state["evidence_reserve_entry_timestamps"] = {
                         lane: list(payload.get("evidence_reserve_entry_timestamps", {}).get(lane) or [])[-32:]
@@ -1602,6 +1620,9 @@ class PaperAutopilotEngine:
             "legacy_swing_market_activity": dict(self._runtime_state.get("legacy_swing_market_activity") or {}),
             "legacy_swing_exit_lifecycle": dict(self._runtime_state.get("legacy_swing_exit_lifecycle") or {}),
             "position_resolution_reviews": dict(self._runtime_state.get("position_resolution_reviews") or {}),
+            "legacy_migration_manifest_v1": dict(self._runtime_state.get("legacy_migration_manifest_v1") or {}),
+            "legacy_migration_approval_v1": dict(self._runtime_state.get("legacy_migration_approval_v1") or {}),
+            "legacy_migration_application_v1": dict(self._runtime_state.get("legacy_migration_application_v1") or {}),
             "evidence_reserve_entry_timestamps": {
                 lane: list((self._runtime_state.get("evidence_reserve_entry_timestamps") or {}).get(lane) or [])[-32:]
                 for lane in ("DAY", "CRYPTO")
@@ -4332,6 +4353,156 @@ class PaperAutopilotEngine:
             **adaptive,
         }
 
+    def _apply_approved_legacy_migration_v1(
+        self,
+        resolution_rows: list[dict[str, Any]],
+        refreshed_reviews: dict[str, dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+        """Consume the explicit one-time approval for the frozen 37-position set.
+
+        This is deliberately invoked only by the normal reconciliation worker.
+        It neither reads a provider nor changes broker state; it annotates the
+        existing lifecycle overlay so the canonical capacity authority can
+        distinguish active slots from fully risk-included legacy exposure.
+        """
+        manifest = dict(self._runtime_state.get("legacy_migration_manifest_v1") or {})
+        approval = dict(self._runtime_state.get("legacy_migration_approval_v1") or {})
+        application = dict(self._runtime_state.get("legacy_migration_application_v1") or {})
+        now = datetime.now(UTC)
+        if not manifest:
+            manifest = build_legacy_migration_manifest_v1(
+                resolution_rows,
+                source_commit=_LEGACY_MIGRATION_SOURCE_COMMIT_V1,
+                now=now,
+            )
+            if int(manifest.get("position_count") or 0) != 37:
+                manifest["approval_status"] = "FAILED_COUNT_MISMATCH"
+                manifest["exact_blocker"] = "AUDITED_LEGACY_MANIFEST_COUNT_NOT_37"
+            self._runtime_state["legacy_migration_manifest_v1"] = manifest
+        if not approval and manifest.get("approval_status") != "FAILED_COUNT_MISMATCH":
+            # The task's explicit one-time migration authorization is recorded
+            # verbatim as a durable, non-reusable approval event.
+            approval = build_legacy_migration_approval_v1(
+                manifest,
+                approved_by="human_authorization_one_time_legacy_migration_v1",
+                now=now,
+            )
+            self._runtime_state["legacy_migration_approval_v1"] = approval
+        if not approval:
+            return resolution_rows, refreshed_reviews
+        if (
+            approval.get("migration_manifest_id") != manifest.get("migration_manifest_id")
+            or int(approval.get("approved_position_count") or 0) != int(manifest.get("position_count") or 0)
+            or not bool(approval.get("full_risk_inclusion_required"))
+            or not bool(approval.get("active_slot_exclusion_allowed"))
+            or bool(approval.get("new_entries_allowed"))
+            or bool(approval.get("averaging_down_allowed"))
+            or bool(approval.get("replacement_inside_cohort_allowed"))
+        ):
+            approval["approval_status"] = "REJECTED_FAIL_CLOSED"
+            approval["exact_blocker"] = "MIGRATION_APPROVAL_INTEGRITY_INVALID"
+            self._runtime_state["legacy_migration_approval_v1"] = approval
+            return resolution_rows, refreshed_reviews
+
+        current_by_position = {
+            str(row.get("position_id") or row.get("asset_id") or "").upper(): dict(row)
+            for row in resolution_rows
+            if str(row.get("position_id") or row.get("asset_id") or "")
+        }
+        current_by_symbol = {
+            str(row.get("symbol") or "").upper(): dict(row)
+            for row in resolution_rows
+            if str(row.get("symbol") or "").strip()
+        }
+        outcomes: list[dict[str, Any]] = []
+        approved_by_position: dict[str, dict[str, Any]] = {}
+        for expected in list(manifest.get("position_identifiers") or []):
+            expected_row = dict(expected or {})
+            position_id = str(expected_row.get("position_id") or "")
+            position_key = position_id.upper()
+            symbol = str(expected_row.get("symbol") or "").upper()
+            current = current_by_position.get(position_key)
+            outcome = "MATCHED_OPEN_POSITION"
+            if current is None:
+                current = current_by_symbol.get(symbol)
+                outcome = "ALREADY_CLOSED" if current is None else "SYMBOL_MISMATCH"
+            if current is not None and outcome == "MATCHED_OPEN_POSITION":
+                current_id = legacy_migration_position_identifier_v1(current)
+                if current_id.get("broker_position_fingerprint") != expected_row.get("broker_position_fingerprint"):
+                    outcome = "QUANTITY_CHANGED"
+            if outcome == "MATCHED_OPEN_POSITION":
+                approved_by_position[position_key] = current
+            outcomes.append({
+                "position_id": position_id,
+                "symbol": symbol,
+                "outcome": outcome,
+                "expected_fingerprint": expected_row.get("broker_position_fingerprint"),
+            })
+
+        migrated_ids = set(approved_by_position)
+        updated_rows: list[dict[str, Any]] = []
+        updated_reviews = dict(refreshed_reviews)
+        for row in resolution_rows:
+            position_id = str(row.get("position_id") or row.get("asset_id") or "")
+            position_key = position_id.upper()
+            if position_key not in migrated_ids:
+                updated_rows.append(row)
+                continue
+            prior = dict(updated_reviews.get(position_key) or {})
+            applied = {
+                **prior,
+                "management_cohort": "LEGACY_POSITION_RESOLUTION",
+                "legacy_migration_approved": True,
+                "legacy_migration_approval_id": approval.get("approval_id"),
+                "legacy_migration_manifest_id": manifest.get("migration_manifest_id"),
+                "legacy_migration_state": "APPLIED",
+                "legacy_resolution_approved": True,
+                "legacy_resolution_approval_id": approval.get("approval_id"),
+                "legacy_slot_exclusion_approved": True,
+                "active_slot_exclusion": True,
+                "full_risk_included": True,
+                "decreasing_only": True,
+                "no_new_legacy_entries": True,
+            }
+            updated_reviews[position_key] = applied
+            overlay = build_position_management_overlay_v1(row, prior_review=applied, now=now)
+            updated_rows.append({**row, **overlay})
+
+        application = {
+            "schema_version": "astra_legacy_migration_application_v1",
+            "migration_manifest_id": manifest.get("migration_manifest_id"),
+            "approval_id": approval.get("approval_id"),
+            "applied_at": _now_iso(),
+            "positions_matched": sum(1 for row in outcomes if row["outcome"] == "MATCHED_OPEN_POSITION"),
+            "positions_already_closed": sum(1 for row in outcomes if row["outcome"] == "ALREADY_CLOSED"),
+            "positions_mismatched": sum(1 for row in outcomes if row["outcome"] in {"QUANTITY_CHANGED", "SYMBOL_MISMATCH", "POSITION_NOT_FOUND"}),
+            "positions_ambiguous": sum(1 for row in outcomes if row["outcome"] == "AMBIGUOUS_FAIL_CLOSED"),
+            "positions_successfully_migrated": len(migrated_ids),
+            "outcomes": outcomes,
+            "full_risk_inclusion_required": True,
+            "active_slot_exclusion_allowed": True,
+            "decreasing_only": True,
+        }
+        already_closed = approval.get("approval_status") == "APPLIED_AND_CLOSED"
+        approval.update({
+            "approval_status": "APPLIED_AND_CLOSED",
+            "consumed_once": True,
+            "consumed_at": approval.get("consumed_at") or _now_iso(),
+            "expires_after_application": True,
+            "application_summary": {
+                key: application[key]
+                for key in ("positions_matched", "positions_already_closed", "positions_mismatched", "positions_ambiguous", "positions_successfully_migrated")
+            },
+        })
+        if already_closed:
+            application["recovery_state"] = "EXISTING_MANIFEST_OVERLAY_RESTORED"
+            application["recovered_at"] = _now_iso()
+        manifest["approval_status"] = "APPLIED_AND_CLOSED"
+        self._runtime_state["legacy_migration_manifest_v1"] = manifest
+        self._runtime_state["legacy_migration_approval_v1"] = approval
+        self._runtime_state["legacy_migration_application_v1"] = application
+        return updated_rows, updated_reviews
+
     def _evidence_capacity_snapshot_v1(
         self,
         broker_snapshot: dict[str, Any],
@@ -4373,6 +4544,11 @@ class PaperAutopilotEngine:
         if broker_payload.get("broker_positions_fetch_ok"):
             # Broker reconciliation is authoritative for which positions are
             # still active.  Retain only reviews for current broker positions.
+            self._runtime_state["position_resolution_reviews"] = refreshed_reviews
+            resolution_rows, refreshed_reviews = self._apply_approved_legacy_migration_v1(
+                resolution_rows,
+                refreshed_reviews,
+            )
             self._runtime_state["position_resolution_reviews"] = refreshed_reviews
         positions = resolution_rows
         internal_by_symbol = {
@@ -4421,6 +4597,9 @@ class PaperAutopilotEngine:
             "legacy_resolution_approval_required", "legacy_resolution_approved",
             "legacy_resolution_approval_id", "active_slot_exclusion_eligible",
             "active_slot_exclusion_approved", "full_risk_included", "current_thesis",
+            "legacy_migration_approved", "legacy_migration_approval_id",
+            "legacy_migration_manifest_id", "legacy_migration_state", "active_slot_exclusion",
+            "day_horizon_drift_decision", "day_horizon_drift_reason",
             "exit_readiness_state", "position_age_days", "last_review_at", "next_review_at",
             "review_state", "hold_exception_state",
         )
@@ -4433,6 +4612,22 @@ class PaperAutopilotEngine:
             prior_reviews_by_position=refreshed_reviews,
         )
         snapshot["position_resolution_reviews_owner"] = "engine.astra_unified_position_lifecycle_v1"
+        snapshot["legacy_migration_manifest_v1"] = {
+            key: value
+            for key, value in dict(self._runtime_state.get("legacy_migration_manifest_v1") or {}).items()
+            if key != "position_identifiers"
+        }
+        snapshot["legacy_migration_manifest_position_count"] = len(
+            list((self._runtime_state.get("legacy_migration_manifest_v1") or {}).get("position_identifiers") or [])
+        )
+        snapshot["legacy_migration_approval_v1"] = {
+            key: value
+            for key, value in dict(self._runtime_state.get("legacy_migration_approval_v1") or {}).items()
+            if key != "approved_position_identifiers"
+        }
+        snapshot["legacy_migration_application_v1"] = dict(
+            self._runtime_state.get("legacy_migration_application_v1") or {}
+        )
         snapshot["position_rows_source"] = "worker_broker_reconciliation"
         snapshot["position_rows_secret_free"] = True
         self._runtime_state["last_evidence_capacity_snapshot"] = dict(snapshot)

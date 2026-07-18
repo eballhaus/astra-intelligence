@@ -91,9 +91,9 @@ def _approved_legacy_slot_exclusion(row: Mapping[str, Any]) -> bool:
     return bool(
         _text(row.get("management_cohort")).upper() == "LEGACY_POSITION_RESOLUTION"
         and bool(row.get("decreasing_only"))
-        and bool(row.get("legacy_resolution_approved"))
-        and bool(_text(row.get("legacy_resolution_approval_id")))
-        and bool(row.get("active_slot_exclusion_approved"))
+        and bool(row.get("legacy_migration_approved") or row.get("legacy_resolution_approved"))
+        and bool(_text(row.get("legacy_migration_approval_id") or row.get("legacy_resolution_approval_id")))
+        and bool(row.get("active_slot_exclusion") or row.get("active_slot_exclusion_approved"))
     )
 
 
@@ -282,11 +282,16 @@ def build_capacity_snapshot(
     lanes: dict[str, dict[str, Any]] = {}
     for lane in LANES:
         config = _reserve_config(lane, values)
-        open_position_count = len(lane_rows[lane])
+        raw_lane_rows = lane_rows[lane]
+        active_lane_rows = [row for row in raw_lane_rows if not _approved_legacy_slot_exclusion(row)]
+        legacy_excluded_rows = [row for row in raw_lane_rows if _approved_legacy_slot_exclusion(row)]
+        open_position_count = len(active_lane_rows)
         pending_order_count = len(lane_pending[lane])
         active_commitment_count = len(lane_commitments[lane])
         used = open_position_count + pending_order_count + active_commitment_count
-        used_capital = round(sum(_position_value(row) for row in lane_rows[lane] + lane_pending[lane]), 4)
+        used_capital = round(sum(_position_value(row) for row in active_lane_rows + lane_pending[lane]), 4)
+        legacy_excluded_capital = round(sum(_position_value(row) for row in legacy_excluded_rows), 4)
+        raw_lane_capital = round(used_capital + legacy_excluded_capital, 4)
         configured_limit = config.get("configured_capital_limit")
         capital_remaining = round(max(0.0, configured_limit - used_capital), 4) if configured_limit is not None else None
         position_limit = config.get("configured_position_limit")
@@ -316,9 +321,8 @@ def build_capacity_snapshot(
             blockers.append(_text(global_risk_reason) or "GLOBAL_RISK_BLOCKED")
         reserve_available = not blockers
         if lane == "SWING":
-            decision = "AVAILABLE" if reserve_available and global_remaining and global_remaining > 0 else ("GLOBAL_CAPACITY_EXHAUSTED" if state_fresh else "BROKER_STATE_STALE")
-            if global_remaining == 0 and reserve_available:
-                decision = "GLOBAL_CAPACITY_EXHAUSTED"
+            slot_available = active_strategy_remaining is not None and active_strategy_remaining > 0
+            decision = "AVAILABLE" if reserve_available and slot_available else ("ACTIVE_STRATEGY_SLOT_CAPACITY_EXHAUSTED" if state_fresh else "BROKER_STATE_STALE")
         else:
             if not reserve_available:
                 if "GLOBAL_RISK_BLOCKED" in blockers:
@@ -357,15 +361,19 @@ def build_capacity_snapshot(
             "effective_capital_limit": configured_limit,
             "approved_ceiling": config.get("approved_ceiling"),
             "capital_used": used_capital,
+            "raw_broker_capital_used": raw_lane_capital,
+            "legacy_excluded_capital": legacy_excluded_capital,
             "capital_remaining": capital_remaining,
             "configured_position_limit": position_limit,
             "positions_used": used,
+            "raw_broker_position_count": len(raw_lane_rows),
+            "legacy_excluded_position_count": len(legacy_excluded_rows),
             "positions_remaining": positions_remaining,
             "open_position_count": open_position_count,
             "pending_order_count": pending_order_count,
             "active_commitment_count": active_commitment_count,
             "current_reserve_occupancy_count": used,
-            "reserve_available": bool(reserve_available and lane != "SWING"),
+            "reserve_available": bool(reserve_available and (lane != "SWING" or decision == "AVAILABLE")),
             "reserve_state": reserve_state,
             "broker_buying_power_sufficient": buying_power is not None and buying_power > 0,
             "global_account_risk_allowed": bool(global_risk_allowed),
@@ -435,7 +443,7 @@ def build_capacity_snapshot(
         "global_risk_reason": _text(global_risk_reason),
         "swing_core_capital_used": lanes["swing"]["capital_used"],
         "swing_core_position_count": lanes["swing"]["positions_used"],
-        "swing_core_capacity_remaining": global_remaining,
+        "swing_core_capacity_remaining": active_strategy_remaining if excluded_legacy_symbols else global_remaining,
         "reserve_capital_excluded_from_swing": True,
         "lane_entry_counts": entry_counts,
         "historical_entry_counts_advisory_only": True,

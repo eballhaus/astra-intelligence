@@ -40,6 +40,13 @@ def _text(value: Any, default: str = "") -> str:
     return text or default
 
 
+def _integer(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _now() -> str:
     return utc_now()
 
@@ -325,14 +332,60 @@ class ContinuousGovernanceV1:
         # PaperAutopilot reconciliation cycle.  Governance observes it here;
         # it cannot approve migration, release capacity, or submit an order.
         management_reviews = _dict(runtime_state.get("position_resolution_reviews"))
+        migration_manifest = _dict(runtime_state.get("legacy_migration_manifest_v1"))
+        migration_approval = _dict(runtime_state.get("legacy_migration_approval_v1"))
+        migration_application = _dict(runtime_state.get("legacy_migration_application_v1"))
+        if migration_manifest or migration_approval or migration_application:
+            manifest_id = _text(migration_manifest.get("migration_manifest_id"))
+            approval_id = _text(migration_approval.get("approval_id"))
+            approved_count = _integer(migration_approval.get("approved_position_count"), 0)
+            manifest_count = _integer(migration_manifest.get("position_count"), 0)
+            applied = _text(migration_approval.get("approval_status")) == "APPLIED_AND_CLOSED"
+            invariant_base = {
+                "position_id": manifest_id or "legacy_migration_manifest",
+                "symbol": "LEGACY_MIGRATION",
+                "classification": "ONE_TIME_APPROVAL",
+                "management_cohort": "LEGACY_POSITION_RESOLUTION",
+            }
+            def migration_invariant(invariant_id: str, passed: bool, blocker: str) -> None:
+                invariants.append({
+                    "invariant_id": invariant_id,
+                    "owner": "PaperAutopilot._evidence_capacity_snapshot_v1",
+                    "dependencies": [manifest_id or "legacy_migration_manifest"],
+                    "state": "PASS" if passed else "FAIL",
+                    "observed_value": invariant_base,
+                    "expected_value": "immutable_one_time_legacy_migration",
+                    "first_failed_at": None if passed else _now(),
+                    "last_checked_at": _now(),
+                    "failure_count": 0 if passed else 1,
+                    "severity": "INFO" if passed else "HIGH",
+                    "repairability": "DIAGNOSTIC",
+                    "exact_blocker": None if passed else blocker,
+                    "allowed_remediations": [],
+                })
+            migration_invariant(
+                "MIGRATION_MANIFEST_IMMUTABLE",
+                bool(manifest_id and _text(migration_manifest.get("manifest_hash")) and migration_manifest.get("immutable")),
+                "migration_manifest_identity_or_hash_missing",
+            )
+            migration_invariant(
+                "APPROVAL_APPLIES_TO_MANIFEST_ONLY",
+                bool(approval_id and migration_approval.get("migration_manifest_id") == manifest_id and approved_count == manifest_count),
+                "migration_approval_manifest_scope_mismatch",
+            )
+            migration_invariant(
+                "APPROVAL_CONSUMED_ONCE",
+                not applied or bool(migration_approval.get("consumed_once") and migration_approval.get("expires_after_application")),
+                "applied_migration_approval_reusable",
+            )
         for position_key, management_raw in list(management_reviews.items())[:100]:
             management = _dict(management_raw)
             symbol = _text(management.get("symbol") or position_key).upper()
             legacy = _text(management.get("management_cohort")).upper() == "LEGACY_POSITION_RESOLUTION"
             slot_excluded = bool(management.get("active_slot_exclusion_approved"))
             approval_complete = bool(
-                management.get("legacy_resolution_approved")
-                and _text(management.get("legacy_resolution_approval_id"))
+                (management.get("legacy_migration_approved") or management.get("legacy_resolution_approved"))
+                and _text(management.get("legacy_migration_approval_id") or management.get("legacy_resolution_approval_id"))
                 and management.get("decreasing_only")
             )
             base = {
@@ -367,9 +420,9 @@ class ContinuousGovernanceV1:
             management_invariant("ACTIVE_SLOT_EXCLUSION_ONLY", not slot_excluded or approval_complete, "legacy_slot_exclusion_missing_governance_approval")
             management_invariant(
                 "NO_DAY_TO_SWING_DRIFT",
-                _text(management.get("classification")) != "DAY_HORIZON_DRIFT_POSITION",
+                _text(management.get("classification")) != "DAY_HORIZON_DRIFT_POSITION"
+                or bool(_text(management.get("day_horizon_drift_decision"))),
                 "day_horizon_drift_requires_hold_exception_or_exit_review",
-                waiting=_text(management.get("classification")) == "DAY_HORIZON_DRIFT_POSITION",
             )
         return invariants, rows
 
