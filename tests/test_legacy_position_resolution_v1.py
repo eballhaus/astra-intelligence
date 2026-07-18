@@ -70,7 +70,20 @@ class LegacyPositionResolutionTests(unittest.TestCase):
         self.assertEqual(overlay["classification"], "DAY_HORIZON_DRIFT_POSITION")
         self.assertEqual(overlay["original_lane"], "DAY")
         self.assertEqual(overlay["hold_exception_state"], "THESIS_REVALIDATION_REQUIRED")
-        self.assertEqual(overlay["day_horizon_drift_decision"], "INSUFFICIENT_EVIDENCE_FAIL_CLOSED")
+        self.assertEqual(overlay["day_horizon_drift_decision"], "INSUFFICIENT_EVIDENCE_WITH_HARD_DEADLINE")
+        self.assertEqual(overlay["day_close_root_cause"], "CONTRACT_INCOMPLETE")
+        self.assertTrue(overlay["day_hard_deadline_at"])
+
+    def test_non_day_position_has_no_day_close_root_cause(self):
+        overlay = build_position_management_overlay_v1({"symbol": "AAPL", "qty": 1, "market_value": 100})
+        self.assertIsNone(overlay["day_close_root_cause"])
+
+    def test_deprecated_day_fail_closed_label_is_migrated_to_bounded_deadline(self):
+        overlay = build_position_management_overlay_v1({
+            "symbol": "SPY", "lane_id": "DAY", "original_lane": "DAY",
+            "entry_timestamp": (datetime.now(UTC) - timedelta(days=2)).isoformat(),
+        }, prior_review={"day_horizon_drift_decision": "INSUFFICIENT_EVIDENCE_FAIL_CLOSED"})
+        self.assertEqual(overlay["day_horizon_drift_decision"], "INSUFFICIENT_EVIDENCE_WITH_HARD_DEADLINE")
 
     def test_one_time_manifest_is_stable_and_excludes_later_positions(self):
         rows = [

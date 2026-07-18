@@ -146,6 +146,23 @@ class ContinuousGovernanceTests(unittest.TestCase):
         self.assertEqual(failed[0]["state"], "FAIL")
         self.assertEqual(failed[0]["severity"], "HIGH")
 
+    def test_crypto_incomplete_contract_requires_structured_attribution(self):
+        runtime_state = runtime(review=False)
+        runtime_state["last_execution_trace"] = {"per_candidate_decision_trace": [{
+            "symbol": "BTC/USD", "candidate_id": "crypto-btc", "asset_type": "crypto",
+            "eligible": False, "decision_reason": "PRETRADE_DECISION_CONTRACT_INVALID",
+            "pretrade_decision_contract_state": "CONTRACT_INCOMPLETE",
+            "pretrade_decision_contract_missing_fields": ["expected_mfe"],
+            "pretrade_decision_contract_v1": {"contract_state": "CONTRACT_INCOMPLETE", "missing_required_fields": ["expected_mfe"]},
+            "eligibility_gate_attribution_v1": {"first_failing_gate": {"gate": "contract"}},
+        }]}
+        with tempfile.TemporaryDirectory() as directory:
+            result = ContinuousGovernanceV1(directory).run_worker_cycle(
+                worker_state=worker_state(), runtime_state=runtime_state, safety=SAFETY,
+            )
+        failed = [row for row in result["invariants"] if row.get("invariant_id") == "NO_CONTRACT_INCOMPLETE_WITHOUT_FIELD_ATTRIBUTION"]
+        self.assertEqual(failed[0]["state"], "FAIL")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -817,6 +817,22 @@ def build_position_management_overlay_v1(
     next_review = current + timedelta(hours=review_hours)
     if prior_next_review and prior_next_review >= current:
         next_review = prior_next_review
+    day_entry_lineage_complete = bool(
+        _text(row.get("entry_order_id") or row.get("source_broker_order_id"))
+        and _text(row.get("entry_fill_id"))
+    )
+    day_close_root_cause = (
+        "CONTRACT_INCOMPLETE" if not day_entry_lineage_complete
+        else "PRE_CLOSE_REVIEW_NOT_RUN"
+    ) if classification == "DAY_HORIZON_DRIFT_POSITION" else None
+    prior_day_drift_decision = _text(
+        row.get("day_horizon_drift_decision") or prior.get("day_horizon_drift_decision")
+    )
+    day_drift_decision = (
+        "INSUFFICIENT_EVIDENCE_WITH_HARD_DEADLINE"
+        if prior_day_drift_decision in {"", "INSUFFICIENT_EVIDENCE_FAIL_CLOSED"}
+        else prior_day_drift_decision
+    ) if classification == "DAY_HORIZON_DRIFT_POSITION" else None
     return {
         "schema_version": "astra_position_management_overlay_v1",
         "position_id": position_id,
@@ -852,11 +868,12 @@ def build_position_management_overlay_v1(
         "next_review_at": _iso(next_review),
         "review_state": "OVERDUE_REVIEW" if stale_active else "SCHEDULED_REVIEW",
         "hold_exception_state": "HOLD_EXCEPTION_APPROVED" if bool(row.get("hold_exception_approved")) else "THESIS_REVALIDATION_REQUIRED" if classification in {"DAY_HORIZON_DRIFT_POSITION", "STALE_ACTIVE_POSITION"} else "NOT_REQUIRED",
-        "day_horizon_drift_decision": (
-            _text(row.get("day_horizon_drift_decision") or prior.get("day_horizon_drift_decision"))
-            or "INSUFFICIENT_EVIDENCE_FAIL_CLOSED"
-        ) if classification == "DAY_HORIZON_DRIFT_POSITION" else None,
+        "day_horizon_drift_decision": day_drift_decision,
         "day_horizon_drift_reason": "DAY_POSITION_EXCEEDED_SAME_SESSION_HORIZON" if classification == "DAY_HORIZON_DRIFT_POSITION" else None,
+        "day_close_root_cause": day_close_root_cause,
+        "day_pre_close_review_state": "FINAL_PRE_CLOSE_DECISION_REQUIRED" if classification == "DAY_HORIZON_DRIFT_POSITION" else "NOT_APPLICABLE",
+        "day_hard_deadline_at": _iso(next_review) if classification == "DAY_HORIZON_DRIFT_POSITION" else None,
+        "day_exit_or_conversion_state": "EXIT_REVIEW_REQUIRED" if classification == "DAY_HORIZON_DRIFT_POSITION" else "NOT_APPLICABLE",
         "authoritative_broker_truth": False,
         "reconstruction_is_context_only": reconstructable,
         "automatic_exit_authorized": False,

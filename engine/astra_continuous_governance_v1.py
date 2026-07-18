@@ -424,6 +424,74 @@ class ContinuousGovernanceV1:
                 or bool(_text(management.get("day_horizon_drift_decision"))),
                 "day_horizon_drift_requires_hold_exception_or_exit_review",
             )
+            management_invariant(
+                "NO_DAY_POSITION_PAST_SESSION_WITHOUT_DECISION",
+                _text(management.get("classification")) != "DAY_HORIZON_DRIFT_POSITION"
+                or bool(_text(management.get("day_horizon_drift_decision")) and _text(management.get("day_hard_deadline_at"))),
+                "day_horizon_drift_missing_bounded_decision_or_deadline",
+            )
+            management_invariant(
+                "NO_UNBOUNDED_DAY_OVERNIGHT_EXCEPTION",
+                _text(management.get("classification")) != "DAY_HORIZON_DRIFT_POSITION"
+                or bool(_text(management.get("day_hard_deadline_at"))),
+                "day_overnight_exception_or_drift_has_no_expiration",
+            )
+        capacity = _dict(runtime_state.get("last_evidence_capacity_snapshot"))
+        day_capacity = _dict(_dict(capacity.get("lanes")).get("day"))
+        if day_capacity:
+            position_limit = _integer(day_capacity.get("configured_position_limit"), 0)
+            day_drift_count = sum(
+                1 for row in management_reviews.values()
+                if _text(_dict(row).get("classification")) == "DAY_HORIZON_DRIFT_POSITION"
+            )
+            invariants.append({
+                "invariant_id": "NO_SINGLE_POSITION_LANE_DEADLOCK",
+                "owner": "astra_evidence_accumulation_capacity_v1",
+                "dependencies": ["DAY"],
+                "state": "PASS" if not day_drift_count or position_limit > 1 else "FAIL",
+                "observed_value": {"day_position_limit": position_limit, "day_drift_count": day_drift_count},
+                "expected_value": "degraded_day_position_cannot_consume_entire_day_lane",
+                "first_failed_at": None if not day_drift_count or position_limit > 1 else _now(),
+                "last_checked_at": _now(),
+                "failure_count": 0 if not day_drift_count or position_limit > 1 else 1,
+                "severity": "INFO" if not day_drift_count or position_limit > 1 else "HIGH",
+                "repairability": "DIAGNOSTIC",
+                "exact_blocker": None if not day_drift_count or position_limit > 1 else "DAY_LANE_DEADLOCK",
+                "allowed_remediations": [],
+            })
+        trace_rows = list(_dict(runtime_state.get("last_execution_trace")).get("per_candidate_decision_trace") or [])
+        for trace in trace_rows[:200]:
+            row = _dict(trace)
+            if _text(row.get("asset_type") or row.get("asset_class")).lower() != "crypto":
+                continue
+            attribution = _dict(row.get("eligibility_gate_attribution_v1"))
+            first_gate = _dict(attribution.get("first_failing_gate"))
+            contract = _dict(row.get("pretrade_decision_contract_v1"))
+            contract_attribution = _dict(row.get("contract_failure_attribution_v1"))
+            missing = list(contract.get("missing_required_fields") or row.get("pretrade_decision_contract_missing_fields") or [])
+            if not bool(row.get("eligible")) and not first_gate:
+                invariants.append({
+                    "invariant_id": "NO_VAGUE_CRYPTO_GATE_REJECTION", "owner": "PaperAutopilot._candidate_trace_row",
+                    "dependencies": [_text(row.get("candidate_id") or row.get("symbol"))], "state": "FAIL",
+                    "observed_value": {"symbol": row.get("symbol")}, "expected_value": "exact_crypto_first_failing_gate",
+                    "first_failed_at": _now(), "last_checked_at": _now(), "failure_count": 1,
+                    "severity": "HIGH", "repairability": "DIAGNOSTIC", "exact_blocker": "CRYPTO_GATE_ATTRIBUTION_MISSING", "allowed_remediations": [],
+                })
+            contract_incomplete = _text(contract.get("contract_state") or row.get("pretrade_decision_contract_state")).upper() == "CONTRACT_INCOMPLETE"
+            attribution_complete = bool(
+                contract_attribution
+                and list(contract_attribution.get("missing_fields") or []) == missing
+                and _text(contract_attribution.get("producer"))
+                and _text(contract_attribution.get("consumer"))
+            )
+            if contract_incomplete and (not missing or not attribution_complete):
+                invariants.append({
+                    "invariant_id": "NO_CONTRACT_INCOMPLETE_WITHOUT_FIELD_ATTRIBUTION", "owner": "PaperAutopilot._candidate_trace_row",
+                    "dependencies": [_text(row.get("candidate_id") or row.get("symbol"))], "state": "FAIL",
+                    "observed_value": {"symbol": row.get("symbol"), "missing_fields": missing}, "expected_value": "missing_contract_fields_attributed",
+                    "first_failed_at": _now(), "last_checked_at": _now(), "failure_count": 1,
+                    "severity": "HIGH", "repairability": "DIAGNOSTIC", "exact_blocker": "CRYPTO_CONTRACT_INCOMPLETE", "allowed_remediations": [],
+                })
         return invariants, rows
 
     def _campaign_for(self, rows: list[dict[str, Any]], authorization: str) -> dict[str, Any] | None:

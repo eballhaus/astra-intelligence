@@ -97,6 +97,33 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
         self.assertEqual(result["capacity_decision"], "LANE_RESERVE_EXHAUSTED")
         self.assertIn("LANE_POSITION_LIMIT_REACHED", result["exact_blockers"])
 
+    def test_day_second_slot_remains_available_beneath_unchanged_capital_ceiling(self):
+        env = {**BASE_ENV, "ASTRA_DAY_EVIDENCE_POSITION_LIMIT": "2"}
+        capacity = build_capacity_snapshot(
+            broker_snapshot={"broker_reconciliation_active": True, "broker_positions_fetch_ok": True, "broker_state_age_seconds": 0},
+            account_snapshot={"buying_power": 50000},
+            open_positions=[{"symbol": "DAY1", "lane_id": "DAY", "market_value": 100}],
+            env=env, global_position_limit=10,
+        )
+        result = candidate_capacity_decision(capacity, lane_id="DAY", symbol="DAY2", open_symbols=[])
+        self.assertTrue(result["allowed"])
+        self.assertEqual(capacity["lanes"]["day"]["configured_capital_limit"], 15000.0)
+        self.assertEqual(capacity["lanes"]["day"]["positions_remaining"], 1)
+
+    def test_swing_new_concurrency_cap_is_separate_from_global_active_slots(self):
+        env = {**BASE_ENV, "ASTRA_NEW_SWING_CONCURRENCY_LIMIT": "2"}
+        capacity = build_capacity_snapshot(
+            broker_snapshot={"broker_reconciliation_active": True, "broker_positions_fetch_ok": True, "broker_state_age_seconds": 0},
+            account_snapshot={"buying_power": 50000},
+            open_positions=[
+                {"symbol": "S1", "lane_id": "SWING", "market_value": 100},
+                {"symbol": "S2", "lane_id": "SWING", "market_value": 100},
+            ], env=env, global_position_limit=10,
+        )
+        result = candidate_capacity_decision(capacity, lane_id="SWING", symbol="S3", open_symbols=[])
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["capacity_decision"], "SWING_CONCURRENCY_LIMIT_REACHED")
+
     def test_global_risk_overrides_reserve(self):
         result = candidate_capacity_decision(
             snapshot(risk=False), lane_id="DAY", symbol="NEW", open_symbols=[]
@@ -314,6 +341,11 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
             )
             self.assertTrue(allowed, reason)
             self.assertEqual(trace["capacity_decision"], "AVAILABLE_FROM_LANE_RESERVE")
+            self.assertEqual(
+                trace["contract_failure_attribution_v1"]["producer"],
+                "engine.astra_premarket_certification_v1.build_pretrade_decision_contract",
+            )
+            self.assertEqual(trace["contract_failure_attribution_v1"]["consumer"], "PaperAutopilot._candidate_trace_row")
 
     def test_operational_dry_run_reaches_order_ready_from_day_reserve(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, BASE_ENV, clear=False):

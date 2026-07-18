@@ -17,6 +17,8 @@ from typing import Any, Mapping, Iterable
 VERSION = "1.0.0"
 LANES = ("SWING", "DAY", "CRYPTO")
 APPROVED_CEILINGS = {"DAY": 15000.0, "CRYPTO": 10000.0}
+APPROVED_CONCURRENT_POSITION_LIMITS = {"DAY": 3, "CRYPTO": 4}
+DEFAULT_NEW_SWING_CONCURRENCY_LIMIT = 4
 DEFAULT_GLOBAL_POSITION_LIMIT = 10
 DEFAULT_BROKER_STATE_MAX_AGE_SECONDS = 120.0
 
@@ -157,6 +159,8 @@ def _reserve_config(lane: str, env: Mapping[str, Any]) -> dict[str, Any]:
     configured_position_limit = _integer(raw_position_limit, 1)
     if configured_position_limit <= 0:
         capital_status = "CAPITAL_CONFIGURATION_INVALID"
+    elif configured_position_limit > APPROVED_CONCURRENT_POSITION_LIMITS[lane]:
+        capital_status = "POSITION_LIMIT_EXCEEDS_APPROVAL"
     return {
         "lane_id": lane,
         "reserve_enabled": _truthy(env.get(enabled_key, "0")),
@@ -165,6 +169,7 @@ def _reserve_config(lane: str, env: Mapping[str, Any]) -> dict[str, Any]:
         "approved_ceiling": ceiling,
         "configured_capital_limit": configured_capital,
         "configured_position_limit": configured_position_limit,
+        "approved_position_limit": APPROVED_CONCURRENT_POSITION_LIMITS[lane],
         "max_entries": max(0, _integer(env.get(entries_key, "2"), 2)),
         "max_loss": _number(env.get(loss_key)),
         "capital_configuration_status": capital_status,
@@ -267,6 +272,10 @@ def build_capacity_snapshot(
         active_strategy_status = "BROKER_STATE_STALE"
     elif active_strategy_open is None:
         active_strategy_status = "BROKER_POSITION_DETAILS_UNAVAILABLE"
+    configured_new_swing_limit = max(1, min(
+        6,
+        _integer(values.get("ASTRA_NEW_SWING_CONCURRENCY_LIMIT", DEFAULT_NEW_SWING_CONCURRENCY_LIMIT), DEFAULT_NEW_SWING_CONCURRENCY_LIMIT),
+    ))
     lane_rows: dict[str, list[dict[str, Any]]] = {lane: [] for lane in LANES}
     lane_pending: dict[str, list[dict[str, Any]]] = {lane: [] for lane in LANES}
     lane_commitments: dict[str, list[dict[str, Any]]] = {lane: [] for lane in LANES}
@@ -321,8 +330,13 @@ def build_capacity_snapshot(
             blockers.append(_text(global_risk_reason) or "GLOBAL_RISK_BLOCKED")
         reserve_available = not blockers
         if lane == "SWING":
+            managed_swing_count = len(active_lane_rows)
+            swing_concurrency_remaining = max(0, configured_new_swing_limit - managed_swing_count)
             slot_available = active_strategy_remaining is not None and active_strategy_remaining > 0
-            decision = "AVAILABLE" if reserve_available and slot_available else ("ACTIVE_STRATEGY_SLOT_CAPACITY_EXHAUSTED" if state_fresh else "BROKER_STATE_STALE")
+            decision = "AVAILABLE" if reserve_available and slot_available and swing_concurrency_remaining > 0 else (
+                "SWING_CONCURRENCY_LIMIT_REACHED" if state_fresh and swing_concurrency_remaining <= 0 else
+                "ACTIVE_STRATEGY_SLOT_CAPACITY_EXHAUSTED" if state_fresh else "BROKER_STATE_STALE"
+            )
         else:
             if not reserve_available:
                 if "GLOBAL_RISK_BLOCKED" in blockers:
@@ -365,6 +379,7 @@ def build_capacity_snapshot(
             "legacy_excluded_capital": legacy_excluded_capital,
             "capital_remaining": capital_remaining,
             "configured_position_limit": position_limit,
+            "approved_position_limit": config.get("approved_position_limit"),
             "positions_used": used,
             "raw_broker_position_count": len(raw_lane_rows),
             "legacy_excluded_position_count": len(legacy_excluded_rows),
@@ -396,6 +411,11 @@ def build_capacity_snapshot(
             "historical_entry_counts_advisory_only": True,
             "max_loss": config.get("max_loss"),
         }
+        if lane == "SWING":
+            lanes[lane.lower()].update({
+                "new_swing_concurrency_ceiling": configured_new_swing_limit,
+                "new_swing_concurrency_remaining": swing_concurrency_remaining,
+            })
     snapshot_basis = "|".join([
         generated_at, str(total_occupancy), str(global_limit), str(buying_power),
         str(active_strategy_occupancy), str(len(excluded_legacy_symbols)),
@@ -444,6 +464,8 @@ def build_capacity_snapshot(
         "swing_core_capital_used": lanes["swing"]["capital_used"],
         "swing_core_position_count": lanes["swing"]["positions_used"],
         "swing_core_capacity_remaining": active_strategy_remaining if excluded_legacy_symbols else global_remaining,
+        "new_swing_concurrency_ceiling": configured_new_swing_limit,
+        "new_swing_concurrency_remaining": lanes["swing"].get("new_swing_concurrency_remaining"),
         "reserve_capital_excluded_from_swing": True,
         "lane_entry_counts": entry_counts,
         "historical_entry_counts_advisory_only": True,
