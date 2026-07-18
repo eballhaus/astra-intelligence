@@ -46714,6 +46714,7 @@ def _portfolio_capacity_release_review_payload_v1(statuses: dict | None = None) 
             if isinstance(row, dict)
         ][:100]
     snapshot = _evidence_accumulation_capacity_payload_v1(current)
+    resolution_inventory = dict(snapshot.get("position_resolution_inventory_v1") or {})
     if not positions:
         positions = [
             dict(row) for row in (snapshot.get("position_rows_for_read_only_consumers") or [])
@@ -46747,6 +46748,10 @@ def _portfolio_capacity_release_review_payload_v1(statuses: dict | None = None) 
     review["total_positions_reviewed"] = review.get("total_positions")
     review["classification_counts"] = dict(review.get("positions_by_state") or {})
     review["positions"] = list(review.get("review_rows") or [])
+    review["legacy_position_resolution_v1"] = resolution_inventory
+    review["canonical_position_projection_owner"] = "PaperAutopilot._evidence_capacity_snapshot_v1"
+    review["canonical_lifecycle_owner"] = "engine.astra_unified_position_lifecycle_v1.build_unified_position_lifecycle_decision_v1"
+    review["legacy_resolution_is_approval_gated"] = True
     review["automatic_exits_enabled"] = False
     return {**review, **_safety_flags_v1()}
 

@@ -133,6 +133,41 @@ def _capacity_recycling_integrity(
     }
 
 
+def _legacy_position_resolution_integrity(
+    positions: Iterable[Mapping[str, Any]], capacity: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Report the existing lifecycle overlay without authorizing migration.
+
+    Unapproved legacy records are a legitimate waiting state.  They remain in
+    total broker risk and cannot free a current-strategy slot until the
+    canonical worker receives an explicit Governance approval reference.
+    """
+    rows = [dict(row) for row in positions if isinstance(row, Mapping)]
+    legacy = [row for row in rows if _text(row.get("management_cohort")).upper() == "LEGACY_POSITION_RESOLUTION"]
+    approved = [row for row in legacy if bool(row.get("active_slot_exclusion_approved"))]
+    missing_owner = sorted(_text(row.get("symbol")).upper() for row in rows if not _text(row.get("lifecycle_owner")))
+    missing_thesis = sorted(_text(row.get("symbol")).upper() for row in rows if not _text(row.get("current_thesis")))
+    missing_review = sorted(_text(row.get("symbol")).upper() for row in rows if not _text(row.get("next_review_at")))
+    state = "REPAIRABLE_LIFECYCLE_DEFECT" if (missing_owner or missing_thesis or missing_review) else "LEGACY_MIGRATION_AWAITING_GOVERNANCE" if legacy and not approved else "PASS"
+    return {
+        "owner": "engine.astra_unified_position_lifecycle_v1",
+        "positions_processed": len(rows),
+        "legacy_positions_proposed": len(legacy),
+        "legacy_positions_approved": len(approved),
+        "active_slot_exclusion_count": int(capacity.get("approved_legacy_slot_exclusion_count") or 0),
+        "full_risk_inclusion_required": True,
+        "full_risk_inclusion_confirmed": all(bool(row.get("full_risk_included")) for row in legacy),
+        "no_new_legacy_entries": True,
+        "automatic_migration_enabled": False,
+        "automatic_exit_authorized": False,
+        "missing_lifecycle_owner": missing_owner,
+        "missing_current_thesis": missing_thesis,
+        "missing_next_review": missing_review,
+        "state": state,
+        "legitimate_waiting_state": state == "LEGACY_MIGRATION_AWAITING_GOVERNANCE",
+    }
+
+
 def _information_utilization(truths: list[Mapping[str, Any]], trace_rows: list[Mapping[str, Any]]) -> dict[str, Any]:
     """Report only observed consumption; unknown categories are never claimed learned."""
     categories = (
@@ -234,7 +269,11 @@ def _parallel_lane_readiness(
             blockers.append("CAPACITY_AUTHORITY_NOT_CURRENT")
         if lane_name == "swing":
             global_status = _text(capacity_snapshot.get("global_capacity_status")).upper()
-            if global_status != "AVAILABLE":
+            active_slot_status = _text(capacity_snapshot.get("active_strategy_slot_capacity_status")).upper()
+            slot_exclusions = int(capacity_snapshot.get("approved_legacy_slot_exclusion_count") or 0)
+            if slot_exclusions > 0 and active_slot_status == "AVAILABLE":
+                pass
+            elif global_status != "AVAILABLE":
                 capacity_full = True
                 blockers.append(global_status or "GLOBAL_CAPACITY_NOT_AVAILABLE")
         elif cap.get("arithmetic_consistency") != "PASS":
@@ -655,6 +694,7 @@ def build_multilane_operational_status(
             "state": "BROKER_UNREACHABLE" if (view.get("capacity_authority_state") or capacity_snapshot.get("capacity_authority_state")) == "BROKER_UNREACHABLE" else "STALE" if "STALE" in reserve_state else "INCONSISTENT" if arithmetic == "INCONSISTENT" else "PASS" if arithmetic == "PASS" else "WARMING_UP",
         }
     capacity_recycling = _capacity_recycling_integrity(positions, position_review_rows, capacity_snapshot)
+    legacy_resolution = _legacy_position_resolution_integrity(positions, capacity_snapshot)
     governance_findings: list[dict[str, Any]] = []
     if capacity_recycling["state"] == "REPAIRABLE_CAPACITY_DEFECT":
         governance_findings.append({
@@ -673,6 +713,18 @@ def build_multilane_operational_status(
                 "lane": lane_name.upper(),
                 "safe_remediation": "refresh_authoritative_broker_reconciliation_before_entry",
             })
+    if legacy_resolution["state"] == "REPAIRABLE_LIFECYCLE_DEFECT":
+        governance_findings.append({
+            "code": "LEGACY_POSITION_LIFECYCLE_INCOMPLETE",
+            "severity": "HIGH",
+            "owner": legacy_resolution["owner"],
+            "symbols": sorted(set(
+                legacy_resolution["missing_lifecycle_owner"]
+                + legacy_resolution["missing_current_thesis"]
+                + legacy_resolution["missing_next_review"]
+            )),
+            "safe_remediation": "refresh_existing_unified_lifecycle_management_overlay_in_normal_worker_cycle",
+        })
     truth_independence = _truth_independence(truths)
     information_utilization = _information_utilization(truths, trace_rows)
     parallel_lane_readiness = _parallel_lane_readiness(lane_payloads, capacity_integrity, capacity_snapshot)
@@ -714,6 +766,7 @@ def build_multilane_operational_status(
         capacity_integrity=capacity_integrity,
         governance_findings=governance_findings,
         information_utilization=information_utilization,
+        legacy_resolution=legacy_resolution,
     )
     all_lanes_enabled = all(bool(lane_payloads[key].get("lane_enabled")) for key in lane_payloads)
     operational_status = (
@@ -742,6 +795,7 @@ def build_multilane_operational_status(
         "truth_independence": truth_independence,
         "parallel_lane_readiness": parallel_lane_readiness,
         "capacity_recycling_integrity": capacity_recycling,
+        "legacy_position_resolution": legacy_resolution,
         "information_utilization": information_utilization,
         "cortex_truth_acceleration_oversight": cortex_oversight,
         "governance_truth_acceleration_findings": governance_findings,

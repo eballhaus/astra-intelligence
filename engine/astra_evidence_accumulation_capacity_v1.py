@@ -81,6 +81,22 @@ def _position_value(row: Mapping[str, Any]) -> float:
     return max(0.0, (qty or 0.0) * (price or 0.0)) if qty is not None and price is not None else 0.0
 
 
+def _approved_legacy_slot_exclusion(row: Mapping[str, Any]) -> bool:
+    """Allow a slot exclusion only for an explicitly approved legacy overlay.
+
+    Broker exposure is never excluded.  This only distinguishes current
+    strategy admission slots from legacy positions that remain fully included
+    in portfolio-risk, buying-power, concentration, and reconciliation views.
+    """
+    return bool(
+        _text(row.get("management_cohort")).upper() == "LEGACY_POSITION_RESOLUTION"
+        and bool(row.get("decreasing_only"))
+        and bool(row.get("legacy_resolution_approved"))
+        and bool(_text(row.get("legacy_resolution_approval_id")))
+        and bool(row.get("active_slot_exclusion_approved"))
+    )
+
+
 def _is_active_pending_order(row: Mapping[str, Any]) -> bool:
     """Return whether a broker order still occupies a reserve slot."""
     status = _text(row.get("status") or row.get("order_status")).lower()
@@ -226,6 +242,31 @@ def build_capacity_snapshot(
         global_status = "BROKER_STATE_STALE"
     elif total_open is None:
         global_status = "BROKER_POSITION_DETAILS_UNAVAILABLE"
+    excluded_legacy_symbols = {
+        _text(row.get("symbol")).upper() for row in positions
+        if _text(row.get("symbol")) and _approved_legacy_slot_exclusion(row)
+    }
+    legacy_exposure_symbols = {
+        _text(row.get("symbol")).upper() for row in positions
+        if _text(row.get("symbol")) and _text(row.get("management_cohort")).upper() == "LEGACY_POSITION_RESOLUTION"
+    }
+    active_strategy_open = len(distinct_symbols - excluded_legacy_symbols) if position_details_available else None
+    active_strategy_occupancy = (
+        active_strategy_open + len(pending_symbols) + len(commitment_symbols)
+        if active_strategy_open is not None else None
+    )
+    active_strategy_remaining = (
+        max(0, global_limit - active_strategy_occupancy)
+        if state_fresh and active_strategy_occupancy is not None else None
+    )
+    active_strategy_status = (
+        "AVAILABLE" if active_strategy_remaining and active_strategy_remaining > 0
+        else "ACTIVE_STRATEGY_SLOT_CAPACITY_EXHAUSTED"
+    )
+    if not state_fresh:
+        active_strategy_status = "BROKER_STATE_STALE"
+    elif active_strategy_open is None:
+        active_strategy_status = "BROKER_POSITION_DETAILS_UNAVAILABLE"
     lane_rows: dict[str, list[dict[str, Any]]] = {lane: [] for lane in LANES}
     lane_pending: dict[str, list[dict[str, Any]]] = {lane: [] for lane in LANES}
     lane_commitments: dict[str, list[dict[str, Any]]] = {lane: [] for lane in LANES}
@@ -349,6 +390,7 @@ def build_capacity_snapshot(
         }
     snapshot_basis = "|".join([
         generated_at, str(total_occupancy), str(global_limit), str(buying_power),
+        str(active_strategy_occupancy), str(len(excluded_legacy_symbols)),
         str(lanes.get("day", {}).get("capacity_decision")), str(lanes.get("crypto", {}).get("capacity_decision")),
     ])
     snapshot_id = hashlib.sha256(snapshot_basis.encode("utf-8")).hexdigest()[:20]
@@ -369,6 +411,20 @@ def build_capacity_snapshot(
         "cash": cash,
         "total_open_positions": total_open if state_fresh else None,
         "global_current_occupancy": total_occupancy if state_fresh else None,
+        "broker_total_exposure_position_count": total_open if state_fresh else None,
+        "legacy_existing_exposure_position_count": len(legacy_exposure_symbols) if state_fresh else None,
+        "current_managed_exposure_position_count": (len(distinct_symbols - legacy_exposure_symbols) if state_fresh else None),
+        "total_account_risk_capacity": {
+            "state": "CURRENT" if state_fresh and global_risk_allowed else "BLOCKED",
+            "broker_total_positions_included": total_open if state_fresh else None,
+            "approved_legacy_slot_exclusions_remain_risk_included": True,
+            "global_risk_allowed": bool(global_risk_allowed),
+        },
+        "active_strategy_slot_occupancy": active_strategy_occupancy if state_fresh else None,
+        "active_strategy_slot_capacity_remaining": active_strategy_remaining,
+        "active_strategy_slot_capacity_status": active_strategy_status,
+        "approved_legacy_slot_exclusion_symbols": sorted(excluded_legacy_symbols),
+        "approved_legacy_slot_exclusion_count": len(excluded_legacy_symbols),
         "total_open_orders": _number(account.get("open_orders_count")),
         "pending_order_count": len(pending),
         "active_commitment_count": len(commitments),
@@ -421,8 +477,24 @@ def candidate_capacity_decision(
     if snapshot.get("broker_reconciliation_status") != "FRESH":
         blockers.append("BROKER_STATE_STALE")
     if lane == "SWING" and _integer(snapshot.get("global_capacity_remaining"), 0) <= 0:
-        blockers.append("GLOBAL_CAPACITY_EXHAUSTED")
+        if _integer(snapshot.get("approved_legacy_slot_exclusion_count"), 0) > 0:
+            if _integer(snapshot.get("active_strategy_slot_capacity_remaining"), 0) <= 0:
+                blockers.append("ACTIVE_STRATEGY_SLOT_CAPACITY_EXHAUSTED")
+        else:
+            blockers.append("GLOBAL_CAPACITY_EXHAUSTED")
     decision = payload.get("capacity_decision") or "FAIL_CLOSED"
+    # When a Governance-approved decreasing-only legacy overlay is present,
+    # current-strategy slot admission uses the dedicated slot view.  Total
+    # account-risk and buying-power checks above still apply to every broker
+    # position, including that legacy exposure.
+    if (
+        lane == "SWING"
+        and _integer(snapshot.get("approved_legacy_slot_exclusion_count"), 0) > 0
+        and _integer(snapshot.get("active_strategy_slot_capacity_remaining"), 0) > 0
+        and snapshot.get("broker_reconciliation_status") == "FRESH"
+        and not blockers
+    ):
+        decision = "AVAILABLE"
     if blockers:
         if "DUPLICATE_EXPOSURE_BLOCKED" in blockers:
             decision = "DUPLICATE_EXPOSURE_BLOCKED"
@@ -432,6 +504,8 @@ def candidate_capacity_decision(
             decision = "BROKER_STATE_STALE"
         elif lane == "SWING" and "GLOBAL_CAPACITY_EXHAUSTED" in blockers:
             decision = "GLOBAL_CAPACITY_EXHAUSTED"
+        elif lane == "SWING" and "ACTIVE_STRATEGY_SLOT_CAPACITY_EXHAUSTED" in blockers:
+            decision = "ACTIVE_STRATEGY_SLOT_CAPACITY_EXHAUSTED"
         elif any(item in blockers for item in ("LANE_POSITION_LIMIT_REACHED", "LANE_RESERVE_EXHAUSTED")):
             decision = "LANE_RESERVE_EXHAUSTED"
         else:
@@ -441,6 +515,9 @@ def candidate_capacity_decision(
         "capacity_source": "astra_evidence_accumulation_capacity_v1",
         "snapshot_id": snapshot.get("snapshot_id"),
         "global_capacity_status": snapshot.get("global_capacity_status"),
+        "active_strategy_slot_capacity_status": snapshot.get("active_strategy_slot_capacity_status"),
+        "active_strategy_slot_capacity_remaining": snapshot.get("active_strategy_slot_capacity_remaining"),
+        "approved_legacy_slot_exclusion_count": snapshot.get("approved_legacy_slot_exclusion_count", 0),
         "lane_reserve_status": payload.get("capacity_decision"),
         "reserve_enabled": bool(payload.get("reserve_enabled", False)),
         "reserve_available": bool(payload.get("reserve_available", False)),

@@ -31,6 +31,8 @@ from engine.astra_unified_position_lifecycle_v1 import (
     build_legacy_swing_canary_pre_submit_v1,
     build_legacy_swing_required_evidence_v1,
     build_legacy_forward_baseline_v1,
+    build_position_management_overlay_v1,
+    build_position_resolution_inventory_v1,
     build_position_shadow_twin_v1,
     build_unified_position_lifecycle_decision_v1,
     estimate_legacy_provisional_horizon_v1,
@@ -1373,6 +1375,9 @@ class PaperAutopilotEngine:
             "legacy_swing_market_evidence": {},
             "legacy_swing_market_activity": {},
             "legacy_swing_exit_lifecycle": {},
+            # The unified lifecycle owner persists a conservative management
+            # overlay here; this is not a second position store.
+            "position_resolution_reviews": {},
             # Liveness is worker-owned.  Read-only endpoints consume these
             # fields and must never manufacture a heartbeat by doing broker I/O.
             "worker_generation_id": "",
@@ -1530,6 +1535,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["legacy_swing_market_activity"] = dict(nested_canary.get("market_activity") or {})
                 if isinstance(payload.get("legacy_swing_exit_lifecycle"), dict):
                     self._runtime_state["legacy_swing_exit_lifecycle"] = dict(payload.get("legacy_swing_exit_lifecycle") or {})
+                if isinstance(payload.get("position_resolution_reviews"), dict):
+                    self._runtime_state["position_resolution_reviews"] = dict(payload.get("position_resolution_reviews") or {})
                 if isinstance(payload.get("evidence_reserve_entry_timestamps"), dict):
                     self._runtime_state["evidence_reserve_entry_timestamps"] = {
                         lane: list(payload.get("evidence_reserve_entry_timestamps", {}).get(lane) or [])[-32:]
@@ -1594,6 +1601,7 @@ class PaperAutopilotEngine:
             "legacy_swing_market_evidence": dict(self._runtime_state.get("legacy_swing_market_evidence") or {}),
             "legacy_swing_market_activity": dict(self._runtime_state.get("legacy_swing_market_activity") or {}),
             "legacy_swing_exit_lifecycle": dict(self._runtime_state.get("legacy_swing_exit_lifecycle") or {}),
+            "position_resolution_reviews": dict(self._runtime_state.get("position_resolution_reviews") or {}),
             "evidence_reserve_entry_timestamps": {
                 lane: list((self._runtime_state.get("evidence_reserve_entry_timestamps") or {}).get(lane) or [])[-32:]
                 for lane in ("DAY", "CRYPTO")
@@ -4352,6 +4360,21 @@ class PaperAutopilotEngine:
         else:
             # A stale/unavailable broker snapshot must not authorize capacity.
             positions = []
+        prior_reviews = dict(self._runtime_state.get("position_resolution_reviews") or {})
+        resolution_rows: list[dict[str, Any]] = []
+        refreshed_reviews: dict[str, dict[str, Any]] = {}
+        for position in positions:
+            key = str(position.get("asset_id") or position.get("position_id") or position.get("symbol") or "").upper()
+            overlay = build_position_management_overlay_v1(position, prior_review=dict(prior_reviews.get(key) or {}))
+            enriched = {**position, **overlay}
+            resolution_rows.append(enriched)
+            if key:
+                refreshed_reviews[key] = overlay
+        if broker_payload.get("broker_positions_fetch_ok"):
+            # Broker reconciliation is authoritative for which positions are
+            # still active.  Retain only reviews for current broker positions.
+            self._runtime_state["position_resolution_reviews"] = refreshed_reviews
+        positions = resolution_rows
         internal_by_symbol = {
             str(row.get("symbol") or "").upper().strip(): dict(row)
             for row in open_rows
@@ -4392,11 +4415,24 @@ class PaperAutopilotEngine:
             "avg_entry_price", "asset_class", "asset_type", "lane_id", "position_owner",
             "lifecycle_id", "candidate_id", "recommendation_id", "entry_fill_id",
             "entry_order_fill_id", "entry_timestamp", "unrealized_plpc",
+            "classification", "classification_reason", "lifecycle_owner", "exit_owner",
+            "capacity_owner", "truth_owner", "original_lane", "original_strategy",
+            "original_horizon", "management_cohort", "decreasing_only",
+            "legacy_resolution_approval_required", "legacy_resolution_approved",
+            "legacy_resolution_approval_id", "active_slot_exclusion_eligible",
+            "active_slot_exclusion_approved", "full_risk_included", "current_thesis",
+            "exit_readiness_state", "position_age_days", "last_review_at", "next_review_at",
+            "review_state", "hold_exception_state",
         )
         snapshot["position_rows_for_read_only_consumers"] = [
             {key: row.get(key) for key in safe_position_fields if row.get(key) not in (None, "")}
             for row in positions[:100]
         ]
+        snapshot["position_resolution_inventory_v1"] = build_position_resolution_inventory_v1(
+            positions,
+            prior_reviews_by_position=refreshed_reviews,
+        )
+        snapshot["position_resolution_reviews_owner"] = "engine.astra_unified_position_lifecycle_v1"
         snapshot["position_rows_source"] = "worker_broker_reconciliation"
         snapshot["position_rows_secret_free"] = True
         self._runtime_state["last_evidence_capacity_snapshot"] = dict(snapshot)
@@ -6735,6 +6771,10 @@ class PaperAutopilotEngine:
                 open_rows_initial,
                 safety,
             )
+            broker_position_review_rows = [
+                dict(row) for row in (evidence_capacity_snapshot.get("position_rows_for_read_only_consumers") or [])
+                if isinstance(row, dict)
+            ]
             # Normalize every worker-cycle observation before any early gate
             # can reject it.  The ranking and eligibility values are retained;
             # this only gives every candidate a stable operational lineage.

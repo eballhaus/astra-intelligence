@@ -98,6 +98,54 @@ class ContinuousGovernanceTests(unittest.TestCase):
             self.assertTrue(governance.campaign_path.exists())
             self.assertTrue(governance.summary_path.exists())
 
+    def test_position_management_overlay_invariants_are_governed_without_migration(self):
+        runtime_state = runtime(review=False)
+        runtime_state["position_resolution_reviews"] = {
+            "AAPL": {
+                "position_id": "AAPL", "symbol": "AAPL",
+                "management_cohort": "LEGACY_POSITION_RESOLUTION",
+                "classification": "LEGACY_UNLINKED_POSITION",
+                "lifecycle_owner": "engine.astra_unified_position_lifecycle_v1",
+                "current_thesis": "THESIS_REVALIDATION_REQUIRED",
+                "next_review_at": "2026-07-18T04:00:00Z",
+                "decreasing_only": True,
+                "no_new_legacy_entries": True,
+                "full_risk_included": True,
+                "active_slot_exclusion_approved": False,
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            result = ContinuousGovernanceV1(directory).run_worker_cycle(
+                worker_state=worker_state(), runtime_state=runtime_state, safety=SAFETY,
+            )
+        rows = [row for row in result["invariants"] if row.get("dependencies") == ["AAPL"]]
+        states = {row["invariant_id"]: row["state"] for row in rows}
+        self.assertEqual(states["NO_POSITION_WITHOUT_LIFECYCLE_OWNER"], "PASS")
+        self.assertEqual(states["LEGACY_BOOK_DECREASING_ONLY"], "PASS")
+        self.assertEqual(states["FULL_RISK_INCLUSION"], "PASS")
+        self.assertEqual(states["ACTIVE_SLOT_EXCLUSION_ONLY"], "PASS")
+
+    def test_unapproved_slot_exclusion_fails_closed(self):
+        runtime_state = runtime(review=False)
+        runtime_state["position_resolution_reviews"] = {
+            "AAPL": {
+                "position_id": "AAPL", "symbol": "AAPL",
+                "management_cohort": "LEGACY_POSITION_RESOLUTION",
+                "classification": "LEGACY_UNLINKED_POSITION",
+                "lifecycle_owner": "owner", "current_thesis": "THESIS_REVALIDATION_REQUIRED",
+                "next_review_at": "2026-07-18T04:00:00Z", "decreasing_only": True,
+                "no_new_legacy_entries": True, "full_risk_included": True,
+                "active_slot_exclusion_approved": True,
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            result = ContinuousGovernanceV1(directory).run_worker_cycle(
+                worker_state=worker_state(), runtime_state=runtime_state, safety=SAFETY,
+            )
+        failed = [row for row in result["invariants"] if row.get("invariant_id") == "ACTIVE_SLOT_EXCLUSION_ONLY"]
+        self.assertEqual(failed[0]["state"], "FAIL")
+        self.assertEqual(failed[0]["severity"], "HIGH")
+
 
 if __name__ == "__main__":
     unittest.main()

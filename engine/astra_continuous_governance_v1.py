@@ -321,6 +321,56 @@ class ContinuousGovernanceV1:
             add("ELIGIBLE_REVIEW_IS_SCHEDULED", not eligible or scheduled, "eligible_review_not_scheduled", "REQUEUE_ELIGIBLE_LIFECYCLE_REVIEW" if eligible and identity_complete else None)
             add("SUFFICIENT_BARS_BUILD_MOMENTUM", not sufficient or momentum_current, "momentum_not_current", "SCHEDULE_MISSING_MOMENTUM_BUILD" if sufficient and eligible and identity_complete else None)
             add("MOMENTUM_IS_ACKNOWLEDGED", not momentum_current or all(acks.values()), "consumer_acknowledgements_missing", "RETRY_MISSING_CONSUMER_ACKNOWLEDGEMENT" if momentum_current and identity_complete else None)
+        # The unified lifecycle overlay is committed by the existing
+        # PaperAutopilot reconciliation cycle.  Governance observes it here;
+        # it cannot approve migration, release capacity, or submit an order.
+        management_reviews = _dict(runtime_state.get("position_resolution_reviews"))
+        for position_key, management_raw in list(management_reviews.items())[:100]:
+            management = _dict(management_raw)
+            symbol = _text(management.get("symbol") or position_key).upper()
+            legacy = _text(management.get("management_cohort")).upper() == "LEGACY_POSITION_RESOLUTION"
+            slot_excluded = bool(management.get("active_slot_exclusion_approved"))
+            approval_complete = bool(
+                management.get("legacy_resolution_approved")
+                and _text(management.get("legacy_resolution_approval_id"))
+                and management.get("decreasing_only")
+            )
+            base = {
+                "position_id": _text(management.get("position_id") or position_key),
+                "symbol": symbol,
+                "classification": management.get("classification"),
+                "management_cohort": management.get("management_cohort"),
+            }
+            def management_invariant(invariant_id: str, passed: bool, blocker: str, *, waiting: bool = False) -> None:
+                invariants.append({
+                    "invariant_id": invariant_id,
+                    "owner": "engine.astra_unified_position_lifecycle_v1",
+                    "dependencies": [base["position_id"]],
+                    "state": "PASS" if passed else "LEGITIMATE_WAITING_STATE" if waiting else "FAIL",
+                    "observed_value": base,
+                    "expected_value": "position_management_overlay_complete",
+                    "first_failed_at": None if passed else _now(),
+                    "last_checked_at": _now(),
+                    "failure_count": 0 if passed else 1,
+                    "severity": "INFO" if passed else "WARN" if waiting else "HIGH",
+                    "repairability": "LEGITIMATE_WAITING" if waiting else "DIAGNOSTIC",
+                    "exact_blocker": None if passed else blocker,
+                    "allowed_remediations": [],
+                })
+            management_invariant("NO_POSITION_WITHOUT_LIFECYCLE_OWNER", bool(_text(management.get("lifecycle_owner"))), "position_lifecycle_owner_missing")
+            management_invariant("NO_POSITION_WITHOUT_CURRENT_THESIS", bool(_text(management.get("current_thesis"))), "position_current_thesis_missing")
+            management_invariant("NO_POSITION_WITHOUT_NEXT_REVIEW", bool(_text(management.get("next_review_at"))), "position_next_review_missing")
+            management_invariant("NO_INDEFINITE_HOLD", bool(_text(management.get("next_review_at"))), "unbounded_hold_without_review_deadline")
+            management_invariant("NO_NEW_LEGACY_ENTRIES", not legacy or bool(management.get("no_new_legacy_entries")), "legacy_cohort_accepts_new_entries")
+            management_invariant("LEGACY_BOOK_DECREASING_ONLY", not legacy or bool(management.get("decreasing_only")), "legacy_book_not_decreasing_only")
+            management_invariant("FULL_RISK_INCLUSION", not legacy or bool(management.get("full_risk_included")), "legacy_exposure_not_in_full_risk_view")
+            management_invariant("ACTIVE_SLOT_EXCLUSION_ONLY", not slot_excluded or approval_complete, "legacy_slot_exclusion_missing_governance_approval")
+            management_invariant(
+                "NO_DAY_TO_SWING_DRIFT",
+                _text(management.get("classification")) != "DAY_HORIZON_DRIFT_POSITION",
+                "day_horizon_drift_requires_hold_exception_or_exit_review",
+                waiting=_text(management.get("classification")) == "DAY_HORIZON_DRIFT_POSITION",
+            )
         return invariants, rows
 
     def _campaign_for(self, rows: list[dict[str, Any]], authorization: str) -> dict[str, Any] | None:

@@ -616,6 +616,169 @@ def classify_position_cohort_v1(position: Mapping[str, Any]) -> dict[str, Any]:
             "original_history_state": "UNAVAILABLE" if cohort.startswith("LEGACY") else "AVAILABLE"}
 
 
+def _parse_iso(value: Any) -> datetime | None:
+    raw = _text(value)
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def build_position_management_overlay_v1(
+    position: Mapping[str, Any],
+    *,
+    lifecycle_decision: Mapping[str, Any] | None = None,
+    prior_review: Mapping[str, Any] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Attach one conservative lifecycle-management view to a broker position.
+
+    This is an overlay owned by the existing unified lifecycle decision owner,
+    not a second position store or exit engine.  Legacy slot exclusion is
+    deliberately impossible without a durable, explicit approval reference.
+    """
+    row = dict(position or {})
+    decision = dict(lifecycle_decision or {})
+    prior = dict(prior_review or {})
+    current = now or datetime.now(timezone.utc)
+    cohort = classify_position_cohort_v1(row)
+    symbol = _text(row.get("symbol")).upper()
+    position_id = _text(row.get("asset_id") or row.get("position_id") or symbol)
+    lane = _text(row.get("lane_id") or decision.get("lane") or "SWING").upper()
+    original_lane = _text(row.get("original_lane") or row.get("lane_id") or decision.get("lane") or "UNKNOWN").upper()
+    original_strategy = _text(row.get("original_strategy") or row.get("strategy") or row.get("strategy_archetype") or "UNKNOWN")
+    original_horizon = _text(row.get("original_horizon") or row.get("intended_horizon") or decision.get("original_horizon") or "UNKNOWN")
+    lifecycle_id = _text(row.get("lifecycle_id"))
+    candidate_id = _text(row.get("candidate_id") or row.get("source_candidate_id"))
+    contract_id = _text(row.get("contract_id") or row.get("pretrade_decision_contract_id"))
+    reconstruction_id = _text(row.get("reconstruction_id") or row.get("historical_reconstruction_id"))
+    age = _num(row.get("position_age_days") or row.get("days_held") or row.get("age_days"))
+    if age is None:
+        entry_time = _parse_iso(row.get("entry_timestamp") or row.get("opened_at"))
+        age = max(0.0, (current - entry_time).total_seconds() / 86400.0) if entry_time else None
+    prior_next_review = _parse_iso(prior.get("next_review_at") or row.get("next_review_at"))
+    prior_last_review = _parse_iso(prior.get("last_review_at") or row.get("last_review_at"))
+    duplicate = bool(row.get("duplicate_exposure") or _text(row.get("duplicate_exposure_state")).upper() in {"DUPLICATE", "DUPLICATE_EXPOSURE"})
+    day_drift = original_lane == "DAY" and (age is not None and age > 1.25) and not bool(row.get("hold_exception_approved"))
+    stale_active = prior_next_review is not None and prior_next_review < current
+    reconstructable = bool(reconstruction_id or row.get("reconstruction_state") in {"RECONSTRUCTION_COMPLETE", "RECONSTRUCTION_PARTIAL"})
+    linked = bool(lifecycle_id or candidate_id)
+    legacy = bool(cohort.get("legacy_forward_only_management"))
+    if duplicate:
+        classification, reason = "DUPLICATE_OR_CONFLICTED_POSITION", "DUPLICATE_EXPOSURE_REQUIRES_RECONCILIATION"
+    elif day_drift:
+        classification, reason = "DAY_HORIZON_DRIFT_POSITION", "DAY_POSITION_EXCEEDED_SAME_SESSION_HORIZON"
+    elif stale_active and not legacy:
+        classification, reason = "STALE_ACTIVE_POSITION", "NEXT_REVIEW_OVERDUE"
+    elif not legacy:
+        classification, reason = "CURRENT_MANAGED_POSITION", "COMPLETE_CURRENT_LIFECYCLE_CONTRACT"
+    elif reconstructable:
+        classification, reason = "LEGACY_RECONSTRUCTABLE_POSITION", "RECONSTRUCTED_LINEAGE_AVAILABLE_NOT_BROKER_TRUTH"
+    elif linked:
+        classification, reason = "LEGACY_LINKED_POSITION", "PARTIAL_LEGACY_LINEAGE_AVAILABLE"
+    elif symbol:
+        classification, reason = "LEGACY_UNLINKED_POSITION", "BROKER_POSITION_WITHOUT_CURRENT_LIFECYCLE_LINEAGE"
+    else:
+        classification, reason = "BROKER_ONLY_POSITION", "BROKER_POSITION_IDENTIFIER_INCOMPLETE"
+    management_cohort = "LEGACY_POSITION_RESOLUTION" if classification.startswith("LEGACY_") else _text(row.get("management_cohort") or "CURRENT_MANAGED")
+    approval_id = _text(row.get("legacy_resolution_approval_id") or prior.get("legacy_resolution_approval_id"))
+    approved = bool(row.get("legacy_resolution_approved") or prior.get("legacy_resolution_approved")) and bool(approval_id)
+    slot_exclusion = bool(
+        management_cohort == "LEGACY_POSITION_RESOLUTION"
+        and approved
+        and bool(row.get("legacy_slot_exclusion_approved") or prior.get("legacy_slot_exclusion_approved"))
+    )
+    current_thesis = _text(decision.get("classification") or row.get("thesis_state") or prior.get("current_thesis") or "THESIS_REVALIDATION_REQUIRED").upper()
+    exit_readiness = _text(decision.get("classification") or row.get("exit_readiness_state") or prior.get("exit_readiness_state") or "INSUFFICIENT_EVIDENCE").upper()
+    review_hours = 1 if classification in {"STALE_ACTIVE_POSITION", "DAY_HORIZON_DRIFT_POSITION", "DUPLICATE_OR_CONFLICTED_POSITION"} else 4 if management_cohort == "LEGACY_POSITION_RESOLUTION" else 24
+    next_review = current + timedelta(hours=review_hours)
+    if prior_next_review and prior_next_review >= current:
+        next_review = prior_next_review
+    return {
+        "schema_version": "astra_position_management_overlay_v1",
+        "position_id": position_id,
+        "symbol": symbol,
+        "classification": classification,
+        "classification_reason": reason,
+        "classification_confidence": 0.9 if classification == "CURRENT_MANAGED_POSITION" else 0.7 if linked or reconstructable else 0.5,
+        "lifecycle_owner": "engine.astra_unified_position_lifecycle_v1.build_unified_position_lifecycle_decision_v1",
+        "exit_owner": "PaperAutopilot.authorized_lane_exit_pending",
+        "capacity_owner": "PaperAutopilot._evidence_capacity_snapshot_v1",
+        "truth_owner": "PaperAutopilot._record_legacy_swing_exit_broker_update",
+        "original_lane": original_lane,
+        "original_strategy": original_strategy,
+        "original_horizon": original_horizon,
+        "management_cohort": management_cohort,
+        "decreasing_only": management_cohort == "LEGACY_POSITION_RESOLUTION",
+        "no_new_legacy_entries": True,
+        "legacy_resolution_approval_required": management_cohort == "LEGACY_POSITION_RESOLUTION",
+        "legacy_resolution_approved": approved,
+        "legacy_resolution_approval_id": approval_id or None,
+        "active_slot_exclusion_eligible": management_cohort == "LEGACY_POSITION_RESOLUTION",
+        "active_slot_exclusion_approved": slot_exclusion,
+        "full_risk_included": True,
+        "current_thesis": current_thesis,
+        "exit_readiness_state": exit_readiness,
+        "position_age_days": round(age, 4) if age is not None else None,
+        "last_review_at": _iso(prior_last_review or current),
+        "next_review_at": _iso(next_review),
+        "review_state": "OVERDUE_REVIEW" if stale_active else "SCHEDULED_REVIEW",
+        "hold_exception_state": "HOLD_EXCEPTION_APPROVED" if bool(row.get("hold_exception_approved")) else "THESIS_REVALIDATION_REQUIRED" if classification in {"DAY_HORIZON_DRIFT_POSITION", "STALE_ACTIVE_POSITION"} else "NOT_REQUIRED",
+        "authoritative_broker_truth": False,
+        "reconstruction_is_context_only": reconstructable,
+        "automatic_exit_authorized": False,
+        "automatic_capacity_release_authorized": False,
+        "as_of": _iso(current),
+    }
+
+
+def build_position_resolution_inventory_v1(
+    positions: Sequence[Mapping[str, Any]],
+    *,
+    prior_reviews_by_position: Mapping[str, Mapping[str, Any]] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Build a read-only inventory using the existing lifecycle owner only."""
+    previous = {str(key): dict(value or {}) for key, value in dict(prior_reviews_by_position or {}).items()}
+    rows = []
+    for raw in positions:
+        if not isinstance(raw, Mapping):
+            continue
+        position = dict(raw)
+        key = _text(position.get("asset_id") or position.get("position_id") or position.get("symbol"))
+        rows.append(build_position_management_overlay_v1(position, prior_review=previous.get(key), now=now))
+    counts: dict[str, int] = {}
+    for row in rows:
+        state = _text(row.get("classification")) or "UNKNOWN"
+        counts[state] = counts.get(state, 0) + 1
+    legacy_rows = [row for row in rows if row.get("management_cohort") == "LEGACY_POSITION_RESOLUTION"]
+    approved = [row for row in legacy_rows if row.get("active_slot_exclusion_approved")]
+    missing_owner = [row.get("symbol") for row in rows if not row.get("lifecycle_owner")]
+    missing_thesis = [row.get("symbol") for row in rows if not row.get("current_thesis")]
+    missing_review = [row.get("symbol") for row in rows if not row.get("next_review_at")]
+    return {
+        "schema_version": "astra_position_resolution_inventory_v1",
+        "owner": "engine.astra_unified_position_lifecycle_v1",
+        "position_projection_owner": "PaperAutopilot._evidence_capacity_snapshot_v1",
+        "positions_processed": len(rows),
+        "classification_counts": counts,
+        "legacy_positions_proposed": len(legacy_rows),
+        "legacy_positions_approved": len(approved),
+        "active_slot_exclusion_count": len(approved),
+        "full_risk_inclusion_count": sum(1 for row in rows if row.get("full_risk_included")),
+        "missing_lifecycle_owner": missing_owner,
+        "missing_current_thesis": missing_thesis,
+        "missing_next_review": missing_review,
+        "no_new_legacy_entries": True,
+        "automatic_migration_enabled": False,
+        "automatic_exit_authorized": False,
+        "review_rows": rows,
+    }
+
+
 def _evidence_row(
     name: str,
     *,

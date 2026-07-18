@@ -126,6 +126,7 @@ def build_truth_acceleration_oversight(
     capacity_integrity: dict[str, Any] | None = None,
     governance_findings: list[dict[str, Any]] | None = None,
     information_utilization: dict[str, Any] | None = None,
+    legacy_resolution: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return Cortex proposals inside the approved operational envelope.
 
@@ -199,6 +200,23 @@ def build_truth_acceleration_oversight(
             "governance_state": "PENDING_GOVERNANCE_ADMISSION",
             "applied": False,
         })
+    legacy = dict(legacy_resolution or {})
+    if int(to_int(legacy.get("legacy_positions_proposed"), 0)) and not int(to_int(legacy.get("legacy_positions_approved"), 0)):
+        proposals.append({
+            "proposal_id": "truth-acceleration-legacy-review-priority",
+            "objective": "prioritize_existing_legacy_position_review",
+            "current_state": str(legacy.get("state") or "LEGACY_MIGRATION_AWAITING_GOVERNANCE"),
+            "proposed_setting": {"lane_processing_priority": 90},
+            "approved_range": dict(TRUTH_ACCELERATION_ADAPTIVE_ENVELOPE["lane_processing_priority"]),
+            "expected_benefit": "reduce_unreviewed_legacy_position_age_without_changing_exposure",
+            "safety_impact": "no_order_exit_or_capacity_mutation",
+            "quality_impact": "approval_and_current_evidence_remain_required",
+            "learning_speed_impact": "improves_lifecycle_review_coverage_only",
+            "resource_impact": "bounded_existing_worker_review",
+            "rollback_plan": "restore_previous_scheduler_priority",
+            "governance_state": "PENDING_GOVERNANCE_ADMISSION",
+            "applied": False,
+        })
     return {
         "controller_owner": "AstraPaperProviderCortexCompletionV1.build_truth_acceleration_oversight",
         "controller_state": "PAUSED_FAIL_CLOSED" if critical else "ACTIVE_OBSERVE_AND_GOVERN",
@@ -210,6 +228,7 @@ def build_truth_acceleration_oversight(
         "governance_rejections": len(proposals) if critical else 0,
         "applied_adjustments": [],
         "rollbacks": [],
+        "legacy_resolution_observed": legacy,
         "direct_uncontrolled_mutation": False,
         "provider_calls_used": 0,
         "broker_actions_used": 0,
