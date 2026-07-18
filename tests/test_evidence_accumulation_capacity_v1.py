@@ -13,6 +13,7 @@ from engine.astra_evidence_accumulation_capacity_v1 import (
 from engine.astra_portfolio_capacity_release_review_v1 import build_portfolio_release_review, classify_position
 from engine.lane_execution_trace_ledger_v1 import LaneExecutionTraceLedgerV1
 from engine.paper_autopilot import PaperAutopilotEngine
+from engine.paper_autopilot import _execution_trace_event
 
 
 BASE_ENV = {
@@ -109,6 +110,38 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
         )
         self.assertFalse(result["allowed"])
         self.assertEqual(result["capacity_decision"], "BROKER_STATE_STALE")
+
+    def test_capacity_authority_is_explicit_and_fail_closed_when_stale(self):
+        current = snapshot()
+        self.assertEqual(current["capacity_authority_state"], "CURRENT")
+        self.assertEqual(current["lanes"]["day"]["capacity_authority_state"], "CURRENT")
+        stale = snapshot(fresh=False)
+        self.assertEqual(stale["capacity_authority_state"], "BROKER_UNREACHABLE")
+        self.assertEqual(stale["lanes"]["crypto"]["capacity_authority_state"], "BROKER_UNREACHABLE")
+
+    def test_early_trace_records_exact_first_failing_gate(self):
+        trace = _execution_trace_event(
+            {"symbol": "BTC/USD", "asset_class": "crypto", "candidate_id": "btc-stale"},
+            eligible=False,
+            decision_reason="candidate_freshness_not_ready",
+        )
+        attribution = trace["eligibility_gate_attribution_v1"]
+        self.assertEqual(attribution["first_failing_gate"]["code"], "CANDIDATE_STALE")
+        self.assertEqual(attribution["first_failing_gate"]["validity"], "MISSING_INPUT_DEFECT")
+
+    def test_missing_contract_and_crypto_source_are_not_generic_rejections(self):
+        contract_trace = _execution_trace_event(
+            {"symbol": "DAY", "candidate_id": "day-contract"},
+            eligible=False,
+            decision_reason="PRETRADE_DECISION_CONTRACT_MISSING_FIELDS",
+        )
+        crypto_trace = _execution_trace_event(
+            {"symbol": "BTC/USD", "asset_class": "crypto", "candidate_id": "btc-source"},
+            eligible=False,
+            decision_reason="CANDIDATE_SOURCE_NOT_READY",
+        )
+        self.assertEqual(contract_trace["eligibility_gate_attribution_v1"]["first_failing_gate"]["code"], "CONTRACT_INCOMPLETE")
+        self.assertEqual(crypto_trace["eligibility_gate_attribution_v1"]["first_failing_gate"]["code"], "CANDIDATE_STALE")
 
     def test_historical_entry_counts_are_advisory_not_reserve_occupancy(self):
         # Historical DAY attempts are learning telemetry. They cannot consume

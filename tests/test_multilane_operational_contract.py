@@ -45,6 +45,46 @@ class MultilaneOperationalContractTests(unittest.TestCase):
         self.assertEqual(blocker["code"], "CANDIDATE_FRESHNESS_NOT_READY")
         self.assertEqual(payload["lanes"]["crypto"]["lifecycle_funnel"]["orders_submitted"], 0)
 
+    def test_exact_trace_gate_replaces_generic_rejection_summary(self):
+        candidate = {"symbol": "NVDA", "paper_entry_horizon_style": "day_trade", "candidate_id": "c1"}
+        payload = build_multilane_operational_status(
+            candidates=[candidate], open_positions=[], broker_truth_records=[],
+            autopilot_trace={"per_candidate_decision_trace": [{
+                "symbol": "NVDA", "lane_id": "DAY", "eligible": False,
+                "decision_reason": "quality_confidence_too_low",
+                "eligibility_gate_attribution_v1": {
+                    "first_failing_gate": {
+                        "code": "CONFIDENCE_BELOW_THRESHOLD",
+                        "owner": "PaperAutopilot commitment gate",
+                        "input_value": "quality_confidence_too_low",
+                        "validity": "VALID_STRATEGY_REJECTION",
+                    },
+                },
+            }]},
+            source_metadata={"candidate_freshness_status": "CURRENT"},
+            day_config={"capital_configured": True, "day_lane_pilot_enabled": True},
+        )
+        blocker = payload["lanes"]["day"]["first_causal_blocker"]
+        self.assertEqual(blocker["code"], "CONFIDENCE_BELOW_THRESHOLD")
+        self.assertEqual(blocker["validity"], "VALID_STRATEGY_REJECTION")
+
+    def test_flat_truth_state_is_contextual_when_only_valid_rejections_exist(self):
+        payload = build_multilane_operational_status(
+            candidates=[{"symbol": "NVDA", "paper_entry_horizon_style": "day_trade", "candidate_id": "c1"}],
+            open_positions=[], broker_truth_records=[],
+            autopilot_trace={"per_candidate_decision_trace": [{
+                "symbol": "NVDA", "lane_id": "DAY", "eligible": False,
+                "decision_reason": "quality_confidence_too_low",
+                "eligibility_gate_attribution_v1": {"first_failing_gate": {"code": "CONFIDENCE_BELOW_THRESHOLD"}},
+            }]},
+            source_metadata={"candidate_freshness_status": "CURRENT"},
+            day_config={"capital_configured": True, "day_lane_pilot_enabled": True},
+        )
+        self.assertEqual(
+            payload["truth_production_scoreboard"]["flat_truth_escalation_state"],
+            "VALID_GATE_REJECTIONS",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

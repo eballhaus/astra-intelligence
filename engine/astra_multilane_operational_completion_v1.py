@@ -95,8 +95,20 @@ def _first_causal_blocker(
             return {"code": "MARKET_SESSION_NOT_ELIGIBLE", "owner": "existing market-session gate", "next_expected_stage": "eligible_candidate"}
         return {"code": "NO_CURRENT_MARKET_OPPORTUNITY", "owner": "existing ranking engine", "next_expected_stage": "fresh_candidate"}
     if not any(row.get("eligibility_state") == "ELIGIBLE" for row in current_rows):
+        exact = next(
+            (dict(row.get("first_failing_gate") or {}) for row in current_rows if dict(row.get("first_failing_gate") or {}).get("code")),
+            {},
+        )
+        if exact and exact.get("code") not in {"PASS", "UNKNOWN_FAIL_CLOSED"}:
+            return {
+                "code": exact.get("code"),
+                "detail": exact.get("input_value"),
+                "owner": exact.get("owner") or "PaperAutopilot eligibility gate",
+                "validity": exact.get("validity"),
+                "next_expected_stage": "eligible_candidate",
+            }
         blocker = next((_text(row.get("order_blocker")) for row in current_rows if _text(row.get("order_blocker"))), "REJECTED_BY_EXISTING_GATES")
-        return {"code": "CANDIDATES_REJECTED_BY_VALID_GATES", "detail": blocker, "owner": "PaperAutopilot eligibility gate", "next_expected_stage": "eligible_candidate"}
+        return {"code": "UNKNOWN_FAIL_CLOSED", "detail": blocker, "owner": "PaperAutopilot eligibility gate", "validity": "UNKNOWN_FAIL_CLOSED", "next_expected_stage": "eligible_candidate"}
     if not bool(activation.get("execution_enabled")):
         return {"code": "LANE_EXECUTION_NOT_ADMITTED", "owner": "existing governance and lane activation contract", "next_expected_stage": "admitted_lane"}
     if not bool(capacity.get("capital_configured", True)):
@@ -182,6 +194,22 @@ def _stage_row(candidate: Mapping[str, Any], trace: Mapping[str, Any], *, curren
     stage = "ORDER_READY" if order_ready else "SELECTED" if selected else "ELIGIBLE" if allowed else "REJECTED_BY_EXISTING_GATE" if trace else "CLASSIFIED"
     if blocker:
         stage = blocker
+    attribution = dict(trace.get("eligibility_gate_attribution_v1") or {})
+    if not attribution:
+        attribution = {
+            "schema": "astra_eligibility_gate_attribution_v1",
+            "candidate_id": _text(row.get("candidate_id")),
+            "symbol": symbol,
+            "eligibility_result": "ELIGIBLE" if allowed else "REJECTED",
+            "first_failing_gate": {
+                "code": "PASS" if allowed else "UNKNOWN_FAIL_CLOSED",
+                "owner": "PaperAutopilot" if allowed else "existing candidate/worker handoff",
+                "input_value": "eligible" if allowed else blocker,
+                "required_value": "existing gates pass",
+                "validity": "PASS" if allowed else "UNKNOWN_FAIL_CLOSED",
+            },
+            "all_failing_gates": [],
+        }
     return {
         "lane_id": row.get("lane_id"), "asset_class": row.get("asset_class"),
         "instrument_type": row.get("instrument_type"), "trade_style": row.get("trade_style"),
@@ -193,6 +221,8 @@ def _stage_row(candidate: Mapping[str, Any], trace: Mapping[str, Any], *, curren
         "source_snapshot_id": _text(row.get("source_snapshot_id") or trace.get("source_snapshot_id")),
         "eligibility_state": "ELIGIBLE" if allowed else "NOT_ELIGIBLE",
         "eligibility_reason": _text(trace.get("reason")),
+        "pretrade_decision_contract_missing_fields": list(trace.get("pretrade_decision_contract_missing_fields") or []),
+        "pretrade_decision_contract_conflicts": list(trace.get("pretrade_decision_contract_conflicts") or []),
         "allocation_state": _text(row.get("allocation_state")) or "DIAGNOSTIC_ONLY",
         "allocation_reason": _text(row.get("allocation_reason")),
         "diversity_state": "BLOCKED" if "correlation" in blocker or "sector" in blocker else "NOT_BLOCKED",
@@ -202,6 +232,8 @@ def _stage_row(candidate: Mapping[str, Any], trace: Mapping[str, Any], *, curren
         "selection_timestamp": _text(trace.get("selection_timestamp") or row.get("selection_timestamp")),
         "order_readiness_state": "ORDER_READY" if order_ready else "NOT_READY",
         "order_blocker": blocker, "operational_stage": stage,
+        "eligibility_gate_attribution_v1": attribution,
+        "first_failing_gate": dict(attribution.get("first_failing_gate") or {}),
         "same_session_exit_required": bool(row.get("same_session_exit_required")),
         "overnight_allowed": bool(row.get("overnight_allowed")),
         "capital_book_id": row.get("capital_book_id"),
@@ -391,7 +423,7 @@ def build_multilane_operational_status(
         view = dict(capacity_lanes.get(lane.lower()) or {})
         used = view.get("positions_used")
         remaining = view.get("positions_remaining")
-        configured = view.get("position_limit")
+        configured = view.get("configured_position_limit")
         if configured is None and isinstance(used, (int, float)) and isinstance(remaining, (int, float)):
             configured = used + remaining
         reserve_state = _text(view.get("reserve_state") or view.get("capacity_status")) or "NOT_APPLICABLE"
@@ -404,17 +436,39 @@ def build_multilane_operational_status(
             "active_commitments": view.get("active_commitment_count"),
             "available_capacity": remaining, "reserve_state": reserve_state,
             "arithmetic_consistency": arithmetic,
-            "state": "STALE" if "STALE" in reserve_state else "INCONSISTENT" if arithmetic == "INCONSISTENT" else "PASS" if arithmetic == "PASS" else "WARMING_UP",
+            "authority_owner": view.get("capacity_authority_owner") or capacity_snapshot.get("capacity_authority_owner") or "PaperAutopilot._evidence_capacity_snapshot_v1",
+            "authority_timestamp": view.get("capacity_authority_timestamp") or capacity_snapshot.get("capacity_authority_timestamp") or capacity_snapshot.get("generated_at"),
+            "authority_state": view.get("capacity_authority_state") or capacity_snapshot.get("capacity_authority_state") or ("STALE" if "STALE" in reserve_state else "CURRENT"),
+            "broker_positions_fetch_ok": bool(capacity_snapshot.get("broker_positions_fetch_ok")),
+            "broker_positions_error_sanitized": str(capacity_snapshot.get("broker_positions_error_sanitized") or "")[:180],
+            "state": "BROKER_UNREACHABLE" if (view.get("capacity_authority_state") or capacity_snapshot.get("capacity_authority_state")) == "BROKER_UNREACHABLE" else "STALE" if "STALE" in reserve_state else "INCONSISTENT" if arithmetic == "INCONSISTENT" else "PASS" if arithmetic == "PASS" else "WARMING_UP",
         }
+    eligible_work = sum(int(view.get("eligible_candidates") or 0) for view in lane_payloads.values())
+    current_work = sum(int(view.get("current_candidates") or 0) for view in lane_payloads.values())
+    active_lifecycles = sum(int(view.get("open_positions") or 0) for view in lane_payloads.values())
+    strict_truths = len(truths)
+    if strict_truths:
+        flat_truth_state = "BROKER_TRUTH_PRODUCING"
+    elif active_lifecycles:
+        flat_truth_state = "WAITING_FOR_ACTIVE_LIFECYCLE_EXIT"
+    elif eligible_work:
+        flat_truth_state = "ELIGIBLE_WORK_STALLED"
+    elif current_work:
+        flat_truth_state = "VALID_GATE_REJECTIONS"
+    else:
+        flat_truth_state = "NO_MARKET_OPPORTUNITY"
     scoreboard = {
         "today_status": ledger_windows.get("history_status", "WARMING_UP"),
         "rolling_window_days": ledger_windows.get("window_days", 0),
         "cohort_count": len(cohort_payloads),
-        "strict_broker_truths": len(truths),
+        "strict_broker_truths": strict_truths,
         "completed_lifecycles": sum(int((row.get("rolling_trace_funnel") or {}).get("completed_lifecycles", 0) or 0) for row in cohort_payloads.values()),
         "learning_acknowledgements": sum(int((row.get("rolling_trace_funnel") or {}).get("learning_deliveries", 0) or 0) for row in cohort_payloads.values()),
         "official_metric_state": "WARMING_UP" if not truths else "STRICT_BROKER_TRUTH_AVAILABLE",
         "shadow_or_reconstructed_metrics_excluded": True,
+        "flat_truth_escalation_state": flat_truth_state,
+        "flat_truth_escalation_owner": "existing Governance and PaperAutopilot throughput owners",
+        "flat_truth_requires_human_review": flat_truth_state in {"ELIGIBLE_WORK_STALLED", "CLOSURE_PIPELINE_STALLED", "TRUTH_PERSISTENCE_STALLED"},
     }
     all_lanes_enabled = all(bool(lane_payloads[key].get("lane_enabled")) for key in lane_payloads)
     operational_status = (

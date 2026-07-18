@@ -332,6 +332,11 @@ def build_capacity_snapshot(
             "duplicate_exposure_allowed": True,
             "capacity_decision": decision,
             "exact_blockers": list(dict.fromkeys(blockers)),
+            # Only the worker may refresh this snapshot.  Readers can inspect
+            # it, but a stale read can never authorize a new position.
+            "capacity_authority_owner": "PaperAutopilot._evidence_capacity_snapshot_v1",
+            "capacity_authority_timestamp": generated_at,
+            "capacity_authority_state": "CURRENT" if state_fresh else "BROKER_UNREACHABLE" if not fetch_ok else "STALE",
             "max_entries": config.get("max_entries"),
             "entries_used": historical_entries_used,
             "entries_remaining": historical_entries_remaining,
@@ -352,6 +357,9 @@ def build_capacity_snapshot(
         "snapshot_id": snapshot_id,
         "paper_mode_verified": True,
         "broker_reconciliation_status": "FRESH" if state_fresh else "STALE_OR_UNAVAILABLE",
+        "capacity_authority_owner": "PaperAutopilot._evidence_capacity_snapshot_v1",
+        "capacity_authority_timestamp": generated_at,
+        "capacity_authority_state": "CURRENT" if state_fresh else "BROKER_UNREACHABLE" if not fetch_ok else "STALE",
         "broker_state_age_seconds": round(state_age, 3) if state_age is not None else None,
         "broker_state_max_age_seconds": float(broker_state_max_age_seconds),
         "account_equity": equity,

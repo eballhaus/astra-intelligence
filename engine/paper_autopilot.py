@@ -11,7 +11,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
 from engine.candidate_execution_integrity_v1 import candidate_execution_integrity
@@ -957,6 +957,148 @@ def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
     return r
 
 
+_ELIGIBILITY_GATE_MAP_V1 = {
+    "candidate_freshness_not_ready": ("CANDIDATE_STALE", "MISSING_INPUT_DEFECT", "existing cached candidate producer"),
+    "candidate_source_not_ready": ("CANDIDATE_STALE", "MISSING_INPUT_DEFECT", "existing cached candidate producer"),
+    "no_current_cached_crypto_ranking_signal": ("CANDIDATE_STALE", "MISSING_INPUT_DEFECT", "existing cached crypto ranking producer"),
+    "pretrade_decision_contract_missing_fields": ("CONTRACT_INCOMPLETE", "MISSING_INPUT_DEFECT", "pretrade decision contract"),
+    "missing_symbol": ("CONTRACT_INCOMPLETE", "MISSING_INPUT_DEFECT", "candidate normalization contract"),
+    "duplicate_active_position": ("DUPLICATE_EXPOSURE", "VALID_SAFETY_REJECTION", "PaperAutopilot duplicate exposure gate"),
+    "cooldown_active": ("RISK_REJECTED", "VALID_SAFETY_REJECTION", "PaperAutopilot cooldown gate"),
+    "max_concurrent_positions_reached": ("CAPACITY_EXHAUSTED", "VALID_SAFETY_REJECTION", "canonical capacity authority"),
+    "max_new_positions_per_cycle_reached": ("CAPACITY_EXHAUSTED", "VALID_SAFETY_REJECTION", "PaperAutopilot bounded cycle gate"),
+    "stock_capacity_reached": ("CAPACITY_EXHAUSTED", "VALID_SAFETY_REJECTION", "canonical capacity authority"),
+    "crypto_capacity_reached": ("CAPACITY_EXHAUSTED", "VALID_SAFETY_REJECTION", "canonical capacity authority"),
+    "broker_state_stale": ("CAPACITY_EXHAUSTED", "CAPACITY_AUTHORITY_DEFECT", "PaperAutopilot broker reconciliation"),
+    "global_capacity_exhausted": ("CAPACITY_EXHAUSTED", "VALID_SAFETY_REJECTION", "canonical capacity authority"),
+    "lane_reserve_exhausted": ("CAPACITY_EXHAUSTED", "VALID_SAFETY_REJECTION", "canonical capacity authority"),
+    "capital_not_configured": ("CAPITAL_NOT_READY", "VALID_SAFETY_REJECTION", "existing lane capital configuration"),
+    "buying_power_unavailable": ("CAPITAL_NOT_READY", "MISSING_INPUT_DEFECT", "paper broker account snapshot"),
+    "buying_power_insufficient": ("CAPITAL_NOT_READY", "VALID_SAFETY_REJECTION", "paper broker account snapshot"),
+    "uncertainty_extreme": ("RISK_REJECTED", "VALID_STRATEGY_REJECTION", "PaperAutopilot commitment gate"),
+    "uncertainty_high": ("RISK_REJECTED", "VALID_STRATEGY_REJECTION", "PaperAutopilot commitment gate"),
+    "uncertainty_score_high": ("RISK_REJECTED", "VALID_STRATEGY_REJECTION", "PaperAutopilot commitment gate"),
+    "eligibility_blocked": ("RANKING_BELOW_THRESHOLD", "VALID_STRATEGY_REJECTION", "PaperAutopilot commitment gate"),
+    "deployment_blocked": ("RANKING_BELOW_THRESHOLD", "VALID_STRATEGY_REJECTION", "PaperAutopilot commitment gate"),
+    "discipline_reject": ("RISK_REJECTED", "VALID_STRATEGY_REJECTION", "PaperAutopilot commitment gate"),
+    "discipline_tier_reject": ("RISK_REJECTED", "VALID_STRATEGY_REJECTION", "PaperAutopilot commitment gate"),
+    "quality_confidence_too_low": ("CONFIDENCE_BELOW_THRESHOLD", "VALID_STRATEGY_REJECTION", "PaperAutopilot commitment gate"),
+    "insufficient_positive_signals": ("RANKING_BELOW_THRESHOLD", "VALID_STRATEGY_REJECTION", "PaperAutopilot commitment gate"),
+    "high_uncertainty_not_high_quality": ("RISK_REJECTED", "VALID_STRATEGY_REJECTION", "PaperAutopilot commitment gate"),
+    "entry_commitment_below_threshold": ("CONFIDENCE_BELOW_THRESHOLD", "VALID_STRATEGY_REJECTION", "PaperAutopilot commitment gate"),
+    "pretrade_decision_contract_invalid": ("CONTRACT_INCOMPLETE", "MISSING_INPUT_DEFECT", "pretrade decision contract"),
+    "correlation_overload": ("RISK_REJECTED", "VALID_SAFETY_REJECTION", "portfolio diversification gate"),
+    "duplicate_theme_overstack": ("DUPLICATE_EXPOSURE", "VALID_SAFETY_REJECTION", "portfolio diversification gate"),
+    "poor_portfolio_fit": ("RISK_REJECTED", "VALID_STRATEGY_REJECTION", "portfolio diversification gate"),
+    "concentration_pressure": ("RISK_REJECTED", "VALID_SAFETY_REJECTION", "portfolio diversification gate"),
+    "crypto_scalp_shadow_only": ("HORIZON_MISSING", "VALID_STRATEGY_REJECTION", "crypto lane policy"),
+}
+
+
+def _eligibility_gate_code_v1(reason: Any) -> tuple[str, str, str]:
+    """Classify existing gate results without changing their evaluation order."""
+    raw = str(reason or "").strip().lower()
+    if raw in _ELIGIBILITY_GATE_MAP_V1:
+        return _ELIGIBILITY_GATE_MAP_V1[raw]
+    if "session" in raw or "market_closed" in raw:
+        return ("MARKET_SESSION_CLOSED", "VALID_MARKET_SESSION_WAIT", "existing market-session gate")
+    if "quote" in raw:
+        return ("QUOTE_MISSING", "MISSING_INPUT_DEFECT", "existing quote evidence gate")
+    if "bar" in raw:
+        return ("BAR_MISSING", "MISSING_INPUT_DEFECT", "existing bar evidence gate")
+    if "spread" in raw:
+        return ("SPREAD_TOO_WIDE", "VALID_SAFETY_REJECTION", "existing liquidity gate")
+    if "volume" in raw or "liquidity" in raw:
+        return ("LIQUIDITY_NOT_READY", "VALID_SAFETY_REJECTION", "existing liquidity gate")
+    if "unsupported" in raw or "capability" in raw:
+        return ("BROKER_ASSET_UNSUPPORTED", "VALID_SAFETY_REJECTION", "paper broker capability gate")
+    if "stale" in raw or "freshness" in raw:
+        return ("CANDIDATE_STALE", "STALE_INPUT_DEFECT", "existing candidate freshness gate")
+    if "horizon" in raw:
+        return ("HORIZON_MISSING", "INCORRECT_METADATA_DEFECT", "trade lane contract")
+    if "strategy" in raw:
+        return ("STRATEGY_MISSING", "INCORRECT_METADATA_DEFECT", "trade lane contract")
+    if "lane" in raw:
+        return ("LANE_IDENTITY_MISSING", "INCORRECT_METADATA_DEFECT", "trade lane contract")
+    if "contract" in raw:
+        return ("CONTRACT_INCOMPLETE", "MISSING_INPUT_DEFECT", "pretrade decision contract")
+    return ("UNKNOWN_FAIL_CLOSED", "UNKNOWN_FAIL_CLOSED", "PaperAutopilot eligibility gate")
+
+
+def _eligibility_gate_attribution_v1(
+    row: Mapping[str, Any], *, reason: Any, allowed: bool,
+    gate_meta: Mapping[str, Any] | None = None,
+    activation: Mapping[str, Any] | None = None,
+    session: Mapping[str, Any] | None = None,
+    capacity: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Project a complete, read-only explanation from the existing gate result."""
+    candidate = dict(row or {})
+    meta = dict(gate_meta or {})
+    activation = dict(activation or {})
+    session = dict(session or {})
+    capacity = dict(capacity or {})
+    code, validity, owner = _eligibility_gate_code_v1(reason)
+    required = {
+        "CONFIDENCE_BELOW_THRESHOLD": "existing commitment confidence/quality floor",
+        "CAPACITY_EXHAUSTED": "fresh broker-authoritative capacity",
+        "CONTRACT_INCOMPLETE": "complete existing pretrade decision contract",
+        "CANDIDATE_STALE": "current cached candidate evidence",
+        "DUPLICATE_EXPOSURE": "no broker-confirmed duplicate exposure",
+        "MARKET_SESSION_CLOSED": "existing market session eligibility",
+    }.get(code, "existing gate requirement")
+    inputs = {
+        "ranking_score": candidate.get("score") or candidate.get("ranking_score"),
+        "confidence_score": candidate.get("confidence") or candidate.get("predicted_win_probability"),
+        "commitment_score": meta.get("commitment_score"),
+        "freshness_age_seconds": candidate.get("candidate_age_seconds") or candidate.get("quote_age_seconds"),
+        "market_session": session.get("market_session_mode") or candidate.get("market_session_mode"),
+        "liquidity_state": candidate.get("liquidity_state") or candidate.get("liquidity_status"),
+        "spread_state": candidate.get("spread_state") or candidate.get("spread_pct"),
+        "volume_state": candidate.get("volume_state") or candidate.get("volume_24h") or candidate.get("volume"),
+        "capital_state": capacity.get("capacity_decision"),
+        "risk_state": candidate.get("portfolio_risk_label") or candidate.get("risk_label"),
+        "duplicate_exposure_state": "DUPLICATE" if candidate.get("duplicate_active_position") else "CHECKED_BY_WORKER",
+        "contract_completeness_state": str((candidate.get("pretrade_decision_contract_v1") or {}).get("contract_status") or candidate.get("pretrade_decision_contract_status") or "UNKNOWN"),
+        "broker_eligibility_state": activation.get("execution_enabled"),
+    }
+    first = {
+        "code": "PASS" if allowed else code,
+        "owner": "PaperAutopilot" if allowed else owner,
+        "input_value": "eligible" if allowed else str(reason or "unknown"),
+        "required_value": "existing gates pass" if allowed else required,
+        "validity": "PASS" if allowed else validity,
+    }
+    downstream = [] if allowed else [first]
+    for blocker in list(capacity.get("exact_blockers") or []):
+        blocker_code, blocker_validity, blocker_owner = _eligibility_gate_code_v1(blocker)
+        candidate_gate = {
+            "code": blocker_code,
+            "owner": blocker_owner,
+            "input_value": str(blocker),
+            "required_value": "fresh broker-authoritative capacity",
+            "validity": blocker_validity,
+        }
+        if candidate_gate not in downstream:
+            downstream.append(candidate_gate)
+    return {
+        "schema": "astra_eligibility_gate_attribution_v1",
+        "candidate_id": str(candidate.get("candidate_id") or candidate.get("recommendation_id") or ""),
+        "symbol": str(candidate.get("symbol") or "").upper(),
+        "asset_class": str(candidate.get("asset_class") or candidate.get("asset_type") or ""),
+        "lane": str(candidate.get("lane_id") or "").upper(),
+        "etf_cohort": str(candidate.get("instrument_type") or "").upper() == "ETF",
+        "strategy": str(candidate.get("strategy_archetype") or candidate.get("trade_archetype") or ""),
+        "horizon": str(candidate.get("paper_entry_horizon_style") or candidate.get("trade_horizon_style") or ""),
+        "generated_at": str(candidate.get("candidate_generated_at") or candidate.get("generated_at") or ""),
+        "evidence_timestamp": str(candidate.get("quote_timestamp") or candidate.get("source_timestamp") or ""),
+        "gate_inputs": inputs,
+        "eligibility_result": "ELIGIBLE" if allowed else "REJECTED",
+        "first_failing_gate": first,
+        "all_failing_gates": downstream,
+    }
+
+
 def _execution_trace_event(row: dict[str, Any], **values: Any) -> dict[str, Any]:
     """Keep blocked candidate traces on the same canonical lineage path.
 
@@ -1003,6 +1145,15 @@ def _execution_trace_event(row: dict[str, Any], **values: Any) -> dict[str, Any]
         "pretrade_decision_contract_status": str((normalized.get("pretrade_decision_contract_v1") or {}).get("contract_status") or "INVALID"),
     }
     trace.update(values)
+    trace["eligibility_gate_attribution_v1"] = _eligibility_gate_attribution_v1(
+        normalized,
+        reason=trace.get("decision_reason") or trace.get("reason"),
+        allowed=bool(trace.get("eligible") or trace.get("allowed")),
+        gate_meta=trace.get("gate_meta"),
+        activation=trace.get("lane_activation_contract"),
+        session=trace.get("session_confirmation") or trace.get("session_diag"),
+        capacity=trace.get("capacity_decision") if isinstance(trace.get("capacity_decision"), Mapping) else {},
+    )
     return trace
 
 
@@ -4209,6 +4360,9 @@ class PaperAutopilotEngine:
             "broker_pending_orders": len(pending_orders),
             "broker_orders_fetch_ok": bool(broker_payload.get("broker_orders_fetch_ok")),
         }
+        snapshot["broker_positions_fetch_ok"] = bool(broker_payload.get("broker_positions_fetch_ok"))
+        snapshot["broker_positions_error_sanitized"] = str(broker_payload.get("broker_positions_error_sanitized") or "")[:180]
+        snapshot["broker_orders_fetch_ok"] = bool(broker_payload.get("broker_orders_fetch_ok"))
         self._runtime_state["last_evidence_capacity_snapshot"] = dict(snapshot)
         return snapshot
 
@@ -4919,6 +5073,15 @@ class PaperAutopilotEngine:
             "broker_actions_used": 0,
             "generated_at": _now_iso(),
         }
+        trace["eligibility_gate_attribution_v1"] = _eligibility_gate_attribution_v1(
+            r,
+            reason=reason,
+            allowed=bool(allowed),
+            gate_meta=gate_meta,
+            activation=activation,
+            session=session_diag,
+            capacity=capacity_decision,
+        )
         return trace, bool(allowed), str(reason), dict(gate_meta or {})
 
     def _submit_alpaca_paper_entry_order(
@@ -7037,6 +7200,9 @@ class PaperAutopilotEngine:
                 "open_position_rows_count": int(len(open_rows_initial)),
                 "open_positions_unique_count": int(len([s for s in internal_open_syms if s])),
                 "broker_open_positions_count": int(len([s for s in broker_open_syms if s])),
+                "broker_positions_fetch_ok": bool(broker_positions_fetch_ok),
+                "broker_positions_error_sanitized": str(broker_snapshot.get("broker_positions_error_sanitized") or "")[:180],
+                "broker_orders_fetch_ok": bool(broker_snapshot.get("broker_orders_fetch_ok")),
                 "effective_broker_capacity_count": int(len([s for s in broker_open_syms if s])),
                 "stale_internal_positions_count": stale_internal_positions_count,
                 "stale_internal_workflow_row_overhang": int(max(0, len(open_rows_initial) - len([s for s in internal_open_syms if s]))),

@@ -47414,19 +47414,36 @@ def multilane_paper_operational_status_v1(force: bool = False):
 def _broker_truth_throughput_v1_payload(statuses: dict | None = None) -> dict:
     """Bounded read-only scorecard over the canonical multi-lane payload."""
     canonical = dict((statuses or {}).get("multilane_paper_operational_status_v1") or _multilane_paper_operational_status_v1_payload(statuses))
+    lanes = canonical.get("lanes") or {}
     return {
         "endpoint": "/api/astra_broker_truth_throughput_v1",
         "suite": "Astra Broker-Truth Throughput Consolidation V1",
         "status": "THROUGHPUT_OBSERVATION_ACTIVE",
         "canonical_endpoint": "/api/multilane_paper_operational_status_v1",
-        "lanes": canonical.get("lanes") or {},
+        "lanes": lanes,
         "cohorts": canonical.get("cohorts") or {},
         "throughput_windows": canonical.get("throughput_windows") or {},
         "lifecycle_lineage_integrity": canonical.get("lifecycle_lineage_integrity") or {},
         "truth_production_scoreboard": canonical.get("truth_production_scoreboard") or {},
         "first_causal_blockers": {
             name: dict(value.get("first_causal_blocker") or {})
-            for name, value in (canonical.get("lanes") or {}).items() if isinstance(value, dict)
+            for name, value in lanes.items() if isinstance(value, dict)
+        },
+        "eligibility_gate_attribution": {
+            name: [
+                dict(row.get("eligibility_gate_attribution_v1") or {})
+                for row in list(value.get("detailed_candidates") or [])[:25]
+                if isinstance(row, dict)
+            ]
+            for name, value in lanes.items() if isinstance(value, dict)
+        },
+        "capacity_authority": {
+            name: {
+                "owner": (canonical.get("capacity_integrity") or {}).get(name, {}).get("authority_owner"),
+                "timestamp": (canonical.get("capacity_integrity") or {}).get(name, {}).get("authority_timestamp"),
+                "state": (canonical.get("capacity_integrity") or {}).get(name, {}).get("authority_state"),
+            }
+            for name in ("swing", "day", "crypto")
         },
         "provider_calls_used": 0, "broker_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
         "worker_actions_used": 0, "get_route_mutations": 0,
