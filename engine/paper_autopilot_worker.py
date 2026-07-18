@@ -27,6 +27,10 @@ from engine.astra_runtime_governance_v1 import (
     write_snapshot,
 )
 from engine.astra_continuous_governance_v1 import ContinuousGovernanceV1
+from engine.astra_governance_coverage_consolidation_v1 import (
+    COMPONENT_ID,
+    AstraGovernanceCoverageConsolidationV1,
+)
 
 
 class PaperAutopilotWorker:
@@ -40,6 +44,7 @@ class PaperAutopilotWorker:
         self.previous_cursor = str(read_snapshot().get("cursor") or "")
         self.resource_policy = dict(read_snapshot().get("resource_policy") or {})
         self.continuous_governance = ContinuousGovernanceV1(STATE)
+        self.governance_coverage = AstraGovernanceCoverageConsolidationV1(STATE)
 
     def _base_state(self) -> dict[str, Any]:
         previous = read_snapshot()
@@ -193,15 +198,31 @@ class PaperAutopilotWorker:
         """
         worker_state = read_snapshot()
         safety = dict(getattr(self.autopilot, "_alpaca_safety_snapshot", lambda: {})() or {})
-        result = self.continuous_governance.run_worker_cycle(
-            worker_state=worker_state,
-            runtime_state=getattr(self.autopilot, "_runtime_state", {}),
-            safety=safety,
-        )
+        if not self.governance_coverage.component_enabled(COMPONENT_ID):
+            # A certification rollback can isolate this optional diagnostic
+            # hook without touching the execution engine or canonical truth.
+            result = {**self.continuous_governance.snapshot(), "status": "COMPONENT_ISOLATED_FAIL_CLOSED", "repairs_executed": 0, "repairs_verified": 0}
+        else:
+            result = self.continuous_governance.run_worker_cycle(
+                worker_state=worker_state,
+                runtime_state=getattr(self.autopilot, "_runtime_state", {}),
+                safety=safety,
+            )
         if int(result.get("repairs_executed") or 0) > 0:
             save = getattr(self.autopilot, "_save_state_file", None)
             if callable(save):
                 save()
+        # Coverage is a separate, metadata-only owner.  It consumes the
+        # committed governance outcome and current worker state; it cannot
+        # call a provider, broker, or alter the autopilot decision policy.
+        coverage = self.governance_coverage.run_worker_cycle(
+            continuous=result,
+            runtime=worker_state,
+            preflight={
+                "paper_mode_verified": bool(safety.get("paper_mode_verified")),
+                "broker_live_endpoint_allowed": bool(safety.get("broker_live_endpoint_allowed")),
+            },
+        )
         self._publish(continuous_governance={
             "status": result.get("status"),
             "authorization": result.get("authorization"),
@@ -209,6 +230,8 @@ class PaperAutopilotWorker:
             "first_causal_blocker": dict(result.get("current_campaign") or {}).get("first_causal_blocker"),
             "repairs_executed": result.get("repairs_executed"),
             "repairs_verified": result.get("repairs_verified"),
+            "coverage_status": coverage.get("status"),
+            "coverage_certification": dict((coverage.get("post_deployment_certifications") or [{}])[0]).get("certification_state"),
         })
         return result
 

@@ -2613,6 +2613,10 @@ try:
 except Exception:
     ContinuousGovernanceV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
+    from engine.astra_governance_coverage_consolidation_v1 import AstraGovernanceCoverageConsolidationV1
+except Exception:
+    AstraGovernanceCoverageConsolidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+try:
     from engine.astra_build_l_research_maturation_v1 import (
         BuildLFinalValidationV1,
         CryptoIntelligenceSeparateEvidenceV2,
@@ -3377,6 +3381,7 @@ ASTRA_AUTONOMOUS_SAFE_REPAIR = AstraAutonomousSafeRepairV1(state_dir=STATE)
 ASTRA_GOVERNANCE_OVERSIGHT_V2 = AstraGovernanceOversightV2(state_dir=STATE)
 ASTRA_BUILD_K_FINAL_VALIDATION = BuildKFinalValidationV1(state_dir=STATE)
 ASTRA_CONTINUOUS_GOVERNANCE = ContinuousGovernanceV1(state_dir=STATE)
+ASTRA_GOVERNANCE_COVERAGE_CONSOLIDATION = AstraGovernanceCoverageConsolidationV1(state_dir=STATE)
 ASTRA_MOMENTUM_EXIT_READINESS_LOSS_ACCEPTANCE = MomentumExitReadinessLossAcceptanceV1(state_dir=STATE)
 ASTRA_HORIZON_CAPACITY_TURNOVER_RESEARCH = HorizonCapacityTurnoverResearchV1(state_dir=STATE)
 ASTRA_HISTORICAL_REPLAY_MULTI_HORIZON_VALIDATION = HistoricalReplayMultiHorizonValidationV1(state_dir=STATE)
@@ -46211,9 +46216,59 @@ def _astra_continuous_governance_snapshot_v1() -> dict:
         }
 
 
+def _astra_governance_coverage_snapshot_v1() -> dict:
+    """Read worker-committed certification state without launching a scan."""
+    try:
+        return dict(ASTRA_GOVERNANCE_COVERAGE_CONSOLIDATION.snapshot() or {})
+    except Exception as exc:
+        return {
+            "endpoint": "/api/astra_governance_coverage_consolidation_v1",
+            "status": "FAIL_CLOSED_GOVERNANCE_COVERAGE_UNAVAILABLE",
+            "degraded_reason": f"governance_coverage_snapshot_unavailable:{str(exc)[:140]}",
+            "get_route_read_only": True,
+            "provider_calls_used": 0,
+            "broker_actions_used": 0,
+            "llm_calls_used": 0,
+            "behavior_safe_to_apply": False,
+            "paper_only_preserved": True,
+        }
+
+
 @router.get("/api/astra_continuous_governance_v1")
 def astra_continuous_governance_v1():
     return _astra_continuous_governance_snapshot_v1()
+
+
+@router.get("/api/astra_governance_coverage_consolidation_v1")
+def astra_governance_coverage_consolidation_v1():
+    return _astra_governance_coverage_snapshot_v1()
+
+
+@router.get("/api/astra_upgrade_admission_v1")
+def astra_upgrade_admission_v1():
+    payload = _astra_governance_coverage_snapshot_v1()
+    keys = ("status", "baseline_certification", "upgrade_contracts", "admission_results", "post_deployment_certifications", "market_state")
+    return {"endpoint": "/api/astra_upgrade_admission_v1", **{key: payload.get(key) for key in keys}, "get_route_read_only": True,
+            "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "behavior_safe_to_apply": False,
+            "paper_only_preserved": True}
+
+
+@router.get("/api/astra_full_system_readiness_v1")
+def astra_full_system_readiness_v1():
+    payload = _astra_governance_coverage_snapshot_v1()
+    return {"endpoint": "/api/astra_full_system_readiness_v1", "status": payload.get("status"),
+            "readiness_matrix": payload.get("readiness_matrix", []), "market_state": payload.get("market_state"),
+            "get_route_read_only": True, "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
+            "behavior_safe_to_apply": False, "paper_only_preserved": True}
+
+
+@router.get("/api/astra_governance_owner_report_v1")
+def astra_governance_owner_report_v1():
+    payload = _astra_governance_coverage_snapshot_v1()
+    return {"endpoint": "/api/astra_governance_owner_report_v1", "status": payload.get("status"),
+            "owner_report": payload.get("owner_report", {}), "warning_categories": payload.get("warning_categories", {}),
+            "get_route_read_only": True, "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
+            "behavior_safe_to_apply": False, "paper_only_preserved": True}
 
 
 @router.get("/api/astra_remediation_campaigns_v1")
@@ -86989,6 +87044,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             })
             _attach_premarket_certification_compact_v1(force_cached)
             force_cached["astra_continuous_governance_v1"] = _astra_continuous_governance_snapshot_v1()
+            force_cached["astra_governance_coverage_consolidation_v1"] = _astra_governance_coverage_snapshot_v1()
             force_cached["astra_runtime_resource_governance_v1"] = _astra_runtime_resource_governance_payload_v1()
             force_cached["astra_operational_preflight_v1"] = astra_operational_preflight_v1()
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(force_cached), "ts": time.time()}
@@ -87023,6 +87079,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             }
             _attach_pladeu_statuses_v1(fast, force=False)
             fast["astra_continuous_governance_v1"] = _astra_continuous_governance_snapshot_v1()
+            fast["astra_governance_coverage_consolidation_v1"] = _astra_governance_coverage_snapshot_v1()
             fast["astra_runtime_resource_governance_v1"] = _astra_runtime_resource_governance_payload_v1()
             fast["astra_operational_preflight_v1"] = astra_operational_preflight_v1()
             return fast
