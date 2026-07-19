@@ -41,7 +41,7 @@ def continuous_snapshot():
 class GovernanceCoverageConsolidationTests(unittest.TestCase):
     def test_registry_covers_every_required_domain_once(self):
         domains = [item["domain"] for item in component_registry()]
-        required = {"RUNTIME", "PROCESSES", "RESOURCES", "PROVIDERS", "STORAGE", "INDEXES", "EVIDENCE", "RETRIEVAL", "LANES", "THROUGHPUT", "HORIZONS", "LIFECYCLES", "CORTEX", "COPILOT", "BROKER", "RECONCILIATION", "TRUTH", "LEARNING", "REMEDIATION", "SECURITY_AND_SAFETY", "UPGRADE_GOVERNANCE"}
+        required = {"RUNTIME", "PROCESSES", "RESOURCES", "PROVIDERS", "STORAGE", "INDEXES", "EVIDENCE", "RETRIEVAL", "LANES", "THROUGHPUT", "HORIZONS", "LIFECYCLES", "CORTEX", "COPILOT", "BROKER", "RECONCILIATION", "TRUTH", "LEARNING", "REMEDIATION", "SYSTEM_INTEGRITY", "SECURITY_AND_SAFETY", "UPGRADE_GOVERNANCE"}
         self.assertEqual(set(domains), required)
         self.assertEqual(len(domains), len(set(domains)))
 

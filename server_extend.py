@@ -736,6 +736,7 @@ except Exception:
 try:
     from engine.astra_canonical_truth_registry_v1 import canonical_fact_registry_v1, fact_envelope_v1
     from engine.astra_truth_arbitration_v1 import TruthContradictionRegistryV1, arbitrate_truth_claims_v1, cortex_truth_summary_v1, read_canonical_open_crypto_positions
+    from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystemIntegrityScannerV1
 except Exception:
     canonical_fact_registry_v1 = lambda: {}  # type: ignore[assignment]
     fact_envelope_v1 = None  # type: ignore[assignment]
@@ -743,6 +744,7 @@ except Exception:
     arbitrate_truth_claims_v1 = None  # type: ignore[assignment]
     cortex_truth_summary_v1 = None  # type: ignore[assignment]
     read_canonical_open_crypto_positions = None  # type: ignore[assignment]
+    ContinuousSystemIntegrityScannerV1 = None  # type: ignore[assignment,misc]
 try:
     from engine.trade_lifecycle_excursion_v2 import TradeLifecycleExcursionV2
 except Exception:
@@ -70366,6 +70368,7 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
         ])
     arbitration = worker_arbitration if worker_facts else (arbitrate_truth_claims_v1(claims) if callable(arbitrate_truth_claims_v1) else {"critical_facts": {}, "contradictions": [], "status": "UNAVAILABLE_FAIL_CLOSED"})
     persisted = TruthContradictionRegistryV1(STATE).load() if TruthContradictionRegistryV1 is not None else {"issues": []}
+    scanner = ContinuousSystemIntegrityScannerV1(STATE).snapshot() if ContinuousSystemIntegrityScannerV1 is not None else {"status": "UNAVAILABLE_FAIL_CLOSED"}
     active = [dict(row) for row in (persisted.get("issues") or []) if isinstance(row, dict) and row.get("state") not in {"RESOLVED"}]
     cortex = cortex_truth_summary_v1({**arbitration, "contradictions": active}) if callable(cortex_truth_summary_v1) else {"truth_promotion_allowed": False}
     compliance = [
@@ -70380,10 +70383,21 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
             "resolved_contradictions": [dict(row) for row in (persisted.get("issues") or []) if isinstance(row, dict) and row.get("state") == "RESOLVED"],
             "governance_invariants": {"CRYPTO_LOCAL_BROKER_POSITION_COUNTS_RECONCILE": int(_to_float(local_count, 0)) == int(_to_float(capacity.get("crypto_open_positions"), 0)), "CRYPTO_RECONCILIATION_USES_CANONICAL_OPEN_POSITION_STORE": True, "NO_NONCANONICAL_POSITION_SOURCE_OVERRIDES_CANONICAL_TRUTH": True, "CRITICAL_FACT_SCOPE_IS_EXPLICIT": bool(claims)},
             "cortex_truth_summary": cortex, "consumer_source_compliance": compliance,
+            "system_integrity_summary": {"status": scanner.get("status"), "last_scan_at": scanner.get("last_scan_at"),
+                "active_root_cause_count": len(scanner.get("active_root_causes") or []), "human_repair_required_count": len(scanner.get("human_repairs_required") or [])},
             "remaining_blockers": ["open truth-arbitration contradiction requires sustained worker verification"] if active else [],
             "recommended_repairs": ["retain canonical SQLite open-position reader; do not use broad adapters as active state"],
             "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "state_mutations_from_get": 0,
             "get_route_read_only": True, **_safety_flags_v1()}
+
+
+def _astra_system_integrity_scanner_v1_payload() -> dict:
+    """Read the worker-committed integrity snapshot only; never start a scan."""
+    if ContinuousSystemIntegrityScannerV1 is None:
+        return {"endpoint": "/api/astra_system_integrity_scanner_v1", "status": "UNAVAILABLE_FAIL_CLOSED",
+                "get_route_read_only": True, "provider_calls_used": 0, "broker_actions_used": 0,
+                "llm_calls_used": 0, "state_mutations_from_get": 0, **_safety_flags_v1()}
+    return ContinuousSystemIntegrityScannerV1(STATE).snapshot()
 
 
 def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
@@ -74243,6 +74257,11 @@ def crypto_data_lifecycle_shadow_completion_v1():
 @router.get("/api/astra_canonical_truth_governance_v1")
 def astra_canonical_truth_governance_v1():
     return _astra_canonical_truth_governance_v1_payload()
+
+
+@router.get("/api/astra_system_integrity_scanner_v1")
+def astra_system_integrity_scanner_v1():
+    return _astra_system_integrity_scanner_v1_payload()
 
 
 @router.get("/api/crypto_lane_paper_readiness_v1")

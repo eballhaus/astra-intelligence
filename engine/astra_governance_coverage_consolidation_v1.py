@@ -130,6 +130,7 @@ def component_registry() -> list[dict[str, Any]]:
         ("TRUTH", "astra_truth_controlled_evolution_executive_v1", "engine/astra_truth_controlled_evolution_executive_v1.py", "/api/astra_truth_controlled_evolution_executive_v1", "state/truth_*", "ALL", "ALL"),
         ("LEARNING", "unified_learning_diagnostics_v1", "server_extend.py", "/api/unified_learning_diagnostics_v1", "state/dashboard_cache", "ALL", "ALL"),
         ("REMEDIATION", "astra_continuous_governance_v1", "engine/astra_continuous_governance_v1.py", "/api/astra_continuous_governance_v1", "state/astra_remediation_campaigns_v1.json", "EQUITY", "SWING"),
+        ("SYSTEM_INTEGRITY", "astra_continuous_system_integrity_scanner_v1", "engine/astra_continuous_system_integrity_scanner_v1.py", "/api/astra_system_integrity_scanner_v1", "state/astra_system_integrity_scanner_v1.json", "ALL", "ALL"),
         ("SECURITY_AND_SAFETY", "astra_operational_preflight_v1", "server_extend.py", "/api/astra_operational_preflight_v1", "state/astra_worker_runtime_v1.json", "ALL", "ALL"),
         ("UPGRADE_GOVERNANCE", "astra_governance_coverage_consolidation_v1", "engine/astra_governance_coverage_consolidation_v1.py", "/api/astra_upgrade_admission_v1", STATE_FILE, "ALL", "ALL"),
     ]
@@ -161,7 +162,7 @@ def continuous_governance_contract() -> dict[str, Any]:
         "cortex_influence_expectation": "diagnostic root-cause acknowledgement only; no policy influence",
         "freshness_requirement": "after startup and each bounded worker cycle", "resource_budget": "no provider/broker/LLM calls",
         "latency_budget": "100ms bounded snapshot scan", "memory_budget": "bounded 50 lifecycle records", "scan_budget": "50 records, one campaign",
-        "required_invariants": ["ONE_CANONICAL_WORKER", "ELIGIBLE_REVIEW_IS_SCHEDULED", "SUFFICIENT_BARS_BUILD_MOMENTUM"],
+        "required_invariants": ["ONE_CANONICAL_WORKER", "ELIGIBLE_REVIEW_IS_SCHEDULED", "SUFFICIENT_BARS_BUILD_MOMENTUM", "ALL_CRITICAL_FACTS_HAVE_UNIQUE_CANONICAL_OWNER", "SAFE_CORRECTION_MUST_BE_ALLOWLISTED", "RECURRENT_DEFECT_MUST_ESCALATE"],
         "safe_remediations": ["REQUEUE_ELIGIBLE_LIFECYCLE_REVIEW", "SCHEDULE_MISSING_MOMENTUM_BUILD", "RETRY_MISSING_CONSUMER_ACKNOWLEDGEMENT"],
         "failure_mode": "fail closed or legitimate waiting", "fail_closed_behavior": "no repair for ambiguous identity or policy/resource safety failure",
         "rollback_procedure": "disable this component's worker hook only; preserve campaigns and canonical evidence",

@@ -505,6 +505,7 @@ def build_multilane_operational_status(
     execution_ledger: Mapping[str, Any] | None = None,
     capacity_snapshot: Mapping[str, Any] | None = None,
     position_review_rows: Iterable[Mapping[str, Any]] | None = None,
+    system_integrity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a cache-first status payload from existing authoritative owners."""
     trace_rows = list((autopilot_trace or {}).get("per_candidate_decision_trace") or [])
@@ -516,6 +517,7 @@ def build_multilane_operational_status(
     execution_ledger = dict(execution_ledger or {})
     capacity_snapshot = dict(capacity_snapshot or {})
     position_review_rows = [dict(row) for row in (position_review_rows or []) if isinstance(row, Mapping)]
+    system_integrity = dict(system_integrity or source_metadata.get("system_integrity_scanner_v1") or {})
     freshness_meta = operational_freshness(source_metadata.get("candidate_snapshot_age_seconds", source_metadata.get("candidate_cache_age_seconds")))
     freshness = _text(source_metadata.get("candidate_freshness_status") or freshness_meta["candidate_snapshot_freshness"]).upper() or "MISSING"
     current = [_stage_row(row, trace_by_symbol.get(_text(row.get("symbol") or row.get("ticker")).upper(), {}), current=_is_current(row, freshness), pilot_enabled=bool(day_config.get("day_lane_pilot_enabled")), capital_configured=bool(day_config.get("capital_configured"))) for row in candidates if isinstance(row, Mapping)]
@@ -767,6 +769,7 @@ def build_multilane_operational_status(
         governance_findings=governance_findings,
         information_utilization=information_utilization,
         legacy_resolution=legacy_resolution,
+        system_integrity=system_integrity,
     )
     all_lanes_enabled = all(bool(lane_payloads[key].get("lane_enabled")) for key in lane_payloads)
     operational_status = (

@@ -35,6 +35,7 @@ from engine.crypto_operational_integrity_readiness_v1 import CryptoOperationalIn
 from engine.shadow_profit_loss_protection_validation_v1 import ShadowProfitLossProtectionValidationV1
 from engine.astra_canonical_truth_registry_v1 import fact_envelope_v1
 from engine.astra_truth_arbitration_v1 import TruthContradictionRegistryV1, arbitrate_truth_claims_v1, read_canonical_open_crypto_positions
+from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystemIntegrityScannerV1
 
 
 class PaperAutopilotWorker:
@@ -52,6 +53,7 @@ class PaperAutopilotWorker:
         self.crypto_operational_integrity = CryptoOperationalIntegrityReadinessV1(STATE)
         self.shadow_profit_loss_protection = ShadowProfitLossProtectionValidationV1(STATE)
         self.truth_contradictions = TruthContradictionRegistryV1(STATE)
+        self.system_integrity_scanner = ContinuousSystemIntegrityScannerV1(STATE)
 
     def _base_state(self) -> dict[str, Any]:
         previous = read_snapshot()
@@ -342,6 +344,22 @@ class PaperAutopilotWorker:
             crypto_integrity = {"status": "UNAVAILABLE_FAIL_CLOSED"}
             shadow_protection = {"status": "UNAVAILABLE_FAIL_CLOSED"}
             truth_arbitration = {"status": "UNAVAILABLE_FAIL_CLOSED"}
+        # This scanner owns only bounded state diagnostics. It consumes the
+        # facts already gathered by this worker and cannot reach providers,
+        # brokers, LLMs, order paths, or mutable lifecycle truth.
+        integrity_scan = self.system_integrity_scanner.run_if_due(
+            worker_state=worker_state,
+            runtime_state=getattr(self.autopilot, "_runtime_state", {}),
+            safety=safety,
+            context={
+                "truth_arbitration": truth_arbitration,
+                "crypto_integrity": crypto_integrity,
+                "shadow_protection": shadow_protection,
+                "quote_handoffs": list(getattr(self.autopilot, "_runtime_state", {}).get("crypto_quote_handoffs_v1") or [])[:20],
+                "get_side_effects": 0,
+            },
+        )
+        getattr(self.autopilot, "_runtime_state", {})["system_integrity_scanner_v1"] = dict(integrity_scan)
         self._publish(continuous_governance={
             "status": result.get("status"),
             "authorization": result.get("authorization"),
@@ -355,6 +373,8 @@ class PaperAutopilotWorker:
             "shadow_profit_loss_protection_status": shadow_protection.get("status"),
             "truth_arbitration_status": truth_arbitration.get("status"),
             "truth_contradiction_count": len(truth_arbitration.get("contradictions") or []),
+            "system_integrity_status": integrity_scan.get("status"),
+            "system_integrity_root_cause_count": len(integrity_scan.get("active_root_causes") or []),
         })
         return result
 

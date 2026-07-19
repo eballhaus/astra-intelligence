@@ -554,6 +554,21 @@ class ContinuousGovernanceV1:
             truth_invariant("STALE_DIAGNOSTIC_CANNOT_OVERRIDE_CURRENT_CANONICAL_FACT", True, "")
             truth_invariant("HISTORICAL_ROWS_CANNOT_BE_COUNTED_AS_ACTIVE_POSITIONS", True, "")
             truth_invariant("RECONSTRUCTED_ROWS_CANNOT_BE_COUNTED_AS_BROKER_POSITIONS", True, "")
+        integrity = _dict(runtime_state.get("system_integrity_scanner_v1"))
+        if integrity:
+            roots = [row for row in list(integrity.get("active_root_causes") or []) if isinstance(row, dict)]
+            def scanner_invariant(invariant_id: str, passed: bool, blocker: str) -> None:
+                invariants.append({"invariant_id": invariant_id, "owner": "astra_continuous_system_integrity_scanner_v1", "dependencies": ["worker committed integrity scan"],
+                    "state": "PASS" if passed else "WARN", "observed_value": integrity, "expected_value": "no active critical root cause",
+                    "first_failed_at": None if passed else _now(), "last_checked_at": _now(), "failure_count": 0 if passed else 1,
+                    "severity": "INFO" if passed else "HIGH", "repairability": "DIAGNOSTIC", "exact_blocker": "" if passed else blocker,
+                    "allowed_remediations": ["allowlisted derived-state correction only"]})
+            scanner_invariant("ALL_CRITICAL_FACTS_HAVE_UNIQUE_CANONICAL_OWNER", not any(str(row.get("category")) == "GOVERNANCE_COVERAGE_GAP" for row in roots), "critical fact registry contract incomplete")
+            scanner_invariant("ALL_CRITICAL_CONSUMERS_USE_APPROVED_SOURCE", not any(str(row.get("category")) == "CANONICAL_SOURCE_VIOLATION" for row in roots), "noncanonical source used by a critical consumer")
+            scanner_invariant("NO_ENDPOINT_CRITICAL_FACT_CONTRADICTION", not any(str(row.get("category")) in {"CANONICAL_SOURCE_VIOLATION", "SCOPE_MISMATCH"} for row in roots), "critical fact contradiction present")
+            scanner_invariant("NO_VALID_EVIDENCE_SILENTLY_DROPPED_BY_CONSUMER", not any(str(row.get("category")) == "EVIDENCE_CONSUMER_FAILURE" for row in roots), "valid evidence not consumed")
+            scanner_invariant("SAFE_CORRECTION_MUST_BE_ALLOWLISTED", all(bool(row.get("safe_correction_available")) or bool(row.get("human_repair_required")) for row in roots), "unclassified correction authority")
+            scanner_invariant("RECURRENT_DEFECT_MUST_ESCALATE", not any(str(row.get("state")) == "RECURRENT" for row in roots), "recurrent root cause requires review")
         return invariants, rows
 
     def _campaign_for(self, rows: list[dict[str, Any]], authorization: str) -> dict[str, Any] | None:

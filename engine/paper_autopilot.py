@@ -1744,6 +1744,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["equity_risk_envelopes_snapshot_v1"] = dict(payload.get("equity_risk_envelopes_snapshot_v1") or {})
                 if isinstance(payload.get("truth_arbitration_v1"), dict):
                     self._runtime_state["truth_arbitration_v1"] = dict(payload.get("truth_arbitration_v1") or {})
+                if isinstance(payload.get("system_integrity_scanner_v1"), dict):
+                    self._runtime_state["system_integrity_scanner_v1"] = dict(payload.get("system_integrity_scanner_v1") or {})
                 if payload.get("last_cycle_utc"):
                     self._runtime_state["last_cycle_utc"] = str(payload.get("last_cycle_utc") or "")
                 for key in (
@@ -1795,6 +1797,7 @@ class PaperAutopilotEngine:
             "crypto_rankings_snapshot_v1": dict(self._runtime_state.get("crypto_rankings_snapshot_v1") or {}),
             "equity_risk_envelopes_snapshot_v1": dict(self._runtime_state.get("equity_risk_envelopes_snapshot_v1") or {}),
             "truth_arbitration_v1": dict(self._runtime_state.get("truth_arbitration_v1") or {}),
+            "system_integrity_scanner_v1": dict(self._runtime_state.get("system_integrity_scanner_v1") or {}),
             "last_execution_trace": {
                 **dict(self._runtime_state.get("last_execution_trace") or {}),
                 "per_candidate_decision_trace": list(

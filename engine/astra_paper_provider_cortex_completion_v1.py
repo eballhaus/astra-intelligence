@@ -128,6 +128,7 @@ def build_truth_acceleration_oversight(
     information_utilization: dict[str, Any] | None = None,
     legacy_resolution: dict[str, Any] | None = None,
     truth_arbitration: dict[str, Any] | None = None,
+    system_integrity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return Cortex proposals inside the approved operational envelope.
 
@@ -203,8 +204,12 @@ def build_truth_acceleration_oversight(
         })
     legacy = dict(legacy_resolution or {})
     truth = dict(truth_arbitration or {})
+    integrity = dict(system_integrity or {})
     truth_contradictions = [dict(row) for row in (truth.get("contradictions") or []) if isinstance(row, dict)]
     if truth_contradictions:
+        critical = True
+    integrity_roots = [dict(row) for row in (integrity.get("active_root_causes") or []) if isinstance(row, dict)]
+    if integrity_roots:
         critical = True
     if int(to_int(legacy.get("legacy_positions_proposed"), 0)) and not int(to_int(legacy.get("legacy_positions_approved"), 0)):
         proposals.append({
@@ -238,6 +243,14 @@ def build_truth_acceleration_oversight(
             "rejected_claims": truth_contradictions, "unresolved_contradictions": len(truth_contradictions),
             "truth_promotion_allowed": False,
             "plain_english": "Canonical facts are retained; conflicting diagnostic claims are rejected and cannot become broker truth."},
+        "system_integrity": {"system_integrity_summary": integrity.get("status") or "AWAITING_WORKER_SCAN",
+            "highest_impact_root_causes": integrity_roots[:5], "downstream_symptoms_grouped": True,
+            "safe_corrections_applied": list(integrity.get("safe_corrections_applied") or [])[:10],
+            "safe_corrections_verifying": list(integrity.get("safe_corrections_verifying") or [])[:10],
+            "human_repairs_required": list(integrity.get("human_repairs_required") or [])[:10],
+            "recurrent_defects": list(integrity.get("recurrent_defects") or [])[:10],
+            "legitimate_waiting_states": list(integrity.get("legitimate_waiting_states") or [])[:10],
+            "truth_promotion_allowed": False},
         "direct_uncontrolled_mutation": False,
         "provider_calls_used": 0,
         "broker_actions_used": 0,
