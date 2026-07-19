@@ -21306,7 +21306,7 @@ def crypto_rankings():
 
 
 def _refresh_crypto_rankings_snapshot_v1() -> dict:
-    """Produce one bounded BTC/USD snapshot from existing worker providers."""
+    """Refresh one rotating broker-supported crypto pair per worker cycle."""
     if str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() != "worker":
         return {"status": "REJECTED_NOT_WORKER_OWNER", "provider_calls_used": 0, "broker_actions_used": 0}
     now = time.time()
@@ -21326,9 +21326,22 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         PAPER_AUTOPILOT._save_state_file()
         return {"status": "FAILED_FAIL_CLOSED", "exact_blocker": blocker, "provider_calls_used": 2, "broker_actions_used": 0}
 
-    # BTC/USD is the bounded initial proof. Additional pairs stay deferred
-    # until this canonical quote -> bar -> ranking path is current.
-    symbol = "BTC/USD"
+    # Reuse the broker's cached capability record. Discovery is deliberately
+    # worker-owned and bounded to one pair per cycle, so widening observation
+    # does not multiply provider calls or turn a discovery result into trade
+    # approval. Stablecoins are excluded from directional candidate discovery.
+    capability = dict(ALPACA_PAPER_BROKER.crypto_capability_status(False) or {})
+    stable_bases = {"USDC", "USDT", "DAI", "USD", "PYUSD", "FDUSD", "TUSD", "USDG"}
+    discovered = sorted({
+        str(pair).upper().replace("-", "/")
+        for pair in (capability.get("tradable_pairs") or capability.get("supported_pairs") or [])
+        if str(pair).upper().replace("-", "/").endswith("/USD")
+        and str(pair).upper().replace("-", "/").split("/", 1)[0] not in stable_bases
+    })[:30]
+    if not discovered:
+        discovered = list(_ASTRA_CRYPTO_APPROVED_CORE_UNIVERSE_V1)
+    cursor = int(previous.get("discovery_cursor") or 0) % len(discovered)
+    symbol = discovered[cursor]
     try:
         from engine import data_orchestrator as active_data_orchestrator
 
@@ -21349,7 +21362,7 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         quote_row, quote_meta, quote = None, {}, {}
     quote_provider = str((quote_meta or {}).get("provider_used") or quote.get("provider_used") or "").lower()
     if not quote_row or quote_provider in {"", "none", "local_snapshot"}:
-        return fail_closed("BTC_USD_FRESH_QUOTE_UNAVAILABLE")
+        return fail_closed(f"{symbol.replace('/', '_')}_FRESH_QUOTE_UNAVAILABLE")
     quote_rows = [dict(quote_row)]
     end = datetime.now(UTC)
     start = end - timedelta(hours=6)
@@ -21363,7 +21376,7 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
     ) or {})
     bars = [dict(row) for row in (bar_payload.get("bars") or []) if isinstance(row, dict)]
     if len(bars) < 2:
-        return fail_closed("BTC_USD_FRESH_BARS_UNAVAILABLE", bar_payload=bar_payload)
+        return fail_closed(f"{symbol.replace('/', '_')}_FRESH_BARS_UNAVAILABLE", bar_payload=bar_payload)
     latest_bar = dict(bars[-1])
     try:
         high, low, close = float(latest_bar.get("h")), float(latest_bar.get("l")), float(latest_bar.get("c"))
@@ -21371,13 +21384,25 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
     except (TypeError, ValueError):
         risk_pct = None
     if risk_pct is None or risk_pct <= 0:
-        return fail_closed("BTC_USD_BAR_RISK_ENVELOPE_UNAVAILABLE", bar_payload=bar_payload)
+        return fail_closed(f"{symbol.replace('/', '_')}_BAR_RISK_ENVELOPE_UNAVAILABLE", bar_payload=bar_payload)
+
+    # Alpaca bars carry the authoritative interval volume. Preserve it for
+    # ranking and contract consumers instead of treating a quote-only payload
+    # as a volume observation.
+    bar_volume = latest_bar.get("v")
+    try:
+        if float(bar_volume) > 0:
+            quote_rows[0]["volume"] = float(bar_volume)
+            quote_rows[0]["volume_24h"] = float(bar_volume)
+            quote_rows[0]["volume_evidence"] = "ALPACA_15MIN_BAR"
+    except (TypeError, ValueError):
+        pass
 
     ranked = _prioritize_rankings(quote_rows, learning_snapshot=_get_enriched_learning_insights_cached())
     ranked = PORTFOLIO_INTEL.apply(ranked, asset_type="crypto")
     ranked = _prioritize_rankings(ranked, learning_snapshot=_get_enriched_learning_insights_cached())
     if not ranked:
-        return fail_closed("BTC_USD_RANKING_EMPTY", bar_payload=bar_payload)
+        return fail_closed(f"{symbol.replace('/', '_')}_RANKING_EMPTY", bar_payload=bar_payload)
     quote_timestamp = str(quote_rows[0].get("quote_timestamp") or quote_rows[0].get("timestamp") or "")
     output = [_ensure_persona_fields({
         **dict(ranked[0]),
@@ -21392,11 +21417,18 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
     output = PREDICTIVE_MODEL.annotate_rows(output)
     output = REGIME_ENGINE.annotate_rows(output)
     generated_at = _now_utc_iso()
+    previously_certified = set(previous.get("certified_pairs") or [])
+    if quote_rows[0].get("volume_evidence") == "ALPACA_15MIN_BAR":
+        previously_certified.add(symbol)
     snapshot = {
         "rows": output, "generated_at": generated_at, "generated_at_epoch": now,
         "quote_timestamp": quote_timestamp, "bar_timestamp": latest_bar.get("t"),
         "quote_provider": quote_provider,
         "provider_owner": "data_orchestrator.ProviderRouter + AlpacaPaperBroker.historical_bars",
+        "crypto_discovery_universe": discovered,
+        "discovery_cursor": (cursor + 1) % len(discovered),
+        "certified_pairs": sorted(previously_certified),
+        "certification_state": "ROTATING_BOUNDED_EVALUATION",
     }
     PAPER_AUTOPILOT._runtime_state["crypto_rankings_snapshot_v1"] = snapshot
     _update_last_rankings("crypto", output)
