@@ -16,7 +16,8 @@ def dependency_graph_v1() -> dict[str, Any]:
         "crypto_ranking_snapshot", "operational_crypto_candidate", "candidate_execution_integrity",
         "crypto_readiness", "canonical_local_position_store", "broker_capacity_snapshot",
         "truth_arbitration", "continuous_governance", "cortex_truth_summary", "dashboard_summary",
-        "completed_broker_lifecycle", "shadow_profit_loss_consumer",
+        "completed_broker_lifecycle", "shadow_profit_loss_consumer", "sentinel_scan_engine",
+        "governance_issue_lifecycle", "cortex_root_cause_summary", "controlled_repair_executor",
     ]
     edges = [
         ("alpaca_crypto_latest_quote", "ProviderRouter", "produces"),
@@ -31,6 +32,9 @@ def dependency_graph_v1() -> dict[str, Any]:
         ("truth_arbitration", "cortex_truth_summary", "consumes"),
         ("continuous_governance", "dashboard_summary", "displays"),
         ("completed_broker_lifecycle", "shadow_profit_loss_consumer", "consumes"),
+        ("sentinel_scan_engine", "continuous_governance", "detects"),
+        ("continuous_governance", "cortex_root_cause_summary", "classifies"),
+        ("cortex_root_cause_summary", "controlled_repair_executor", "plans"),
     ]
     return {"version": "1.0.0", "nodes": nodes, "edges": [{"from": left, "to": right, "relation": relation} for left, right, relation in edges]}
 
@@ -51,12 +55,25 @@ def root_cause_from_signal_v1(signal: dict[str, Any]) -> dict[str, Any]:
     elif kind == "ENDPOINT_SIDE_EFFECT":
         category, handoff = "ENDPOINT_SIDE_EFFECT", "GET handler -> mutable worker/provider/broker path"
         symptoms, owner, repair = ["GET_ROUTE_NOT_READ_ONLY"], "endpoint handler", "remove mutable call from GET composition"
+    elif kind == "CRYPTO_PROVIDER_DATA_UNAVAILABLE":
+        category, handoff = "PROVIDER_DATA_UNAVAILABLE", "ProviderRouter crypto quote request -> provider response"
+        symptoms, owner, repair = ["PENDING_QUOTE_FRESHNESS", "PENDING_SPREAD", "PENDING_DATA_QUALITY"], "external crypto quote provider", "wait for a current observable quote; do not fabricate market data"
+    elif kind == "CRYPTO_VOLUME_DROPPED":
+        category, handoff = "FIELD_DROPPED_DURING_TRANSFORMATION", "completed crypto bar evidence -> liquidity readiness"
+        symptoms, owner, repair = ["PENDING_LIQUIDITY", "PENDING_DATA_QUALITY"], "crypto candidate transformation", "preserve completed-bar volume evidence through readiness contract"
+    elif kind == "CRYPTO_DATA_QUALITY_CONTRACT_MISMATCH":
+        category, handoff = "PRODUCER_CONSUMER_CONTRACT_MISMATCH", "crypto candidate evidence -> data-quality consumer"
+        symptoms, owner, repair = ["PENDING_DATA_QUALITY", "CRYPTO_ORDER_READY_COUNT_ZERO"], "crypto readiness contract consumer", "align explicit canonical data-quality aliases without changing thresholds"
     else:
         category, handoff = kind, str(signal.get("first_bad_handoff") or "unclassified critical handoff")
         symptoms, owner, repair = list(signal.get("downstream_symptoms") or []), str(signal.get("owner") or "unknown"), str(signal.get("repair") or "produce bounded human repair package")
     facts = sorted({str(item) for item in signal.get("canonical_fact_ids") or []})
     root_id = _id(category, handoff, ",".join(facts))
-    return {"root_cause_id": root_id, "category": category, "severity": str(signal.get("severity") or "HIGH"),
+    severity = str(signal.get("severity") or "HIGH")
+    finding_id = "finding-" + hashlib.sha256((root_id + "|" + kind).encode("utf-8")).hexdigest()[:16]
+    return {"root_cause_id": root_id, "finding_id": finding_id, "governance_issue_id": root_id,
+            "verification_id": "verification-" + root_id.removeprefix("root-"), "category": category, "severity": severity,
+            "confidence": str(signal.get("confidence") or ("VERIFIED" if kind not in {"UNKNOWN_SYSTEM_DEFECT"} else "LOW")),
             "first_bad_handoff": handoff, "canonical_fact_ids": facts, "affected_components": list(signal.get("affected_components") or [owner]),
             "affected_endpoints": list(signal.get("affected_endpoints") or []), "downstream_symptoms": symptoms,
             "likely_owner": owner, "smallest_safe_repair": repair,

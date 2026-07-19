@@ -356,6 +356,7 @@ class PaperAutopilotWorker:
                 "crypto_integrity": crypto_integrity,
                 "shadow_protection": shadow_protection,
                 "quote_handoffs": list(getattr(self.autopilot, "_runtime_state", {}).get("crypto_quote_handoffs_v1") or [])[:20],
+                "crypto_ranking_snapshot": dict(getattr(self.autopilot, "_runtime_state", {}).get("crypto_rankings_snapshot_v1") or {}),
                 "get_side_effects": 0,
             },
         )

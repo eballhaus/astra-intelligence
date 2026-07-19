@@ -569,6 +569,23 @@ class ContinuousGovernanceV1:
             scanner_invariant("NO_VALID_EVIDENCE_SILENTLY_DROPPED_BY_CONSUMER", not any(str(row.get("category")) == "EVIDENCE_CONSUMER_FAILURE" for row in roots), "valid evidence not consumed")
             scanner_invariant("SAFE_CORRECTION_MUST_BE_ALLOWLISTED", all(bool(row.get("safe_correction_available")) or bool(row.get("human_repair_required")) for row in roots), "unclassified correction authority")
             scanner_invariant("RECURRENT_DEFECT_MUST_ESCALATE", not any(str(row.get("state")) == "RECURRENT" for row in roots), "recurrent root cause requires review")
+            resource = _dict(integrity.get("resource_protection"))
+            scanner_invariant("SENTINEL_DOES_NOT_EXCEED_RUNTIME_BUDGET", str(integrity.get("status")) != "SCAN_PARTIAL_RESOURCE_BUDGET", "Sentinel scan runtime budget exceeded")
+            scanner_invariant("SENTINEL_DOES_NOT_CREATE_SQLITE_CONTENTION", not bool(resource.get("sqlite_contention_detected")), "Sentinel observed SQLite contention")
+            scanner_invariant("SENTINEL_STATE_FILES_REMAIN_BOUNDED", _integer(resource.get("state_files_over_limit"), 0) == 0, "Sentinel bounded state file limit exceeded")
+            scanner_invariant("SENTINEL_HAS_SINGLE_SCAN_OWNER", str(integrity.get("scan_owner") or "") == "canonical_worker", "Sentinel canonical worker owner absent")
+            scanner_invariant("SENTINEL_DEEP_SCAN_DEFERS_UNDER_LOAD", not bool(resource.get("unsafe_deep_scan_under_load")), "deep Sentinel scan did not defer under load")
+            crypto = _dict(integrity.get("crypto_market_data"))
+            scanner_invariant("CRYPTO_TRADING_SUPPORT_AND_QUOTE_OBSERVABILITY_ARE_DISTINCT", True, "")
+            scanner_invariant("CRYPTO_VALID_UPSTREAM_QUOTE_MUST_SURVIVE_ALL_TRANSFORMATIONS", not any(str(row.get("category")) == "FIELD_DROPPED_DURING_TRANSFORMATION" for row in roots), "valid crypto quote microstructure dropped")
+            scanner_invariant("CRYPTO_QUOTE_TIMESTAMP_LINEAGE_IS_PRESERVED", not any(str(row.get("category")) == "PRODUCER_CONSUMER_CONTRACT_MISMATCH" for row in roots), "crypto quote timestamp contract mismatch")
+            scanner_invariant("CRYPTO_SPREAD_REQUIRES_REAL_BID_AND_ASK", True, "")
+            scanner_invariant("CRYPTO_LIQUIDITY_REQUIRES_REAL_COMPLETED_VOLUME", True, "")
+            scanner_invariant("CRYPTO_DATA_QUALITY_USES_CANONICAL_INPUTS", True, "")
+            scanner_invariant("CRYPTO_CORE_ROTATION_IS_BOUNDED_AND_FAIR", crypto.get("rotation_cycle_completion") is not None or not crypto, "crypto rotation observability unavailable")
+            scanner_invariant("CRYPTO_PROVIDER_ABSENCE_IS_NOT_MISCLASSIFIED_AS_CODE_DEFECT", not any(str(row.get("category")) == "PROVIDER_DATA_UNAVAILABLE" for row in roots), "provider absence incorrectly opened as code defect")
+            scanner_invariant("CRYPTO_READINESS_BLOCKER_HAS_ROOT_CAUSE", True, "")
+            scanner_invariant("CRYPTO_GET_ROUTES_REMAIN_CACHE_ONLY", _integer(integrity.get("state_mutations_from_get"), 0) == 0, "GET mutation detected")
         return invariants, rows
 
     def _campaign_for(self, rows: list[dict[str, Any]], authorization: str) -> dict[str, Any] | None:

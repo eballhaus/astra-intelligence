@@ -72,7 +72,7 @@ class ContinuousSystemIntegrityScannerTests(unittest.TestCase):
         self.scanner.lock_path.parent.mkdir(parents=True, exist_ok=True)
         self.scanner.lock_path.write_text("owned", encoding="utf-8")
         payload = self._scan()
-        self.assertEqual(payload["scan_deferred"], "OVERLAPPING_SCAN_REJECTED")
+        self.assertEqual(payload["scan_deferred"], "SCAN_DEFERRED_EXISTING_OWNER")
 
     def test_non_worker_owner_is_rejected(self):
         payload = self.scanner.run_if_due(worker_state={"process_role": "API_GET"}, runtime_state={}, safety={}, context={})

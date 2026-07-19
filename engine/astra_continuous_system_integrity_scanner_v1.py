@@ -14,7 +14,7 @@ from engine.astra_integrity_dependency_graph_v1 import dependency_graph_v1, root
 from engine.astra_safe_correction_registry_v1 import SafeCorrectionRegistryV1
 
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 ROOT_LIMIT = 100
 VERIFICATION_WINDOW = 3
 
@@ -69,15 +69,21 @@ class ContinuousSystemIntegrityScannerV1:
                 return max(1, int(os.environ.get(name, default)))
             except ValueError:
                 return default
+        light_interval = value("ASTRA_SENTINEL_LIGHT_SCAN_INTERVAL_SECONDS", value("ASTRA_SYSTEM_INTEGRITY_SCAN_INTERVAL_SECONDS", 300))
+        deep_interval = max(1800, min(3600, value("ASTRA_SENTINEL_DEEP_SCAN_INTERVAL_SECONDS", 2700)))
         return {
-            "interval_seconds": value("ASTRA_SYSTEM_INTEGRITY_SCAN_INTERVAL_SECONDS", 300),
-            "max_runtime_seconds": value("ASTRA_SYSTEM_INTEGRITY_SCAN_MAX_RUNTIME_SECONDS", 3),
-            "max_facts": value("ASTRA_SYSTEM_INTEGRITY_SCAN_MAX_FACTS", 80),
-            "max_consumers": value("ASTRA_SYSTEM_INTEGRITY_SCAN_MAX_CONSUMERS", 40),
-            "max_issues": value("ASTRA_SYSTEM_INTEGRITY_SCAN_MAX_ISSUES", 40),
-            "max_file_reads": value("ASTRA_SYSTEM_INTEGRITY_SCAN_MAX_FILE_READS", 8),
-            "max_rows": value("ASTRA_SYSTEM_INTEGRITY_SCAN_MAX_ROWS", 200),
-            "max_corrections": value("ASTRA_SAFE_CORRECTIONS_MAX_PER_CYCLE", 2),
+            "interval_seconds": light_interval, "light_interval_seconds": light_interval,
+            "deep_interval_seconds": deep_interval,
+            "max_runtime_seconds": value("ASTRA_SENTINEL_LIGHT_SCAN_MAX_RUNTIME_SECONDS", value("ASTRA_SYSTEM_INTEGRITY_SCAN_MAX_RUNTIME_SECONDS", 3)),
+            "deep_max_runtime_seconds": value("ASTRA_SENTINEL_DEEP_SCAN_MAX_RUNTIME_SECONDS", 15),
+            "max_facts": value("ASTRA_SENTINEL_MAX_FACTS_PER_SCAN", value("ASTRA_SYSTEM_INTEGRITY_SCAN_MAX_FACTS", 80)),
+            "max_consumers": value("ASTRA_SENTINEL_MAX_CONSUMERS_PER_SCAN", value("ASTRA_SYSTEM_INTEGRITY_SCAN_MAX_CONSUMERS", 40)),
+            "max_issues": value("ASTRA_SENTINEL_MAX_ROOT_CAUSES", value("ASTRA_SYSTEM_INTEGRITY_SCAN_MAX_ISSUES", 40)),
+            "max_file_reads": value("ASTRA_SENTINEL_MAX_FILES_PER_SCAN", value("ASTRA_SYSTEM_INTEGRITY_SCAN_MAX_FILE_READS", 8)),
+            "max_rows": value("ASTRA_SENTINEL_MAX_ROWS_PER_SOURCE", value("ASTRA_SYSTEM_INTEGRITY_SCAN_MAX_ROWS", 200)),
+            "max_corrections": value("ASTRA_SENTINEL_MAX_CORRECTIONS_PER_CYCLE", value("ASTRA_SAFE_CORRECTIONS_MAX_PER_CYCLE", 2)),
+            "high_load_backoff_seconds": value("ASTRA_SENTINEL_HIGH_LOAD_BACKOFF_SECONDS", 300),
+            "correction_failure_cooldown_seconds": value("ASTRA_SENTINEL_CORRECTION_FAILURE_COOLDOWN_SECONDS", 900),
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -109,10 +115,17 @@ class ContinuousSystemIntegrityScannerV1:
             "shadow_promoted_to_broker_truth": False, "behavior_safe_to_apply": False,
         }
 
-    def _due(self, now: float, limits: dict[str, int]) -> bool:
+    def _scan_mode(self, now: float, limits: dict[str, int], context: dict[str, Any]) -> str | None:
         previous = _read(self.summary_path)
         last = float(previous.get("scan_monotonic") or 0)
-        return not last or now - last >= limits["interval_seconds"]
+        if str(previous.get("schema_version") or "") != VERSION or str(previous.get("sentinel_scan_engine") or "") != "astra_continuous_system_integrity_scanner_v1":
+            return "TARGETED"
+        if list(context.get("targeted_reasons") or []):
+            return "TARGETED"
+        if not last or now - last >= limits["light_interval_seconds"]:
+            last_deep = float(previous.get("deep_scan_monotonic") or 0)
+            return "DEEP" if not last_deep or now - last_deep >= limits["deep_interval_seconds"] else "LIGHT"
+        return None
 
     def _acquire(self) -> bool:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -227,6 +240,43 @@ class ContinuousSystemIntegrityScannerV1:
                                "fallback_used": False, "rejected_claim_count": 0})
         return signals, waiting, compliance
 
+    @staticmethod
+    def _crypto_market_data(context: dict[str, Any], prior: dict[str, Any], max_rows: int) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+        """Classify cached crypto quote evidence without querying any provider."""
+        snapshot = dict(context.get("crypto_ranking_snapshot") or {})
+        rows = [dict(row) for row in snapshot.get("crypto_quote_integrity_rows") or [] if isinstance(row, dict)][:max_rows]
+        old = dict(prior.get("crypto_market_data") or {})
+        history = dict(old.get("pair_observability") or {})
+        signals: list[dict[str, Any]] = []
+        waiting: list[dict[str, Any]] = []
+        evaluated = []
+        for row in rows:
+            symbol = str(row.get("symbol") or "UNKNOWN")
+            received = bool(row.get("quote_received"))
+            bid, ask = bool(row.get("bid_present")), bool(row.get("ask_present"))
+            prior_row = dict(history.get(symbol) or {})
+            previous_streak = _number(prior_row.get("quote_failure_streak"))
+            upstream_bid, upstream_ask = row.get("provider_bid"), row.get("provider_ask")
+            upstream_valid = bool(upstream_bid not in (None, "") and upstream_ask not in (None, ""))
+            if received and upstream_valid and not (bid and ask):
+                signals.append({"kind": "QUOTE_FIELDS_DROPPED", "severity": "HIGH", "confidence": "VERIFIED", "canonical_fact_ids": ["CRYPTO_PAIR_BID_AVAILABLE", "CRYPTO_PAIR_ASK_AVAILABLE", "CRYPTO_PAIR_SPREAD_AVAILABLE"], "affected_endpoints": ["crypto readiness"], "affected_components": ["crypto ranking snapshot"]})
+                state, streak = "SOFTWARE_DEFECT", previous_streak + 1
+            elif not received:
+                waiting.append({"state": "LEGITIMATE_WAITING_STATE", "reason": "provider_quote_absent", "symbol": symbol, "classification": "PROVIDER_DATA_UNAVAILABLE", "fail_closed": True})
+                state, streak = "PROVIDER_DATA_UNAVAILABLE", previous_streak + 1
+            elif not (bid and ask):
+                waiting.append({"state": "LEGITIMATE_WAITING_STATE", "reason": "bid_or_ask_absent", "symbol": symbol, "classification": "PROVIDER_DATA_UNAVAILABLE", "fail_closed": True})
+                state, streak = "PROVIDER_DATA_UNAVAILABLE", previous_streak + 1
+            else:
+                state, streak = "OBSERVABLE", 0
+            volume = bool(row.get("volume_available"))
+            if received and bool(row.get("completed_volume_upstream")) and not volume:
+                signals.append({"kind": "CRYPTO_VOLUME_DROPPED", "severity": "HIGH", "confidence": "VERIFIED", "canonical_fact_ids": ["CRYPTO_PAIR_COMPLETED_VOLUME_AVAILABLE"], "affected_endpoints": ["crypto readiness"], "affected_components": ["crypto candidate transformation"]})
+            evaluated.append({"symbol": symbol, "quote_observability_state": state, "quote_failure_streak": streak, "last_successful_quote_at": row.get("quote_timestamp") if state == "OBSERVABLE" else prior_row.get("last_successful_quote_at"), "bid_available": bid, "ask_available": ask, "spread_available": bool(row.get("spread_present")), "completed_volume_available": volume, "data_quality_ready": bool(row.get("candidate_persisted")), "rotation_last_evaluated_at": snapshot.get("generated_at")})
+        pair_map = {row["symbol"]: row for row in evaluated}
+        summary = {"pairs_evaluated": len(evaluated), "quote_observable_pairs": sum(row["quote_observability_state"] == "OBSERVABLE" for row in evaluated), "pairs_with_bid_ask": sum(row["bid_available"] and row["ask_available"] for row in evaluated), "pairs_with_valid_spread": sum(row["spread_available"] for row in evaluated), "pairs_with_completed_volume": sum(row["completed_volume_available"] for row in evaluated), "pairs_data_quality_ready": sum(row["data_quality_ready"] for row in evaluated), "rotation_cursor": snapshot.get("discovery_cursor"), "rotation_cycles_remaining": snapshot.get("rotation_cycles_remaining"), "rotation_cycle_completion": snapshot.get("pairs_evaluated_this_cycle"), "pair_observability": pair_map, "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0}
+        return summary, signals, waiting
+
     def _update_roots(self, roots: list[dict[str, Any]]) -> dict[str, Any]:
         previous = _read(self.root_path)
         known = {str(row.get("root_cause_id")): dict(row) for row in previous.get("root_causes") or [] if isinstance(row, dict)}
@@ -267,14 +317,22 @@ class ContinuousSystemIntegrityScannerV1:
         limits, started = self.limits_from_env(), time.monotonic()
         if str(worker_state.get("process_role") or "") != "PAPER_AUTOPILOT_WORKER":
             return {**self.snapshot(), "status": "SCAN_REJECTED_NONCANONICAL_OWNER", "scan_deferred": "WORKER_OWNER_REQUIRED"}
-        if not self._due(started, limits):
+        mode = self._scan_mode(started, limits, context)
+        if mode is None:
             return {**self.snapshot(), "scan_deferred": "INTERVAL_NOT_DUE"}
+        activity = ("order_processing_active", "fill_reconciliation_active", "position_reconciliation_active", "broker_refresh_active", "heavy_learning_active")
+        busy = next((name for name in activity if bool(context.get(name))), None)
+        if busy or str(worker_state.get("resource_state") or "") in {"RESOURCE_HIGH_PAUSE", "RESOURCE_MEMORY_PAUSE", "RESOURCE_API_LATENCY_PAUSE"}:
+            return {**self.snapshot(), "status": "SCAN_DEFERRED_EXISTING_OWNER", "scan_deferred": "HIGH_LOAD_BACKOFF", "deferred_reason": busy or worker_state.get("resource_state"), "resource_protection": {"deferred": True, "backoff_seconds": limits["high_load_backoff_seconds"]}}
         if not self._acquire():
-            return {**self.snapshot(), "status": "SCAN_PARTIAL_RESOURCE_BUDGET", "scan_deferred": "OVERLAPPING_SCAN_REJECTED"}
+            return {**self.snapshot(), "status": "SCAN_DEFERRED_EXISTING_OWNER", "scan_deferred": "SCAN_DEFERRED_EXISTING_OWNER"}
         try:
             registry = canonical_fact_registry_v1()
             static_scan = self._static_scan(limits["max_file_reads"])
             signals, waiting, compliance = self._signals(context, registry, limits["max_rows"])
+            previous_summary = _read(self.summary_path)
+            crypto_market_data, crypto_signals, crypto_waiting = self._crypto_market_data(context, previous_summary, limits["max_rows"])
+            signals.extend(crypto_signals); waiting.extend(crypto_waiting)
             signals.extend(self._registry_failures(registry, limits["max_facts"]))
             roots = [root_cause_from_signal_v1(signal) for signal in signals[:limits["max_issues"]]]
             root_state = self._update_roots(roots)
@@ -288,9 +346,11 @@ class ContinuousSystemIntegrityScannerV1:
                 corrections.append(self.corrections.record(transaction)["transactions"][-1])
             _atomic(self.consumer_path, {"schema_version": VERSION, "generated_at": _now(), "consumers": compliance[:limits["max_consumers"]]})
             elapsed = round((time.monotonic() - started) * 1000, 3)
-            partial = elapsed > limits["max_runtime_seconds"] * 1000
+            runtime_limit = limits["deep_max_runtime_seconds"] if mode == "DEEP" else limits["max_runtime_seconds"]
+            partial = elapsed > runtime_limit * 1000
             status = "SCAN_PARTIAL_RESOURCE_BUDGET" if partial else "CRITICAL" if any(str(row.get("severity")) == "CRITICAL" for row in active) else "WARNING" if active else "PASS"
-            summary = {"schema_version": VERSION, "status": status, "scan_owner": "canonical_worker", "last_scan_at": _now(), "scan_monotonic": time.monotonic(),
+            summary = {"schema_version": VERSION, "status": status, "scan_owner": "canonical_worker", "sentinel_canonical_owner": "PaperAutopilotWorker", "sentinel_scan_engine": "astra_continuous_system_integrity_scanner_v1", "scan_mode": mode, "last_scan_at": _now(), "scan_monotonic": time.monotonic(),
+                       "deep_scan_monotonic": time.monotonic() if mode == "DEEP" else previous_summary.get("deep_scan_monotonic"),
                        "scan_runtime_ms": elapsed, "critical_facts_checked": min(len(registry), limits["max_facts"]), "consumers_checked": min(len(compliance), limits["max_consumers"]),
                        "contracts_checked": min(len(registry), limits["max_facts"]), "files_read": static_scan["files_read"], "rows_read": min(len(signals) + len(compliance), limits["max_rows"]), "static_scan": static_scan,
                        "active_root_causes": active[:limits["max_issues"]], "downstream_symptoms": [symptom for root in active for symptom in root.get("downstream_symptoms") or []][:limits["max_issues"] * 4],
@@ -299,9 +359,14 @@ class ContinuousSystemIntegrityScannerV1:
                        "human_repairs_required": human[:limits["max_issues"]], "recurrent_defects": [row for row in active if row.get("state") == "RECURRENT"],
                        "unknown_defects": [row for row in active if row.get("category") == "UNKNOWN_SYSTEM_DEFECT"], "legitimate_waiting_states": waiting,
                        "consumer_compliance": {"checked": min(len(compliance), limits["max_consumers"]), "failures": [row for row in compliance if not row.get("source_compliant")]},
-                       "governance_summary": {"root_causes": len(active), "human_repair_required": len(human), "safe_corrections": len(corrections)},
+                       "light_scan": {"interval_seconds": limits["light_interval_seconds"], "max_runtime_seconds": limits["max_runtime_seconds"], "last_run_at": _now() if mode in {"LIGHT", "TARGETED"} else previous_summary.get("light_scan", {}).get("last_run_at")},
+                       "deep_scan": {"interval_seconds": limits["deep_interval_seconds"], "max_runtime_seconds": limits["deep_max_runtime_seconds"], "last_run_at": _now() if mode == "DEEP" else previous_summary.get("deep_scan", {}).get("last_run_at"), "deferred_for_load": False},
+                       "targeted_scan": {"triggered": mode == "TARGETED", "triggers": list(context.get("targeted_reasons") or [])[:8]},
+                       "resource_protection": {"scan_runtime_budget_seconds": runtime_limit, "max_files": limits["max_file_reads"], "max_rows": limits["max_rows"], "max_facts": limits["max_facts"], "max_consumers": limits["max_consumers"], "deferred": False, "worker_priority_preserved": True},
+                       "crypto_market_data": crypto_market_data,
+                       "governance_summary": {"root_causes": len(active), "human_repair_required": len(human), "safe_corrections": len(corrections), "sentinel_single_scan_owner": True},
                        "cortex_summary": {"system_integrity_summary": status, "highest_impact_root_causes": active[:5], "downstream_symptoms_grouped": True,
-                                          "truth_promotion_allowed": False, "recommended_repair_order": [row.get("root_cause_id") for row in active[:5]]},
+                                          "truth_promotion_allowed": False, "recommended_repair_order": [row.get("root_cause_id") for row in active[:5]], "root_cause_orchestration": True},
                        "dependency_graph": dependency_graph_v1(), "consolidated_repair_queue": [{"priority": index + 1, "root_cause_id": row.get("root_cause_id"), "summary": row.get("smallest_safe_repair"), "systems_affected": row.get("affected_components"), "downstream_blockers_cleared": row.get("downstream_symptoms"), "safe_to_autocorrect": bool(row.get("safe_correction_available")), "recommended_files": row.get("affected_components"), "required_tests": ["scanner root-cause regression"]} for index, row in enumerate(active[:10])],
                        "resource_usage": {"provider_calls_used": 0, "broker_read_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "safe_corrections_attempted": len(corrections), "safe_corrections_applied": sum(bool(row.get("applied")) for row in corrections), "issues_grouped": len(active), "duplicate_symptoms_suppressed": max(0, len(signals) - len(active))},
                        "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "state_mutations_from_get": 0, **self._safety_flags()}

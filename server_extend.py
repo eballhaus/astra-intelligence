@@ -737,6 +737,7 @@ try:
     from engine.astra_canonical_truth_registry_v1 import canonical_fact_registry_v1, fact_envelope_v1
     from engine.astra_truth_arbitration_v1 import TruthContradictionRegistryV1, arbitrate_truth_claims_v1, cortex_truth_summary_v1, read_canonical_open_crypto_positions
     from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystemIntegrityScannerV1
+    from engine.astra_sentinel_integration_v1 import sentinel_integrity_payload_v1
 except Exception:
     canonical_fact_registry_v1 = lambda: {}  # type: ignore[assignment]
     fact_envelope_v1 = None  # type: ignore[assignment]
@@ -745,6 +746,7 @@ except Exception:
     cortex_truth_summary_v1 = None  # type: ignore[assignment]
     read_canonical_open_crypto_positions = None  # type: ignore[assignment]
     ContinuousSystemIntegrityScannerV1 = None  # type: ignore[assignment,misc]
+    sentinel_integrity_payload_v1 = None  # type: ignore[assignment]
 try:
     from engine.trade_lifecycle_excursion_v2 import TradeLifecycleExcursionV2
 except Exception:
@@ -21474,7 +21476,7 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         quote_provider = str((quote_meta or {}).get("provider_used") or quote.get("provider_used") or "").lower()
         if not quote_row or quote_provider in {"", "none", "local_snapshot"}:
             failures.append({"symbol": symbol, "blocker": "FRESH_QUOTE_UNAVAILABLE"})
-            quote_integrity_rows.append({"symbol": symbol, "quote_received": False, "bid_present": False, "ask_present": False, "spread_present": False, "quote_timestamp": "", "quote_age_seconds": None, "quote_provider": quote_provider or None, "quote_record_id": None, "volume_available": False, "bars_available": False, "candidate_persisted": False, "failure_reason": "FRESH_QUOTE_UNAVAILABLE"})
+            quote_integrity_rows.append({"symbol": symbol, "quote_received": False, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": False, "ask_present": False, "spread_present": False, "quote_timestamp": "", "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": None, "quote_provider": quote_provider or None, "quote_record_id": None, "volume_available": False, "completed_volume_upstream": False, "bars_available": False, "candidate_persisted": False, "failure_reason": "FRESH_QUOTE_UNAVAILABLE"})
             continue
         quote_row = _preserve_crypto_quote_microstructure_v1(dict(quote_row), dict(quote_row), quote_provider)
         provider_calls_used += 1
@@ -21484,14 +21486,14 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         volume_audit.append({"symbol": symbol, **volume, "bar_response_state": bar_payload.get("response_state")})
         if len(bars) < 2 or volume["volume_state"] != "ROLLING_REAL_VOLUME_AVAILABLE":
             failures.append({"symbol": symbol, "blocker": "VOLUME_UNAVAILABLE", "volume_state": volume["volume_state"]})
-            quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "bid_present": quote_row.get("bid") is not None, "ask_present": quote_row.get("ask") is not None, "spread_present": quote_row.get("spread_pct") is not None, "quote_timestamp": quote_row.get("quote_timestamp"), "quote_age_seconds": quote_row.get("quote_age_seconds"), "quote_provider": quote_row.get("quote_provider"), "quote_record_id": quote_row.get("quote_record_id"), "volume_available": False, "bars_available": bool(bars), "candidate_persisted": False, "failure_reason": "VOLUME_UNAVAILABLE"})
+            quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": quote_row.get("bid") is not None, "ask_present": quote_row.get("ask") is not None, "spread_present": quote_row.get("spread_pct") is not None, "quote_timestamp": quote_row.get("quote_timestamp"), "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": quote_row.get("quote_age_seconds"), "quote_provider": quote_row.get("quote_provider"), "quote_record_id": quote_row.get("quote_record_id"), "volume_available": False, "completed_volume_upstream": False, "bars_available": bool(bars), "candidate_persisted": False, "failure_reason": "VOLUME_UNAVAILABLE"})
             continue
         latest_completed = next((bar for bar in reversed(bars) if str(bar.get("t") or "") == volume["latest_completed_bar_timestamp"]), {})
         high, low, close = _to_float(latest_completed.get("h"), 0.0), _to_float(latest_completed.get("l"), 0.0), _to_float(latest_completed.get("c"), 0.0)
         risk_pct = round(((high - low) / close) * 100.0, 4) if close > 0 and high >= low else 0.0
         if risk_pct <= 0:
             failures.append({"symbol": symbol, "blocker": "BAR_RISK_ENVELOPE_UNAVAILABLE"})
-            quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "bid_present": quote_row.get("bid") is not None, "ask_present": quote_row.get("ask") is not None, "spread_present": quote_row.get("spread_pct") is not None, "quote_timestamp": quote_row.get("quote_timestamp"), "quote_age_seconds": quote_row.get("quote_age_seconds"), "quote_provider": quote_row.get("quote_provider"), "quote_record_id": quote_row.get("quote_record_id"), "volume_available": True, "bars_available": True, "candidate_persisted": False, "failure_reason": "BAR_RISK_ENVELOPE_UNAVAILABLE"})
+            quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": quote_row.get("bid") is not None, "ask_present": quote_row.get("ask") is not None, "spread_present": quote_row.get("spread_pct") is not None, "quote_timestamp": quote_row.get("quote_timestamp"), "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": quote_row.get("quote_age_seconds"), "quote_provider": quote_row.get("quote_provider"), "quote_record_id": quote_row.get("quote_record_id"), "volume_available": True, "completed_volume_upstream": True, "bars_available": True, "candidate_persisted": False, "failure_reason": "BAR_RISK_ENVELOPE_UNAVAILABLE"})
             continue
         quote_row = dict(quote_row)
         quote_row.update({"volume": volume["rolling_completed_bar_volume"], "quote_volume": volume["rolling_completed_bar_volume"], "volume_evidence": "ALPACA_ROLLING_COMPLETED_15MIN_BARS"})
@@ -21500,16 +21502,18 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         ranked = _prioritize_rankings(ranked, learning_snapshot=_get_enriched_learning_insights_cached())
         if not ranked:
             failures.append({"symbol": symbol, "blocker": "RANKING_EMPTY"})
-            quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "bid_present": quote_row.get("bid") is not None, "ask_present": quote_row.get("ask") is not None, "spread_present": quote_row.get("spread_pct") is not None, "quote_timestamp": quote_row.get("quote_timestamp"), "quote_age_seconds": quote_row.get("quote_age_seconds"), "quote_provider": quote_row.get("quote_provider"), "quote_record_id": quote_row.get("quote_record_id"), "volume_available": True, "bars_available": True, "candidate_persisted": False, "failure_reason": "RANKING_EMPTY"})
+            quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": quote_row.get("bid") is not None, "ask_present": quote_row.get("ask") is not None, "spread_present": quote_row.get("spread_pct") is not None, "quote_timestamp": quote_row.get("quote_timestamp"), "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": quote_row.get("quote_age_seconds"), "quote_provider": quote_row.get("quote_provider"), "quote_record_id": quote_row.get("quote_record_id"), "volume_available": True, "completed_volume_upstream": True, "bars_available": True, "candidate_persisted": False, "failure_reason": "RANKING_EMPTY"})
             continue
         final_row = _preserve_crypto_quote_microstructure_v1(dict(ranked[0]), quote_row, quote_provider)
         final_row.update({"symbol": symbol, "asset_class": "crypto", "asset_type": "crypto", "lane_id": "CRYPTO", "rank_position": rank, "ranking_run_id": f"crypto-worker:{int(now)}", "generated_at": _now_utc_iso(), "candidate_generated_at": _now_utc_iso(), "quote_timestamp": str(final_row.get("quote_timestamp") or quote_row.get("timestamp") or ""), "bar_timestamp": volume["latest_completed_bar_timestamp"], "bar_evidence": {"source": "AlpacaPaperBroker.historical_bars", "resolution": "15Min", "count": len(bars), **volume}, "crypto_risk_pct": risk_pct, "freshness_state": "CURRENT"})
         output.append(_ensure_persona_fields(final_row))
-        quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "bid_present": final_row.get("bid") is not None, "ask_present": final_row.get("ask") is not None, "spread_present": final_row.get("spread_pct") is not None, "quote_timestamp": final_row.get("quote_timestamp"), "quote_age_seconds": final_row.get("quote_age_seconds"), "quote_provider": final_row.get("quote_provider"), "quote_record_id": final_row.get("quote_record_id"), "volume_available": True, "bars_available": True, "candidate_persisted": True, "failure_reason": ""})
+        quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": final_row.get("bid") is not None, "ask_present": final_row.get("ask") is not None, "spread_present": final_row.get("spread_pct") is not None, "quote_timestamp": final_row.get("quote_timestamp"), "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": final_row.get("quote_age_seconds"), "quote_provider": final_row.get("quote_provider"), "quote_record_id": final_row.get("quote_record_id"), "volume_available": True, "completed_volume_upstream": True, "bars_available": True, "candidate_persisted": True, "failure_reason": ""})
     output = PORTFOLIO_RISK_ENGINE.enrich(output, asset_type="crypto", companion_rows=LAST_RANKINGS.get("stocks", []))
     output = PREDICTIVE_MODEL.annotate_rows(output)
     output = REGIME_ENGINE.annotate_rows(output)
     generated_at = _now_utc_iso()
+    for row in quote_integrity_rows:
+        row["snapshot_generated_at"] = generated_at
     previously_certified = set(previous.get("certified_pairs") or [])
     previously_certified.update(row["symbol"] for row in output if row.get("volume_evidence") == "ALPACA_ROLLING_COMPLETED_15MIN_BARS")
     snapshot = {
@@ -21528,6 +21532,7 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         "crypto_quote_integrity": {"pairs_requested": len(symbols), "pairs_with_quote": sum(1 for row in quote_integrity_rows if row.get("quote_received")), "pairs_with_bid_ask": sum(1 for row in quote_integrity_rows if row.get("bid_present") and row.get("ask_present")), "pairs_with_calculated_spread": sum(1 for row in quote_integrity_rows if row.get("spread_present")), "pairs_missing_bid_ask": sum(1 for row in quote_integrity_rows if not (row.get("bid_present") and row.get("ask_present"))), "pairs_persisted": sum(1 for row in quote_integrity_rows if row.get("candidate_persisted"))},
         "capability_refresh": capability_refresh,
         "pairs_evaluated_this_cycle": len(symbols), "rotation_cycles_remaining": max(0, math.ceil(len(discovered) / batch_size) - 1),
+        "rotation_observability": {"evaluated_symbols": symbols, "core_pairs_in_discovery": [pair for pair in ("BTC/USD", "ETH/USD", "LINK/USD", "LTC/USD") if pair in discovered], "fair_rotation_enforced": True, "provider_calls_used": provider_calls_used, "broker_actions_used": 0},
     }
     PAPER_AUTOPILOT._runtime_state["crypto_rankings_snapshot_v1"] = snapshot
     _update_last_rankings("crypto", output)
@@ -70400,6 +70405,17 @@ def _astra_system_integrity_scanner_v1_payload() -> dict:
     return ContinuousSystemIntegrityScannerV1(STATE).snapshot()
 
 
+def _astra_sentinel_integrity_v1_payload() -> dict:
+    """Compatibility identity over the committed worker-owned scanner only."""
+    scanner = _astra_system_integrity_scanner_v1_payload()
+    if callable(sentinel_integrity_payload_v1):
+        return sentinel_integrity_payload_v1(scanner)
+    return {"endpoint": "/api/astra_sentinel_integrity_v1", "status": "UNAVAILABLE_FAIL_CLOSED",
+            "sentinel_owner": "canonical_worker", "scan_engine": "astra_continuous_system_integrity_scanner_v1",
+            "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
+            "state_mutations_from_get": 0, "get_route_read_only": True, **_safety_flags_v1()}
+
+
 def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
     lane = _crypto_paper_lane_validation_v1_payload(statuses)
     rows = _crypto_ranking_rows_cached_v1()
@@ -74262,6 +74278,11 @@ def astra_canonical_truth_governance_v1():
 @router.get("/api/astra_system_integrity_scanner_v1")
 def astra_system_integrity_scanner_v1():
     return _astra_system_integrity_scanner_v1_payload()
+
+
+@router.get("/api/astra_sentinel_integrity_v1")
+def astra_sentinel_integrity_v1():
+    return _astra_sentinel_integrity_v1_payload()
 
 
 @router.get("/api/crypto_lane_paper_readiness_v1")
