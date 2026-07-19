@@ -47,6 +47,20 @@ class ContinuousSystemIntegrityScannerTests(unittest.TestCase):
         self.assertFalse(any(root["category"] == "FIELD_DROPPED_DURING_TRANSFORMATION" for root in payload["active_root_causes"]))
         self.assertEqual(payload["legitimate_waiting_states"][0]["reason"], "provider_quote_absent")
 
+    def test_current_market_evidence_blocker_does_not_become_horizon_root(self):
+        payload = self._scan(
+            crypto_integrity={"pair_eligibility": {"evaluated_candidates": [{
+                "symbol": "LINK/USD",
+                "first_causal_blocker": {"gate": "quote_spread", "status": "PENDING_SPREAD"},
+                "gate_status": {"horizon_assignment": "PENDING_HORIZON_EVIDENCE:QUOTE"},
+            }]}},
+            multilane_completion_matrix={"status": "WARNING", "lanes": {"CRYPTO": {"first_blocker": "quote_spread"}}},
+        )
+        categories = [row["category"] for row in payload["active_root_causes"]]
+        self.assertIn("CRYPTO_MARKET_EVIDENCE_NOT_READY", categories)
+        self.assertNotIn("CRYPTO_HORIZON_PRODUCER_CONSUMER_MISMATCH", categories)
+        self.assertNotIn("MONITORING_COVERAGE_GAP", categories)
+
     def test_valid_evidence_not_consumed_is_consumer_defect(self):
         payload = self._scan(shadow_protection={"lifecycle_evidence_eligibility": {"eligible_complete_lifecycles": 1}, "shadow_profit_loss_consumption": {"valid_records_consumed": 0}})
         self.assertEqual(payload["active_root_causes"][0]["category"], "EVIDENCE_CONSUMER_FAILURE")

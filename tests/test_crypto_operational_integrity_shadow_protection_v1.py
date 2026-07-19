@@ -193,6 +193,29 @@ class CryptoOperationalIntegrityShadowProtectionTests(unittest.TestCase):
         )
         self.assertEqual(duplicate["duplicate_exposure"]["duplicate_candidate_count"], 1)
 
+    def test_each_candidate_reports_one_ordered_first_causal_blocker(self):
+        payload = build_crypto_operational_integrity_readiness_v1(
+            lane=_lane(activation_requested=True), capability=_canonical_capability(),
+            candidates=[_candidate(symbol="LINK/USD", quote_age_seconds=999, spread_pct=None, volume_24h=0, data_quality_score=0)],
+        )
+        candidate = payload["pair_eligibility"]["evaluated_candidates"][0]
+        self.assertEqual(candidate["first_causal_blocker"]["gate"], "timestamp_freshness")
+        self.assertEqual(payload["candidate_execution_blockers"], ["timestamp_freshness"])
+        self.assertEqual(payload["candidate_first_causal_blockers"][0]["symbol"], "LINK/USD")
+
+    def test_provider_timestamp_wins_over_a_fresh_receipt_age(self):
+        result = candidate_execution_integrity(
+            _candidate(
+                symbol="LINK/USD", quote_age_seconds=1,
+                provider_quote_timestamp=(NOW - timedelta(minutes=10)).isoformat(),
+            ),
+            supported_pairs={"LINK/USD"}, tradable_pairs={"LINK/USD"},
+            lane_state="LANE_PAPER_ACTIVE_BOUNDED", paper_mode_verified=True,
+            capacity_available=True, broker_reconciliation_ok=True,
+        )
+        self.assertEqual(result["gate_status"]["timestamp_freshness"], "REJECTED_STALE_QUOTE")
+        self.assertEqual(result["first_causal_blocker"]["gate"], "timestamp_freshness")
+
     def test_lifecycle_lineage_keeps_verified_and_unverified_entries_separate(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

@@ -7,6 +7,7 @@ single-writer ownership, resource pauses, and an atomic status snapshot.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import signal
 import sys
@@ -365,7 +366,14 @@ class PaperAutopilotWorker:
             # This uses only the current worker's committed candidate and
             # trace evidence. It is diagnostic-only and cannot alter a gate,
             # a lifecycle, or any broker-facing behavior.
-            completion_candidates = [*crypto_rows, *[dict(row) for row in (getattr(self.autopilot, "_runtime_state", {}).get("last_execution_trace") or {}).get("per_candidate_decision_trace") or [] if isinstance(row, dict)]]
+            # The completion matrix must consume the evaluated integrity
+            # contract, not raw ranking rows. That preserves each candidate's
+            # ordered first causal blocker through readiness and governance.
+            evaluated_crypto_rows = [
+                dict(row) for row in ((crypto_integrity.get("pair_eligibility") or {}).get("evaluated_candidates") or [])
+                if isinstance(row, dict)
+            ]
+            completion_candidates = [*evaluated_crypto_rows, *[dict(row) for row in (getattr(self.autopilot, "_runtime_state", {}).get("last_execution_trace") or {}).get("per_candidate_decision_trace") or [] if isinstance(row, dict)]]
             multilane_completion = self.multilane_completion_matrix.build(
                 candidate_rows=completion_candidates,
                 execution_trace=dict(getattr(self.autopilot, "_runtime_state", {}).get("last_execution_trace") or {}),
@@ -382,22 +390,43 @@ class PaperAutopilotWorker:
             shadow_protection = {"status": "UNAVAILABLE_FAIL_CLOSED"}
             truth_arbitration = {"status": "UNAVAILABLE_FAIL_CLOSED"}
             multilane_completion = {"status": "UNAVAILABLE_FAIL_CLOSED"}
+        # A changed causal fingerprint is a bounded reason to scan now. The
+        # canonical worker remains the only scanner owner; unchanged evidence
+        # continues to use the normal low-frequency Sentinel interval.
+        runtime = getattr(self.autopilot, "_runtime_state", {})
+        current_blockers = [
+            {
+                "symbol": row.get("symbol"),
+                "gate": (row.get("first_causal_blocker") or {}).get("gate"),
+                "status": (row.get("first_causal_blocker") or {}).get("status"),
+            }
+            for row in ((crypto_integrity.get("pair_eligibility") or {}).get("evaluated_candidates") or [])
+            if isinstance(row, dict) and isinstance(row.get("first_causal_blocker"), dict)
+        ][:8]
+        fingerprint = json.dumps(current_blockers, sort_keys=True, separators=(",", ":"))
+        targeted_reasons: list[str] = []
+        if fingerprint and fingerprint != str(runtime.get("crypto_sentinel_blocker_fingerprint_v1") or ""):
+            runtime["crypto_sentinel_blocker_fingerprint_v1"] = fingerprint
+            targeted_reasons = list(dict.fromkeys(
+                f"crypto_first_causal_blocker:{row['gate']}" for row in current_blockers[:3] if row.get("gate")
+            ))
         # This scanner owns only bounded state diagnostics. It consumes the
         # facts already gathered by this worker and cannot reach providers,
         # brokers, LLMs, order paths, or mutable lifecycle truth.
         integrity_scan = self.system_integrity_scanner.run_if_due(
             worker_state=worker_state,
-            runtime_state=getattr(self.autopilot, "_runtime_state", {}),
+            runtime_state=runtime,
             safety=safety,
             context={
                 "truth_arbitration": truth_arbitration,
                 "crypto_integrity": crypto_integrity,
                 "shadow_protection": shadow_protection,
-                "quote_handoffs": list(getattr(self.autopilot, "_runtime_state", {}).get("crypto_quote_handoffs_v1") or [])[:20],
+                "quote_handoffs": list(getattr(self.autopilot, "_runtime_state", {}).get("crypto_quote_handoffs_v1") or (getattr(self.autopilot, "_runtime_state", {}).get("crypto_rankings_snapshot_v1") or {}).get("crypto_quote_handoffs_v1") or [])[:20],
                 "crypto_ranking_snapshot": dict(getattr(self.autopilot, "_runtime_state", {}).get("crypto_rankings_snapshot_v1") or {}),
                 "crypto_market_data_matrix": crypto_matrix,
                 "multilane_completion_matrix": multilane_completion,
                 "canonical_capacity_fact": dict(lane.get("canonical_capacity_fact") or {}),
+                "targeted_reasons": targeted_reasons,
                 "get_side_effects": 0,
             },
         )

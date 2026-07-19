@@ -218,6 +218,10 @@ def _quote_to_rank_row(sym: str, quote: dict, asset_type: str, now_iso: str) -> 
             "quote_age_seconds": round(_safe_float(quote.get("quote_age_seconds"), 0.0), 2),
             "freshness_seconds": round(_safe_float(quote.get("freshness_seconds"), _safe_float(quote.get("quote_age_seconds"), 0.0)), 2),
             "quote_timestamp": quote.get("quote_timestamp"),
+            # Keep provenance explicit for downstream execution integrity.
+            # ``timestamp`` below is the worker receipt time and is never a
+            # substitute for this provider-native observation timestamp.
+            "provider_quote_timestamp": quote.get("quote_timestamp"),
             # Preserve provider-native microstructure and lineage through the
             # ranker. Invalid/missing quote sides remain explicitly pending.
             "bid": bid if bid > 0 else None,

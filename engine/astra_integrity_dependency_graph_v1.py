@@ -74,6 +74,10 @@ def root_cause_from_signal_v1(signal: dict[str, Any]) -> dict[str, Any]:
     elif kind == "CRYPTO_HORIZON_INPUT_NOT_PERSISTED":
         category, handoff = "CRYPTO_HORIZON_PRODUCER_CONSUMER_MISMATCH", "crypto ranking snapshot -> candidate execution integrity"
         symptoms, owner, repair = ["PENDING_HORIZON_EVIDENCE", "CRYPTO_ORDER_READY_COUNT_ZERO"], "crypto ranking snapshot producer", "persist the bounded horizon evidence envelope; do not supply a default horizon"
+    elif kind == "CRYPTO_MARKET_EVIDENCE_BLOCKED":
+        category, handoff = "CRYPTO_MARKET_EVIDENCE_NOT_READY", str(signal.get("first_bad_handoff") or "provider quote/bar evidence -> candidate execution integrity")
+        symptoms = ["CRYPTO_ELIGIBILITY_BLOCKED", "HORIZON_ASSIGNMENT_BLOCKED_BY_UPSTREAM", "CRYPTO_ORDER_READY_COUNT_ZERO"]
+        owner, repair = "crypto market-evidence producer", "wait for real current quote/bar evidence or repair a verified producer-to-consumer field loss; do not fabricate a candidate"
     elif kind == "MATRIX_WARNING_WITH_SENTINEL_PASS":
         category, handoff = "MONITORING_COVERAGE_GAP", "multilane completion matrix -> sentinel/governance summary"
         symptoms, owner, repair = ["SENTINEL_FALSE_PASS", "GOVERNANCE_FALSE_PASS"], "continuous integrity scanner", "promote matrix warnings to a bounded root-cause finding"

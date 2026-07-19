@@ -219,22 +219,28 @@ def build_crypto_operational_integrity_readiness_v1(
         )
         evaluated.append({
             "candidate_id": raw.get("candidate_id"), "symbol": pair or raw.get("symbol"),
+            "asset_class": "crypto", "asset_type": "crypto", "lane_id": "CRYPTO",
             "pair_eligibility": "TRADABLE" if pair in tradable else "UNSUPPORTED_OR_UNTRADABLE",
             "duplicate_position": bool(pair and pair in normalized_open),
             "duplicate_pending_order": bool(pair and pair in normalized_pending),
             "asset_rule": dict(asset_rules.get(pair) or {}) if pair else {},
-            "quote_timestamp": raw.get("quote_timestamp"), "quote_source": raw.get("quote_source") or raw.get("crypto_quote_evidence_source"),
+            "quote_timestamp": raw.get("quote_timestamp"),
+            "provider_quote_timestamp": raw.get("provider_quote_timestamp") or raw.get("quote_timestamp"),
+            "quote_source": raw.get("quote_source") or raw.get("crypto_quote_evidence_source"),
             **integrity,
         })
     data_status, data_reasons = _data_state(evaluated)
     liquidity_status, liquidity_reasons = _liquidity_state(evaluated)
     execution_ready = [row for row in evaluated if bool(row.get("execution_eligible"))]
-    execution_blockers = sorted({
-        str(gate)
-        for row in evaluated
-        for gate in (row.get("failed_gates") or [])
-        if str(gate or "").strip()
-    })
+    # Preserve candidate/gate order.  Sorting all failures loses the one
+    # causal failure that explains why a particular candidate cannot advance.
+    first_causal_blockers = [
+        {"symbol": row.get("symbol"), **dict(row.get("first_causal_blocker") or {})}
+        for row in evaluated if isinstance(row.get("first_causal_blocker"), dict)
+    ]
+    execution_blockers = list(dict.fromkeys(
+        str(row.get("gate") or "") for row in first_causal_blockers if str(row.get("gate") or "")
+    ))
     lineage = _lineage_readiness(open_positions, lifecycle_rows)
     exact_blockers: list[str] = []
     if not capital_configured:
@@ -248,7 +254,10 @@ def build_crypto_operational_integrity_readiness_v1(
     if liquidity_status != "LIQUIDITY_READY":
         exact_blockers.extend(liquidity_reasons[:3])
     if evaluated and not execution_ready:
-        exact_blockers.extend(f"CRYPTO_CANDIDATE_GATE_FAILED:{gate}" for gate in execution_blockers[:3])
+        exact_blockers.extend(
+            f"CRYPTO_CANDIDATE_GATE_FAILED:{row.get('symbol')}:{row.get('gate')}"
+            for row in first_causal_blockers[:3]
+        )
     if lineage["active_lineage_blocking"]:
         exact_blockers.append("CRYPTO_ENTRY_LINEAGE_UNVERIFIED")
     if not capital_configured:
@@ -281,6 +290,7 @@ def build_crypto_operational_integrity_readiness_v1(
         "paper_execution_currently_allowed": bool(lane.get("paper_crypto_enabled")) and status == "PAPER_READY",
         "execution_ready_candidate_count": len(execution_ready),
         "candidate_execution_blockers": execution_blockers[:12],
+        "candidate_first_causal_blockers": first_causal_blockers[:25],
         "human_configuration_required": not bool(lane.get("activation_requested")) or not capital_configured,
         "capital_readiness": {
             "configured": capital_configured, "configured_capital": capital_limit,
@@ -315,7 +325,7 @@ def build_crypto_operational_integrity_readiness_v1(
             "supported_time_in_force": capability.get("supported_time_in_force") or [], "fractional_quantity_supported": bool(capability.get("fractional_quantity_supported")),
             "market_data_entitlement_confirmed": bool(capability.get("market_data_entitlement_confirmed")),
             "market_data_status": capability.get("market_data_status") or "UNKNOWN", "supported_pairs_count": len(supported), "tradable_pairs_count": len(tradable)},
-        "pair_eligibility": {"evaluated_candidates": evaluated[:25], "supported_pairs_count": len(supported), "tradable_pairs_count": len(tradable),
+        "pair_eligibility": {"evaluated_candidates": evaluated[:25], "first_causal_blockers": first_causal_blockers[:25], "supported_pairs_count": len(supported), "tradable_pairs_count": len(tradable),
             "canonical_pair_capability": {pair: {"supported": pair in supported, "tradable": pair in tradable,
                 "pair_eligibility": "TRADABLE" if pair in tradable else "SUPPORTED_NOT_TRADABLE" if pair in supported else "UNSUPPORTED_OR_UNTRADABLE",
                 "asset_rule": dict(asset_rules.get(pair) or {})} for pair in ("LINK/USD", "LTC/USD")}},

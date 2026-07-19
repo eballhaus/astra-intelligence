@@ -25,6 +25,7 @@ STAGES = (
     "governance_acknowledgement", "cortex_acknowledgement",
 )
 MAX_HISTORY = 12
+MARKET_EVIDENCE_GATES = {"timestamp_freshness", "quote_spread", "volume_liquidity", "data_quality"}
 
 
 def _now() -> str:
@@ -76,6 +77,27 @@ def _stage(stage: str, classification: str, *, reason: str = "", first_bad_hando
     }
 
 
+def _causal_blocker(row: dict[str, Any]) -> tuple[str, str]:
+    """Read the candidate-integrity owner without reordering gate failures."""
+    first = row.get("first_causal_blocker")
+    if isinstance(first, dict) and str(first.get("gate") or ""):
+        return str(first["gate"]), str(first.get("status") or first["gate"])
+    return (
+        str(row.get("first_failing_gate") or row.get("order_blocker") or row.get("operational_source_rejection") or ""),
+        str(row.get("order_blocker") or row.get("reason") or row.get("first_failing_gate") or row.get("operational_source_rejection") or ""),
+    )
+
+
+def _crypto_handoff(gate: str) -> str:
+    if gate == "timestamp_freshness":
+        return "provider quote timestamp -> operational crypto candidate"
+    if gate in {"quote_spread", "volume_liquidity", "data_quality"}:
+        return "crypto ranking snapshot -> candidate execution integrity"
+    if gate == "horizon_assignment":
+        return "crypto ranking snapshot -> candidate execution integrity"
+    return "candidate execution integrity -> eligibility gate"
+
+
 class AstraMultilaneCompletionMatrixV1:
     """Single worker-owned diagnostic matrix; no provider, broker, or order path."""
 
@@ -103,9 +125,8 @@ class AstraMultilaneCompletionMatrixV1:
         for lane in LANES:
             candidates, traces = by_lane[lane], trace_by_lane[lane]
             horizon_missing: list[str] = []
-            failed = next((row for row in candidates if row.get("order_blocker") or row.get("first_failing_gate") or row.get("operational_source_rejection")), {})
-            blocker = str(failed.get("first_failing_gate") or failed.get("order_blocker") or failed.get("operational_source_rejection") or "")
-            reason = str(failed.get("order_blocker") or failed.get("reason") or blocker)
+            failed = next((row for row in candidates if _causal_blocker(row)[0]), {})
+            blocker, reason = _causal_blocker(failed)
             stages = {stage: _stage(stage, "RUNTIME_NOT_EXERCISED", reason="no current broker-linked runtime evidence") for stage in STAGES}
             if not candidates:
                 stages["candidate_discovery"] = _stage("candidate_discovery", "LEGITIMATE_WAITING", reason="no current natural candidate")
@@ -117,8 +138,32 @@ class AstraMultilaneCompletionMatrixV1:
                 stages["candidate_discovery"] = _stage("candidate_discovery", "PASS", runtime=True)
                 freshness = "PASS" if source_freshness in {"CURRENT", "FRESH", ""} or lane == "CRYPTO" else "LEGITIMATE_WAITING"
                 stages["candidate_freshness"] = _stage("candidate_freshness", freshness, runtime=freshness == "PASS", reason="candidate source not current" if freshness != "PASS" else "")
-                crypto_failed_gates = [str(x) for x in (crypto_readiness.get("failed_gates") or crypto_readiness.get("candidate_execution_blockers") or [])]
-                if lane == "CRYPTO" and "horizon_assignment" in crypto_failed_gates:
+                crypto_first = ""
+                crypto_reason = ""
+                if lane == "CRYPTO":
+                    # The worker supplies evaluated candidates. This fallback
+                    # keeps old snapshots observable without inventing proof.
+                    readiness_rows = [dict(row) for row in ((crypto_readiness.get("pair_eligibility") or {}).get("evaluated_candidates") or []) if isinstance(row, dict)]
+                    if not blocker and readiness_rows:
+                        failed = next((row for row in readiness_rows if _causal_blocker(row)[0]), {})
+                        crypto_first, crypto_reason = _causal_blocker(failed)
+                    else:
+                        crypto_first, crypto_reason = blocker, reason
+                    if not crypto_first:
+                        legacy_blockers = [str(value) for value in (
+                            crypto_readiness.get("failed_gates") or crypto_readiness.get("candidate_execution_blockers") or []
+                        ) if str(value)]
+                        if legacy_blockers:
+                            crypto_first, crypto_reason = legacy_blockers[0], legacy_blockers[0]
+                if lane == "CRYPTO" and crypto_first in MARKET_EVIDENCE_GATES:
+                    first, reason = crypto_first, crypto_reason or crypto_first
+                    handoff = _crypto_handoff(first)
+                    stages["market_data"] = _stage("market_data", "INSUFFICIENT_EVIDENCE", reason=reason, first_bad_handoff=handoff, runtime=True)
+                    if first == "timestamp_freshness":
+                        stages["candidate_freshness"] = _stage("candidate_freshness", "INSUFFICIENT_EVIDENCE", reason=reason, first_bad_handoff=handoff, runtime=True)
+                    stages["eligibility"] = _stage("eligibility", "BLOCKED_BY_UPSTREAM", upstream=first, first_bad_handoff=handoff)
+                    stages["horizon_assignment"] = _stage("horizon_assignment", "BLOCKED_BY_UPSTREAM", upstream=first)
+                elif lane == "CRYPTO" and crypto_first == "horizon_assignment":
                     horizon_rows = [dict(row) for row in ((crypto_readiness.get("pair_eligibility") or {}).get("evaluated_candidates") or []) if isinstance(row, dict)]
                     horizon_missing = sorted({str(item) for row in horizon_rows for item in (row.get("horizon_evidence_missing") or []) if str(item)})
                     first = "horizon_assignment"
@@ -126,7 +171,7 @@ class AstraMultilaneCompletionMatrixV1:
                     stages["horizon_assignment"] = _stage("horizon_assignment", "INSUFFICIENT_EVIDENCE", reason=horizon_missing[0] if horizon_missing else "no canonical day/swing/scalp horizon input persisted", first_bad_handoff="crypto ranking snapshot -> candidate execution integrity", runtime=True)
                 elif blocker:
                     first = blocker
-                    classification = "LEGITIMATE_WAITING" if "market is closed" in reason.lower() else "FAIL_UNKNOWN_CLOSED"
+                    classification = "LEGITIMATE_WAITING" if "market is closed" in reason.lower() else "INSUFFICIENT_EVIDENCE" if blocker.startswith("PENDING_") else "FAIL_UNKNOWN_CLOSED"
                     stages["eligibility"] = _stage("eligibility", classification, reason=reason, first_bad_handoff="candidate contract -> eligibility gate", runtime=True)
                     if lane == "DAY" and "CONTRACT_INCOMPLETE" in blocker:
                         stages["horizon_assignment"] = _stage("horizon_assignment", "BLOCKED_BY_UPSTREAM", upstream="CONTRACT_INCOMPLETE")
@@ -149,6 +194,10 @@ class AstraMultilaneCompletionMatrixV1:
                 "candidate_count": len(candidates), "fresh_candidate_count": len(candidates) if source_freshness in {"CURRENT", "FRESH", ""} or lane == "CRYPTO" else 0,
                 "eligible_candidate_count": sum(bool(row.get("eligible") or row.get("execution_eligible")) for row in candidates),
                 "horizon_assigned_count": sum(str(row.get("assigned_horizon") or row.get("paper_entry_horizon_style") or "") in {"scalp", "day_trade", "swing_trade"} for row in candidates),
+                "candidate_first_causal_blockers": [
+                    {"symbol": row.get("symbol"), "first_causal_blocker": dict(row.get("first_causal_blocker") or {})}
+                    for row in candidates if isinstance(row.get("first_causal_blocker"), dict)
+                ][:25],
                 "paper_order_intents": sum(bool(row.get("order_ready")) for row in traces),
                 "active_positions": _number(execution_trace.get("active_positions_by_lane", {}).get(lane)),
                 "complete_broker_truths": eligible_truth,
@@ -156,8 +205,10 @@ class AstraMultilaneCompletionMatrixV1:
                 "governance_acknowledgement": "COVERED_BY_SENTINEL_MATRIX",
                 "cortex_acknowledgement": "ROOT_CAUSE_GROUPING_ACTIVE",
             }
-            if first and lane == "CRYPTO":
+            if first == "horizon_assignment" and lane == "CRYPTO":
                 manifest.append({"root_cause_id": "CRYPTO_HORIZON_EVIDENCE_MISSING", "title": "Crypto horizon evidence is incomplete at the execution boundary", "classification": "INSUFFICIENT_EVIDENCE", "confidence": "VERIFIED", "severity": "HIGH", "lanes_affected": [lane], "stages_affected": ["horizon_assignment", "lifecycle_forecast", "order_ready"], "first_bad_handoff": "crypto ranking snapshot -> candidate execution integrity", "verified_evidence": "cached row horizon envelope is absent or incomplete", "missing_upstream_facts": horizon_missing, "downstream_symptoms": ["EVIDENCE_NOT_READY", "ORDER_READY_COUNT_ZERO"], "repair_level": "LEVEL_3_HUMAN_OR_NEW_EVIDENCE", "human_action_required": False, "expected_blockers_cleared": []})
+            elif first in MARKET_EVIDENCE_GATES and lane == "CRYPTO":
+                manifest.append({"root_cause_id": "CRYPTO_MARKET_EVIDENCE_NOT_READY", "title": "Crypto market evidence is incomplete before horizon assignment", "classification": "INSUFFICIENT_EVIDENCE", "confidence": "VERIFIED", "severity": "HIGH", "lanes_affected": [lane], "stages_affected": ["market_data", "candidate_freshness", "eligibility", "horizon_assignment"], "first_bad_handoff": _crypto_handoff(first), "verified_evidence": reason, "missing_upstream_facts": [first], "downstream_symptoms": ["HORIZON_ASSIGNMENT_BLOCKED_BY_UPSTREAM", "ORDER_READY_COUNT_ZERO"], "repair_level": "LEVEL_3_HUMAN_OR_NEW_EVIDENCE", "human_action_required": False, "expected_blockers_cleared": []})
         return {"schema_version": VERSION, "generated_at": _now(), "status": "WARNING", "lanes": lanes,
                 "shared_root_causes": [], "lane_specific_root_causes": manifest, "legitimate_waiting_states": waiting,
                 "runtime_unexercised_stages": runtime_unexercised[:120], "coverage_gaps": [], "repair_manifest": manifest,

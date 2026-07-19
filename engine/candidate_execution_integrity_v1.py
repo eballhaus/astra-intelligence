@@ -185,10 +185,13 @@ def candidate_execution_integrity(
     pair = identity.get("normalized_symbol") or ""
     supported = {str(item or "").upper().replace("-", "/") for item in (supported_pairs or [])}
     tradable = {str(item or "").upper().replace("-", "/") for item in (tradable_pairs or [])}
-    quote_age = _number(row.get("quote_age_seconds"), _number(row.get("freshness_seconds"), -1.0))
-    if quote_age < 0:
-        timestamp_age = _timestamp_age_seconds(row.get("quote_timestamp") or row.get("data_timestamp") or row.get("timestamp"))
-        quote_age = timestamp_age if timestamp_age is not None else -1.0
+    # Production crypto rows retain the provider timestamp explicitly.  A
+    # worker receipt time must never make an otherwise unproven quote fresh.
+    provider_quote_timestamp = row.get("provider_quote_timestamp") or row.get("quote_timestamp")
+    timestamp_age = _timestamp_age_seconds(provider_quote_timestamp)
+    quote_age = timestamp_age if timestamp_age is not None else _number(
+        row.get("quote_age_seconds"), _number(row.get("freshness_seconds"), -1.0)
+    )
     bid = _number(row.get("bid") or row.get("bid_price") or row.get("bp"), -1.0)
     ask = _number(row.get("ask") or row.get("ask_price") or row.get("ap"), -1.0)
     spread = _number(row.get("spread_pct"), _number(row.get("bid_ask_spread_pct"), -1.0))
@@ -236,6 +239,9 @@ def candidate_execution_integrity(
         "capacity_concentration": capacity_gate if _text(row.get("concentration_status") or "pass").lower() not in {"blocked", "reject"} else "PENDING_CAPACITY_OR_CONCENTRATION",
         "broker_reconciliation": "PASS" if broker_reconciliation_ok else "PENDING_BROKER_RECONCILIATION",
         "paper_live_safety": "PASS" if paper_mode_verified and not live_endpoint_detected and not kill_switch_enabled else "REJECTED_PAPER_LIVE_SAFETY",
+        # This records the pre-existing lane activation guard in the same
+        # causal contract. It does not activate a lane or alter execution.
+        "lane_activation": "PASS" if lane_state == "LANE_PAPER_ACTIVE_BOUNDED" else "PENDING_LANE_ACTIVATION",
         "confidence_ranking": "PASS" if confidence >= 52 else "PENDING_CONFIDENCE_OR_RANKING",
         "horizon_assignment": "PASS" if canonical_horizon else "PENDING_HORIZON_EVIDENCE:" + (horizon_missing[0] if horizon_missing else "NOT_PERSISTED_CANONICAL"),
         "order_schema_min_notional": "PASS" if _number(row.get("notional"), 25.0) >= 1.0 else "REJECTED_MIN_NOTIONAL",
@@ -243,6 +249,16 @@ def candidate_execution_integrity(
         "kill_switch": "REJECTED_KILL_SWITCH" if kill_switch_enabled else "PASS",
     }
     failed = [name for name, status in gates.items() if status != "PASS"]
+    # Dict insertion order is the canonical gate order.  Consumers use this
+    # one first failure rather than incorrectly elevating downstream symptoms.
+    first_gate = failed[0] if failed else ""
+    first_causal_blocker = {
+        "gate": first_gate,
+        "status": gates.get(first_gate, ""),
+        "evidence_class": "MARKET_EVIDENCE" if first_gate in {
+            "timestamp_freshness", "quote_spread", "volume_liquidity", "data_quality"
+        } else "EXECUTION_GUARD",
+    } if first_gate else None
     eligible = not failed and lane_state == "LANE_PAPER_ACTIVE_BOUNDED"
     if identity.get("reason") in {"REJECTED_EQUITY_SYMBOL_CONTAMINATION", "REJECTED_ASSET_CLASS_MISMATCH", "REJECTED_MISSING_ASSET_METADATA", "REJECTED_SYMBOL_NORMALIZATION"}:
         candidate_state = "REJECTED_ASSET_CLASS"
@@ -261,7 +277,9 @@ def candidate_execution_integrity(
         "execution_eligible": eligible,
         "gate_status": gates,
         "failed_gates": failed,
+        "first_causal_blocker": first_causal_blocker,
         "quote_age_seconds": round(quote_age, 3) if quote_age >= 0 else None,
+        "provider_quote_timestamp": provider_quote_timestamp or None,
         "spread_pct": spread if spread >= 0 else None,
         "bid": bid if bid > 0 else None,
         "ask": ask if ask > 0 else None,

@@ -43,6 +43,20 @@ class MultilaneCompletionMatrixTests(unittest.TestCase):
         )
         self.assertEqual(payload["lanes"]["CRYPTO"]["first_blocker"], "horizon_assignment")
 
+    def test_crypto_market_evidence_precedes_downstream_horizon_symptom(self):
+        payload = self.build(
+            [{
+                "symbol": "LINK/USD", "asset_class": "crypto", "lane_id": "CRYPTO",
+                "assigned_horizon": "unknown",
+                "first_causal_blocker": {"gate": "timestamp_freshness", "status": "REJECTED_STALE_QUOTE"},
+            }],
+        )
+        crypto = payload["lanes"]["CRYPTO"]
+        self.assertEqual(crypto["first_blocker"], "timestamp_freshness")
+        self.assertEqual(crypto["stages"]["market_data"]["status"], "INSUFFICIENT_EVIDENCE")
+        self.assertEqual(crypto["stages"]["horizon_assignment"]["status"], "BLOCKED_BY_UPSTREAM")
+        self.assertNotIn("CRYPTO_HORIZON_EVIDENCE_MISSING", [row["root_cause_id"] for row in payload["repair_manifest"]])
+
     def test_day_contract_failure_blocks_downstream_without_claiming_runtime_proof(self):
         payload = self.build([{
             "symbol": "AAPL", "asset_class": "equity", "lane_id": "DAY",

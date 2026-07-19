@@ -21543,7 +21543,8 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
             quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": quote_row.get("bid") is not None, "ask_present": quote_row.get("ask") is not None, "spread_present": quote_row.get("spread_pct") is not None, "quote_timestamp": quote_row.get("quote_timestamp"), "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": quote_row.get("quote_age_seconds"), "quote_provider": quote_row.get("quote_provider"), "quote_record_id": quote_row.get("quote_record_id"), "volume_available": True, "completed_volume_upstream": True, "bars_available": True, "candidate_persisted": False, "failure_reason": "RANKING_EMPTY"})
             continue
         final_row = _preserve_crypto_quote_microstructure_v1(dict(ranked[0]), quote_row, quote_provider)
-        final_row.update({"symbol": symbol, "asset_class": "crypto", "asset_type": "crypto", "lane_id": "CRYPTO", "rank_position": rank, "ranking_run_id": f"crypto-worker:{int(now)}", "generated_at": _now_utc_iso(), "candidate_generated_at": _now_utc_iso(), "quote_timestamp": str(final_row.get("quote_timestamp") or quote_row.get("timestamp") or ""), "bar_timestamp": volume["latest_completed_bar_timestamp"], "bar_evidence": {"source": "AlpacaPaperBroker.historical_bars", "resolution": "15Min", "count": len(bars), **volume}, "crypto_risk_pct": risk_pct, "completed_bar_return_pct": completed_return_pct, "freshness_state": "CURRENT"})
+        provider_quote_timestamp = str(final_row.get("provider_quote_timestamp") or final_row.get("quote_timestamp") or quote_row.get("provider_quote_timestamp") or quote_row.get("quote_timestamp") or "")
+        final_row.update({"symbol": symbol, "asset_class": "crypto", "asset_type": "crypto", "lane_id": "CRYPTO", "rank_position": rank, "ranking_run_id": f"crypto-worker:{int(now)}", "generated_at": _now_utc_iso(), "candidate_generated_at": _now_utc_iso(), "quote_timestamp": provider_quote_timestamp, "provider_quote_timestamp": provider_quote_timestamp or None, "quote_timestamp_origin": "provider" if provider_quote_timestamp else "missing", "bar_timestamp": volume["latest_completed_bar_timestamp"], "bar_evidence": {"source": "AlpacaPaperBroker.historical_bars", "resolution": "15Min", "count": len(bars), **volume}, "crypto_risk_pct": risk_pct, "completed_bar_return_pct": completed_return_pct, "freshness_state": "CURRENT"})
         output.append(_ensure_persona_fields(final_row))
         quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": final_row.get("bid") is not None, "ask_present": final_row.get("ask") is not None, "spread_present": final_row.get("spread_pct") is not None, "quote_timestamp": final_row.get("quote_timestamp"), "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": final_row.get("quote_age_seconds"), "quote_provider": final_row.get("quote_provider"), "quote_record_id": final_row.get("quote_record_id"), "volume_available": True, "completed_volume_upstream": True, "bars_available": True, "candidate_persisted": True, "provider_diagnostics": dict(quote.get("provider_diagnostics") or {}), "provider_response_status": (quote.get("provider_diagnostics") or {}).get("http_status"), "provider_response_keys": list((quote.get("provider_diagnostics") or {}).get("response_keys") or [])[:20], "failure_reason": ""})
     output = PORTFOLIO_RISK_ENGINE.enrich(output, asset_type="crypto", companion_rows=LAST_RANKINGS.get("stocks", []))
@@ -21556,6 +21557,25 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
     generated_at = _now_utc_iso()
     for row in quote_integrity_rows:
         row["snapshot_generated_at"] = generated_at
+    persisted_by_symbol = {str(row.get("symbol") or ""): dict(row) for row in output if str(row.get("symbol") or "")}
+    # The scanner receives a committed, worker-owned handoff ledger.  It
+    # compares provider-native facts with the persisted candidate without
+    # reading providers or treating an intentional source rejection as loss.
+    quote_handoffs = []
+    for integrity in quote_integrity_rows:
+        row = dict(integrity)
+        persisted = persisted_by_symbol.get(str(row.get("symbol") or ""), {})
+        row.update({
+            "provider_quote_timestamp": row.get("quote_timestamp") or None,
+            "snapshot_bid": persisted.get("bid") if persisted else None,
+            "snapshot_ask": persisted.get("ask") if persisted else None,
+            "snapshot_spread_pct": persisted.get("spread_pct") if persisted else None,
+            "snapshot_quote_timestamp": persisted.get("provider_quote_timestamp") or persisted.get("quote_timestamp") if persisted else None,
+            "snapshot_volume_24h": persisted.get("volume_24h") or persisted.get("quote_volume") or persisted.get("volume") if persisted else None,
+            "candidate_persisted": bool(persisted),
+            "handoff_state": "PERSISTED_CANDIDATE" if persisted else "SOURCE_REJECTED_FAIL_CLOSED",
+        })
+        quote_handoffs.append(row)
     previously_certified = set(previous.get("certified_pairs") or [])
     previously_certified.update(row["symbol"] for row in output if row.get("volume_evidence") == "ALPACA_ROLLING_COMPLETED_15MIN_BARS")
     snapshot = {
@@ -21574,12 +21594,14 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         "certification_state": "ROTATING_BOUNDED_EVALUATION",
         "crypto_volume_audit": volume_audit, "failed_pairs": failures,
         "crypto_quote_integrity_rows": quote_integrity_rows,
+        "crypto_quote_handoffs_v1": quote_handoffs,
         "crypto_quote_integrity": {"pairs_requested": len(symbols), "pairs_with_quote": sum(1 for row in quote_integrity_rows if row.get("quote_received")), "pairs_with_bid_ask": sum(1 for row in quote_integrity_rows if row.get("bid_present") and row.get("ask_present")), "pairs_with_calculated_spread": sum(1 for row in quote_integrity_rows if row.get("spread_present")), "pairs_missing_bid_ask": sum(1 for row in quote_integrity_rows if not (row.get("bid_present") and row.get("ask_present"))), "pairs_persisted": sum(1 for row in quote_integrity_rows if row.get("candidate_persisted"))},
         "capability_refresh": capability_refresh,
         "pairs_evaluated_this_cycle": len(symbols), "rotation_cycles_remaining": max(0, math.ceil(len(discovered) / batch_size) - 1),
         "rotation_observability": {"evaluated_symbols": symbols, "core_pairs_in_discovery": [pair for pair in ("BTC/USD", "ETH/USD", "LINK/USD", "LTC/USD") if pair in discovered], "fair_rotation_enforced": True, "market_data_diagnostic_active": diagnostic_active, "market_data_diagnostic_remaining": max(0, len(diagnostic_set) - (diagnostic_cursor + len(symbols) if diagnostic_active else diagnostic_cursor)), "provider_calls_used": provider_calls_used, "broker_actions_used": 0},
     }
     PAPER_AUTOPILOT._runtime_state["crypto_rankings_snapshot_v1"] = snapshot
+    PAPER_AUTOPILOT._runtime_state["crypto_quote_handoffs_v1"] = quote_handoffs
     _update_last_rankings("crypto", output)
     RANKINGS_ENDPOINT_CACHE["crypto"] = {"ts": now, "payload": list(output)}
     PAPER_AUTOPILOT._save_state_file()
@@ -69909,7 +69931,10 @@ def _crypto_operational_candidate_rows_v3() -> list[dict]:
             "current_price": price if price not in (None, "") else row.get("current_price"),
             "bid": bid if bid not in (None, "") else row.get("bid"),
             "ask": ask if ask not in (None, "") else row.get("ask"),
-            "quote_timestamp": observed("quote_timestamp", "timestamp", "updated_at", "as_of", "t"),
+            # Do not substitute a cache/worker timestamp for provider quote
+            # time. Missing provenance stays missing and fails closed later.
+            "quote_timestamp": observed("provider_quote_timestamp", "quote_timestamp"),
+            "provider_quote_timestamp": observed("provider_quote_timestamp", "quote_timestamp"),
             "quote_age_seconds": observed("quote_age_seconds", "freshness_seconds", "age_seconds"),
             "spread_pct": spread_pct if spread_pct not in (None, "") else row.get("spread_pct"),
             "volume_24h": observed("volume_24h", "quote_volume", "volume", "volume_usd"),

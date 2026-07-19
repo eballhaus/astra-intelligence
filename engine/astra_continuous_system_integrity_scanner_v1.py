@@ -197,7 +197,9 @@ class ContinuousSystemIntegrityScannerV1:
             handoff["contract_validation"] = validate_field_contract_v1(
                 handoff, {"required_fields": ["symbol"], "optional_fields": ["provider_bid", "provider_ask", "snapshot_bid", "snapshot_ask"]},
             )
-            if provider_sides and not downstream_sides:
+            # Source-rejected rows are fail-closed observations, not evidence
+            # that a persisted candidate lost quote fields in transit.
+            if provider_sides and bool(handoff.get("candidate_persisted", True)) and not downstream_sides:
                 signals.append({"kind": "QUOTE_FIELDS_DROPPED", "severity": "HIGH", "canonical_fact_ids": ["CURRENT_QUOTE_BID", "CURRENT_QUOTE_ASK", "CURRENT_QUOTE_SPREAD"],
                                 "affected_endpoints": ["crypto readiness"], "affected_components": ["ProviderRouter", "data_orchestrator", "crypto ranking snapshot"]})
             elif not provider_sides:
@@ -226,8 +228,27 @@ class ContinuousSystemIntegrityScannerV1:
                             "repair": "consume canonical capacity fact rather than legacy availability aliases"})
         if capacity_fact and not bool(capacity_fact.get("authority_current")):
             waiting.append({"state": "LEGITIMATE_WAITING_STATE", "reason": "canonical_capacity_authority_not_current", "fail_closed": True})
-        horizon_rows = list((integrity.get("pair_eligibility") or {}).get("evaluated_candidates") or [])
-        if any(str((row.get("gate_status") or {}).get("horizon_assignment") or "").startswith("PENDING_HORIZON") for row in horizon_rows if isinstance(row, dict)):
+        horizon_rows = [dict(row) for row in ((integrity.get("pair_eligibility") or {}).get("evaluated_candidates") or []) if isinstance(row, dict)]
+        first_blockers = [
+            {"symbol": row.get("symbol"), **dict(row.get("first_causal_blocker") or {})}
+            for row in horizon_rows if isinstance(row.get("first_causal_blocker"), dict)
+        ]
+        first_market_blocker = next((row for row in first_blockers if str(row.get("gate") or "") in {
+            "timestamp_freshness", "quote_spread", "volume_liquidity", "data_quality"
+        }), {})
+        crypto_root_detected = False
+        if first_market_blocker:
+            gate = str(first_market_blocker.get("gate") or "")
+            handoff = "provider quote timestamp -> operational crypto candidate" if gate == "timestamp_freshness" else "crypto ranking snapshot -> candidate execution integrity"
+            signals.append({"kind": "CRYPTO_MARKET_EVIDENCE_BLOCKED", "severity": "HIGH", "confidence": "VERIFIED",
+                            "canonical_fact_ids": ["CRYPTO_CANONICAL_MARKET_EVIDENCE", f"CRYPTO_GATE_{gate.upper()}"],
+                            "affected_endpoints": ["crypto readiness", "multilane completion matrix", "sentinel"],
+                            "affected_components": ["crypto ranking snapshot", "candidate execution integrity"],
+                            "first_bad_handoff": handoff,
+                            "owner": "crypto market-evidence producer",
+                            "repair": "preserve or await real provider evidence; no synthetic fallback is permitted"})
+            crypto_root_detected = True
+        if any(str(row.get("gate") or "") == "horizon_assignment" for row in first_blockers):
             signals.append({"kind": "CRYPTO_HORIZON_INPUT_NOT_PERSISTED", "severity": "HIGH",
                             "canonical_fact_ids": ["CRYPTO_PERSISTED_HORIZON_EVIDENCE"],
                             "affected_endpoints": ["crypto readiness", "multilane completion matrix"],
@@ -235,7 +256,20 @@ class ContinuousSystemIntegrityScannerV1:
                             "first_bad_handoff": "crypto ranking snapshot -> candidate execution integrity",
                             "owner": "crypto ranking snapshot producer",
                             "repair": "persist a canonical horizon evidence envelope or retain an explicit insufficient-evidence state"})
-        if str(completion.get("status") or "").upper() == "WARNING" and crypto_completion.get("first_blocker"):
+            crypto_root_detected = True
+        guard_blockers = [
+            row for row in first_blockers if str(row.get("gate") or "") not in {
+                "timestamp_freshness", "quote_spread", "volume_liquidity", "data_quality", "horizon_assignment"
+            }
+        ]
+        for blocker in guard_blockers[:max_rows]:
+            # A valid candidate may still be deliberately held by an existing
+            # safety/configuration guard. Record that actual first gate as a
+            # fail-closed waiting state instead of a fabricated defect.
+            waiting.append({"state": "LEGITIMATE_WAITING_STATE", "reason": f"crypto_candidate_gate:{blocker.get('gate')}",
+                            "gate_status": blocker.get("status"), "fail_closed": True})
+            crypto_root_detected = True
+        if str(completion.get("status") or "").upper() == "WARNING" and crypto_completion.get("first_blocker") and not crypto_root_detected:
             signals.append({"kind": "MATRIX_WARNING_WITH_SENTINEL_PASS", "severity": "HIGH",
                             "canonical_fact_ids": ["CRYPTO_MULTILANE_COMPLETION_STATUS"],
                             "affected_endpoints": ["sentinel", "Governance", "Cortex", "multilane completion matrix"],
