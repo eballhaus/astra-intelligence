@@ -31,6 +31,8 @@ from engine.astra_governance_coverage_consolidation_v1 import (
     COMPONENT_ID,
     AstraGovernanceCoverageConsolidationV1,
 )
+from engine.crypto_operational_integrity_readiness_v1 import CryptoOperationalIntegrityReadinessV1
+from engine.shadow_profit_loss_protection_validation_v1 import ShadowProfitLossProtectionValidationV1
 
 
 class PaperAutopilotWorker:
@@ -45,6 +47,8 @@ class PaperAutopilotWorker:
         self.resource_policy = dict(read_snapshot().get("resource_policy") or {})
         self.continuous_governance = ContinuousGovernanceV1(STATE)
         self.governance_coverage = AstraGovernanceCoverageConsolidationV1(STATE)
+        self.crypto_operational_integrity = CryptoOperationalIntegrityReadinessV1(STATE)
+        self.shadow_profit_loss_protection = ShadowProfitLossProtectionValidationV1(STATE)
 
     def _base_state(self) -> dict[str, Any]:
         previous = read_snapshot()
@@ -253,6 +257,49 @@ class PaperAutopilotWorker:
                 "lineage_isolated": all(str(row.get("asset_class") or "crypto").lower() == "crypto" for row in crypto_rows),
             },
         )
+        # These are bounded cache/state compositions. They deliberately reuse
+        # the cycle's existing data and never submit, cancel, or probe orders.
+        crypto_integrity: dict[str, Any] = {}
+        shadow_protection: dict[str, Any] = {}
+        try:
+            positions = [dict(row) for row in (self.autopilot.paper_positions() or []) if isinstance(row, dict)]
+            lane = {
+                "activation_requested": crypto_activation.get("activation_requested"),
+                "paper_crypto_enabled": crypto_activation.get("paper_crypto_enabled"),
+                "paper_mode_verified": safety.get("paper_mode_verified"),
+                "kill_switch_enabled": crypto_activation.get("kill_switch_enabled"),
+                "capital_configured": crypto_activation.get("capital_configured"),
+                "capital_limit": crypto_activation.get("capital_limit"),
+                "crypto_day_trade_capacity": crypto_activation.get("crypto_day_trade_capacity"),
+                "crypto_short_swing_capacity": crypto_activation.get("crypto_short_swing_capacity"),
+                "day_trade_capacity_available": crypto_activation.get("day_trade_capacity_available"),
+                "short_swing_capacity_available": crypto_activation.get("short_swing_capacity_available"),
+                "lane_state": crypto_activation.get("lane_state"),
+                "broker_reconciliation_ok": False,
+            }
+            capability = dict(crypto_activation.get("broker_capability") or {})
+            if not capability:
+                capability = {
+                    "paper_mode_verified": safety.get("paper_mode_verified"),
+                    "live_endpoint_detected": False,
+                    "crypto_trading_supported": crypto_activation.get("paper_account_crypto_support"),
+                    "supported_pairs": crypto_activation.get("supported_pairs") or [],
+                    "tradable_pairs": crypto_activation.get("tradable_pairs") or [],
+                }
+            crypto_integrity = self.crypto_operational_integrity.build(
+                lane=lane, capability=capability, candidates=crypto_rows,
+                open_positions=positions, pending_orders=[], buying_power=None,
+            )
+            self.crypto_operational_integrity.write_snapshot(crypto_integrity)
+            shadow_protection = self.shadow_profit_loss_protection.build(
+                self.shadow_profit_loss_protection.load_bounded_lifecycle_rows(), positions,
+            )
+            self.shadow_profit_loss_protection.write_snapshot(shadow_protection)
+        except Exception:
+            # Optional diagnostics fail closed and cannot interrupt the owner
+            # worker or alter the trading cycle.
+            crypto_integrity = {"status": "UNAVAILABLE_FAIL_CLOSED"}
+            shadow_protection = {"status": "UNAVAILABLE_FAIL_CLOSED"}
         self._publish(continuous_governance={
             "status": result.get("status"),
             "authorization": result.get("authorization"),
@@ -262,6 +309,8 @@ class PaperAutopilotWorker:
             "repairs_verified": result.get("repairs_verified"),
             "coverage_status": coverage.get("status"),
             "coverage_certification": dict((coverage.get("post_deployment_certifications") or [{}])[0]).get("certification_state"),
+            "crypto_operational_integrity_status": crypto_integrity.get("status"),
+            "shadow_profit_loss_protection_status": shadow_protection.get("status"),
         })
         return result
 

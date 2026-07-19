@@ -726,6 +726,14 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
+    from engine.crypto_operational_integrity_readiness_v1 import CryptoOperationalIntegrityReadinessV1
+except Exception:
+    CryptoOperationalIntegrityReadinessV1 = None  # type: ignore[assignment,misc]
+try:
+    from engine.shadow_profit_loss_protection_validation_v1 import ShadowProfitLossProtectionValidationV1
+except Exception:
+    ShadowProfitLossProtectionValidationV1 = None  # type: ignore[assignment,misc]
+try:
     from engine.trade_lifecycle_excursion_v2 import TradeLifecycleExcursionV2
 except Exception:
     class TradeLifecycleExcursionV2:  # type: ignore[override]
@@ -70090,6 +70098,59 @@ def _crypto_paper_execution_readiness_v1_payload(statuses: dict | None = None) -
     }
 
 
+def _crypto_operational_integrity_readiness_v1_payload(statuses: dict | None = None) -> dict:
+    """Compose existing cache-only crypto owners into a single readiness view."""
+    statuses = dict(statuses or {})
+    lane = _crypto_paper_lane_validation_v1_payload(statuses)
+    capability = {}
+    if "ALPACA_PAPER_BROKER" in globals() and hasattr(ALPACA_PAPER_BROKER, "crypto_capability_status"):
+        capability = dict(ALPACA_PAPER_BROKER.crypto_capability_status(False) or {})
+    positions: list[dict] = []
+    try:
+        positions = [dict(row) for row in (PAPER_AUTOPILOT.paper_positions() or []) if isinstance(row, dict)]
+    except Exception:
+        positions = []
+    alpaca = statuses.get("alpaca_paper_status_v1") if isinstance(statuses.get("alpaca_paper_status_v1"), dict) else {}
+    if not alpaca:
+        alpaca = ((_CACHE.get("alpaca_paper_status_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
+    account = dict(alpaca.get("account") or {})
+    buying_power = account.get("buying_power", alpaca.get("buying_power"))
+    if CryptoOperationalIntegrityReadinessV1 is None:
+        return {"endpoint": "/api/crypto_operational_integrity_readiness_v1", "status": "BROKER_NOT_READY",
+                "exact_blockers": ["crypto_operational_integrity_module_unavailable"], "get_route_read_only": True,
+                "worker_invocations": 0, "mutations": 0, "full_store_scans": 0, **_safety_flags_v1()}
+    payload = CryptoOperationalIntegrityReadinessV1(STATE).build(
+        lane=lane, capability=capability, candidates=_crypto_ranking_rows_cached_v1(),
+        open_positions=positions, pending_orders=[], buying_power=buying_power,
+        known_equity_symbols=_known_equity_symbols_v1(),
+    )
+    return {"endpoint": "/api/crypto_operational_integrity_readiness_v1", "canonical_owners": [
+                "PaperAutopilotEngine._crypto_paper_activation_status", "AlpacaPaperBroker.crypto_capability_status",
+                "candidate_execution_integrity_v1", "astra_multilane_activation_v2.lane_capital_status"],
+            "source_mode": "cache_only_composed_existing_crypto_systems", "get_route_read_only": True,
+            "worker_invocations": 0, "mutations": 0, "full_store_scans": 0, **payload, **_safety_flags_v1()}
+
+
+def _shadow_profit_loss_protection_validation_v1_payload() -> dict:
+    """Read bounded lifecycle evidence only; this endpoint cannot create exits."""
+    if ShadowProfitLossProtectionValidationV1 is None:
+        return {"endpoint": "/api/shadow_profit_loss_protection_validation_v1", "status": "INSUFFICIENT_EVIDENCE",
+                "exact_blockers": ["shadow_profit_loss_protection_module_unavailable"], "get_route_read_only": True,
+                "worker_invocations": 0, "mutations": 0, "full_store_scans": 0, **_safety_flags_v1()}
+    suite = ShadowProfitLossProtectionValidationV1(STATE)
+    try:
+        positions = [dict(row) for row in (PAPER_AUTOPILOT.paper_positions() or []) if isinstance(row, dict)]
+    except Exception:
+        positions = []
+    registry = _astra_evidence_state_json("broker_truth_records_v1.json")
+    broker_rows = [dict(row) for row in (registry.get("records") or [])[-500:] if isinstance(row, dict)]
+    payload = suite.build(suite.load_bounded_lifecycle_rows(), positions, broker_rows)
+    return {"endpoint": "/api/shadow_profit_loss_protection_validation_v1",
+            "canonical_owners": ["TradeLifecycleExcursionV1", "broker_truth_records_v1", "PaperAutopilotEngine.paper_positions"],
+            "source_mode": "bounded_lifecycle_and_broker_truth_read_only", "get_route_read_only": True,
+            "worker_invocations": 0, "mutations": 0, "full_store_scans": 0, **payload, **_safety_flags_v1()}
+
+
 def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
     lane = _crypto_paper_lane_validation_v1_payload(statuses)
     rows = _crypto_ranking_rows_cached_v1()
@@ -73914,6 +73975,17 @@ def astra_crypto_performance_attribution_v1():
 def crypto_paper_execution_readiness_v1(force: bool = False):
     cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
     return _crypto_paper_execution_readiness_v1_payload(dict(cached_unified or {}))
+
+
+@router.get("/api/crypto_operational_integrity_readiness_v1")
+def crypto_operational_integrity_readiness_v1(force: bool = False):
+    cached_unified = ((_CACHE.get("unified_learning_diagnostics_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    return _crypto_operational_integrity_readiness_v1_payload(dict(cached_unified or {}))
+
+
+@router.get("/api/shadow_profit_loss_protection_validation_v1")
+def shadow_profit_loss_protection_validation_v1(force: bool = False):
+    return _shadow_profit_loss_protection_validation_v1_payload()
 
 
 @router.get("/api/crypto_lane_paper_readiness_v1")
