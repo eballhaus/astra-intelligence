@@ -28,6 +28,17 @@ class CryptoFGCContractTests(unittest.TestCase):
         self.assertIn('"broker_read_calls_used": 0', self.source)
         self.assertIn('"automatic_promotions_enabled": False', self.source)
 
+    def test_worker_uses_completed_real_volume_and_bounded_rotation(self):
+        self.assertIn("_completed_crypto_bar_volume_evidence_v1", self.source)
+        self.assertIn("ROLLING_REAL_VOLUME_AVAILABLE", self.source)
+        self.assertIn("ASTRA_CRYPTO_REFRESH_PAIRS_PER_CYCLE", self.source)
+        self.assertIn("pairs_evaluated_this_cycle", self.source)
+        self.assertIn("latest_completed_bar_timestamp", self.source)
+        self.assertIn('"provider_calls_used": provider_calls_used', self.source)
+        self.assertIn('"rolling_completed_bar_volume"', self.source)
+        self.assertIn('"positive_volume_bar_count"', self.source)
+        self.assertNotIn('"volume_evidence": "INFERRED_FROM_PRICE"', self.source)
+
     def test_canonical_outcome_audit_reports_lineage_and_evidence_separation(self):
         self.assertIn('"broker_truth_attribution_coverage_pct"', self.source)
         self.assertIn('"official_metrics_source": "broker_confirmed_complete_paper_round_trips_only"', self.source)

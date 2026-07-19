@@ -21305,8 +21305,45 @@ def crypto_rankings():
     return [dict(row) for row in rows if isinstance(row, dict)]
 
 
+def _completed_crypto_bar_volume_evidence_v1(bars: list[dict], now_utc: datetime) -> dict:
+    """Use real completed-bar volume only; the active interval never certifies liquidity."""
+    completed: list[dict] = []
+    cutoff = now_utc - timedelta(minutes=15)
+    for index, raw in enumerate(bars):
+        row = dict(raw or {})
+        timestamp = str(row.get("t") or "")
+        try:
+            observed = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).astimezone(UTC)
+        except Exception:
+            observed = None
+        if observed is not None and observed <= cutoff:
+            completed.append(row)
+        elif observed is None and index < max(0, len(bars) - 1):
+            # Unknown timestamps cannot prove the final bar is complete; only
+            # retain earlier bars as conservative compatibility evidence.
+            completed.append(row)
+    volumes = []
+    for row in completed:
+        try:
+            value = float(row.get("v"))
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            volumes.append(value)
+    ordered = sorted(volumes)
+    midpoint = len(ordered) // 2
+    median = (ordered[midpoint] if len(ordered) % 2 else (ordered[midpoint - 1] + ordered[midpoint]) / 2.0) if ordered else 0.0
+    return {
+        "completed_bar_count": len(completed), "positive_volume_bar_count": len(volumes),
+        "rolling_completed_bar_volume": round(sum(volumes) / len(volumes), 8) if volumes else 0.0,
+        "median_completed_bar_volume": round(median, 8) if volumes else 0.0,
+        "latest_completed_bar_timestamp": str(completed[-1].get("t") or "") if completed else "",
+        "volume_state": "ROLLING_REAL_VOLUME_AVAILABLE" if volumes else "VOLUME_UNAVAILABLE",
+    }
+
+
 def _refresh_crypto_rankings_snapshot_v1() -> dict:
-    """Refresh one rotating broker-supported crypto pair per worker cycle."""
+    """Refresh a bounded rotating batch of broker-supported crypto pairs."""
     if str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() != "worker":
         return {"status": "REJECTED_NOT_WORKER_OWNER", "provider_calls_used": 0, "broker_actions_used": 0}
     now = time.time()
@@ -21316,20 +21353,9 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
     if previous.get("status") == "FAILED_FAIL_CLOSED" and now - float(previous.get("generated_at_epoch") or 0.0) <= 120.0:
         return {"status": "RECENT_FAILURE_COOLDOWN", "exact_blocker": previous.get("exact_blocker"), "provider_calls_used": 0, "broker_actions_used": 0}
 
-    def fail_closed(blocker: str, *, bar_payload: dict | None = None) -> dict:
-        snapshot = {
-            "rows": [], "status": "FAILED_FAIL_CLOSED", "exact_blocker": blocker,
-            "generated_at": _now_utc_iso(), "generated_at_epoch": now,
-            "bar_source": str((bar_payload or {}).get("response_state") or ""),
-        }
-        PAPER_AUTOPILOT._runtime_state["crypto_rankings_snapshot_v1"] = snapshot
-        PAPER_AUTOPILOT._save_state_file()
-        return {"status": "FAILED_FAIL_CLOSED", "exact_blocker": blocker, "provider_calls_used": 2, "broker_actions_used": 0}
-
-    # Reuse the broker's cached capability record. Discovery is deliberately
-    # worker-owned and bounded to one pair per cycle, so widening observation
-    # does not multiply provider calls or turn a discovery result into trade
-    # approval. Stablecoins are excluded from directional candidate discovery.
+    # Reuse the broker's cached capability record. The worker evaluates only a
+    # small batch (six read calls at most), well under its existing twelve-call
+    # budget. Discovery never becomes approval or an order request.
     capability = dict(ALPACA_PAPER_BROKER.crypto_capability_status(False) or {})
     stable_bases = {"USDC", "USDT", "DAI", "USD", "PYUSD", "FDUSD", "TUSD", "USDG"}
     discovered = sorted({
@@ -21341,101 +21367,73 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
     if not discovered:
         discovered = list(_ASTRA_CRYPTO_APPROVED_CORE_UNIVERSE_V1)
     cursor = int(previous.get("discovery_cursor") or 0) % len(discovered)
-    symbol = discovered[cursor]
-    try:
-        from engine import data_orchestrator as active_data_orchestrator
-
-        quote = dict(active_data_orchestrator._router.get_quote(
-            symbol,
-            asset_type="crypto",
-            batch_id=f"crypto-worker:{int(now)}",
-            bypass_cache=True,
-            use_selective_backups=False,
-        ) or {})
-        quote_row, quote_meta = active_data_orchestrator._quote_to_rank_row(
-            symbol,
-            quote,
-            "crypto",
-            _now_utc_iso(),
-        )
-    except Exception:
-        quote_row, quote_meta, quote = None, {}, {}
-    quote_provider = str((quote_meta or {}).get("provider_used") or quote.get("provider_used") or "").lower()
-    if not quote_row or quote_provider in {"", "none", "local_snapshot"}:
-        return fail_closed(f"{symbol.replace('/', '_')}_FRESH_QUOTE_UNAVAILABLE")
-    quote_rows = [dict(quote_row)]
+    batch_size = max(1, min(3, int(os.getenv("ASTRA_CRYPTO_REFRESH_PAIRS_PER_CYCLE", "3") or 3)))
+    symbols = [discovered[(cursor + offset) % len(discovered)] for offset in range(batch_size)]
     end = datetime.now(UTC)
     start = end - timedelta(hours=6)
-    bar_payload = dict(ALPACA_PAPER_BROKER.historical_bars(
-        symbol,
-        asset_class="crypto",
-        timeframe="15Min",
-        limit=24,
-        start=start.isoformat().replace("+00:00", "Z"),
-        end=end.isoformat().replace("+00:00", "Z"),
-    ) or {})
-    bars = [dict(row) for row in (bar_payload.get("bars") or []) if isinstance(row, dict)]
-    if len(bars) < 2:
-        return fail_closed(f"{symbol.replace('/', '_')}_FRESH_BARS_UNAVAILABLE", bar_payload=bar_payload)
-    latest_bar = dict(bars[-1])
-    try:
-        high, low, close = float(latest_bar.get("h")), float(latest_bar.get("l")), float(latest_bar.get("c"))
-        risk_pct = round(((high - low) / close) * 100.0, 4) if close > 0 and high >= low else None
-    except (TypeError, ValueError):
-        risk_pct = None
-    if risk_pct is None or risk_pct <= 0:
-        return fail_closed(f"{symbol.replace('/', '_')}_BAR_RISK_ENVELOPE_UNAVAILABLE", bar_payload=bar_payload)
-
-    # Alpaca bars carry the authoritative interval volume. Preserve it for
-    # ranking and contract consumers instead of treating a quote-only payload
-    # as a volume observation.
-    bar_volume = latest_bar.get("v")
-    try:
-        if float(bar_volume) > 0:
-            quote_rows[0]["volume"] = float(bar_volume)
-            quote_rows[0]["volume_24h"] = float(bar_volume)
-            quote_rows[0]["volume_evidence"] = "ALPACA_15MIN_BAR"
-    except (TypeError, ValueError):
-        pass
-
-    ranked = _prioritize_rankings(quote_rows, learning_snapshot=_get_enriched_learning_insights_cached())
-    ranked = PORTFOLIO_INTEL.apply(ranked, asset_type="crypto")
-    ranked = _prioritize_rankings(ranked, learning_snapshot=_get_enriched_learning_insights_cached())
-    if not ranked:
-        return fail_closed(f"{symbol.replace('/', '_')}_RANKING_EMPTY", bar_payload=bar_payload)
-    quote_timestamp = str(quote_rows[0].get("quote_timestamp") or quote_rows[0].get("timestamp") or "")
-    output = [_ensure_persona_fields({
-        **dict(ranked[0]),
-        "symbol": symbol, "asset_class": "crypto", "asset_type": "crypto", "lane_id": "CRYPTO",
-        "rank_position": 1, "ranking_run_id": f"crypto-worker:{int(now)}",
-        "generated_at": _now_utc_iso(), "candidate_generated_at": _now_utc_iso(),
-        "quote_timestamp": quote_timestamp, "bar_timestamp": latest_bar.get("t"),
-        "bar_evidence": {"source": "AlpacaPaperBroker.historical_bars", "resolution": "15Min", "count": len(bars)},
-        "crypto_risk_pct": risk_pct, "freshness_state": "CURRENT",
-    })]
+    output, failures, volume_audit = [], [], []
+    provider_calls_used = 0
+    for rank, symbol in enumerate(symbols, start=1):
+        try:
+            from engine import data_orchestrator as active_data_orchestrator
+            provider_calls_used += 1
+            quote = dict(active_data_orchestrator._router.get_quote(symbol, asset_type="crypto", batch_id=f"crypto-worker:{int(now)}:{rank}", bypass_cache=True, use_selective_backups=False) or {})
+            quote_row, quote_meta = active_data_orchestrator._quote_to_rank_row(symbol, quote, "crypto", _now_utc_iso())
+        except Exception:
+            quote_row, quote_meta, quote = None, {}, {}
+        quote_provider = str((quote_meta or {}).get("provider_used") or quote.get("provider_used") or "").lower()
+        if not quote_row or quote_provider in {"", "none", "local_snapshot"}:
+            failures.append({"symbol": symbol, "blocker": "FRESH_QUOTE_UNAVAILABLE"})
+            continue
+        provider_calls_used += 1
+        bar_payload = dict(ALPACA_PAPER_BROKER.historical_bars(symbol, asset_class="crypto", timeframe="15Min", limit=24, start=start.isoformat().replace("+00:00", "Z"), end=end.isoformat().replace("+00:00", "Z")) or {})
+        bars = [dict(row) for row in (bar_payload.get("bars") or []) if isinstance(row, dict)]
+        volume = _completed_crypto_bar_volume_evidence_v1(bars, end)
+        volume_audit.append({"symbol": symbol, **volume, "bar_response_state": bar_payload.get("response_state")})
+        if len(bars) < 2 or volume["volume_state"] != "ROLLING_REAL_VOLUME_AVAILABLE":
+            failures.append({"symbol": symbol, "blocker": "VOLUME_UNAVAILABLE", "volume_state": volume["volume_state"]})
+            continue
+        latest_completed = next((bar for bar in reversed(bars) if str(bar.get("t") or "") == volume["latest_completed_bar_timestamp"]), {})
+        high, low, close = _to_float(latest_completed.get("h"), 0.0), _to_float(latest_completed.get("l"), 0.0), _to_float(latest_completed.get("c"), 0.0)
+        risk_pct = round(((high - low) / close) * 100.0, 4) if close > 0 and high >= low else 0.0
+        if risk_pct <= 0:
+            failures.append({"symbol": symbol, "blocker": "BAR_RISK_ENVELOPE_UNAVAILABLE"})
+            continue
+        quote_row = dict(quote_row)
+        quote_row.update({"volume": volume["rolling_completed_bar_volume"], "quote_volume": volume["rolling_completed_bar_volume"], "volume_evidence": "ALPACA_ROLLING_COMPLETED_15MIN_BARS"})
+        ranked = _prioritize_rankings([quote_row], learning_snapshot=_get_enriched_learning_insights_cached())
+        ranked = PORTFOLIO_INTEL.apply(ranked, asset_type="crypto")
+        ranked = _prioritize_rankings(ranked, learning_snapshot=_get_enriched_learning_insights_cached())
+        if not ranked:
+            failures.append({"symbol": symbol, "blocker": "RANKING_EMPTY"})
+            continue
+        output.append(_ensure_persona_fields({**dict(ranked[0]), "symbol": symbol, "asset_class": "crypto", "asset_type": "crypto", "lane_id": "CRYPTO", "rank_position": rank, "ranking_run_id": f"crypto-worker:{int(now)}", "generated_at": _now_utc_iso(), "candidate_generated_at": _now_utc_iso(), "quote_timestamp": str(quote_row.get("quote_timestamp") or quote_row.get("timestamp") or ""), "bar_timestamp": volume["latest_completed_bar_timestamp"], "bar_evidence": {"source": "AlpacaPaperBroker.historical_bars", "resolution": "15Min", "count": len(bars), **volume}, "crypto_risk_pct": risk_pct, "freshness_state": "CURRENT"}))
     output = PORTFOLIO_RISK_ENGINE.enrich(output, asset_type="crypto", companion_rows=LAST_RANKINGS.get("stocks", []))
     output = PREDICTIVE_MODEL.annotate_rows(output)
     output = REGIME_ENGINE.annotate_rows(output)
     generated_at = _now_utc_iso()
     previously_certified = set(previous.get("certified_pairs") or [])
-    if quote_rows[0].get("volume_evidence") == "ALPACA_15MIN_BAR":
-        previously_certified.add(symbol)
+    previously_certified.update(row["symbol"] for row in output if row.get("volume_evidence") == "ALPACA_ROLLING_COMPLETED_15MIN_BARS")
     snapshot = {
-        "rows": output, "generated_at": generated_at, "generated_at_epoch": now,
-        "quote_timestamp": quote_timestamp, "bar_timestamp": latest_bar.get("t"),
-        "quote_provider": quote_provider,
+        "rows": output, "status": "CURRENT" if output else "FAILED_FAIL_CLOSED",
+        "generated_at": generated_at, "generated_at_epoch": now,
+        "quote_timestamp": max((str(row.get("quote_timestamp") or "") for row in output), default=""),
+        "bar_timestamp": max((str(row.get("bar_timestamp") or "") for row in output), default=""),
+        "quote_provider": "worker_provider_router",
         "provider_owner": "data_orchestrator.ProviderRouter + AlpacaPaperBroker.historical_bars",
         "crypto_discovery_universe": discovered,
-        "discovery_cursor": (cursor + 1) % len(discovered),
+        "discovery_cursor": (cursor + batch_size) % len(discovered),
         "certified_pairs": sorted(previously_certified),
         "certification_state": "ROTATING_BOUNDED_EVALUATION",
+        "crypto_volume_audit": volume_audit, "failed_pairs": failures,
+        "pairs_evaluated_this_cycle": len(symbols), "rotation_cycles_remaining": max(0, math.ceil(len(discovered) / batch_size) - 1),
     }
     PAPER_AUTOPILOT._runtime_state["crypto_rankings_snapshot_v1"] = snapshot
     _update_last_rankings("crypto", output)
     RANKINGS_ENDPOINT_CACHE["crypto"] = {"ts": now, "payload": list(output)}
     PAPER_AUTOPILOT._save_state_file()
     _PERF_COUNTERS["rankings_build_count"] = int(_PERF_COUNTERS.get("rankings_build_count", 0)) + 1
-    return {"status": "CURRENT", "generated_at": generated_at, "rows": len(output), "provider_calls_used": 2, "broker_actions_used": 0}
+    return {"status": "CURRENT" if output else "FAILED_FAIL_CLOSED", "generated_at": generated_at, "rows": len(output), "failed_pairs": len(failures), "pairs_evaluated": len(symbols), "provider_calls_used": provider_calls_used, "broker_actions_used": 0}
 
 
 def _bounded_current_equity_candidate_rows_v1(max_rows: int = 8) -> list[dict]:
@@ -70102,7 +70100,9 @@ def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
             "source_cache": "LAST_RANKINGS.crypto/RANKINGS_ENDPOINT_CACHE.crypto",
             "generated_at": row.get("generated_at") or row.get("timestamp"),
             "data_timestamp": row.get("data_timestamp") or row.get("quote_timestamp") or row.get("timestamp"),
+            "bar_timestamp": row.get("bar_timestamp") or "",
             "candidate_freshness": "fresh" if integrity.get("gate_status", {}).get("timestamp_freshness") == "PASS" else "stale_or_incomplete",
+            "freshness_state": row.get("freshness_state") or "UNKNOWN",
             "ranking_score": row.get("ranking_score") or row.get("score") or row.get("confidence"),
             "ranking_position": idx + 1,
             "horizon_scores": row.get("horizon_scores") or {},
@@ -70115,6 +70115,11 @@ def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
             "risk_status": integrity.get("gate_status", {}).get("volatility_risk"),
             "confidence_status": integrity.get("gate_status", {}).get("confidence_ranking"),
             "liquidity_status": integrity.get("gate_status", {}).get("volume_liquidity"),
+            "volume_evidence": row.get("volume_evidence") or "VOLUME_EVIDENCE_MISSING",
+            "rolling_completed_bar_volume": (row.get("bar_evidence") or {}).get("rolling_completed_bar_volume"),
+            "completed_bar_count": (row.get("bar_evidence") or {}).get("completed_bar_count"),
+            "positive_volume_bar_count": (row.get("bar_evidence") or {}).get("positive_volume_bar_count"),
+            "crypto_risk_pct": row.get("crypto_risk_pct"),
             "paper_eligibility": "eligible" if broker_ok else "not_eligible",
             "broker_eligibility": "eligible" if broker_ok else "not_eligible",
             "candidate_state": terminal,
