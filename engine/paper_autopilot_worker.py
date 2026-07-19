@@ -277,12 +277,20 @@ class PaperAutopilotWorker:
             broad_crypto_count = len(broad_crypto_rows)
             capacity = dict(getattr(self.autopilot, "_runtime_state", {}).get("last_evidence_capacity_snapshot") or {})
             broker_crypto_count = int(capacity.get("crypto_open_positions") or 0)
+            rejected_diagnostic_claim = {
+                "fact_id": "LOCAL_OPEN_CRYPTO_POSITION_COUNT", "value": broad_crypto_count,
+                "claimed_scope": "all crypto-labeled compatibility rows",
+                "source_owner": "PAPER_AUTOPILOT.paper_positions", "source_type": "adapter",
+                "canonical": False, "source_timestamp": utc_now(),
+                "consumer": "diagnostic-only compatibility observation",
+                "rejection_reason": "prohibited substitute; not an active-position fact claim",
+            }
             claims = [
                 fact_envelope_v1("LOCAL_OPEN_CRYPTO_POSITION_COUNT", len(canonical_crypto_positions), snapshot_id=str(capacity.get("snapshot_id") or ""), exclusions=["historical", "diagnostic", "reconstructed", "closed", "unfilled"]),
-                {"fact_id": "LOCAL_OPEN_CRYPTO_POSITION_COUNT", "value": broad_crypto_count, "claimed_scope": "all crypto-labeled compatibility rows", "source_owner": "PAPER_AUTOPILOT.paper_positions", "source_type": "adapter", "canonical": False, "source_timestamp": utc_now(), "consumer": "legacy crypto integrity adapter"},
                 fact_envelope_v1("BROKER_OPEN_CRYPTO_POSITION_COUNT", broker_crypto_count, snapshot_id=str(capacity.get("snapshot_id") or "")),
             ]
             truth_arbitration = arbitrate_truth_claims_v1(claims)
+            truth_arbitration["rejected_diagnostic_claims"] = [rejected_diagnostic_claim]
             truth_arbitration["contradiction_registry"] = self.truth_contradictions.observe(list(truth_arbitration.get("contradictions") or []))
             getattr(self.autopilot, "_runtime_state", {})["truth_arbitration_v1"] = dict(truth_arbitration)
             lane = {
