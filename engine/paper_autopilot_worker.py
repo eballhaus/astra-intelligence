@@ -33,6 +33,8 @@ from engine.astra_governance_coverage_consolidation_v1 import (
 )
 from engine.crypto_operational_integrity_readiness_v1 import CryptoOperationalIntegrityReadinessV1
 from engine.shadow_profit_loss_protection_validation_v1 import ShadowProfitLossProtectionValidationV1
+from engine.astra_canonical_truth_registry_v1 import fact_envelope_v1
+from engine.astra_truth_arbitration_v1 import TruthContradictionRegistryV1, arbitrate_truth_claims_v1, read_canonical_open_crypto_positions
 
 
 class PaperAutopilotWorker:
@@ -49,6 +51,7 @@ class PaperAutopilotWorker:
         self.governance_coverage = AstraGovernanceCoverageConsolidationV1(STATE)
         self.crypto_operational_integrity = CryptoOperationalIntegrityReadinessV1(STATE)
         self.shadow_profit_loss_protection = ShadowProfitLossProtectionValidationV1(STATE)
+        self.truth_contradictions = TruthContradictionRegistryV1(STATE)
 
     def _base_state(self) -> dict[str, Any]:
         previous = read_snapshot()
@@ -261,8 +264,27 @@ class PaperAutopilotWorker:
         # the cycle's existing data and never submit, cancel, or probe orders.
         crypto_integrity: dict[str, Any] = {}
         shadow_protection: dict[str, Any] = {}
+        truth_arbitration: dict[str, Any] = {}
         try:
+            # Compatibility rows are retained only as a rejected diagnostic
+            # claim. Active crypto reconciliation uses canonical SQLite rows.
             positions = [dict(row) for row in (self.autopilot.paper_positions() or []) if isinstance(row, dict)]
+            # The canonical current position store is distinct from the
+            # historical compatibility database used by paper_positions().
+            canonical_position_db = str(STATE / "paper_autopilot.db")
+            canonical_crypto_positions = read_canonical_open_crypto_positions(canonical_position_db)
+            broad_crypto_rows = [row for row in positions if str(row.get("asset_class") or row.get("asset_type") or "").lower() in {"crypto", "cryptocurrency"}]
+            broad_crypto_count = len(broad_crypto_rows)
+            capacity = dict(getattr(self.autopilot, "_runtime_state", {}).get("last_evidence_capacity_snapshot") or {})
+            broker_crypto_count = int(capacity.get("crypto_open_positions") or 0)
+            claims = [
+                fact_envelope_v1("LOCAL_OPEN_CRYPTO_POSITION_COUNT", len(canonical_crypto_positions), snapshot_id=str(capacity.get("snapshot_id") or ""), exclusions=["historical", "diagnostic", "reconstructed", "closed", "unfilled"]),
+                {"fact_id": "LOCAL_OPEN_CRYPTO_POSITION_COUNT", "value": broad_crypto_count, "claimed_scope": "all crypto-labeled compatibility rows", "source_owner": "PAPER_AUTOPILOT.paper_positions", "source_type": "adapter", "canonical": False, "source_timestamp": utc_now(), "consumer": "legacy crypto integrity adapter"},
+                fact_envelope_v1("BROKER_OPEN_CRYPTO_POSITION_COUNT", broker_crypto_count, snapshot_id=str(capacity.get("snapshot_id") or "")),
+            ]
+            truth_arbitration = arbitrate_truth_claims_v1(claims)
+            truth_arbitration["contradiction_registry"] = self.truth_contradictions.observe(list(truth_arbitration.get("contradictions") or []))
+            getattr(self.autopilot, "_runtime_state", {})["truth_arbitration_v1"] = dict(truth_arbitration)
             lane = {
                 "activation_requested": crypto_activation.get("activation_requested"),
                 "paper_crypto_enabled": crypto_activation.get("paper_crypto_enabled"),
@@ -275,7 +297,19 @@ class PaperAutopilotWorker:
                 "day_trade_capacity_available": crypto_activation.get("day_trade_capacity_available"),
                 "short_swing_capacity_available": crypto_activation.get("short_swing_capacity_available"),
                 "lane_state": crypto_activation.get("lane_state"),
-                "broker_reconciliation_ok": False,
+                "broker_reconciliation_ok": bool(capacity.get("broker_positions_fetch_ok")) and broker_crypto_count == len(canonical_crypto_positions),
+                "broker_reconciliation_status": "CURRENT_MATCHED" if broker_crypto_count == len(canonical_crypto_positions) else "COUNT_MISMATCH_FAIL_CLOSED",
+                "canonical_local_position_source": "state/paper_autopilot.db.paper_positions",
+                "canonical_local_position_query_scope": "status=OPEN AND asset_type=crypto",
+                "canonical_local_open_crypto_count": len(canonical_crypto_positions),
+                "noncanonical_rows_observed": broad_crypto_count,
+                "noncanonical_rows_excluded": broad_crypto_count,
+                "historical_rows_excluded": 0,
+                "diagnostic_rows_excluded": 0,
+                "reconstructed_rows_excluded": 0,
+                "closed_rows_excluded": 0,
+                "unfilled_rows_excluded": 0,
+                "local_crypto_open_count": len(canonical_crypto_positions), "broker_crypto_open_count": broker_crypto_count,
             }
             broker = getattr(self.autopilot, "alpaca_paper_broker", None)
             cached_capability = getattr(broker, "cached_crypto_capability", None)
@@ -287,7 +321,7 @@ class PaperAutopilotWorker:
             lifecycle_rows = self.shadow_profit_loss_protection.load_bounded_lifecycle_rows()
             crypto_integrity = self.crypto_operational_integrity.build(
                 lane=lane, capability=capability, candidates=crypto_rows,
-                open_positions=positions, pending_orders=[], lifecycle_rows=lifecycle_rows, buying_power=None,
+                open_positions=canonical_crypto_positions, pending_orders=[], lifecycle_rows=lifecycle_rows, buying_power=None,
             )
             self.crypto_operational_integrity.write_snapshot(crypto_integrity)
             shadow_protection = self.shadow_profit_loss_protection.build(
@@ -299,6 +333,7 @@ class PaperAutopilotWorker:
             # worker or alter the trading cycle.
             crypto_integrity = {"status": "UNAVAILABLE_FAIL_CLOSED"}
             shadow_protection = {"status": "UNAVAILABLE_FAIL_CLOSED"}
+            truth_arbitration = {"status": "UNAVAILABLE_FAIL_CLOSED"}
         self._publish(continuous_governance={
             "status": result.get("status"),
             "authorization": result.get("authorization"),
@@ -310,6 +345,8 @@ class PaperAutopilotWorker:
             "coverage_certification": dict((coverage.get("post_deployment_certifications") or [{}])[0]).get("certification_state"),
             "crypto_operational_integrity_status": crypto_integrity.get("status"),
             "shadow_profit_loss_protection_status": shadow_protection.get("status"),
+            "truth_arbitration_status": truth_arbitration.get("status"),
+            "truth_contradiction_count": len(truth_arbitration.get("contradictions") or []),
         })
         return result
 

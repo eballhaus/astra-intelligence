@@ -187,7 +187,7 @@ def crypto_lane_contract() -> dict[str, Any]:
         "cortex_influence_expectation": "crypto-only acknowledgement; no equity policy influence",
         "freshness_requirement": "current cached natural candidate evidence", "resource_budget": "existing bounded worker budget only",
         "latency_budget": "no GET path work", "memory_budget": "bounded current crypto candidate rows", "scan_budget": "24 cached rows maximum",
-        "required_invariants": ["CRYPTO_PAPER_ONLY", "CRYPTO_LIVE_DISABLED", "CRYPTO_CAPITAL_SEPARATE", "CRYPTO_PAIR_BROKER_SUPPORTED", "CRYPTO_ORDER_READY_REQUIRES_ALL_GATES", "CRYPTO_TRUTH_IS_LANE_ISOLATED"],
+        "required_invariants": ["CRYPTO_PAPER_ONLY", "CRYPTO_LIVE_DISABLED", "CRYPTO_CAPITAL_SEPARATE", "CRYPTO_PAIR_BROKER_SUPPORTED", "CRYPTO_ORDER_READY_REQUIRES_ALL_GATES", "CRYPTO_TRUTH_IS_LANE_ISOLATED", "CRYPTO_RECONCILIATION_USES_CANONICAL_OPEN_POSITION_STORE", "NO_NONCANONICAL_POSITION_SOURCE_OVERRIDES_CANONICAL_TRUTH", "CROSS_ENDPOINT_CRITICAL_FACTS_AGREE"],
         "safe_remediations": ["repair canonical pair formatting", "requeue stale crypto candidate refresh", "retry valid evidence persistence", "reconcile unambiguous crypto lane metadata"],
         "failure_mode": "fail closed awaiting natural candidate", "fail_closed_behavior": "no order or broker action without all existing gates",
         "rollback_procedure": "disable existing crypto paper worker path only; preserve evidence and broker truth", "migration_procedure": "retain legacy endpoints as read-only adapters",

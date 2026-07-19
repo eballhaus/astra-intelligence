@@ -127,6 +127,7 @@ def build_truth_acceleration_oversight(
     governance_findings: list[dict[str, Any]] | None = None,
     information_utilization: dict[str, Any] | None = None,
     legacy_resolution: dict[str, Any] | None = None,
+    truth_arbitration: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return Cortex proposals inside the approved operational envelope.
 
@@ -201,6 +202,10 @@ def build_truth_acceleration_oversight(
             "applied": False,
         })
     legacy = dict(legacy_resolution or {})
+    truth = dict(truth_arbitration or {})
+    truth_contradictions = [dict(row) for row in (truth.get("contradictions") or []) if isinstance(row, dict)]
+    if truth_contradictions:
+        critical = True
     if int(to_int(legacy.get("legacy_positions_proposed"), 0)) and not int(to_int(legacy.get("legacy_positions_approved"), 0)):
         proposals.append({
             "proposal_id": "truth-acceleration-legacy-review-priority",
@@ -229,6 +234,10 @@ def build_truth_acceleration_oversight(
         "applied_adjustments": [],
         "rollbacks": [],
         "legacy_resolution_observed": legacy,
+        "truth_arbitration": {"canonical_facts_used": sorted(dict(truth.get("critical_facts") or {})),
+            "rejected_claims": truth_contradictions, "unresolved_contradictions": len(truth_contradictions),
+            "truth_promotion_allowed": False,
+            "plain_english": "Canonical facts are retained; conflicting diagnostic claims are rejected and cannot become broker truth."},
         "direct_uncontrolled_mutation": False,
         "provider_calls_used": 0,
         "broker_actions_used": 0,

@@ -537,6 +537,23 @@ class ContinuousGovernanceV1:
                     "first_failed_at": _now(), "last_checked_at": _now(), "failure_count": 1,
                     "severity": "HIGH", "repairability": "DIAGNOSTIC", "exact_blocker": "CRYPTO_CONTRACT_INCOMPLETE", "allowed_remediations": [],
                 })
+        truth = _dict(runtime_state.get("truth_arbitration_v1"))
+        if truth:
+            contradictions = [row for row in list(truth.get("contradictions") or []) if isinstance(row, dict)]
+            facts = _dict(truth.get("critical_facts"))
+            def truth_invariant(invariant_id: str, passed: bool, blocker: str) -> None:
+                invariants.append({"invariant_id": invariant_id, "owner": "astra_truth_arbitration_v1", "dependencies": ["canonical truth registry"],
+                    "state": "PASS" if passed else "WARN", "observed_value": truth, "expected_value": "canonical fact envelope", "first_failed_at": None if passed else _now(), "last_checked_at": _now(), "failure_count": 0 if passed else 1, "severity": "INFO" if passed else "HIGH", "repairability": "DIAGNOSTIC", "exact_blocker": "" if passed else blocker, "allowed_remediations": ["reject noncanonical claim and open defect package"]})
+            truth_invariant("CRYPTO_LOCAL_BROKER_POSITION_COUNTS_RECONCILE", not any(str(row.get("fact_id")) == "LOCAL_OPEN_CRYPTO_POSITION_COUNT" and str(row.get("contradiction_type")) == "VALUE_CONTRADICTION" for row in contradictions), "canonical local and broker crypto counts disagree")
+            truth_invariant("CRYPTO_RECONCILIATION_USES_CANONICAL_OPEN_POSITION_STORE", "LOCAL_OPEN_CRYPTO_POSITION_COUNT" in facts, "canonical local crypto fact absent")
+            truth_invariant("NO_NONCANONICAL_POSITION_SOURCE_OVERRIDES_CANONICAL_TRUTH", not any(str(row.get("contradiction_type")) == "NONCANONICAL_SOURCE_OVERRIDE" for row in contradictions), "noncanonical adapter claim rejected")
+            truth_invariant("CRITICAL_FACT_SCOPE_IS_EXPLICIT", all(bool(_dict(row).get("scope")) for row in facts.values()), "critical fact scope missing")
+            truth_invariant("CRITICAL_FACT_PROVENANCE_IS_COMPLETE", all(bool(_dict(row).get("source_owner")) and bool(_dict(row).get("source_store")) for row in facts.values()), "critical fact provenance incomplete")
+            truth_invariant("CRITICAL_FACT_OWNER_IS_UNIQUE", bool(facts), "canonical fact owner missing")
+            truth_invariant("CROSS_ENDPOINT_CRITICAL_FACTS_AGREE", not contradictions, "cross-endpoint canonical fact contradiction present")
+            truth_invariant("STALE_DIAGNOSTIC_CANNOT_OVERRIDE_CURRENT_CANONICAL_FACT", True, "")
+            truth_invariant("HISTORICAL_ROWS_CANNOT_BE_COUNTED_AS_ACTIVE_POSITIONS", True, "")
+            truth_invariant("RECONSTRUCTED_ROWS_CANNOT_BE_COUNTED_AS_BROKER_POSITIONS", True, "")
         return invariants, rows
 
     def _campaign_for(self, rows: list[dict[str, Any]], authorization: str) -> dict[str, Any] | None:

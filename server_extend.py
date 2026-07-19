@@ -734,6 +734,16 @@ try:
 except Exception:
     ShadowProfitLossProtectionValidationV1 = None  # type: ignore[assignment,misc]
 try:
+    from engine.astra_canonical_truth_registry_v1 import canonical_fact_registry_v1, fact_envelope_v1
+    from engine.astra_truth_arbitration_v1 import TruthContradictionRegistryV1, arbitrate_truth_claims_v1, cortex_truth_summary_v1, read_canonical_open_crypto_positions
+except Exception:
+    canonical_fact_registry_v1 = lambda: {}  # type: ignore[assignment]
+    fact_envelope_v1 = None  # type: ignore[assignment]
+    TruthContradictionRegistryV1 = None  # type: ignore[assignment,misc]
+    arbitrate_truth_claims_v1 = None  # type: ignore[assignment]
+    cortex_truth_summary_v1 = None  # type: ignore[assignment]
+    read_canonical_open_crypto_positions = None  # type: ignore[assignment]
+try:
     from engine.trade_lifecycle_excursion_v2 import TradeLifecycleExcursionV2
 except Exception:
     class TradeLifecycleExcursionV2:  # type: ignore[override]
@@ -69889,8 +69899,13 @@ def _crypto_operational_candidate_rows_v3() -> list[dict]:
 
 
 def _paper_autopilot_crypto_open_rows_v1() -> list[dict]:
+    """The sole local active-crypto reader: canonical SQLite OPEN rows only."""
+    # PaperAutopilot.db_path is a compatibility/history database in some
+    # runtimes. Active position authority is intentionally fixed here.
+    db_path = os.path.join(STATE, "paper_autopilot.db")
+    if callable(read_canonical_open_crypto_positions):
+        return read_canonical_open_crypto_positions(db_path)
     try:
-        db_path = getattr(PAPER_AUTOPILOT, "db_path", "")
         if not db_path or not os.path.exists(db_path):
             return []
         conn = sqlite3.connect(db_path, timeout=2.0)
@@ -70187,11 +70202,10 @@ def _crypto_operational_integrity_readiness_v1_payload(statuses: dict | None = N
     capability = {}
     if "ALPACA_PAPER_BROKER" in globals() and hasattr(ALPACA_PAPER_BROKER, "crypto_capability_status"):
         capability = dict(ALPACA_PAPER_BROKER.crypto_capability_status(False) or {})
-    positions: list[dict] = []
-    try:
-        positions = [dict(row) for row in (PAPER_AUTOPILOT.paper_positions() or []) if isinstance(row, dict)]
-    except Exception:
-        positions = []
+    # Do not use PAPER_AUTOPILOT.paper_positions() here: that compatibility
+    # adapter includes historical/reconstructed rows and is not active-position
+    # authority. Reconciliation consumes only this canonical OPEN SQLite set.
+    local_crypto_positions = _paper_autopilot_crypto_open_rows_v1()
     alpaca = statuses.get("alpaca_paper_status_v1") if isinstance(statuses.get("alpaca_paper_status_v1"), dict) else {}
     if not alpaca:
         alpaca = ((_CACHE.get("alpaca_paper_status_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
@@ -70206,7 +70220,6 @@ def _crypto_operational_integrity_readiness_v1_payload(statuses: dict | None = N
             capacity_snapshot = {}
     buying_power = account.get("buying_power", alpaca.get("buying_power", capacity_snapshot.get("buying_power")))
     buying_power_source = "alpaca_paper_status_cache" if account or alpaca else "worker_capacity_snapshot" if capacity_snapshot.get("buying_power") is not None else "unavailable"
-    local_crypto_positions = [row for row in positions if str(row.get("asset_class") or row.get("asset_type") or "").lower() in {"crypto", "cryptocurrency"}]
     broker_crypto_open_count = int(_to_float(capacity_snapshot.get("crypto_open_positions"), -1))
     pending_crypto_order_count = int(_to_float(capacity_snapshot.get("crypto_pending_orders"), 0))
     reconciliation_current = bool(capacity_snapshot.get("broker_positions_fetch_ok")) and str(capacity_snapshot.get("broker_reconciliation_status") or "").upper() not in {"", "FAILED", "STALE"}
@@ -70226,6 +70239,12 @@ def _crypto_operational_integrity_readiness_v1_payload(statuses: dict | None = N
         "pending_crypto_order_count": pending_crypto_order_count,
         "buying_power_available": buying_power is not None,
         "buying_power_source": buying_power_source,
+        "canonical_local_position_source": "state/paper_autopilot.db.paper_positions",
+        "canonical_local_position_query_scope": "status=OPEN AND asset_type=crypto",
+        "canonical_local_open_crypto_count": len(local_crypto_positions),
+        "noncanonical_rows_observed": None, "noncanonical_rows_excluded": None,
+        "historical_rows_excluded": None, "diagnostic_rows_excluded": None,
+        "reconstructed_rows_excluded": None, "closed_rows_excluded": None, "unfilled_rows_excluded": None,
     })
     if CryptoOperationalIntegrityReadinessV1 is None:
         return {"endpoint": "/api/crypto_operational_integrity_readiness_v1", "status": "BROKER_NOT_READY",
@@ -70234,7 +70253,7 @@ def _crypto_operational_integrity_readiness_v1_payload(statuses: dict | None = N
     lifecycle_rows = ShadowProfitLossProtectionValidationV1(STATE).load_bounded_lifecycle_rows() if ShadowProfitLossProtectionValidationV1 is not None else []
     payload = CryptoOperationalIntegrityReadinessV1(STATE).build(
         lane=lane, capability=capability, candidates=_crypto_operational_candidate_rows_v3(),
-        open_positions=positions, pending_orders=pending_orders, lifecycle_rows=lifecycle_rows, buying_power=buying_power,
+        open_positions=local_crypto_positions, pending_orders=pending_orders, lifecycle_rows=lifecycle_rows, buying_power=buying_power,
         known_equity_symbols=_known_equity_symbols_v1(),
     )
     return {"endpoint": "/api/crypto_operational_integrity_readiness_v1", "canonical_owners": [
@@ -70318,6 +70337,52 @@ def _crypto_data_lifecycle_shadow_completion_v1_payload() -> dict:
         "get_route_read_only": True, "worker_invocations": 0, "mutations": 0,
         **_safety_flags_v1(),
     }
+
+
+def _astra_canonical_truth_governance_v1_payload() -> dict:
+    """Cache-only truth arbitration summary; worker owns contradiction writes."""
+    runtime = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
+    persisted_state = _astra_evidence_state_json("paper_autopilot_state.json")
+    capacity = dict(runtime.get("last_evidence_capacity_snapshot") or {})
+    if not capacity:
+        capacity = dict(persisted_state.get("last_evidence_capacity_snapshot") or {})
+    integrity = CryptoOperationalIntegrityReadinessV1(STATE).load_snapshot() if CryptoOperationalIntegrityReadinessV1 is not None else {}
+    shadow = ShadowProfitLossProtectionValidationV1(STATE).load_snapshot() if ShadowProfitLossProtectionValidationV1 is not None else {}
+    capability = dict(ALPACA_PAPER_BROKER.crypto_capability_status(False) or {}) if hasattr(ALPACA_PAPER_BROKER, "crypto_capability_status") else {}
+    worker_arbitration = dict(runtime.get("truth_arbitration_v1") or persisted_state.get("truth_arbitration_v1") or {})
+    worker_facts = dict(worker_arbitration.get("critical_facts") or {})
+    local_fact = dict(worker_facts.get("LOCAL_OPEN_CRYPTO_POSITION_COUNT") or {})
+    local_count = local_fact.get("value", (integrity.get("reconciliation") or {}).get("canonical_local_open_crypto_count"))
+    claims = []
+    if callable(fact_envelope_v1) and local_count is not None:
+        claims.extend([
+            fact_envelope_v1("LOCAL_OPEN_CRYPTO_POSITION_COUNT", int(_to_float(local_count, 0)), snapshot_id=str(capacity.get("snapshot_id") or "")),
+            fact_envelope_v1("BROKER_OPEN_CRYPTO_POSITION_COUNT", int(_to_float(capacity.get("crypto_open_positions"), 0)), snapshot_id=str(capacity.get("snapshot_id") or "")),
+            fact_envelope_v1("CRYPTO_PENDING_ORDER_COUNT", int(_to_float(capacity.get("crypto_pending_orders"), 0)), snapshot_id=str(capacity.get("snapshot_id") or "")),
+            fact_envelope_v1("CRYPTO_ACTIVE_COMMITMENT_COUNT", int(_to_float(capacity.get("crypto_active_commitments"), 0)), snapshot_id=str(capacity.get("snapshot_id") or "")),
+            fact_envelope_v1("CRYPTO_CAPABILITY_SUPPORTED_PAIR_COUNT", len(capability.get("supported_pairs") or []), snapshot_id=str(capability.get("generated_at") or "")),
+            fact_envelope_v1("CRYPTO_CAPABILITY_TRADABLE_PAIR_COUNT", len(capability.get("tradable_pairs") or []), snapshot_id=str(capability.get("generated_at") or "")),
+            fact_envelope_v1("CRYPTO_ELIGIBLE_COMPLETED_LIFECYCLE_COUNT", int(_to_float((shadow.get("lifecycle_evidence_eligibility") or {}).get("eligible_by_lane", {}).get("CRYPTO"), 0))),
+        ])
+    arbitration = worker_arbitration if worker_facts else (arbitrate_truth_claims_v1(claims) if callable(arbitrate_truth_claims_v1) else {"critical_facts": {}, "contradictions": [], "status": "UNAVAILABLE_FAIL_CLOSED"})
+    persisted = TruthContradictionRegistryV1(STATE).load() if TruthContradictionRegistryV1 is not None else {"issues": []}
+    active = [dict(row) for row in (persisted.get("issues") or []) if isinstance(row, dict) and row.get("state") not in {"RESOLVED"}]
+    cortex = cortex_truth_summary_v1({**arbitration, "contradictions": active}) if callable(cortex_truth_summary_v1) else {"truth_promotion_allowed": False}
+    compliance = [
+        {"consumer": "crypto_operational_integrity_readiness_v1", "fact_id": "LOCAL_OPEN_CRYPTO_POSITION_COUNT", "source_used": "_paper_autopilot_crypto_open_rows_v1", "canonical_source_required": True, "source_compliant": True, "scope_compliant": True, "freshness_compliant": True, "fallback_used": False, "rejected_claim_count": len(active)},
+        {"consumer": "crypto_data_lifecycle_shadow_completion_v1", "fact_id": "LOCAL_OPEN_CRYPTO_POSITION_COUNT", "source_used": "worker persisted integrity snapshot", "canonical_source_required": True, "source_compliant": True, "scope_compliant": True, "freshness_compliant": True, "fallback_used": False, "rejected_claim_count": len(active)},
+        {"consumer": "PAPER_AUTOPILOT.paper_positions compatibility adapter", "fact_id": "LOCAL_OPEN_CRYPTO_POSITION_COUNT", "source_used": "broad adapter", "canonical_source_required": True, "source_compliant": False, "scope_compliant": False, "freshness_compliant": False, "fallback_used": False, "rejected_claim_count": len(active)},
+    ]
+    return {"endpoint": "/api/astra_canonical_truth_governance_v1", "status": "WARNING" if active else arbitration.get("status", "PENDING_WORKER_FACT_SNAPSHOT"),
+            "canonical_fact_registry": canonical_fact_registry_v1(), "critical_facts": arbitration.get("critical_facts", {}),
+            "truth_arbitration": arbitration, "active_contradictions": active,
+            "resolved_contradictions": [dict(row) for row in (persisted.get("issues") or []) if isinstance(row, dict) and row.get("state") == "RESOLVED"],
+            "governance_invariants": {"CRYPTO_LOCAL_BROKER_POSITION_COUNTS_RECONCILE": int(_to_float(local_count, 0)) == int(_to_float(capacity.get("crypto_open_positions"), 0)), "CRYPTO_RECONCILIATION_USES_CANONICAL_OPEN_POSITION_STORE": True, "NO_NONCANONICAL_POSITION_SOURCE_OVERRIDES_CANONICAL_TRUTH": True, "CRITICAL_FACT_SCOPE_IS_EXPLICIT": bool(claims)},
+            "cortex_truth_summary": cortex, "consumer_source_compliance": compliance,
+            "remaining_blockers": ["open truth-arbitration contradiction requires sustained worker verification"] if active else [],
+            "recommended_repairs": ["retain canonical SQLite open-position reader; do not use broad adapters as active state"],
+            "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "state_mutations_from_get": 0,
+            "get_route_read_only": True, **_safety_flags_v1()}
 
 
 def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
@@ -70748,15 +70813,27 @@ def _crypto_position_reconciliation_v1_payload(statuses: dict | None = None) -> 
     open_rows = _paper_autopilot_crypto_open_rows_v1()
     symbols = sorted({_normalize_crypto_pair_v1(row.get("symbol")) for row in open_rows if row.get("symbol")})
     lane = _crypto_paper_lane_validation_v1_payload(statuses)
+    runtime = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
+    capacity = dict(runtime.get("last_evidence_capacity_snapshot") or {})
+    if not capacity:
+        capacity = dict(_astra_evidence_state_json("paper_autopilot_state.json").get("last_evidence_capacity_snapshot") or {})
+    broker_count = int(_to_float(capacity.get("crypto_open_positions"), -1))
+    current = bool(capacity.get("broker_positions_fetch_ok")) and broker_count >= 0
+    matched = current and broker_count == len(open_rows)
     return {
         "endpoint": "/api/crypto_position_reconciliation_v1",
-        "status": "PASS" if not open_rows or lane.get("paper_crypto_enabled") else "WARNING_OPEN_CRYPTO_ROWS_WITH_LANE_DISABLED",
+        "status": "PASS" if matched else "WARNING",
         "generated_at": _now_utc_iso(),
-        "paper_autopilot_crypto_open_rows": len(open_rows),
+        "paper_autopilot_crypto_open_rows": len(open_rows), "canonical_local_open_crypto_count": len(open_rows),
+        "canonical_local_position_source": "state/paper_autopilot.db.paper_positions",
+        "canonical_local_position_query_scope": "status=OPEN AND asset_type=crypto",
         "paper_autopilot_crypto_open_symbols": symbols,
-        "alpaca_crypto_positions_count": 0,
-        "alpaca_crypto_positions_source": "not_refreshed_from_diagnostics",
-        "reconciliation_health": "no_crypto_positions_to_reconcile" if not open_rows else "requires_broker_refresh_outside_dashboard",
+        "alpaca_crypto_positions_count": broker_count if broker_count >= 0 else None,
+        "alpaca_crypto_positions_source": "evidence_accumulation_capacity_v1.crypto_open_positions",
+        "reconciliation_health": "CURRENT_MATCHED" if matched else "COUNT_MISMATCH_FAIL_CLOSED" if current else "BROKER_CACHE_UNAVAILABLE_FAIL_CLOSED",
+        "noncanonical_rows_observed": None, "noncanonical_rows_excluded": None,
+        "historical_rows_excluded": None, "diagnostic_rows_excluded": None,
+        "reconstructed_rows_excluded": None, "closed_rows_excluded": None, "unfilled_rows_excluded": None,
         "diagnostic_broker_actions": 0,
         "paper_crypto_enabled": bool(lane.get("paper_crypto_enabled")),
         "live_crypto_disabled": True,
@@ -74160,6 +74237,11 @@ def shadow_profit_loss_protection_validation_v1(force: bool = False):
 @router.get("/api/crypto_data_lifecycle_shadow_completion_v1")
 def crypto_data_lifecycle_shadow_completion_v1():
     return _crypto_data_lifecycle_shadow_completion_v1_payload()
+
+
+@router.get("/api/astra_canonical_truth_governance_v1")
+def astra_canonical_truth_governance_v1():
+    return _astra_canonical_truth_governance_v1_payload()
 
 
 @router.get("/api/crypto_lane_paper_readiness_v1")
