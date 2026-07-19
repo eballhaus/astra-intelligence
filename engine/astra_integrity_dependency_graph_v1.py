@@ -58,6 +58,10 @@ def root_cause_from_signal_v1(signal: dict[str, Any]) -> dict[str, Any]:
     elif kind == "CRYPTO_PROVIDER_DATA_UNAVAILABLE":
         category, handoff = "PROVIDER_DATA_UNAVAILABLE", "ProviderRouter crypto quote request -> provider response"
         symptoms, owner, repair = ["PENDING_QUOTE_FRESHNESS", "PENDING_SPREAD", "PENDING_DATA_QUALITY"], "external crypto quote provider", "wait for a current observable quote; do not fabricate market data"
+    elif kind == "CRYPTO_PROVIDER_PATH_DEFECT":
+        category, handoff = "PRODUCER_CONSUMER_CONTRACT_MISMATCH", "ProviderRouter crypto request -> provider adapter"
+        symptoms = ["PENDING_QUOTE_FRESHNESS", "PENDING_SPREAD", "PENDING_LIQUIDITY", "PENDING_DATA_QUALITY"]
+        owner, repair = "engine.provider_router.ProviderRouter.get_quote", "repair the verified adapter failure and preserve the provider diagnostic contract"
     elif kind == "CRYPTO_VOLUME_DROPPED":
         category, handoff = "FIELD_DROPPED_DURING_TRANSFORMATION", "completed crypto bar evidence -> liquidity readiness"
         symptoms, owner, repair = ["PENDING_LIQUIDITY", "PENDING_DATA_QUALITY"], "crypto candidate transformation", "preserve completed-bar volume evidence through readiness contract"

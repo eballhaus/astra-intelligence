@@ -228,6 +228,13 @@ def build_crypto_operational_integrity_readiness_v1(
         })
     data_status, data_reasons = _data_state(evaluated)
     liquidity_status, liquidity_reasons = _liquidity_state(evaluated)
+    execution_ready = [row for row in evaluated if bool(row.get("execution_eligible"))]
+    execution_blockers = sorted({
+        str(gate)
+        for row in evaluated
+        for gate in (row.get("failed_gates") or [])
+        if str(gate or "").strip()
+    })
     lineage = _lineage_readiness(open_positions, lifecycle_rows)
     exact_blockers: list[str] = []
     if not capital_configured:
@@ -240,6 +247,8 @@ def build_crypto_operational_integrity_readiness_v1(
         exact_blockers.extend(data_reasons[:3])
     if liquidity_status != "LIQUIDITY_READY":
         exact_blockers.extend(liquidity_reasons[:3])
+    if evaluated and not execution_ready:
+        exact_blockers.extend(f"CRYPTO_CANDIDATE_GATE_FAILED:{gate}" for gate in execution_blockers[:3])
     if lineage["active_lineage_blocking"]:
         exact_blockers.append("CRYPTO_ENTRY_LINEAGE_UNVERIFIED")
     if not capital_configured:
@@ -256,6 +265,11 @@ def build_crypto_operational_integrity_readiness_v1(
         status = "LINEAGE_NOT_READY"
     elif not evaluated:
         status = "EVIDENCE_NOT_READY"
+    elif not execution_ready:
+        # A data-complete candidate is not execution-ready until every
+        # canonical candidate gate passes. This is a reporting correction;
+        # candidate_execution_integrity remains the gate owner.
+        status = "EVIDENCE_NOT_READY"
     else:
         status = "PAPER_READY"
     return {
@@ -265,6 +279,8 @@ def build_crypto_operational_integrity_readiness_v1(
         # An existing human configuration is not an authorization when this
         # diagnostic finds a current integrity blocker.
         "paper_execution_currently_allowed": bool(lane.get("paper_crypto_enabled")) and status == "PAPER_READY",
+        "execution_ready_candidate_count": len(execution_ready),
+        "candidate_execution_blockers": execution_blockers[:12],
         "human_configuration_required": not bool(lane.get("activation_requested")) or not capital_configured,
         "capital_readiness": {
             "configured": capital_configured, "configured_capital": capital_limit,

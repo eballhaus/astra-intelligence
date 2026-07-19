@@ -738,6 +738,7 @@ try:
     from engine.astra_truth_arbitration_v1 import TruthContradictionRegistryV1, arbitrate_truth_claims_v1, cortex_truth_summary_v1, read_canonical_open_crypto_positions
     from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystemIntegrityScannerV1
     from engine.astra_sentinel_integration_v1 import sentinel_integrity_payload_v1
+    from engine.astra_crypto_market_data_capability_matrix_v1 import CryptoMarketDataCapabilityMatrixV1
 except Exception:
     canonical_fact_registry_v1 = lambda: {}  # type: ignore[assignment]
     fact_envelope_v1 = None  # type: ignore[assignment]
@@ -747,6 +748,7 @@ except Exception:
     read_canonical_open_crypto_positions = None  # type: ignore[assignment]
     ContinuousSystemIntegrityScannerV1 = None  # type: ignore[assignment,misc]
     sentinel_integrity_payload_v1 = None  # type: ignore[assignment]
+    CryptoMarketDataCapabilityMatrixV1 = None  # type: ignore[assignment,misc]
 try:
     from engine.trade_lifecycle_excursion_v2 import TradeLifecycleExcursionV2
 except Exception:
@@ -21458,35 +21460,58 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
     })[:30]
     if not discovered:
         discovered = list(_ASTRA_CRYPTO_APPROVED_CORE_UNIVERSE_V1)
-    cursor = int(previous.get("discovery_cursor") or 0) % len(discovered)
     batch_size = max(1, min(3, int(os.getenv("ASTRA_CRYPTO_REFRESH_PAIRS_PER_CYCLE", "3") or 3)))
-    symbols = [discovered[(cursor + offset) % len(discovered)] for offset in range(batch_size)]
+    cursor = int(previous.get("discovery_cursor") or 0) % len(discovered)
+    # One bounded diagnostic pass establishes real request/response evidence
+    # for liquid reference pairs without increasing the existing three-pair
+    # worker budget. It affects observation order only, never ranking or lane
+    # activation; ordinary fair rotation resumes after the set is exhausted.
+    diagnostic_set = [pair for pair in ("BTC/USD", "ETH/USD", "SOL/USD", "LINK/USD", "LTC/USD", "SKY/USD", "SUSHI/USD") if pair in discovered]
+    diagnostic_cursor = int(previous.get("market_data_diagnostic_cursor") or 0)
+    diagnostic_active = bool(diagnostic_set and diagnostic_cursor < len(diagnostic_set) and not previous.get("market_data_diagnostic_complete"))
+    if diagnostic_active:
+        symbols = diagnostic_set[diagnostic_cursor:diagnostic_cursor + batch_size]
+    else:
+        symbols = [discovered[(cursor + offset) % len(discovered)] for offset in range(batch_size)]
     end = datetime.now(UTC)
     start = end - timedelta(hours=6)
     output, failures, volume_audit, quote_integrity_rows = [], [], [], []
     provider_calls_used = 0
     for rank, symbol in enumerate(symbols, start=1):
+        quote_error = ""
         try:
             from engine import data_orchestrator as active_data_orchestrator
             provider_calls_used += 1
             quote = dict(active_data_orchestrator._router.get_quote(symbol, asset_type="crypto", batch_id=f"crypto-worker:{int(now)}:{rank}", bypass_cache=True, use_selective_backups=False) or {})
             quote_row, quote_meta = active_data_orchestrator._quote_to_rank_row(symbol, quote, "crypto", _now_utc_iso())
-        except Exception:
+        except Exception as exc:
             quote_row, quote_meta, quote = None, {}, {}
+            quote_error = str(exc)[:180]
         quote_provider = str((quote_meta or {}).get("provider_used") or quote.get("provider_used") or "").lower()
         if not quote_row or quote_provider in {"", "none", "local_snapshot"}:
             failures.append({"symbol": symbol, "blocker": "FRESH_QUOTE_UNAVAILABLE"})
-            quote_integrity_rows.append({"symbol": symbol, "quote_received": False, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": False, "ask_present": False, "spread_present": False, "quote_timestamp": "", "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": None, "quote_provider": quote_provider or None, "quote_record_id": None, "volume_available": False, "completed_volume_upstream": False, "bars_available": False, "candidate_persisted": False, "failure_reason": "FRESH_QUOTE_UNAVAILABLE"})
+            provider_diagnostics = dict(quote.get("provider_diagnostics") or {})
+            if quote_error:
+                provider_diagnostics.update({"failure_classification": "ASTRA_REQUEST_NOT_SENT", "worker_exception": quote_error})
+            quote_integrity_rows.append({"symbol": symbol, "quote_received": False, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": False, "ask_present": False, "spread_present": False, "quote_timestamp": "", "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": None, "quote_provider": quote_provider or None, "quote_record_id": None, "volume_available": False, "completed_volume_upstream": False, "bars_available": False, "candidate_persisted": False, "provider_diagnostics": provider_diagnostics, "provider_response_status": provider_diagnostics.get("http_status"), "provider_response_keys": list(provider_diagnostics.get("response_keys") or [])[:20], "failure_reason": "FRESH_QUOTE_UNAVAILABLE"})
             continue
         quote_row = _preserve_crypto_quote_microstructure_v1(dict(quote_row), dict(quote_row), quote_provider)
         provider_calls_used += 1
         bar_payload = dict(ALPACA_PAPER_BROKER.historical_bars(symbol, asset_class="crypto", timeframe="15Min", limit=24, start=start.isoformat().replace("+00:00", "Z"), end=end.isoformat().replace("+00:00", "Z")) or {})
         bars = [dict(row) for row in (bar_payload.get("bars") or []) if isinstance(row, dict)]
         volume = _completed_crypto_bar_volume_evidence_v1(bars, end)
-        volume_audit.append({"symbol": symbol, **volume, "bar_response_state": bar_payload.get("response_state")})
+        bar_field_keys = sorted({str(key) for row in bars[:24] for key in row})[:20]
+        volume_audit.append({
+            "symbol": symbol,
+            **volume,
+            "bar_response_state": bar_payload.get("response_state"),
+            "bar_field_keys": bar_field_keys,
+            "volume_field_present_count": sum(1 for row in bars if row.get("v") not in (None, "")),
+            "bar_http_status": bar_payload.get("http_status"),
+        })
         if len(bars) < 2 or volume["volume_state"] != "ROLLING_REAL_VOLUME_AVAILABLE":
             failures.append({"symbol": symbol, "blocker": "VOLUME_UNAVAILABLE", "volume_state": volume["volume_state"]})
-            quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": quote_row.get("bid") is not None, "ask_present": quote_row.get("ask") is not None, "spread_present": quote_row.get("spread_pct") is not None, "quote_timestamp": quote_row.get("quote_timestamp"), "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": quote_row.get("quote_age_seconds"), "quote_provider": quote_row.get("quote_provider"), "quote_record_id": quote_row.get("quote_record_id"), "volume_available": False, "completed_volume_upstream": False, "bars_available": bool(bars), "candidate_persisted": False, "failure_reason": "VOLUME_UNAVAILABLE"})
+            quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": quote_row.get("bid") is not None, "ask_present": quote_row.get("ask") is not None, "spread_present": quote_row.get("spread_pct") is not None, "quote_timestamp": quote_row.get("quote_timestamp"), "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": quote_row.get("quote_age_seconds"), "quote_provider": quote_row.get("quote_provider"), "quote_record_id": quote_row.get("quote_record_id"), "volume_available": False, "completed_volume_upstream": False, "bars_available": bool(bars), "candidate_persisted": False, "provider_diagnostics": dict(quote.get("provider_diagnostics") or {}), "provider_response_status": (quote.get("provider_diagnostics") or {}).get("http_status"), "provider_response_keys": list((quote.get("provider_diagnostics") or {}).get("response_keys") or [])[:20], "failure_reason": "VOLUME_UNAVAILABLE"})
             continue
         latest_completed = next((bar for bar in reversed(bars) if str(bar.get("t") or "") == volume["latest_completed_bar_timestamp"]), {})
         high, low, close = _to_float(latest_completed.get("h"), 0.0), _to_float(latest_completed.get("l"), 0.0), _to_float(latest_completed.get("c"), 0.0)
@@ -21507,7 +21532,7 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         final_row = _preserve_crypto_quote_microstructure_v1(dict(ranked[0]), quote_row, quote_provider)
         final_row.update({"symbol": symbol, "asset_class": "crypto", "asset_type": "crypto", "lane_id": "CRYPTO", "rank_position": rank, "ranking_run_id": f"crypto-worker:{int(now)}", "generated_at": _now_utc_iso(), "candidate_generated_at": _now_utc_iso(), "quote_timestamp": str(final_row.get("quote_timestamp") or quote_row.get("timestamp") or ""), "bar_timestamp": volume["latest_completed_bar_timestamp"], "bar_evidence": {"source": "AlpacaPaperBroker.historical_bars", "resolution": "15Min", "count": len(bars), **volume}, "crypto_risk_pct": risk_pct, "freshness_state": "CURRENT"})
         output.append(_ensure_persona_fields(final_row))
-        quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": final_row.get("bid") is not None, "ask_present": final_row.get("ask") is not None, "spread_present": final_row.get("spread_pct") is not None, "quote_timestamp": final_row.get("quote_timestamp"), "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": final_row.get("quote_age_seconds"), "quote_provider": final_row.get("quote_provider"), "quote_record_id": final_row.get("quote_record_id"), "volume_available": True, "completed_volume_upstream": True, "bars_available": True, "candidate_persisted": True, "failure_reason": ""})
+        quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": final_row.get("bid") is not None, "ask_present": final_row.get("ask") is not None, "spread_present": final_row.get("spread_pct") is not None, "quote_timestamp": final_row.get("quote_timestamp"), "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": final_row.get("quote_age_seconds"), "quote_provider": final_row.get("quote_provider"), "quote_record_id": final_row.get("quote_record_id"), "volume_available": True, "completed_volume_upstream": True, "bars_available": True, "candidate_persisted": True, "provider_diagnostics": dict(quote.get("provider_diagnostics") or {}), "provider_response_status": (quote.get("provider_diagnostics") or {}).get("http_status"), "provider_response_keys": list((quote.get("provider_diagnostics") or {}).get("response_keys") or [])[:20], "failure_reason": ""})
     output = PORTFOLIO_RISK_ENGINE.enrich(output, asset_type="crypto", companion_rows=LAST_RANKINGS.get("stocks", []))
     output = PREDICTIVE_MODEL.annotate_rows(output)
     output = REGIME_ENGINE.annotate_rows(output)
@@ -21525,6 +21550,9 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         "provider_owner": "data_orchestrator.ProviderRouter + AlpacaPaperBroker.historical_bars",
         "crypto_discovery_universe": discovered,
         "discovery_cursor": (cursor + batch_size) % len(discovered),
+        "market_data_diagnostic_cycle_id": f"crypto-market-data-diagnostic:{int(now)}" if diagnostic_active else None,
+        "market_data_diagnostic_cursor": min(len(diagnostic_set), diagnostic_cursor + len(symbols)) if diagnostic_active else diagnostic_cursor,
+        "market_data_diagnostic_complete": bool(diagnostic_active and diagnostic_cursor + len(symbols) >= len(diagnostic_set)) or bool(previous.get("market_data_diagnostic_complete")),
         "certified_pairs": sorted(previously_certified),
         "certification_state": "ROTATING_BOUNDED_EVALUATION",
         "crypto_volume_audit": volume_audit, "failed_pairs": failures,
@@ -21532,7 +21560,7 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         "crypto_quote_integrity": {"pairs_requested": len(symbols), "pairs_with_quote": sum(1 for row in quote_integrity_rows if row.get("quote_received")), "pairs_with_bid_ask": sum(1 for row in quote_integrity_rows if row.get("bid_present") and row.get("ask_present")), "pairs_with_calculated_spread": sum(1 for row in quote_integrity_rows if row.get("spread_present")), "pairs_missing_bid_ask": sum(1 for row in quote_integrity_rows if not (row.get("bid_present") and row.get("ask_present"))), "pairs_persisted": sum(1 for row in quote_integrity_rows if row.get("candidate_persisted"))},
         "capability_refresh": capability_refresh,
         "pairs_evaluated_this_cycle": len(symbols), "rotation_cycles_remaining": max(0, math.ceil(len(discovered) / batch_size) - 1),
-        "rotation_observability": {"evaluated_symbols": symbols, "core_pairs_in_discovery": [pair for pair in ("BTC/USD", "ETH/USD", "LINK/USD", "LTC/USD") if pair in discovered], "fair_rotation_enforced": True, "provider_calls_used": provider_calls_used, "broker_actions_used": 0},
+        "rotation_observability": {"evaluated_symbols": symbols, "core_pairs_in_discovery": [pair for pair in ("BTC/USD", "ETH/USD", "LINK/USD", "LTC/USD") if pair in discovered], "fair_rotation_enforced": True, "market_data_diagnostic_active": diagnostic_active, "market_data_diagnostic_remaining": max(0, len(diagnostic_set) - (diagnostic_cursor + len(symbols) if diagnostic_active else diagnostic_cursor)), "provider_calls_used": provider_calls_used, "broker_actions_used": 0},
     }
     PAPER_AUTOPILOT._runtime_state["crypto_rankings_snapshot_v1"] = snapshot
     _update_last_rankings("crypto", output)
@@ -70263,6 +70291,10 @@ def _crypto_operational_integrity_readiness_v1_payload(statuses: dict | None = N
         open_positions=local_crypto_positions, pending_orders=pending_orders, lifecycle_rows=lifecycle_rows, buying_power=buying_power,
         known_equity_symbols=_known_equity_symbols_v1(),
     )
+    if CryptoMarketDataCapabilityMatrixV1 is not None:
+        matrix = CryptoMarketDataCapabilityMatrixV1(STATE).snapshot()
+        payload["market_data_capability_matrix_summary"] = dict(matrix.get("summary") or {})
+        payload["market_data_capability_matrix_status"] = matrix.get("status")
     return {"endpoint": "/api/crypto_operational_integrity_readiness_v1", "canonical_owners": [
                 "PaperAutopilotEngine._crypto_paper_activation_status", "AlpacaPaperBroker.crypto_capability_status",
                 "candidate_execution_integrity_v1", "astra_multilane_activation_v2.lane_capital_status"],
@@ -70374,6 +70406,7 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
     arbitration = worker_arbitration if worker_facts else (arbitrate_truth_claims_v1(claims) if callable(arbitrate_truth_claims_v1) else {"critical_facts": {}, "contradictions": [], "status": "UNAVAILABLE_FAIL_CLOSED"})
     persisted = TruthContradictionRegistryV1(STATE).load() if TruthContradictionRegistryV1 is not None else {"issues": []}
     scanner = ContinuousSystemIntegrityScannerV1(STATE).snapshot() if ContinuousSystemIntegrityScannerV1 is not None else {"status": "UNAVAILABLE_FAIL_CLOSED"}
+    matrix = CryptoMarketDataCapabilityMatrixV1(STATE).snapshot() if CryptoMarketDataCapabilityMatrixV1 is not None else {}
     active = [dict(row) for row in (persisted.get("issues") or []) if isinstance(row, dict) and row.get("state") not in {"RESOLVED"}]
     cortex = cortex_truth_summary_v1({**arbitration, "contradictions": active}) if callable(cortex_truth_summary_v1) else {"truth_promotion_allowed": False}
     compliance = [
@@ -70390,6 +70423,7 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
             "cortex_truth_summary": cortex, "consumer_source_compliance": compliance,
             "system_integrity_summary": {"status": scanner.get("status"), "last_scan_at": scanner.get("last_scan_at"),
                 "active_root_cause_count": len(scanner.get("active_root_causes") or []), "human_repair_required_count": len(scanner.get("human_repairs_required") or [])},
+            "crypto_market_data_capability_matrix_summary": dict(matrix.get("summary") or {}),
             "remaining_blockers": ["open truth-arbitration contradiction requires sustained worker verification"] if active else [],
             "recommended_repairs": ["retain canonical SQLite open-position reader; do not use broad adapters as active state"],
             "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "state_mutations_from_get": 0,
@@ -70409,11 +70443,23 @@ def _astra_sentinel_integrity_v1_payload() -> dict:
     """Compatibility identity over the committed worker-owned scanner only."""
     scanner = _astra_system_integrity_scanner_v1_payload()
     if callable(sentinel_integrity_payload_v1):
-        return sentinel_integrity_payload_v1(scanner)
+        payload = sentinel_integrity_payload_v1(scanner)
+        matrix = CryptoMarketDataCapabilityMatrixV1(STATE).snapshot() if CryptoMarketDataCapabilityMatrixV1 is not None else {}
+        payload["crypto_market_data"]["capability_matrix_summary"] = dict(matrix.get("summary") or {})
+        return payload
     return {"endpoint": "/api/astra_sentinel_integrity_v1", "status": "UNAVAILABLE_FAIL_CLOSED",
             "sentinel_owner": "canonical_worker", "scan_engine": "astra_continuous_system_integrity_scanner_v1",
             "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
             "state_mutations_from_get": 0, "get_route_read_only": True, **_safety_flags_v1()}
+
+
+def _crypto_market_data_capability_matrix_v1_payload() -> dict:
+    """Read the worker-owned matrix only; never refresh a provider from GET."""
+    if CryptoMarketDataCapabilityMatrixV1 is None:
+        return {"endpoint": "/api/crypto_market_data_capability_matrix_v1", "status": "FAIL_CLOSED",
+                "provider_calls_from_get": 0, "broker_actions_from_get": 0, "llm_calls_from_get": 0,
+                "state_mutations_from_get": 0, "get_route_read_only": True, **_safety_flags_v1()}
+    return CryptoMarketDataCapabilityMatrixV1(STATE).snapshot()
 
 
 def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
@@ -74283,6 +74329,11 @@ def astra_system_integrity_scanner_v1():
 @router.get("/api/astra_sentinel_integrity_v1")
 def astra_sentinel_integrity_v1():
     return _astra_sentinel_integrity_v1_payload()
+
+
+@router.get("/api/crypto_market_data_capability_matrix_v1")
+def crypto_market_data_capability_matrix_v1():
+    return _crypto_market_data_capability_matrix_v1_payload()
 
 
 @router.get("/api/crypto_lane_paper_readiness_v1")

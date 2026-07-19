@@ -256,13 +256,26 @@ class ContinuousSystemIntegrityScannerV1:
             bid, ask = bool(row.get("bid_present")), bool(row.get("ask_present"))
             prior_row = dict(history.get(symbol) or {})
             previous_streak = _number(prior_row.get("quote_failure_streak"))
+            diagnostics = dict(row.get("provider_diagnostics") or {})
+            classification = str(diagnostics.get("failure_classification") or "").upper()
             upstream_bid, upstream_ask = row.get("provider_bid"), row.get("provider_ask")
             upstream_valid = bool(upstream_bid not in (None, "") and upstream_ask not in (None, ""))
             if received and upstream_valid and not (bid and ask):
                 signals.append({"kind": "QUOTE_FIELDS_DROPPED", "severity": "HIGH", "confidence": "VERIFIED", "canonical_fact_ids": ["CRYPTO_PAIR_BID_AVAILABLE", "CRYPTO_PAIR_ASK_AVAILABLE", "CRYPTO_PAIR_SPREAD_AVAILABLE"], "affected_endpoints": ["crypto readiness"], "affected_components": ["crypto ranking snapshot"]})
                 state, streak = "SOFTWARE_DEFECT", previous_streak + 1
+            elif not received and classification.startswith("ASTRA_"):
+                signals.append({
+                    "kind": "CRYPTO_PROVIDER_PATH_DEFECT", "severity": "HIGH", "confidence": "VERIFIED",
+                    "canonical_fact_ids": ["CRYPTO_PAIR_QUOTE_OBSERVABLE", "CRYPTO_CURRENT_QUOTE_BID", "CRYPTO_CURRENT_QUOTE_ASK"],
+                    "affected_endpoints": ["crypto readiness", "crypto market-data capability matrix"],
+                    "affected_components": ["ProviderRouter", "crypto ranking refresh"],
+                    "first_bad_handoff": "ProviderRouter crypto request -> provider adapter",
+                    "owner": "engine.provider_router.ProviderRouter.get_quote",
+                    "repair": str(diagnostics.get("worker_exception") or "inspect the classified provider request path"),
+                })
+                state, streak = "SOFTWARE_DEFECT", previous_streak + 1
             elif not received:
-                waiting.append({"state": "LEGITIMATE_WAITING_STATE", "reason": "provider_quote_absent", "symbol": symbol, "classification": "PROVIDER_DATA_UNAVAILABLE", "fail_closed": True})
+                waiting.append({"state": "LEGITIMATE_WAITING_STATE", "reason": "provider_quote_absent", "symbol": symbol, "classification": classification or "PROVIDER_DATA_UNAVAILABLE", "fail_closed": True})
                 state, streak = "PROVIDER_DATA_UNAVAILABLE", previous_streak + 1
             elif not (bid and ask):
                 waiting.append({"state": "LEGITIMATE_WAITING_STATE", "reason": "bid_or_ask_absent", "symbol": symbol, "classification": "PROVIDER_DATA_UNAVAILABLE", "fail_closed": True})

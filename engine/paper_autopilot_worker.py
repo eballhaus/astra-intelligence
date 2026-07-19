@@ -36,6 +36,7 @@ from engine.shadow_profit_loss_protection_validation_v1 import ShadowProfitLossP
 from engine.astra_canonical_truth_registry_v1 import fact_envelope_v1
 from engine.astra_truth_arbitration_v1 import TruthContradictionRegistryV1, arbitrate_truth_claims_v1, read_canonical_open_crypto_positions
 from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystemIntegrityScannerV1
+from engine.astra_crypto_market_data_capability_matrix_v1 import CryptoMarketDataCapabilityMatrixV1
 
 
 class PaperAutopilotWorker:
@@ -54,6 +55,7 @@ class PaperAutopilotWorker:
         self.shadow_profit_loss_protection = ShadowProfitLossProtectionValidationV1(STATE)
         self.truth_contradictions = TruthContradictionRegistryV1(STATE)
         self.system_integrity_scanner = ContinuousSystemIntegrityScannerV1(STATE)
+        self.crypto_market_data_matrix = CryptoMarketDataCapabilityMatrixV1(STATE)
 
     def _base_state(self) -> dict[str, Any]:
         previous = read_snapshot()
@@ -334,6 +336,11 @@ class PaperAutopilotWorker:
                 open_positions=canonical_crypto_positions, pending_orders=[], lifecycle_rows=lifecycle_rows, buying_power=None,
             )
             self.crypto_operational_integrity.write_snapshot(crypto_integrity)
+            crypto_matrix = self.crypto_market_data_matrix.build(
+                capability=capability,
+                ranking_snapshot=dict(getattr(self.autopilot, "_runtime_state", {}).get("crypto_rankings_snapshot_v1") or {}),
+            )
+            self.crypto_market_data_matrix.write(crypto_matrix)
             shadow_protection = self.shadow_profit_loss_protection.build(
                 lifecycle_rows, positions,
             )
@@ -342,6 +349,7 @@ class PaperAutopilotWorker:
             # Optional diagnostics fail closed and cannot interrupt the owner
             # worker or alter the trading cycle.
             crypto_integrity = {"status": "UNAVAILABLE_FAIL_CLOSED"}
+            crypto_matrix = {"status": "UNAVAILABLE_FAIL_CLOSED"}
             shadow_protection = {"status": "UNAVAILABLE_FAIL_CLOSED"}
             truth_arbitration = {"status": "UNAVAILABLE_FAIL_CLOSED"}
         # This scanner owns only bounded state diagnostics. It consumes the
@@ -357,6 +365,7 @@ class PaperAutopilotWorker:
                 "shadow_protection": shadow_protection,
                 "quote_handoffs": list(getattr(self.autopilot, "_runtime_state", {}).get("crypto_quote_handoffs_v1") or [])[:20],
                 "crypto_ranking_snapshot": dict(getattr(self.autopilot, "_runtime_state", {}).get("crypto_rankings_snapshot_v1") or {}),
+                "crypto_market_data_matrix": crypto_matrix,
                 "get_side_effects": 0,
             },
         )

@@ -53,6 +53,41 @@ def _safe_symbol(symbol: Any) -> str:
     return str(symbol or "").strip().upper()
 
 
+def canonical_crypto_market_symbol_v1(symbol: Any) -> dict[str, str]:
+    """Return the one internal/request/response identity contract for crypto.
+
+    Alpaca crypto requests use ``BASE/USD``.  Responses have historically
+    appeared with either slash or compact keys, so consumers must use this
+    bounded alias list rather than inventing a second normalizer.
+    """
+    raw = _safe_symbol(symbol).replace("_", "/").replace("-", "/")
+    compact = raw.replace("/", "")
+    if "/" not in raw:
+        if compact.endswith("USD") and len(compact) > 3:
+            raw = f"{compact[:-3]}/USD"
+        else:
+            raw = f"{compact}/USD"
+    base, quote = raw.split("/", 1)
+    internal = f"{base}/{quote}"
+    return {
+        "internal_pair": internal, "provider_request_symbol": internal,
+        "provider_response_key": internal, "provider_response_compact_key": f"{base}{quote}",
+        "base_asset": base, "quote_asset": quote,
+    }
+
+
+def _crypto_response_quote_v1(quotes: dict[str, Any], identity: dict[str, str]) -> tuple[dict[str, Any], str | None]:
+    """Read only a provider-returned quote; never synthesize a missing key."""
+    if not isinstance(quotes, dict):
+        return {}, None
+    aliases = [identity["provider_response_key"], identity["provider_response_compact_key"], identity["provider_response_key"].replace("/", "-")]
+    for key in aliases:
+        value = quotes.get(key)
+        if isinstance(value, dict):
+            return dict(value), key
+    return {}, None
+
+
 def _coerce_ts_seconds(value: Any) -> float | None:
     try:
         if value is None:
@@ -262,6 +297,9 @@ class ProviderRouter:
     ]
 
     RATE_LIMIT_COOLDOWN_SECONDS = 120
+    # FMP request accounting requires an explicit cache TTL.  This governs
+    # diagnostics only and preserves the existing live-quote cache behavior.
+    CACHE_TTL_SECONDS = 20
 
     @staticmethod
     def legacy_swing_provider_role_matrix_v1() -> dict[str, Any]:
@@ -494,14 +532,19 @@ class ProviderRouter:
         enriched_history_source: str | None = None,
         enriched_signal_ready: bool = False,
         enriched_signal_limitations: list[str] | None = None,
+        bid: float | None = None,
+        ask: float | None = None,
+        bid_size: float | None = None,
+        ask_size: float | None = None,
+        quote_source: str | None = None,
+        quote_record_id: str | None = None,
+        provider_diagnostics: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         valid = bool(price > 0)
         now_ts = time.time()
         ts_seconds = _coerce_ts_seconds(quote_timestamp)
-        if ts_seconds is None:
-            ts_seconds = now_ts
-        freshness_seconds = max(0.0, now_ts - ts_seconds)
-        ts_iso = datetime.fromtimestamp(ts_seconds, tz=UTC).isoformat().replace("+00:00", "Z")
+        freshness_seconds = max(0.0, now_ts - ts_seconds) if ts_seconds is not None else None
+        ts_iso = datetime.fromtimestamp(ts_seconds, tz=UTC).isoformat().replace("+00:00", "Z") if ts_seconds is not None else None
         prev_close_val = _to_float(prev_close, 0.0) if prev_close is not None else 0.0
         open_val = _to_float(open_price, 0.0) if open_price is not None else 0.0
         high_val = _to_float(high_price, 0.0) if high_price is not None else 0.0
@@ -521,7 +564,7 @@ class ProviderRouter:
                 field_bonus += 8.0
             if change_pct_val != 0.0 or change_val != 0.0:
                 field_bonus += 6.0
-            freshness_pen = min(18.0, freshness_seconds / 20.0)
+            freshness_pen = min(18.0, freshness_seconds / 20.0) if freshness_seconds is not None else 18.0
             data_quality_score = max(
                 0.0,
                 min(100.0, 52.0 + (conf * 30.0) + field_bonus - freshness_pen),
@@ -531,7 +574,9 @@ class ProviderRouter:
             signal_limitations.append("missing_previous_close")
         if volume_val <= 0:
             signal_limitations.append("missing_volume")
-        if freshness_seconds > 120.0:
+        if freshness_seconds is None:
+            signal_limitations.append("missing_provider_quote_timestamp")
+        elif freshness_seconds > 120.0:
             signal_limitations.append("stale_quote_timestamp")
         return {
             "symbol": symbol,
@@ -558,7 +603,18 @@ class ProviderRouter:
             "raw_price_present": bool(price > 0),
             "raw_prev_close_present": bool(prev_close_val > 0),
             "quote_timestamp": ts_iso,
-            "quote_age_seconds": max(0.0, _to_float(quote_age_seconds, freshness_seconds)),
+            # Provider time is the freshness authority. A local fetch must not
+            # reset its age to zero merely because this is a live request.
+            "quote_age_seconds": round(freshness_seconds, 3) if freshness_seconds is not None else None,
+            "bid": _to_float(bid, 0.0) if _to_float(bid, 0.0) > 0 else None,
+            "ask": _to_float(ask, 0.0) if _to_float(ask, 0.0) > 0 else None,
+            "bp": _to_float(bid, 0.0) if _to_float(bid, 0.0) > 0 else None,
+            "ap": _to_float(ask, 0.0) if _to_float(ask, 0.0) > 0 else None,
+            "bid_size": _to_float(bid_size, 0.0) if _to_float(bid_size, 0.0) > 0 else None,
+            "ask_size": _to_float(ask_size, 0.0) if _to_float(ask_size, 0.0) > 0 else None,
+            "quote_source": str(quote_source or provider or "none").upper(),
+            "quote_record_id": str(quote_record_id or "") or None,
+            "provider_diagnostics": dict(provider_diagnostics or {}),
             "provider_attempt_count": int(len(attempted)),
             "provider_success_count": int(1 if valid else 0),
             "attempted_providers": list(attempted),
@@ -972,9 +1028,8 @@ class ProviderRouter:
                 return {"ok": False, "error": "missing_alpaca_secret", "status": None}
             headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
             if asset_type == "crypto":
-                pair = str(symbol or "").upper().replace("-", "/")
-                if "/" not in pair:
-                    pair = f"{pair}/USD"
+                identity = canonical_crypto_market_symbol_v1(symbol)
+                pair = identity["provider_request_symbol"]
                 url = "https://data.alpaca.markets/v1beta3/crypto/us/latest/quotes"
                 data, status, err, latency = self._request(p, url, params={"symbols": pair}, headers=headers)
             else:
@@ -982,8 +1037,10 @@ class ProviderRouter:
                 url = f"https://data.alpaca.markets/v2/stocks/{pair}/quotes/latest"
                 data, status, err, latency = self._request(p, url, headers=headers)
             if err:
-                return {"ok": False, "error": err, "status": status, "latency_ms": latency}
-            quote = dict((data.get("quotes") or {}).get(pair) or {}) if asset_type == "crypto" else dict(data.get("quote") or {})
+                return {"ok": False, "error": err, "status": status, "latency_ms": latency,
+                        "endpoint": url, "feed": "us", "request_symbol": pair if asset_type == "crypto" else symbol,
+                        "authentication_present": True, "response_keys": []}
+            quote, response_key = _crypto_response_quote_v1(dict(data.get("quotes") or {}), identity) if asset_type == "crypto" else (dict(data.get("quote") or {}), "quote")
             ask = _to_float(quote.get("ap"), 0.0)
             bid = _to_float(quote.get("bp"), 0.0)
             price = ((ask + bid) / 2.0) if ask > 0 and bid > 0 else max(ask, bid)
@@ -998,6 +1055,8 @@ class ProviderRouter:
                 "ask": ask if ask > 0 else None,
                 "bp": bid if bid > 0 else None,
                 "ap": ask if ask > 0 else None,
+                "bs": _to_float(quote.get("bs"), 0.0) or None,
+                "as": _to_float(quote.get("as"), 0.0) or None,
                 "mid": mid,
                 "spread_pct": spread_pct,
                 "quote_spread": "PASS" if spread_pct is not None else "PENDING_SPREAD",
@@ -1015,6 +1074,12 @@ class ProviderRouter:
                 "error": "",
                 "latency_ms": latency,
                 "field_path": "quotes.<pair>.ap/bp" if asset_type == "crypto" else "quote.ap/quote.bp",
+                "endpoint": url, "feed": "us" if asset_type == "crypto" else "iex",
+                "request_symbol": pair if asset_type == "crypto" else symbol,
+                "response_key": response_key,
+                "response_keys": sorted(str(key) for key in (data.get("quotes") or {}).keys())[:20] if asset_type == "crypto" else ["quote"],
+                "authentication_present": True,
+                "empty_response": not bool(quote),
             }
 
         # MORALIS and unsupported providers return conservative failure.
@@ -1058,11 +1123,19 @@ class ProviderRouter:
                 quote_age_seconds=0.0,
                 data_unavailable_reason="no_active_provider",
                 rejection_reason="no_active_provider",
+                provider_diagnostics={
+                    "provider": "none",
+                    "request_symbol": sym,
+                    "failure_classification": "no_active_provider",
+                    "configured_provider_order": list(default_order)[:8],
+                    "active_provider_count": 0,
+                },
             )
             return payload
 
         attempted: list[str] = []
         successes: list[tuple[str, dict[str, Any]]] = []
+        failed_probes: list[dict[str, Any]] = []
         first_success: tuple[str, dict[str, Any]] | None = None
         enrichment_sources: list[str] = []
         enriched_prev_close_source = ""
@@ -1074,7 +1147,20 @@ class ProviderRouter:
         for p in providers:
             attempted.append(p)
             self._last_cycle_attempt_order.append(p)
-            probe = self._fetch_quote_from_provider(p, sym, at)
+            try:
+                probe = self._fetch_quote_from_provider(p, sym, at)
+            except Exception as exc:  # One adapter must not suppress later canonical fallbacks.
+                probe = {
+                    "ok": False,
+                    "error": f"provider_adapter_exception:{type(exc).__name__}",
+                    "status": None,
+                    "request_symbol": sym,
+                    "endpoint": None,
+                    "feed": None,
+                    "authentication_present": bool(self._key_for(p, at)),
+                    "empty_response": False,
+                    "latency_ms": 0.0,
+                }
             latency = _to_float(probe.get("latency_ms"), 0.0)
             ok = bool(probe.get("ok", False) and _to_float(probe.get("price"), 0.0) > 0)
             err = str(probe.get("error") or "")
@@ -1083,6 +1169,13 @@ class ProviderRouter:
             self._mark_result(p, ok, latency, rate_limited=rate_limited)
             if err:
                 self._set_last_error(p, err)
+            if not ok:
+                failed_probes.append({"provider": p, "http_status": status, "error": err[:160],
+                                      "endpoint": probe.get("endpoint"), "feed": probe.get("feed"),
+                                      "request_symbol": probe.get("request_symbol") or sym,
+                                      "response_keys": list(probe.get("response_keys") or [])[:20],
+                                      "authentication_present": bool(probe.get("authentication_present")),
+                                      "empty_response": bool(probe.get("empty_response"))})
             if ok:
                 successes.append((p, probe))
                 if first_success is None:
@@ -1162,6 +1255,12 @@ class ProviderRouter:
                 enriched_history_source=enriched_history_source,
                 enriched_signal_ready=signal_ready,
                 enriched_signal_limitations=limitations,
+                bid=enriched.get("bid") or enriched.get("bp"),
+                ask=enriched.get("ask") or enriched.get("ap"),
+                bid_size=enriched.get("bs"), ask_size=enriched.get("as"),
+                quote_source=enriched.get("quote_source") or f"{used}_MARKET_DATA",
+                quote_record_id=enriched.get("quote_record_id") or enriched.get("record_id"),
+                provider_diagnostics={"provider": used, "endpoint": enriched.get("endpoint"), "feed": enriched.get("feed"), "request_symbol": enriched.get("request_symbol") or sym, "response_key": enriched.get("response_key"), "response_keys": list(enriched.get("response_keys") or [])[:20], "http_status": enriched.get("status"), "authentication_present": bool(enriched.get("authentication_present")), "empty_response": bool(enriched.get("empty_response")), "failed_probes": failed_probes[:8]},
             )
             payload["provider_agreement"] = 1.0 if len(successes) == 1 else round(1.0 / float(len(successes)), 4)
             if protected_tier1:
@@ -1194,6 +1293,7 @@ class ProviderRouter:
             enriched_history_source="",
             enriched_signal_ready=False,
             enriched_signal_limitations=[reason],
+            provider_diagnostics={"provider": "none", "request_symbol": sym, "failed_probes": failed_probes[:8], "failure_classification": reason},
         )
         if batch_id:
             payload["quote_batch_id"] = str(batch_id)
