@@ -177,6 +177,16 @@ def _quote_to_rank_row(sym: str, quote: dict, asset_type: str, now_iso: str) -> 
         return None, meta
 
     momentum_weight, volatility_factor = _momentum_and_volatility(price, prev_close)
+    bid = _safe_float(quote.get("bid", quote.get("bp")), 0.0)
+    ask = _safe_float(quote.get("ask", quote.get("ap")), 0.0)
+    mid = _safe_float(quote.get("mid"), 0.0)
+    if bid > 0 and ask > 0 and ask >= bid:
+        mid = (bid + ask) / 2.0
+        spread_pct = ((ask - bid) / mid) * 100.0 if mid > 0 else None
+        quote_spread = "PASS"
+    else:
+        spread_pct = None
+        quote_spread = "PENDING_SPREAD"
     intel = _ranker.evaluate_symbol(
         symbol=sym,
         price=price,
@@ -208,6 +218,20 @@ def _quote_to_rank_row(sym: str, quote: dict, asset_type: str, now_iso: str) -> 
             "quote_age_seconds": round(_safe_float(quote.get("quote_age_seconds"), 0.0), 2),
             "freshness_seconds": round(_safe_float(quote.get("freshness_seconds"), _safe_float(quote.get("quote_age_seconds"), 0.0)), 2),
             "quote_timestamp": quote.get("quote_timestamp"),
+            # Preserve provider-native microstructure and lineage through the
+            # ranker. Invalid/missing quote sides remain explicitly pending.
+            "bid": bid if bid > 0 else None,
+            "ask": ask if ask > 0 else None,
+            "bid_price": bid if bid > 0 else None,
+            "ask_price": ask if ask > 0 else None,
+            "bp": bid if bid > 0 else None,
+            "ap": ask if ask > 0 else None,
+            "mid": mid if mid > 0 else None,
+            "spread_pct": spread_pct,
+            "bid_ask_spread_pct": spread_pct,
+            "quote_spread": quote_spread,
+            "quote_source": quote.get("quote_source") or quote.get("provider_name") or provider_used,
+            "quote_record_id": quote.get("quote_record_id") or quote.get("record_id"),
             "quote_enriched": bool(quote.get("quote_enriched", False)),
             "quote_enrichment_sources": list(quote.get("quote_enrichment_sources") or []),
             "enriched_previous_close_source": str(quote.get("enriched_previous_close_source") or ""),

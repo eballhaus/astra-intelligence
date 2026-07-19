@@ -227,11 +227,17 @@ def build_shadow_profit_loss_protection_validation_v1(
         if not valid:
             exclusions[reason] += 1
             continue
+        # Shadow threshold studies consume only completed lifecycles. Active
+        # verified positions remain available to the advisory path below but
+        # cannot be counted as completed calibration evidence.
+        if not bool(path[-1].get("closed")):
+            exclusions["lifecycle_not_complete"] += 1
+            continue
         eligible[_lane(path[-1])].append({"lifecycle_id": lifecycle_id, "path": path, "latest": path[-1]})
     lane_results: dict[str, Any] = {}
     all_human_candidates: list[dict[str, Any]] = []
     for lane_name, lifecycles in eligible.items():
-        completed = [item for item in lifecycles if bool(item["latest"].get("closed"))]
+        completed = list(lifecycles)
         fixed: dict[str, Any] = {}
         protection: dict[str, Any] = {}
         for threshold in LOSS_THRESHOLDS:
@@ -290,9 +296,22 @@ def build_shadow_profit_loss_protection_validation_v1(
     status = "INSUFFICIENT_EVIDENCE" if total_completed < 10 else "EARLY_EVIDENCE"
     thesis_counts = Counter(_text(item["latest"].get("thesis_state") or item["latest"].get("lifecycle_stage") or "unknown").upper()
                            for rows in eligible.values() for item in rows)
+    lane_sample_counts = {lane: int((lane_results.get(lane) or {}).get("completed_lifecycles") or 0) for lane in ("SWING_EQUITY", "DAY_EQUITY", "DAY_ETF", "SWING_ETF", "CRYPTO")}
+    for lane, result in lane_results.items():
+        lane_sample_counts.setdefault(lane, int(result.get("completed_lifecycles") or 0))
+    next_milestone = "10 eligible completed broker-linked lifecycles for EARLY evidence" if total_completed < 10 else "25 eligible completed broker-linked lifecycles for DEVELOPING evidence" if total_completed < 25 else "50 eligible completed broker-linked lifecycles for review readiness" if total_completed < 50 else "100 eligible completed broker-linked lifecycles for stronger evidence"
+    why_no_recommendation = "eligible completed broker-linked lifecycle count below human-review threshold" if total_completed < 50 else "human review still required; automatic activation is prohibited"
     return {"suite": "Shadow Profit/Loss Protection & Threshold Validation V1", "status": status, "generated_at": _now_iso(),
             "eligible_lifecycles": total_eligible, "eligible_complete_lifecycles": total_completed,
             "excluded_lifecycles": sum(exclusions.values()), "exclusion_reasons": dict(exclusions), "lane_results": lane_results,
+            "lifecycle_evidence_eligibility": {"records_reviewed": len(grouped), "eligible_complete_lifecycles": total_completed,
+                "excluded_lifecycles": sum(exclusions.values()), "exclusion_reasons": dict(exclusions), "eligible_by_lane": lane_sample_counts},
+            "shadow_profit_loss_consumption": {"valid_records_available": total_completed, "valid_records_consumed": total_completed,
+                "valid_records_not_consumed": 0, "consumer_contract_mismatches": 0,
+                "invalid_records_excluded": sum(exclusions.values())},
+            "why_no_threshold_recommendation": why_no_recommendation,
+            "next_evidence_milestone": next_milestone, "eligible_sample_count": total_completed,
+            "required_sample_count": 50,
             "fixed_loss_thresholds_studied": list(LOSS_THRESHOLDS), "profit_protection_structures_studied": {"profit_triggers": list(PROFIT_TRIGGERS), "giveback_ratios": list(GIVEBACK_RATIOS)},
             "thesis_break_results": {"advisory_only": True, "observed_state_counts": dict(thesis_counts), "allowed_actions": ["HOLD", "WATCH", "PROTECT_PROFIT", "CONTROLLED_LOSS_REVIEW", "EXIT_REVIEW", "REPLACE_CANDIDATE", "THESIS_BROKEN", "INSUFFICIENT_EVIDENCE"]},
             "controlled_loss_results": {"optimization_target": ["profit_factor", "average_return", "drawdown", "recovery_rate", "return_per_day", "opportunity_cost"], "automatic_exit": False},

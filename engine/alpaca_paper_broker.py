@@ -167,6 +167,9 @@ class AlpacaPaperBroker:
                 )}
         return {
             "generated_at": cached.get("generated_at"),
+            "capability_refresh_owner": _safe_text(cached.get("capability_refresh_owner"), "PaperAutopilotWorker.crypto_capability_refresh"),
+            "capability_last_refresh_status": _safe_text(cached.get("capability_last_refresh_status"), "CACHE_ONLY"),
+            "capability_last_refresh_error": _safe_text(cached.get("capability_last_refresh_error")),
             "paper_mode_verified": bool(cached.get("paper_mode_verified")),
             "paper_endpoint_confirmed": bool(cached.get("paper_endpoint_confirmed")),
             "live_endpoint_detected": bool(cached.get("live_endpoint_detected")),
@@ -319,6 +322,9 @@ class AlpacaPaperBroker:
         activation_state = "VALIDATED_PAPER_READY" if capability_ok else "BLOCKED_CRYPTO_UNSUPPORTED"
         payload = {
             "generated_at": _now_iso(),
+            "capability_refresh_owner": "PaperAutopilotWorker.crypto_capability_refresh",
+            "capability_last_refresh_status": "CURRENT",
+            "capability_last_refresh_error": "",
             "activation_state": activation_state,
             "probe_performed_this_request": True,
             "paper_mode_verified": bool(safety.get("paper_mode_verified")),

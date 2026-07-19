@@ -21350,6 +21350,75 @@ def _completed_crypto_bar_volume_evidence_v1(bars: list[dict], now_utc: datetime
     }
 
 
+def _preserve_crypto_quote_microstructure_v1(row: dict, quote_row: dict, quote_provider: str = "") -> dict:
+    """Preserve normalized quote sides at ranking snapshot boundaries.
+
+    Ranking and portfolio transforms are not quote owners. This guard retains
+    the normalized provider quote without replacing a valid transformed field
+    with ``None`` and keeps missing sides fail-closed as PENDING_SPREAD.
+    """
+    out = dict(row or {})
+    source = dict(quote_row or {})
+
+    def positive(value: Any) -> float | None:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    bid = positive(out.get("bid") or out.get("bid_price") or out.get("bp")) or positive(source.get("bid") or source.get("bid_price") or source.get("bp"))
+    ask = positive(out.get("ask") or out.get("ask_price") or out.get("ap")) or positive(source.get("ask") or source.get("ask_price") or source.get("ap"))
+    valid_sides = bool(bid is not None and ask is not None and ask >= bid)
+    mid = ((bid + ask) / 2.0) if valid_sides else None
+    spread_pct = (((ask - bid) / mid) * 100.0) if mid and mid > 0 else None
+    for key in ("quote_timestamp", "quote_source", "quote_record_id"):
+        if out.get(key) in (None, "") and source.get(key) not in (None, ""):
+            out[key] = source.get(key)
+    out.update({
+        "bid": bid,
+        "ask": ask,
+        "bid_price": bid,
+        "ask_price": ask,
+        "bp": bid,
+        "ap": ask,
+        "mid": mid,
+        "spread_pct": spread_pct,
+        "bid_ask_spread_pct": spread_pct,
+        "quote_spread": "PASS" if spread_pct is not None else "PENDING_SPREAD",
+        "quote_provider": str(out.get("quote_provider") or source.get("quote_provider") or quote_provider or source.get("provider_used") or "").lower() or None,
+    })
+    return out
+
+
+def _worker_refresh_crypto_capability_v1() -> dict:
+    """Bounded worker-only capability refresh; diagnostics remain cache-only."""
+    if str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() != "worker":
+        return {"status": "REJECTED_NOT_WORKER_OWNER", "broker_read_calls_used": 0, "broker_actions_used": 0}
+    capability = dict(ALPACA_PAPER_BROKER.crypto_capability_status(False) or {})
+    generated_at = str(capability.get("generated_at") or "")
+    age_seconds = None
+    try:
+        age_seconds = max(0.0, (datetime.now(UTC) - datetime.fromisoformat(generated_at.replace("Z", "+00:00")).astimezone(UTC)).total_seconds())
+    except Exception:
+        pass
+    interval_seconds = max(3600.0, float(os.getenv("ASTRA_CRYPTO_CAPABILITY_REFRESH_SECONDS", "21600") or 21600))
+    if age_seconds is not None and age_seconds < interval_seconds:
+        return {"status": "CURRENT_CACHE_REUSED", "capability_age_seconds": round(age_seconds, 3), "broker_read_calls_used": 0, "broker_actions_used": 0}
+    try:
+        refreshed = dict(ALPACA_PAPER_BROKER.crypto_capability_status(True) or {})
+        refreshed.update({
+            "capability_refresh_owner": "PaperAutopilotWorker.crypto_capability_refresh",
+            "capability_last_refresh_status": "CURRENT" if refreshed.get("crypto_trading_supported") else "FAILED_FAIL_CLOSED",
+            "capability_last_refresh_error": str(refreshed.get("exact_blocker") or "")[:180],
+        })
+        ALPACA_PAPER_BROKER._save_crypto_capability(refreshed)
+        return {"status": refreshed["capability_last_refresh_status"], "capability_age_seconds": 0.0,
+                "broker_read_calls_used": int(refreshed.get("broker_read_calls_used") or 0), "broker_actions_used": 0}
+    except Exception as exc:
+        return {"status": "FAILED_FAIL_CLOSED", "capability_last_refresh_error": str(exc)[:180], "broker_read_calls_used": 0, "broker_actions_used": 0}
+
+
 def _refresh_crypto_rankings_snapshot_v1() -> dict:
     """Refresh a bounded rotating batch of broker-supported crypto pairs."""
     if str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() != "worker":
@@ -21364,6 +21433,7 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
     # Reuse the broker's cached capability record. The worker evaluates only a
     # small batch (six read calls at most), well under its existing twelve-call
     # budget. Discovery never becomes approval or an order request.
+    capability_refresh = _worker_refresh_crypto_capability_v1()
     capability = dict(ALPACA_PAPER_BROKER.crypto_capability_status(False) or {})
     stable_bases = {"USDC", "USDT", "DAI", "USD", "PYUSD", "FDUSD", "TUSD", "USDG"}
     discovered = sorted({
@@ -21379,7 +21449,7 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
     symbols = [discovered[(cursor + offset) % len(discovered)] for offset in range(batch_size)]
     end = datetime.now(UTC)
     start = end - timedelta(hours=6)
-    output, failures, volume_audit = [], [], []
+    output, failures, volume_audit, quote_integrity_rows = [], [], [], []
     provider_calls_used = 0
     for rank, symbol in enumerate(symbols, start=1):
         try:
@@ -21392,7 +21462,9 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         quote_provider = str((quote_meta or {}).get("provider_used") or quote.get("provider_used") or "").lower()
         if not quote_row or quote_provider in {"", "none", "local_snapshot"}:
             failures.append({"symbol": symbol, "blocker": "FRESH_QUOTE_UNAVAILABLE"})
+            quote_integrity_rows.append({"symbol": symbol, "quote_received": False, "bid_present": False, "ask_present": False, "spread_present": False, "quote_timestamp": "", "quote_age_seconds": None, "quote_provider": quote_provider or None, "quote_record_id": None, "volume_available": False, "bars_available": False, "candidate_persisted": False, "failure_reason": "FRESH_QUOTE_UNAVAILABLE"})
             continue
+        quote_row = _preserve_crypto_quote_microstructure_v1(dict(quote_row), dict(quote_row), quote_provider)
         provider_calls_used += 1
         bar_payload = dict(ALPACA_PAPER_BROKER.historical_bars(symbol, asset_class="crypto", timeframe="15Min", limit=24, start=start.isoformat().replace("+00:00", "Z"), end=end.isoformat().replace("+00:00", "Z")) or {})
         bars = [dict(row) for row in (bar_payload.get("bars") or []) if isinstance(row, dict)]
@@ -21400,12 +21472,14 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         volume_audit.append({"symbol": symbol, **volume, "bar_response_state": bar_payload.get("response_state")})
         if len(bars) < 2 or volume["volume_state"] != "ROLLING_REAL_VOLUME_AVAILABLE":
             failures.append({"symbol": symbol, "blocker": "VOLUME_UNAVAILABLE", "volume_state": volume["volume_state"]})
+            quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "bid_present": quote_row.get("bid") is not None, "ask_present": quote_row.get("ask") is not None, "spread_present": quote_row.get("spread_pct") is not None, "quote_timestamp": quote_row.get("quote_timestamp"), "quote_age_seconds": quote_row.get("quote_age_seconds"), "quote_provider": quote_row.get("quote_provider"), "quote_record_id": quote_row.get("quote_record_id"), "volume_available": False, "bars_available": bool(bars), "candidate_persisted": False, "failure_reason": "VOLUME_UNAVAILABLE"})
             continue
         latest_completed = next((bar for bar in reversed(bars) if str(bar.get("t") or "") == volume["latest_completed_bar_timestamp"]), {})
         high, low, close = _to_float(latest_completed.get("h"), 0.0), _to_float(latest_completed.get("l"), 0.0), _to_float(latest_completed.get("c"), 0.0)
         risk_pct = round(((high - low) / close) * 100.0, 4) if close > 0 and high >= low else 0.0
         if risk_pct <= 0:
             failures.append({"symbol": symbol, "blocker": "BAR_RISK_ENVELOPE_UNAVAILABLE"})
+            quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "bid_present": quote_row.get("bid") is not None, "ask_present": quote_row.get("ask") is not None, "spread_present": quote_row.get("spread_pct") is not None, "quote_timestamp": quote_row.get("quote_timestamp"), "quote_age_seconds": quote_row.get("quote_age_seconds"), "quote_provider": quote_row.get("quote_provider"), "quote_record_id": quote_row.get("quote_record_id"), "volume_available": True, "bars_available": True, "candidate_persisted": False, "failure_reason": "BAR_RISK_ENVELOPE_UNAVAILABLE"})
             continue
         quote_row = dict(quote_row)
         quote_row.update({"volume": volume["rolling_completed_bar_volume"], "quote_volume": volume["rolling_completed_bar_volume"], "volume_evidence": "ALPACA_ROLLING_COMPLETED_15MIN_BARS"})
@@ -21414,8 +21488,12 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         ranked = _prioritize_rankings(ranked, learning_snapshot=_get_enriched_learning_insights_cached())
         if not ranked:
             failures.append({"symbol": symbol, "blocker": "RANKING_EMPTY"})
+            quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "bid_present": quote_row.get("bid") is not None, "ask_present": quote_row.get("ask") is not None, "spread_present": quote_row.get("spread_pct") is not None, "quote_timestamp": quote_row.get("quote_timestamp"), "quote_age_seconds": quote_row.get("quote_age_seconds"), "quote_provider": quote_row.get("quote_provider"), "quote_record_id": quote_row.get("quote_record_id"), "volume_available": True, "bars_available": True, "candidate_persisted": False, "failure_reason": "RANKING_EMPTY"})
             continue
-        output.append(_ensure_persona_fields({**dict(ranked[0]), "symbol": symbol, "asset_class": "crypto", "asset_type": "crypto", "lane_id": "CRYPTO", "rank_position": rank, "ranking_run_id": f"crypto-worker:{int(now)}", "generated_at": _now_utc_iso(), "candidate_generated_at": _now_utc_iso(), "quote_timestamp": str(quote_row.get("quote_timestamp") or quote_row.get("timestamp") or ""), "bar_timestamp": volume["latest_completed_bar_timestamp"], "bar_evidence": {"source": "AlpacaPaperBroker.historical_bars", "resolution": "15Min", "count": len(bars), **volume}, "crypto_risk_pct": risk_pct, "freshness_state": "CURRENT"}))
+        final_row = _preserve_crypto_quote_microstructure_v1(dict(ranked[0]), quote_row, quote_provider)
+        final_row.update({"symbol": symbol, "asset_class": "crypto", "asset_type": "crypto", "lane_id": "CRYPTO", "rank_position": rank, "ranking_run_id": f"crypto-worker:{int(now)}", "generated_at": _now_utc_iso(), "candidate_generated_at": _now_utc_iso(), "quote_timestamp": str(final_row.get("quote_timestamp") or quote_row.get("timestamp") or ""), "bar_timestamp": volume["latest_completed_bar_timestamp"], "bar_evidence": {"source": "AlpacaPaperBroker.historical_bars", "resolution": "15Min", "count": len(bars), **volume}, "crypto_risk_pct": risk_pct, "freshness_state": "CURRENT"})
+        output.append(_ensure_persona_fields(final_row))
+        quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "bid_present": final_row.get("bid") is not None, "ask_present": final_row.get("ask") is not None, "spread_present": final_row.get("spread_pct") is not None, "quote_timestamp": final_row.get("quote_timestamp"), "quote_age_seconds": final_row.get("quote_age_seconds"), "quote_provider": final_row.get("quote_provider"), "quote_record_id": final_row.get("quote_record_id"), "volume_available": True, "bars_available": True, "candidate_persisted": True, "failure_reason": ""})
     output = PORTFOLIO_RISK_ENGINE.enrich(output, asset_type="crypto", companion_rows=LAST_RANKINGS.get("stocks", []))
     output = PREDICTIVE_MODEL.annotate_rows(output)
     output = REGIME_ENGINE.annotate_rows(output)
@@ -21434,6 +21512,9 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         "certified_pairs": sorted(previously_certified),
         "certification_state": "ROTATING_BOUNDED_EVALUATION",
         "crypto_volume_audit": volume_audit, "failed_pairs": failures,
+        "crypto_quote_integrity_rows": quote_integrity_rows,
+        "crypto_quote_integrity": {"pairs_requested": len(symbols), "pairs_with_quote": sum(1 for row in quote_integrity_rows if row.get("quote_received")), "pairs_with_bid_ask": sum(1 for row in quote_integrity_rows if row.get("bid_present") and row.get("ask_present")), "pairs_with_calculated_spread": sum(1 for row in quote_integrity_rows if row.get("spread_present")), "pairs_missing_bid_ask": sum(1 for row in quote_integrity_rows if not (row.get("bid_present") and row.get("ask_present"))), "pairs_persisted": sum(1 for row in quote_integrity_rows if row.get("candidate_persisted"))},
+        "capability_refresh": capability_refresh,
         "pairs_evaluated_this_cycle": len(symbols), "rotation_cycles_remaining": max(0, math.ceil(len(discovered) / batch_size) - 1),
     }
     PAPER_AUTOPILOT._runtime_state["crypto_rankings_snapshot_v1"] = snapshot
@@ -70115,7 +70196,37 @@ def _crypto_operational_integrity_readiness_v1_payload(statuses: dict | None = N
     if not alpaca:
         alpaca = ((_CACHE.get("alpaca_paper_status_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
     account = dict(alpaca.get("account") or {})
-    buying_power = account.get("buying_power", alpaca.get("buying_power"))
+    worker_state = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
+    capacity_snapshot = dict(worker_state.get("last_evidence_capacity_snapshot") or {})
+    if not capacity_snapshot:
+        try:
+            persisted = _astra_evidence_state_json("paper_autopilot_state.json")
+            capacity_snapshot = dict(persisted.get("last_evidence_capacity_snapshot") or {})
+        except Exception:
+            capacity_snapshot = {}
+    buying_power = account.get("buying_power", alpaca.get("buying_power", capacity_snapshot.get("buying_power")))
+    buying_power_source = "alpaca_paper_status_cache" if account or alpaca else "worker_capacity_snapshot" if capacity_snapshot.get("buying_power") is not None else "unavailable"
+    local_crypto_positions = [row for row in positions if str(row.get("asset_class") or row.get("asset_type") or "").lower() in {"crypto", "cryptocurrency"}]
+    broker_crypto_open_count = int(_to_float(capacity_snapshot.get("crypto_open_positions"), -1))
+    pending_crypto_order_count = int(_to_float(capacity_snapshot.get("crypto_pending_orders"), 0))
+    reconciliation_current = bool(capacity_snapshot.get("broker_positions_fetch_ok")) and str(capacity_snapshot.get("broker_reconciliation_status") or "").upper() not in {"", "FAILED", "STALE"}
+    position_counts_match = broker_crypto_open_count >= 0 and broker_crypto_open_count == len(local_crypto_positions)
+    # The capacity snapshot deliberately stores aggregate pending-order facts,
+    # not mutable broker order objects. A non-zero aggregate fails closed until
+    # the canonical worker can provide ID-linked order details.
+    pending_orders = [{"asset_class": "crypto", "status": "held"}] if pending_crypto_order_count > 0 else []
+    lane["broker_reconciliation_ok"] = reconciliation_current and position_counts_match and pending_crypto_order_count == 0
+    lane.update({
+        "broker_reconciliation_status": "CURRENT_MATCHED" if lane["broker_reconciliation_ok"] else "COUNT_MISMATCH_FAIL_CLOSED" if reconciliation_current and not position_counts_match else "PENDING_OR_UNAVAILABLE",
+        "local_crypto_open_count": len(local_crypto_positions),
+        "broker_crypto_open_count": broker_crypto_open_count if broker_crypto_open_count >= 0 else None,
+        "matched_crypto_position_count": len(local_crypto_positions) if broker_crypto_open_count == len(local_crypto_positions) and lane["broker_reconciliation_ok"] else 0,
+        "local_only_crypto_position_count": max(0, len(local_crypto_positions) - max(0, broker_crypto_open_count)),
+        "broker_only_crypto_position_count": max(0, broker_crypto_open_count - len(local_crypto_positions)) if broker_crypto_open_count >= 0 else None,
+        "pending_crypto_order_count": pending_crypto_order_count,
+        "buying_power_available": buying_power is not None,
+        "buying_power_source": buying_power_source,
+    })
     if CryptoOperationalIntegrityReadinessV1 is None:
         return {"endpoint": "/api/crypto_operational_integrity_readiness_v1", "status": "BROKER_NOT_READY",
                 "exact_blockers": ["crypto_operational_integrity_module_unavailable"], "get_route_read_only": True,
@@ -70123,7 +70234,7 @@ def _crypto_operational_integrity_readiness_v1_payload(statuses: dict | None = N
     lifecycle_rows = ShadowProfitLossProtectionValidationV1(STATE).load_bounded_lifecycle_rows() if ShadowProfitLossProtectionValidationV1 is not None else []
     payload = CryptoOperationalIntegrityReadinessV1(STATE).build(
         lane=lane, capability=capability, candidates=_crypto_operational_candidate_rows_v3(),
-        open_positions=positions, pending_orders=[], lifecycle_rows=lifecycle_rows, buying_power=buying_power,
+        open_positions=positions, pending_orders=pending_orders, lifecycle_rows=lifecycle_rows, buying_power=buying_power,
         known_equity_symbols=_known_equity_symbols_v1(),
     )
     return {"endpoint": "/api/crypto_operational_integrity_readiness_v1", "canonical_owners": [
@@ -70151,6 +70262,62 @@ def _shadow_profit_loss_protection_validation_v1_payload() -> dict:
             "canonical_owners": ["TradeLifecycleExcursionV1", "broker_truth_records_v1", "PaperAutopilotEngine.paper_positions"],
             "source_mode": "bounded_lifecycle_and_broker_truth_read_only", "get_route_read_only": True,
             "worker_invocations": 0, "mutations": 0, "full_store_scans": 0, **payload, **_safety_flags_v1()}
+
+
+def _crypto_data_lifecycle_shadow_completion_v1_payload() -> dict:
+    """Read-only composition of worker-persisted crypto and shadow evidence."""
+    runtime = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
+    ranking = dict(runtime.get("crypto_rankings_snapshot_v1") or {})
+    if not ranking:
+        try:
+            persisted = _astra_evidence_state_json("paper_autopilot_state.json")
+            ranking = dict(persisted.get("crypto_rankings_snapshot_v1") or {})
+        except Exception:
+            ranking = {}
+    capability = dict(ALPACA_PAPER_BROKER.crypto_capability_status(False) or {}) if hasattr(ALPACA_PAPER_BROKER, "crypto_capability_status") else {}
+    integrity = CryptoOperationalIntegrityReadinessV1(STATE).load_snapshot() if CryptoOperationalIntegrityReadinessV1 is not None else {}
+    shadow = ShadowProfitLossProtectionValidationV1(STATE).load_snapshot() if ShadowProfitLossProtectionValidationV1 is not None else {}
+    blockers = []
+    blockers.extend(str(row.get("blocker") or "") for row in (ranking.get("failed_pairs") or []) if isinstance(row, dict))
+    blockers.extend(str(value) for value in (integrity.get("exact_blockers") or []) if value)
+    if str(shadow.get("status") or "INSUFFICIENT_EVIDENCE") == "INSUFFICIENT_EVIDENCE":
+        blockers.append("SHADOW_ELIGIBLE_COMPLETE_LIFECYCLES_INSUFFICIENT")
+    if not ranking:
+        blockers.append("CRYPTO_RANKING_SNAPSHOT_UNAVAILABLE")
+    remaining = list(dict.fromkeys(item for item in blockers if item))[:30]
+    return {
+        "endpoint": "/api/crypto_data_lifecycle_shadow_completion_v1",
+        "status": "PARTIAL" if remaining else "COMPLETE_CACHE_EVIDENCE_AVAILABLE",
+        "crypto_quote_pipeline": {
+            "snapshot_status": ranking.get("status") or "UNAVAILABLE",
+            "generated_at": ranking.get("generated_at"),
+            "quote_integrity": dict(ranking.get("crypto_quote_integrity") or {}),
+            "evaluated_pairs": list(ranking.get("crypto_quote_integrity_rows") or [])[:12],
+            "provider_owner": ranking.get("provider_owner"),
+        },
+        "crypto_capability": {
+            "capability_generated_at": capability.get("generated_at"),
+            "capability_freshness_state": (integrity.get("broker_capability") or {}).get("capability_freshness_state"),
+            "capability_age_seconds": (integrity.get("broker_capability") or {}).get("capability_age_seconds"),
+            "capability_refresh_owner": capability.get("capability_refresh_owner"),
+            "capability_last_refresh_status": capability.get("capability_last_refresh_status"),
+            "capability_last_refresh_error": capability.get("capability_last_refresh_error"),
+            "supported_pair_count": len(capability.get("supported_pairs") or []),
+            "tradable_pair_count": len(capability.get("tradable_pairs") or []),
+        },
+        "crypto_candidate_readiness": integrity,
+        "crypto_reconciliation": dict(integrity.get("reconciliation") or {}),
+        "crypto_entry_lineage": dict(integrity.get("lineage_readiness") or {}),
+        "lifecycle_evidence_eligibility": dict(shadow.get("lifecycle_evidence_eligibility") or {}),
+        "shadow_profit_loss_consumption": dict(shadow.get("shadow_profit_loss_consumption") or {}),
+        "remaining_blockers": remaining,
+        "recommended_next_actions": ["wait for bounded worker quote and capability refresh", "collect only natural broker-confirmed completed lifecycles"],
+        "paper_execution_currently_allowed": False,
+        "automatic_exit_activation_allowed": False,
+        "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
+        "get_route_read_only": True, "worker_invocations": 0, "mutations": 0,
+        **_safety_flags_v1(),
+    }
 
 
 def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
@@ -73988,6 +74155,11 @@ def crypto_operational_integrity_readiness_v1(force: bool = False):
 @router.get("/api/shadow_profit_loss_protection_validation_v1")
 def shadow_profit_loss_protection_validation_v1(force: bool = False):
     return _shadow_profit_loss_protection_validation_v1_payload()
+
+
+@router.get("/api/crypto_data_lifecycle_shadow_completion_v1")
+def crypto_data_lifecycle_shadow_completion_v1():
+    return _crypto_data_lifecycle_shadow_completion_v1_payload()
 
 
 @router.get("/api/crypto_lane_paper_readiness_v1")

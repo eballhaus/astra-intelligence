@@ -987,9 +987,20 @@ class ProviderRouter:
             ask = _to_float(quote.get("ap"), 0.0)
             bid = _to_float(quote.get("bp"), 0.0)
             price = ((ask + bid) / 2.0) if ask > 0 and bid > 0 else max(ask, bid)
+            mid = ((ask + bid) / 2.0) if ask > 0 and bid > 0 and ask >= bid else None
+            spread_pct = (((ask - bid) / mid) * 100.0) if mid and mid > 0 else None
             return {
                 "ok": price > 0,
                 "price": price,
+                # Preserve native quote sides. Downstream liquidity gates must
+                # never infer a spread from candles or a last-trade price.
+                "bid": bid if bid > 0 else None,
+                "ask": ask if ask > 0 else None,
+                "bp": bid if bid > 0 else None,
+                "ap": ask if ask > 0 else None,
+                "mid": mid,
+                "spread_pct": spread_pct,
+                "quote_spread": "PASS" if spread_pct is not None else "PENDING_SPREAD",
                 "prev_close": None,
                 "open": None,
                 "high": max(ask, bid) if max(ask, bid) > 0 else None,
@@ -998,6 +1009,8 @@ class ProviderRouter:
                 "change": None,
                 "change_percent": None,
                 "quote_timestamp": quote.get("t"),
+                "quote_source": "ALPACA_MARKET_DATA" if asset_type == "crypto" else "ALPACA_MARKET_DATA",
+                "quote_record_id": quote.get("i") or quote.get("id"),
                 "status": status,
                 "error": "",
                 "latency_ms": latency,
