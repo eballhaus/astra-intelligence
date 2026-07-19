@@ -70373,7 +70373,8 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
         {"consumer": "crypto_data_lifecycle_shadow_completion_v1", "fact_id": "LOCAL_OPEN_CRYPTO_POSITION_COUNT", "source_used": "worker persisted integrity snapshot", "canonical_source_required": True, "source_compliant": True, "scope_compliant": True, "freshness_compliant": True, "fallback_used": False, "rejected_claim_count": len(active)},
         {"consumer": "PAPER_AUTOPILOT.paper_positions compatibility adapter", "fact_id": "LOCAL_OPEN_CRYPTO_POSITION_COUNT", "source_used": "diagnostic-only broad adapter", "canonical_source_required": False, "source_compliant": True, "scope_compliant": False, "freshness_compliant": False, "fallback_used": False, "rejected_claim_count": len(active), "publication_allowed": False},
     ]
-    return {"endpoint": "/api/astra_canonical_truth_governance_v1", "status": "WARNING" if active else arbitration.get("status", "PENDING_WORKER_FACT_SNAPSHOT"),
+    endpoint_status = "WARNING" if active else "PASS" if worker_facts else arbitration.get("status", "PENDING_WORKER_FACT_SNAPSHOT")
+    return {"endpoint": "/api/astra_canonical_truth_governance_v1", "status": endpoint_status,
             "canonical_fact_registry": canonical_fact_registry_v1(), "critical_facts": arbitration.get("critical_facts", {}),
             "truth_arbitration": arbitration, "active_contradictions": active,
             "resolved_contradictions": [dict(row) for row in (persisted.get("issues") or []) if isinstance(row, dict) and row.get("state") == "RESOLVED"],
