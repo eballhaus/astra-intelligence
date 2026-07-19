@@ -2,6 +2,15 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load Astra's canonical persistent configuration for every startup path.
+# Exported values are inherited by the backend, worker, and frontend.
+if [[ -f "${ROOT_DIR}/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${ROOT_DIR}/.env"
+  set +a
+fi
 STATE_DIR="${ROOT_DIR}/state"
 LOG_DIR="${ROOT_DIR}/logs"
 STARTUP_LOG="${LOG_DIR}/astra_startup.log"
