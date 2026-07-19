@@ -37,6 +37,7 @@ from engine.astra_canonical_truth_registry_v1 import fact_envelope_v1
 from engine.astra_truth_arbitration_v1 import TruthContradictionRegistryV1, arbitrate_truth_claims_v1, read_canonical_open_crypto_positions
 from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystemIntegrityScannerV1
 from engine.astra_crypto_market_data_capability_matrix_v1 import CryptoMarketDataCapabilityMatrixV1
+from engine.astra_multilane_completion_matrix_v1 import AstraMultilaneCompletionMatrixV1
 
 
 class PaperAutopilotWorker:
@@ -56,6 +57,7 @@ class PaperAutopilotWorker:
         self.truth_contradictions = TruthContradictionRegistryV1(STATE)
         self.system_integrity_scanner = ContinuousSystemIntegrityScannerV1(STATE)
         self.crypto_market_data_matrix = CryptoMarketDataCapabilityMatrixV1(STATE)
+        self.multilane_completion_matrix = AstraMultilaneCompletionMatrixV1(STATE)
 
     def _base_state(self) -> dict[str, Any]:
         previous = read_snapshot()
@@ -345,6 +347,18 @@ class PaperAutopilotWorker:
                 lifecycle_rows, positions,
             )
             self.shadow_profit_loss_protection.write_snapshot(shadow_protection)
+            # This uses only the current worker's committed candidate and
+            # trace evidence. It is diagnostic-only and cannot alter a gate,
+            # a lifecycle, or any broker-facing behavior.
+            completion_candidates = [*crypto_rows, *[dict(row) for row in (getattr(self.autopilot, "_runtime_state", {}).get("last_execution_trace") or {}).get("per_candidate_decision_trace") or [] if isinstance(row, dict)]]
+            multilane_completion = self.multilane_completion_matrix.build(
+                candidate_rows=completion_candidates,
+                execution_trace=dict(getattr(self.autopilot, "_runtime_state", {}).get("last_execution_trace") or {}),
+                crypto_readiness=crypto_integrity,
+                shadow=shadow_protection,
+                source_freshness=str((getattr(self.autopilot, "_runtime_state", {}).get("last_execution_trace") or {}).get("candidate_freshness") or "UNKNOWN"),
+            )
+            self.multilane_completion_matrix.write(multilane_completion)
         except Exception:
             # Optional diagnostics fail closed and cannot interrupt the owner
             # worker or alter the trading cycle.
@@ -352,6 +366,7 @@ class PaperAutopilotWorker:
             crypto_matrix = {"status": "UNAVAILABLE_FAIL_CLOSED"}
             shadow_protection = {"status": "UNAVAILABLE_FAIL_CLOSED"}
             truth_arbitration = {"status": "UNAVAILABLE_FAIL_CLOSED"}
+            multilane_completion = {"status": "UNAVAILABLE_FAIL_CLOSED"}
         # This scanner owns only bounded state diagnostics. It consumes the
         # facts already gathered by this worker and cannot reach providers,
         # brokers, LLMs, order paths, or mutable lifecycle truth.
@@ -366,6 +381,7 @@ class PaperAutopilotWorker:
                 "quote_handoffs": list(getattr(self.autopilot, "_runtime_state", {}).get("crypto_quote_handoffs_v1") or [])[:20],
                 "crypto_ranking_snapshot": dict(getattr(self.autopilot, "_runtime_state", {}).get("crypto_rankings_snapshot_v1") or {}),
                 "crypto_market_data_matrix": crypto_matrix,
+                "multilane_completion_matrix": multilane_completion,
                 "get_side_effects": 0,
             },
         )
@@ -385,6 +401,7 @@ class PaperAutopilotWorker:
             "truth_contradiction_count": len(truth_arbitration.get("contradictions") or []),
             "system_integrity_status": integrity_scan.get("status"),
             "system_integrity_root_cause_count": len(integrity_scan.get("active_root_causes") or []),
+            "multilane_completion_status": multilane_completion.get("status"),
         })
         return result
 

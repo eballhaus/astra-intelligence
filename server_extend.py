@@ -739,6 +739,7 @@ try:
     from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystemIntegrityScannerV1
     from engine.astra_sentinel_integration_v1 import sentinel_integrity_payload_v1
     from engine.astra_crypto_market_data_capability_matrix_v1 import CryptoMarketDataCapabilityMatrixV1
+    from engine.astra_multilane_completion_matrix_v1 import AstraMultilaneCompletionMatrixV1
 except Exception:
     canonical_fact_registry_v1 = lambda: {}  # type: ignore[assignment]
     fact_envelope_v1 = None  # type: ignore[assignment]
@@ -749,6 +750,7 @@ except Exception:
     ContinuousSystemIntegrityScannerV1 = None  # type: ignore[assignment,misc]
     sentinel_integrity_payload_v1 = None  # type: ignore[assignment]
     CryptoMarketDataCapabilityMatrixV1 = None  # type: ignore[assignment,misc]
+    AstraMultilaneCompletionMatrixV1 = None  # type: ignore[assignment,misc]
 try:
     from engine.trade_lifecycle_excursion_v2 import TradeLifecycleExcursionV2
 except Exception:
@@ -70407,6 +70409,7 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
     persisted = TruthContradictionRegistryV1(STATE).load() if TruthContradictionRegistryV1 is not None else {"issues": []}
     scanner = ContinuousSystemIntegrityScannerV1(STATE).snapshot() if ContinuousSystemIntegrityScannerV1 is not None else {"status": "UNAVAILABLE_FAIL_CLOSED"}
     matrix = CryptoMarketDataCapabilityMatrixV1(STATE).snapshot() if CryptoMarketDataCapabilityMatrixV1 is not None else {}
+    completion = AstraMultilaneCompletionMatrixV1(STATE).snapshot() if AstraMultilaneCompletionMatrixV1 is not None else {}
     active = [dict(row) for row in (persisted.get("issues") or []) if isinstance(row, dict) and row.get("state") not in {"RESOLVED"}]
     cortex = cortex_truth_summary_v1({**arbitration, "contradictions": active}) if callable(cortex_truth_summary_v1) else {"truth_promotion_allowed": False}
     compliance = [
@@ -70424,6 +70427,7 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
             "system_integrity_summary": {"status": scanner.get("status"), "last_scan_at": scanner.get("last_scan_at"),
                 "active_root_cause_count": len(scanner.get("active_root_causes") or []), "human_repair_required_count": len(scanner.get("human_repairs_required") or [])},
             "crypto_market_data_capability_matrix_summary": dict(matrix.get("summary") or {}),
+            "multilane_completion_matrix_summary": {"status": completion.get("status"), "lanes": {lane: dict(row).get("first_blocker") for lane, row in (completion.get("lanes") or {}).items() if isinstance(row, dict)}},
             "remaining_blockers": ["open truth-arbitration contradiction requires sustained worker verification"] if active else [],
             "recommended_repairs": ["retain canonical SQLite open-position reader; do not use broad adapters as active state"],
             "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "state_mutations_from_get": 0,
@@ -70446,6 +70450,8 @@ def _astra_sentinel_integrity_v1_payload() -> dict:
         payload = sentinel_integrity_payload_v1(scanner)
         matrix = CryptoMarketDataCapabilityMatrixV1(STATE).snapshot() if CryptoMarketDataCapabilityMatrixV1 is not None else {}
         payload["crypto_market_data"]["capability_matrix_summary"] = dict(matrix.get("summary") or {})
+        completion = AstraMultilaneCompletionMatrixV1(STATE).snapshot() if AstraMultilaneCompletionMatrixV1 is not None else {}
+        payload["multilane_completion_summary"] = {"status": completion.get("status"), "shared_root_causes": completion.get("shared_root_causes") or [], "lane_specific_root_causes": completion.get("lane_specific_root_causes") or []}
         return payload
     return {"endpoint": "/api/astra_sentinel_integrity_v1", "status": "UNAVAILABLE_FAIL_CLOSED",
             "sentinel_owner": "canonical_worker", "scan_engine": "astra_continuous_system_integrity_scanner_v1",
@@ -70460,6 +70466,15 @@ def _crypto_market_data_capability_matrix_v1_payload() -> dict:
                 "provider_calls_from_get": 0, "broker_actions_from_get": 0, "llm_calls_from_get": 0,
                 "state_mutations_from_get": 0, "get_route_read_only": True, **_safety_flags_v1()}
     return CryptoMarketDataCapabilityMatrixV1(STATE).snapshot()
+
+
+def _astra_multilane_completion_matrix_v1_payload() -> dict:
+    """Read the committed worker-owned completion matrix only."""
+    if AstraMultilaneCompletionMatrixV1 is None:
+        return {"endpoint": "/api/astra_multilane_completion_matrix_v1", "status": "PARTIAL",
+                "provider_calls_from_get": 0, "broker_actions_from_get": 0, "llm_calls_from_get": 0,
+                "state_mutations_from_get": 0, "get_route_read_only": True, **_safety_flags_v1()}
+    return AstraMultilaneCompletionMatrixV1(STATE).snapshot()
 
 
 def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
@@ -74334,6 +74349,11 @@ def astra_sentinel_integrity_v1():
 @router.get("/api/crypto_market_data_capability_matrix_v1")
 def crypto_market_data_capability_matrix_v1():
     return _crypto_market_data_capability_matrix_v1_payload()
+
+
+@router.get("/api/astra_multilane_completion_matrix_v1")
+def astra_multilane_completion_matrix_v1():
+    return _astra_multilane_completion_matrix_v1_payload()
 
 
 @router.get("/api/crypto_lane_paper_readiness_v1")
