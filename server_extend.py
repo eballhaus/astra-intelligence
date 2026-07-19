@@ -1,5 +1,9 @@
 from engine.runtime_environment import load_runtime_environment, resolve_fmp_key
-from engine.candidate_execution_integrity_v1 import candidate_execution_integrity, normalize_crypto_pair_strict
+from engine.candidate_execution_integrity_v1 import (
+    candidate_execution_integrity,
+    derive_crypto_horizon_evidence_v1,
+    normalize_crypto_pair_strict,
+)
 from engine.astra_multilane_activation_v2 import (
     adaptive_throughput,
     canonical_lane_activation_contract,
@@ -15,7 +19,10 @@ from engine.astra_multilane_market_hours_audit_v1 import MarketHoursAuditRegistr
 from engine.astra_trade_lane_registry_v1 import apply_trade_lane_contract
 from engine.astra_unified_position_lifecycle_v1 import build_unified_position_lifecycle_decision_v1, legacy_swing_canary_configuration_v1
 from engine.learning_return_integrity_v1 import audit_learning_return_rows
-from engine.astra_evidence_accumulation_capacity_v1 import build_capacity_snapshot
+from engine.astra_evidence_accumulation_capacity_v1 import (
+    build_capacity_snapshot,
+    canonical_candidate_capacity_fact,
+)
 from engine.astra_portfolio_capacity_release_review_v1 import (
     build_portfolio_release_review,
     fallback_concentration_audit,
@@ -21515,9 +21522,13 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
             failures.append({"symbol": symbol, "blocker": "VOLUME_UNAVAILABLE", "volume_state": volume["volume_state"]})
             quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": quote_row.get("bid") is not None, "ask_present": quote_row.get("ask") is not None, "spread_present": quote_row.get("spread_pct") is not None, "quote_timestamp": quote_row.get("quote_timestamp"), "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": quote_row.get("quote_age_seconds"), "quote_provider": quote_row.get("quote_provider"), "quote_record_id": quote_row.get("quote_record_id"), "volume_available": False, "completed_volume_upstream": False, "bars_available": bool(bars), "candidate_persisted": False, "provider_diagnostics": dict(quote.get("provider_diagnostics") or {}), "provider_response_status": (quote.get("provider_diagnostics") or {}).get("http_status"), "provider_response_keys": list((quote.get("provider_diagnostics") or {}).get("response_keys") or [])[:20], "failure_reason": "VOLUME_UNAVAILABLE"})
             continue
-        latest_completed = next((bar for bar in reversed(bars) if str(bar.get("t") or "") == volume["latest_completed_bar_timestamp"]), {})
+        latest_completed_index = next((index for index in range(len(bars) - 1, -1, -1) if str(bars[index].get("t") or "") == volume["latest_completed_bar_timestamp"]), -1)
+        latest_completed = bars[latest_completed_index] if latest_completed_index >= 0 else {}
+        prior_completed = bars[latest_completed_index - 1] if latest_completed_index > 0 else {}
         high, low, close = _to_float(latest_completed.get("h"), 0.0), _to_float(latest_completed.get("l"), 0.0), _to_float(latest_completed.get("c"), 0.0)
+        prior_close = _to_float(prior_completed.get("c"), 0.0)
         risk_pct = round(((high - low) / close) * 100.0, 4) if close > 0 and high >= low else 0.0
+        completed_return_pct = round(((close - prior_close) / prior_close) * 100.0, 6) if prior_close > 0 and close > 0 else 0.0
         if risk_pct <= 0:
             failures.append({"symbol": symbol, "blocker": "BAR_RISK_ENVELOPE_UNAVAILABLE"})
             quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": quote_row.get("bid") is not None, "ask_present": quote_row.get("ask") is not None, "spread_present": quote_row.get("spread_pct") is not None, "quote_timestamp": quote_row.get("quote_timestamp"), "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": quote_row.get("quote_age_seconds"), "quote_provider": quote_row.get("quote_provider"), "quote_record_id": quote_row.get("quote_record_id"), "volume_available": True, "completed_volume_upstream": True, "bars_available": True, "candidate_persisted": False, "failure_reason": "BAR_RISK_ENVELOPE_UNAVAILABLE"})
@@ -21532,12 +21543,16 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
             quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": quote_row.get("bid") is not None, "ask_present": quote_row.get("ask") is not None, "spread_present": quote_row.get("spread_pct") is not None, "quote_timestamp": quote_row.get("quote_timestamp"), "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": quote_row.get("quote_age_seconds"), "quote_provider": quote_row.get("quote_provider"), "quote_record_id": quote_row.get("quote_record_id"), "volume_available": True, "completed_volume_upstream": True, "bars_available": True, "candidate_persisted": False, "failure_reason": "RANKING_EMPTY"})
             continue
         final_row = _preserve_crypto_quote_microstructure_v1(dict(ranked[0]), quote_row, quote_provider)
-        final_row.update({"symbol": symbol, "asset_class": "crypto", "asset_type": "crypto", "lane_id": "CRYPTO", "rank_position": rank, "ranking_run_id": f"crypto-worker:{int(now)}", "generated_at": _now_utc_iso(), "candidate_generated_at": _now_utc_iso(), "quote_timestamp": str(final_row.get("quote_timestamp") or quote_row.get("timestamp") or ""), "bar_timestamp": volume["latest_completed_bar_timestamp"], "bar_evidence": {"source": "AlpacaPaperBroker.historical_bars", "resolution": "15Min", "count": len(bars), **volume}, "crypto_risk_pct": risk_pct, "freshness_state": "CURRENT"})
+        final_row.update({"symbol": symbol, "asset_class": "crypto", "asset_type": "crypto", "lane_id": "CRYPTO", "rank_position": rank, "ranking_run_id": f"crypto-worker:{int(now)}", "generated_at": _now_utc_iso(), "candidate_generated_at": _now_utc_iso(), "quote_timestamp": str(final_row.get("quote_timestamp") or quote_row.get("timestamp") or ""), "bar_timestamp": volume["latest_completed_bar_timestamp"], "bar_evidence": {"source": "AlpacaPaperBroker.historical_bars", "resolution": "15Min", "count": len(bars), **volume}, "crypto_risk_pct": risk_pct, "completed_bar_return_pct": completed_return_pct, "freshness_state": "CURRENT"})
         output.append(_ensure_persona_fields(final_row))
         quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": final_row.get("bid") is not None, "ask_present": final_row.get("ask") is not None, "spread_present": final_row.get("spread_pct") is not None, "quote_timestamp": final_row.get("quote_timestamp"), "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": final_row.get("quote_age_seconds"), "quote_provider": final_row.get("quote_provider"), "quote_record_id": final_row.get("quote_record_id"), "volume_available": True, "completed_volume_upstream": True, "bars_available": True, "candidate_persisted": True, "provider_diagnostics": dict(quote.get("provider_diagnostics") or {}), "provider_response_status": (quote.get("provider_diagnostics") or {}).get("http_status"), "provider_response_keys": list((quote.get("provider_diagnostics") or {}).get("response_keys") or [])[:20], "failure_reason": ""})
     output = PORTFOLIO_RISK_ENGINE.enrich(output, asset_type="crypto", companion_rows=LAST_RANKINGS.get("stocks", []))
     output = PREDICTIVE_MODEL.annotate_rows(output)
     output = REGIME_ENGINE.annotate_rows(output)
+    # Persisted candidate horizon evidence is a producer contract.  It is not
+    # a ranking change and deliberately leaves the horizon absent when the
+    # bounded worker lacks a required fact.
+    output = [{**dict(row), **derive_crypto_horizon_evidence_v1(row)} for row in output]
     generated_at = _now_utc_iso()
     for row in quote_integrity_rows:
         row["snapshot_generated_at"] = generated_at
@@ -48047,6 +48062,14 @@ def _lane_execution_daily_report_v1_payload(statuses: dict | None = None) -> dic
             int(_to_float(commitment_stats.get("released"), 0.0)),
         ),
         "reserve_commitments_converted_to_orders": int(_to_float((dict(lanes.get("DAY") or {})).get("reserve_commitments_pending"), 0.0)),
+        "reserve_commitment_counter_semantics": {
+            "current_active_commitments_source": "astra_evidence_accumulation_capacity_v1.active_commitments",
+            "current_pending_orders_source": "astra_evidence_accumulation_capacity_v1.pending_orders",
+            "historical_requested_counter": "lane_execution_trace_ledger_v1.reserve_commitments_requested",
+            "historical_released_counter": "lane_execution_trace_ledger_v1.reserve_commitments_released",
+            "historical_converted_to_pending_order_counter": "lane_execution_trace_ledger_v1.reserve_commitments_pending",
+            "legacy_pending_counter_is_current_occupancy": False,
+        },
         "portfolio_capacity_release_review_v1": dict(statuses.get("portfolio_capacity_release_review_v1") or {}),
         "activation_contracts": activation,
         "activation_contract_consistent": not conflicts,
@@ -70052,6 +70075,11 @@ def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> di
     # This endpoint owns crypto capability facts, but not a second activation
     # decision.  Every runtime reader consumes the shared contract below.
     crypto_rows = _crypto_operational_candidate_rows_v3()
+    runtime_state = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}) or {})
+    capacity_snapshot = dict(runtime_state.get("last_evidence_capacity_snapshot") or {})
+    if not capacity_snapshot:
+        capacity_snapshot = dict(_astra_evidence_state_json("paper_autopilot_state.json").get("last_evidence_capacity_snapshot") or {})
+    canonical_capacity_fact = canonical_candidate_capacity_fact(capacity_snapshot, lane_id="CRYPTO")
     activation = canonical_lane_activation_contract(
         "CRYPTO",
         broker_safety={**dict(safety or {}), **dict(capability or {})},
@@ -70099,6 +70127,9 @@ def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> di
         "crypto_short_swing_capacity": 2,
         "crypto_scalp_broker_capacity": 0,
         "crypto_scalp_shadow_status": "shadow_practice_only",
+        "canonical_capacity_fact": canonical_capacity_fact,
+        "capacity_authority_state": "CURRENT" if canonical_capacity_fact.get("authority_current") else "STALE_OR_UNAVAILABLE_FAIL_CLOSED",
+        "legacy_capacity_aliases_diagnostic_only": True,
         "day_trade_capacity_used": crypto_day_used,
         "day_trade_capacity_available": max(0, 6 - crypto_day_used) if active else 0,
         "short_swing_capacity_used": crypto_swing_used,
@@ -70237,8 +70268,8 @@ def _crypto_operational_integrity_readiness_v1_payload(statuses: dict | None = N
     statuses = dict(statuses or {})
     lane = _crypto_paper_lane_validation_v1_payload(statuses)
     capability = {}
-    if "ALPACA_PAPER_BROKER" in globals() and hasattr(ALPACA_PAPER_BROKER, "crypto_capability_status"):
-        capability = dict(ALPACA_PAPER_BROKER.crypto_capability_status(False) or {})
+    if "ALPACA_PAPER_BROKER" in globals() and hasattr(ALPACA_PAPER_BROKER, "cached_crypto_capability"):
+        capability = dict(ALPACA_PAPER_BROKER.cached_crypto_capability() or {})
     # Do not use PAPER_AUTOPILOT.paper_positions() here: that compatibility
     # adapter includes historical/reconstructed rows and is not active-position
     # authority. Reconciliation consumes only this canonical OPEN SQLite set.
@@ -70266,6 +70297,11 @@ def _crypto_operational_integrity_readiness_v1_payload(statuses: dict | None = N
     # the canonical worker can provide ID-linked order details.
     pending_orders = [{"asset_class": "crypto", "status": "held"}] if pending_crypto_order_count > 0 else []
     lane["broker_reconciliation_ok"] = reconciliation_current and position_counts_match and pending_crypto_order_count == 0
+    lane["canonical_capacity_fact"] = canonical_candidate_capacity_fact(
+        capacity_snapshot,
+        lane_id="CRYPTO",
+        open_symbols=[row.get("symbol") for row in local_crypto_positions],
+    )
     lane.update({
         "broker_reconciliation_status": "CURRENT_MATCHED" if lane["broker_reconciliation_ok"] else "COUNT_MISMATCH_FAIL_CLOSED" if reconciliation_current and not position_counts_match else "PENDING_OR_UNAVAILABLE",
         "local_crypto_open_count": len(local_crypto_positions),
@@ -70417,7 +70453,9 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
         {"consumer": "crypto_data_lifecycle_shadow_completion_v1", "fact_id": "LOCAL_OPEN_CRYPTO_POSITION_COUNT", "source_used": "worker persisted integrity snapshot", "canonical_source_required": True, "source_compliant": True, "scope_compliant": True, "freshness_compliant": True, "fallback_used": False, "rejected_claim_count": len(active)},
         {"consumer": "PAPER_AUTOPILOT.paper_positions compatibility adapter", "fact_id": "LOCAL_OPEN_CRYPTO_POSITION_COUNT", "source_used": "diagnostic-only broad adapter", "canonical_source_required": False, "source_compliant": True, "scope_compliant": False, "freshness_compliant": False, "fallback_used": False, "rejected_claim_count": len(active), "publication_allowed": False},
     ]
-    endpoint_status = "WARNING" if active else "PASS" if worker_facts else arbitration.get("status", "PENDING_WORKER_FACT_SNAPSHOT")
+    scanner_roots = [dict(row) for row in (scanner.get("active_root_causes") or []) if isinstance(row, dict) and row.get("state") != "RESOLVED"]
+    completion_warning = str(completion.get("status") or "").upper() == "WARNING"
+    endpoint_status = "WARNING" if active or scanner_roots or completion_warning else "PASS" if worker_facts else arbitration.get("status", "PENDING_WORKER_FACT_SNAPSHOT")
     return {"endpoint": "/api/astra_canonical_truth_governance_v1", "status": endpoint_status,
             "canonical_fact_registry": canonical_fact_registry_v1(), "critical_facts": arbitration.get("critical_facts", {}),
             "truth_arbitration": arbitration, "active_contradictions": active,
@@ -70426,6 +70464,7 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
             "cortex_truth_summary": cortex, "consumer_source_compliance": compliance,
             "system_integrity_summary": {"status": scanner.get("status"), "last_scan_at": scanner.get("last_scan_at"),
                 "active_root_cause_count": len(scanner.get("active_root_causes") or []), "human_repair_required_count": len(scanner.get("human_repairs_required") or [])},
+            "governance_issue_classifications": ([{"root_cause_id": row.get("root_cause_id"), "category": row.get("category"), "severity": row.get("severity"), "state": row.get("state"), "first_bad_handoff": row.get("first_bad_handoff")} for row in scanner_roots[:20]] + ([{"root_cause_id": "CURRENT_MULTILANE_MATRIX_WARNING", "category": "MONITORING_COVERAGE_GAP", "severity": "HIGH", "state": "OPEN", "first_bad_handoff": "multilane completion matrix -> sentinel/governance summary"}] if completion_warning and not any(str(row.get("category")) == "MONITORING_COVERAGE_GAP" for row in scanner_roots) else [])),
             "crypto_market_data_capability_matrix_summary": dict(matrix.get("summary") or {}),
             "multilane_completion_matrix_summary": {"status": completion.get("status"), "lanes": {lane: dict(row).get("first_blocker") for lane, row in (completion.get("lanes") or {}).items() if isinstance(row, dict)}},
             "remaining_blockers": ["open truth-arbitration contradiction requires sustained worker verification"] if active else [],
@@ -70452,6 +70491,9 @@ def _astra_sentinel_integrity_v1_payload() -> dict:
         payload["crypto_market_data"]["capability_matrix_summary"] = dict(matrix.get("summary") or {})
         completion = AstraMultilaneCompletionMatrixV1(STATE).snapshot() if AstraMultilaneCompletionMatrixV1 is not None else {}
         payload["multilane_completion_summary"] = {"status": completion.get("status"), "shared_root_causes": completion.get("shared_root_causes") or [], "lane_specific_root_causes": completion.get("lane_specific_root_causes") or []}
+        if str(completion.get("status") or "").upper() == "WARNING" and str(payload.get("status") or "").upper() == "PASS":
+            payload["status"] = "WARNING"
+            payload["monitoring_coverage_warning"] = "multilane_completion_matrix_warning_not_yet_absorbed_by_worker_scan"
         return payload
     return {"endpoint": "/api/astra_sentinel_integrity_v1", "status": "UNAVAILABLE_FAIL_CLOSED",
             "sentinel_owner": "canonical_worker", "scan_engine": "astra_continuous_system_integrity_scanner_v1",
@@ -70488,10 +70530,9 @@ def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
         candidate = dict(row)
         candidate.setdefault("asset_class", "crypto")
         candidate_horizon = _candidate_horizon_from_row_v1(row)
-        if candidate_horizon not in {"scalp", "day_trade", "swing_trade"}:
-            candidate_horizon = "day_trade"
-        candidate["assigned_horizon"] = candidate_horizon
-        candidate["paper_entry_horizon_style"] = candidate_horizon
+        if candidate_horizon in {"scalp", "day_trade", "swing_trade"}:
+            candidate["assigned_horizon"] = candidate_horizon
+            candidate["paper_entry_horizon_style"] = candidate_horizon
         integrity = candidate_execution_integrity(
             candidate,
             supported_pairs=supported_pairs,
@@ -70500,11 +70541,7 @@ def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
             lane_state=str(lane.get("lane_state") or "LANE_BLOCKED"),
             paper_mode_verified=bool(lane.get("paper_mode_verified")),
             live_endpoint_detected=not bool(lane.get("paper_mode_verified")),
-            capacity_available=(
-                int(_to_float(lane.get("short_swing_capacity_available"), 0.0)) > 0
-                if candidate_horizon == "swing_trade"
-                else int(_to_float(lane.get("day_trade_capacity_available"), 0.0)) > 0
-            ),
+            capacity_fact=dict(lane.get("canonical_capacity_fact") or {}),
             duplicate_pending=False,
             # This cache-only funnel must not manufacture broker reconciliation.
             broker_reconciliation_ok=False,
@@ -70534,9 +70571,9 @@ def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
             "ranking_score": row.get("ranking_score") or row.get("score") or row.get("confidence"),
             "ranking_position": idx + 1,
             "horizon_scores": row.get("horizon_scores") or {},
-            "intended_horizon": f"crypto_{candidate_horizon}",
-            "assigned_horizon": candidate_horizon,
-            "assignment_result": "diagnostic_assignment",
+            "intended_horizon": f"crypto_{candidate_horizon}" if candidate_horizon in {"scalp", "day_trade", "swing_trade"} else None,
+            "assigned_horizon": candidate_horizon if candidate_horizon in {"scalp", "day_trade", "swing_trade"} else None,
+            "assignment_result": "persisted_canonical" if str(candidate.get("horizon_evidence_status")) == "PERSISTED_CANONICAL" else "insufficient_evidence",
             "tie_break_result": "not_applied",
             "duplicate_symbol_status": integrity.get("gate_status", {}).get("duplicate_pending"),
             "capacity_status": integrity.get("gate_status", {}).get("capacity_concentration"),
@@ -70596,7 +70633,9 @@ def _crypto_candidate_integrity_v1_payload(statuses: dict | None = None) -> dict
     for index, raw in enumerate(raw_rows[:80]):
         candidate = dict(raw)
         candidate.setdefault("asset_class", "crypto")
-        candidate["assigned_horizon"] = _candidate_horizon_from_row_v1(candidate)
+        detected_horizon = _candidate_horizon_from_row_v1(candidate)
+        if detected_horizon in {"scalp", "day_trade", "swing_trade"}:
+            candidate["assigned_horizon"] = detected_horizon
         fingerprint = f"{candidate.get('symbol') or candidate.get('ticker')}:{candidate.get('candidate_id') or index}"
         if fingerprint in seen:
             continue
@@ -70609,7 +70648,7 @@ def _crypto_candidate_integrity_v1_payload(statuses: dict | None = None) -> dict
             lane_state=str(lane.get("lane_state") or "LANE_BLOCKED"),
             paper_mode_verified=bool(lane.get("paper_mode_verified")),
             live_endpoint_detected=not bool(lane.get("paper_mode_verified")),
-            capacity_available=False,
+            capacity_fact=dict(lane.get("canonical_capacity_fact") or {}),
             duplicate_pending=False,
             broker_reconciliation_ok=False,
             kill_switch_enabled=bool(lane.get("kill_switch_enabled")),

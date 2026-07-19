@@ -68,6 +68,15 @@ def root_cause_from_signal_v1(signal: dict[str, Any]) -> dict[str, Any]:
     elif kind == "CRYPTO_DATA_QUALITY_CONTRACT_MISMATCH":
         category, handoff = "PRODUCER_CONSUMER_CONTRACT_MISMATCH", "crypto candidate evidence -> data-quality consumer"
         symptoms, owner, repair = ["PENDING_DATA_QUALITY", "CRYPTO_ORDER_READY_COUNT_ZERO"], "crypto readiness contract consumer", "align explicit canonical data-quality aliases without changing thresholds"
+    elif kind == "CANONICAL_CAPACITY_AVAILABLE_BUT_CANDIDATE_GATE_PENDING":
+        category, handoff = "CANONICAL_CAPACITY_CONSUMER_MISMATCH", "canonical capacity fact -> candidate execution integrity"
+        symptoms, owner, repair = ["PENDING_CAPACITY_OR_CONCENTRATION", "CRYPTO_ORDER_READY_COUNT_ZERO"], "candidate execution capacity consumer", "consume the current canonical capacity fact and preserve fail-closed freshness"
+    elif kind == "CRYPTO_HORIZON_INPUT_NOT_PERSISTED":
+        category, handoff = "CRYPTO_HORIZON_PRODUCER_CONSUMER_MISMATCH", "crypto ranking snapshot -> candidate execution integrity"
+        symptoms, owner, repair = ["PENDING_HORIZON_EVIDENCE", "CRYPTO_ORDER_READY_COUNT_ZERO"], "crypto ranking snapshot producer", "persist the bounded horizon evidence envelope; do not supply a default horizon"
+    elif kind == "MATRIX_WARNING_WITH_SENTINEL_PASS":
+        category, handoff = "MONITORING_COVERAGE_GAP", "multilane completion matrix -> sentinel/governance summary"
+        symptoms, owner, repair = ["SENTINEL_FALSE_PASS", "GOVERNANCE_FALSE_PASS"], "continuous integrity scanner", "promote matrix warnings to a bounded root-cause finding"
     else:
         category, handoff = kind, str(signal.get("first_bad_handoff") or "unclassified critical handoff")
         symptoms, owner, repair = list(signal.get("downstream_symptoms") or []), str(signal.get("owner") or "unknown"), str(signal.get("repair") or "produce bounded human repair package")

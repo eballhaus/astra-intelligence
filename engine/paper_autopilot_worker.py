@@ -38,6 +38,8 @@ from engine.astra_truth_arbitration_v1 import TruthContradictionRegistryV1, arbi
 from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystemIntegrityScannerV1
 from engine.astra_crypto_market_data_capability_matrix_v1 import CryptoMarketDataCapabilityMatrixV1
 from engine.astra_multilane_completion_matrix_v1 import AstraMultilaneCompletionMatrixV1
+from engine.astra_evidence_accumulation_capacity_v1 import canonical_candidate_capacity_fact
+from engine.candidate_execution_integrity_v1 import derive_crypto_horizon_evidence_v1
 
 
 class PaperAutopilotWorker:
@@ -219,6 +221,11 @@ class PaperAutopilotWorker:
             crypto_activation = dict(activation_builder() or {}) if callable(activation_builder) else {}
             candidate_source = getattr(self.autopilot, "get_crypto_candidate_rows_fn", None)
             crypto_rows = [dict(row) for row in (candidate_source() or []) if isinstance(row, dict)] if callable(candidate_source) else []
+            # Reuse the producer/consumer contract normalizer before every
+            # worker-owned diagnostic consumes cached crypto candidates. This
+            # cannot rank, promote, or execute a candidate; it only preserves
+            # explicit evidence or an insufficient-evidence outcome.
+            crypto_rows = [{**row, **derive_crypto_horizon_evidence_v1(row)} for row in crypto_rows]
         except Exception:
             # The crypto lane remains independently fail-closed.  A missing
             # cached source cannot affect equity work or create a candidate.
@@ -308,8 +315,16 @@ class PaperAutopilotWorker:
                 "capital_limit": crypto_activation.get("capital_limit"),
                 "crypto_day_trade_capacity": crypto_activation.get("crypto_day_trade_capacity"),
                 "crypto_short_swing_capacity": crypto_activation.get("crypto_short_swing_capacity"),
+                # Legacy fields are reported for compatibility only. Candidate
+                # integrity receives the canonical fact below.
                 "day_trade_capacity_available": crypto_activation.get("day_trade_capacity_available"),
                 "short_swing_capacity_available": crypto_activation.get("short_swing_capacity_available"),
+                "legacy_capacity_aliases_diagnostic_only": True,
+                "canonical_capacity_fact": canonical_candidate_capacity_fact(
+                    capacity,
+                    lane_id="CRYPTO",
+                    open_symbols=[row.get("symbol") for row in canonical_crypto_positions],
+                ),
                 "lane_state": crypto_activation.get("lane_state"),
                 "broker_reconciliation_ok": bool(capacity.get("broker_positions_fetch_ok")) and broker_crypto_count == len(canonical_crypto_positions),
                 "broker_reconciliation_status": "CURRENT_MATCHED" if broker_crypto_count == len(canonical_crypto_positions) else "COUNT_MISMATCH_FAIL_CLOSED",
@@ -382,6 +397,7 @@ class PaperAutopilotWorker:
                 "crypto_ranking_snapshot": dict(getattr(self.autopilot, "_runtime_state", {}).get("crypto_rankings_snapshot_v1") or {}),
                 "crypto_market_data_matrix": crypto_matrix,
                 "multilane_completion_matrix": multilane_completion,
+                "canonical_capacity_fact": dict(lane.get("canonical_capacity_fact") or {}),
                 "get_side_effects": 0,
             },
         )

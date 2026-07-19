@@ -553,3 +553,55 @@ def candidate_capacity_decision(
         "exact_blockers": list(dict.fromkeys(blockers)),
         "allowed": decision in {"AVAILABLE", "AVAILABLE_FROM_LANE_RESERVE"},
     }
+
+
+def canonical_candidate_capacity_fact(
+    snapshot: Mapping[str, Any] | None,
+    *,
+    lane_id: str,
+    symbol: str = "",
+    open_symbols: Iterable[str] | None = None,
+    global_risk_allowed: bool | None = None,
+) -> dict[str, Any]:
+    """Return the only capacity fact a candidate execution consumer may use.
+
+    The existing capacity decision remains the policy owner.  This thin
+    envelope adds provenance and freshness so a consumer cannot accidentally
+    substitute a legacy boolean such as ``day_trade_capacity_available``.
+    It is pure and fail-closed when the worker-owned broker snapshot is absent
+    or not fresh.
+    """
+    source = dict(snapshot or {})
+    lane = _text(lane_id).upper()
+    decision = candidate_capacity_decision(
+        source,
+        lane_id=lane,
+        symbol=symbol,
+        open_symbols=open_symbols,
+        global_risk_allowed=global_risk_allowed,
+    ) if source else {
+        "capacity_decision": "BROKER_STATE_STALE",
+        "exact_blockers": ["CANONICAL_CAPACITY_SNAPSHOT_MISSING"],
+        "allowed": False,
+    }
+    fresh = bool(source) and _text(source.get("broker_reconciliation_status")).upper() == "FRESH"
+    authority_current = bool(fresh and source.get("snapshot_id"))
+    exact_blockers = list(decision.get("exact_blockers") or [])
+    if not authority_current:
+        exact_blockers.append("CANONICAL_CAPACITY_AUTHORITY_NOT_CURRENT")
+    return {
+        **decision,
+        "fact_id": "CANONICAL_CANDIDATE_CAPACITY_FACT",
+        "lane_id": lane,
+        "symbol": _text(symbol).upper() or None,
+        "authority_owner": "astra_evidence_accumulation_capacity_v1.build_capacity_snapshot",
+        "authority_snapshot_id": source.get("snapshot_id"),
+        "authority_generated_at": source.get("generated_at"),
+        "authority_reconciliation_status": source.get("broker_reconciliation_status"),
+        "authority_current": authority_current,
+        "exact_blockers": list(dict.fromkeys(exact_blockers)),
+        "allowed": bool(decision.get("allowed")) and authority_current,
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+    }

@@ -19,6 +19,7 @@ from engine.runtime_environment import load_runtime_environment
 from engine.astra_evidence_accumulation_capacity_v1 import (
     build_capacity_snapshot,
     candidate_capacity_decision,
+    canonical_candidate_capacity_fact,
 )
 from engine.astra_unified_position_lifecycle_v1 import (
     build_legacy_swing_direct_confirmation_v1,
@@ -1058,7 +1059,13 @@ def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
                 r["buy_quality_tier"] = "qualified"
             else:
                 r["buy_quality_tier"] = "weak"
+    is_crypto = str(r.get("asset_class") or r.get("asset_type") or "").strip().lower() in {"crypto", "cryptocurrency"}
     horizon, horizon_source, inferred = _infer_horizon_style(r)
+    # Crypto candidates must carry the worker-persisted horizon evidence.  The
+    # generic compatibility default is useful for older equity rows but must
+    # never silently turn a crypto observation into a day-trade contract.
+    if is_crypto and str(r.get("horizon_evidence_status") or "") != "PERSISTED_CANONICAL":
+        horizon, horizon_source, inferred = "", "", False
     if horizon:
         r.setdefault("trade_horizon_style", horizon)
         r.setdefault("best_horizon_style", horizon)
@@ -4145,7 +4152,7 @@ class PaperAutopilotEngine:
             return False, "crypto_data_quality_below_floor", meta
         return True, "crypto_market_data_gates_passed", meta
 
-    def _crypto_execution_integrity_gate(self, row: dict[str, Any], *, capacity_available: bool = True, duplicate_pending: bool = False, reconciliation_ok: bool = False) -> tuple[bool, str, dict[str, Any]]:
+    def _crypto_execution_integrity_gate(self, row: dict[str, Any], *, capacity_snapshot: Mapping[str, Any] | None = None, duplicate_pending: bool = False, reconciliation_ok: bool = False) -> tuple[bool, str, dict[str, Any]]:
         """Use the same strict identity/gate truth as the diagnostics and broker."""
         activation = self._crypto_paper_activation_status()
         capability = dict(activation.get("capability") or {})
@@ -4156,7 +4163,11 @@ class PaperAutopilotEngine:
             lane_state="LANE_PAPER_ACTIVE_BOUNDED" if activation.get("paper_active_bounded") else "LANE_BLOCKED",
             paper_mode_verified=bool(capability.get("paper_mode_verified")),
             live_endpoint_detected=bool(capability.get("live_endpoint_detected")),
-            capacity_available=capacity_available,
+            capacity_fact=canonical_candidate_capacity_fact(
+                capacity_snapshot,
+                lane_id="CRYPTO",
+                symbol=str(row.get("symbol") or row.get("ticker") or ""),
+            ),
             duplicate_pending=duplicate_pending,
             broker_reconciliation_ok=reconciliation_ok,
             kill_switch_enabled=bool(activation.get("kill_switch_enabled")),
@@ -5369,6 +5380,7 @@ class PaperAutopilotEngine:
         broker_reconciliation_active: bool = False,
         max_new_positions_per_cycle: int | None = None,
         capacity_decision: dict[str, Any] | None = None,
+        capacity_snapshot: Mapping[str, Any] | None = None,
         current_candidates: list[dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], bool, str, dict[str, Any]]:
         r = _normalize_paper_entry_bridge(row)
@@ -5475,11 +5487,11 @@ class PaperAutopilotEngine:
                 session_diag = {}
         if asset == "crypto":
             crypto_activation = self._crypto_paper_activation_status()
-            horizon = str(r.get("paper_entry_horizon_style") or r.get("trade_horizon_style") or "day_trade")
+            horizon = str(r.get("paper_entry_horizon_style") or r.get("trade_horizon_style") or "").strip()
             crypto_data_ok, crypto_data_reason, crypto_data_meta = self._crypto_execution_data_gate(r)
             integrity_ok, integrity_reason, integrity_meta = self._crypto_execution_integrity_gate(
                 r,
-                capacity_available=(crypto_capacity > 0 and total_capacity > 0) or reserve_capacity_allowed,
+                capacity_snapshot=capacity_snapshot,
                 duplicate_pending=symbol in open_syms,
                 reconciliation_ok=broker_reconciliation_active,
             )
@@ -5950,7 +5962,7 @@ class PaperAutopilotEngine:
             integrity_row["notional"] = min(50.0, max(10.0, _to_float(os.getenv("ASTRA_ALPACA_CRYPTO_PAPER_NOTIONAL"), 25.0)))
             integrity_ok, integrity_reason, integrity = self._crypto_execution_integrity_gate(
                 integrity_row,
-                capacity_available=True,
+                capacity_snapshot=dict(self._runtime_state.get("last_evidence_capacity_snapshot") or {}),
                 duplicate_pending=str(r.get("symbol") or "").upper().strip() in set(broker_snapshot.get("broker_open_symbols") or set()),
                 reconciliation_ok=reconciliation_checked,
             )
@@ -7656,6 +7668,7 @@ class PaperAutopilotEngine:
                     broker_open_syms=broker_open_syms,
                 broker_reconciliation_active=broker_reconciliation_active,
                 capacity_decision=capacity_decision,
+                capacity_snapshot=evidence_capacity_snapshot,
                 current_candidates=candidates,
                 )
                 row_trace["horizon_capacity_enabled"] = bool(self.horizon_capacity_enabled)
@@ -8148,6 +8161,7 @@ class PaperAutopilotEngine:
                 broker_open_syms=set(),
                 broker_reconciliation_active=False,
                 capacity_decision=capacity_decision,
+                capacity_snapshot=canonical_capacity,
                 current_candidates=candidates,
             )
             if capacity_decision:

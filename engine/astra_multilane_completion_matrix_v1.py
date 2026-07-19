@@ -102,6 +102,7 @@ class AstraMultilaneCompletionMatrixV1:
         runtime_unexercised: list[dict[str, Any]] = []
         for lane in LANES:
             candidates, traces = by_lane[lane], trace_by_lane[lane]
+            horizon_missing: list[str] = []
             failed = next((row for row in candidates if row.get("order_blocker") or row.get("first_failing_gate") or row.get("operational_source_rejection")), {})
             blocker = str(failed.get("first_failing_gate") or failed.get("order_blocker") or failed.get("operational_source_rejection") or "")
             reason = str(failed.get("order_blocker") or failed.get("reason") or blocker)
@@ -118,9 +119,11 @@ class AstraMultilaneCompletionMatrixV1:
                 stages["candidate_freshness"] = _stage("candidate_freshness", freshness, runtime=freshness == "PASS", reason="candidate source not current" if freshness != "PASS" else "")
                 crypto_failed_gates = [str(x) for x in (crypto_readiness.get("failed_gates") or crypto_readiness.get("candidate_execution_blockers") or [])]
                 if lane == "CRYPTO" and "horizon_assignment" in crypto_failed_gates:
+                    horizon_rows = [dict(row) for row in ((crypto_readiness.get("pair_eligibility") or {}).get("evaluated_candidates") or []) if isinstance(row, dict)]
+                    horizon_missing = sorted({str(item) for row in horizon_rows for item in (row.get("horizon_evidence_missing") or []) if str(item)})
                     first = "horizon_assignment"
-                    stages["eligibility"] = _stage("eligibility", "FAIL_UNKNOWN_CLOSED", reason="candidate execution integrity rejected missing horizon", first_bad_handoff="ranking snapshot -> operational candidate")
-                    stages["horizon_assignment"] = _stage("horizon_assignment", "INSUFFICIENT_EVIDENCE", reason="no canonical day/swing/scalp horizon input persisted", first_bad_handoff="crypto ranking snapshot -> candidate execution integrity", runtime=True)
+                    stages["eligibility"] = _stage("eligibility", "INSUFFICIENT_EVIDENCE", reason="candidate execution integrity requires persisted horizon evidence", first_bad_handoff="ranking snapshot -> operational candidate")
+                    stages["horizon_assignment"] = _stage("horizon_assignment", "INSUFFICIENT_EVIDENCE", reason=horizon_missing[0] if horizon_missing else "no canonical day/swing/scalp horizon input persisted", first_bad_handoff="crypto ranking snapshot -> candidate execution integrity", runtime=True)
                 elif blocker:
                     first = blocker
                     classification = "LEGITIMATE_WAITING" if "market is closed" in reason.lower() else "FAIL_UNKNOWN_CLOSED"
@@ -154,7 +157,7 @@ class AstraMultilaneCompletionMatrixV1:
                 "cortex_acknowledgement": "ROOT_CAUSE_GROUPING_ACTIVE",
             }
             if first and lane == "CRYPTO":
-                manifest.append({"root_cause_id": "CRYPTO_HORIZON_EVIDENCE_MISSING", "title": "Crypto horizon input is absent at the execution boundary", "classification": "INSUFFICIENT_EVIDENCE", "confidence": "VERIFIED", "severity": "HIGH", "lanes_affected": [lane], "stages_affected": ["horizon_assignment", "lifecycle_forecast", "order_ready"], "first_bad_handoff": "crypto ranking snapshot -> candidate execution integrity", "verified_evidence": "cached rows have no assigned_horizon, paper_entry_horizon_style, or recognized hold window", "downstream_symptoms": ["EVIDENCE_NOT_READY", "ORDER_READY_COUNT_ZERO"], "repair_level": "LEVEL_3_HUMAN_OR_NEW_EVIDENCE", "human_action_required": False, "expected_blockers_cleared": []})
+                manifest.append({"root_cause_id": "CRYPTO_HORIZON_EVIDENCE_MISSING", "title": "Crypto horizon evidence is incomplete at the execution boundary", "classification": "INSUFFICIENT_EVIDENCE", "confidence": "VERIFIED", "severity": "HIGH", "lanes_affected": [lane], "stages_affected": ["horizon_assignment", "lifecycle_forecast", "order_ready"], "first_bad_handoff": "crypto ranking snapshot -> candidate execution integrity", "verified_evidence": "cached row horizon envelope is absent or incomplete", "missing_upstream_facts": horizon_missing, "downstream_symptoms": ["EVIDENCE_NOT_READY", "ORDER_READY_COUNT_ZERO"], "repair_level": "LEVEL_3_HUMAN_OR_NEW_EVIDENCE", "human_action_required": False, "expected_blockers_cleared": []})
         return {"schema_version": VERSION, "generated_at": _now(), "status": "WARNING", "lanes": lanes,
                 "shared_root_causes": [], "lane_specific_root_causes": manifest, "legitimate_waiting_states": waiting,
                 "runtime_unexercised_stages": runtime_unexercised[:120], "coverage_gaps": [], "repair_manifest": manifest,

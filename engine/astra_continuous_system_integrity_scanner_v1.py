@@ -212,6 +212,37 @@ class ContinuousSystemIntegrityScannerV1:
         elif eligible == 0:
             waiting.append({"state": "LEGITIMATE_WAITING_STATE", "reason": "insufficient_completed_broker_lifecycle_evidence", "fail_closed": True})
         integrity = dict(context.get("crypto_integrity") or {})
+        capacity_fact = dict(context.get("canonical_capacity_fact") or {})
+        completion = dict(context.get("multilane_completion_matrix") or {})
+        crypto_completion = dict((completion.get("lanes") or {}).get("CRYPTO") or {})
+        candidate_blockers = set(str(item) for item in (integrity.get("candidate_execution_blockers") or []))
+        if bool(capacity_fact.get("authority_current")) and bool(capacity_fact.get("allowed")) and "capacity_concentration" in candidate_blockers:
+            signals.append({"kind": "CANONICAL_CAPACITY_AVAILABLE_BUT_CANDIDATE_GATE_PENDING", "severity": "HIGH",
+                            "canonical_fact_ids": ["CANONICAL_CANDIDATE_CAPACITY_FACT"],
+                            "affected_endpoints": ["crypto readiness", "multilane completion matrix"],
+                            "affected_components": ["candidate_execution_integrity", "crypto operational readiness"],
+                            "first_bad_handoff": "canonical capacity fact -> candidate execution integrity",
+                            "owner": "candidate execution capacity consumer",
+                            "repair": "consume canonical capacity fact rather than legacy availability aliases"})
+        if capacity_fact and not bool(capacity_fact.get("authority_current")):
+            waiting.append({"state": "LEGITIMATE_WAITING_STATE", "reason": "canonical_capacity_authority_not_current", "fail_closed": True})
+        horizon_rows = list((integrity.get("pair_eligibility") or {}).get("evaluated_candidates") or [])
+        if any(str((row.get("gate_status") or {}).get("horizon_assignment") or "").startswith("PENDING_HORIZON") for row in horizon_rows if isinstance(row, dict)):
+            signals.append({"kind": "CRYPTO_HORIZON_INPUT_NOT_PERSISTED", "severity": "HIGH",
+                            "canonical_fact_ids": ["CRYPTO_PERSISTED_HORIZON_EVIDENCE"],
+                            "affected_endpoints": ["crypto readiness", "multilane completion matrix"],
+                            "affected_components": ["crypto ranking snapshot", "candidate execution integrity"],
+                            "first_bad_handoff": "crypto ranking snapshot -> candidate execution integrity",
+                            "owner": "crypto ranking snapshot producer",
+                            "repair": "persist a canonical horizon evidence envelope or retain an explicit insufficient-evidence state"})
+        if str(completion.get("status") or "").upper() == "WARNING" and crypto_completion.get("first_blocker"):
+            signals.append({"kind": "MATRIX_WARNING_WITH_SENTINEL_PASS", "severity": "HIGH",
+                            "canonical_fact_ids": ["CRYPTO_MULTILANE_COMPLETION_STATUS"],
+                            "affected_endpoints": ["sentinel", "Governance", "Cortex", "multilane completion matrix"],
+                            "affected_components": ["continuous integrity scanner", "multilane completion matrix"],
+                            "first_bad_handoff": "multilane completion matrix -> sentinel/governance summary",
+                            "owner": "continuous integrity scanner",
+                            "repair": "surface matrix warnings as root-cause findings before reporting PASS"})
         reconciliation = dict(integrity.get("reconciliation") or {})
         if reconciliation and str(reconciliation.get("broker_reconciliation_status") or "").upper() == "COUNT_MISMATCH_FAIL_CLOSED":
             signals.append({"kind": "BROKER_LOCAL_RECONCILIATION_FAILURE", "severity": "HIGH", "canonical_fact_ids": ["LOCAL_OPEN_CRYPTO_POSITION_COUNT", "BROKER_OPEN_CRYPTO_POSITION_COUNT"],

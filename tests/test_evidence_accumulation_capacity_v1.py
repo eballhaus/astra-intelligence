@@ -75,6 +75,11 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
             summary = ledger._read_summary()
             self.assertEqual(summary["lanes"]["DAY"]["allowed_by_lane_reserve"], 0)
             self.assertEqual(summary["lanes"]["CRYPTO"]["reserve_order_ready_count"], 0)
+            self.assertFalse(summary["lanes"]["CRYPTO"]["reserve_commitments_pending_is_current_occupancy"])
+            self.assertEqual(
+                summary["lanes"]["CRYPTO"]["reserve_commitments_converted_to_pending_order_lifetime"],
+                summary["lanes"]["CRYPTO"]["reserve_commitments_pending"],
+            )
     def test_day_reserve_allows_full_global_account(self):
         positions = [{"symbol": f"S{i}", "lane_id": "SWING", "market_value": 100} for i in range(10)]
         result = candidate_capacity_decision(snapshot(positions=positions), lane_id="DAY", symbol="NEW", open_symbols=[])

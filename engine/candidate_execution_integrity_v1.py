@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Mapping
 
 
 CRYPTO_ASSET_CLASSES = {"crypto", "cryptocurrency"}
@@ -50,6 +50,72 @@ def _timestamp_age_seconds(value: Any) -> float | None:
         return max(0.0, (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds())
     except (TypeError, ValueError):
         return None
+
+
+def derive_crypto_horizon_evidence_v1(candidate: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Build a deterministic, persisted crypto-horizon evidence envelope.
+
+    This is deliberately not a ranking adjustment and never supplies a
+    fallback horizon.  The producer must provide a completed-bar window,
+    directional bar return, risk range, confidence, and an explicit regime
+    observation.  Missing source facts remain visible and fail closed.
+    """
+    row = dict(candidate or {})
+    bars = dict(row.get("bar_evidence") or {})
+    completed = int(_number(bars.get("completed_bar_count") or bars.get("count"), 0.0))
+    volume = _number(bars.get("rolling_completed_bar_volume") or row.get("volume") or row.get("quote_volume"), 0.0)
+    momentum = _number(row.get("completed_bar_return_pct") or row.get("crypto_completed_bar_return_pct"), 0.0)
+    risk = _number(row.get("crypto_risk_pct"), 0.0)
+    confidence = _number(row.get("confidence") or row.get("ranking_score") or row.get("score"), 0.0)
+    if 0 < confidence <= 1:
+        confidence *= 100.0
+    regime = _text(row.get("market_regime") or row.get("regime") or row.get("external_environment_tier") or (row.get("ranking_feedback_profile") or {}).get("external_environment_tier"))
+    missing: list[str] = []
+    if completed < 8:
+        missing.append("COMPLETED_15MIN_BAR_WINDOW_INSUFFICIENT")
+    if volume <= 0:
+        missing.append("COMPLETED_BAR_VOLUME_MISSING")
+    if not row.get("quote_timestamp"):
+        missing.append("QUOTE_TIMESTAMP_MISSING")
+    if risk <= 0:
+        missing.append("BAR_RISK_ENVELOPE_MISSING")
+    if momentum == 0:
+        missing.append("DIRECTIONAL_COMPLETED_BAR_RETURN_MISSING")
+    if confidence <= 0:
+        missing.append("RANKING_CONFIDENCE_MISSING")
+    if not regime:
+        missing.append("REGIME_OBSERVATION_MISSING")
+    if missing:
+        return {
+            "horizon_evidence_status": "INSUFFICIENT_EVIDENCE",
+            "horizon_evidence_missing": missing,
+            "assigned_horizon": None,
+            "paper_entry_horizon_style": None,
+            "horizon_scores": {},
+            "horizon_provenance": "crypto_15m_completed_bar_horizon_v1",
+            "horizon_assignment_version": "1.0.0",
+            "horizon_confidence": 0.0,
+        }
+    # The 15-minute completed-bar source proves an intraday window only.  It
+    # cannot justify a fabricated scalp or swing assignment.
+    directional_strength = min(20.0, abs(momentum) * 100.0)
+    evidence_strength = min(20.0, completed / 2.0) + min(20.0, max(0.0, confidence) / 5.0)
+    day_score = round(min(100.0, 40.0 + directional_strength + evidence_strength + min(20.0, risk * 4.0)), 2)
+    return {
+        "horizon_evidence_status": "PERSISTED_CANONICAL",
+        "horizon_evidence_missing": [],
+        "assigned_horizon": "day_trade",
+        "paper_entry_horizon_style": "day_trade",
+        "horizon_scores": {"scalp": 0.0, "day_trade": day_score, "swing_trade": 0.0},
+        "horizon_provenance": "crypto_15m_completed_bar_horizon_v1",
+        "horizon_assignment_version": "1.0.0",
+        "horizon_confidence": day_score,
+        "horizon_evidence": {
+            "resolution": bars.get("resolution"), "completed_bar_count": completed,
+            "completed_bar_return_pct": round(momentum, 6), "rolling_completed_bar_volume": volume,
+            "risk_pct": risk, "regime": regime,
+        },
+    }
 
 
 def normalize_crypto_pair_strict(
@@ -104,6 +170,7 @@ def candidate_execution_integrity(
     duplicate_pending: bool = False,
     broker_reconciliation_ok: bool = False,
     kill_switch_enabled: bool = False,
+    capacity_fact: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a complete mandatory-gate audit with a fail-closed terminal state."""
     row = dict(candidate or {})
@@ -138,6 +205,24 @@ def candidate_execution_integrity(
     horizon = _text(row.get("paper_entry_horizon_style") or row.get("assigned_horizon") or row.get("trade_horizon_style")).lower()
     if horizon == "intraday":
         horizon = "day_trade"
+    horizon_status = _text(row.get("horizon_evidence_status"))
+    horizon_missing = list(row.get("horizon_evidence_missing") or [])
+    canonical_horizon = bool(
+        horizon in VALID_HORIZONS
+        and horizon != "scalp"
+        and horizon_status == "PERSISTED_CANONICAL"
+        and _text(row.get("horizon_provenance"))
+        and isinstance(row.get("horizon_scores"), dict)
+    )
+    fact = dict(capacity_fact or {})
+    if fact:
+        capacity_gate = "PASS" if bool(fact.get("allowed")) and bool(fact.get("authority_current")) else (
+            "PENDING_CANONICAL_CAPACITY_AUTHORITY" if not bool(fact.get("authority_current")) else "PENDING_" + _text(fact.get("capacity_decision") or "CAPACITY")
+        )
+    else:
+        # Compatibility is retained only for direct legacy callers. Production
+        # crypto paths inject the canonical fact and cannot clear this gate.
+        capacity_gate = "PASS" if capacity_available else "PENDING_CAPACITY_OR_CONCENTRATION"
     gates = {
         "identity": "PASS" if identity.get("ok") else identity.get("reason"),
         "broker_support": "PASS" if pair and pair in supported else "REJECTED_UNSUPPORTED_CRYPTO_PAIR",
@@ -148,11 +233,11 @@ def candidate_execution_integrity(
         "data_quality": "PASS" if quality >= 50 else "PENDING_DATA_QUALITY",
         "volatility_risk": "PASS" if _text(row.get("volatility_risk_status") or "pass").lower() not in {"blocked", "reject", "high"} else "REJECTED_VOLATILITY_RISK",
         "duplicate_pending": "REJECTED_DUPLICATE_OR_PENDING" if duplicate_pending or _bool(row.get("duplicate_pending_order")) else "PASS",
-        "capacity_concentration": "PASS" if capacity_available and _text(row.get("concentration_status") or "pass").lower() not in {"blocked", "reject"} else "PENDING_CAPACITY_OR_CONCENTRATION",
+        "capacity_concentration": capacity_gate if _text(row.get("concentration_status") or "pass").lower() not in {"blocked", "reject"} else "PENDING_CAPACITY_OR_CONCENTRATION",
         "broker_reconciliation": "PASS" if broker_reconciliation_ok else "PENDING_BROKER_RECONCILIATION",
         "paper_live_safety": "PASS" if paper_mode_verified and not live_endpoint_detected and not kill_switch_enabled else "REJECTED_PAPER_LIVE_SAFETY",
         "confidence_ranking": "PASS" if confidence >= 52 else "PENDING_CONFIDENCE_OR_RANKING",
-        "horizon_assignment": "PASS" if horizon in VALID_HORIZONS and horizon != "scalp" else "PENDING_HORIZON_ASSIGNMENT",
+        "horizon_assignment": "PASS" if canonical_horizon else "PENDING_HORIZON_EVIDENCE:" + (horizon_missing[0] if horizon_missing else "NOT_PERSISTED_CANONICAL"),
         "order_schema_min_notional": "PASS" if _number(row.get("notional"), 25.0) >= 1.0 else "REJECTED_MIN_NOTIONAL",
         "budget": "PASS" if _text(row.get("budget_status") or "pass").lower() not in {"blocked", "reject"} else "REJECTED_BUDGET",
         "kill_switch": "REJECTED_KILL_SWITCH" if kill_switch_enabled else "PASS",
@@ -186,6 +271,9 @@ def candidate_execution_integrity(
         "data_quality_score": quality,
         "confidence": round(confidence, 2),
         "assigned_horizon": horizon or "unknown",
+        "horizon_evidence_status": horizon_status or "INSUFFICIENT_EVIDENCE",
+        "horizon_evidence_missing": horizon_missing,
+        "capacity_fact": fact or None,
         "lane_state": lane_state,
         "semantic_fail_closed": bool(failed),
         "provider_calls_used": 0,

@@ -213,7 +213,7 @@ def build_crypto_operational_integrity_readiness_v1(
             known_equity_symbols=known_equity_symbols or set(),
             lane_state=str(lane.get("lane_state") or "LANE_BLOCKED"),
             paper_mode_verified=paper_mode, live_endpoint_detected=live_endpoint,
-            capacity_available=bool(lane.get("day_trade_capacity_available") or lane.get("short_swing_capacity_available")),
+            capacity_fact=dict(lane.get("canonical_capacity_fact") or {}),
             duplicate_pending=duplicate, broker_reconciliation_ok=bool(lane.get("broker_reconciliation_ok", False)),
             kill_switch_enabled=kill_switch,
         )

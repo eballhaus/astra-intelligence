@@ -96,6 +96,15 @@ class LaneExecutionTraceLedgerV1:
                     # older workers without rewriting historical trace rows.
                     for key, default in self._empty_lane().items():
                         lane_data.setdefault(key, default)
+                    # This counter is appended once per trace row and never
+                    # decremented, so it is a historical conversion count,
+                    # not current pending broker/order occupancy.  Preserve
+                    # the legacy key for readers while publishing an explicit
+                    # non-authoritative label for new diagnostics.
+                    lane_data["reserve_commitments_converted_to_pending_order_lifetime"] = int(
+                        lane_data.get("reserve_commitments_pending") or 0
+                    )
+                    lane_data["reserve_commitments_pending_is_current_occupancy"] = False
                     data["lanes"][lane] = lane_data
                 for cohort in COHORTS:
                     cohort_data = data["cohorts"].get(cohort)
