@@ -35239,6 +35239,47 @@ def _alpaca_paper_status_fast_fallback_v1(reason: str = "cache_first_status") ->
     return out
 
 
+@router.get("/api/broker_entry_price_lineage_repair_v1")
+def broker_entry_price_lineage_repair_v1(max_rows: int = 250):
+    """Read-only audit of ID-linked paper entry-price lineage.
+
+    The endpoint deliberately does not contact Alpaca or mutate historical
+    records.  Worker reconciliation is the only path that can replace a
+    provisional price with a broker-confirmed fill.
+    """
+    try:
+        payload = dict(PAPER_AUTOPILOT.entry_price_lineage_dry_run_audit_v1(max_rows=max_rows) or {})
+    except Exception as exc:
+        payload = {
+            "endpoint": "/api/broker_entry_price_lineage_repair_v1",
+            "status": "DRY_RUN_UNAVAILABLE",
+            "historical_state_modified": False,
+            "apply_mode_available": False,
+            "records_reviewed": 0,
+            "reason": f"dry_run_unavailable:{str(exc)[:120]}",
+        }
+    payload.update({
+        "api_calls_used": 0,
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        "paper_only_preserved": True,
+        "alpaca_paper_only_preserved": True,
+        "live_trading_changed": False,
+        "broker_live_endpoint_allowed": False,
+        "broker_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "ranking_behavior_changed": False,
+        "thresholds_changed": False,
+        "forced_trades_enabled": False,
+        "forced_exits_enabled": False,
+        "learned_exits_enabled": False,
+        "automatic_promotions_enabled": False,
+        "behavior_safe_to_apply": False,
+    })
+    return payload
+
+
 @router.get("/api/alpaca_paper_status_v1")
 def alpaca_paper_status_v1(force: bool = False):
     cached = _CACHE.get("alpaca_paper_status_v1") if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}

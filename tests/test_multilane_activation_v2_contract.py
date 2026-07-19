@@ -69,7 +69,9 @@ class MultilaneActivationV2ContractTests(unittest.TestCase):
                 {
                     "lane_id": "DAY", "symbol": "NVDA", "asset_type": "stock", "position_id": "l1",
                     "entry_order_id": "bo", "entry_fill_id": "bf", "entry_timestamp": "2026-01-01T00:00:00Z",
-                    "entry_price": 100, "quantity": 1,
+                    "entry_price": 100, "broker_filled_avg_price": 100, "entry_price_verified": True,
+                    "entry_price_source": "alpaca_paper_order.filled_avg_price",
+                    "entry_price_evidence_class": "BROKER_CONFIRMED_FILL", "quantity": 1,
                 },
                 {"exit_order_id": "so", "exit_fill_id": "sf", "filled_at": "2026-01-01T01:00:00Z"},
                 exit_price=101, return_percent=1, hold_seconds=3600, exit_reason="fixture",

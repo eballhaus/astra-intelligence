@@ -213,6 +213,35 @@ class TradeLifecycleExcursionV1:
             return None
 
         entry_price = _to_float(paper_row.get("entry_price"), _to_float(entry_payload.get("entry_price"), 0.0))
+        entry_price_verified = bool(
+            paper_row.get("entry_price_verified")
+            if paper_row.get("entry_price_verified") is not None
+            else entry_payload.get("entry_price_verified", False)
+        )
+        entry_price_source = _to_text(
+            paper_row.get("entry_price_source") or entry_payload.get("entry_price_source"),
+            "ENTRY_PRICE_UNAVAILABLE",
+        )
+        entry_price_evidence_class = _to_text(
+            paper_row.get("entry_price_evidence_class") or entry_payload.get("entry_price_evidence_class"),
+            "ENTRY_PRICE_UNAVAILABLE",
+        )
+        entry_price_lineage_status = _to_text(
+            paper_row.get("entry_price_lineage_status") or entry_payload.get("entry_price_lineage_status"),
+            "ENTRY_PRICE_UNAVAILABLE",
+        )
+        entry_price_lineage_reason = _to_text(
+            paper_row.get("entry_price_lineage_reason") or entry_payload.get("entry_price_lineage_reason"),
+            "entry_price_lineage_not_recorded",
+        )
+        provisional_entry_price = _to_float(
+            paper_row.get("provisional_entry_price"),
+            _to_float(entry_payload.get("provisional_entry_price"), 0.0),
+        )
+        broker_filled_avg_price = _to_float(
+            paper_row.get("broker_filled_avg_price"),
+            _to_float(entry_payload.get("broker_filled_avg_price"), 0.0),
+        )
         current_price = _to_float(
             latest_row.get("price"),
             _to_float(
@@ -290,6 +319,21 @@ class TradeLifecycleExcursionV1:
             "asset_type": _to_text(paper_row.get("asset_type") or entry_payload.get("asset_type"), "stock"),
             "entry_timestamp": entry_ts,
             "entry_price": _round(entry_price),
+            "provisional_entry_price": _round(provisional_entry_price) if provisional_entry_price > 0.0 else None,
+            "broker_filled_avg_price": _round(broker_filled_avg_price) if broker_filled_avg_price > 0.0 else None,
+            "entry_price_source": entry_price_source,
+            "entry_price_evidence_class": entry_price_evidence_class,
+            "entry_price_verified": entry_price_verified,
+            "entry_price_lineage_status": entry_price_lineage_status,
+            "entry_price_lineage_reason": entry_price_lineage_reason,
+            "entry_order_id": _to_text(paper_row.get("entry_order_id") or paper_row.get("source_broker_order_id") or entry_payload.get("entry_order_id")),
+            "entry_fill_id": _to_text(paper_row.get("entry_fill_id") or entry_payload.get("entry_fill_id")),
+            "source_client_order_id": _to_text(paper_row.get("source_client_order_id") or entry_payload.get("source_client_order_id")),
+            "official_metric_eligible": entry_price_verified,
+            "loss_calibration_eligible": entry_price_verified,
+            "lifecycle_learning_eligible": entry_price_verified,
+            "diagnostic_only": not entry_price_verified,
+            "diagnostic_only_reason": "broker_confirmed_entry_price_required" if not entry_price_verified else "",
             "current_timestamp": current_ts,
             "current_price": _round(current_price),
             "current_return_pct": _round(current_return),

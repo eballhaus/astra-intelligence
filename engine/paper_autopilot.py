@@ -586,6 +586,153 @@ def _safe_json_load(raw: Any) -> dict[str, Any]:
     return {}
 
 
+def _entry_price_pct_difference(provisional: Any, canonical: Any) -> float | None:
+    provisional_value = _to_float(provisional, 0.0)
+    canonical_value = _to_float(canonical, 0.0)
+    if provisional_value <= 0.0 or canonical_value <= 0.0:
+        return None
+    return round(abs(canonical_value - provisional_value) / provisional_value * 100.0, 6)
+
+
+def _broker_order_payloads_v1(result: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Return normalized order containers without accepting non-broker prices."""
+    raw = dict(result or {})
+    payloads: list[dict[str, Any]] = []
+    for candidate in (raw, raw.get("order"), raw.get("broker_order"), raw.get("data")):
+        if isinstance(candidate, dict):
+            payload = dict(candidate)
+            if payload not in payloads:
+                payloads.append(payload)
+    return payloads
+
+
+def resolve_canonical_entry_price_lineage_v1(
+    *,
+    symbol: Any,
+    provisional_entry_price: Any,
+    candidate_entry_price: Any = None,
+    broker_order_result: dict[str, Any] | None = None,
+    broker_position: dict[str, Any] | None = None,
+    expected_broker_order_id: Any = None,
+    expected_client_order_id: Any = None,
+    paper_broker_context: bool = True,
+) -> dict[str, Any]:
+    """Resolve entry-price evidence without inferring a fill from a quote.
+
+    Position-average fallback requires explicit order/client lineage.  Matching
+    only by symbol would silently pair unrelated lots and is intentionally not
+    accepted as broker truth.
+    """
+    normalized_symbol = str(symbol or "").upper().strip()
+    provisional = _to_float(provisional_entry_price, 0.0)
+    candidate = _to_float(candidate_entry_price, 0.0)
+    expected_order = str(expected_broker_order_id or "").strip()
+    expected_client = str(expected_client_order_id or "").strip()
+    base = {
+        "canonical_entry_price": None,
+        "provisional_entry_price": provisional if provisional > 0.0 else None,
+        "broker_filled_avg_price": None,
+        "entry_price_source": "ENTRY_PRICE_UNAVAILABLE",
+        "entry_price_evidence_class": "ENTRY_PRICE_UNAVAILABLE",
+        "entry_price_verified": False,
+        "entry_price_provisional": False,
+        "entry_price_lineage_status": "ENTRY_PRICE_UNAVAILABLE",
+        "entry_price_lineage_reason": "no_valid_submission_or_broker_fill_price",
+        "entry_order_id": expected_order,
+        "source_client_order_id": expected_client,
+        "entry_fill_id": "",
+        "entry_filled_at": "",
+        "entry_slippage_pct": None,
+        "entry_price_mismatch_pct": None,
+        "entry_price_mismatch_over_5pct": False,
+        "entry_price_mismatch_over_20pct": False,
+        "entry_price_mismatch_over_50pct": False,
+    }
+    for order in _broker_order_payloads_v1(broker_order_result):
+        status = str(order.get("status") or order.get("order_status") or "").lower().strip()
+        order_symbol = str(order.get("symbol") or normalized_symbol).upper().strip()
+        order_id = str(order.get("id") or order.get("broker_order_id") or expected_order).strip()
+        client_id = str(order.get("client_order_id") or expected_client).strip()
+        paper_flag = order.get("paper_mode_verified")
+        if status != "filled" or not paper_broker_context or paper_flag is False:
+            continue
+        if not normalized_symbol or order_symbol != normalized_symbol:
+            continue
+        filled_price = _to_float(order.get("filled_avg_price"), 0.0)
+        if filled_price <= 0.0:
+            continue
+        fill_time = str(order.get("filled_at") or "").strip()
+        fill_id = str(order.get("fill_id") or order.get("execution_id") or (f"{order_id}:{fill_time}" if order_id and fill_time else "")).strip()
+        mismatch = _entry_price_pct_difference(provisional, filled_price)
+        return {
+            **base,
+            "canonical_entry_price": filled_price,
+            "broker_filled_avg_price": filled_price,
+            "entry_price_source": "alpaca_paper_order.filled_avg_price",
+            "entry_price_evidence_class": "BROKER_CONFIRMED_FILL",
+            "entry_price_verified": True,
+            "entry_price_lineage_status": "BROKER_CONFIRMED_FILL",
+            "entry_price_lineage_reason": "filled_alpaca_paper_order_matches_symbol",
+            "entry_order_id": order_id,
+            "source_client_order_id": client_id,
+            "entry_fill_id": fill_id,
+            "entry_filled_at": fill_time,
+            "entry_slippage_pct": round(((filled_price - provisional) / provisional) * 100.0, 6) if provisional > 0.0 else None,
+            "entry_price_mismatch_pct": mismatch,
+            "entry_price_mismatch_over_5pct": bool(mismatch is not None and mismatch > 5.0),
+            "entry_price_mismatch_over_20pct": bool(mismatch is not None and mismatch > 20.0),
+            "entry_price_mismatch_over_50pct": bool(mismatch is not None and mismatch > 50.0),
+        }
+
+    position = dict(broker_position or {})
+    position_symbol = str(position.get("symbol") or "").upper().strip()
+    position_order = str(position.get("entry_order_id") or position.get("source_broker_order_id") or position.get("broker_order_id") or "").strip()
+    position_client = str(position.get("source_client_order_id") or position.get("client_order_id") or "").strip()
+    linked = bool((expected_order and position_order == expected_order) or (expected_client and position_client == expected_client))
+    position_paper_flag = position.get("paper_mode_verified")
+    position_price = _to_float(position.get("avg_entry_price"), 0.0)
+    if paper_broker_context and position_paper_flag is not False and normalized_symbol and position_symbol == normalized_symbol and linked and position_price > 0.0:
+        mismatch = _entry_price_pct_difference(provisional, position_price)
+        return {
+            **base,
+            "canonical_entry_price": position_price,
+            "broker_filled_avg_price": position_price,
+            "entry_price_source": "alpaca_paper_position.avg_entry_price",
+            "entry_price_evidence_class": "BROKER_CONFIRMED_POSITION",
+            "entry_price_verified": True,
+            "entry_price_lineage_status": "BROKER_CONFIRMED_POSITION",
+            "entry_price_lineage_reason": "linked_broker_position_avg_entry_price",
+            "entry_order_id": expected_order or position_order,
+            "source_client_order_id": expected_client or position_client,
+            "entry_price_mismatch_pct": mismatch,
+            "entry_price_mismatch_over_5pct": bool(mismatch is not None and mismatch > 5.0),
+            "entry_price_mismatch_over_20pct": bool(mismatch is not None and mismatch > 20.0),
+            "entry_price_mismatch_over_50pct": bool(mismatch is not None and mismatch > 50.0),
+        }
+    if provisional > 0.0:
+        return {
+            **base,
+            "canonical_entry_price": provisional,
+            "entry_price_source": "latest_submission_quote",
+            "entry_price_evidence_class": "PROVISIONAL_RUNTIME_QUOTE",
+            "entry_price_provisional": True,
+            "entry_price_lineage_status": "PROVISIONAL_AWAITING_BROKER_FILL",
+            "entry_price_lineage_reason": "broker_fill_not_confirmed_at_position_creation",
+        }
+    if candidate > 0.0:
+        return {
+            **base,
+            "canonical_entry_price": candidate,
+            "provisional_entry_price": candidate,
+            "entry_price_source": "candidate_row_price",
+            "entry_price_evidence_class": "UNVERIFIED_CANDIDATE_PRICE",
+            "entry_price_provisional": True,
+            "entry_price_lineage_status": "UNVERIFIED_CANDIDATE_PRICE",
+            "entry_price_lineage_reason": "submission_quote_unavailable",
+        }
+    return base
+
+
 def _parse_iso_utc(raw: Any) -> datetime | None:
     text = str(raw or "").strip()
     if not text:
@@ -1499,6 +1646,15 @@ class PaperAutopilotEngine:
                 "exit_policy_owner": "TEXT",
                 "entry_order_id": "TEXT",
                 "entry_fill_id": "TEXT",
+                "provisional_entry_price": "REAL",
+                "broker_filled_avg_price": "REAL",
+                "entry_price_source": "TEXT",
+                "entry_price_evidence_class": "TEXT",
+                "entry_price_verified": "INTEGER NOT NULL DEFAULT 0",
+                "entry_price_provisional": "INTEGER NOT NULL DEFAULT 1",
+                "entry_price_lineage_status": "TEXT",
+                "entry_price_lineage_reason": "TEXT",
+                "entry_filled_at": "TEXT",
                 "exit_order_id": "TEXT",
                 "exit_fill_id": "TEXT",
             }
@@ -3320,6 +3476,16 @@ class PaperAutopilotEngine:
         exit_order_id = str(broker_fill.get("exit_order_id") or "").strip()
         exit_fill_id = str(broker_fill.get("exit_fill_id") or "").strip()
         lifecycle_id = str(open_row.get("position_id") or "").strip()
+        entry_verified = bool(open_row.get("entry_price_verified"))
+        broker_entry_price = _to_float(open_row.get("broker_filled_avg_price"), 0.0)
+        if not entry_verified or broker_entry_price <= 0.0 or not entry_order_id or not entry_fill_id:
+            return {
+                "persisted": False,
+                "reason": "broker_confirmed_entry_price_required",
+                "entry_price_verified": entry_verified,
+                "entry_order_id_present": bool(entry_order_id),
+                "entry_fill_id_present": bool(entry_fill_id),
+            }
         record = {
             "evidence_class": "BROKER_CONFIRMED_COMPLETE",
             "truth_quality": "BROKER_CONFIRMED_COMPLETE",
@@ -3339,7 +3505,10 @@ class PaperAutopilotEngine:
             "exit_order_id": exit_order_id, "exit_fill_id": exit_fill_id,
             "entry_time": str(open_row.get("entry_timestamp") or ""),
             "exit_time": str(broker_fill.get("filled_at") or _now_iso()),
-            "entry_price": _to_float(open_row.get("entry_price"), 0.0),
+            "entry_price": broker_entry_price,
+            "entry_price_source": str(open_row.get("entry_price_source") or ""),
+            "entry_price_evidence_class": str(open_row.get("entry_price_evidence_class") or ""),
+            "entry_price_verified": True,
             "exit_price": float(exit_price), "quantity": _to_float(open_row.get("quantity"), 0.0),
             "realized_return": round(float(return_percent), 6), "hold_duration": round(float(hold_seconds), 3),
             "return_per_hour": round(float(return_percent) / max(hold_seconds / 3600.0, 1e-9), 6),
@@ -4171,6 +4340,169 @@ class PaperAutopilotEngine:
                 # only prevents an in-flight order from claiming extra capacity.
                 pass
         return out
+
+    def _reconcile_entry_price_lineage_v1(self, broker_snapshot: dict[str, Any]) -> dict[str, Any]:
+        """Replace a stored provisional price only with ID-linked paper fill evidence.
+
+        This is worker-only reconciliation: it never creates a position, does
+        not alter an order, and never matches an entry by symbol alone.
+        """
+        broker = self.alpaca_paper_broker
+        position_by_symbol = dict((broker_snapshot or {}).get("broker_position_by_symbol") or {})
+        with self._connect() as conn:
+            rows = [dict(row or {}) for row in conn.execute(
+                """
+                SELECT * FROM paper_positions
+                WHERE status='OPEN' AND COALESCE(entry_price_verified, 0)=0
+                ORDER BY entry_timestamp ASC LIMIT 12
+                """
+            ).fetchall()]
+        reviewed = repaired = awaiting = broker_reads = 0
+        mismatch_rows: list[dict[str, Any]] = []
+        for row in rows:
+            reviewed += 1
+            symbol = str(row.get("symbol") or "").upper().strip()
+            entry_order_id = str(row.get("entry_order_id") or row.get("source_broker_order_id") or "").strip()
+            client_order_id = str(row.get("source_client_order_id") or "").strip()
+            order_result: dict[str, Any] = {}
+            if entry_order_id and broker is not None and hasattr(broker, "order"):
+                try:
+                    broker_reads += 1
+                    order_result = dict(broker.order(entry_order_id) or {})
+                except Exception:
+                    order_result = {}
+            lineage = resolve_canonical_entry_price_lineage_v1(
+                symbol=symbol,
+                provisional_entry_price=row.get("provisional_entry_price") or row.get("entry_price"),
+                candidate_entry_price=_safe_json_load(row.get("row_json")).get("price"),
+                broker_order_result=order_result,
+                broker_position=dict(position_by_symbol.get(symbol) or {}),
+                expected_broker_order_id=entry_order_id,
+                expected_client_order_id=client_order_id,
+                paper_broker_context=bool((broker_snapshot or {}).get("broker_reconciliation_active")),
+            )
+            if not bool(lineage.get("entry_price_verified")):
+                awaiting += 1
+                continue
+            notes = _safe_json_load(row.get("lifecycle_notes"))
+            notes["entry_price_lineage_reconciliation_v1"] = {
+                "reconciled_at": _now_iso(),
+                "repair_action": "BROKER_FILL_REPLACED_PROVISIONAL_CANONICAL_ENTRY_PRICE",
+                "entry_price_source": lineage.get("entry_price_source"),
+                "entry_price_evidence_class": lineage.get("entry_price_evidence_class"),
+                "entry_price_mismatch_pct": lineage.get("entry_price_mismatch_pct"),
+            }
+            with self._connect() as conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE paper_positions
+                    SET entry_price=?,
+                        provisional_entry_price=CASE WHEN provisional_entry_price IS NULL OR provisional_entry_price<=0 THEN ? ELSE provisional_entry_price END,
+                        broker_filled_avg_price=?, entry_price_source=?, entry_price_evidence_class=?,
+                        entry_price_verified=1, entry_price_provisional=0,
+                        entry_price_lineage_status=?, entry_price_lineage_reason=?,
+                        entry_order_id=?, source_broker_order_id=?, source_client_order_id=?,
+                        entry_fill_id=?, entry_filled_at=?, lifecycle_notes=?, updated_at=?
+                    WHERE position_id=? AND COALESCE(entry_price_verified, 0)=0
+                    """,
+                    (
+                        lineage.get("canonical_entry_price"), lineage.get("provisional_entry_price"),
+                        lineage.get("broker_filled_avg_price"), lineage.get("entry_price_source"),
+                        lineage.get("entry_price_evidence_class"), lineage.get("entry_price_lineage_status"),
+                        lineage.get("entry_price_lineage_reason"), lineage.get("entry_order_id") or entry_order_id,
+                        lineage.get("entry_order_id") or entry_order_id, lineage.get("source_client_order_id") or client_order_id,
+                        lineage.get("entry_fill_id") or row.get("entry_fill_id"), lineage.get("entry_filled_at") or row.get("entry_filled_at"),
+                        _safe_json(notes), _now_iso(), row.get("position_id"),
+                    ),
+                )
+                conn.commit()
+            if int(cursor.rowcount or 0) <= 0:
+                continue
+            repaired += 1
+            if lineage.get("entry_price_mismatch_pct") is not None:
+                mismatch_rows.append({
+                    "position_id": row.get("position_id"), "symbol": symbol,
+                    "provisional_entry_price": lineage.get("provisional_entry_price"),
+                    "broker_filled_avg_price": lineage.get("broker_filled_avg_price"),
+                    "mismatch_pct": lineage.get("entry_price_mismatch_pct"),
+                    "repair_action": "BROKER_FILL_REPLACED_PROVISIONAL_CANONICAL_ENTRY_PRICE",
+                })
+        return {
+            "status": "REPAIRED" if repaired else "AWAITING_BROKER_FILL",
+            "reviewed": reviewed, "repaired": repaired, "awaiting": awaiting,
+            "broker_reads": broker_reads, "mismatches": mismatch_rows[:12],
+            "broker_actions_used": 0, "provider_calls_used": 0, "llm_calls_used": 0,
+            "paper_only_preserved": True, "behavior_safe_to_apply": False,
+        }
+
+    def entry_price_lineage_dry_run_audit_v1(self, max_rows: int = 250) -> dict[str, Any]:
+        """Compare stored entry prices with ID-linked broker truth without applying repairs."""
+        cap = max(1, min(int(max_rows or 250), 500))
+        with self._connect() as conn:
+            positions = [dict(row or {}) for row in conn.execute(
+                "SELECT * FROM paper_positions ORDER BY updated_at DESC LIMIT ?", (cap,)
+            ).fetchall()]
+        registry = self._trade_state_load_json("broker_truth_records_v1.json")
+        truth_rows = [dict(row or {}) for row in (registry.get("records") or []) if isinstance(row, dict)][-1200:]
+        by_order: dict[str, list[dict[str, Any]]] = {}
+        by_fill: dict[str, list[dict[str, Any]]] = {}
+        by_client: dict[str, list[dict[str, Any]]] = {}
+        for truth in truth_rows:
+            for key, index in ((truth.get("entry_order_id") or truth.get("broker_order_id"), by_order), (truth.get("entry_fill_id") or truth.get("fill_id"), by_fill), (truth.get("source_client_order_id") or truth.get("client_order_id"), by_client)):
+                text = str(key or "").strip()
+                if text:
+                    index.setdefault(text, []).append(truth)
+        lifecycle_path = os.path.join(os.path.dirname(self.db_path) or "state", "trade_lifecycle_excursion_v1.jsonl")
+        lifecycle_by_id: dict[str, dict[str, Any]] = {}
+        try:
+            with open(lifecycle_path, "rb") as handle:
+                handle.seek(max(0, os.path.getsize(lifecycle_path) - 1_500_000))
+                lines = handle.read().decode("utf-8", "ignore").splitlines()[-1200:]
+            for line in lines:
+                parsed = json.loads(line)
+                if isinstance(parsed, dict) and str(parsed.get("lifecycle_id") or "").strip():
+                    lifecycle_by_id[str(parsed.get("lifecycle_id"))] = parsed
+        except Exception:
+            lifecycle_by_id = {}
+        matches: list[dict[str, Any]] = []
+        exact = timestamp_only = unmatched = 0
+        for position in positions:
+            order_id = str(position.get("entry_order_id") or position.get("source_broker_order_id") or "").strip()
+            fill_id = str(position.get("entry_fill_id") or "").strip()
+            client_id = str(position.get("source_client_order_id") or "").strip()
+            candidates = by_order.get(order_id) or by_fill.get(fill_id) or by_client.get(client_id) or []
+            match = candidates[0] if len(candidates) == 1 else {}
+            match_kind = "broker_order_id" if match and by_order.get(order_id) else "fill_id" if match and by_fill.get(fill_id) else "client_order_id" if match else "unmatched"
+            if match:
+                exact += 1
+            else:
+                unmatched += 1
+            stored = _to_float(position.get("entry_price"), 0.0)
+            broker_price = _to_float(match.get("entry_price"), _to_float(match.get("filled_avg_price"), 0.0)) if match else 0.0
+            mismatch = _entry_price_pct_difference(stored, broker_price)
+            lifecycle = lifecycle_by_id.get(str(position.get("position_id") or ""), {})
+            matches.append({
+                "position_id": position.get("position_id"), "symbol": position.get("symbol"),
+                "match_kind": match_kind, "exact_id_linked": bool(match), "timestamp_only_diagnostic_match": False,
+                "original_entry_price": stored or None, "broker_fill_price": broker_price or None,
+                "mismatch_pct": mismatch, "entry_price_verified": bool(position.get("entry_price_verified")),
+                "eligible_for_safe_repair": bool(match and broker_price > 0.0 and not bool(position.get("entry_price_verified"))),
+                "proposed_repair_action": "REQUIRES_WORKER_BROKER_FILL_RECONCILIATION" if match and broker_price > 0.0 else "NO_AUTOMATIC_REPAIR",
+                "reason": "exact_identifier_linked_broker_truth" if match else "strong_broker_identifier_match_required",
+                "lifecycle_metrics_would_need_reconstruction": bool(lifecycle and not bool(lifecycle.get("entry_price_verified"))),
+            })
+        return {
+            "endpoint": "/api/broker_entry_price_lineage_repair_v1",
+            "status": "DRY_RUN_COMPLETE", "historical_state_modified": False, "apply_mode_available": False,
+            "records_reviewed": len(positions), "exact_id_linked_matches": exact,
+            "timestamp_only_diagnostic_matches": timestamp_only, "unmatched_records": unmatched,
+            "records": matches[:cap], "broker_truth_records_reviewed": len(truth_rows),
+            "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
+            "paper_only_preserved": True, "alpaca_paper_only_preserved": True,
+            "behavior_safe_to_apply": False, "live_trading_changed": False,
+            "broker_behavior_changed": False, "entry_behavior_changed": False,
+            "ranking_behavior_changed": False, "thresholds_changed": False,
+        }
 
     def _sanitize_broker_error(self, result: dict[str, Any] | None) -> str:
         if not isinstance(result, dict):
@@ -5668,10 +6000,12 @@ class PaperAutopilotEngine:
         entry_price: float,
         source_bucket: str,
         gate_meta: dict[str, Any] | None = None,
+        entry_price_lineage: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         r = _normalize_paper_entry_bridge(row)
         meta = dict(gate_meta or {})
         attribution = _paper_attribution_metadata(r)
+        lineage = dict(entry_price_lineage or {})
         return {
             "entry_reason": "paper_autopilot_entry",
             "recommendation_id": attribution["recommendation_id"],
@@ -5680,6 +6014,17 @@ class PaperAutopilotEngine:
             "candidate_id": attribution["candidate_id"],
             "attribution_status": "captured_from_canonical_candidate" if any(attribution.values()) else "not_present_on_candidate",
             "entry_price": round(_to_float(entry_price, 0.0), 6),
+            "entry_price_reference": round(_to_float(lineage.get("provisional_entry_price"), _to_float(entry_price, 0.0)), 6),
+            "provisional_entry_price": lineage.get("provisional_entry_price"),
+            "canonical_entry_price": lineage.get("canonical_entry_price", entry_price),
+            "broker_filled_avg_price": lineage.get("broker_filled_avg_price"),
+            "entry_slippage_pct": lineage.get("entry_slippage_pct"),
+            "entry_price_source": str(lineage.get("entry_price_source") or "ENTRY_PRICE_UNAVAILABLE"),
+            "entry_price_evidence_class": str(lineage.get("entry_price_evidence_class") or "ENTRY_PRICE_UNAVAILABLE"),
+            "entry_price_verified": bool(lineage.get("entry_price_verified", False)),
+            "entry_price_provisional": bool(lineage.get("entry_price_provisional", False)),
+            "entry_price_lineage_status": str(lineage.get("entry_price_lineage_status") or "ENTRY_PRICE_UNAVAILABLE"),
+            "entry_price_lineage_reason": str(lineage.get("entry_price_lineage_reason") or ""),
             "entry_quality": str(r.get("buy_quality_tier") or ""),
             "entry_source_bucket": str(source_bucket or "paper_candidate"),
             "entry_setup_type": str(r.get("setup_type") or "unknown"),
@@ -5867,9 +6212,6 @@ class PaperAutopilotEngine:
         entry_row["candidate_id"] = str(
             entry_row.get("candidate_id") or broker_order.get("candidate_id") or ""
         ).strip()
-        entry_context = self._build_entry_context_v1(submit_row, entry_price, source_bucket, gate_meta=gate_meta)
-        entry_context["position_id"] = pid
-        entry_context["alpaca_paper_order"] = broker_order
         broker_order_payload = dict(broker_order.get("order") or {}) if isinstance(broker_order, dict) else {}
         source_broker_order_id = str(
             broker_order_payload.get("id")
@@ -5884,16 +6226,32 @@ class PaperAutopilotEngine:
             or entry_row.get("client_order_id")
             or ""
         ).strip()
-        # Alpaca may expose executions through the order's filled timestamp
-        # rather than a separate execution object.  The derived identifier is
-        # retained only when the broker reports a filled order; pending orders
-        # never gain a fill ID.
-        entry_filled_at = str(broker_order_payload.get("filled_at") or "").strip()
-        entry_fill_id = str(
-            broker_order_payload.get("fill_id")
-            or broker_order_payload.get("execution_id")
-            or (f"{source_broker_order_id}:{entry_filled_at}" if source_broker_order_id and entry_filled_at else "")
-        ).strip()
+        entry_price_lineage = resolve_canonical_entry_price_lineage_v1(
+            symbol=symbol,
+            provisional_entry_price=entry_price,
+            candidate_entry_price=row_price,
+            broker_order_result=broker_order,
+            expected_broker_order_id=source_broker_order_id,
+            expected_client_order_id=source_client_order_id,
+            paper_broker_context=True,
+        )
+        canonical_entry_price = _to_float(entry_price_lineage.get("canonical_entry_price"), 0.0)
+        if canonical_entry_price <= 0.0:
+            return {"ok": False, "error": "entry_price_lineage_unavailable", "symbol": symbol}
+        entry_price = canonical_entry_price
+        source_broker_order_id = str(entry_price_lineage.get("entry_order_id") or source_broker_order_id).strip()
+        source_client_order_id = str(entry_price_lineage.get("source_client_order_id") or source_client_order_id).strip()
+        entry_filled_at = str(entry_price_lineage.get("entry_filled_at") or "").strip()
+        entry_fill_id = str(entry_price_lineage.get("entry_fill_id") or "").strip()
+        entry_context = self._build_entry_context_v1(
+            submit_row,
+            entry_price,
+            source_bucket,
+            gate_meta=gate_meta,
+            entry_price_lineage=entry_price_lineage,
+        )
+        entry_context["position_id"] = pid
+        entry_context["alpaca_paper_order"] = broker_order
         entry_context.update({
             "lane_id": entry_row.get("lane_id"),
             "capital_book_id": entry_row.get("capital_book_id"),
@@ -5954,7 +6312,11 @@ class PaperAutopilotEngine:
                 """
                 UPDATE paper_positions
                 SET lane_id=?, capital_book_id=?, position_owner=?, exit_policy_owner=?,
-                    entry_order_id=?, entry_fill_id=?
+                    entry_order_id=?, entry_fill_id=?, entry_filled_at=?,
+                    provisional_entry_price=?, broker_filled_avg_price=?,
+                    entry_price_source=?, entry_price_evidence_class=?,
+                    entry_price_verified=?, entry_price_provisional=?,
+                    entry_price_lineage_status=?, entry_price_lineage_reason=?
                 WHERE position_id=?
                 """,
                 (
@@ -5964,6 +6326,15 @@ class PaperAutopilotEngine:
                     str(entry_row.get("exit_policy_owner") or ""),
                     source_broker_order_id,
                     entry_fill_id,
+                    entry_filled_at or None,
+                    entry_price_lineage.get("provisional_entry_price"),
+                    entry_price_lineage.get("broker_filled_avg_price"),
+                    entry_price_lineage.get("entry_price_source"),
+                    entry_price_lineage.get("entry_price_evidence_class"),
+                    1 if bool(entry_price_lineage.get("entry_price_verified")) else 0,
+                    1 if bool(entry_price_lineage.get("entry_price_provisional")) else 0,
+                    entry_price_lineage.get("entry_price_lineage_status"),
+                    entry_price_lineage.get("entry_price_lineage_reason"),
                     pid,
                 ),
             )
@@ -6001,6 +6372,17 @@ class PaperAutopilotEngine:
                         "entry_timestamp": now_iso,
                         "entry_price": entry_price,
                         "current_price": entry_price,
+                        "provisional_entry_price": entry_price_lineage.get("provisional_entry_price"),
+                        "broker_filled_avg_price": entry_price_lineage.get("broker_filled_avg_price"),
+                        "entry_price_source": entry_price_lineage.get("entry_price_source"),
+                        "entry_price_evidence_class": entry_price_lineage.get("entry_price_evidence_class"),
+                        "entry_price_verified": bool(entry_price_lineage.get("entry_price_verified")),
+                        "entry_price_provisional": bool(entry_price_lineage.get("entry_price_provisional")),
+                        "entry_price_lineage_status": entry_price_lineage.get("entry_price_lineage_status"),
+                        "entry_price_lineage_reason": entry_price_lineage.get("entry_price_lineage_reason"),
+                        "entry_order_id": source_broker_order_id,
+                        "entry_fill_id": entry_fill_id,
+                        "source_client_order_id": source_client_order_id,
                         "confidence": _to_float(row.get("confidence"), _to_float(row.get("predicted_win_probability"), 0.0)),
                         "grade": _to_float(row.get("grade_percent"), _to_float(row.get("persona_weighted_grade"), 0.0)),
                         "entry_quality_score": _to_float(row.get("entry_quality_score"), _to_float(row.get("paper_entry_bridge_score"), 0.0)),
@@ -6033,6 +6415,12 @@ class PaperAutopilotEngine:
             "position_id": pid,
             "symbol": symbol,
             "entry_price": entry_price,
+            "provisional_entry_price": entry_price_lineage.get("provisional_entry_price"),
+            "broker_filled_avg_price": entry_price_lineage.get("broker_filled_avg_price"),
+            "entry_price_source": entry_price_lineage.get("entry_price_source"),
+            "entry_price_evidence_class": entry_price_lineage.get("entry_price_evidence_class"),
+            "entry_price_verified": bool(entry_price_lineage.get("entry_price_verified")),
+            "entry_price_lineage_status": entry_price_lineage.get("entry_price_lineage_status"),
             "asset_type": asset_type,
             "broker_order_id": source_broker_order_id,
             "entry_fill_id": entry_fill_id,
@@ -6776,6 +7164,8 @@ class PaperAutopilotEngine:
             broker_snapshot = self._broker_open_symbols_snapshot()
             broker_open_syms = set(broker_snapshot.get("broker_open_symbols") or set())
             broker_position_by_symbol = dict(broker_snapshot.get("broker_position_by_symbol") or {})
+            self._note_worker_progress("entry_price_lineage_reconciliation")
+            entry_price_lineage_refresh = self._reconcile_entry_price_lineage_v1(broker_snapshot)
             legacy_activation_refresh = self._refresh_legacy_forward_activations(broker_position_by_symbol)
             self._note_worker_progress("legacy_market_evidence")
             legacy_canary_refresh = self._refresh_legacy_swing_canary_pre_submit(broker_position_by_symbol)
@@ -7529,6 +7919,7 @@ class PaperAutopilotEngine:
                 "open_positions_unique_count": int(len([s for s in internal_open_syms if s])),
                 "broker_open_positions_count": int(len([s for s in broker_open_syms if s])),
                 "broker_positions_fetch_ok": bool(broker_positions_fetch_ok),
+                "entry_price_lineage_reconciliation": entry_price_lineage_refresh,
                 "broker_positions_error_sanitized": str(broker_snapshot.get("broker_positions_error_sanitized") or "")[:180],
                 "broker_orders_fetch_ok": bool(broker_snapshot.get("broker_orders_fetch_ok")),
                 "effective_broker_capacity_count": int(len([s for s in broker_open_syms if s])),
