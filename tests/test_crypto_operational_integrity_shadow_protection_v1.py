@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 import tempfile
 import unittest
+from unittest.mock import Mock
 
+from engine.alpaca_paper_broker import AlpacaPaperBroker
+from engine.candidate_execution_integrity_v1 import candidate_execution_integrity
 from engine.crypto_operational_integrity_readiness_v1 import build_crypto_operational_integrity_readiness_v1
 from engine.shadow_profit_loss_protection_validation_v1 import build_shadow_profit_loss_protection_validation_v1
 from engine.trade_lifecycle_excursion_v1 import TradeLifecycleExcursionV1
@@ -44,6 +48,20 @@ def _capability(**overrides):
     return row
 
 
+def _canonical_capability(**overrides):
+    row = _capability(
+        generated_at=NOW.isoformat(), market_data_entitlement_confirmed=True, market_data_status="PASS",
+        source="alpaca_crypto_capability_v2_cache", cache_only=True,
+        supported_pairs=["LINK/USD", "LTC/USD"], tradable_pairs=["LINK/USD", "LTC/USD"],
+        asset_rules={
+            "LINK/USD": {"tradable": True, "status": "active", "fractionable": True, "min_order_size": "0.1", "min_trade_increment": "0.000000001", "price_increment": "0.000000001"},
+            "LTC/USD": {"tradable": True, "status": "active", "fractionable": True, "min_order_size": "0.02", "min_trade_increment": "0.000000001", "price_increment": "0.000000001"},
+        },
+    )
+    row.update(overrides)
+    return row
+
+
 def _lifecycle(lifecycle_id: str, price: float, *, closed: bool = False, timestamp: datetime | None = None,
                lane_id: str = "DAY", symbol: str = "BTC/USD", asset_class: str = "crypto", verified: bool = True):
     return {
@@ -57,6 +75,95 @@ def _lifecycle(lifecycle_id: str, price: float, *, closed: bool = False, timesta
 
 
 class CryptoOperationalIntegrityShadowProtectionTests(unittest.TestCase):
+    def test_canonical_capability_and_pair_rules_win_over_empty_activation_fields(self):
+        payload = build_crypto_operational_integrity_readiness_v1(
+            lane=_lane(), capability=_canonical_capability(),
+            candidates=[_candidate(symbol="LINK/USD"), _candidate(symbol="LTC/USD")],
+        )
+        self.assertNotEqual(payload["status"], "BROKER_NOT_READY")
+        self.assertTrue(payload["broker_capability"]["crypto_trading_supported"])
+        self.assertEqual(payload["broker_capability"]["supported_pairs_count"], 2)
+        self.assertEqual(payload["broker_capability"]["tradable_pairs_count"], 2)
+        evaluated = {row["symbol"]: row for row in payload["pair_eligibility"]["evaluated_candidates"]}
+        self.assertEqual(evaluated["LINK/USD"]["pair_eligibility"], "TRADABLE")
+        self.assertEqual(evaluated["LTC/USD"]["pair_eligibility"], "TRADABLE")
+        self.assertTrue(evaluated["LINK/USD"]["asset_rule"]["fractionable"])
+        self.assertEqual(payload["pair_eligibility"]["canonical_pair_capability"]["LINK/USD"]["pair_eligibility"], "TRADABLE")
+
+    def test_missing_capability_remains_broker_not_ready_without_fabricating_pairs(self):
+        payload = build_crypto_operational_integrity_readiness_v1(
+            lane=_lane(), capability={}, candidates=[_candidate(symbol="LINK/USD")],
+        )
+        self.assertEqual(payload["status"], "BROKER_NOT_READY")
+        self.assertFalse(payload["paper_execution_currently_allowed"])
+        self.assertEqual(payload["broker_capability"]["supported_pairs"], [])
+
+    def test_public_capability_accessor_is_cache_only_and_sanitized(self):
+        with tempfile.TemporaryDirectory() as root:
+            broker = AlpacaPaperBroker()
+            broker._crypto_capability_path = f"{root}/capability.json"
+            with open(broker._crypto_capability_path, "w", encoding="utf-8") as handle:
+                json.dump({**_canonical_capability(), "api_key": "not-exported", "asset_rules": {"LINK/USD": _canonical_capability()["asset_rules"]["LINK/USD"]}}, handle)
+            broker._request = Mock(side_effect=AssertionError("cache accessor made broker request"))
+            payload = broker.cached_crypto_capability()
+            self.assertTrue(payload["cache_only"])
+            self.assertEqual(payload["broker_actions_used"], 0)
+            self.assertNotIn("api_key", payload)
+            broker._request.assert_not_called()
+
+    def test_bid_ask_spread_calculates_without_fabricating_missing_sides(self):
+        passing = candidate_execution_integrity(
+            _candidate(symbol="LINK/USD", bid=10.00, ask=10.10, spread_pct=None),
+            supported_pairs={"LINK/USD"}, tradable_pairs={"LINK/USD"}, lane_state="LANE_PAPER_ACTIVE_BOUNDED",
+            paper_mode_verified=True, capacity_available=True, broker_reconciliation_ok=True,
+        )
+        self.assertAlmostEqual(passing["mid"], 10.05)
+        self.assertAlmostEqual(passing["spread_pct"], 0.9950248756, places=6)
+        self.assertEqual(passing["gate_status"]["quote_spread"], "PASS")
+        missing = candidate_execution_integrity(
+            _candidate(symbol="LINK/USD", bid=10.0, ask=None, spread_pct=None),
+            supported_pairs={"LINK/USD"}, tradable_pairs={"LINK/USD"}, lane_state="LANE_PAPER_ACTIVE_BOUNDED",
+            paper_mode_verified=True, capacity_available=True, broker_reconciliation_ok=True,
+        )
+        self.assertIsNone(missing["spread_pct"])
+        self.assertEqual(missing["gate_status"]["quote_spread"], "PENDING_SPREAD")
+
+    def test_excessive_spread_remains_a_liquidity_blocker(self):
+        payload = build_crypto_operational_integrity_readiness_v1(
+            lane=_lane(activation_requested=True), capability=_canonical_capability(), candidates=[_candidate(symbol="LINK/USD", bid=10, ask=10.5, spread_pct=None)],
+        )
+        candidate = payload["pair_eligibility"]["evaluated_candidates"][0]
+        self.assertEqual(candidate["gate_status"]["quote_spread"], "REJECTED_EXCESSIVE_SPREAD")
+        self.assertEqual(payload["status"], "LIQUIDITY_NOT_READY")
+
+    def test_legacy_unverified_lineage_is_reported_but_not_an_active_blocker(self):
+        legacy = [{
+            "lifecycle_id": f"legacy-{index}", "asset_class": "crypto", "symbol": "LINK/USD",
+            "entry_price_verified": False, "loss_calibration_eligible": False, "diagnostic_only": True,
+        } for index in range(199)]
+        payload = build_crypto_operational_integrity_readiness_v1(
+            lane=_lane(), capability=_canonical_capability(), candidates=[_candidate(symbol="LINK/USD")], lifecycle_rows=legacy,
+        )
+        lineage = payload["lineage_readiness"]
+        self.assertEqual(lineage["legacy_unverified_entries"], 199)
+        self.assertEqual(lineage["active_unverified_entries"], 0)
+        self.assertFalse(lineage["active_lineage_blocking"])
+        self.assertNotEqual(payload["status"], "LINEAGE_NOT_READY")
+
+    def test_active_unverified_lineage_blocks_but_verified_lineage_does_not(self):
+        active_unverified = [{"position_id": "open-1", "symbol": "LINK/USD", "asset_class": "crypto", "entry_order_id": "entry-1", "entry_price_verified": False}]
+        blocked = build_crypto_operational_integrity_readiness_v1(
+            lane=_lane(activation_requested=True), capability=_canonical_capability(), candidates=[_candidate(symbol="LINK/USD")], open_positions=active_unverified,
+        )
+        self.assertEqual(blocked["status"], "LINEAGE_NOT_READY")
+        self.assertIn("CRYPTO_ENTRY_LINEAGE_UNVERIFIED", blocked["exact_blockers"])
+        verified = build_crypto_operational_integrity_readiness_v1(
+            lane=_lane(activation_requested=True), capability=_canonical_capability(), candidates=[_candidate(symbol="LINK/USD")],
+            open_positions=[{**active_unverified[0], "entry_price_verified": True}],
+        )
+        self.assertEqual(verified["lineage_readiness"]["active_verified_entries"], 1)
+        self.assertEqual(verified["lineage_readiness"]["active_unverified_entries"], 0)
+
     def test_crypto_capital_absent_fails_closed_without_enabling_execution(self):
         payload = build_crypto_operational_integrity_readiness_v1(
             lane=_lane(capital_configured=False, capital_limit=None), capability=_capability(), candidates=[_candidate()],

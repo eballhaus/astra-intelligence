@@ -69744,8 +69744,8 @@ def _crypto_operational_candidate_rows_v3() -> list[dict]:
                 if value not in (None, ""):
                     return value
             return None
-        bid = observed("bid", "bid_price")
-        ask = observed("ask", "ask_price")
+        bid = observed("bid", "bid_price", "bp")
+        ask = observed("ask", "ask_price", "ap")
         price = observed("price", "current_price", "last_price", "last", "close")
         spread_pct = observed("spread_pct", "bid_ask_spread_pct")
         try:
@@ -69758,7 +69758,7 @@ def _crypto_operational_candidate_rows_v3() -> list[dict]:
             "current_price": price if price not in (None, "") else row.get("current_price"),
             "bid": bid if bid not in (None, "") else row.get("bid"),
             "ask": ask if ask not in (None, "") else row.get("ask"),
-            "quote_timestamp": observed("quote_timestamp", "timestamp", "updated_at", "as_of"),
+            "quote_timestamp": observed("quote_timestamp", "timestamp", "updated_at", "as_of", "t"),
             "quote_age_seconds": observed("quote_age_seconds", "freshness_seconds", "age_seconds"),
             "spread_pct": spread_pct if spread_pct not in (None, "") else row.get("spread_pct"),
             "volume_24h": observed("volume_24h", "quote_volume", "volume", "volume_usd"),
@@ -69767,6 +69767,7 @@ def _crypto_operational_candidate_rows_v3() -> list[dict]:
             "expected_downside_range": observed("expected_downside_range", "downside_range"),
             "expected_drawdown": observed("expected_drawdown", "drawdown_range", "max_drawdown_pct"),
             "crypto_quote_evidence_source": "crypto_ranking_cache_quote_fields" if quote or price not in (None, "") else "UNAVAILABLE",
+            "quote_source": observed("quote_source", "source", "provider", "provider_name") or "crypto_ranking_cache",
         })
         if row.get("quote_age_seconds") in (None, "") and row.get("quote_timestamp"):
             try:
@@ -69877,7 +69878,7 @@ def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> di
     if not alpaca:
         alpaca = ((_CACHE.get("alpaca_paper_status_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
     safety = ALPACA_PAPER_BROKER.safety_status() if "ALPACA_PAPER_BROKER" in globals() else {}
-    capability = ALPACA_PAPER_BROKER.crypto_capability_status(False) if "ALPACA_PAPER_BROKER" in globals() and hasattr(ALPACA_PAPER_BROKER, "crypto_capability_status") else {}
+    capability = ALPACA_PAPER_BROKER.cached_crypto_capability() if "ALPACA_PAPER_BROKER" in globals() and hasattr(ALPACA_PAPER_BROKER, "cached_crypto_capability") else {}
     ranking_rows = _crypto_ranking_rows_cached_v1()
     ranked_pairs = [str(row.get("symbol") or "") for row in ranking_rows]
     monitored = list(dict.fromkeys(list(_ASTRA_CRYPTO_APPROVED_CORE_UNIVERSE_V1) + [p for p in ranked_pairs if p]))[:24]
@@ -70016,8 +70017,8 @@ def _crypto_paper_execution_readiness_v1_payload(statuses: dict | None = None) -
     truth = _crypto_broker_truth_accumulation_v1_payload(statuses)
     separation = _broker_truth_asset_class_separation_audit_v1_payload(statuses)
     capability = {}
-    if "ALPACA_PAPER_BROKER" in globals() and hasattr(ALPACA_PAPER_BROKER, "crypto_capability_status"):
-        capability = dict(ALPACA_PAPER_BROKER.crypto_capability_status(False) or {})
+    if "ALPACA_PAPER_BROKER" in globals() and hasattr(ALPACA_PAPER_BROKER, "cached_crypto_capability"):
+        capability = dict(ALPACA_PAPER_BROKER.cached_crypto_capability() or {})
 
     candidate_rows = [row for row in (funnel.get("candidate_rows") or []) if isinstance(row, dict)]
     qualified_count = int(_to_float(funnel.get("qualified_candidates"), 0.0))
@@ -70119,9 +70120,10 @@ def _crypto_operational_integrity_readiness_v1_payload(statuses: dict | None = N
         return {"endpoint": "/api/crypto_operational_integrity_readiness_v1", "status": "BROKER_NOT_READY",
                 "exact_blockers": ["crypto_operational_integrity_module_unavailable"], "get_route_read_only": True,
                 "worker_invocations": 0, "mutations": 0, "full_store_scans": 0, **_safety_flags_v1()}
+    lifecycle_rows = ShadowProfitLossProtectionValidationV1(STATE).load_bounded_lifecycle_rows() if ShadowProfitLossProtectionValidationV1 is not None else []
     payload = CryptoOperationalIntegrityReadinessV1(STATE).build(
-        lane=lane, capability=capability, candidates=_crypto_ranking_rows_cached_v1(),
-        open_positions=positions, pending_orders=[], buying_power=buying_power,
+        lane=lane, capability=capability, candidates=_crypto_operational_candidate_rows_v3(),
+        open_positions=positions, pending_orders=[], lifecycle_rows=lifecycle_rows, buying_power=buying_power,
         known_equity_symbols=_known_equity_symbols_v1(),
     )
     return {"endpoint": "/api/crypto_operational_integrity_readiness_v1", "canonical_owners": [

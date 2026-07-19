@@ -277,22 +277,21 @@ class PaperAutopilotWorker:
                 "lane_state": crypto_activation.get("lane_state"),
                 "broker_reconciliation_ok": False,
             }
-            capability = dict(crypto_activation.get("broker_capability") or {})
-            if not capability:
-                capability = {
-                    "paper_mode_verified": safety.get("paper_mode_verified"),
-                    "live_endpoint_detected": False,
-                    "crypto_trading_supported": crypto_activation.get("paper_account_crypto_support"),
-                    "supported_pairs": crypto_activation.get("supported_pairs") or [],
-                    "tradable_pairs": crypto_activation.get("tradable_pairs") or [],
-                }
+            broker = getattr(self.autopilot, "alpaca_paper_broker", None)
+            cached_capability = getattr(broker, "cached_crypto_capability", None)
+            capability = dict(cached_capability() or {}) if callable(cached_capability) else {}
+            if not capability.get("crypto_trading_supported") and isinstance(crypto_activation.get("capability"), dict):
+                # The activation owner may already hold the same canonical
+                # capability payload.  Never reconstruct it from booleans.
+                capability = dict(crypto_activation.get("capability") or capability)
+            lifecycle_rows = self.shadow_profit_loss_protection.load_bounded_lifecycle_rows()
             crypto_integrity = self.crypto_operational_integrity.build(
                 lane=lane, capability=capability, candidates=crypto_rows,
-                open_positions=positions, pending_orders=[], buying_power=None,
+                open_positions=positions, pending_orders=[], lifecycle_rows=lifecycle_rows, buying_power=None,
             )
             self.crypto_operational_integrity.write_snapshot(crypto_integrity)
             shadow_protection = self.shadow_profit_loss_protection.build(
-                self.shadow_profit_loss_protection.load_bounded_lifecycle_rows(), positions,
+                lifecycle_rows, positions,
             )
             self.shadow_profit_loss_protection.write_snapshot(shadow_protection)
         except Exception:

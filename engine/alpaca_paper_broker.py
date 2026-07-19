@@ -135,6 +135,55 @@ class AlpacaPaperBroker:
         except Exception:
             return {}
 
+    def cached_crypto_capability(self) -> dict[str, Any]:
+        """Return a sanitized cached crypto capability snapshot without I/O.
+
+        This is the public cache-only owner for diagnostics and worker wiring.
+        It never calls Alpaca, loads credentials, or writes the capability
+        cache. Missing or malformed state remains explicitly fail-closed.
+        """
+        cached = self._load_crypto_capability()
+        if not cached:
+            return {
+                "generated_at": None, "paper_mode_verified": False,
+                "paper_endpoint_confirmed": False, "live_endpoint_detected": False,
+                "crypto_trading_supported": False, "supported_pairs": [], "tradable_pairs": [],
+                "supported_order_types": [], "supported_time_in_force": [],
+                "fractional_quantity_supported": False, "market_data_entitlement_confirmed": False,
+                "market_data_status": "UNAVAILABLE", "asset_rules": {},
+                "exact_blocker": "runtime_crypto_capability_cache_unavailable",
+                "source": "alpaca_crypto_capability_v2_cache", "cache_only": True,
+                "broker_actions_used": 0, "secrets_exposed": False,
+            }
+        rules: dict[str, dict[str, Any]] = {}
+        for pair, raw in dict(cached.get("asset_rules") or {}).items():
+            if not isinstance(raw, dict):
+                continue
+            normalized = _safe_text(pair).upper().replace("-", "/")
+            if normalized:
+                rules[normalized] = {key: raw.get(key) for key in (
+                    "tradable", "status", "fractionable", "min_order_size",
+                    "min_trade_increment", "price_increment",
+                )}
+        return {
+            "generated_at": cached.get("generated_at"),
+            "paper_mode_verified": bool(cached.get("paper_mode_verified")),
+            "paper_endpoint_confirmed": bool(cached.get("paper_endpoint_confirmed")),
+            "live_endpoint_detected": bool(cached.get("live_endpoint_detected")),
+            "crypto_trading_supported": bool(cached.get("crypto_trading_supported")),
+            "supported_pairs": sorted({_safe_text(pair).upper().replace("-", "/") for pair in (cached.get("supported_pairs") or []) if _safe_text(pair)}),
+            "tradable_pairs": sorted({_safe_text(pair).upper().replace("-", "/") for pair in (cached.get("tradable_pairs") or []) if _safe_text(pair)}),
+            "supported_order_types": list(cached.get("supported_order_types") or []),
+            "supported_time_in_force": list(cached.get("supported_time_in_force") or []),
+            "fractional_quantity_supported": bool(cached.get("fractional_quantity_supported")),
+            "market_data_entitlement_confirmed": bool(cached.get("market_data_entitlement_confirmed")),
+            "market_data_status": _safe_text(cached.get("market_data_status"), "UNKNOWN"),
+            "asset_rules": rules,
+            "exact_blocker": _safe_text(cached.get("exact_blocker")),
+            "source": "alpaca_crypto_capability_v2_cache", "cache_only": True,
+            "broker_actions_used": 0, "secrets_exposed": False,
+        }
+
     def _save_crypto_capability(self, payload: dict[str, Any]) -> None:
         try:
             os.makedirs(os.path.dirname(self._crypto_capability_path) or ".", exist_ok=True)
@@ -222,10 +271,9 @@ class AlpacaPaperBroker:
         """Return cached capability or perform a deliberate read-only Alpaca probe."""
         safety = self.safety_status()
         if not probe:
-            cached = self._load_crypto_capability()
-            if cached:
-                cached["probe_performed_this_request"] = False
-                return cached
+            cached = self.cached_crypto_capability()
+            if cached.get("crypto_trading_supported") or cached.get("supported_pairs"):
+                return {**cached, "probe_performed_this_request": False}
             return {
                 "activation_state": "VALIDATED_SHADOW_ONLY" if safety.get("paper_mode_verified") else "BLOCKED_NOT_PAPER_ACCOUNT",
                 "probe_performed_this_request": False,

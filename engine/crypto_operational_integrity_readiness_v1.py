@@ -31,6 +31,79 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _timestamp_age_seconds(value: Any) -> float | None:
+    text = _text(value)
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds())
+    except (TypeError, ValueError):
+        return None
+
+
+def _capability_freshness(capability: dict[str, Any]) -> dict[str, Any]:
+    age = _timestamp_age_seconds(capability.get("generated_at"))
+    raw_ttl = _text(os.getenv("ASTRA_CRYPTO_CAPABILITY_MAX_AGE_SECONDS"))
+    configured_ttl = _num(raw_ttl, -1.0) if raw_ttl else None
+    if age is None:
+        state = "UNKNOWN"
+    elif age <= 86400:
+        state = "CURRENT"
+    elif age <= 604800:
+        state = "AGING"
+    else:
+        state = "STALE"
+    diagnostic_stale = state == "STALE"
+    enforced_stale = bool(configured_ttl is not None and configured_ttl > 0 and age is not None and age > configured_ttl)
+    return {"capability_generated_at": capability.get("generated_at"), "capability_age_seconds": round(age, 3) if age is not None else None,
+            "capability_freshness_state": state, "capability_stale": diagnostic_stale,
+            "capability_enforced_stale": enforced_stale,
+            "capability_ttl_seconds": configured_ttl if configured_ttl and configured_ttl > 0 else None}
+
+
+def _lineage_readiness(open_positions: list[dict[str, Any]], lifecycle_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Separate current broker-linked exposure from historical diagnostics."""
+    active_verified = active_unverified = legacy_unverified = historical_unverified = 0
+    active_ids: set[str] = set()
+    for row in open_positions:
+        asset = _text(row.get("asset_class") or row.get("asset_type")).lower()
+        if asset not in {"crypto", "cryptocurrency"}:
+            continue
+        identity = _text(row.get("position_id") or row.get("lifecycle_id") or row.get("entry_order_id") or row.get("symbol"))
+        if identity:
+            active_ids.add(identity)
+        linked = bool(row.get("entry_order_id") or row.get("source_broker_order_id") or row.get("entry_fill_id") or row.get("source_client_order_id"))
+        if bool(row.get("entry_price_verified")):
+            active_verified += 1
+        elif linked:
+            active_unverified += 1
+        else:
+            legacy_unverified += 1
+    for row in lifecycle_rows:
+        asset = _text(row.get("asset_class") or row.get("asset_type")).lower()
+        if asset not in {"crypto", "cryptocurrency"} or bool(row.get("entry_price_verified")):
+            continue
+        identity = _text(row.get("position_id") or row.get("lifecycle_id") or row.get("entry_order_id") or row.get("symbol"))
+        if identity and identity in active_ids:
+            continue
+        if bool(row.get("closed")) or _text(row.get("exit_timestamp")):
+            historical_unverified += 1
+        else:
+            legacy_unverified += 1
+    return {
+        "active_verified_entries": active_verified,
+        "active_unverified_entries": active_unverified,
+        "legacy_unverified_entries": legacy_unverified,
+        "historical_unverified_entries": historical_unverified,
+        "active_lineage_blocking": bool(active_unverified),
+        "unverified_entries_diagnostic_only": True,
+        "official_metrics_require_verified_entry": True,
+    }
+
+
 def _safety() -> dict[str, Any]:
     return {
         "paper_only_preserved": True,
@@ -90,6 +163,7 @@ def build_crypto_operational_integrity_readiness_v1(
     candidates: list[dict[str, Any]] | None = None,
     open_positions: list[dict[str, Any]] | None = None,
     pending_orders: list[dict[str, Any]] | None = None,
+    lifecycle_rows: list[dict[str, Any]] | None = None,
     buying_power: Any = None,
     known_equity_symbols: set[str] | None = None,
 ) -> dict[str, Any]:
@@ -99,13 +173,16 @@ def build_crypto_operational_integrity_readiness_v1(
     candidates = [dict(row) for row in (candidates or []) if isinstance(row, dict)][:50]
     open_positions = [dict(row) for row in (open_positions or []) if isinstance(row, dict)][:200]
     pending_orders = [dict(row) for row in (pending_orders or []) if isinstance(row, dict)][:200]
+    lifecycle_rows = [dict(row) for row in (lifecycle_rows or []) if isinstance(row, dict)][:1200]
     supported = {str(item or "").upper().replace("-", "/") for item in (capability.get("supported_pairs") or [])}
     tradable = {str(item or "").upper().replace("-", "/") for item in (capability.get("tradable_pairs") or [])}
+    asset_rules = dict(capability.get("asset_rules") or {})
     paper_mode = bool(capability.get("paper_mode_verified") or lane.get("paper_mode_verified"))
     live_endpoint = bool(capability.get("live_endpoint_detected"))
     kill_switch = bool(lane.get("kill_switch_enabled"))
     capital_configured = bool(lane.get("capital_configured"))
     capital_limit = lane.get("capital_limit")
+    capability_freshness = _capability_freshness(capability)
     normalized_open = {
         normalize_crypto_pair_strict(row.get("symbol"), asset_class=row.get("asset_class") or row.get("asset_type") or "crypto").get("normalized_symbol")
         for row in open_positions
@@ -145,28 +222,29 @@ def build_crypto_operational_integrity_readiness_v1(
             "pair_eligibility": "TRADABLE" if pair in tradable else "UNSUPPORTED_OR_UNTRADABLE",
             "duplicate_position": bool(pair and pair in normalized_open),
             "duplicate_pending_order": bool(pair and pair in normalized_pending),
+            "asset_rule": dict(asset_rules.get(pair) or {}) if pair else {},
+            "quote_timestamp": raw.get("quote_timestamp"), "quote_source": raw.get("quote_source") or raw.get("crypto_quote_evidence_source"),
             **integrity,
         })
     data_status, data_reasons = _data_state(evaluated)
     liquidity_status, liquidity_reasons = _liquidity_state(evaluated)
-    verified_entries = sum(1 for row in open_positions if str(row.get("asset_type") or row.get("asset_class") or "").lower() == "crypto" and bool(row.get("entry_price_verified")))
-    unverified_entries = sum(1 for row in open_positions if str(row.get("asset_type") or row.get("asset_class") or "").lower() == "crypto" and not bool(row.get("entry_price_verified")))
+    lineage = _lineage_readiness(open_positions, lifecycle_rows)
     exact_blockers: list[str] = []
     if not capital_configured:
         exact_blockers.append("CRYPTO_PAPER_CAPITAL_NOT_CONFIGURED")
-    if not paper_mode or live_endpoint or not bool(capability.get("crypto_trading_supported")):
-        exact_blockers.append(str(capability.get("exact_blocker") or "CRYPTO_BROKER_NOT_READY"))
+    if not paper_mode or live_endpoint or not bool(capability.get("crypto_trading_supported")) or capability_freshness["capability_enforced_stale"]:
+        exact_blockers.append("CRYPTO_CAPABILITY_CACHE_STALE" if capability_freshness["capability_enforced_stale"] else str(capability.get("exact_blocker") or "CRYPTO_BROKER_NOT_READY"))
     if kill_switch:
         exact_blockers.append("CRYPTO_PAPER_KILL_SWITCH_ENABLED")
     if data_status != "DATA_READY":
         exact_blockers.extend(data_reasons[:3])
     if liquidity_status != "LIQUIDITY_READY":
         exact_blockers.extend(liquidity_reasons[:3])
-    if unverified_entries:
+    if lineage["active_lineage_blocking"]:
         exact_blockers.append("CRYPTO_ENTRY_LINEAGE_UNVERIFIED")
     if not capital_configured:
         status = "NOT_CONFIGURED"
-    elif not paper_mode or live_endpoint or not bool(capability.get("crypto_trading_supported")):
+    elif not paper_mode or live_endpoint or not bool(capability.get("crypto_trading_supported")) or capability_freshness["capability_enforced_stale"]:
         status = "BROKER_NOT_READY"
     elif not bool(lane.get("activation_requested")) or kill_switch:
         status = "PAPER_READY_BLOCKED_BY_HUMAN_CONFIGURATION"
@@ -174,7 +252,7 @@ def build_crypto_operational_integrity_readiness_v1(
         status = "DATA_NOT_READY"
     elif liquidity_status != "LIQUIDITY_READY":
         status = "LIQUIDITY_NOT_READY"
-    elif unverified_entries:
+    elif lineage["active_lineage_blocking"]:
         status = "LINEAGE_NOT_READY"
     elif not evaluated:
         status = "EVIDENCE_NOT_READY"
@@ -197,17 +275,28 @@ def build_crypto_operational_integrity_readiness_v1(
         "broker_capability": {"paper_mode_verified": paper_mode, "live_endpoint_detected": live_endpoint,
             "crypto_trading_supported": bool(capability.get("crypto_trading_supported")), "supported_pairs": sorted(supported)[:80],
             "tradable_pairs": sorted(tradable)[:80], "supported_order_types": capability.get("supported_order_types") or [],
-            "supported_time_in_force": capability.get("supported_time_in_force") or [], "fractional_quantity_supported": bool(capability.get("fractional_quantity_supported"))},
-        "pair_eligibility": {"evaluated_candidates": evaluated[:25], "supported_pairs_count": len(supported), "tradable_pairs_count": len(tradable)},
+            "supported_time_in_force": capability.get("supported_time_in_force") or [], "fractional_quantity_supported": bool(capability.get("fractional_quantity_supported")),
+            "market_data_entitlement_confirmed": bool(capability.get("market_data_entitlement_confirmed")),
+            "market_data_status": capability.get("market_data_status") or "UNKNOWN", "supported_pairs_count": len(supported), "tradable_pairs_count": len(tradable)},
+        "pair_eligibility": {"evaluated_candidates": evaluated[:25], "supported_pairs_count": len(supported), "tradable_pairs_count": len(tradable),
+            "canonical_pair_capability": {pair: {"supported": pair in supported, "tradable": pair in tradable,
+                "pair_eligibility": "TRADABLE" if pair in tradable else "SUPPORTED_NOT_TRADABLE" if pair in supported else "UNSUPPORTED_OR_UNTRADABLE",
+                "asset_rule": dict(asset_rules.get(pair) or {})} for pair in ("LINK/USD", "LTC/USD")}},
         "data_readiness": {"status": data_status, "reasons": data_reasons, "evaluated_candidates": len(evaluated)},
         "liquidity_readiness": {"status": liquidity_status, "reasons": liquidity_reasons},
         "duplicate_exposure": {"open_crypto_symbols": sorted(normalized_open), "pending_crypto_symbols": sorted(normalized_pending),
             "duplicate_candidate_count": sum(1 for row in evaluated if row.get("duplicate_position") or row.get("duplicate_pending_order"))},
-        "lifecycle_lineage": {"verified_open_entries": verified_entries, "unverified_open_entries": unverified_entries,
-            "unverified_entries_diagnostic_only": True, "official_metrics_require_verified_entry": True},
+        "capability_source": capability.get("source") or "unknown_fail_closed", "capability_cache_only": bool(capability.get("cache_only")),
+        **capability_freshness,
+        "lifecycle_lineage": {"verified_open_entries": lineage["active_verified_entries"], "unverified_open_entries": lineage["active_unverified_entries"], **lineage},
+        "lineage_readiness": lineage,
         "evidence_isolation": {"asset_class": "crypto", "equity_evidence_consumed": False, "crypto_thresholds_separate": True,
             "required_partition_keys": ["asset_class", "lane_id", "strategy_cohort", "horizon", "symbol", "regime", "lifecycle_stage"]},
-        "exact_blockers": sorted(set(filter(None, exact_blockers))), "warnings": [],
+        "exact_blockers": sorted(set(filter(None, exact_blockers))),
+        "warnings": [warning for warning in [
+            "crypto_capability_snapshot_stale_diagnostic_only"
+            if capability_freshness["capability_stale"] and not capability_freshness["capability_enforced_stale"] else "",
+        ] if warning],
         "recommended_human_actions": ["Configure a separate crypto paper capital limit only if human-approved"] if not capital_configured else [],
         **_safety(),
     }

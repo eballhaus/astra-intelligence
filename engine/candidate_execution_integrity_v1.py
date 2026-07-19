@@ -6,6 +6,7 @@ always classified as non-executable.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -28,6 +29,14 @@ def _number(value: Any, default: float = 0.0) -> float:
 
 def _bool(value: Any) -> bool:
     return bool(value)
+
+
+def _configured_max_spread_pct(candidate: dict[str, Any]) -> float:
+    """Use the existing crypto guard configuration without changing it."""
+    configured = _number(candidate.get("max_spread_pct"), -1.0)
+    if configured < 0:
+        configured = _number(os.getenv("ASTRA_CRYPTO_MAX_SPREAD_PCT"), 1.5)
+    return max(0.1, configured)
 
 
 def _timestamp_age_seconds(value: Any) -> float | None:
@@ -113,7 +122,14 @@ def candidate_execution_integrity(
     if quote_age < 0:
         timestamp_age = _timestamp_age_seconds(row.get("quote_timestamp") or row.get("data_timestamp") or row.get("timestamp"))
         quote_age = timestamp_age if timestamp_age is not None else -1.0
+    bid = _number(row.get("bid") or row.get("bid_price") or row.get("bp"), -1.0)
+    ask = _number(row.get("ask") or row.get("ask_price") or row.get("ap"), -1.0)
     spread = _number(row.get("spread_pct"), _number(row.get("bid_ask_spread_pct"), -1.0))
+    if spread < 0 and bid > 0 and ask > 0 and ask >= bid:
+        mid = (bid + ask) / 2.0
+        if mid > 0:
+            spread = ((ask - bid) / mid) * 100.0
+    max_spread_pct = _configured_max_spread_pct(row)
     volume = _number(row.get("volume_24h"), _number(row.get("volume"), _number(row.get("quote_volume"), 0.0)))
     quality = _number(row.get("data_quality_score"), _number(row.get("quote_quality_score"), 0.0))
     confidence = _number(row.get("confidence"), _number(row.get("ranking_score"), _number(row.get("score"), 0.0)))
@@ -127,7 +143,7 @@ def candidate_execution_integrity(
         "broker_support": "PASS" if pair and pair in supported else "REJECTED_UNSUPPORTED_CRYPTO_PAIR",
         "broker_tradability": "PASS" if pair and pair in tradable else "REJECTED_UNTRADABLE_CRYPTO_PAIR",
         "timestamp_freshness": "PASS" if 0 <= quote_age <= 120 else "PENDING_QUOTE_FRESHNESS" if quote_age < 0 else "REJECTED_STALE_QUOTE",
-        "quote_spread": "PASS" if 0 <= spread <= 1.5 else "PENDING_SPREAD" if spread < 0 else "REJECTED_SPREAD_TOO_WIDE",
+        "quote_spread": "PASS" if 0 <= spread <= max_spread_pct else "PENDING_SPREAD" if spread < 0 else "REJECTED_EXCESSIVE_SPREAD",
         "volume_liquidity": "PASS" if volume > 0 else "PENDING_LIQUIDITY",
         "data_quality": "PASS" if quality >= 50 else "PENDING_DATA_QUALITY",
         "volatility_risk": "PASS" if _text(row.get("volatility_risk_status") or "pass").lower() not in {"blocked", "reject", "high"} else "REJECTED_VOLATILITY_RISK",
@@ -162,6 +178,10 @@ def candidate_execution_integrity(
         "failed_gates": failed,
         "quote_age_seconds": round(quote_age, 3) if quote_age >= 0 else None,
         "spread_pct": spread if spread >= 0 else None,
+        "bid": bid if bid > 0 else None,
+        "ask": ask if ask > 0 else None,
+        "mid": round((bid + ask) / 2.0, 10) if bid > 0 and ask > 0 and ask >= bid else None,
+        "max_spread_pct": max_spread_pct,
         "volume_24h": volume,
         "data_quality_score": quality,
         "confidence": round(confidence, 2),
