@@ -45,6 +45,13 @@ from engine.astra_unified_position_lifecycle_v1 import (
     legacy_swing_writer_adapter_contract_v1,
     select_legacy_swing_canary_candidate_v1,
 )
+from engine.astra_legacy_quarantine_v1 import (
+    bounded_legacy_quarantine_review_v1,
+    build_position_attribution_summary_v1,
+    ensure_fail_closed_canary_control_v1,
+    resolve_canonical_lifecycle_decision_v1,
+    resolve_canonical_position_ownership_v1,
+)
 
 
 _LEGACY_MIGRATION_SOURCE_COMMIT_V1 = "e1e30e0739387be274e4e717cf7c7239b42d7890"
@@ -6924,6 +6931,62 @@ class PaperAutopilotEngine:
         self._load_state_file()
         return {"ok": True, "autopilot_enabled": self._enabled}
 
+    def _bounded_legacy_quarantine_review_phase(
+        self,
+        open_rows: list[dict[str, Any]] | None = None,
+        broker_position_by_symbol: dict[str, dict[str, Any]] | None = None,
+        max_reviews: int = 1,
+    ) -> dict[str, Any]:
+        """Bounded, worker-owned legacy quarantine review without order submission.
+
+        Produces canonical ownership, a single lifecycle decision, and a
+        broker-neutral exit-readiness contract per reviewed position. The
+        canary remains disabled; execution_authorized is always False.
+        """
+        rows = list(open_rows or self._fetch_open_positions() or [])
+        broker_positions = dict(broker_position_by_symbol or {})
+        prior_reviews = dict(self._runtime_state.get("legacy_quarantine_reviews_v1") or {})
+        market_session = {}
+        if self.market_session_timing_suite is not None:
+            try:
+                market_session = dict(self.market_session_timing_suite.status() or {})
+            except Exception:
+                market_session = {}
+        pending_map = dict(self._runtime_state.get("authorized_lane_exit_pending") or {})
+        result = bounded_legacy_quarantine_review_v1(
+            rows,
+            broker_positions=broker_positions,
+            pending_map=pending_map,
+            market_session=market_session,
+            max_reviews=max_reviews,
+            prior_reviews=prior_reviews,
+        )
+        # Store by position_id for idempotent review; never overwrite activation ts.
+        stored: dict[str, Any] = {}
+        for item in result.get("reviewed", []) or []:
+            pid = str(item.get("position_id") or "").strip()
+            if not pid:
+                continue
+            prior = dict(prior_reviews.get(pid) or {})
+            if prior.get("activation_timestamp") and not item.get("activation_timestamp"):
+                item["activation_timestamp"] = prior["activation_timestamp"]
+            stored[pid] = item
+        self._runtime_state["legacy_quarantine_reviews_v1"] = stored
+        self._runtime_state["legacy_quarantine_review_summary_v1"] = {
+            "reviewed_count": result.get("reviewed_count", 0),
+            "max_reviews": result.get("max_reviews", 1),
+            "execution_authorized": result.get("execution_authorized", False),
+            "canary_enabled": result.get("canary_enabled", False),
+            "kill_switch_active": result.get("kill_switch_active", True),
+            "as_of": result.get("as_of"),
+        }
+        self._runtime_state["legacy_quarantine_attribution_summary_v1"] = build_position_attribution_summary_v1(
+            rows,
+            broker_positions=broker_positions,
+        )
+        self._runtime_state["legacy_canary_control_v1"] = ensure_fail_closed_canary_control_v1()
+        return result
+
     def status(self):
         counts = self._count_open_positions()
         open_position_rows_count = self._count_open_position_rows()
@@ -6955,6 +7018,17 @@ class PaperAutopilotEngine:
         learned_runtime = self._learned_exit_runtime_summary()
         last_trace = dict(self._runtime_state.get("last_execution_trace") or {})
         legacy_canary = dict(self._runtime_state.get("legacy_swing_canary") or {})
+        legacy_canary_control = dict(self._runtime_state.get("legacy_canary_control_v1") or {})
+        if not legacy_canary_control:
+            legacy_canary_control = {
+                "schema_version": "legacy_swing_canary_control_v1",
+                "activation_state": "DISABLED_FAIL_CLOSED",
+                "enabled": False,
+                "kill_switch": True,
+                "readiness_state": "NOT_READY",
+                "execution_authorized": False,
+                "source": "in_memory_fail_closed_default",
+            }
         return {
             "ok": True,
             "autopilot_enabled": self._enabled,
@@ -6991,6 +7065,9 @@ class PaperAutopilotEngine:
                 "technically_eligible_count": len(dict(legacy_canary.get("selection") or {}).get("technically_eligible_candidates") or []),
                 "broker_actions": int(legacy_canary.get("broker_actions") or 0),
             },
+            "legacy_quarantine_review_v1": dict(self._runtime_state.get("legacy_quarantine_review_summary_v1") or {}),
+            "legacy_quarantine_attribution_summary_v1": dict(self._runtime_state.get("legacy_quarantine_attribution_summary_v1") or {}),
+            "legacy_canary_control_v1": legacy_canary_control,
             "last_error": str(self._runtime_state.get("last_error") or ""),
             "last_updated_utc": _now_iso(),
         }
@@ -7054,6 +7131,15 @@ class PaperAutopilotEngine:
                 legacy_refresh = self._refresh_legacy_swing_canary_pre_submit(broker_positions)
             except Exception as exc:
                 legacy_refresh = {"observation_state": "FAILED", "error": str(exc)[:180]}
+            try:
+                self._note_worker_progress("legacy_quarantine_review")
+                quarantine_review = self._bounded_legacy_quarantine_review_phase(
+                    open_rows=self._fetch_open_positions(),
+                    broker_position_by_symbol=broker_positions,
+                    max_reviews=1,
+                )
+            except Exception as exc:
+                quarantine_review = {"observation_state": "FAILED", "error": str(exc)[:180]}
             safety = self._alpaca_safety_snapshot()
             out = {
                 "ok": True,
@@ -7062,6 +7148,7 @@ class PaperAutopilotEngine:
                 "positions_closed": 0,
                 "cycle_reason": "disabled",
                 "legacy_swing_observation": legacy_refresh,
+                "legacy_quarantine_review_v1": quarantine_review,
             }
             trace = {
                 "paper_worker_running": bool(self._thread and self._thread.is_alive()),
@@ -7078,6 +7165,7 @@ class PaperAutopilotEngine:
                 "live_trading_changed": False,
                 "secrets_exposed": False,
                 "legacy_swing_observation": legacy_refresh,
+                "legacy_quarantine_review_v1": quarantine_review,
             }
             self._runtime_state["last_cycle_utc"] = _now_iso()
             self._runtime_state["last_cycle_summary"] = out
@@ -7187,6 +7275,15 @@ class PaperAutopilotEngine:
             legacy_activation_refresh = self._refresh_legacy_forward_activations(broker_position_by_symbol)
             self._note_worker_progress("legacy_market_evidence")
             legacy_canary_refresh = self._refresh_legacy_swing_canary_pre_submit(broker_position_by_symbol)
+            try:
+                self._note_worker_progress("legacy_quarantine_review")
+                quarantine_review = self._bounded_legacy_quarantine_review_phase(
+                    open_rows=open_rows_initial,
+                    broker_position_by_symbol=broker_position_by_symbol,
+                    max_reviews=1,
+                )
+            except Exception as exc:
+                quarantine_review = {"observation_state": "FAILED", "error": str(exc)[:180]}
             # Market evidence is a restart-stable worker product.  Persist it
             # before the broader candidate scan, which may take longer than a
             # bounded provider refresh cycle.
@@ -7995,6 +8092,7 @@ class PaperAutopilotEngine:
                     if opened > 0
                     else str(final_blocker_reason or "orders_not_submitted")[:180]
                 ),
+                "legacy_quarantine_review_v1": dict(quarantine_review or {}),
                 **self._learned_exit_runtime_summary(),
             }
             trace = {
@@ -8081,6 +8179,7 @@ class PaperAutopilotEngine:
                     else str(final_blocker_reason or "orders_not_submitted")[:180]
                 ),
                 **self._learned_exit_runtime_summary(),
+                "legacy_quarantine_review_v1": dict(quarantine_review or {}),
                 "live_trading_changed": False,
                 "secrets_exposed": False,
             }
