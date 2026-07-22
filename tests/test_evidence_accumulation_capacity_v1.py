@@ -24,7 +24,9 @@ BASE_ENV = {
     "ASTRA_CRYPTO_EVIDENCE_CAPITAL_LIMIT": "10000",
     "ASTRA_CRYPTO_EVIDENCE_POSITION_LIMIT": "1",
     "ASTRA_DAY_LANE_PILOT_ENABLED": "1",
+    "ASTRA_DAY_LANE_CAPITAL_LIMIT": "15000",
     "ASTRA_ENABLE_ALPACA_CRYPTO_PAPER": "1",
+    "ASTRA_CRYPTO_PAPER_CAPITAL_LIMIT": "10000",
 }
 
 
@@ -313,7 +315,7 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
         self.assertFalse(audit["blanket_fallback_detected"])
 
     def test_paper_autopilot_gate_consumes_reserve_decision(self):
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(BASE_ENV, {"ASTRA_DAY_LANE_PILOT_ENABLED": "1"}, clear=False):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, BASE_ENV, clear=False):
             engine = PaperAutopilotEngine(
                 db_path=str(pathlib.Path(tmp) / "paper.db"),
                 state_path=str(pathlib.Path(tmp) / "state.json"),
@@ -441,7 +443,7 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
             self.assertEqual(summary["reserve_commitments_released"], 1)
 
     def test_operational_dry_run_reaches_order_ready_from_crypto_reserve(self):
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(BASE_ENV, clear=False):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, BASE_ENV, clear=False):
             engine = PaperAutopilotEngine(
                 db_path=str(pathlib.Path(tmp) / "paper.db"),
                 state_path=str(pathlib.Path(tmp) / "state.json"),
