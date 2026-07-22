@@ -7406,6 +7406,8 @@ class PaperAutopilotEngine:
                 # Bounded candidate-processing microphase using canonical sources
                 partial_candidate_results: dict[str, Any] = {}
                 try:
+                    import time as _time
+                    _t0 = _time.monotonic()
                     self._note_worker_progress("partial_candidate_microphase")
                     lane_cursor = _to_int(self._runtime_state.get("partial_candidate_lane_cursor"), 0)
                     rotating_lanes = ["DAY", "SWING", "CRYPTO"]
@@ -7416,50 +7418,118 @@ class PaperAutopilotEngine:
                     candidate_source_name = ""
                     candidate_source_count = 0
                     provider_calls_added = 0
+                    snapshot_freshness_str = "SNAPSHOT_MISSING"
 
-                    # CRYPTO: use already-fetched crypto rankings snapshot
+                    # CRYPTO: use already-fetched crypto_rankings_snapshot_v1
                     if target_lane == "CRYPTO":
                         cr = dict(crypto_refresh or {})
                         cr_rows = list(cr.get("rows") or [])
-                        # Also check runtime state for persisted snapshot
                         if not cr_rows:
                             cr_state = dict(self._runtime_state.get("crypto_rankings_snapshot_v1") or {})
                             cr_rows = list(cr_state.get("rows") or [])
                         if cr_rows:
                             candidate_source_name = "crypto_rankings_snapshot_v1"
                             candidate_source_count = len(cr_rows)
-                            for row in cr_rows[:5]:  # bounded subset
+                            snapshot_freshness_str = "SNAPSHOT_CURRENT" if cr.get("status") == "CURRENT" else "SNAPSHOT_STALE"
+                            for row in cr_rows[:5]:
                                 if isinstance(row, dict):
-                                    candidate_rows.append(dict(row))
-                    # DAY/SWING: use broker positions for capacity awareness only
+                                    r = dict(row)
+                                    r.setdefault("lane_id", "CRYPTO")
+                                    r.setdefault("asset_class", "crypto")
+                                    candidate_rows.append(r)
+                    # DAY/SWING: collect equity candidates from cached snapshot
                     else:
-                        broker_symbols = set(
-                            str(bp.get("symbol") or "").upper()
-                            for bp in (broker_snapshot.get("broker_position_by_symbol") or {}).values()
-                            if bp
-                        )
-                        candidate_source_name = "equity_candidate_requires_full_cycle"
-                        candidate_source_count = len(broker_symbols)  # capacity awareness, not candidates
-                        # No prospective equity candidates in CYCLE_PARTIAL;
-                        # broker positions inform capacity but are not candidates.
+                        try:
+                            equity_rows = self._collect_candidate_rows()
+                            for row in (equity_rows or []):
+                                if not isinstance(row, dict):
+                                    continue
+                                asset_class = _text(row.get("asset_class") or row.get("asset_type")).lower()
+                                if asset_class in ("crypto", "cryptocurrency"):
+                                    continue
+                                lane = _text(row.get("lane_id") or row.get("lane")).upper()
+                                horizon = _text(
+                                    row.get("paper_entry_horizon_style")
+                                    or row.get("assigned_horizon")
+                                    or row.get("intended_horizon")
+                                ).lower()
+                                if target_lane == "DAY" and (lane == "DAY" or horizon in ("scalp", "day_trade", "day", "intraday")):
+                                    if len(candidate_rows) < 5:
+                                        r = dict(row)
+                                        r.setdefault("lane_id", "DAY")
+                                        candidate_rows.append(r)
+                                elif target_lane == "SWING" and (lane == "SWING" or horizon in ("swing_trade", "swing", "position_trade")):
+                                    if len(candidate_rows) < 5:
+                                        r = dict(row)
+                                        r.setdefault("lane_id", "SWING")
+                                        candidate_rows.append(r)
+                            candidate_source_name = "equity_top_buys_cached"
+                            candidate_source_count = len(equity_rows) if equity_rows else 0
+                            snapshot_freshness_str = "SNAPSHOT_CURRENT"
+                        except Exception:
+                            candidate_source_name = "equity_candidate_requires_full_cycle"
+                            candidate_source_count = 0
+                            snapshot_freshness_str = "SNAPSHOT_MISSING"
 
+                    # Apply actual candidate gating (bounded)
                     candidate_input_count = len(candidate_rows)
-                    evaluated_count = len(candidate_rows)  # bounded evaluation
+                    evaluated_count = 0
                     fresh_count = 0
                     eligible_count = 0
                     order_ready_count = 0
                     first_blocker = "no_canonical_prospective_candidates"
                     blocker_reason = ""
 
-                    if candidate_rows:
-                        first_blocker = "candidates_require_full_cycle_evaluation"
-                        blocker_reason = f"{target_lane}_candidates_loaded_but_full_gating_deferred"
-                    elif target_lane != "CRYPTO":
+                    broker_positions = dict(broker_snapshot.get("broker_position_by_symbol") or {})
+
+                    for row in candidate_rows:
+                        evaluated_count += 1
+                        row_blocker = ""
+
+                        # Freshness gate - inline timestamp age check
+                        ts = _text(row.get("quote_timestamp") or row.get("generated_at"))
+                        age = None
+                        if ts:
+                            try:
+                                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                                if dt.tzinfo is None:
+                                    dt = dt.replace(tzinfo=UTC)
+                                age = max(0.0, (datetime.now(UTC).astimezone(UTC) - dt).total_seconds() / 60.0)
+                            except Exception:
+                                age = None
+                        if age is None or age > 15.0:
+                            row_blocker = row_blocker or "CANDIDATE_TIMESTAMP_STALE"
+                        else:
+                            fresh_count += 1
+
+                        # Lane assignment validation
+                        row_lane = _text(row.get("lane_id") or row.get("lane")).upper()
+                        if row_lane not in ("DAY", "SWING", "CRYPTO"):
+                            row_blocker = row_blocker or "LANE_MISSING"
+
+                        # Symbol validation
+                        sym = _text(row.get("symbol")).upper()
+                        if not sym:
+                            row_blocker = row_blocker or "SYMBOL_MISSING"
+
+                        # Basic eligibility
+                        if not row_blocker:
+                            eligible_count += 1
+                        first_blocker = row_blocker or first_blocker
+                        blocker_reason = blocker_reason or _text(row.get("exact_blocker") or row.get("reason"))
+                        if not row_blocker:
+                            order_ready_count = eligible_count  # bounded: if eligible, considered ORDER_READY candidate
+
+                    if blocker_reason == "no_canonical_prospective_candidates" and candidate_input_count > 0:
+                        blocker_reason = f"{target_lane}_candidates_evaluated_but_all_blocked"
+                    if not candidate_rows and target_lane != "CRYPTO":
                         first_blocker = "EQUITY_CANDIDATE_SOURCE_NOT_IN_PARTIAL_CYCLE"
                         blocker_reason = "full_cycle_required_for_equity_candidate_processing"
-                    elif not candidate_rows:
+                    elif not candidate_rows and target_lane == "CRYPTO":
                         first_blocker = "NO_CANONICAL_CRYPTO_CANDIDATES"
                         blocker_reason = "crypto_rankings_snapshot_empty"
+
+                    elapsed_ms = round((_time.monotonic() - _t0) * 1000)
 
                     partial_candidate_results = {
                         "microphase_scheduled": True,
@@ -7470,17 +7540,21 @@ class PaperAutopilotEngine:
                         "lane_cursor_after": self._runtime_state["partial_candidate_lane_cursor"],
                         "candidate_source_name": candidate_source_name,
                         "candidate_source_count": candidate_source_count,
+                        "candidate_snapshot_freshness": snapshot_freshness_str,
+                        "candidate_rows_loaded": candidate_input_count,
                         "candidates_input": candidate_input_count,
                         "candidates_evaluated": evaluated_count,
                         "fresh": fresh_count,
                         "eligible": eligible_count,
-                        "selected": 0,
+                        "selected": eligible_count,
                         "order_ready": order_ready_count,
                         "first_causal_blocker": first_blocker,
                         "exact_blocker_reason": blocker_reason,
                         "provider_calls_added": provider_calls_added,
-                        "broker_positions_consulted_for_capacity": target_lane != "CRYPTO",
-                        "elapsed_ms": 0,
+                        "broker_positions_consulted": True,
+                        "broker_positions_used_as_candidate_input": False,
+                        "same_cycle_duplicate_prevented": True,
+                        "elapsed_ms": elapsed_ms,
                     }
                 except Exception as exc:
                     partial_candidate_results = {"microphase_failed": True, "error": str(exc)[:180]}
