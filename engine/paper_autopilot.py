@@ -2881,7 +2881,7 @@ class PaperAutopilotEngine:
             "worker_invoked": True,
             # The isolated runtime may temporarily reduce this existing
             # acquisition loop to one symbol under elevated host pressure.
-            "max_symbols_per_cycle": min(3, max(1, int(getattr(self, "max_stocks", 3) or 3))),
+            "max_symbols_per_cycle": min(6, max(1, int(getattr(self, "max_stocks", 6) or 6))),
             "maximum_provider_requests_per_cycle": 12,
             "maximum_pages_per_symbol": 2,
             "maximum_cycle_elapsed_seconds": 45,
