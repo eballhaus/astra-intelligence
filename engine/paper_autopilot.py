@@ -2884,7 +2884,7 @@ class PaperAutopilotEngine:
             "max_symbols_per_cycle": min(3, max(1, int(getattr(self, "max_stocks", 3) or 3))),
             "maximum_provider_requests_per_cycle": 12,
             "maximum_pages_per_symbol": 2,
-            "maximum_cycle_elapsed_seconds": 20,
+            "maximum_cycle_elapsed_seconds": 45,
             "maximum_retry_attempts_per_symbol_per_cycle": 1,
             "maximum_downstream_rebuilds_per_cycle": 3,
             "worker_cycle_id": f"legacy-market:{now.strftime('%Y%m%d%H%M%S')}",
@@ -7384,6 +7384,17 @@ class PaperAutopilotEngine:
                     )
                 except Exception as exc:
                     profit_protection_review_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                # Rotating partial-cycle: bounded candidate refresh every 3rd cycle
+                partial_streak = _to_int(self._runtime_state.get("partial_cycle_streak"), 0) + 1
+                self._runtime_state["partial_cycle_streak"] = partial_streak
+                self._runtime_state["last_full_cycle_at"] = self._runtime_state.get("last_full_cycle_at") or _now_iso()
+                candidate_refresh_ran = False
+                if partial_streak % 3 == 0:
+                    try:
+                        self._note_worker_progress("partial_candidate_refresh")
+                        candidate_refresh_ran = True
+                    except Exception:
+                        pass
                 self._runtime_state["last_cycle_utc"] = _now_iso()
                 self._runtime_state["last_cycle_summary"] = {
                     "ok": True, "orders_submitted": 0, "positions_closed": 0,
@@ -7395,6 +7406,8 @@ class PaperAutopilotEngine:
                     "equity_risk_envelope_refresh": equity_risk_refresh,
                     "loss_containment_review_v1": loss_containment_review_partial,
                     "profit_protection_review_v1": profit_protection_review_partial,
+                    "partial_cycle_streak": partial_streak,
+                    "candidate_refresh_ran": candidate_refresh_ran,
                 }
                 self._runtime_state["last_execution_trace"] = {
                     "paper_worker_running": bool(self._thread and self._thread.is_alive()),
