@@ -137,11 +137,17 @@ def build_peak_memory(
         giveback_ratio = (giveback_pct_points / peak_return_pct) if peak_return_pct > 0 else None
         capture_ratio = (current_return_pct / peak_return_pct) if peak_return_pct > 0 else None
 
-        provenance = (
-            "OBSERVED_SINCE_TRACKING_START"
-            if not prior_peak
-            else "CONTINUOUS_TRACKING"
-        )
+        provenance = "OBSERVED_SINCE_TRACKING_START"
+        tracking_started_at = _iso()
+        continuity_status = "FIRST_OBSERVATION"
+        restart_continuity_verified = False
+        historical_lifetime_peak_known = False
+        if prior_peak:
+            provenance = prior_peak.get("peak_provenance", provenance)
+            tracking_started_at = prior_peak.get("tracking_started_at", _iso())
+            continuity_status = "CONTINUOUS_TRACKING"
+            restart_continuity_verified = prior_peak.get("restart_continuity_verified", False)
+            historical_lifetime_peak_known = prior_peak.get("historical_lifetime_peak_known", False)
 
         new_positions[position_id] = {
             "position_id": position_id,
@@ -161,6 +167,10 @@ def build_peak_memory(
             "giveback_ratio": round(giveback_ratio, 6) if giveback_ratio is not None else None,
             "capture_ratio": round(capture_ratio, 6) if capture_ratio is not None else None,
             "peak_provenance": provenance,
+            "tracking_started_at": tracking_started_at,
+            "continuity_status": continuity_status,
+            "restart_continuity_verified": restart_continuity_verified,
+            "historical_lifetime_peak_known": historical_lifetime_peak_known,
             "peak_evidence_source": "broker_position_snapshot",
             "last_observed_at": as_of,
         }
