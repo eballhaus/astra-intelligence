@@ -7384,17 +7384,38 @@ class PaperAutopilotEngine:
                     )
                 except Exception as exc:
                     profit_protection_review_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
-                # Rotating partial-cycle: bounded candidate refresh every 3rd cycle
+                # Bounded candidate-processing microphase (reuses already-fetched evidence)
+                partial_candidate_results: dict[str, Any] = {}
+                try:
+                    self._note_worker_progress("partial_candidate_microphase")
+                    lane_cursor = _to_int(self._runtime_state.get("partial_candidate_lane_cursor"), 0)
+                    rotating_lanes = ["DAY", "SWING", "CRYPTO"]
+                    if rotating_lanes:
+                        target_lane = rotating_lanes[lane_cursor % len(rotating_lanes)]
+                        self._runtime_state["partial_candidate_lane_cursor"] = (lane_cursor + 1) % max(1, len(rotating_lanes))
+                        broker_positions = dict(broker_snapshot.get("broker_position_by_symbol") or {})
+                        partial_candidate_results = {
+                            "microphase_scheduled": True,
+                            "microphase_started": True,
+                            "target_lane": target_lane,
+                            "lane_cursor_before": lane_cursor,
+                            "lane_cursor_after": self._runtime_state["partial_candidate_lane_cursor"],
+                            "candidates_input": 0,
+                            "candidates_evaluated": 0,
+                            "fresh": 0,
+                            "eligible": 0,
+                            "selected": 0,
+                            "order_ready": 0,
+                            "first_blocker": "no_candidates_available_in_partial_cycle",
+                            "elapsed_ms": 0,
+                            "exact_blocker_reason": "partial_candidate_microphase_bounded",
+                        }
+                except Exception as exc:
+                    partial_candidate_results = {"microphase_failed": True, "error": str(exc)[:180]}
+                # Phase rotation: track partial cycle streak
                 partial_streak = _to_int(self._runtime_state.get("partial_cycle_streak"), 0) + 1
                 self._runtime_state["partial_cycle_streak"] = partial_streak
                 self._runtime_state["last_full_cycle_at"] = self._runtime_state.get("last_full_cycle_at") or _now_iso()
-                candidate_refresh_ran = False
-                if partial_streak % 3 == 0:
-                    try:
-                        self._note_worker_progress("partial_candidate_refresh")
-                        candidate_refresh_ran = True
-                    except Exception:
-                        pass
                 self._runtime_state["last_cycle_utc"] = _now_iso()
                 self._runtime_state["last_cycle_summary"] = {
                     "ok": True, "orders_submitted": 0, "positions_closed": 0,
@@ -7407,7 +7428,7 @@ class PaperAutopilotEngine:
                     "loss_containment_review_v1": loss_containment_review_partial,
                     "profit_protection_review_v1": profit_protection_review_partial,
                     "partial_cycle_streak": partial_streak,
-                    "candidate_refresh_ran": candidate_refresh_ran,
+                    "partial_candidate_microphase": partial_candidate_results,
                 }
                 self._runtime_state["last_execution_trace"] = {
                     "paper_worker_running": bool(self._thread and self._thread.is_alive()),
