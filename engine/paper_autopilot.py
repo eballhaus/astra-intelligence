@@ -57,6 +57,11 @@ from engine.astra_loss_containment_engine_v1 import (
     run_loss_containment_review_v1,
     save_loss_containment_state_v1,
 )
+from engine.astra_position_peak_memory_v1 import (
+    build_peak_memory,
+    load_peak_memory,
+    save_peak_memory,
+)
 from engine.astra_profit_protection_giveback_v1 import (
     load_profit_protection_state_v1,
     run_profit_protection_review_v1,
@@ -1355,6 +1360,10 @@ class PaperAutopilotEngine:
         self.loss_containment_state_path = str(
             kwargs.get("loss_containment_state_path")
             or os.path.join(os.path.dirname(self.state_path) or "state", "loss_containment_state_v1.json")
+        )
+        self.peak_memory_state_path = str(
+            kwargs.get("peak_memory_state_path")
+            or os.path.join(os.path.dirname(self.state_path) or "state", "position_peak_memory_v1.json")
         )
         self.profit_protection_state_path = str(
             kwargs.get("profit_protection_state_path")
@@ -7384,6 +7393,16 @@ class PaperAutopilotEngine:
                     )
                 except Exception as exc:
                     profit_protection_review_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                # Update peak memory from broker snapshot
+                peak_memory_update: dict[str, Any] = {}
+                try:
+                    peak_memory_update = build_peak_memory(
+                        dict(broker_snapshot.get("broker_position_by_symbol") or {}),
+                        prior_state=load_peak_memory(self.peak_memory_state_path),
+                    )
+                    save_peak_memory(self.peak_memory_state_path, peak_memory_update)
+                except Exception:
+                    peak_memory_update = {"positions_tracked": 0, "error": "peak_memory_exception"}
                 # Bounded candidate-processing microphase (reuses already-fetched evidence)
                 partial_candidate_results: dict[str, Any] = {}
                 try:
