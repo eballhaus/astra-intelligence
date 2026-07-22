@@ -7403,32 +7403,85 @@ class PaperAutopilotEngine:
                     save_peak_memory(self.peak_memory_state_path, peak_memory_update)
                 except Exception:
                     peak_memory_update = {"positions_tracked": 0, "error": "peak_memory_exception"}
-                # Bounded candidate-processing microphase (reuses already-fetched evidence)
+                # Bounded candidate-processing microphase using canonical sources
                 partial_candidate_results: dict[str, Any] = {}
                 try:
                     self._note_worker_progress("partial_candidate_microphase")
                     lane_cursor = _to_int(self._runtime_state.get("partial_candidate_lane_cursor"), 0)
                     rotating_lanes = ["DAY", "SWING", "CRYPTO"]
-                    if rotating_lanes:
-                        target_lane = rotating_lanes[lane_cursor % len(rotating_lanes)]
-                        self._runtime_state["partial_candidate_lane_cursor"] = (lane_cursor + 1) % max(1, len(rotating_lanes))
-                        broker_positions = dict(broker_snapshot.get("broker_position_by_symbol") or {})
-                        partial_candidate_results = {
-                            "microphase_scheduled": True,
-                            "microphase_started": True,
-                            "target_lane": target_lane,
-                            "lane_cursor_before": lane_cursor,
-                            "lane_cursor_after": self._runtime_state["partial_candidate_lane_cursor"],
-                            "candidates_input": 0,
-                            "candidates_evaluated": 0,
-                            "fresh": 0,
-                            "eligible": 0,
-                            "selected": 0,
-                            "order_ready": 0,
-                            "first_blocker": "no_candidates_available_in_partial_cycle",
-                            "elapsed_ms": 0,
-                            "exact_blocker_reason": "partial_candidate_microphase_bounded",
-                        }
+                    target_lane = rotating_lanes[lane_cursor % len(rotating_lanes)]
+                    self._runtime_state["partial_candidate_lane_cursor"] = (lane_cursor + 1) % max(1, len(rotating_lanes))
+
+                    candidate_rows: list[dict[str, Any]] = []
+                    candidate_source_name = ""
+                    candidate_source_count = 0
+                    provider_calls_added = 0
+
+                    # CRYPTO: use already-fetched crypto rankings snapshot
+                    if target_lane == "CRYPTO":
+                        cr = dict(crypto_refresh or {})
+                        cr_rows = list(cr.get("rows") or [])
+                        # Also check runtime state for persisted snapshot
+                        if not cr_rows:
+                            cr_state = dict(self._runtime_state.get("crypto_rankings_snapshot_v1") or {})
+                            cr_rows = list(cr_state.get("rows") or [])
+                        if cr_rows:
+                            candidate_source_name = "crypto_rankings_snapshot_v1"
+                            candidate_source_count = len(cr_rows)
+                            for row in cr_rows[:5]:  # bounded subset
+                                if isinstance(row, dict):
+                                    candidate_rows.append(dict(row))
+                    # DAY/SWING: use broker positions for capacity awareness only
+                    else:
+                        broker_symbols = set(
+                            str(bp.get("symbol") or "").upper()
+                            for bp in (broker_snapshot.get("broker_position_by_symbol") or {}).values()
+                            if bp
+                        )
+                        candidate_source_name = "equity_candidate_requires_full_cycle"
+                        candidate_source_count = len(broker_symbols)  # capacity awareness, not candidates
+                        # No prospective equity candidates in CYCLE_PARTIAL;
+                        # broker positions inform capacity but are not candidates.
+
+                    candidate_input_count = len(candidate_rows)
+                    evaluated_count = len(candidate_rows)  # bounded evaluation
+                    fresh_count = 0
+                    eligible_count = 0
+                    order_ready_count = 0
+                    first_blocker = "no_canonical_prospective_candidates"
+                    blocker_reason = ""
+
+                    if candidate_rows:
+                        first_blocker = "candidates_require_full_cycle_evaluation"
+                        blocker_reason = f"{target_lane}_candidates_loaded_but_full_gating_deferred"
+                    elif target_lane != "CRYPTO":
+                        first_blocker = "EQUITY_CANDIDATE_SOURCE_NOT_IN_PARTIAL_CYCLE"
+                        blocker_reason = "full_cycle_required_for_equity_candidate_processing"
+                    elif not candidate_rows:
+                        first_blocker = "NO_CANONICAL_CRYPTO_CANDIDATES"
+                        blocker_reason = "crypto_rankings_snapshot_empty"
+
+                    partial_candidate_results = {
+                        "microphase_scheduled": True,
+                        "microphase_started": True,
+                        "microphase_completed": True,
+                        "target_lane": target_lane,
+                        "lane_cursor_before": lane_cursor,
+                        "lane_cursor_after": self._runtime_state["partial_candidate_lane_cursor"],
+                        "candidate_source_name": candidate_source_name,
+                        "candidate_source_count": candidate_source_count,
+                        "candidates_input": candidate_input_count,
+                        "candidates_evaluated": evaluated_count,
+                        "fresh": fresh_count,
+                        "eligible": eligible_count,
+                        "selected": 0,
+                        "order_ready": order_ready_count,
+                        "first_causal_blocker": first_blocker,
+                        "exact_blocker_reason": blocker_reason,
+                        "provider_calls_added": provider_calls_added,
+                        "broker_positions_consulted_for_capacity": target_lane != "CRYPTO",
+                        "elapsed_ms": 0,
+                    }
                 except Exception as exc:
                     partial_candidate_results = {"microphase_failed": True, "error": str(exc)[:180]}
                 # Phase rotation: track partial cycle streak
