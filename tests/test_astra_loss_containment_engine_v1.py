@@ -481,6 +481,68 @@ class IntegrationTests(unittest.TestCase):
                 engine._submit_authorized_lane_exit = original
         self.assertEqual(calls, [])
 
+    def test_cycle_partial_path_includes_loss_containment(self):
+        """Regression: CYCLE_PARTIAL short-cycle path must run loss containment.
+
+        The enabled worker cycle returns early at the CYCLE_PARTIAL budget check
+        before reaching the main loss-containment block. This test verifies that
+        the short-cycle path now includes its own loss-containment review.
+        """
+        PaperAutopilotEngine = self._can_import_paper_autopilot()
+        engine = PaperAutopilotEngine(
+            db_path=self.db_path,
+            state_path=self.state_path,
+            enabled=True,
+        )
+        engine._ensure_schema()
+        with engine._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO paper_positions
+                  (position_id, symbol, asset_type, status, quantity,
+                   entry_price, entry_timestamp, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("d1", "AAPL", "stock", "OPEN", 10, 100.0,
+                 "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z",
+                 "2025-01-15T12:00:00Z"),
+            )
+            conn.commit()
+
+        # Mock the canary pre-submit to return a CYCLE_PARTIAL state.
+        def _partial_mock(_broker_positions):
+            return {"market_activity": {"cycle_state": "CYCLE_PARTIAL_BUDGET"}}
+        engine._refresh_legacy_swing_canary_pre_submit = _partial_mock
+
+        # Mock broker snapshot to provide price data for loss containment.
+        def _broker_snapshot():
+            return {
+                "broker_open_symbols": {"AAPL"},
+                "broker_position_by_symbol": {
+                    "AAPL": {
+                        "qty": 10, "avg_entry_price": 100.0,
+                        "current_price": 90.0, "asset_class": "stock",
+                    },
+                },
+                "broker_reconciliation_active": True,
+                "broker_positions_fetch_ok": True,
+                "broker_open_positions_count": 1,
+            }
+        engine._broker_open_symbols_snapshot = _broker_snapshot
+
+        # Must also supply refresh_crypto_rankings_fn and
+        # refresh_equity_risk_envelopes_fn to avoid AttributeError.
+        engine.refresh_crypto_rankings_fn = lambda: {}
+        engine.refresh_equity_risk_envelopes_fn = lambda: {}
+
+        result = engine.run_cycle()
+        self.assertIn("loss_containment_review_v1", result)
+        lc = result["loss_containment_review_v1"]
+        self.assertNotEqual(lc.get("execution_authorized"), True)
+        self.assertNotEqual(lc.get("paper_action_ready"), True)
+        self.assertNotEqual(lc.get("broker_submission_allowed"), True)
+        self.assertGreater(lc.get("positions_evaluated", 0), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

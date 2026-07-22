@@ -7297,6 +7297,16 @@ class PaperAutopilotEngine:
                             "status": "FAILED_FAIL_CLOSED",
                             "exact_blocker": f"equity_risk_envelope_refresh_exception:{str(exc)[:120]}",
                         }
+                loss_containment_review_partial: dict[str, Any] = {}
+                try:
+                    self._note_worker_progress("loss_containment_review")
+                    broker_position_by_symbol = dict(broker_snapshot.get("broker_position_by_symbol") or {})
+                    loss_containment_review_partial = self._loss_containment_review_phase(
+                        broker_position_by_symbol=broker_position_by_symbol,
+                        max_positions=100,
+                    )
+                except Exception as exc:
+                    loss_containment_review_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 self._runtime_state["last_cycle_utc"] = _now_iso()
                 self._runtime_state["last_cycle_summary"] = {
                     "ok": True, "orders_submitted": 0, "positions_closed": 0,
@@ -7306,6 +7316,7 @@ class PaperAutopilotEngine:
                     "broker_positions_fetch_ok": bool(broker_snapshot.get("broker_positions_fetch_ok")),
                     "crypto_ranking_refresh": crypto_refresh,
                     "equity_risk_envelope_refresh": equity_risk_refresh,
+                    "loss_containment_review_v1": loss_containment_review_partial,
                 }
                 self._runtime_state["last_execution_trace"] = {
                     "paper_worker_running": bool(self._thread and self._thread.is_alive()),
@@ -7319,6 +7330,7 @@ class PaperAutopilotEngine:
                     "evidence_accumulation_capacity_v1": evidence_capacity_snapshot,
                     "crypto_ranking_refresh": crypto_refresh,
                     "equity_risk_envelope_refresh": equity_risk_refresh,
+                    "loss_containment_review_v1": loss_containment_review_partial,
                     "live_trading_changed": False, "secrets_exposed": False,
                 }
                 self._note_worker_progress("legacy_market_evidence_checkpoint")
