@@ -1,0 +1,81 @@
+models:
+  deepseek-flash:
+    name: DeepSeek Flash
+    identifier: deepseek-flash
+    typical_use:
+      - small diff reviews
+      - focused test validation
+      - runtime-claim verification
+      - contained defect corrections
+      - lightweight diagnostics
+      - acceptance-ledger audits
+    max_risk: low
+    max_complexity: medium
+    autonomous: false
+    execution_authority: false
+
+  kimi:
+    name: Kimi K2.7 Code
+    identifier: kimi
+    typical_use:
+      - standalone engines
+      - diagnostics
+      - reports
+      - dashboard or backend modules with clear ownership
+      - large test generation
+      - documentation
+      - long contained implementations
+      - coordination tooling
+    max_risk: medium
+    max_complexity: high
+    autonomous: false
+    execution_authority: false
+
+  deepseek-pro:
+    name: DeepSeek Pro
+    identifier: deepseek-pro
+    typical_use:
+      - PaperAutopilot
+      - worker control
+      - lane capacity
+      - capital ownership
+      - broker entries
+      - broker exits
+      - quantity reconciliation
+      - lifecycle closure
+      - canonical state ownership
+      - high-risk integration when Codex is unavailable
+    max_risk: high
+    max_complexity: high
+    autonomous: false
+    execution_authority: false
+
+  codex:
+    name: Codex
+    identifier: codex
+    typical_use:
+      - hardest cross-system implementation
+      - difficult repository-wide debugging
+      - execution-sensitive refactors
+      - final integration of high-risk branches
+      - complex multi-branch conflict resolution
+      - high-risk final review
+    max_risk: critical
+    max_complexity: critical
+    autonomous: false
+    execution_authority: false
+    note: Use only when rates are available; otherwise escalate to DeepSeek Pro.
+
+escalation_rules:
+  - condition: risk exceeds assigned model max_risk
+    action: recommend next higher model
+  - condition: implementation crosses canonical ownership
+    action: require independent review; recommend DeepSeek Pro or Codex
+  - condition: contained task becomes cross-system
+    action: recommend higher model and integration queue
+  - condition: safety-sensitive defect discovered
+    action: halt; recommend DeepSeek Pro or Codex review
+  - condition: assigned model cannot complete acceptance criteria
+    action: escalate with explicit reason
+
+rate_efficiency_rule: Use the cheapest model that can safely complete the task.

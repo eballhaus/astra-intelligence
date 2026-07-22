@@ -1,0 +1,52 @@
+forbidden_paths:
+  # Runtime and secret files
+  - pattern: "^\\.env$"
+    reason: secret_configuration
+  - pattern: "^\\.env\\."
+    reason: secret_configuration
+
+  # Runtime state
+  - pattern: "^state/"
+    reason: runtime_state
+  - pattern: "^diagnostics/"
+    reason: runtime_diagnostics
+  - pattern: "^diagnostics\\.json$"
+    reason: runtime_diagnostics
+  - pattern: "^logs/"
+    reason: runtime_logs
+  - pattern: "^state/.*"
+    reason: runtime_state
+
+  # Databases and locks
+  - pattern: "\\.db$"
+    reason: database
+  - pattern: "\\.sqlite$"
+    reason: database
+  - pattern: "\\.sqlite3$"
+    reason: database
+  - pattern: "\\.lock$"
+    reason: lock_file
+
+  # Build artifacts and caches
+  - pattern: "__pycache__/"
+    reason: cache
+  - pattern: "\\.pytest_cache/"
+    reason: cache
+  - pattern: "node_modules/"
+    reason: dependency_directory
+  - pattern: "^dist/"
+    reason: build_output
+  - pattern: "^build/"
+    reason: build_output
+
+  # Live checkout
+  - pattern: "^/Users/eric/Desktop/astra-intelligence-clean$"
+    reason: live_checkout
+    exception_task_types:
+      - integration
+
+forbidden_task_types:
+  normal:
+    - live_checkout_use
+
+note: The live checkout is protected for normal implementation workstreams.

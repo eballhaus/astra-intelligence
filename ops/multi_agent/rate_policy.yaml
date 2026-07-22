@@ -1,0 +1,38 @@
+rate_categories:
+  context:
+    - low
+    - medium
+    - high
+    - very_high
+  output:
+    - low
+    - medium
+    - high
+    - very_high
+
+policies:
+  default:
+    max_model_tier: kimi
+    full_suite_required: false
+    escalation_allowed: true
+    independent_review_required: false
+
+  high_risk:
+    max_model_tier: deepseek-pro
+    full_suite_required: true
+    escalation_allowed: true
+    independent_review_required: true
+
+  critical:
+    max_model_tier: codex
+    full_suite_required: true
+    escalation_allowed: true
+    independent_review_required: true
+
+model_rates_relative:
+  deepseek-flash: 1
+  kimi: 3
+  deepseek-pro: 5
+  codex: 8
+
+note: Rate values are relative for routing decisions, not actual API costs.

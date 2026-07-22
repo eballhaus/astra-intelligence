@@ -1,0 +1,11 @@
+- workstream:
+    id: env-cleanup-v1
+    title: Environment Cleanup V1
+    status: proposed
+    primary_model: kimi
+    branch: kimi/env-cleanup-v1
+    owned_files:
+      - .env
+      - state/runtime_health.log
+
+# INVALID: .env and state/** are forbidden paths

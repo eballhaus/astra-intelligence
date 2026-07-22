@@ -1,0 +1,49 @@
+workstreams:
+  - id: position-peak-exit-closure-v1
+    title: Position Peak Memory and Unified Exit Readiness V1
+    status: active
+    risk_level: high
+    primary_model: deepseek-pro
+    review_model: deepseek-flash
+    integrator_model: codex
+    branch: deepseek/position-peak-exit-closure-v1
+    worktree: /Users/eric/Desktop/astra-position-lifecycle-deepseek
+    base_branch: origin/main
+    base_commit: 92accdd63a74e45a02721887ee3f639aca489ee9
+    owned_files: []
+    owned_patterns:
+      - engine/astra_position_peak_*_v1.py
+      - tests/test_astra_position_peak_*_v1.py
+    owned_contracts:
+      - position_peak_memory
+      - position_lifecycle_classification
+      - unified_position_decision
+      - exit_readiness
+      - lifecycle_closure
+    read_only_dependencies:
+      - engine/astra_loss_containment_engine_v1.py
+      - engine/astra_profit_protection_giveback_v1.py
+      - engine/astra_legacy_quarantine_v1.py
+    forbidden_files: []
+    depends_on: []
+    blocks: []
+    acceptance_criteria:
+      - id: A1
+        description: Peak memory engine tracks MFE and giveback per position
+        status: NOT_EVALUATED
+        evidence: []
+      - id: A2
+        description: Unified exit readiness respects advisory-only safety flags
+        status: NOT_EVALUATED
+        evidence: []
+    rate_policy:
+      estimated_context: high
+      estimated_output: high
+      full_suite_required: true
+      escalation_allowed: true
+      maximum_default_model: deepseek-pro
+    integration:
+      order: 10
+      requires_independent_review: true
+      requires_full_suite_at_integration: true
+      runtime_restart_expected: false

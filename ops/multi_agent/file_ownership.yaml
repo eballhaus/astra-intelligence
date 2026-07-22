@@ -1,0 +1,4 @@
+# File ownership registry.
+# Populated and validated by astra_agent_validate.py.
+# Each entry maps an active workstream id to owned files and read-only dependencies.
+registry: {}

@@ -1,0 +1,3 @@
+# Canonical-contract ownership registry.
+# Populated and validated by astra_agent_validate.py.
+registry: {}

@@ -1,0 +1,13 @@
+- workstream_a:
+    id: position-lifecycle-v1
+    title: Position Lifecycle V1
+    status: integrated
+
+- workstream_b:
+    id: exit-readiness-v1
+    title: Exit Readiness V1
+    status: proposed
+    depends_on:
+      - position-lifecycle-v1
+
+# workstream_b cannot start until position-lifecycle-v1 is integrated
