@@ -151,6 +151,18 @@ class ThesisSupportMomentumTests(unittest.TestCase):
         self.assertEqual(d["profit_state"], "THESIS_BROKEN")
         self.assertEqual(d["canonical_recommendation"], "THESIS_BROKEN")
 
+    def test_thesis_broken_without_peak_evidence_not_hold(self):
+        """Regression: thesis broken without LC decision and without peak evidence must not return HOLD."""
+        pos = _position(
+            current_price=95.0,
+            thesis_broken=True,
+        )
+        d = evaluate_position_profit_protection_v1(pos)
+        self.assertNotEqual(d["canonical_recommendation"], "HOLD")
+        self.assertNotEqual(d["profit_state"], "NO_PROFIT_HISTORY")
+        self.assertEqual(d["canonical_recommendation"], "THESIS_BROKEN")
+        self.assertEqual(d["profit_state"], "THESIS_BROKEN")
+
     def test_support_failure_increases_severity(self):
         pos = _position(
             current_price=115.0,

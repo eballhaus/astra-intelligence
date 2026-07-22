@@ -632,11 +632,11 @@ def _derive_state_and_recommendation(
     if loss_containment.get("loss_containment_priority"):
         return "LOSS_CONTAINMENT_PRIORITY", "DEFER_TO_LOSS_CONTAINMENT", [loss_containment.get("loss_containment_reason") or "loss_containment_priority"]
 
-    if not metrics.get("peak_evidence_available"):
-        return "NO_PROFIT_HISTORY", "HOLD", ["no_canonical_peak_gain_evidence"]
-
     if thesis.get("thesis_state") == "THESIS_BROKEN":
         return "THESIS_BROKEN", "THESIS_BROKEN", ["thesis_broken_overrides_profit_logic"]
+
+    if not metrics.get("peak_evidence_available"):
+        return "NO_PROFIT_HISTORY", "HOLD", ["no_canonical_peak_gain_evidence"]
 
     current_return_pct = metrics.get("current_return_pct", 0.0)
     if current_return_pct <= 0.0:

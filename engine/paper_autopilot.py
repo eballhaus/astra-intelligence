@@ -57,6 +57,11 @@ from engine.astra_loss_containment_engine_v1 import (
     run_loss_containment_review_v1,
     save_loss_containment_state_v1,
 )
+from engine.astra_profit_protection_giveback_v1 import (
+    load_profit_protection_state_v1,
+    run_profit_protection_review_v1,
+    save_profit_protection_state_v1,
+)
 
 
 _LEGACY_MIGRATION_SOURCE_COMMIT_V1 = "e1e30e0739387be274e4e717cf7c7239b42d7890"
@@ -1351,6 +1356,10 @@ class PaperAutopilotEngine:
             kwargs.get("loss_containment_state_path")
             or os.path.join(os.path.dirname(self.state_path) or "state", "loss_containment_state_v1.json")
         )
+        self.profit_protection_state_path = str(
+            kwargs.get("profit_protection_state_path")
+            or os.path.join(os.path.dirname(self.state_path) or "state", "profit_protection_state_v1.json")
+        )
         self.get_crypto_candidate_rows_fn = kwargs.get("get_crypto_candidate_rows_fn")
         # Snapshot refresh is worker-owned; API readers only consume the
         # persisted output through the existing candidate adapter.
@@ -1729,6 +1738,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["position_resolution_reviews"] = dict(payload.get("position_resolution_reviews") or {})
                 if isinstance(payload.get("loss_containment_state_v1"), dict):
                     self._runtime_state["loss_containment_state_v1"] = dict(payload.get("loss_containment_state_v1") or {})
+                if isinstance(payload.get("profit_protection_state_v1"), dict):
+                    self._runtime_state["profit_protection_state_v1"] = dict(payload.get("profit_protection_state_v1") or {})
                 for key in (
                     "legacy_migration_manifest_v1",
                     "legacy_migration_approval_v1",
@@ -1806,6 +1817,7 @@ class PaperAutopilotEngine:
             "legacy_swing_exit_lifecycle": dict(self._runtime_state.get("legacy_swing_exit_lifecycle") or {}),
             "position_resolution_reviews": dict(self._runtime_state.get("position_resolution_reviews") or {}),
             "loss_containment_state_v1": dict(self._runtime_state.get("loss_containment_state_v1") or {}),
+            "profit_protection_state_v1": dict(self._runtime_state.get("profit_protection_state_v1") or {}),
             "legacy_migration_manifest_v1": dict(self._runtime_state.get("legacy_migration_manifest_v1") or {}),
             "legacy_migration_approval_v1": dict(self._runtime_state.get("legacy_migration_approval_v1") or {}),
             "legacy_migration_application_v1": dict(self._runtime_state.get("legacy_migration_application_v1") or {}),
@@ -6997,6 +7009,60 @@ class PaperAutopilotEngine:
         self._save_loss_containment_state(result.get("state", {}))
         return result
 
+    def _load_profit_protection_state(self) -> dict[str, Any]:
+        return load_profit_protection_state_v1(self.profit_protection_state_path)
+
+    def _save_profit_protection_state(self, state: dict[str, Any] | None = None) -> None:
+        payload = dict(state or self._runtime_state.get("profit_protection_state_v1") or {})
+        save_profit_protection_state_v1(self.profit_protection_state_path, payload)
+
+    def _profit_protection_review_phase(
+        self,
+        open_rows: list[dict[str, Any]] | None = None,
+        broker_position_by_symbol: dict[str, dict[str, Any]] | None = None,
+        max_positions: int = 100,
+    ) -> dict[str, Any]:
+        """Bounded advisory profit-protection review without order submission.
+
+        Consumes loss-containment decisions by position ID for precedence.
+        """
+        rows = list(open_rows or self._fetch_open_positions() or [])
+        broker_positions = dict(broker_position_by_symbol or {})
+        prior_state = self._load_profit_protection_state()
+
+        ownership_map: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            pid = _pick_first_text(row.get("position_id"), row.get("asset_id"), row.get("symbol"))
+            ownership_map[pid] = resolve_canonical_position_ownership_v1(row)
+
+        lc_state = self._runtime_state.get("loss_containment_state_v1") or {}
+        lc_decisions = dict(lc_state.get("decisions") or {})
+
+        result = run_profit_protection_review_v1(
+            rows,
+            ownership_map=ownership_map,
+            broker_positions=broker_positions,
+            loss_containment_decisions=lc_decisions,
+            prior_state=prior_state,
+            max_positions=max_positions,
+        )
+        self._runtime_state["profit_protection_review_v1"] = {
+            "positions_evaluated": result.get("positions_evaluated", 0),
+            "max_positions": result.get("max_positions", 1),
+            "metrics": result.get("metrics", {}),
+            "lane_summaries": result.get("lane_summaries", {}),
+            "execution_authorized": result.get("execution_authorized", False),
+            "paper_action_ready": result.get("paper_action_ready", False),
+            "broker_submission_allowed": result.get("broker_submission_allowed", False),
+            "advisory_only": result.get("advisory_only", True),
+            "as_of": result.get("generated_timestamp"),
+        }
+        self._runtime_state["profit_protection_state_v1"] = result.get("state", {})
+        self._save_profit_protection_state(result.get("state", {}))
+        return result
+
     def _bounded_legacy_quarantine_review_phase(
         self,
         open_rows: list[dict[str, Any]] | None = None,
@@ -7134,6 +7200,7 @@ class PaperAutopilotEngine:
             "legacy_quarantine_review_v1": dict(self._runtime_state.get("legacy_quarantine_review_summary_v1") or {}),
             "legacy_quarantine_attribution_summary_v1": dict(self._runtime_state.get("legacy_quarantine_attribution_summary_v1") or {}),
             "loss_containment_review_v1": dict(self._runtime_state.get("loss_containment_review_v1") or {}),
+            "profit_protection_review_v1": dict(self._runtime_state.get("profit_protection_review_v1") or {}),
             "legacy_canary_control_v1": legacy_canary_control,
             "last_error": str(self._runtime_state.get("last_error") or ""),
             "last_updated_utc": _now_iso(),
@@ -7307,6 +7374,16 @@ class PaperAutopilotEngine:
                     )
                 except Exception as exc:
                     loss_containment_review_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                profit_protection_review_partial: dict[str, Any] = {}
+                try:
+                    self._note_worker_progress("profit_protection_review")
+                    broker_position_by_symbol = dict(broker_snapshot.get("broker_position_by_symbol") or {})
+                    profit_protection_review_partial = self._profit_protection_review_phase(
+                        broker_position_by_symbol=broker_position_by_symbol,
+                        max_positions=100,
+                    )
+                except Exception as exc:
+                    profit_protection_review_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 self._runtime_state["last_cycle_utc"] = _now_iso()
                 self._runtime_state["last_cycle_summary"] = {
                     "ok": True, "orders_submitted": 0, "positions_closed": 0,
@@ -7317,6 +7394,7 @@ class PaperAutopilotEngine:
                     "crypto_ranking_refresh": crypto_refresh,
                     "equity_risk_envelope_refresh": equity_risk_refresh,
                     "loss_containment_review_v1": loss_containment_review_partial,
+                    "profit_protection_review_v1": profit_protection_review_partial,
                 }
                 self._runtime_state["last_execution_trace"] = {
                     "paper_worker_running": bool(self._thread and self._thread.is_alive()),
@@ -7331,6 +7409,7 @@ class PaperAutopilotEngine:
                     "crypto_ranking_refresh": crypto_refresh,
                     "equity_risk_envelope_refresh": equity_risk_refresh,
                     "loss_containment_review_v1": loss_containment_review_partial,
+                    "profit_protection_review_v1": profit_protection_review_partial,
                     "live_trading_changed": False, "secrets_exposed": False,
                 }
                 self._note_worker_progress("legacy_market_evidence_checkpoint")
@@ -7402,6 +7481,16 @@ class PaperAutopilotEngine:
                 )
             except Exception as exc:
                 loss_containment_review = {"observation_state": "FAILED", "error": str(exc)[:180]}
+            profit_protection_review: dict[str, Any] = {}
+            try:
+                self._note_worker_progress("profit_protection_review")
+                profit_protection_review = self._profit_protection_review_phase(
+                    open_rows=open_rows_initial,
+                    broker_position_by_symbol=broker_position_by_symbol,
+                    max_positions=100,
+                )
+            except Exception as exc:
+                profit_protection_review = {"observation_state": "FAILED", "error": str(exc)[:180]}
             # Market evidence is a restart-stable worker product.  Persist it
             # before the broader candidate scan, which may take longer than a
             # bounded provider refresh cycle.
@@ -8212,6 +8301,7 @@ class PaperAutopilotEngine:
                 ),
                 "legacy_quarantine_review_v1": dict(quarantine_review or {}),
                 "loss_containment_review_v1": dict(loss_containment_review or {}),
+                "profit_protection_review_v1": dict(profit_protection_review or {}),
                 **self._learned_exit_runtime_summary(),
             }
             trace = {
@@ -8300,6 +8390,7 @@ class PaperAutopilotEngine:
                 **self._learned_exit_runtime_summary(),
                 "legacy_quarantine_review_v1": dict(quarantine_review or {}),
                 "loss_containment_review_v1": dict(loss_containment_review or {}),
+                "profit_protection_review_v1": dict(profit_protection_review or {}),
                 "live_trading_changed": False,
                 "secrets_exposed": False,
             }
