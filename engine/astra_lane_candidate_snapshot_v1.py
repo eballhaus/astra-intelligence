@@ -96,6 +96,14 @@ def build_lane_candidate_snapshots(
         if asset_class in ("crypto", "cryptocurrency"):
             continue  # crypto has its own snapshot
 
+        # Skip rows that are clearly broker positions, not candidate rankings
+        has_candidate_fields = (
+            _text(row.get("candidate_id") or row.get("recommendation_id") or row.get("rank"))
+            or (lane or horizon)
+        )
+        if not has_candidate_fields:
+            continue
+
         if lane == "DAY" or horizon in ("scalp", "day_trade", "day", "intraday"):
             if len(day_rows) < max_rows:
                 day_rows.append(_normalize_row(row, "DAY", as_of))
