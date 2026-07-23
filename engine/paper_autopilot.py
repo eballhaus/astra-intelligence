@@ -57,6 +57,11 @@ from engine.astra_loss_containment_engine_v1 import (
     run_loss_containment_review_v1,
     save_loss_containment_state_v1,
 )
+from engine.astra_canonical_position_snapshot_v1 import (
+    build_canonical_position_snapshot,
+    snapshot_to_loss_containment_rows,
+    snapshot_to_broker_position_by_symbol,
+)
 from engine.astra_position_peak_memory_v1 import (
     build_peak_memory,
     load_peak_memory,
@@ -6982,11 +6987,33 @@ class PaperAutopilotEngine:
 
         Produces canonical loss-containment decisions per position, lane
         summaries, and durable shadow records. Execution is never authorized.
+
+        Broker positions are authoritative for current open-position existence.
+        When broker snapshot is available, always build canonical rows from
+        broker positions (authoritative), regardless of DB state.
         """
         rows = list(open_rows or self._fetch_open_positions() or [])
         broker_positions = dict(broker_position_by_symbol or {})
         latest_prices = dict(latest_price_by_symbol or {})
         prior_state = self._load_loss_containment_state()
+
+        # Authoritative broker truth: When broker positions are available,
+        # always build canonical snapshot rows. Broker positions define the
+        # authoritative current open-position set.
+        if broker_positions:
+            canonical_snapshot = build_canonical_position_snapshot(broker_positions)
+            broker_rows = snapshot_to_loss_containment_rows(canonical_snapshot)
+            if broker_rows:
+                rows = broker_rows  # Broker truth overrides any stale DB rows
+                # Stale decision eviction: Only retain prior decisions for
+                # positions that exist in current broker snapshot.
+                current_symbols = set(broker_positions.keys())
+                prior_decisions = dict(prior_state.get("decisions") or {})
+                filtered_decisions = {
+                    pid: d for pid, d in prior_decisions.items()
+                    if isinstance(d, dict) and d.get("symbol") in current_symbols
+                }
+                prior_state = {**prior_state, "decisions": filtered_decisions}
 
         ownership_map: dict[str, dict[str, Any]] = {}
         for row in rows:
@@ -7034,10 +7061,29 @@ class PaperAutopilotEngine:
         """Bounded advisory profit-protection review without order submission.
 
         Consumes loss-containment decisions by position ID for precedence.
+
+        Broker positions are authoritative for current open-position existence.
         """
         rows = list(open_rows or self._fetch_open_positions() or [])
         broker_positions = dict(broker_position_by_symbol or {})
         prior_state = self._load_profit_protection_state()
+
+        # Authoritative broker truth: When broker positions are available,
+        # always build canonical snapshot rows. Broker positions define the
+        # authoritative current open-position set.
+        if broker_positions:
+            canonical_snapshot = build_canonical_position_snapshot(broker_positions)
+            broker_rows = snapshot_to_loss_containment_rows(canonical_snapshot)
+            if broker_rows:
+                rows = broker_rows  # Broker truth overrides any stale DB rows
+                # Stale decision eviction for profit protection too
+                current_symbols = set(broker_positions.keys())
+                prior_decisions = dict(prior_state.get("decisions") or {})
+                filtered_decisions = {
+                    pid: d for pid, d in prior_decisions.items()
+                    if isinstance(d, dict) and d.get("symbol") in current_symbols
+                }
+                prior_state = {**prior_state, "decisions": filtered_decisions}
 
         ownership_map: dict[str, dict[str, Any]] = {}
         for row in rows:
