@@ -227,7 +227,7 @@ environment instead.
 python3.12 -m venv /tmp/astra_multi_agent_review_venv
 /tmp/astra_multi_agent_review_venv/bin/python -m pip install --upgrade pip
 /tmp/astra_multi_agent_review_venv/bin/python -m pip install pytest pyyaml
-/tmp/astra_multi_agent_review_venv/bin/python -m pytest tests/test_astra_multi_agent_os.py -v
+/tmp/astra_multi_agent_review_venv/bin/python -m pytest tests_pytest/test_astra_multi_agent_os.py -v
 ```
 
 ### 12.2 Test count
@@ -237,7 +237,7 @@ parametrized over the eight CLI scripts, so pytest collects more test cases
 than there are function definitions. The exact counts are:
 
 ```bash
-python -m pytest tests/test_astra_multi_agent_os.py --collect-only -q
+python -m pytest tests_pytest/test_astra_multi_agent_os.py --collect-only -q
 ```
 
 When reporting results, distinguish **test functions** from **collected pytest
@@ -250,7 +250,7 @@ python -m py_compile ops/multi_agent/*.py scripts/astra_agent_*.py scripts/astra
 for s in scripts/astra_agent_*.py scripts/astra_integration_queue.py; do
     python "$s" --help >/dev/null || echo "help failed for $s";
 done
-python -m pytest tests/test_astra_multi_agent_os.py -v
+python -m pytest tests_pytest/test_astra_multi_agent_os.py -v
 ```
 
 The tests validate schema checks, ownership conflicts, forbidden paths,
