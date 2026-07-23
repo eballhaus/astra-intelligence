@@ -1,0 +1,17 @@
+- workstream_a:
+    id: broker-submission-audit-v1
+    title: Broker Submission Audit V1
+    status: active
+    primary_model: deepseek-pro
+    owned_contracts:
+      - broker_submission
+
+- workstream_b:
+    id: order-normalization-v1
+    title: Order Normalization V1
+    status: proposed
+    primary_model: kimi
+    owned_contracts:
+      - broker_submission
+
+# INVALID: both workstreams own the canonical broker_submission contract

@@ -1,0 +1,50 @@
+schema_version: 1
+id: <workstream-id>
+title: <Workstream Title>
+status: proposed
+risk_level: low
+
+primary_model: kimi
+review_model: deepseek-flash
+integrator_model: codex
+
+branch: kimi/<workstream-id>
+worktree: /Users/eric/Desktop/astra-<workstream-id>
+
+base_branch: origin/main
+base_commit: "<commit-hash>"
+
+owned_files:
+  - ops/multi_agent/example_file.py
+
+owned_patterns: []
+
+owned_contracts:
+  - example_contract
+
+read_only_dependencies:
+  - engine/astra_loss_containment_engine_v1.py
+
+forbidden_files: []
+
+depends_on: []
+blocks: []
+
+acceptance_criteria:
+  - id: A1
+    description: Example acceptance criterion
+    status: NOT_EVALUATED
+    evidence: []
+
+rate_policy:
+  estimated_context: medium
+  estimated_output: medium
+  full_suite_required: false
+  escalation_allowed: true
+  maximum_default_model: kimi
+
+integration:
+  order: 100
+  requires_independent_review: false
+  requires_full_suite_at_integration: false
+  runtime_restart_expected: false

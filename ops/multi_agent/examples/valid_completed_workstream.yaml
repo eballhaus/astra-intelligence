@@ -1,0 +1,22 @@
+- workstream:
+    id: profit-protection-v1
+    title: Profit Protection V1
+    status: integrated
+    primary_model: kimi
+    branch: kimi/profit-protection-v1
+    owned_files:
+      - engine/astra_profit_protection_giveback_v1.py
+      - tests/test_astra_profit_protection_giveback_v1.py
+    acceptance_criteria:
+      - id: A1
+        description: All focused tests pass
+        status: PASS
+        evidence:
+          - type: test
+            value: tests.test_astra_profit_protection_giveback_v1
+      - id: A2
+        description: No broker or canary paths added
+        status: PASS
+        evidence:
+          - type: safety_scan
+            value: no broker/canary/execution matches

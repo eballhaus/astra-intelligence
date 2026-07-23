@@ -1,0 +1,19 @@
+- workstream_a:
+    id: paper-autopilot-audit-v1
+    title: PaperAutopilot Audit V1
+    status: active
+    primary_model: deepseek-pro
+    branch: deepseek/paper-autopilot-audit-v1
+    owned_files:
+      - engine/paper_autopilot.py
+
+- workstream_b:
+    id: exit-learning-v1
+    title: Exit Learning V1
+    status: proposed
+    primary_model: kimi
+    branch: kimi/exit-learning-v1
+    owned_files:
+      - engine/paper_autopilot.py
+
+# INVALID: both workstreams claim engine/paper_autopilot.py

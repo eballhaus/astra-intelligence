@@ -1,0 +1,7 @@
+acceptance_criteria:
+  - id: A1
+    description: Exact requirement
+    status: NOT_EVALUATED
+    evidence: []
+    external_blocker: null
+    controllable_work_remaining: []

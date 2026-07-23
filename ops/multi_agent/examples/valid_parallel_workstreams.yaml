@@ -1,0 +1,28 @@
+- workstream_a:
+    id: portfolio-decision-audit-v1
+    title: Portfolio Decision Audit V1
+    status: proposed
+    risk_level: medium
+    primary_model: kimi
+    review_model: deepseek-flash
+    branch: kimi/portfolio-decision-audit-v1
+    worktree: /Users/eric/Desktop/astra-kimi-feature
+    owned_files:
+      - engine/astra_portfolio_decision_audit_v1.py
+      - tests/test_astra_portfolio_decision_audit_v1.py
+    read_only_dependencies:
+      - engine/astra_loss_containment_engine_v1.py
+
+- workstream_b:
+    id: trade-memory-index-v1
+    title: Trade Memory Index V1
+    status: proposed
+    risk_level: low
+    primary_model: deepseek-flash
+    branch: deepseek/trade-memory-index-v1
+    worktree: /Users/eric/Desktop/astra-deepseek-flash-feature
+    owned_files:
+      - engine/astra_trade_memory_index_v1.py
+      - tests/test_astra_trade_memory_index_v1.py
+
+# These two workstreams are independent because they own distinct files and contracts.

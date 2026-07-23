@@ -1,0 +1,7 @@
+# Integration queue.
+# Tracks branches awaiting manual integration by the designated integrator.
+# The system never merges, pushes to main, deploys, or restarts automatically.
+integrator: codex
+current: null
+queue: []
+history: []
