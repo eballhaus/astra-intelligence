@@ -105,9 +105,9 @@ def _model_display_name(model: str) -> str:
 
 def _model_instruction(model: str) -> str:
     if model == "deepseek-flash":
-        return "Use DeepSeek Flash for this contained review, audit, or validation task."
+        return "Use DeepSeek Flash."
     if model == "deepseek-pro":
-        return "Use DeepSeek Pro for this broker, runtime, lifecycle, or high-risk task."
+        return "Use DeepSeek Pro."
     if model == "codex":
         return "Use Codex for this hardest cross-system or final integration task."
     return "Use Kimi K2.7 Code for this implementation."

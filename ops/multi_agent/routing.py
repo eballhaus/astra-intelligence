@@ -16,6 +16,8 @@ def recommend_model(task: dict[str, Any]) -> dict[str, Any]:
     touches_runtime = task.get("touches_runtime", False)
     touches_broker = task.get("touches_broker", False)
     touches_canonical = task.get("touches_canonical", False)
+    touches_paper_autopilot = task.get("touches_paper_autopilot", False)
+    touches_capital = task.get("touches_capital", False)
     cross_system = task.get("cross_system", False)
     task_type = task.get("task_type", "implementation")
 
@@ -23,10 +25,12 @@ def recommend_model(task: dict[str, Any]) -> dict[str, Any]:
     rate_policy = load_rate_policy()
     models = roles.get("models", {})
 
+    sensitive = touches_broker or touches_runtime or touches_canonical or touches_paper_autopilot or touches_capital
+
     # Determine the appropriate rate policy.
     if risk == "critical" or cross_system or complexity == "critical":
         policy_key = "critical"
-    elif risk == "high" or touches_broker or touches_runtime or touches_canonical:
+    elif risk == "high" or sensitive:
         policy_key = "high_risk"
     else:
         policy_key = "default"
@@ -38,9 +42,9 @@ def recommend_model(task: dict[str, Any]) -> dict[str, Any]:
     if risk == "critical" or cross_system or complexity == "critical":
         recommended = "codex"
         reason = "critical_or_cross_system_task_recommends_codex"
-    elif touches_broker or touches_runtime or touches_canonical or risk == "high":
+    elif sensitive or risk == "high":
         recommended = "deepseek-pro"
-        reason = "broker_runtime_or_canonical_ownership_requires_deepseek_pro"
+        reason = "broker_runtime_paper_autopilot_or_canonical_ownership_requires_deepseek_pro"
     elif risk == "low" and task_type in {"review", "audit", "diff_review", "test_validation"}:
         recommended = "deepseek-flash"
         reason = "small_review_or_audit_routes_to_deepseek_flash"
@@ -49,12 +53,13 @@ def recommend_model(task: dict[str, Any]) -> dict[str, Any]:
         reason = "contained_implementation_routes_to_kimi"
 
     # Escalation: if recommended model is unavailable, fall back.
-    fallback = None
+    fallback_from = None
     if recommended == "codex" and not task.get("codex_available", True):
-        fallback = "deepseek-pro"
+        fallback_from = recommended
+        recommended = "deepseek-pro"
         reason = "codex_unavailable_falls_back_to_deepseek_pro"
 
-    final = fallback or recommended
+    final = recommended
 
     # Enforce max_model_tier cap.
     if MODEL_ORDER.index(final) > MODEL_ORDER.index(max_tier):
@@ -68,7 +73,7 @@ def recommend_model(task: dict[str, Any]) -> dict[str, Any]:
         "escalation_allowed": policy.get("escalation_allowed", True),
         "independent_review_required": policy.get("independent_review_required", False),
         "full_suite_required": policy.get("full_suite_required", False),
-        "fallback_from": fallback,
+        "fallback_from": fallback_from,
     }
 
 

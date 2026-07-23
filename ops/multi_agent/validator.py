@@ -11,6 +11,7 @@ from .common import (
     ops_dir,
     repo_root,
     normalize_path,
+    resolve_path,
     path_matches_pattern,
     VALID_STATUSES,
     VALID_MODELS,
@@ -78,6 +79,27 @@ def validate_workstream_schema(workstream: dict[str, Any]) -> list[str]:
     return errors
 
 
+_NON_OWNER_STATUSES = {"failed", "cancelled"}
+
+
+def _is_forbidden(file_path: str, pattern: str) -> bool:
+    if path_matches_pattern(file_path, pattern):
+        return True
+    # Case-insensitive re-check for safety on case-preserving file systems.
+    if pattern.startswith("^"):
+        try:
+            if re.search(pattern, file_path, re.IGNORECASE):
+                return True
+        except re.error:
+            pass
+    else:
+        lowered_path = file_path.lower()
+        lowered_pattern = pattern.lower()
+        if path_matches_pattern(lowered_path, lowered_pattern):
+            return True
+    return False
+
+
 def validate_forbidden_paths(workstream: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     forbidden = load_forbidden_paths()
@@ -87,7 +109,7 @@ def validate_forbidden_paths(workstream: dict[str, Any]) -> list[str]:
     for f in workstream.get("owned_files", []):
         normalized = normalize_path(f)
         for pattern in patterns:
-            if path_matches_pattern(normalized, pattern) or path_matches_pattern(f, pattern):
+            if _is_forbidden(normalized, pattern) or _is_forbidden(f, pattern):
                 errors.append(f"forbidden_path:{f}")
                 break
 
@@ -97,13 +119,18 @@ def validate_forbidden_paths(workstream: dict[str, Any]) -> list[str]:
                 if re.search(pattern, p):
                     errors.append(f"forbidden_pattern:{p}")
                     break
-            elif "state/" in p or "diagnostics/" in p or ".env" in p or "logs/" in p:
+            elif "state/" in p.lower() or "diagnostics/" in p.lower() or ".env" in p.lower() or "logs/" in p.lower():
                 errors.append(f"forbidden_pattern:{p}")
                 break
 
     worktree = workstream.get("worktree", "")
-    if worktree == LIVE_CHECKOUT and task_type != "integration":
-        errors.append("forbidden_worktree:live_checkout")
+    if worktree:
+        try:
+            if resolve_path(worktree) == resolve_path(LIVE_CHECKOUT) and task_type != "integration":
+                errors.append("forbidden_worktree:live_checkout")
+        except (OSError, RuntimeError):
+            # If the path cannot be resolved, treat the worktree claim with suspicion.
+            errors.append("forbidden_worktree:unresolvable")
 
     return errors
 
@@ -115,6 +142,7 @@ def validate_ownership(workstream: dict[str, Any]) -> list[str]:
     owned_files = [normalize_path(f) for f in workstream.get("owned_files", [])]
     owned_patterns = workstream.get("owned_patterns", [])
     owned_contracts = workstream.get("owned_contracts", [])
+    read_only = set(normalize_path(d) for d in workstream.get("read_only_dependencies", []))
 
     # Duplicate ownership within workstream.
     seen_files: set[str] = set()
@@ -129,8 +157,18 @@ def validate_ownership(workstream: dict[str, Any]) -> list[str]:
             errors.append(f"duplicate_owned_contract:{c}")
         seen_contracts.add(c)
 
+    # A read-only dependency must not also be claimed as edit ownership.
+    for f in owned_files:
+        if f in read_only:
+            errors.append(f"read_only_dependency_claimed_as_owned:{f}")
+    for c in owned_contracts:
+        if c in workstream.get("read_only_dependencies", []):
+            errors.append(f"read_only_contract_claimed_as_owned:{c}")
+
     for other in get_active_workstreams():
         if other.get("id") == wid:
+            continue
+        if other.get("status") in _NON_OWNER_STATUSES:
             continue
         other_files = [normalize_path(f) for f in other.get("owned_files", [])]
         other_patterns = other.get("owned_patterns", [])
@@ -167,7 +205,8 @@ def validate_ownership(workstream: dict[str, Any]) -> list[str]:
 def _patterns_overlap(a: str, b: str) -> bool:
     """Heuristic overlap check for two glob-ish patterns.
 
-    Returns True if one pattern is a prefix/subset of the other.
+    Returns True if the patterns may match the same path.  The check is
+    intentionally conservative: if it is uncertain, treat it as overlapping.
     """
     a_norm = a.strip().rstrip("/")
     b_norm = b.strip().rstrip("/")
@@ -175,6 +214,17 @@ def _patterns_overlap(a: str, b: str) -> bool:
         return True
     if a_norm.startswith(b_norm + "/") or b_norm.startswith(a_norm + "/"):
         return True
+
+    # If both patterns contain wildcards and share a leading directory prefix,
+    # they may overlap (e.g. src/**/*.py and src/*_test.py).
+    a_has_wild = "*" in a_norm or "?" in a_norm
+    b_has_wild = "*" in b_norm or "?" in b_norm
+    if a_has_wild and b_has_wild:
+        a_lead = a_norm.split("/")[0]
+        b_lead = b_norm.split("/")[0]
+        if a_lead and b_lead and a_lead == b_lead:
+            return True
+
     return False
 
 
@@ -256,6 +306,25 @@ def validate_worktree(workstream: dict[str, Any]) -> dict[str, Any]:
         if not result["branch_matches"]:
             result["errors"].append(f"branch_mismatch:expected={expected_branch}:actual={actual_branch}")
 
+        # Verify the worktree belongs to the expected repository.
+        # In a linked worktree --show-toplevel returns the worktree path, so we
+        # compare the common Git directory instead.
+        try:
+            git_common_dir = subprocess.check_output(
+                ["git", "-C", path, "rev-parse", "--git-common-dir"],
+                text=True,
+                stderr=subprocess.PIPE,
+            ).strip()
+            expected_git_dir = str(repo_root() / ".git")
+        except (subprocess.CalledProcessError, RuntimeError):
+            git_common_dir = ""
+            expected_git_dir = ""
+        if git_common_dir and expected_git_dir:
+            if resolve_path(git_common_dir) != resolve_path(expected_git_dir):
+                result["errors"].append(
+                    f"wrong_repository:git_common_dir={git_common_dir}:expected={expected_git_dir}"
+                )
+
         head = subprocess.check_output(
             ["git", "-C", path, "rev-parse", "HEAD"],
             text=True,
@@ -264,6 +333,16 @@ def validate_worktree(workstream: dict[str, Any]) -> dict[str, Any]:
         result["head_matches_base"] = head == expected_commit
         if not result["head_matches_base"]:
             result["errors"].append(f"commit_mismatch:expected={expected_commit}:actual={head}")
+
+        # Verify the recorded base commit is known to this repository.
+        try:
+            subprocess.check_output(
+                ["git", "-C", path, "cat-file", "-t", expected_commit],
+                text=True,
+                stderr=subprocess.PIPE,
+            )
+        except subprocess.CalledProcessError:
+            result["errors"].append("unknown_base_commit")
 
         status = subprocess.check_output(
             ["git", "-C", path, "status", "--short"],

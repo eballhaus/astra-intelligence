@@ -117,16 +117,20 @@ Circular dependencies are rejected.
 - `risk_level`: low, medium, high, critical.
 - `complexity`: low, medium, high, critical.
 - `task_type`: review/audit vs implementation.
-- `touches_runtime`, `touches_broker`, `touches_canonical`, `cross_system`.
+- `touches_runtime`, `touches_broker`, `touches_canonical`,
+  `touches_paper_autopilot`, `touches_capital`, `cross_system`.
 
 Policy rules:
 
 - Low-risk review/audit tasks route to `deepseek-flash`.
 - Contained implementation routes to `kimi`.
-- Broker, runtime, lifecycle, canonical, or high-risk tasks route to
-  `deepseek-pro`.
+- Broker, runtime, lifecycle, canonical, PaperAutopilot, capital, or high-risk
+  tasks route to `deepseek-pro`.
 - Cross-system or critical tasks route to `codex`.
-- The rate policy `max_model_tier` caps the final recommendation.
+- Safety constraints override the default rate-policy ceiling; the
+  `max_model_tier` caps the final recommendation only when it is not less
+  restrictive than the task's safety requirement.
+- If `codex` is unavailable, cross-system tasks fall back to `deepseek-pro`.
 
 ## 8. Acceptance Ledger
 
@@ -145,8 +149,10 @@ Workstreams move into the integration queue only after:
 
 - Status is `review_passed`.
 - Ledger is valid.
-- Required independent review is recorded.
-- Worktree is valid.
+- Required independent review is recorded (enforced for high-risk/critical
+  workstreams and any workstream that opts in).
+- Worktree is valid, including freshness and ownership checks.
+- No other workstream is currently being integrated.
 
 Queue operations are manual and advisory:
 
@@ -157,7 +163,9 @@ python scripts/astra_integration_queue.py start <id>
 python scripts/astra_integration_queue.py complete <id>
 ```
 
-The queue never merges, pushes, or restarts Astra.
+The queue never merges, pushes, or restarts Astra. The `start` and `complete`
+steps are intended for a designated human integrator; the OS only records the
+decision.
 
 ## 10. Scripts
 
@@ -196,15 +204,52 @@ python scripts/astra_agent_lock_check.py --file src/foo.py --workstream my-works
 - `execution_authorized: false`
 - `paper_action_ready: false`
 - `broker_submission_allowed: false`
-- No script may restart Astra or modify the live checkout.
+- No script may restart Astra, start/stop processes, modify the live checkout,
+  submit broker orders, deploy code, or run models.
 - No automatic merge or push to `main`.
+- No network or broker access is performed by the coordination scripts.
 - All operations are logged in the YAML registries.
 
 ## 12. Testing
 
-Run the focused test suite:
+### 12.1 Development dependencies
+
+Only two third-party packages are needed for OS testing:
+
+- `pytest`
+- `pyyaml`
+
+The OS code uses Python 3.10+ syntax (`|` unions, built-in generic types). Do
+not install these into the Astra runtime environment; create an isolated
+environment instead.
 
 ```bash
+python3.12 -m venv /tmp/astra_multi_agent_review_venv
+/tmp/astra_multi_agent_review_venv/bin/python -m pip install --upgrade pip
+/tmp/astra_multi_agent_review_venv/bin/python -m pip install pytest pyyaml
+/tmp/astra_multi_agent_review_venv/bin/python -m pytest tests/test_astra_multi_agent_os.py -v
+```
+
+### 12.2 Test count
+
+The file contains independent `test_*` functions. One of those functions is
+parametrized over the eight CLI scripts, so pytest collects more test cases
+than there are function definitions. The exact counts are:
+
+```bash
+python -m pytest tests/test_astra_multi_agent_os.py --collect-only -q
+```
+
+When reporting results, distinguish **test functions** from **collected pytest
+cases**.
+
+### 12.3 Running the suite
+
+```bash
+python -m py_compile ops/multi_agent/*.py scripts/astra_agent_*.py scripts/astra_integration_queue.py
+for s in scripts/astra_agent_*.py scripts/astra_integration_queue.py; do
+    python "$s" --help >/dev/null || echo "help failed for $s";
+done
 python -m pytest tests/test_astra_multi_agent_os.py -v
 ```
 
@@ -229,3 +274,17 @@ generation, script import/syntax, and runtime isolation.
 
 The OS schema version is `1.0.0` and is recorded in
 `ops/multi_agent/schema_version.yaml`.
+
+## 15. Integration readiness
+
+Before a feature branch that changes the OS is merged:
+
+1. Fetch the current `origin/main`.
+2. Rebase the feature branch onto `origin/main`.
+3. Resolve any conflicts only within the OS file scope.
+4. Run the full focused test suite.
+5. Verify that only the permitted OS files are changed.
+6. Confirm that the designated integrator step remains a separate,
+   human-approved action outside the OS.
+
+The OS itself does not perform the merge, deployment, or restart.

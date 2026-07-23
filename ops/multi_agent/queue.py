@@ -34,7 +34,13 @@ def get_integration_status(workstream_id: str) -> dict[str, Any]:
         return {"status": "NOT_SAFE_FOR_INTEGRATION", "errors": errors}
 
     integration = ws.get("integration", {})
-    if integration.get("requires_independent_review") and ws.get("review_status") != "passed":
+    rate_policy = ws.get("rate_policy", {})
+    requires_review = (
+        integration.get("requires_independent_review")
+        or rate_policy.get("independent_review_required")
+        or ws.get("risk_level") in {"high", "critical"}
+    )
+    if requires_review and ws.get("review_status") != "passed":
         errors.append("independent_review_required")
         return {"status": "WAITING_FOR_REVIEW", "errors": errors}
 
@@ -48,6 +54,14 @@ def add_to_queue(workstream_id: str) -> dict[str, Any]:
     status = get_integration_status(workstream_id)
     if status["status"] != "READY":
         return {"ok": False, "status": status["status"], "errors": status["errors"]}
+
+    ws = get_workstream(workstream_id)
+    if ws is not None:
+        # Delayed import to avoid a circular dependency at module load time.
+        from . import validator
+        validation = validator.validate_workstream(ws, include_worktree=True)
+        if not validation["valid"]:
+            return {"ok": False, "status": "NOT_SAFE_FOR_INTEGRATION", "errors": validation["errors"]}
 
     queue_data = load_integration_queue()
     queue = list(queue_data.get("queue", []))
@@ -98,6 +112,10 @@ def get_queue_status() -> dict[str, Any]:
 
 def set_current_integrating(workstream_id: str) -> dict[str, Any]:
     queue_data = load_integration_queue()
+    existing = queue_data.get("current")
+    if existing and existing.get("id") != workstream_id:
+        return {"ok": False, "error": "integrator_already_assigned", "current": existing.get("id")}
+
     queue = list(queue_data.get("queue", []))
     current = None
     for item in queue:

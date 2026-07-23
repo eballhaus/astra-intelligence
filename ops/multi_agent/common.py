@@ -42,6 +42,11 @@ def normalize_path(value: str) -> str:
     return os.path.normpath(value.strip()).lstrip("/")
 
 
+def resolve_path(value: str) -> Path:
+    """Resolve a path, including symlinks, for safety comparisons."""
+    return Path(value).expanduser().resolve()
+
+
 def path_matches_pattern(file_path: str, pattern: str) -> bool:
     """Check if a file path matches a glob-ish or regex pattern.
 

@@ -24,6 +24,12 @@ def validate_ledger(workstream: dict[str, Any]) -> dict[str, Any]:
         if status == "PASS":
             if not evidence:
                 errors.append(f"PASS_without_evidence:{c.get('id')}")
+            else:
+                for idx, ev in enumerate(evidence):
+                    if not isinstance(ev, dict):
+                        errors.append(f"{c.get('id')}:evidence_entry_{idx}_not_dict")
+                    elif "source" in ev and ev.get("source") not in {"test", "runtime", "review", "scan", "manual"}:
+                        errors.append(f"{c.get('id')}:evidence_entry_{idx}_invalid_source")
             pass_count += 1
         elif status == "BLOCKED":
             if not blocker:
@@ -36,6 +42,11 @@ def validate_ledger(workstream: dict[str, Any]) -> dict[str, Any]:
 
         if remaining:
             errors.append(f"controllable_work_remaining:{c.get('id')}:{'|'.join(remaining)}")
+
+    if fail_count > 0:
+        errors.append("FAIL_prevents_completion")
+    if not_evaluated_count > 0:
+        errors.append("NOT_EVALUATED_prevents_completion")
 
     status = workstream.get("status", "")
     if status == "implementation_complete" and (fail_count > 0 or not_evaluated_count > 0):
